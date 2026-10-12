@@ -913,6 +913,7 @@
   "askAgentSeatOnly": "Only an AI teammate seated in this room can ask questions",
   "askFieldString": "{field} must be a string",
   "askFieldRequired": "{field} must be a nonempty string",
+  "askNothingToWithdraw": "You haven't answered this question, so there is nothing to take back",
   "serverInternalError": "Something went wrong on the server",
   "resourceNotFound": "Resource not found",
   "accessDenied": "Access denied",

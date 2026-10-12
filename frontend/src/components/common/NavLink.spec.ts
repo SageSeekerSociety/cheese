@@ -108,6 +108,33 @@ describe('NavLink：装了路由就是一条真链接', () => {
   })
 })
 
+describe('NavLink：路由名写错了要有人知道', () => {
+  it('路由表里没有这个名字：画成不可点的，并且 console.warn 点出名字', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const router = makeRouter()
+    await router.push('/')
+    const { getByText } = render(Link, {
+      props: { to: { name: 'no-such-route' } },
+      slots: { default: '爱丽丝' },
+      global: { plugins: [router] },
+    })
+    expect(getByText('爱丽丝').hasAttribute('href')).toBe(false)
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('no-such-route'))
+  })
+
+  it('名字认识、只是少一个参数：不可点，但不当成「名字写错」报警', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const router = makeRouter()
+    await router.push('/')
+    render(Link, {
+      props: { to: { name: 'member', params: { projectId: 'p1' } } },
+      slots: { default: '爱丽丝' },
+      global: { plugins: [router] },
+    })
+    expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('member'))
+  })
+})
+
 describe('NavLink：没装路由照样渲染', () => {
   it('没有 href、不进 Tab 顺序、点了什么也不发生 —— 而且不报「组件没解析」', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})

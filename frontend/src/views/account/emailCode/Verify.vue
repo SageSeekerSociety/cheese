@@ -34,7 +34,6 @@ import VerifyView from './VerifyView.vue'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -72,7 +71,7 @@ async function submit() {
     const upgrade = upgradeAfterEmailCodeSignIn(data.user!.id, data.passkeyEnrollment)
     router.replace(await landingAfterSignIn(upgrade, postLoginTarget(route.query)))
   } catch (e) {
-    error.value = attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.verifyEmail.failed')))
+    error.value = attemptMessage(e) ?? axiosErrorMessage(e, t('account.verifyEmail.failed'))
     code.value = ''
     waitFor(e)
   } finally {
@@ -98,8 +97,7 @@ async function resend() {
     now.value = Date.now()
     toast.success(t('account.verifyEmail.resent'))
   } catch (e) {
-    error.value =
-      attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.verifyEmail.resendFailed')))
+    error.value = attemptMessage(e) ?? axiosErrorMessage(e, t('account.verifyEmail.resendFailed'))
   } finally {
     resending.value = false
   }

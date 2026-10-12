@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
+// spaces 域的命令-载荷语义契约：命令方法把返回的载荷原样交给调用方，只有真正空掉的
+// 载荷才变成显式成功值。整域走新 API 源（`axiosNewApi`）。
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it, vi } from 'vitest'
 
-import { contractEnvironment, envelope, newer, server } from './migrationContract.spec.helper'
+import { contractEnvironment, envelope, newer, server } from './requestContract.spec.helper'
 
 contractEnvironment()
 
@@ -22,13 +24,10 @@ describe('spaces command versus payload semantics', () => {
           return HttpResponse.json(envelope(payload))
         })
       )
-      const { SpacesApi: old } = await import('@/network/api/spaces')
       const { SpacesApi: next } = await import('./spaces')
-      const before = await (old[method.name] as (...args: unknown[]) => Promise<{ data: unknown }>)(...method.args)
       const after = await (next[method.name] as (...args: unknown[]) => Promise<unknown>)(...method.args)
-      expect(before.data).toEqual(payload)
-      expect(after).toEqual(before.data)
-      expect(count).toBe(2)
+      expect(after).toEqual(payload)
+      expect(count).toBe(1)
     })
   }
 

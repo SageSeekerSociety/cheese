@@ -1,33 +1,33 @@
 // @vitest-environment jsdom
-// userAuth 域（证明身份、进入登录态）的载荷契约：`UserAuthApi` 的每个方法都把**旧栈**与
-// **新栈**发出去的浏览器请求对拍（方法、地址与查询、鉴权头、JSON 正文），并核对新的载荷
-// 契约 —— JSON 调用直接给 payload，无载荷命令给显式成功值。整域走主 API 源（旧
-// `ApiInstance`、新 `axiosApi`）。
+// userAuth 域（证明身份、进入登录态）的请求契约：`UserAuthApi` 的每个方法都钉住它发出去的
+// 浏览器请求（方法、地址与查询、鉴权头、刷新 cookie、JSON 正文），并核对载荷契约 ——
+// JSON 调用直接给 payload，无载荷命令给显式成功值。整域走主 API 源（`axiosApi`）。
 //
 // 三个不经过 axios 的助手（`redirectToOAuthLogin` 换浏览器地址、`createUserFromOAuth` /
-// `bindOAuthToUser` 交一张隐藏表单）单独一组：它们没有请求可对拍，就分别核对落点与字段，
+// `bindOAuthToUser` 交一张隐藏表单）单独一组：它们没有请求可钉，就分别核对落点与字段，
 // 其中 bind 会跳过未填的字段、create 不会。
+//
+// `withCredentials: true` 的方法（register、login、signInWithEmailCode、passkey、
+// verify2FA、verifySudoPasskey、logout）要带刷新 cookie，用例表里写 `credentials: 'include'`。
 import { http, HttpResponse } from 'msw'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
-  compareRequests,
   type ContractCase,
   contractEnvironment,
+  contractRequest,
   envelope,
   primary,
   server,
-} from './migrationContract.spec.helper'
+} from './requestContract.spec.helper'
 
 vi.mock('@/errorReporter', () => ({ reportError: vi.fn() }))
 
 contractEnvironment()
 
-let oldAuth: typeof import('@/network/api/users').UserApi
 let newAuth: typeof import('./userAuth').UserAuthApi
 
 beforeAll(async () => {
-  ;({ UserApi: oldAuth } = await import('@/network/api/users'))
   ;({ UserAuthApi: newAuth } = await import('./userAuth'))
 })
 
@@ -47,6 +47,7 @@ const cases: Record<string, ContractCase> = {
     path: '/users',
     args: [{ username: 'ada', nickname: 'Ada', password: 'pw', email: 'ada@example.com', emailCode: '123456' }],
     body: { username: 'ada', nickname: 'Ada', password: 'pw', email: 'ada@example.com', emailCode: '123456' },
+    credentials: 'include',
   },
   getRegistrationConfig: { method: 'GET', path: '/users/registration-config', args: [] },
   login: {
@@ -54,6 +55,7 @@ const cases: Record<string, ContractCase> = {
     path: '/users/auth/login',
     args: [{ username: 'ada', password: 'pw' }],
     body: { username: 'ada', password: 'pw' },
+    credentials: 'include',
   },
   requestSignInCode: {
     method: 'POST',
@@ -61,7 +63,13 @@ const cases: Record<string, ContractCase> = {
     args: ['ada@example.com'],
     body: { email: 'ada@example.com' },
   },
-  signInWithEmailCode: { method: 'POST', path: '/users/auth/email-code/verify', args: [ada], body: ada },
+  signInWithEmailCode: {
+    method: 'POST',
+    path: '/users/auth/email-code/verify',
+    args: [ada],
+    body: ada,
+    credentials: 'include',
+  },
   sendEmailCode: {
     method: 'POST',
     path: '/users/verify/email',
@@ -85,12 +93,14 @@ const cases: Record<string, ContractCase> = {
     path: '/users/auth/passkey/options',
     args: [7],
     body: { userId: 7 },
+    credentials: 'include',
   },
   verifyPasskeyAuthentication: {
     method: 'POST',
     path: '/users/auth/passkey/verify',
     args: [{ id: 'cred-1' }],
     body: { response: { id: 'cred-1' } },
+    credentials: 'include',
   },
   requestSudoTicket: {
     method: 'POST',
@@ -110,6 +120,7 @@ const cases: Record<string, ContractCase> = {
     path: '/users/auth/sudo',
     args: [{ id: 'assertion' }, 'passkey:add'],
     body: { method: 'passkey', credentials: { passkeyResponse: { id: 'assertion' } }, purpose: 'passkey:add' },
+    credentials: 'include',
   },
   verifySudoTOTP: {
     method: 'POST',
@@ -130,8 +141,9 @@ const cases: Record<string, ContractCase> = {
     path: '/users/auth/verify-2fa',
     args: [{ temp_token: 'temp', code: '123456', trust_device: true }],
     body: { temp_token: 'temp', code: '123456', trust_device: true },
+    credentials: 'include',
   },
-  logout: { method: 'POST', path: '/users/auth/logout', args: [] },
+  logout: { method: 'POST', path: '/users/auth/logout', args: [], credentials: 'include' },
   startAppSignIn: {
     method: 'POST',
     path: '/users/auth/app-sign-in',
@@ -172,14 +184,9 @@ const cases: Record<string, ContractCase> = {
   },
 }
 
-describe('userAuth migration: every method keeps its request and payload', () => {
+describe('userAuth: every method keeps its request and payload', () => {
   it.each(Object.entries(cases))('%s preserves the request and returns the payload', async (name, test) => {
-    await compareRequests(
-      test,
-      () => call(oldAuth, name, test.args),
-      () => call(newAuth, name, test.args),
-      primary
-    )
+    await contractRequest(test, () => call(newAuth, name, test.args), primary)
   })
 
   // 同一方法的第二种入参：邀请码只在给了的时候进正文。
@@ -190,16 +197,11 @@ describe('userAuth migration: every method keeps its request and payload', () =>
       args: ['ada@example.com', 'INV-1'],
       body: { email: 'ada@example.com', inviteCode: 'INV-1' },
     }
-    await compareRequests(
-      withInvite,
-      () => oldAuth.sendEmailCode('ada@example.com', 'INV-1'),
-      () => newAuth.sendEmailCode('ada@example.com', 'INV-1'),
-      primary
-    )
+    await contractRequest(withInvite, () => newAuth.sendEmailCode('ada@example.com', 'INV-1'), primary)
   })
 })
 
-describe('userAuth migration: commands answer with an explicit success', () => {
+describe('userAuth: commands answer with an explicit success', () => {
   it.each(['logout', 'requestSignInCode'] as const)(
     '%s resolves true rather than the failure sentinel',
     async (name) => {
@@ -211,7 +213,7 @@ describe('userAuth migration: commands answer with an explicit success', () => {
   )
 })
 
-describe('userAuth migration: the helpers that leave axios', () => {
+describe('userAuth: the helpers that leave axios', () => {
   it('redirectToOAuthLogin sends the browser to the same origin-qualified URL', () => {
     vi.stubGlobal('location', { href: '' })
     newAuth.redirectToOAuthLogin('github', 'st', 'offline')

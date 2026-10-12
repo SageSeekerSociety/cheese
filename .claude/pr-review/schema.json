@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["reviewed_sha", "summary", "candidates_found", "candidates_refuted", "findings", "not_covered"],
+  "properties": {
+    "reviewed_sha": {"type": "string", "description": "git rev-parse HEAD as seen in step 1"},
+    "summary": {"type": "string", "description": "Two or three sentences: what the change does and whether anything survived refutation"},
+    "candidates_found": {"type": "integer", "minimum": 0},
+    "candidates_refuted": {"type": "integer", "minimum": 0},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "kind", "file", "line", "title", "failure", "evidence", "rung", "confirm_with"],
+        "properties": {
+          "severity": {"enum": ["blocker", "major", "minor"]},
+          "kind": {"enum": ["runtime", "test", "ci", "rule", "claim"]},
+          "file": {"type": "string"},
+          "line": {"type": "integer", "minimum": 0},
+          "title": {"type": "string", "description": "One line, the defect itself"},
+          "failure": {"type": "string", "description": "Concrete input or state -> wrong result"},
+          "evidence": {"type": "string", "description": "What was read, with file:line at the pinned SHA, and why refutation failed"},
+          "rung": {"type": "integer", "minimum": 1, "maximum": 5},
+          "confirm_with": {"type": "string", "description": "Exact command that would confirm or kill it; empty only when rung >= 4"}
+        }
+      }
+    },
+    "not_covered": {"type": "array", "items": {"type": "string"}}
+  }
+}
