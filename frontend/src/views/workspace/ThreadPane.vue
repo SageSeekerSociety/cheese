@@ -35,6 +35,7 @@ import { isAgentBlock } from '@/lib/authorship'
 import { replySnippet } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
 import { clockTime } from '@/lib/dateText'
+import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
 import { renderPlain } from '@/lib/renderMessage'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -72,12 +73,9 @@ const viewer = computed(() => currentUserName.value ?? myHandle())
 
 // A thread occupies the room's panel, and on phones there is no WorkPanel.
 // Open its library-document cards on the document's own page instead.
-function openResource(resource: string, _turnId?: string, _review?: DocReviewRequest, document?: OpenedDocument) {
+function openResource(resource: string, _turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
   if (resource !== 'doc' || !document) return
-  void router.push({
-    name: 'project-document',
-    params: { projectId: props.room.project_id, docId: document.id },
-  })
+  void openThreadDocument(router, props.room.project_id, document, review)
 }
 // 正在看哪一轮的过程；null 是在看支线本身。
 const processTurn = ref<string | null>(null)
