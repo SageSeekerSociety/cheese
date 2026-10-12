@@ -692,6 +692,7 @@
       "source": {
         "baseline": "最初的样子",
         "upload": "上传",
+        "template": "从模板新建",
         "ai": "AI 队友修改",
         "editor": "在线编辑保存",
         "restore": "恢复",
@@ -2088,7 +2089,10 @@
   },
   "image": {
     "alt": "图片",
-    "failed": "图片加载失败"
+    "close": "关闭",
+    "failed": "图片加载失败",
+    "open": "查看大图：{name}",
+    "zoomHint": "滚轮或双指缩放，按住拖动"
   },
   "agentAvatar": {
     "defaultName": "芝士",

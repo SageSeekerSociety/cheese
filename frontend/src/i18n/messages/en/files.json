@@ -8,7 +8,9 @@
     "empty": "No files yet",
     "loading": "Loading files",
     "loadError": "Could not load the files",
-    "truncated": "Too many files — only the {n} most recently changed are listed"
+    "truncated": "Too many files — only the {n} most recently changed are listed",
+    "crumbsRoot": "All files",
+    "crumbsLabel": "Breadcrumb"
   },
   "preview": {
     "cannotShow": "Can't display this file",

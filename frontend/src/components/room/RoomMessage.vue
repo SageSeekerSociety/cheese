@@ -234,8 +234,8 @@ function renderPlain(text: string): string {
            这一份能做的事；置顶了的带一个小图钉。 -->
       <div v-if="fileBlock" class="im-file">
         <!-- 图片输入: an attachment block renders as the image itself
-           (click opens the original in a new tab). 字节在 AttachmentImage
-           里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
+           (click opens it larger, in place, see ImageLightbox). 字节在
+           AttachmentImage 里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
         <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
         <BaseButton
           v-else-if="block.kind === 'attachment'"

@@ -226,10 +226,15 @@ describe('four-domain pilot against the HTTP contract', () => {
     expect(refresh).toHaveBeenCalledOnce()
   })
 
+  // A renewal that fails — turned down or out of reach — is attempted once, and
+  // that is all this layer owes: no retry, no notice, no navigation. Ending the
+  // sign-in moved to `lib/session.ts` (the announcement) and
+  // `services/account.ts` (the session drop and the sign-in), for both stacks
+  // (`account.sessionOver.spec.ts`).
   it.each([
-    ['rejected', { kind: 'rejected' as const }, true],
-    ['unreachable', { kind: 'unreachable' as const }, false],
-  ] as const)('does not retry a 401 when refresh is %s', async (_label, outcome, redirects) => {
+    ['rejected', { kind: 'rejected' as const }],
+    ['unreachable', { kind: 'unreachable' as const }],
+  ] as const)('does not retry a 401 when refresh is %s', async (_label, outcome) => {
     const read = reads()[0]
     server.resetHandlers()
     refresh.mockReset().mockResolvedValue(outcome)
@@ -244,8 +249,8 @@ describe('four-domain pilot against the HTTP contract', () => {
     await expect(read.next()).rejects.toBeInstanceOf(Error)
     expect(requests).toBe(1)
     expect(refresh).toHaveBeenCalledOnce()
-    expect(replace).toHaveBeenCalledTimes(redirects ? 1 : 0)
-    expect(notified).toHaveBeenCalledTimes(redirects ? 1 : 0)
+    expect(replace).not.toHaveBeenCalled()
+    expect(notified).not.toHaveBeenCalled()
   })
 
   it('stops after a refreshed request is still unauthorized, including POST uploads', async () => {
