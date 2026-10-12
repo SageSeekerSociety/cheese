@@ -22,15 +22,13 @@ vi.mock('@/network/api/users', () => ({
     bindOAuthToUser: vi.fn(),
   },
 }))
-vi.mock('@/network/api/legal', () => ({
+vi.mock('@/api/legal', () => ({
   LegalApi: {
     listDocuments: vi.fn().mockResolvedValue({
-      data: {
-        documents: [
-          { document: 'terms', version: '1.0' },
-          { document: 'privacy', version: '1.0' },
-        ],
-      },
+      documents: [
+        { document: 'terms', version: '1.0' },
+        { document: 'privacy', version: '1.0' },
+      ],
     }),
   },
 }))

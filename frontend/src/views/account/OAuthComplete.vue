@@ -26,8 +26,8 @@
 </template>
 
 <script setup lang="ts">
-import type { AcceptedDocuments, ConsentMethod } from '@/network/api/legal/types'
 import type { OAuthCreateUserRequest, OAuthState } from '@/network/api/users/types'
+import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
 import type { OAuthBindValues, OAuthCreateValues } from './OAuthCompleteView.vue'
 
 import { computed, onMounted, ref } from 'vue'

@@ -33,7 +33,7 @@
  * 不自己写死版本号——取数在 `useConsentDocuments`，由页面容器做，版本经 props 传进来。
  * 于是这一只不碰接口层，只凭 props 就画得出来。
  */
-import type { AcceptedDocuments, ConsentMethod } from '@/network/api/legal/types'
+import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
 
 import { ref } from 'vue'
 
