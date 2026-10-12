@@ -59,6 +59,10 @@ export function topicsQuery(projectId: string) {
     queryFn: async ({ signal }): Promise<ListPayload<Topic>> => {
       const payload = await listTopics(projectId, TOPIC_SORT, queryClient.getQueryData(queryKey), signal)
       rememberNumbered('channels', payload.data)
+      rememberNumbered(
+        'tasks',
+        payload.data.flatMap((topic) => topic.my_tasks?.shown ?? [])
+      )
       return payload
     },
   })
