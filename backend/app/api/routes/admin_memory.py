@@ -25,20 +25,17 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Query
 
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.routes.admin_common import PlatformAdminDep
 from app.core.config import settings
-from app.core.db import get_db
 from app.domain.memory.migration_service import MemoryMigrationService
 from app.domain.memory.models import MemoryMigrationPlan
 from app.domain.memory.reads import body_reads
 
 router = APIRouter(prefix="/admin/memory", tags=["admin"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def _file_path(item: dict) -> str:

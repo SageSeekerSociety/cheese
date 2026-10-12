@@ -36,7 +36,7 @@ from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
-from app.domain.topic import retire
+from app.domain.room_cleanup import retire
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
 from app.domain.user.models import User

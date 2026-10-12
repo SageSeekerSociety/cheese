@@ -35,7 +35,7 @@ from app.domain.machine.services import HostPool
 from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import RoomCleanup, Topic, TopicStatus
-from app.domain.topic.repositories import TopicRepository
+from app.domain.topic.services import TopicService
 
 logger = logging.getLogger("cheesex.topic.retire")
 
@@ -451,7 +451,7 @@ async def _advance(
     retry_claim = operation.state == "claimed"
     # The first time through, the room's sessions get their one checkpoint.
     first = operation.state == "pending" and not operation.resources
-    room = await TopicRepository(session).lock(operation.topic_id)
+    room = await TopicService(session).lock(operation.topic_id)
     if operation.state == "pending":
         # Only a room taken out of the archive wants its machine back. A room
         # whose row is gone (one that became a closed task, which never

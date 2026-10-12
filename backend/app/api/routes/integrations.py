@@ -7,20 +7,19 @@ a granted project, using the owner's account.
 
 import hmac
 import uuid
-from typing import Annotated
 from urllib.parse import quote, urlencode
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.core.config import settings
 from app.core.crypto import Purpose, keyed_digest, keyed_digests
-from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -57,8 +56,6 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["integrations"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class MailIn(BaseModel):

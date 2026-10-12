@@ -22,7 +22,7 @@
 # and were never going to: the layering was held by 26 upward imports that exist
 # *because* they dodge a cycle, the routes imported 56 model modules directly,
 # and the knot under `app.domain` would have taken 178 dependency removals to
-# untie (today's counts are in `.claude/rules/architecture.md`). Turning the
+# untie (today's counts are in `docs/manual/dev/arch-metrics.md`). Turning the
 # contracts on with no exceptions would have meant either a month of unfunded
 # refactoring before anyone could merge, or a check switched off on day one.
 #
@@ -261,7 +261,6 @@ ignore_imports =
     app.domain.discussion.services -> app.domain.delivery.ledger
     app.domain.discussion.services -> app.domain.notification.models
     app.domain.docs_site.library -> app.domain.project.models
-    app.domain.feedback.repositories -> app.domain.platform_stats.windows
     app.domain.feedback.repositories -> app.domain.topic.models
     app.domain.identity.services -> app.domain.topic_membership.services
     app.domain.knowledge.services -> app.domain.team.repositories
@@ -274,7 +273,6 @@ ignore_imports =
     app.domain.memory.migration_service -> app.domain.project.services
     app.domain.memory.migration_service -> app.domain.usage.ledger
     app.domain.memory.reads -> app.domain.block.models
-    app.domain.memory.reads -> app.domain.platform_stats.windows
     app.domain.memory.redundant -> app.domain.agent.execution
     app.domain.memory.redundant -> app.domain.topic.models
     app.domain.mentions -> app.domain.membership.roster
@@ -354,7 +352,6 @@ ignore_imports =
     app.domain.room_task.services -> app.domain.project.models
     app.domain.room_task.services -> app.domain.project.protection
     app.domain.room_task.services -> app.domain.topic.models
-    app.domain.service_keys -> app.domain.docs_site.models
     app.domain.shell.service -> app.domain.space.models
     app.domain.shell.service -> app.domain.task.models
     app.domain.shell.service -> app.domain.task.protocol
@@ -368,11 +365,6 @@ ignore_imports =
     app.domain.team.membership_services -> app.domain.delivery.ledger
     app.domain.team.membership_services -> app.domain.notification.models
     app.domain.team.services -> app.domain.task.repositories
-    app.domain.topic.retire -> app.domain.agent.device_hub
-    app.domain.topic.retire -> app.domain.agent.device_storage
-    app.domain.topic.retire -> app.domain.agent.models
-    app.domain.topic.retire -> app.domain.agent.resource_cleanup
-    app.domain.topic.retire -> app.domain.machine.services
     app.domain.topic.services -> app.domain.agent.clone
     app.domain.topic.services -> app.domain.agent.harness
     app.domain.topic.services -> app.domain.review.archive
@@ -388,15 +380,12 @@ ignore_imports =
     app.domain.topic_membership.services -> app.domain.topic.repositories
     app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.ledger -> app.domain.project.services
-    app.domain.usage.repositories -> app.domain.platform_stats.windows
     app.domain.usage.repositories -> app.domain.project.models
-    app.domain.usage.subscription_ingest -> app.domain.feature_stats.pricing
     app.domain.usage.subscription_ingest -> app.domain.project.repositories
     app.domain.user.realname_services -> app.domain.space.services
     app.domain.user.repositories -> app.domain.answers.models
     app.domain.user.repositories -> app.domain.identity.models
     app.domain.user.repositories -> app.domain.knowledge.models
-    app.domain.user.repositories -> app.domain.platform_stats.windows
     app.domain.user.repositories -> app.domain.questions.models
     app.domain.user.repositories -> app.domain.task.models
     app.domain.user.repositories -> app.domain.team.models

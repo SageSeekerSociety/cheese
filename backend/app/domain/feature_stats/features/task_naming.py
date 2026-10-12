@@ -48,7 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.agent.gateway_admin import AdminKey, GatewayAdmin, ModelUsage
-from app.domain.platform_stats.windows import dense_series, utc_day_window
+from app.domain.day_windows import dense_series, utc_day_window
 from app.domain.room_task.models import TaskTitle, TaskTitleSource
 
 logger = logging.getLogger(__name__)

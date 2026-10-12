@@ -344,7 +344,7 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
     recorded the home on that host when it took its inventory — the rooms
     PR #2749 left waiting on "device … is offline". Returns what one sweep of
     room cleanups answered."""
-    from app.domain.topic import retire
+    from app.domain.room_cleanup import retire
     from app.domain.topic.services import TopicService
 
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)

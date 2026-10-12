@@ -33,6 +33,7 @@ import { attemptMessage, useAttemptWait } from '../attemptWait'
 
 import VerifyEmailView from './VerifyEmailView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { t } from '@/i18n'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
@@ -74,14 +75,14 @@ const submit = async (value: { otp: string; password?: string }) => {
   if (needsPassword && value.password) signupStore.password = value.password
   submitting.value = true
   try {
-    const { data } = await signupStore.signup(value.otp)
+    const data = await signupStore.signup(value.otp)
     // Registration answers with a session, the same as signing in: the person
     // has just chosen the password, so asking for it again would be busywork.
     await AccountService.login(data.accessToken, data.user)
     toast.success(t('account.verifyEmail.accountCreated'))
     router.replace('/')
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.failed'))
+    error.value = attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.verifyEmail.failed')))
     waitFor(e)
   } finally {
     submitting.value = false
@@ -103,7 +104,8 @@ const handleResend = async () => {
     now.value = Date.now()
     toast.success(t('account.verifyEmail.resent'))
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
+    error.value =
+      attemptMessage(e) ?? axiosErrorMessage(e, requestErrorMessage(e, t('account.verifyEmail.resendFailed')))
   } finally {
     resending.value = false
   }

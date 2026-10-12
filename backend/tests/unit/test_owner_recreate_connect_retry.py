@@ -113,3 +113,64 @@ async def test_an_unmarked_503_is_not_sent_again() -> None:
     with pytest.raises(httpx.HTTPStatusError):
         await hub.exec("machine-7", ["true"])
     assert transport.attempts == 1
+
+
+@pytest.mark.anyio
+async def test_the_waits_double_from_half_a_second_up_to_the_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    monkeypatch.setattr(device_hub_rpc, "OWNER_CONNECT_RETRY_MAX_DELAY_S", 3.0)
+    waits: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def record(seconds, *args, **kwargs):
+        waits.append(seconds)
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", record)
+    transport = _OwnerComingBack(refusals=5, result={"exit": 0})
+    hub = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+
+    assert await hub.exec("machine-7", ["true"]) == {"exit": 0}
+    assert transport.attempts == 6
+    assert waits == [0.5, 1.0, 2.0, 3.0, 3.0]
+
+
+@pytest.mark.anyio
+async def test_the_last_wait_is_cut_to_what_is_left_of_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(device_hub_rpc.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(device_hub_rpc, "OWNER_CONNECT_RETRY_WINDOW_S", 2.2)
+    monkeypatch.setattr(device_hub_rpc, "OWNER_CONNECT_RETRY_MAX_DELAY_S", 5.0)
+    waits: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def record(seconds, *args, **kwargs):
+        waits.append(seconds)
+        clock["now"] += seconds
+        await real_sleep(0)
+
+    monkeypatch.setattr(asyncio, "sleep", record)
+    transport = _OwnerComingBack(refusals=1000)
+    hub = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+
+    with pytest.raises(httpx.ConnectError):
+        await hub.exec("machine-7", ["true"])
+    assert waits == pytest.approx([0.5, 1.0, 0.7])
+    assert transport.attempts == 4
+
+
+@pytest.mark.anyio
+async def test_a_call_whose_own_deadline_has_passed_is_not_sent() -> None:
+    transport = _OwnerComingBack(refusals=0)
+    hub = RemoteDeviceHub("http://owner", "test-owner-secret", transport=transport)
+
+    with pytest.raises(TimeoutError):
+        await hub._call_owner("call_executor", {"timeout": 0})
+    assert transport.attempts == 0

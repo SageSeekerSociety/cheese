@@ -5,7 +5,7 @@ import { getAvatarUrl } from '@/utils/materials'
 
 import { ensureDefaultAvatarId, isChosenAvatar } from './useChosenAvatar'
 
-import { UserApi } from '@/network/api/users'
+import { UserAuthApi } from '@/api/userAuth'
 import AccountService from '@/services/account'
 
 /**
@@ -42,7 +42,7 @@ export function useUserMenu() {
   // 退出登录
   const onLogout = async () => {
     try {
-      await UserApi.logout()
+      await UserAuthApi.logout()
     } catch (error) {
       console.warn('Logout request failed; clearing local session anyway:', error)
     } finally {

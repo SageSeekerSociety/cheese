@@ -56,8 +56,9 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.routes.topics import BlockRepository, DbSession, _actor_in_place
+from app.api.routes.topics import BlockRepository, _actor_in_place
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say

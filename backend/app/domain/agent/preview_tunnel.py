@@ -964,6 +964,7 @@ def run(
     newer helper for the same teammate, and redialling would take the tunnel
     back from the one that is supposed to have it.
     """
+    # Hand-written, not tenacity: this runs on machines with the stdlib only.
     delay = _RECONNECT_START_S
     while True:
         try:

@@ -18,16 +18,14 @@ import json
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
-from app.auth.checker import require_auth_user
-from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
-from app.db.session import get_db
 from app.domain.notification.dto import NotificationDTO
 from app.domain.notification.entity_resolvers import (
     ProjectEntityResolver,
@@ -46,9 +44,6 @@ from app.domain.user.repositories import UserProfileRepository
 from app.domain.user.services import UserService
 
 router = APIRouter(prefix="", tags=["notifications"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
-AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
 
 
 # --- request bodies ----------------------------------------------------------

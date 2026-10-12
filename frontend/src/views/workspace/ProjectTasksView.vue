@@ -13,7 +13,9 @@ import type { TaskFilter } from '@/api/tasks'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { BoardColumn, RoomTask } from '@/cx_types'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
+
+import { useLoadMoreSentinel } from '@/composables/useLoadMoreSentinel'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -91,17 +93,7 @@ const shown = computed(() =>
 )
 
 // 已关闭的滚到最底下那一行露出来时要下一页。
-const sentinel = ref<HTMLElement | null>(null)
-let observer: IntersectionObserver | undefined
-watch(sentinel, (el) => {
-  observer?.disconnect()
-  if (!el || typeof IntersectionObserver === 'undefined') return
-  observer = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) emit('more')
-  })
-  observer.observe(el)
-})
-onBeforeUnmount(() => observer?.disconnect())
+const sentinel = useLoadMoreSentinel(() => emit('more'))
 
 const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building', 'not_started']
 const groups = computed(() =>

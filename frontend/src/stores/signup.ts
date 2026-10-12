@@ -2,7 +2,7 @@ import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
 
 import { defineStore } from 'pinia'
 
-import { UserApi } from '@/network/api/users'
+import { UserAuthApi } from '@/api/userAuth'
 
 interface SignupState {
   username: string
@@ -105,7 +105,7 @@ export const useSignupStore = defineStore('signup', {
 
       // 发送验证邮件
       if (emailVerificationEnabled()) {
-        await UserApi.sendEmailCode(data.email, this.inviteCode || undefined)
+        await UserAuthApi.sendEmailCode(data.email, this.inviteCode || undefined)
       }
       this.codeSentAt = Date.now()
       persist(this.$state)
@@ -113,14 +113,14 @@ export const useSignupStore = defineStore('signup', {
 
     async resendCode() {
       if (emailVerificationEnabled()) {
-        await UserApi.sendEmailCode(this.email, this.inviteCode || undefined)
+        await UserAuthApi.sendEmailCode(this.email, this.inviteCode || undefined)
       }
       this.codeSentAt = Date.now()
       persist(this.$state)
     },
 
     async signup(emailCode: string) {
-      const response = await UserApi.register({
+      const response = await UserAuthApi.register({
         username: this.username,
         nickname: this.nickname,
         password: this.password,

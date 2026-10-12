@@ -4,8 +4,9 @@ from typing import Literal
 
 from fastapi import APIRouter, Query
 
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession, PlatformAdminDep
+from app.api.routes.admin_common import PlatformAdminDep
 from app.core.errors import NotFoundError
 from app.domain.run_record import admin
 

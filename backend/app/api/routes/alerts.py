@@ -17,16 +17,14 @@ reminder collapsed with 收起 comes straight back on the next inbox read.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Query
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
-from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
@@ -41,8 +39,6 @@ from app.domain.notification.services import ProjectNotificationService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="", tags=["alerts"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def _dump(row: Notification) -> dict:

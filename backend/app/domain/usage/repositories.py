@@ -8,7 +8,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.conversation.services import of_room
-from app.domain.platform_stats.windows import utc_day
+from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
 from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage
 

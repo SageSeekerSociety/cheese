@@ -33,6 +33,7 @@ from dataclasses import asdict
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt
 
 from app.core.background import spawn
 from app.core.errors import ConflictError, NotFoundError, ValidationError
@@ -316,31 +317,40 @@ async def reply(
     A thread that moved on in the meantime is read again once; one resolved or
     deleted meanwhile stays without it."""
     text = text.replace("{agent}", bound.agent_name)
-    for attempt in range(2):
-        async with factory() as db:
-            threads = CommentThreads(db)
-            try:
-                doc = await Documents(db).get(asked.document_id)
-                if doc is None:
-                    raise NotFoundError("document gone")
-                current = await threads.describe(await threads.root(doc.id, thread_id))
-                await threads.mutate(
-                    doc,
-                    comment_id=thread_id,
-                    author=bound.agent_handle,
-                    expected_revision=current["revision"],
-                    action="reply",
-                    content=text,
-                )
-                await db.commit()
-                await collab.tell(
-                    asked.document_id, {"type": "state", "resource": "comments"}
-                )
-                return
-            except NotFoundError:
-                logger.info("doc agent reply dropped thread=%s: gone", thread_id)
-                return
-            except ConflictError:
-                await db.rollback()
-                if attempt:
-                    logger.info("doc agent reply dropped thread=%s", thread_id)
+    try:
+        async for attempt in AsyncRetrying(
+            stop=stop_after_attempt(2),
+            retry=retry_if_exception_type(ConflictError),
+            reraise=True,
+        ):
+            with attempt:
+                async with factory() as db:
+                    threads = CommentThreads(db)
+                    try:
+                        doc = await Documents(db).get(asked.document_id)
+                        if doc is None:
+                            raise NotFoundError("document gone")
+                        current = await threads.describe(
+                            await threads.root(doc.id, thread_id)
+                        )
+                        await threads.mutate(
+                            doc,
+                            comment_id=thread_id,
+                            author=bound.agent_handle,
+                            expected_revision=current["revision"],
+                            action="reply",
+                            content=text,
+                        )
+                        await db.commit()
+                        await collab.tell(
+                            asked.document_id, {"type": "state", "resource": "comments"}
+                        )
+                    except NotFoundError:
+                        logger.info(
+                            "doc agent reply dropped thread=%s: gone", thread_id
+                        )
+                    except ConflictError:
+                        await db.rollback()
+                        raise
+    except ConflictError:
+        logger.info("doc agent reply dropped thread=%s", thread_id)

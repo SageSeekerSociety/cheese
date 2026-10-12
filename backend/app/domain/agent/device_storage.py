@@ -1,7 +1,7 @@
 """What a machine holds under the platform's two storage roots, and what the
 platform keeps of it before deleting it.
 
-Read by room retirement (``topic.retire``) to find the homes and checkouts a
+Read by room retirement (``room_cleanup.retire``) to find the homes and checkouts a
 room left on each machine.
 
 **Kept room files.** A room from before rooms had an executor worked in its

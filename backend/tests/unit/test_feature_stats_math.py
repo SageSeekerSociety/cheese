@@ -8,7 +8,8 @@
 import httpx
 import pytest
 
-from app.domain.feature_stats import pricing, stats
+from app.domain.feature_stats import stats
+from app.domain.usage import pricing
 
 # ---------- 分位数 ----------
 

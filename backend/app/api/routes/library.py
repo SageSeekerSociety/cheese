@@ -8,16 +8,15 @@ import uuid
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, File, Form, Query, UploadFile
+from fastapi import APIRouter, Body, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.place import readable_rooms
+from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.db import get_db
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
@@ -29,7 +28,6 @@ from app.domain.project.services import ProjectService
 
 router = APIRouter(prefix="/projects", tags=["library"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 #: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线，数在
 #: `library.MAX_FILE_BYTES`（落地那一层），这里只借它的名字。

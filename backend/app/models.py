@@ -6,6 +6,7 @@ metadata. Keep this list complete when adding a new model.
 """
 
 from app.core import job_runs  # noqa: F401
+from app.domain import service_keys  # noqa: F401
 from app.domain.admin import models as admin  # noqa: F401
 from app.domain.agent import dispatch_log as agent_dispatch_log  # noqa: F401
 from app.domain.agent import models as agent  # noqa: F401
