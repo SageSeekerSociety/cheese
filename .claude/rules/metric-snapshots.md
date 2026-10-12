@@ -1,6 +1,11 @@
-# docs/manual/dev/ — metric snapshots
+---
+paths:
+  - "docs/manual/dev/**"
+---
 
-Read [`../../../AGENTS.md`](../../../AGENTS.md) first.
+# Metric snapshots in docs/manual/dev/
+
+Read [`../../AGENTS.md`](../../AGENTS.md) first.
 
 For published main-branch numbers, use a matching main run of
 `.github/workflows/arch-metrics.yml` and state which revision it measured. Its

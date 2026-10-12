@@ -237,7 +237,7 @@ SFCs, then remove the config. This helps diagnosis, not proof of a full type pas
 Read baseline counts from their JSON, not a prose snapshot. When lowering a
 shared baseline, check prose restatements against the merged baseline too;
 parallel PRs can preserve old numbers without failing a ratchet. Metric-page
-merge handling is in [`../docs/manual/dev/AGENTS.md`](../docs/manual/dev/AGENTS.md).
+merge handling is in [`metric-snapshots.md`](../.claude/rules/metric-snapshots.md).
 
 ## Caps and conventions
 

@@ -25,4 +25,4 @@ as `scripts/test_ci_fast.py` does. Self-hosted jobs share a home, and otherwise
 their pre-commit SQLite/cache writes can lock each other.
 
 Metric artifacts and snapshot-page merges follow
-[`../docs/manual/dev/AGENTS.md`](../docs/manual/dev/AGENTS.md).
+[`metric-snapshots.md`](../.claude/rules/metric-snapshots.md).

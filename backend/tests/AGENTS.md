@@ -13,10 +13,6 @@ indices (`isolation.py`), not a second run ID. Use disjoint blocks only when the
 server is configured to provide them; otherwise use separate Redis instances
 or serialize the runs, rather than selecting a nonexistent database.
 
-Helpers that identify a process must not rely on bare `ps -o args=` under
-pytest: its injected `COLUMNS=80` can truncate the command. Use `ps -ww -o
-args=` or `/proc/<pid>/cmdline`, as the remote-execution helper does.
-
 Real harness tests need the pinned executable, selected by `CHEESE_TEST_CLAUDE`
 through the resolver in `.claude/scripts/dev-db.sh`, and a host that permits the
 sandbox's user namespaces. A missing pinned-build setup error or an actual
