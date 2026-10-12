@@ -566,12 +566,19 @@ def _leave_through_egress(flow: http.HTTPFlow, credential=None) -> bool:
         # is exactly what the run records could not show before (2026-10-12
         # 07:12 UTC, #1447 — the room stalled and nothing was recorded).
         flow.metadata["cheese_egress_offline"] = True
+        # Retryable, with a wait — not a give-up. An egress is far more often
+        # offline for a reboot or a dropped tunnel than for good, and the
+        # verdict here is re-taken every few seconds, so a turn that waits rides
+        # it out and answers. Telling the client not to retry ends the seat's
+        # whole reply instead, and the room then sits until a person wakes it
+        # (2026-10-12, #1451). `retry-after` is what makes the waiting cheap:
+        # the client pauses that long rather than backing off on its own.
         _refuse(
             flow,
             503,
             "api_error",
             EGRESS_OFFLINE_MESSAGE,
-            {"x-should-retry": "false"},
+            {"retry-after": str(EGRESS_OFFLINE_RETRY_AFTER_S)},
         )
         return False
     flow.server_conn.via = ("http", (egress.host, egress.port))
@@ -590,16 +597,27 @@ _REFUSED_EGRESS: dict[str, Egress] = {}
 _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
 
 # What a turn is told when the machine its credential must leave through does
-# not answer. 503 with x-should-retry: false is the one answer Claude Code
-# gives up on at once; a 502 from a connection that never opened was retried
-# ten times, each attempt waiting out a TCP connect timeout, and the room sat
-# silent for minutes. The backend recognises the phrase "subscription egress
-# is offline" and shows its own notice for it (`platform_failures`), which
-# takes only short lines: Claude Code prints this inside the JSON error body.
+# not answer. 503 with a `retry-after`, so the client waits and asks again
+# rather than failing the turn: the machine is usually back within a turn. It
+# used to be `x-should-retry: false`, the one answer Claude Code gives up on at
+# once — right while an outage looked permanent, wrong for a reboot, and it cost
+# the seat its whole reply and needed a person to wake the room (2026-10-12,
+# #1451). The cost of waiting is that the room stays quiet until the turn either
+# answers or runs out of retry budget; that trade is deliberate.
+# The backend recognises the phrase "subscription egress is offline" and shows
+# its own notice for it (`platform_failures`), which takes only short lines:
+# Claude Code prints this inside the JSON error body.
 EGRESS_OFFLINE_MESSAGE = (
     "cheese: the subscription egress is offline, so no model call was made. "
     "It works again once that machine is back online."
 )
+#: How long a turn waits before asking again while no egress answers. The
+#: verdict on an offline egress is re-taken every EGRESS_DOWN_FOR_S seconds, so
+#: one wait already covers a machine that is back; the client's own retry budget
+#: (about three minutes of 5xx) covers the rest. Short enough that a machine
+#: returning from a reboot is used inside the same turn, long enough not to
+#: hammer a machine that is still away.
+EGRESS_OFFLINE_RETRY_AFTER_S = 30
 #: One attempt to open a connection to an egress may take this long. Over the
 #: tailnet a healthy one answers in well under a second.
 EGRESS_CONNECT_TIMEOUT_S = 4.0
