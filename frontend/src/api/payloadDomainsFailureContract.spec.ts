@@ -203,39 +203,100 @@ describe('domain migration: structured refusals keep their meaning', () => {
   })
 })
 
-describe('domain migration: authentication edge cases (new origin)', () => {
-  it('refreshes once and retries a knowledges read with the returned token', async () => {
-    refresh.mockReset().mockImplementation(async () => {
-      auth.accessToken = 'refreshed-token'
-      return { kind: 'ok', token: 'refreshed-token' }
-    })
-    const authorization: (string | null)[] = []
-    server.use(
-      http.get(`${newer}/knowledge/9`, ({ request }) => {
-        authorization.push(request.headers.get('authorization'))
-        if (authorization.length === 1) return new HttpResponse(null, { status: 401 })
-        return HttpResponse.json(envelope({ knowledge: { id: 9 } }))
-      })
-    )
-    const { next } = modules.knowledges!
-    expect(await next.getDetail!(9)).toEqual({ knowledge: { id: 9 } })
-    expect(authorization).toEqual(['Bearer contract-token', 'Bearer refreshed-token'])
-    expect(refresh).toHaveBeenCalledOnce()
+describe('domain migration: knowledges authentication edge cases (both origins)', () => {
+  // knowledges rides the newer origin, so its OLD and NEW transports are
+  // different objects (`NewApiInstance` versus `axiosNewApi`) — this section
+  // proves the 401 contract holds on BOTH, old versus new. It is a
+  // knowledges-specific dual-origin check, not a claim that every domain's auth
+  // was re-run old-versus-new: the primary domains share one transport, and
+  // their real auth evidence is `spacesContract.spec.ts` /
+  // `spacesFailureContract.spec.ts` (primary origin), which is the same stack
+  // those four domains use.
+  const stacks = () =>
+    [
+      ['old', modules.knowledges!.old],
+      ['new', modules.knowledges!.next],
+    ] as const
+  const payload = { knowledge: { id: 9 } }
+  const body = (name: 'old' | 'new', result: unknown) => (name === 'old' ? (result as { data: unknown }).data : result)
+
+  it('sends no bearer for a logged-out or empty-token caller on either stack', async () => {
+    for (const [loggedIn, accessToken] of [
+      [false, 'contract-token'],
+      [true, ''],
+    ] as const) {
+      for (const [name, api] of stacks()) {
+        auth.loggedIn = loggedIn
+        auth.accessToken = accessToken
+        server.use(
+          http.get(`${newer}/knowledge/9`, ({ request }) => {
+            expect(request.headers.get('authorization')).toBeNull()
+            return HttpResponse.json(envelope(payload))
+          })
+        )
+        expect(body(name, await api.getDetail!(9))).toEqual(payload)
+      }
+    }
   })
 
-  it('redirects to sign-in when a knowledges refresh is rejected, without a retry', async () => {
-    let requests = 0
-    server.use(
-      http.get(`${newer}/knowledge/9`, () => {
-        requests++
-        return new HttpResponse(null, { status: 401 })
+  it('refreshes once and retries with the returned token on either stack', async () => {
+    for (const [name, api] of stacks()) {
+      server.resetHandlers()
+      auth.accessToken = 'contract-token'
+      refresh.mockReset().mockImplementation(async () => {
+        auth.accessToken = 'refreshed-token'
+        return { kind: 'ok', token: 'refreshed-token' }
       })
-    )
-    refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
-    replace.mockReset()
-    const { next } = modules.knowledges!
-    await expect(next.getDetail!(9)).rejects.toBeInstanceOf(Error)
-    expect(requests).toBe(1)
-    expect(replace).toHaveBeenCalledWith('/account/signin')
+      const authorization: (string | null)[] = []
+      server.use(
+        http.get(`${newer}/knowledge/9`, ({ request }) => {
+          authorization.push(request.headers.get('authorization'))
+          if (authorization.length === 1) return new HttpResponse(null, { status: 401 })
+          return HttpResponse.json(envelope(payload))
+        })
+      )
+      expect(body(name, await api.getDetail!(9))).toEqual(payload)
+      expect(authorization).toEqual(['Bearer contract-token', 'Bearer refreshed-token'])
+      expect(refresh).toHaveBeenCalledOnce()
+    }
+  })
+
+  it('redirects to sign-in when the refresh is rejected, without a retry, on either stack', async () => {
+    for (const [, api] of stacks()) {
+      server.resetHandlers()
+      let requests = 0
+      server.use(
+        http.get(`${newer}/knowledge/9`, () => {
+          requests++
+          return new HttpResponse(null, { status: 401 })
+        })
+      )
+      refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
+      replace.mockReset()
+      await expect(api.getDetail!(9)).rejects.toBeInstanceOf(Error)
+      expect(requests).toBe(1)
+      expect(replace).toHaveBeenCalledWith('/account/signin')
+    }
+  })
+
+  it('stops after a refreshed request is still unauthorized on either stack', async () => {
+    for (const [, api] of stacks()) {
+      server.resetHandlers()
+      let requests = 0
+      server.use(
+        http.get(`${newer}/knowledge/9`, () => {
+          requests++
+          return new HttpResponse(null, { status: 401 })
+        })
+      )
+      refresh.mockReset().mockImplementation(async () => {
+        auth.accessToken = 'refreshed-token'
+        return { kind: 'ok', token: 'refreshed-token' }
+      })
+      const error = await api.getDetail!(9).catch((failure) => failure)
+      expect(error).toBeInstanceOf(Error)
+      expect(requests).toBe(2)
+      expect(refresh).toHaveBeenCalledOnce()
+    }
   })
 })

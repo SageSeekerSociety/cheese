@@ -4,6 +4,8 @@
 // 荷契约 —— JSON 调用直接给 payload，无载荷命令给显式成功值。knowledges 走新 origin
 // （newer），其余五域走老 origin（primary）。比对的是浏览器可见的请求，不是 axios 配置或
 // 包装源码。
+import type { InternalAxiosRequestConfig } from 'axios'
+
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
@@ -214,9 +216,11 @@ describe('primary-origin domains browser contract', () => {
     )
   })
 
-  it('attachments.upload sends the same named multipart fields and unwraps the 201 envelope', async () => {
+  it('attachments.upload keeps the ordered multipart fields, dials 60s and reports progress', async () => {
     const { AttachmentsApi: old } = await import('@/network/api/attachments')
     const { AttachmentsApi: next } = await import('./attachments')
+    const oldHttp = await import('@/network/api')
+    const { axiosApi } = await import('./axiosHttp')
     const payload = { id: 42 }
     const seen: unknown[] = []
     server.use(
@@ -224,36 +228,54 @@ describe('primary-origin domains browser contract', () => {
         expect(request.headers.get('authorization')).toBe('Bearer contract-token')
         expect(request.headers.get('content-type')).toContain('multipart/form-data; boundary=')
         const form = await request.formData()
-        const entries = [...form.entries()]
-        const files = entries.filter(([, value]) => typeof value !== 'string')
-        const fields = entries.filter(([, value]) => typeof value === 'string')
-        expect(files).toHaveLength(1)
-        const file = files[0]![1] as File
-        seen.push({
-          fieldNames: Object.fromEntries(fields),
-          fileKey: files[0]![0],
-          name: file.name,
-          type: file.type,
-          bytes: [...new Uint8Array(await file.arrayBuffer())],
-        })
+        // Keep all entries in order: folding them into an object would hide a
+        // duplicate field or a reordering that the wire contract forbids.
+        seen.push(
+          await Promise.all(
+            [...form.entries()].map(async ([key, value]) =>
+              typeof value === 'string'
+                ? [key, value]
+                : [key, { name: value.name, type: value.type, bytes: [...new Uint8Array(await value.arrayBuffer())] }]
+            )
+          )
+        )
         return HttpResponse.json(envelope(payload, 201), { status: 201 })
       })
     )
-    const file = uploadFile()
-    const oldResult = await old.upload({ type: 'file', file })
-    const nextResult = await next.upload({ type: 'file', file })
-    // 旧栈给整只信封，新栈直接给 payload。
-    expect(oldResult.data).toEqual(payload)
-    expect(nextResult).toEqual(payload)
-    expect(seen).toHaveLength(2)
-    expect(seen[1]).toEqual(seen[0])
-    expect(seen[0]).toEqual({
-      fieldNames: { type: 'file' },
-      fileKey: 'file',
+    // The upload dials its own 60s timeout above the 30s instance default; read
+    // it off each stack's transport as the request leaves, not off the source.
+    const timeouts: number[] = []
+    const capture = (config: InternalAxiosRequestConfig) => {
+      timeouts.push(config.timeout ?? -1)
+      return config
+    }
+    const oldInterceptor = oldHttp.default.instance.interceptors.request.use(capture)
+    const newInterceptor = axiosApi.interceptors.request.use(capture)
+    const progress: number[] = []
+    try {
+      const file = uploadFile()
+      const oldResult = await old.upload({ type: 'file', file }, (event) => progress.push(event.loaded ?? 0))
+      const nextResult = await next.upload({ type: 'file', file }, (event) => progress.push(event.loaded ?? 0))
+      // 旧栈给整只信封，新栈直接给 payload。
+      expect(oldResult.data).toEqual(payload)
+      expect(nextResult).toEqual(payload)
+    } finally {
+      oldHttp.default.instance.interceptors.request.eject(oldInterceptor)
+      axiosApi.interceptors.request.eject(newInterceptor)
+    }
+    const expectedFile = {
       name: 'notes.pdf',
       type: 'application/pdf',
       bytes: [...new TextEncoder().encode('%PDF-1.7')],
-    })
+    }
+    expect(seen).toHaveLength(2)
+    expect(seen[0]).toEqual([
+      ['type', 'file'],
+      ['file', expectedFile],
+    ])
+    expect(seen[1]).toEqual(seen[0])
+    expect(timeouts).toEqual([60000, 60000])
+    expect(progress.length).toBeGreaterThan(0)
   })
 })
 
