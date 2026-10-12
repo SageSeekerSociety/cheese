@@ -1604,6 +1604,8 @@ class Executor:
                     include(candidate, imports=True, depth=depth + 1)
 
         for path in (
+            root / "AGENTS.override.md",
+            root / "AGENTS.md",
             root / "CLAUDE.md",
             root / "CLAUDE.local.md",
             root / ".claude/rules",
@@ -1618,7 +1620,12 @@ class Executor:
         for directory, directories, files in os.walk(root):
             directories[:] = [name for name in directories if name != ".git"]
             here = Path(directory)
-            for name in ("CLAUDE.md", "CLAUDE.local.md"):
+            for name in (
+                "AGENTS.override.md",
+                "AGENTS.md",
+                "CLAUDE.md",
+                "CLAUDE.local.md",
+            ):
                 if name in files:
                     include(here / name, imports=True)
             if here != root and (here / ".claude/skills").is_dir():
