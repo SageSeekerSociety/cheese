@@ -29,7 +29,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.main import app
 from tests.ask_fixtures import active_ask, question_row, wait_turn_idle
-from tests.conftest import StubChannel, seed_user, stub_compute
+from tests.conftest import StubChannel, seed_user, stub_compute, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -205,8 +205,9 @@ def test_a_question_takes_the_first_answer_and_no_second_one(
 ):
     """一道题只收一个回答：alice 点过之后，bob 再点就是说话，不是答题。
 
-    It takes an answer again once the first is taken back, and there is a way to
-    take it back precisely because a misclick would otherwise stand."""
+    The question takes an answer again once the first one is taken back
+    (``test_the_question_takes_an_answer_again_after_one_is_taken_back``), which
+    is why there has to be a way to take it back: a misclick otherwise stands."""
     pid, room = _room(client)
     seed_user(client, "bob")
     join_project_team(client, pid, "bob")
@@ -214,12 +215,17 @@ def test_a_question_takes_the_first_answer_and_no_second_one(
     prompts = _prompts(stub_hooks, monkeypatch)
 
     _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
-    _say(client, room, "bob", {"content": "按项目", "reply_to": question["id"]})
+    second = _say(
+        client, room, "bob", {"content": "按项目", "reply_to": question["id"]}
+    )
 
     answers = _block(client, room, question["id"])["meta"]["answer_log"]
     assert [(a["by"], a["option"]) for a in answers] == [("alice", "按部门")]
-    # Nobody is reached with an answer the question did not take.
-    assert len(prompts) == 1 and "按部门" in prompts[0]
+    # bob's click is still a message in the room, and still reaches the agent —
+    # a reply to the agent's own message is addressed to it whether or not the
+    # question took it as an answer. What it does not do is answer.
+    assert _block(client, room, second["id"])["content"] == "按项目"
+    assert "按部门" in prompts[0] and "按项目" in "".join(prompts)
 
 
 def test_asking_needs_no_turn_this_backend_is_holding(client):
@@ -425,6 +431,18 @@ def _withdraw(client, question_id, *, by="alice"):
     )
 
 
+def _withdraw_and_settle(client, question_id, *, by="alice"):
+    """Take an answer back and wait out the turn the withdrawal starts.
+
+    What a withdrawal does to the agent is not done by the request: it records a
+    delivery, and the asking agent's turn is started from that. Waiting on the
+    room's turns is not enough — the turn is not in the room yet at the moment
+    this answers — so what this waits for is the work it put behind itself."""
+    response = _withdraw(client, question_id, by=by)
+    wait_work_idle()
+    return response
+
+
 def _next_update(ws) -> dict:
     while True:
         frame = ws.receive_json()
@@ -443,10 +461,9 @@ def test_the_answerer_takes_back_their_answer_and_the_agent_runs_again(
     prompts = _prompts(stub_hooks, monkeypatch)
 
     with room_socket(client, room, "alice") as ws:
-        response = _withdraw(client, question["id"])
+        response = _withdraw_and_settle(client, question["id"])
         assert response.status_code == 200, response.text
         seen = _next_update(ws)
-    wait_turn_idle(client, room)
 
     assert seen["id"] == question["id"] and seen["meta"]["answer_log"] == []
     assert _block(client, room, question["id"])["meta"]["answer_log"] == []
@@ -461,7 +478,7 @@ def test_only_the_answerer_takes_the_answer_back(client, stub_hooks, monkeypatch
     _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
     prompts = _prompts(stub_hooks, monkeypatch)
 
-    refused = _withdraw(client, question["id"], by="bob")
+    refused = _withdraw_and_settle(client, question["id"], by="bob")
 
     assert refused.status_code == 403, refused.text
     (answer,) = _block(client, room, question["id"])["meta"]["answer_log"]
@@ -491,8 +508,7 @@ def test_taking_back_an_answer_leaves_the_message_it_was_said_in(
         client, room, "alice", {"content": "按部门", "reply_to": question["id"]}
     )
 
-    _withdraw(client, question["id"])
-    wait_turn_idle(client, room)
+    _withdraw_and_settle(client, question["id"])
 
     kept = _block(client, room, reply["id"])
     assert kept["content"] == "按部门" and kept["reply_to"] == question["id"]
@@ -507,8 +523,7 @@ def test_the_question_takes_an_answer_again_after_one_is_taken_back(
     question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
     _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
 
-    _withdraw(client, question["id"])
-    wait_turn_idle(client, room)
+    _withdraw_and_settle(client, question["id"])
     prompts = _prompts(stub_hooks, monkeypatch)
 
     _say(client, room, "bob", {"content": "按项目", "reply_to": question["id"]})
