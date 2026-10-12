@@ -26,7 +26,8 @@ from app.api.routes import docs_site as route
 from app.core.config import settings
 from app.domain.docs_site import access, assistant, retrieval, site
 from app.domain.docs_site.limits import AskLimits
-from app.domain.docs_site.models import DocsQuestion, ServiceCredential
+from app.domain.docs_site.models import DocsQuestion
+from app.domain.service_keys import ServiceCredential
 from app.domain.team.models import Team
 from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD

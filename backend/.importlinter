@@ -352,7 +352,6 @@ ignore_imports =
     app.domain.room_task.services -> app.domain.project.models
     app.domain.room_task.services -> app.domain.project.protection
     app.domain.room_task.services -> app.domain.topic.models
-    app.domain.service_keys -> app.domain.docs_site.models
     app.domain.shell.service -> app.domain.space.models
     app.domain.shell.service -> app.domain.task.models
     app.domain.shell.service -> app.domain.task.protocol
