@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import statistics
 import time
 from dataclasses import dataclass, field
@@ -94,6 +95,7 @@ class Sample:
     ready_ms: float
     last_response_ms: float | None
     requests: int
+    api_count: int = 0
     api_requests: list[str] = field(default_factory=list)
     long_task_ms: float = 0.0
     long_task_count: int = 0
@@ -129,14 +131,26 @@ def _request_tracker(page: Page, sink: list[dict[str, Any]]) -> None:
 
 def _login(page: Page, base_url: str, username: str, password: str) -> None:
     page.goto(base_url + SIGNIN_URL, wait_until="domcontentloaded")
-    page.fill(USER_FIELD, username)
-    page.fill(PASSWORD_FIELD, password)
-    page.click(SUBMIT_BUTTON)
-    # The shell is up when the workspace rail or the home nav is there; either
-    # way the sign-in form must be gone.
+    # A page opened into a context that already holds the session is sent home
+    # by the app's own `leaveSignInWhenSignedIn`, so the form never appears.
+    # Signing in again is only for the first page; the rest just wait for the
+    # shell.
+    # The app's own `leaveSignInWhenSignedIn` sends a signed-in session home, so
+    # on a reused context the form never appears. Wait for "either the form is
+    # here or we are no longer on the sign-in URL" rather than for the rail:
+    # the rail element is in the DOM on the sign-in page too, just not shown.
     page.wait_for_function(
-        "() => !document.querySelector(\"input[type='password']\")", timeout=30000
+        """() => window.location.pathname !== '/account/signin'
+                 || !!document.querySelector("input[name='username'], input[autocomplete='username'], #username")""",
+        timeout=60000,
     )
+    if page.url.split("?")[0].endswith(SIGNIN_URL):
+        page.fill(USER_FIELD, username)
+        page.fill(PASSWORD_FIELD, password)
+        page.click(SUBMIT_BUTTON)
+        page.wait_for_function(
+            "() => window.location.pathname !== '/account/signin'", timeout=30000
+        )
     page.wait_for_load_state("networkidle", timeout=30000)
 
 
@@ -146,6 +160,7 @@ def _measure_one(
     url: str,
     mode: str,
     warm_url: str,
+    params: dict[str, object],
     timeout_ms: int = 30000,
 ) -> Sample:
     requests: list[dict[str, Any]] = []
@@ -161,11 +176,13 @@ def _measure_one(
         page.evaluate(LONG_TASK_INIT)
         page.evaluate(PROBE_INIT)
         sink.clear()
-        page.evaluate("(p) => window.__nav(p)", spec.path(url))
+        # A path, not a URL: the router treats "http://host/inbox" as a path it
+        # cannot match, and the app would simply stay where it was.
+        page.evaluate("(p) => window.__nav(p)", spec.route_path(params))
     else:
         sink.clear()
         page.evaluate("() => { window.__lt = { total: 0, count: 0 }; }")
-        page.goto(url, wait_until="commit")
+        page.goto(spec.path(url, params), wait_until="commit")
 
     spec_payload = {"sel": spec.ready_selector, "min": spec.min_text, "notSel": spec.not_ready_selector}
     try:
@@ -180,27 +197,43 @@ def _measure_one(
     t0, t1 = probe["t0"], probe["t1"]
     ready = t1 - t0 if mode == "walk" else t1
 
-    api = [r["url"] for r in sink if "/api/" in r["url"]]
-    ends = [r["end"] for r in sink if r["end"] is not None and r["start"] is not None and r["start"] >= (t0 or 0)]
+    # Request timing is in epoch milliseconds; the page's own clock starts at
+    # timeOrigin. Put both on the same axis, then measure from where the page
+    # was told to open (t0 in walk; the document's start in cold).
+    origin = page.evaluate("() => performance.timeOrigin")
+    base = t0 if mode == "walk" else 0.0
+    window_lo = t0 if mode == "walk" else 0.0
+
+    def rel(ms: float | None) -> float | None:
+        return None if ms is None else ms - origin - base
+
+    starts = [rel(r["start"]) for r in sink if r["start"] is not None]
+    ends = [rel(r["end"]) for r in sink if r["end"] is not None]
+    starts = [s for s in starts if s is not None and s >= window_lo]
+    ends = [e for e in ends if e is not None and e >= window_lo]
     last = max(ends) if ends else None
-    starts_ms = [r["start"] for r in sink if r["start"] is not None and r["start"] >= (t0 or 0)]
     # The network share: from the first request's start to the last response's
     # end. Rendering that finishes earlier than the last response means the page
     # drew something and kept fetching behind it, which is a different problem
     # from waiting on the network.
-    network = (last - min(starts_ms)) if (last and starts_ms) else None
+    network = (last - min(starts)) if (last is not None and starts) else None
 
     return Sample(
         page=spec.name,
         mode=mode,
         ready_ms=round(ready, 1),
-        last_response_ms=round(last, 1) if last else None,
+        last_response_ms=round(last, 1) if last is not None else None,
         requests=len(sink),
+        api_count=len([r for r in sink if "/api/" in r["url"]]),
         api_requests=sorted({r["url"].split("/api/", 1)[1].split("?")[0] for r in sink if "/api/" in r["url"]}),
         long_task_ms=round(lt["total"], 1),
         long_task_count=lt["count"],
-        network_ms=round(network, 1) if network else None,
+        network_ms=round(network, 1) if network is not None else None,
     )
+
+
+def _placeholders(route: str) -> set[str]:
+    return {m for m in re.findall(r"\{(\w+)\}", route)}
 
 
 def _median(samples: list[Sample]) -> Sample:
@@ -216,6 +249,7 @@ def _median(samples: list[Sample]) -> Sample:
         ready_ms=round(pick([s.ready_ms for s in ok]), 1),
         last_response_ms=round(pick(last_vals), 1) if last_vals else None,
         requests=int(pick([s.requests for s in ok])),
+        api_count=int(pick([s.api_count for s in ok])),
         api_requests=sorted({u for s in ok for u in s.api_requests}),
         long_task_ms=round(pick([s.long_task_ms for s in ok]), 1),
         long_task_count=int(pick([s.long_task_count for s in ok])),
@@ -229,7 +263,18 @@ def main() -> None:
     ap.add_argument("--username", default="alice")
     ap.add_argument("--password", default="demo12345")
     ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument(
+        "--params",
+        default=str(Path(__file__).with_name("params.json")),
+        help="ids the route templates are filled from (see README.md)",
+    )
     ap.add_argument("--out", default="perf-open-page.json")
+    ap.add_argument(
+        "--max-seconds",
+        type=float,
+        default=2400,
+        help="stop starting new pages after this long, so a long run still reports",
+    )
     ap.add_argument("--only", default="", help="comma-separated page names")
     ap.add_argument("--modes", default="walk", help="walk,cold")
     ap.add_argument("--timeout-ms", type=int, default=30000)
@@ -238,10 +283,17 @@ def main() -> None:
     wanted = [n.strip() for n in args.only.split(",") if n.strip()]
     specs = [p for p in PAGES if not wanted or p.name in wanted]
     modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+    params: dict[str, object] = json.loads(Path(args.params).read_text())
+    missing = sorted({p for s in specs for p in _placeholders(s.route) if p not in params})
+    if missing:
+        raise SystemExit(f"{args.params} is missing: {', '.join(missing)}")
 
     results: dict[str, dict[str, Sample]] = {}
+    boot = time.time()
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(args=["--no-sandbox"])
+        # --disable-dev-shm-usage: the sandbox gives /dev/shm 64 MB, and a dev
+        # build of this app crashes the renderer once it fills up.
+        browser = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
         context = browser.new_context(viewport={"width": 1440, "height": 900})
         page = context.new_page()
         page.on("pageerror", lambda e: print("[pageerror]", str(e)[:200], flush=True))
@@ -251,18 +303,60 @@ def main() -> None:
         # Every page is walked from the same warm origin (the workspace root),
         # so one page's leftovers do not become the next page's head start.
         warm_url = home
+        with open(args.out, "w") as fh:
+            fh.write("{}\n")  # so a killed run still reports where it stopped
         for spec in specs:
+            if time.time() - boot > args.max_seconds:
+                print(f"[stopping] out of time before {spec.name}", flush=True)
+                break
+            page.goto(warm_url, wait_until="networkidle")
             for mode in modes:
                 samples: list[Sample] = []
-                for i in range(args.runs):
-                    try:
-                        samples.append(
-                            _measure_one(page, spec, args.base_url, mode, warm_url, args.timeout_ms)
-                        )
-                    except Exception as exc:  # noqa: BLE001
-                        samples.append(Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200]))
+                if mode == "walk":
+                    # A renderer crash is not a fact about the page: the page was
+                    # already loaded, so only rendering pushes it over. Retry the
+                    # walk on a fresh page before believing it.
+                    for i in range(args.runs):
+                        try:
+                            samples.append(
+                                _measure_one(page, spec, args.base_url, mode, warm_url, params, args.timeout_ms)
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            samples.append(Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200]))
+                    if all(s.error for s in samples):
+                        print(f"[retry] {spec.name}: {samples[0].error}", flush=True)
+                        try:
+                            page.close()
+                            page = context.new_page()
+                            page.on("pageerror", lambda e: print("[pageerror]", str(e)[:200], flush=True))
+                            _login(page, args.base_url, args.username, args.password)
+                            warm_url = page.url
+                            page.goto(warm_url, wait_until="networkidle")
+                            samples = []
+                            for i in range(args.runs):
+                                try:
+                                    samples.append(
+                                        _measure_one(page, spec, args.base_url, mode, warm_url, params, args.timeout_ms)
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    samples.append(Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200]))
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"[retry failed] {str(exc)[:160]}", flush=True)
+                else:
+                    for i in range(args.runs):
+                        # cold is a fresh document every time anyway, so it gets
+                        # its own page: nothing from the walk stays resident.
+                        fresh = context.new_page()
+                        fresh.on("pageerror", lambda e: print("[pageerror]", str(e)[:200], flush=True))
+                        try:
+                            samples.append(
+                                _measure_one(fresh, spec, args.base_url, mode, warm_url, params, args.timeout_ms)
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            samples.append(Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200]))
+                        fresh.close()
                     page.goto(warm_url, wait_until="networkidle")
-                    time.sleep(0.4)
+                time.sleep(0.4)
                 med = _median(samples)
                 results.setdefault(spec.name, {})[mode] = med
                 print(
@@ -271,6 +365,10 @@ def main() -> None:
                     f"{'ERROR ' + (med.error or '') if med.error else ''}",
                     flush=True,
                 )
+                # Written after every page so a run that gets killed part-way
+                # still leaves the pages it did finish.
+                payload = {p: {m: s.to_dict() for m, s in per_mode.items()} for p, per_mode in results.items()}
+                Path(args.out).write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
         browser.close()
 
