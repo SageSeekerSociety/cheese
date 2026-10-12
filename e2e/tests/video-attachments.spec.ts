@@ -102,7 +102,7 @@ test('a video selected from the album uploads, persists and plays only on reques
 });
 
 for (const [suffix, mimeType] of [['avi', 'video/x-msvideo'], ['mkv', 'video/x-matroska']]) {
-  test(`a download-only ${suffix} attachment does not offer an unusable player`, async ({ page }) => {
+  test(`a download-only ${suffix} attachment does not offer an unusable player`, async ({ page }, testInfo) => {
     await apiLogin(page);
     const rows = await openFirstProject(page);
     await rows.first().click();
@@ -135,8 +135,8 @@ for (const [suffix, mimeType] of [['avi', 'video/x-msvideo'], ['mkv', 'video/x-m
     await expect(row.locator('.attachment-video, video')).toHaveCount(0);
     const [download] = await Promise.all([page.waitForEvent('download'), file.click()]);
     expect(download.suggestedFilename()).toBe(name);
-    const path = await download.path();
-    expect(path).not.toBeNull();
-    expect(await readFile(path!)).toEqual(content);
+    const savedPath = testInfo.outputPath(`download-${suffix}`);
+    await download.saveAs(savedPath);
+    expect(await readFile(savedPath)).toEqual(content);
   });
 }
