@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt, keyed_digest, keyed_digests
+from app.core.redis import GIVE_BACK_ONE_SCRIPT
 from app.domain.user.models import UserBackupCode, UserTwoFactor
 
 logger = logging.getLogger(__name__)
@@ -102,13 +103,6 @@ if failures > tonumber(ARGV[1]) then
   return math.max(redis.call('TTL', KEYS[1]), 1)
 end
 return 0
-"""
-
-_CLIENT_REFUND_SCRIPT = """
-if redis.call('EXISTS', KEYS[1]) == 1 then
-  redis.call('DECR', KEYS[1])
-end
-return 1
 """
 
 # Checked and counted in one script, for the reason consume_attempt gives.
@@ -213,7 +207,7 @@ class ClientFailureBudget:
         """Hand back a slot whose attempt did not fail."""
         if client is None:
             return
-        await self._redis.eval(_CLIENT_REFUND_SCRIPT, 1, self._key(client))  # type: ignore[misc]
+        await self._redis.eval(GIVE_BACK_ONE_SCRIPT, 1, self._key(client))  # type: ignore[misc]
 
 
 class AttemptLimiter:
