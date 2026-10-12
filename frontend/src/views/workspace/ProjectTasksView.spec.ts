@@ -134,7 +134,7 @@ it('看已关闭的：列的是读回来的那一页，筛选上写的是一共�
     presentation: { column: 'done', phrase: 'completed' },
   })
   const view = mount([], {
-    closed: true,
+    status: 'closed',
     closedTasks: [done],
     closedCounts: { all: 120, mine: 40, helping: 3, others: 77 },
     closedHasMore: true,
@@ -155,4 +155,92 @@ it('频道菜单里每个频道只写名字，符号由图标画，私密频道�
   expect(front.querySelector('.mdi-pound')).not.toBeNull()
   const inner = items.find((item) => item.textContent?.includes('内部'))!
   expect(inner.querySelector('.mdi-lock-outline')).not.toBeNull()
+})
+
+it('全部状态同时列进行中与已关闭，并把两边的总数相加', () => {
+  const view = mount([task({ title: '继续做', owner_handle: 'alice' })], {
+    status: 'all',
+    closedTasks: [
+      task({
+        title: '结束了',
+        status: 'closed',
+        presentation: { column: 'done', phrase: 'accepted' },
+        accepted_at: '2026-10-01T00:00:00Z',
+      }),
+    ],
+    closedCounts: { all: 120, mine: 40, helping: 3, others: 77 },
+  })
+  expect(titles(view)).toEqual(['继续做', '结束了'])
+  expect(view.getByRole('button', { name: `${t('work.channelTasks.all')} 121` })).toBeTruthy()
+  expect(view.getByRole('button', { name: `${t('work.channelTasks.mine')} 41` })).toBeTruthy()
+  const row = view.getByRole('button', { name: /结束了/ })
+  expect(row.textContent).toContain(t('work.channelTasks.closed'))
+  expect(row.textContent).toContain(t('taskList.deliveryAccepted'))
+  expect(view.queryByText(t('work.board.column.done'))).toBeNull()
+})
+
+it('状态是单选，重复点已关闭仍是已关闭，交付选择不随之改变', async () => {
+  const view = mount([], { closedCounts: { all: 0, mine: 0, helping: 0, others: 0 } })
+  const delivery = view.getByRole('button', { name: t('taskList.acceptedDelivery') })
+  await fireEvent.click(delivery)
+  const closed = view.getByRole('button', { name: t('work.channelTasks.closed'), exact: true })
+  await fireEvent.click(closed)
+  await fireEvent.click(closed)
+  expect(closed.getAttribute('aria-pressed')).toBe('true')
+  expect(delivery.getAttribute('aria-pressed')).toBe('true')
+  expect(view.getByRole('button', { name: t('taskList.open'), exact: true }).getAttribute('aria-pressed')).toBe('false')
+  await fireEvent.click(view.getByRole('button', { name: t('taskList.allStatuses') }))
+  expect(closed.getAttribute('aria-pressed')).toBe('false')
+  expect(delivery.getAttribute('aria-pressed')).toBe('true')
+})
+
+it('按采纳记录筛选，保留已采纳前几步和仍在收尾的进行中任务', async () => {
+  const view = mount([
+    task({ title: '前几步采纳了', accepted_at: '2026-10-01T00:00:00Z' }),
+    task({
+      title: '正在写总结',
+      accepted_at: '2026-10-01T00:00:00Z',
+      presentation: { column: 'done', phrase: 'accepted' },
+    }),
+    task({ title: '只写着采纳', presentation: { column: 'building', phrase: 'accepted' } }),
+    task({ title: '没有采纳' }),
+  ])
+  await fireEvent.click(view.getByRole('button', { name: t('taskList.acceptedDelivery') }))
+  expect(titles(view)).toEqual(['前几步采纳了', '正在写总结'])
+  expect(view.getByRole('button', { name: /^全部 2$/ })).toBeTruthy()
+  expect(view.getByRole('button', { name: /正在写总结/ }).textContent).toContain(t('taskList.open'))
+  await fireEvent.click(view.getByRole('button', { name: t('taskList.anyDelivery') }))
+  expect(titles(view)).toHaveLength(4)
+})
+
+it('采纳筛选仍与频道、负责人和停滞折叠组合', async () => {
+  const accepted_at = '2026-10-01T00:00:00Z'
+  const view = mount(
+    [
+      task({ title: '我的停滞交付', owner_handle: 'alice', accepted_at, stalled: true }),
+      task({ title: '其他频道', room_id: 'share', owner_handle: 'alice', accepted_at }),
+      task({ title: '别人的交付', accepted_at }),
+      task({ title: '我的未采纳', owner_handle: 'alice' }),
+    ],
+    { channelId: 'front', delivery: 'accepted', whose: 'mine' }
+  )
+  expect(titles(view)).toEqual([])
+  await fireEvent.click(view.getByRole('button', { name: new RegExp(t('work.projectTasks.stalled')) }))
+  expect(titles(view)).toEqual(['我的停滞交付'])
+  expect(view.getByRole('button', { name: /我的停滞交付/ }).textContent).toContain(t('taskList.deliveryAccepted'))
+})
+
+it('全部状态读关闭任务失败时，保留已读的进行中任务并能重试', async () => {
+  const view = mount([task({ title: '还在做' })], { status: 'all', closedFailed: true })
+  expect(titles(view)).toEqual(['还在做'])
+  await fireEvent.click(view.getByRole('button', { name: t('global.loadError.retry') }))
+  expect(view.emitted().more).toHaveLength(1)
+})
+
+it('全部状态为空且关闭任务读失败时，不把失败当成暂无任务', async () => {
+  const view = mount([], { status: 'all', closedFailed: true })
+  expect(view.queryByText(t('work.channelTasks.empty'))).toBeNull()
+  expect(view.getByRole('alert').textContent).toContain(t('work.channelTasks.loadFailed'))
+  await fireEvent.click(view.getByRole('button', { name: t('global.loadError.retry') }))
+  expect(view.emitted().more).toHaveLength(1)
 })
