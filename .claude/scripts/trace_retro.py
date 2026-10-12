@@ -514,7 +514,9 @@ def _lenient(first_push: list[dict], pushes: list[dict]) -> bool:
     and #3496 (same head, draft red then full green) pass; #3498 / #3495 (first
     head only ever cancelled) do not.
 
-    This reproduces the retro's 58% (7/12) on the 10-12 window.
+    On the 10-12 window this reads 8/12 = 67%, one more than the orchestration
+    review's 7/12: the review takes the first commit of the push list as the
+    first head, and for #3493 that commit is one CI never ran.
     """
     if not first_push:
         return False
@@ -1037,9 +1039,9 @@ def render_markdown(report: dict) -> str:
             "——把被顶掉的 cancelled 轮和 draft 层去掉后，第一个跑过必需 CI 的 head 上有没有一次绿的 "
             "full 必需检查。"
         ),
-        "  这一栏两种读法会差数：把提交列表的第一项当首个 head，和按「第一个跑过必需 CI 的 head」"
-        "判，在第一个 `committed` 没跑过 CI 的 PR 上不同——10-12 窗口的 #3493 就是这种，按 head 判"
-        "它算过，复盘那 7 条里不算它。",
+        "  这一栏的读法会差数：把提交列表的第一项当首个 head，和按「第一个跑过必需 CI 的 head」"
+        "判，只有当第一项一次 CI 都没跑过、而那个跑过 CI 的 head 宽松算过时才不同——10-12 窗口的 "
+        "#3493 就是这种，按 head 判它算过，复盘那 7 条里不算它。",
     ]
     return "\n".join(lines)
 
@@ -1223,9 +1225,24 @@ def self_test() -> int:
         [],
     )
     check("首推 names the head CI ran on", rep["first_head"], "b")
-    check("首推 严格 reads that head", rep["strict_first_pass"], False)
     check("首推 宽松 reads that head", rep["lenient_first_pass"], True)
     check("and every head still counts as a push", rep["pushes"], 2)
+    # 严格 on its own: judged against `pushes[0]` — the commit CI never ran —
+    # this comes out False, so the True here pins the head it read.
+    check(
+        "首推 严格 reads that head too",
+        pr_report(
+            {"number": 2, "title": "t", "mergedAt": "x", "mergeCommit": {"oid": "m"}},
+            [rnd("a"), rnd("b", "green")],
+            [],
+        )["strict_first_pass"],
+        True,
+    )
+    check(
+        "and that head's cancelled first round still counts against it",
+        rep["strict_first_pass"],
+        False,
+    )
 
     # green_of: the boundary is a full-tier green, not a draft one.
     draft_green = {"outcome": "green", "tier": "draft", "started_at": "2026-10-12T11:00:00"}

@@ -576,30 +576,37 @@ def self_test() -> int:
     # The transcript a real turn leaves: one call described, one not. Read
     # through `_tool_calls`, because a command taken from the wrong field is
     # invisible to a test that calls `_command_of` itself.
-    page = {
-        "data": [
-            {
-                "id": "b1",
-                "meta": {
-                    "tool": "Bash",
-                    "at": "2026-10-12T11:00:01",
-                    "arg": "跑测试",
-                    "detail": "uv run pytest -q",
-                },
-            },
-            {"id": "b2", "meta": {"tool": "Bash", "at": "2026-10-12T11:00:02", "arg": "ruff check ."}},
-        ],
-        "has_more": False,
+    described = {
+        "id": "b1",
+        "meta": {"tool": "Bash", "at": "2026-10-12T11:00:04", "arg": "跑测试", "detail": "uv run pytest -q"},
     }
-    real_request = _request
-    globals()["_request"] = lambda *a, **k: page
-    try:
-        calls = list(_tool_calls({"id": "t"}, "tok", "2026-10-12T00:00:00", "2026-10-12T23:00:00"))
-    finally:
-        globals()["_request"] = real_request
+    plain = {"id": "b2", "meta": {"tool": "Bash", "at": "2026-10-12T11:00:05", "arg": "ruff check ."}}
+
+    def calls_of(page: dict) -> list[tuple]:
+        real_request = _request
+        globals()["_request"] = lambda *a, **k: page
+        try:
+            return list(_tool_calls({"id": "t"}, "tok", "2026-10-12T00:00:00", "2026-10-12T23:00:00"))
+        finally:
+            globals()["_request"] = real_request
+
+    calls = calls_of({"data": [described, plain], "has_more": False})
     check("a described call's command comes from detail", calls[0][3], "uv run pytest -q")
     check("a plain call's command comes from arg", calls[1][3], "ruff check .")
-    check("and that check ends a block", edit_blocks([(c[1], c[2], c[3]) for c in calls]), [])
+
+    # The same two commands through the signal they feed: a check ends the run of
+    # edits, so four either side of one is not a block. Read either command as
+    # empty — it no longer reads as a check — and the eight join into one.
+    def edit(i: int) -> dict:
+        return {"id": f"e{i}", "meta": {"tool": "Edit", "at": f"2026-10-12T11:00:{i:02d}", "arg": "改文件"}}
+
+    calls = calls_of(
+        {
+            "data": [edit(i) for i in range(4)] + [described, plain] + [edit(i) for i in range(10, 14)],
+            "has_more": False,
+        }
+    )
+    check("a check ends the run of edits", edit_blocks([(c[1], c[2], c[3]) for c in calls]), [])
     check("tasks sort by number", ledger["s"]["tasks"], ["2", "10"])
     check("a task without a number keeps its id", _label({"number": None, "id": "abcdef12"}), "?abcdef")
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)
