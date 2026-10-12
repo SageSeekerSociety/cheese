@@ -1613,9 +1613,6 @@ class Executor:
             root / ".claude/agents",
         ):
             include(path, imports=True)
-        # One walk for everything a subdirectory contributes: its instruction
-        # files, and its own `.claude/skills`, which a session offers once a
-        # file tool reaches into that subdirectory (`release.lazy_skills`).
         nested_skills = []
         for directory, directories, files in os.walk(root):
             directories[:] = [name for name in directories if name != ".git"]
@@ -1632,16 +1629,12 @@ class Executor:
                 nested_skills.append(here)
         ignored = gitignored(root, nested_skills)
         for here in nested_skills:
-            # Claude Code skips a gitignored subdirectory's skills (a
-            # dependency's, under `node_modules`), and so does the room.
             if here not in ignored:
                 include(here / ".claude/skills")
         if (root / ".claude").is_dir() and not (root / ".claude").is_symlink():
             selected.add(root / ".claude")
         include(root / ".claude/skills")
         include(root / ".claude/workflows")
-        # Where Codex finds a repository's skills: a Codex room mirrors them
-        # from here (`codex/tools.py` `RemoteTools.sync_skills`).
         include(root / ".agents/skills")
         include(root / ".codex/skills")
 

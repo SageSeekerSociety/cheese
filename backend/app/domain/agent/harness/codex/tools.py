@@ -99,7 +99,7 @@ class RemoteTools:
         # Codex's cwd is a project root, so mirror project instructions there
         # at their original relative paths for native instruction discovery.
         self.project_docs = project_docs
-        self.docs_mirrored: dict[str, tuple[int, int]] | None = None
+        self.docs_mirrored: dict[str, tuple[str, int, int]] | None = None
         # What the mirror holds: its path -> the (size, mtime) it was read at.
         self.mirrored: dict[str, tuple[int, int]] | None = None
         # Where the runner says a person is waiting on an answer
@@ -166,10 +166,10 @@ class RemoteTools:
                     path.unlink()
             self.docs_mirrored = {}
 
-        wanted: dict[str, tuple[int, int]] = {}
+        wanted: dict[str, tuple[str, int, int]] = {}
         for name, entry in entries.items():
             if (
-                entry.get("kind") != "file"
+                entry.get("kind") not in {"file", "symlink"}
                 or posixpath.basename(name) not in PROJECT_DOC_NAMES
                 or name.startswith("/")
                 or posixpath.normpath(name) != name
@@ -177,7 +177,31 @@ class RemoteTools:
                 or name.startswith("../")
             ):
                 continue
-            wanted[name] = (entry["size"], entry["mtime_ns"])
+            source = name
+            source_entry = entry
+            seen = {name}
+            while source_entry.get("kind") == "symlink":
+                target = source_entry.get("target")
+                if not isinstance(target, str) or target.startswith("/"):
+                    break
+                source = posixpath.normpath(
+                    posixpath.join(posixpath.dirname(source), target)
+                )
+                if (
+                    source in seen
+                    or source == ".."
+                    or source.startswith("../")
+                    or source.startswith("/")
+                ):
+                    break
+                seen.add(source)
+                source_entry = entries.get(source, {})
+            if source_entry.get("kind") == "file":
+                wanted[name] = (
+                    source,
+                    source_entry["size"],
+                    source_entry["mtime_ns"],
+                )
 
         changed = False
         for name in [name for name in self.docs_mirrored if name not in wanted]:
@@ -189,15 +213,15 @@ class RemoteTools:
             if self.docs_mirrored.get(name) == stamp:
                 continue
             data = b""
-            while len(data) < stamp[0]:
+            while len(data) < stamp[1]:
                 piece = base64.b64decode(
                     self.client.call(
                         "context_fs",
                         {
                             "operation": "read",
-                            "path": name,
+                            "path": stamp[0],
                             "offset": len(data),
-                            "size": min(SKILL_READ_BYTES, stamp[0] - len(data)),
+                            "size": min(SKILL_READ_BYTES, stamp[1] - len(data)),
                         },
                     )["data"]
                 )
