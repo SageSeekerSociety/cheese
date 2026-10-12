@@ -30,7 +30,8 @@ afterwards unless you pass --keep.
 The first run must fail and the second must pass. Exit 0 proven, 1 not proven,
 2 could not judge — the last for a node id that does not resolve, a revision that
 is not a commit here, a layout this script has no runner for, a --copy file that
-is missing, a runner that is not on PATH. If your test is not one of the two
+is missing or that would land outside the worktree, a runner that is not on PATH,
+a command that exited 127 without ever running. If your test is not one of the two
 layouts below, say how to run it with --command; the script will not guess a
 runner it does not know, because a runner that is not installed looks exactly
 like a test that does not fail. A test that needs Postgres needs the dev stack up
@@ -74,6 +75,12 @@ TEST_SUFFIXES = (
     ".mjs",
     ".vue",
 )
+
+#: What a shell exits when the command it was handed does not exist. It is not a
+#: test result: nothing ran. Reading it as a red test would turn "your runner is
+#: not installed" into a verdict about the test — the mistake `runner_for` exists
+#: to avoid, arriving by the other door.
+CANNOT_RUN = 127
 
 FIX_HINT = (
     "修法：把 --without 指到「不含这个修复」的提交（通常是你那条修复提交的父提交）。"
@@ -238,6 +245,26 @@ def reclaim_stale(root: Path) -> None:
         remove_worktree(root, path)
 
 
+def destination_for(relative: str, tree: Path) -> Path:
+    """Where `relative` lands inside `tree`, refusing anything that leaves it.
+
+    Each copied path keeps its position relative to the repository, so the
+    worktree half sees the same layout. A path that climbs out with `..` — or
+    that is absolute, since `tree / "/x"` is `/x` — would instead write outside
+    the worktree, over your own tree or anywhere else the process may write.
+    That is the comparison set up wrong, so it is "could not judge" (exit 2),
+    never a verdict about the test.
+    """
+    destination = (tree / relative).resolve()
+    if not destination.is_relative_to(tree.resolve()):
+        print(
+            f"prove-regression: {relative} would land outside the worktree",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    return destination
+
+
 def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool) -> str:
     """Check `sha` out into `tree` and put the test file there too.
 
@@ -262,7 +289,7 @@ def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool)
         if not source.is_file():
             print(f"prove-regression: --copy {relative} is not a file", file=sys.stderr)
             raise SystemExit(2)
-        destination = tree / relative
+        destination = destination_for(relative, tree)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
     note = sha[:12] + (f", reusing {', '.join(linked)}" if linked else "")
@@ -278,6 +305,16 @@ def run(argv: list[str], where: Path) -> int:
     except FileNotFoundError as exc:
         print(f"prove-regression: {exc.filename} is not on PATH", file=sys.stderr)
         raise SystemExit(2) from exc
+    if done.returncode == CANNOT_RUN:
+        # `sh -c 'not-a-command'` exits 127, and so does any shell that cannot
+        # find what --command named. Nothing ran, so there is no test result to
+        # read; a verdict here would be about the caller's runner, not the test.
+        print(
+            f"prove-regression: {argv[0]} exited {CANNOT_RUN} (not found); the test "
+            "did not run",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
     return done.returncode
 
 
@@ -592,6 +629,49 @@ def self_test() -> int:
             "end to end: a layout with no runner is not judged, and says why",
             told.returncode == 2 and "--command" in told.stderr,
         )
+        # A runner that is not there and a test that fails are both a non-zero
+        # exit, so "could not judge" has to survive both ways of not finding it:
+        # the program subprocess could not start, and the shell that could not
+        # find what --command named. Judging either would put a verdict on a test
+        # that never ran.
+        for argv, label in (
+            (["prove-regression-no-such-program-xyz"], "a runner that is not on PATH"),
+            (
+                ["sh", "-c", "prove-regression-no-such-command-xyz"],
+                "a --command whose program does not exist",
+            ),
+        ):
+            with _Muffle():
+                try:
+                    run(argv, repo)
+                    code = 0
+                except SystemExit as exc:
+                    code = exc.code
+                except OSError:
+                    code = -1
+            tally.case(f"{label} is not judged", code == 2)
+        tally.case(
+            "end to end: a --command that never ran is not judged",
+            prove(without, "prove-regression-no-such-command-xyz").returncode == 2,
+        )
+        tally.case(
+            "end to end: an absolute node id is not judged",
+            prove(without, runs, node=str(repo / "test_app.py")).returncode == 2,
+        )
+        # The copy keeps its position under the worktree, so a path that climbs
+        # out would be written to the real tree — or past it. The file it would
+        # have landed on says whether it was written.
+        escape = Path(scratch) / "escape.py"
+        escape.write_text("outside\n", encoding="utf-8")
+        outside_tree = Path(scratch) / "absolute.py"
+        outside_tree.write_text("outside\n", encoding="utf-8")
+        tally.case(
+            "end to end: copies that would land outside the worktree are not judged",
+            prove(without, runs, copy="../escape.py").returncode == 2
+            and prove(without, runs, copy=str(outside_tree)).returncode == 2
+            and escape.read_text(encoding="utf-8") == "outside\n"
+            and outside_tree.read_text(encoding="utf-8") == "outside\n",
+        )
         tally.case(
             "end to end: green without the fix → NOT PROVEN",
             prove(without, "python3 -c 'raise SystemExit(0)'").returncode == 1,
@@ -671,17 +751,26 @@ class _Muffle:
 
     Both streams: judge() writes its verdict to stdout, and the refusals write to
     stderr, and the self-test asserts on exit codes rather than on either.
+
+    The file descriptors are swapped too, not just `sys.stdout`/`sys.stderr`:
+    a case that runs a command which does not exist would otherwise print the
+    shell's complaint over the self-test's own output, where a reader has no way
+    to tell it from a case that failed.
     """
 
     def __enter__(self) -> None:
         self._saved = sys.stdout, sys.stderr
         devnull = open(os.devnull, "w")  # noqa: SIM115
         self._devnull = devnull
+        self._saved_fd2 = os.dup(2)
+        os.dup2(devnull.fileno(), 2)
         sys.stdout = sys.stderr = devnull
 
     def __exit__(self, *exc: object) -> None:
-        self._devnull.close()
         sys.stdout, sys.stderr = self._saved
+        os.dup2(self._saved_fd2, 2)
+        os.close(self._saved_fd2)
+        self._devnull.close()
 
 
 def _worktrees(repo: Path) -> list[str]:
