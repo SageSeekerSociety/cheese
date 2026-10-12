@@ -1,8 +1,8 @@
-import type { Block } from '@/cx_types'
+import type { Block, ChecklistMeta, TodoItem } from '@/cx_types'
 
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { askAnswers, askOptions, replySnippet } from './blockDisplay'
+import { askAnswers, askOptions, replyBlock, replySnippet } from './blockDisplay'
 import { loadDocRead } from './docReadLoad'
 
 import { setLocale } from '@/i18n'
@@ -55,6 +55,72 @@ describe('replySnippet', () => {
   it('@ 人、提话题读成名字，和正文里显示的一样', () => {
     expect(replySnippet(said('wang', '<@cheese-3fa2> 看下 <#t9>'), maps)).toBe('@芝士 看下 #第三节图表')
     expect(replySnippet(said('cheese-3fa2', '<@lixue> 改好了'), maps)).toBe('@李雪 改好了')
+  })
+})
+
+type Step = { subject: string; status: TodoItem['status'] }
+
+const MARK: Record<TodoItem['status'], string> = {
+  completed: '✓',
+  in_progress: '✱',
+  pending: '○',
+}
+
+/** 队友的一条步骤清单消息：正文一步一行、记号开头，结构在 `meta.checklist` 里。 */
+function listBlock(steps: Step[]): Block {
+  return {
+    ...said('cheese', steps.map((step) => `${MARK[step.status]} ${step.subject}`).join('\n')),
+    meta: {
+      checklist: {
+        items: steps.map((step, n) => ({ id: String(n + 1), ...step })),
+        result: null,
+      },
+    },
+  } as Block
+}
+
+describe('步骤清单在摘要里说什么', () => {
+  it('念一步，连它的记号；不念折成一行的那串记号', () => {
+    const block = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'in_progress' },
+      { subject: '跑相关检查', status: 'pending' },
+    ])
+    expect(replySnippet(block, maps, 200)).toBe('✓ 读 main 源码')
+  })
+
+  it('太长了照旧截断', () => {
+    const block = listBlock([{ subject: '一步一步地把这件事说清楚', status: 'in_progress' }])
+    expect(replySnippet(block, maps, 6)).toBe('✱ 一步一步…')
+  })
+
+  it('迁移前那种只有 `true` 的清单没有结构，仍按正文说', () => {
+    const block = {
+      ...said('lin', '✓ 读代码\n✱ 改摘要行'),
+      meta: { checklist: true },
+    } as Block
+    expect(replySnippet(block, maps, 200)).toBe('✓ 读代码 ✱ 改摘要行')
+  })
+})
+
+describe('支线摘要里那条最后回复', () => {
+  it('后端随它带上清单结构时，摘要念的是清单的一步', () => {
+    const message = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'in_progress' },
+    ])
+    const reply = {
+      author: 'cheese',
+      content: message.content,
+      created_at: message.created_at,
+      checklist: message.meta?.checklist as ChecklistMeta,
+    }
+    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('✓ 读 main 源码')
+  })
+
+  it('后端没带结构时，还是按正文说', () => {
+    const reply = { author: 'lin', content: '下午三点评审', created_at: '2026-10-12T00:00:00Z' }
+    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('下午三点评审')
   })
 })
 
