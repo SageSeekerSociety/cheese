@@ -1,7 +1,7 @@
 ---
 title: 前端结构
 kind: 参考
-summary: 两个入口、组件预览站和它的收录闸、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求的两套栈、i18n 债务表和六道质量闸。
+summary: 两个入口、组件预览站和它的收录闸、壳与路由、组件要路由时的那条缝、房间的两栏、工作面板的页签、状态与请求、i18n 债务表和六道质量闸。
 covers:
   - frontend/src/main.ts
   - frontend/src/demo-main.ts
@@ -19,7 +19,7 @@ covers:
   - frontend/scripts/catalog-scaffold.mjs
   - frontend/src/stores/
   - frontend/src/api.ts
-  - frontend/src/network/
+  - frontend/src/api/
   - frontend/src/i18n/
   - frontend/scripts/tsc-ratchet.mjs
   - frontend/scripts/stylelint-ratchet.mjs
@@ -32,7 +32,7 @@ covers:
 
 前端是一个 Vue 3 + Vuetify 的单页应用，但 `frontend/index.html` 之外还有第二个入口：文档站用它内嵌的 `/demo/<名字>` 演示，`/demo/catalog` 则是脱离后端的组件预览站。
 
-> 讲：两个入口、壳与路由、组件要路由时的那条缝、房间两栏和它们的行管线、工作面板的页签、状态与请求的两套栈、翻译债务表和机器闸。不讲：设计 token 的取值和色板（见仓库内 `docs/design-system.md`，闸门见[质量闸](#gates)），文档站怎么构建和发布（见[文档站与问芝士](/dev/docs-site#build)），后端接口的形状和约定（见[后端结构与接口约定](/dev/backend-app#envelope)）。
+> 讲：两个入口、壳与路由、组件要路由时的那条缝、房间两栏和它们的行管线、工作面板的页签、状态与请求、翻译债务表和机器闸。不讲：设计 token 的取值和色板（见仓库内 `docs/design-system.md`，闸门见[质量闸](#gates)），文档站怎么构建和发布（见[文档站与问芝士](/dev/docs-site#build)），后端接口的形状和约定（见[后端结构与接口约定](/dev/backend-app#envelope)）。
 
 ## 两个入口 {#entries}
 
@@ -157,22 +157,27 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 任务列表的列是怎么推出来的见[看板](/dev/boards#board)，待处理清单见[任务与工作目录](/dev/tasks#awaiting)。
 
-## 状态与请求：并存的两套栈 {#state-network}
+## 状态与请求 {#state-network}
 
-这是读这一栏时最容易踩的一件事：**前端有两条各自独立的请求栈。**
+请求层只有一套：`src/api/`。写代码时从 `@/api` 拿，或者直接引 `src/api/<域>.ts`。
 
-| | `src/api.ts` | `src/network/` |
-|---|---|---|
-| 底座 | 原生 `fetch` | axios（`class Api` 包一层实例 + 拦截器） |
-| 服务谁 | 房间、话题、工作面板那一批视图 | 主产品的那批路由（`network/api/*`：users、tasks、teams、spaces、materials…） |
-| 信封 | 自己剥 `{code,message,data}` | 响应拦截器里剥 |
-| 401 处理 | 请求里重试一次（见下） | 响应拦截器刷新后重放 |
+这一栏以前讲的是「并存的两套栈」，现在那句已经不成立（2026-10-12 收尾，见下）。
+
+| 谁 | 走哪条传输 |
+|---|---|
+| `@/api` 的绝大多数调用方，以及 `src/api/**` 下按域切的模块 | `src/api/http.ts` 的 `request<T>`：原生 `fetch`，调用方自己剥 `{code,message,data}`，GET 套读预算，401 在请求里重试一次 |
+| `src/api/spaces.ts` | `src/api/axiosHttp.ts`：axios 实例 + 拦截器。它整份域还是 pilot 时留下的 axios 版，为的是上传进度、超时和刷新重放；统一掉这段策略**不在本线范围**，见文件头的注释 |
+| 连接器的 `/connector/*` | `src/api/connector.ts` 的 `connectorRequest`：同一形状的镜像，不套信封、只留 Bearer |
+
+两条传输共用同一套上层：`ApiError`（`src/api/http.ts`）、`lib/session.ts` 的刷新、`ErrorHandler` 的拒绝处理器、`axiosErrorMessage` 的文案兜底。
+
+`network/` 这个目录已经不存在了，别再往回引：ESLint 里有一条 `no-restricted-imports` 专门拦 `@/network`（`eslint.config.mjs`，报文里指到 `@/api`），棘轮的 `legacy-network` 那本账也从 140 条收到 0，只能减不能加。
 
 `stores/` 是 pinia：`workspace.ts`（项目与话题）、`feedback.ts`（反馈，含缓存、分页、陈旧判断）、`space.ts`、`discussionStore.ts`、`navigation.ts`、`signup.ts`、`title.ts`。房间 chrome、聊天和工作面板挂载时会各自请求同一份名册/任务摘要，所以 `api.ts` 里有一个 `pendingRoomReads` 表**只共享在飞行中的读**：写请求（任何非 GET）一进来就整表清空，下一次读一定打到服务器。
 
 ## 请求的信封、重试、401 与预算 {#api}
 
-`api.ts` 的 `request<T>` 是 GET 才套预算，非 GET 直接进 `performRequest`：
+`src/api/http.ts` 的 `request<T>` 是 GET 才套预算，非 GET 直接进 `performRequest`：
 
 | 机制 | 细节 |
 |---|---|
@@ -205,7 +210,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 闸门 | 命令 | 拦什么 |
 |---|---|---|
 | ESLint | `pnpm run lint`（`task fe:lint:check`） | 代码问题；故意不传 `--fix` —— 会重写工作区的闸门可以在它偷偷修好的违规上退出 0 |
-| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`@/network/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算）；判据和四条组件原则见 `.claude/rules/architecture.md` |
+| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算）；判据和四条组件原则见 `.claude/rules/architecture.md` |
 | 无障碍 | `pnpm run lint:a11y` | `src/**/*.vue` 模板里新增的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，配置在 `eslint.a11y.config.mjs`）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
 | 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错 |
@@ -217,7 +222,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 测试约定 {#tests}
 
-- 单测是 vitest，`environment: 'happy-dom'`，setup 文件 `src/test/setup-network.ts`；CI 跑 `vitest run --dir src`。
+- 单测是 vitest，`environment: 'happy-dom'`，setup 文件 `src/test/setup-network.ts` —— 它把没被 mock 的 `fetch` 直接判失败（「Mock every HTTP request used by this test」，MSW 的拦截在它之上），跟 mock 哪个请求栈无关；CI 跑 `vitest run --dir src`。
 - 测试文件与源文件同目录、同名前缀（`ChatPanel.mentionMenu.spec.ts`、`WorkPanel.tabs.spec.ts`），一个行为一个文件。
 - `@/api` 会被 `vi.mock` 掉，所以请求栈本身的测试（`apiRetry.spec.ts`、`api401Retry.spec.ts`、`apiTokenRefresh.spec.ts`、`apiEdgeErrorPage.spec.ts`）单独摆一份。
 - `scripts/` 下的是 `node --test` 的地盘（`pnpm run test:ratchet`），不是 vitest 的：它们匹配 vitest 默认的 include glob，混进去会让整个 run 以 "No test suite found" 挂掉。
@@ -225,11 +230,11 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 边界与坑 {#traps}
 
-- **两套请求栈不是重构没做完。** 改一个接口前先确认调用方用的是 `@/api`（fetch、自己剥信封）还是 `@/network`（axios、拦截器剥），两边的重试与 401 行为不同。
+- **请求层只剩一套，`@/api`；底座是两条。** `src/api/spaces.ts` 走 axios（`axiosHttp.ts`），其余域模块走 `fetch`（`http.ts`）。改一个接口先看它落在哪个模块：axios 那条有上传进度和刷新后重放，fetch 那条的 GET 有读预算和 502–504/520–530 重试，两者的失败形状也不同。
+- **`axiosErrorMessage` 只认 `ApiError`，别的错误一律返回调用方给的 fallback。** 它以前还认旧栈的 `BusinessError`，那段已经删了。要按状态码分辨（例如把 409 和别的分开展示），读 `ApiError.status`，不要对 message 做子串匹配。
 - **后端的错误体几乎都写着 `retryable: false`，所以几乎都不重试。** `api/http.ts` 的 GET 只在状态码是 502–504、520–530 且 `error.retryable !== false` 时重试。后端把它设成 `true` 的只有 `ForgeRateLimitedError`、`ForgeUnreachableError`（`backend/app/domain/project/forge.py`，都是 503）和限流的 429（`app/core/request_limits.py`，429 不在上面的状态码里）。结果是：后端自己答出的 503（比如 `GatewayUnavailableError`）不重试，会重试的只有边缘返回的非 JSON 页面、没有错误体的 5xx 和这两类代码仓库错误。想让一类错误被重试，在它的错误类上设 `retryable = True`。
 - **`App.vue` 之外还有第二个入口。** 改全局样式或插件时，`demo-main.ts` 那条路只装了 vuetify 和 i18n：依赖路由、登录态或任何 store 的东西在那里都没有，而文档的每次构建都会跑到它。
 - **`NotFound` 通配必须最后。** 前面插一条落不进任何 match 的路由，被它吃掉的表现是「页面打不开」，看起来像后端 404。
 - **折起来的必须还在。** `collapseNotices` 的硬约束是「信息不能丢，只能收起来」；新增一档折叠时，原文必须仍然在展开区里，不能只留一行摘要。
 - **`meta.in_room` 缺省是露面。** 不写这一格的事件会进聊天区 —— 想让机器自己的输出不占屏，必须显式写 `false`，而不是指望某个作者的默认。
 - **棘轮基线只能减。** 用 `--update` 降基线，不要为了让 PR 过而手工往 `*-baseline.json` 里加条目；加进去的那一条永远不会自己消失。
-- **两套栈的错误类型互不认识。** `network/utils/requestErrorMessage.ts` 只认 axios 那侧的 `BusinessError`，**别的错误一律返回调用方给的 fallback** —— 把一个 `ApiError` 递给它，界面就只会说那句兜底的话。要按状态码分辨（例如把 409 和别的分开展示），读 `ApiError.status`，不要对 message 做子串匹配。

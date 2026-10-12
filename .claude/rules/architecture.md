@@ -19,7 +19,7 @@ One command runs all seven: `task boundaries`. Individually:
 | Component imports | `pnpm --dir frontend run lint:boundary` |
 | File sizes | `python3 .claude/scripts/check-file-sizes.py` |
 | Scenes run standalone | `pnpm --dir frontend run lint:scenes` |
-| Scene child/route debt and old network importers only shrink | `pnpm --dir frontend run lint:scene-debt` |
+| Scene child/route debt only shrinks (the legacy network importers are already at zero) | `pnpm --dir frontend run lint:scene-debt` |
 | Grade-A components are in the catalog | `pnpm --dir frontend run lint:catalog` |
 
 Each has tests of its own that CI runs: five carry `--self-test`
@@ -149,12 +149,18 @@ still exists before writing it.
 ## Frontend: a component does not fetch
 
 Enforced by ESLint under `frontend/src/components/**`: no `src/api.ts`, no
-`src/services/**`, no `src/network/**`, no `vue-router`. The rule judges **where
+`src/services/**`, no `vue-router`. The rule judges **where
 the import resolves, not how it is spelled** — `@/api`, `../api` and
 `../../api` are the same dependency and the same violation, while
 `src/components/chat/services/*` reached as `./services/x` is not the API layer
 and stays legal. `frontend/src/views/**` is unrestricted — a view is the thing
 allowed to know that a server exists.
+
+Outside the component boundary, the whole tree is barred from `@/network`: that
+stack was retired, and `frontend/eslint.config.mjs` keeps a
+`no-restricted-imports` rule so it cannot come back. The ratchet's
+`legacy-network` set (`pnpm --dir frontend run lint:scene-debt`) is the second
+half of the same guard and is empty.
 
 Four principles, in the order they matter:
 

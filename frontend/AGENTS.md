@@ -4,8 +4,8 @@ Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here
 
 ## A component does not fetch
 
-Nothing under `src/components/**` may import `@/api`, `@/services/*`,
-`@/network/*` or `vue-router`. Data arrives as a prop or from a composable the
+Nothing under `src/components/**` may import `@/api`, `@/services/*` or
+`vue-router`. Data arrives as a prop or from a composable the
 view called; `src/views/**` is where knowing that a server exists is allowed.
 This is checked on every commit and in CI:
 
@@ -46,9 +46,13 @@ does nothing is worse than no thing at all.
 Type a `to` prop as `NavTarget` from `lib/navTarget.ts`, not
 `RouteLocationRaw` from `vue-router` — an `import type` from `vue-router`
 counts as a boundary violation just like a value import. The API layer's half
-is looser: `import type { User } from '@/network/api/users/types'` is left
+is looser: `import type { User } from '@/types/users'` is left
 alone, because a type binding is erased before anything runs and so cannot
 fetch. Only the vue-router half has an alternative to point you at.
+
+`src/network/` no longer exists — every caller reaches the server through
+`@/api`, and `eslint.config.mjs` keeps a `no-restricted-imports` rule that
+rejects `@/network` with a message pointing at `@/api`.
 
 ## The component preview site
 
@@ -178,8 +182,10 @@ baseline to the approved merge base, so hand-adding an exemption fails too.
   source files importing `src/network`, including files within that stack,
   type-only imports, re-exports and literal dynamic imports. Specs and type
   declaration files are excluded. Alias and relative spellings are the same
-  dependency. History is frozen per importer file, not per import statement;
-  a new file uses `@/api` or a domain module, never `@/network`.
+  dependency. History is frozen per importer file, not per import statement.
+  The stack is gone and this set is empty: reaching the server means `@/api` or
+  a domain module, and ESLint's `no-restricted-imports` rule fails the build if
+  an `@/network` import ever comes back.
 
 The scanner uses Vue's SFC parser and TypeScript's parser/binder; missing dependencies, invalid
 source and unreadable baselines are exit 2 (cannot judge), never a pass. Its
