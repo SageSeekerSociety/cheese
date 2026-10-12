@@ -430,7 +430,7 @@ def test_a_named_document_is_read_and_changed_instead_of_the_rooms(
                 "instructions": "整理",
                 "spec": {"freq": "weekly", "time": "09:00"},
             },
-            "每周执行要给出星期几",
+            "每周执行要给出星期",
         ),
         (
             {"title": "整点跑", "instructions": "整理", "spec": {"freq": "daily"}},

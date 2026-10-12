@@ -274,7 +274,7 @@ const rowMenu = useRowMenu<'row'>()
             {{ run.error || t('routines.noReason') }}
           </div>
           <div v-else-if="run.summary" class="t-body">{{ run.summary }}</div>
-          <!-- 这次执行交回的结果文件。规则里填的「结果放在 周报/」只是它们的落脚路径，
+          <!-- 这次执行交回的结果文件。例行事务里填的「存储位置 周报/」只是它们的落脚路径，
                频道面板上没有对应的文件夹 —— 房间里这一格就是它们的入口，所以每一份都
                当场点得开；项目页上没有能开文件的面板，整串指回规则所在的房间。 -->
           <div v-if="run.outputs.length" class="t-meta routine-run__outputs">

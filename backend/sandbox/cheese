@@ -285,12 +285,12 @@ _CHAT_PAGE = {
 ROUTINE_TRIGGERS = ("schedule", "library_file_added", "task_closed", "card_accepted")
 ROUTINE_FREQS = ("hourly", "daily", "weekly", "monthly")
 
-_ROUTINE = _text("规则 id")
+_ROUTINE = _text("例行事务 id")
 _ROUTINE_SPEC = (
     '定时写 {"freq": "weekly", "weekdays": [0], "time": "09:00"}（0=周一）；'
     "也可以是 daily + time、monthly + day + time、hourly + minute；"
     '事件触发写 {"scope": "room"} 或 {"scope": "project"}。'
-    '定时规则可以加 "feedback_batch": N（1–10）：每次执行时平台把最早的 N 条'
+    '定时的例行事务可以加 "feedback_batch": N（1–10）：每次执行时平台把最早的 N 条'
     "没人处理的反馈连同分诊步骤附在工作说明后面，没有就不执行；"
     "只有做平台本身的项目里的频道能用"
 )
@@ -912,7 +912,7 @@ PLATFORM_TOOLS = ToolTable(
             "所以起草完要把配置用一两句话说给用户听，请他在「例行事务」里确认，"
             "不要说得像已经设好了。",
             {
-                "title": _text("规则名字，一句话"),
+                "title": _text("例行事务的名字，一句话"),
                 "instructions": _text("到点要做的事，写清做什么、交出什么"),
                 "context_scope": _text("可以用哪些资料；不写就是按需要自取"),
                 "output_dir": _text("结果放频道文件区哪个目录；不写就是根目录"),
@@ -935,14 +935,14 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_update",
-            "改一条规则，只发要改的那几项。**人设的规则被你改过会退回草稿**，"
+            "改一条例行事务，只发要改的那几项。**人设的例行事务被你改过会退回草稿**，"
             "要人再确认一次才继续跑；改完把改动说给用户听。",
             {
                 "routine": _ROUTINE,
                 "title": _text("新名字"),
                 "instructions": _text("新的工作内容"),
-                "context_scope": _text("新的资料范围"),
-                "output_dir": _text("新的结果目录"),
+                "context_scope": _text("新的参考资料"),
+                "output_dir": _text("新的存储位置"),
                 "trigger": {
                     "type": "string",
                     "enum": list(ROUTINE_TRIGGERS),
@@ -956,7 +956,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_pause",
-            "暂停一条规则。停的是执行，不是这条规则本身：它还在，恢复执行要由人来点"
+            "暂停一条例行事务。停的是执行，不是这条例行事务本身：它还在，恢复执行要由人来点"
             "（你没有恢复的权限）。",
             {"routine": _ROUTINE},
             ["routine"],
@@ -1210,7 +1210,7 @@ def routine_spec_checked(
             return
         # 起草时的默认触发方式就是定时：不说清什么时候跑，后端也只会拒。
         raise ValueError(
-            "定时规则要写 freq（hourly、daily、weekly、monthly），"
+            "定时的例行事务要写 freq（hourly、daily、weekly、monthly），"
             '例如 {"freq": "weekly", "weekdays": [0], "time": "09:00"}'
         )
     if event:
@@ -1220,7 +1220,7 @@ def routine_spec_checked(
         raise ValueError("频率只能是 hourly、daily、weekly、monthly 之一")
     if freq == "hourly":
         if not _is_int(spec.get("minute"), 0, 59):
-            raise ValueError("每小时执行要给出第几分钟（0–59）")
+            raise ValueError("每小时执行要给出分钟（0–59）")
         return
     raw = str(spec.get("time") or "")
     try:
@@ -1236,9 +1236,9 @@ def routine_spec_checked(
             or not days
             or any(not _is_int(day, 0, 6) for day in days)
         ):
-            raise ValueError("每周执行要给出星期几（0=周一 … 6=周日）")
+            raise ValueError("每周执行要给出星期（0=周一 … 6=周日）")
     if freq == "monthly" and not _is_int(spec.get("day"), 1, 31):
-        raise ValueError("每月执行要给出几号（1–31）")
+        raise ValueError("每月执行要给出日期（1–31）")
 
 
 def _is_int(value, low: int, high: int) -> bool:
@@ -2844,7 +2844,7 @@ def _say_routine_draft(args, data, env) -> str:
         "它现在是**草稿，不会执行**。\n"
         f"什么时候跑：{data.get('trigger_text') or args.get('trigger') or 'schedule'}\n"
         "把配置用一两句话说给用户听，请他在这个频道右侧的「例行事务」里点"
-        "「确认启用」。确认之前一个字都不会跑，所以别告诉他规则已经设好了。"
+        "「确认启用」。确认之前一个字都不会跑，所以别告诉他例行事务已经设好了。"
     )
 
 
@@ -2873,7 +2873,7 @@ def _say_routine_update(args, data, env) -> str:
     data = data or {}
     state = data.get("state")
     tail = (
-        "它退回了草稿：人设的规则被你改过，要人再确认一次才继续跑，把改动说给他听。"
+        "它退回了草稿：人设的例行事务被你改过，要人再确认一次才继续跑，把改动说给他听。"
         if state == "draft"
         else f"它现在 {state}。"
     )
@@ -2898,7 +2898,7 @@ def _say_routine_report(args, data, env) -> str:
         parts.append("结果文件：" + "、".join(data["outputs"]))
     if data.get("error"):
         parts.append(f"失败原因：{data['error']}")
-    parts.append("规则主人已经收到这条结果。")
+    parts.append("例行事务的主人已经收到这条结果。")
     return "\n".join(parts)
 
 

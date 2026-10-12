@@ -31,7 +31,7 @@
   "[chromium] › feedback-flows.spec.ts › 用户提一条反馈，能看见、能支持、能评论": 5.2,
   "[chromium] › feedback-flows.spec.ts › 管理员把一条反馈走完四级，指派、优先级、内部备注都留得下": 5.7,
   "[chromium] › layout-invariants.spec.ts › 房间输入框：下面那一行放得下，手指点得中 › 手机（触屏）和桌面两档": 5.7,
-  "[chromium] › layout-invariants.spec.ts › 房间面板的「定时与触发」那一格铺满整条面板": 4.4,
+  "[chromium] › layout-invariants.spec.ts › 房间面板的「例行事务」那一格铺满整条面板": 4.4,
   "[chromium] › layout-invariants.spec.ts › 手机外壳：顶栏和底栏上每一颗按钮，手指能点的范围至少 44×44": 9.8,
   "[chromium] › layout-invariants.spec.ts › 表单字段不会互相压住，也不会被裁掉 › 「修改 AI 队友」对话框": 3.6,
   "[chromium] › layout-invariants.spec.ts › 表单字段不会互相压住，也不会被裁掉 › artifact comparison keeps diff lines vertical on desktop and mobile": 3.3,

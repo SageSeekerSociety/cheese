@@ -27,7 +27,7 @@ const minutes = computed(() => {
   return Math.max(1, Math.round((Date.parse(end) - Date.parse(start)) / 60_000))
 })
 
-// 这次执行交回的结果文件。规则里填的「结果放在 周报/」只是它们在频道文件区里的落脚
+// 这次执行交回的结果文件。例行事务里填的「存储位置 周报/」只是它们在频道文件区里的落脚
 // 路径 —— 频道面板上没有对应的文件夹，这一行是它们唯一的入口，所以每一份都得点得开。
 const files = computed(() => (going.value || missed.value ? [] : props.run.outputs))
 

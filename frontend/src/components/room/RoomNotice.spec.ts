@@ -128,7 +128,7 @@ describe('芝士起草、等人确认的那一行', () => {
       author: 'system',
       content: '芝士起草了「每周进展」，要你确认后才会执行',
       created_at: '2026-09-27T08:00:00Z',
-      meta: { severity: 'info', who: 'human', detail: '名称：每周进展', detail_label: '待确认的配置', ...meta },
+      meta: { severity: 'info', who: 'human', detail: '名称：每周进展', detail_label: '待确认的例行事务', ...meta },
     } as unknown as Block
   }
 

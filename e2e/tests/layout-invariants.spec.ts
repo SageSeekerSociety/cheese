@@ -1025,7 +1025,7 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
 // 空状态那两行字多宽，面板就多宽，「新建」右侧的刷新键停在半路。判据因此不是「内容有多
 // 宽」而是**它住的那条 flex 行有多宽**。vitest 量不到坐标，typecheck / stylelint 也不
 // 看这个，只有屏幕上量得出来。
-test('房间面板的「定时与触发」那一格铺满整条面板', async ({ page }) => {
+test('房间面板的「例行事务」那一格铺满整条面板', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   const rows = await openFirstProject(page);
