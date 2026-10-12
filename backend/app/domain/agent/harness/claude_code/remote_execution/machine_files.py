@@ -21,12 +21,15 @@ by Pythons as old as 3.9.
 from __future__ import annotations
 
 import base64
+import functools
 import json
 import os
 import re
+import runpy
 import shutil
 import subprocess
 import tempfile
+from pathlib import Path
 
 #: What pi's find leaves out wherever it searches.
 SKIPPED = ("node_modules", ".git")
@@ -34,15 +37,6 @@ SKIPPED = ("node_modules", ".git")
 #: The most one read brings back. pi reads a file whole and then cuts it to
 #: what the model is shown; a file past this is refused rather than carried.
 READ_LIMIT = 32 * 1024 * 1024
-
-#: What a file's first bytes say it is, for the image types pi hands a model
-#: as an image rather than as text (pi's own read does the same sniffing).
-IMAGE_MAGIC = (
-    (b"\x89PNG\r\n\x1a\n", "image/png"),
-    (b"\xff\xd8\xff", "image/jpeg"),
-    (b"GIF87a", "image/gif"),
-    (b"GIF89a", "image/gif"),
-)
 
 
 def _too_large(path: str) -> str:
@@ -57,13 +51,21 @@ def read(path: str) -> dict:
     return {"data": base64.b64encode(data).decode()}
 
 
+@functools.cache
+def _raster_images() -> dict:
+    """The platform's one account of image files (`app/core/raster_images.py`).
+    Shipped beside this file; read from the source tree when this runs from a
+    checkout."""
+    beside = Path(__file__).with_name("raster_images.py")
+    if not beside.exists():
+        beside = Path(__file__).resolve().parents[6] / "app/core/raster_images.py"
+    return runpy.run_path(str(beside))
+
+
 def _image_type(head: bytes) -> str | None:
-    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
-        return "image/webp"
-    for magic, kind in IMAGE_MAGIC:
-        if head.startswith(magic):
-            return kind
-    return None
+    """Which image type pi hands a model as an image rather than as text (pi's
+    own read does the same sniffing)."""
+    return _raster_images()["sniff"](head)
 
 
 def open_file(path: str, write: bool) -> dict:

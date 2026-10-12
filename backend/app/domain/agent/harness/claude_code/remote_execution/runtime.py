@@ -61,10 +61,9 @@ SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 PROTOCOL_VERSION = 1
 
 # What this runtime reads from its own release, by its path there, with the
-# file it is built from in a checkout (under `backend/`). The launch ships
-# these (`launch.file_sources`), and whatever starts a copy of this runtime
-# installs them the same way (`tests/support/executor_release.py`), so a file
-# the runtime comes to need reaches the machine and every fixture, or neither.
+# file it is built from in a checkout (under `backend/`). The launch ships these
+# (`launch.file_sources`) and every copy of this runtime installs them the same
+# way (`tests/support/executor_release.py`): machine and fixture get the same.
 _OWN = (
     "runtime",
     "portable",
@@ -82,6 +81,7 @@ RELEASE_FILES = {
         for name in (*_OWN, "predecessor")
     },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
+    "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",
 }
