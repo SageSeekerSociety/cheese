@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.conversation.services import of_room
 from app.domain.day_windows import utc_day
 from app.domain.project.models import Project
-from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage
+from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage, call_count
 
 #: Rows of model calls. A compute charge (``usage.compute``) is a usage row
 #: too, for its credits, but it has no tokens and is no call: every count of
@@ -40,12 +40,6 @@ def unpriced_tokens() -> Any:
             else_=0,
         )
     )
-
-
-def call_count() -> Any:
-    """How many model calls the rows cover: the sum of ``calls``, not the
-    number of rows, because a gateway drain lands many calls as one row."""
-    return func.coalesce(func.sum(ResourceUsage.calls), 0)
 
 
 class UsageRepository:

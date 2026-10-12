@@ -30,8 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import AuthorType, Block
 from app.domain.project.models import Project
-from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage
-from app.domain.usage.repositories import call_count
+from app.domain.usage.models import COMPUTE_ROUTE, ResourceUsage, call_count
 from app.domain.user.models import User, UserProfile
 
 #: 「每小时」那条线和「什么时候用的」用北京时间读：用的人在这个时区。
