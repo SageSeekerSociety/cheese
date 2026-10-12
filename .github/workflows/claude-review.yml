@@ -45,6 +45,8 @@ on:
     types: [created]
   repository_dispatch:
     types: [claude-review]
+  push: # DEMO ONLY, removed before merge
+    branches: [task/ee8164cd]
 
 jobs:
   auto-review:
@@ -94,7 +96,7 @@ jobs:
           trigger_phrase: "@claude"
 
   dispatched:
-    if: github.event_name == 'repository_dispatch'
+    if: github.event_name == 'repository_dispatch' || github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     concurrency:
@@ -107,8 +109,8 @@ jobs:
       id-token: write
     env:
       GH_TOKEN: ${{ github.token }}
-      PR: ${{ github.event.client_payload.pr }}
-      SHA: ${{ github.event.client_payload.sha }}
+      PR: ${{ github.event.client_payload.pr || '3496' }}
+      SHA: ${{ github.event.client_payload.sha || 'f6a632e3e523d1c63dcd62c0d8a7ad1041b13af7' }}
     steps:
       - name: Check the PR and the pinned commit
         id: pin
@@ -134,7 +136,7 @@ jobs:
       # branch, never from the tree under review.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ github.event_name == 'push' && github.sha || github.event.repository.default_branch }}
           path: .review-trusted
           sparse-checkout: .github/claude-review
 
