@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Check a review result against schema.json and render it as the PR comment.
+"""Check a review result against schema.json beside this file and render it as the PR comment.
 
     render.py <result.json> <pinned sha> <method rev> [<current head>]
 
-The first line of the comment is `<!-- pr-review sha=<pinned sha> -->`, so
+prepare copies this file and schema.json from origin/main next to the
+result, and post runs that copy, so the branch a seat sits on cannot loosen
+the check. The first line of the comment is `<!-- pr-review sha=<pinned sha> -->`, so
 `pr-review.sh show` can find the review of a given commit. Exits 1, printing
 why, when the result does not match the schema or names a different commit
 than the one pinned: a review of the wrong tree is never posted as if it
@@ -63,7 +65,7 @@ def render(result: dict, sha: str, method_rev: str, head_now: str) -> str:
     findings = sorted(result["findings"], key=lambda f: SEVERITY_ORDER[f["severity"]])
     lines = [
         f"<!-- pr-review sha={sha} -->",
-        f"**Independent review** of `{sha[:12]}`, method `.claude/pr-review/prompt.md` at `{method_rev[:12]}`",
+        f"**Independent review** of `{sha[:12]}`, method `.claude/pr-review/prompt.md` at `{method_rev[:12] + method_rev[40:]}`",
     ]
     if head_now and head_now != sha:
         lines.append(f"The PR has moved on since: its head is now `{head_now[:12]}`.")
@@ -115,6 +117,12 @@ def main() -> int:
         print(f"{path}: {e}", file=sys.stderr)
         return 1
     errors = problems(result, SCHEMA)
+    if not errors:
+        errors = [
+            f"result.findings[{i}]: rung {f['rung']} is unverified and needs confirm_with"
+            for i, f in enumerate(result["findings"])
+            if f["rung"] < 4 and not f["confirm_with"].strip()
+        ]
     if not errors and result["reviewed_sha"].strip() != sha:
         errors = [f"the review saw {result['reviewed_sha']!r}, but {sha} was pinned"]
     if errors:

@@ -56,6 +56,7 @@ prepare() {
     method_rev=$(git -C "$ROOT" log -1 --format=%H origin/main -- "$METHOD")
     git -C "$ROOT" show "origin/main:$METHOD/prompt.md" > "$dir/REVIEW.md"
     git -C "$ROOT" show "origin/main:$METHOD/schema.json" > "$dir/schema.json"
+    git -C "$ROOT" show "origin/main:$METHOD/render.py" > "$dir/render.py"
   else
     echo "pr-review: $METHOD is not on origin/main yet; using this checkout's copy" >&2
     method_rev=$(git -C "$ROOT" rev-parse HEAD)
@@ -63,11 +64,11 @@ prepare() {
     # comment never names a commit whose method is not the one that ran.
     git -C "$ROOT" diff --quiet HEAD -- "$METHOD" || method_rev="$method_rev+uncommitted"
     cp "$ROOT/$METHOD/prompt.md" "$dir/REVIEW.md"
-    cp "$ROOT/$METHOD/schema.json" "$dir/schema.json"
+    cp "$ROOT/$METHOD/schema.json" "$ROOT/$METHOD/render.py" "$dir/"
   fi
 
   gh api "repos/$REPO/pulls/$pr" -q '"# " + .title + "\n\n" + (.body // "")' > "$dir/pr.md" || exit 1
-  printf 'pr=%s\nsha=%s\nmethod_rev=%s\ntree=%s\n' "$pr" "$sha" "$method_rev" "$tree" > "$dir/meta"
+  printf 'pr=%q\nsha=%q\nmethod_rev=%q\ntree=%q\n' "$pr" "$sha" "$method_rev" "$tree" > "$dir/meta"
   cat >> "$dir/REVIEW.md" <<EOF
 
 ## This review
@@ -91,7 +92,7 @@ post() {
   # shellcheck disable=SC1091
   . "$dir/meta"
   head_now=$(head_of "$pr" 2>/dev/null || true)
-  comment=$(python3 "$HERE/../pr-review/render.py" "$dir/result.json" "$sha" "$method_rev" "$head_now") \
+  comment=$(python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" "$head_now") \
     || die "$dir/result.json was not posted; fix it and run post again"
   if [ "$dry" = --dry-run ]; then printf '%s\n' "$comment"; return; fi
   gh pr comment "$pr" -R "$REPO" --body "$comment" >/dev/null || die "could not comment on #$pr"
