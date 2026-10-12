@@ -7,7 +7,7 @@
 // 而 panels/ 没有页面那种「外壳 + 视图」的豁免。样板是 `PanelDocView`。
 //
 // `can_manage` 是后端逐条算好的，这一格不自己算：拿不到权限的那些规则在 `RoutineRow`
-// 里不画按钮、只写一句「这条规则由谁管」——只读不是「偷偷禁用」，是说出来。
+// 里不画按钮、只写一句「这条例行事务由谁管」——只读不是「偷偷禁用」，是说出来。
 import type { Routine, RoutineInput, RoutineRun } from '@/lib/routine'
 import type { UserRefTarget } from '@/lib/userRef'
 

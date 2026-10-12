@@ -229,7 +229,7 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '读规则失败',
-        note: '列表没读出来：一句话留在最上面（role=alert），不是「还没有规则」—— 那会让失败看着像本来就没有。',
+        note: '列表没读出来：一句话留在最上面（role=alert），不是「还没有例行事务」—— 那会让失败看着像本来就没有。',
         props: { routines: [], error: '未能读取例行事务' },
         expect: '未能读取例行事务',
       },
