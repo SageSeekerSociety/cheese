@@ -4,6 +4,7 @@
 import '@/styles/docBlocks.css'
 
 import type { AnyExtension } from '@tiptap/core'
+import type { CanvasHost } from '@/types/canvas'
 import type { AgentHook } from './mermaidView'
 
 import { Extension } from '@tiptap/core'
@@ -11,6 +12,7 @@ import { Plugin } from '@tiptap/pm/state'
 
 import { BlockEditing, BlockSelect } from './blockEditing'
 import { withBlockViews } from './blockViews'
+import { withCanvas } from './canvasBlock'
 import { READING } from './shapes'
 import { TableHandles } from './tableHandles'
 import { TableShape } from './tableShape'
@@ -32,7 +34,19 @@ const Reading = Extension.create({
 })
 
 /** The document's extensions as the document panel's editor runs them. `agent`
- *  says whether a diagram can be handed to the AI teammate, and how. */
-export function editorBlocks(schema: AnyExtension[], agent: AgentHook = () => null): AnyExtension[] {
-  return [...withBlockViews(schema, agent), BlockEditing, BlockSelect, TableShape, TableHandles, Reading]
+ *  says whether a diagram can be handed to the AI teammate, and how; `canvas`
+ *  is how a canvas block reads and writes its board (none: it shows its title). */
+export function editorBlocks(
+  schema: AnyExtension[],
+  agent: AgentHook = () => null,
+  canvas: CanvasHost | null = null
+): AnyExtension[] {
+  return [
+    ...withCanvas(withBlockViews(schema, agent), canvas),
+    BlockEditing,
+    BlockSelect,
+    TableShape,
+    TableHandles,
+    Reading,
+  ]
 }

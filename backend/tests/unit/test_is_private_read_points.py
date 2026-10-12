@@ -42,6 +42,9 @@ BASELINE = {
     # 置顶只在频道里有：私聊是两个人的，没有概览，也就没有置顶。
     "app/domain/pin/services.py": 1,
     "app/domain/topic/models.py": 1,
+    # 画布格子关联的任务，在谁都能读的频道里才写给 AI 队友看：`open_rooms` 是
+    # `WHERE is_private IS FALSE` 一类的过滤，和轮次组装不是一回事。
+    "app/domain/topic/reads.py": 1,
     # 8：未读数里私聊默认每条都算（`unread_counts`），和「私聊不进这张列表」一类
     # 过滤同属登记。
     "app/domain/topic/repositories.py": 8,

@@ -80,6 +80,14 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     group: 'run',
   },
   {
+    to: '/admin/machines',
+    name: 'AdminMachines',
+    icon: 'mdi-server',
+    labelKey: 'navigation.admin.machines',
+    badge: false,
+    group: 'run',
+  },
+  {
     to: '/admin/performance',
     name: 'AdminPerformance',
     icon: 'mdi-speedometer',
