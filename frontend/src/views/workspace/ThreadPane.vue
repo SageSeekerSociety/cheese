@@ -9,9 +9,11 @@
 // AI 队友的一条回复上点「查看过程」，这一栏换成那一轮的现场，「返回支线」回来。支线的
 // 对话只是藏起来，连接和滚动位置都还在。
 import type { Block, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { Thread } from '@/types/threads'
 
 import { computed, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -64,8 +66,19 @@ const emit = defineEmits<{
   (e: 'mention-click', handle: string): void
 }>()
 
+const router = useRouter()
 const store = useWorkspaceStore()
 const viewer = computed(() => currentUserName.value ?? myHandle())
+
+// A thread occupies the room's panel, and on phones there is no WorkPanel.
+// Open its library-document cards on the document's own page instead.
+function openResource(resource: string, _turnId?: string, _review?: DocReviewRequest, document?: OpenedDocument) {
+  if (resource !== 'doc' || !document) return
+  void router.push({
+    name: 'project-document',
+    params: { projectId: props.room.project_id, docId: document.id },
+  })
+}
 // 正在看哪一轮的过程；null 是在看支线本身。
 const processTurn = ref<string | null>(null)
 const busy = ref(false)
@@ -199,6 +212,7 @@ function toTask() {
         :members="members"
         :topic-list="topicList"
         @open-file="emit('open-file', $event)"
+        @open-resource="openResource"
         @open-topic="emit('open-topic', $event)"
         @open-card="emit('open-task', $event)"
         @mention-click="emit('mention-click', $event)"
