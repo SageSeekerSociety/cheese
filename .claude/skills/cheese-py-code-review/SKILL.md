@@ -59,11 +59,17 @@ task check
 
 ## Review Checklist
 
-### 1. Conventions (canonical copies live in AGENTS.md — already in context)
+### 1. Conventions (canonical copies live in the rule files — already in context)
 
-Check the diff against every rule in AGENTS.md's **Architecture / Python
-Conventions / API Design / Datetime / Security** sections. This skill does not
-restate them; AGENTS.md is the single source of truth.
+Check the diff against them; this skill does not restate them.
+
+- `.claude/rules/architecture.md` — module boundaries, the checked import graph,
+  the file-size cap.
+- `backend/AGENTS.md` — the import graph, and `## Caps and conventions`.
+- `docs/manual/dev/backend-app.md` — the response envelope, how an error becomes a
+  response, and the write gate.
+- `.claude/scripts/check-repo-rules.sh` — each rule a script enforces, stated next
+  to its enforcement (naive datetimes, raw `HTTPException`).
 
 ### 2. Testing
 

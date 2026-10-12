@@ -1,6 +1,5 @@
-// 题目（板上的赛题）一域的请求 / 响应形状。原先住在 `@/network/api/tasks/types`，
-// 随着该域迁移到 `@/api/taskBoard` 而搬到 `@/types` —— 组件可以引 `@/types`，
-// 不该引 `@/network`。`Task`/`TaskSubmission` 这些实体形状仍在 `@/types/tasks`。
+// 题目（板上的赛题）一域的请求 / 响应形状，供 `@/api/taskBoard` 用。组件可以引
+// `@/types`，不该引 API 层。`Task`/`TaskSubmission` 这些实体形状仍在 `@/types/tasks`。
 import type {
   SpaceTeaching,
   Task,

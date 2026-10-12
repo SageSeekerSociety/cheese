@@ -1,5 +1,4 @@
-// 法律文档接口的形状。原先是 `@/network/api/legal/types`，迁移后集中在这里，
-// 供 Consent 那一串消费者与 `@/api/legal` 共用。
+// 法律文档接口的形状，供 Consent 那一串消费者与 `@/api/legal` 共用。
 
 export type LegalDocumentKey = 'terms' | 'privacy'
 

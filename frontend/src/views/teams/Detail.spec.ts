@@ -128,7 +128,7 @@ describe('a team page', () => {
   })
 
   it('403 says no access, with no retry', async () => {
-    detailByHandle.mockRejectedValue({ code: 403 })
+    detailByHandle.mockRejectedValue({ status: 403 })
     mount()
 
     await screen.findByText('你没有权限查看')

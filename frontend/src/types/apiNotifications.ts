@@ -1,4 +1,4 @@
-// 通知的形状。原先是 `@/network/api/notifications/types`，迁移后集中在这里，
+// 通知的形状，集中在这里，
 // 组件（不碰 API 层）也能按名取类型。
 import type { EncodedCursorPage } from '@/types'
 

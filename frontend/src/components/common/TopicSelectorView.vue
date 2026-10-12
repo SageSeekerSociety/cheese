@@ -43,7 +43,7 @@
 // 两个回调 prop 传进来，这个组件在原时机调用，行为不变。
 //
 // 分家的理由和 components/common/UserRef.vue 一样：原先那只 TopicSelector.vue 自己
-// import 了 @/network/api/tags，于是每一个装着它的场景都被拖进「必须连 API 层」，
+// import 了 @/api/tags，于是每一个装着它的场景都被拖进「必须连 API 层」，
 // 架构指标掉到 C。现在原件已删，只留这只「只认 props 的展示件」：场景里能单独渲染它，
 // 使用方（Ask、ManageTopics）由各自的容器通过 `searchTopics` / `createTopic` 接上取数。
 import type { Topic } from '@/types'

@@ -16,7 +16,6 @@ import { axiosErrorMessage } from '@/api/axiosHttp'
 import { ApiError } from '@/api/http'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { currentUserId, currentUserName } from '@/services/account'
 import { attemptMessage } from '@/views/account/attemptWait'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
@@ -122,7 +121,7 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
         passkeyWrongHostMessage(error, passkeyRpId) ??
         ((error as { name?: string } | null)?.name === 'NotAllowedError'
           ? t('account.sudo.passkeyCanceled')
-          : axiosErrorMessage(error, requestErrorMessage(error, t('account.sudo.failed'))))
+          : axiosErrorMessage(error, t('account.sudo.failed')))
       code.value = ''
     } finally {
       loading.value = false
