@@ -22,7 +22,7 @@ import { isAgentHandle } from '@/lib/authorship'
 
 const props = withDefaults(
   defineProps<{
-    /** 认人的唯一依据：头像底色的种子、`handleLine` 行的内容。 */
+    /** 认人的唯一依据：头像底色的种子。 */
     handle?: string | null
     /** 显示名。不给就退回 handle。 */
     name?: string | null
@@ -35,6 +35,12 @@ const props = withDefaults(
     mention?: boolean
     /** 名字下另起一行画 `@handle`。 */
     handleLine?: boolean
+    /**
+     * `handleLine` 那一行显示的 @handle，和认人的 `handle` 分开：队友的座位 handle
+     * （`cheese-<hex>`）是内部编号，屏幕上写它自己的 handle（`cheese`，见
+     * `lib/agentNames` 的 `shownHandle`）。不给就写 `handle` 本身。
+     */
+    subHandle?: string | null
     /** 头像对读屏的名字；留空即装饰（旁边本就有可读的名字）。 */
     alt?: string
   }>(),
@@ -46,6 +52,7 @@ const props = withDefaults(
     size: 24,
     mention: false,
     handleLine: false,
+    subHandle: null,
     alt: '',
   }
 )
@@ -69,7 +76,7 @@ const isAgent = computed(() => props.agent ?? isAgentHandle(props.handle || ''))
     />
     <span class="identity-view__text">
       <span class="identity-view__name"><template v-if="mention">@</template>{{ label }}</span>
-      <span v-if="handleLine && handle" class="identity-view__handle">@{{ handle }}</span>
+      <span v-if="handleLine && (subHandle || handle)" class="identity-view__handle">@{{ subHandle || handle }}</span>
     </span>
   </span>
 </template>

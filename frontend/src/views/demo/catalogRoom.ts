@@ -19,6 +19,7 @@
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { TaskLine } from '@/lib/channelTasks'
+import type { MemberCandidate } from '@/lib/memberPicker'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
@@ -29,6 +30,7 @@ import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
+import MemberPicker from '@/components/room/MemberPicker.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
@@ -327,6 +329,16 @@ const CHIP_FAILED: PendingAttachment = {
 }
 const CHIP_IMAGE: PendingAttachment = { path: 'uploads/demo/板书.png', mime: 'image/png', name: '板书.png' }
 
+// ---- 挑人（MemberPicker）------------------------------------------------------
+
+/** 「添加」那张单子上的候选：一个有头像的人、一个被邀请进来的外部成员（没头像、
+ *  挂「外部」），和一位 AI 队友（画超椭圆、名字下面写它自己的 handle）。 */
+const PICKER_CANDIDATES: MemberCandidate[] = [
+  { handle: 'alice', name: 'Alice', avatarId: 12, agent: false },
+  { handle: 'bobby', name: '波比', avatarId: null, agent: false, external: true },
+  { handle: 'cheese-t1', name: '芝士', avatarId: null, agent: true, sub: 'cheese' },
+]
+
 export const ROOM_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-mention-menu',
@@ -571,6 +583,37 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '不在导览里，只有一颗「知道了」。',
         props: { target: new DOMRect(16, 16, 160, 32), title: '任务', text: '芝士把你交给它的事做成了任务。' },
         expect: '芝士把你交给它的事做成了任务。',
+      },
+    ],
+  },
+  {
+    id: 'room-member-picker',
+    title: 'MemberPicker',
+    about:
+      '往频道里加人那一步的「挑人」：可搜索、可多选，勾好的人挂在上面当可移除的头像 chip。纯 props —— 候选名单、勾了谁、忙不忙都由调用方给，这一件一个请求都不发。',
+    file: 'src/components/room/MemberPicker.vue',
+    component: MemberPicker,
+    // 搜索框是 `v-text-field`、勾选是 `v-icon`，都走 Vuetify；提示语、`×` 的读屏
+    // 名字走全局的 `t()`。
+    needs: UI_T,
+    states: [
+      {
+        name: '一个人都还没勾',
+        note: '候选一行行和名册里那一行同一个样子：头像、名字、@handle、标。勾之前一个请求都不发。',
+        props: { options: PICKER_CANDIDATES, modelValue: [] },
+        expectSelector: '.member-picker__row',
+      },
+      {
+        name: '勾了两个人',
+        note: '勾好的挂在上面当 chip，每一颗右边一个「×」把人拿掉；同时选中的那几行铺一条中性的底，不拿主题色去装饰选项。',
+        props: { options: PICKER_CANDIDATES, modelValue: ['alice', 'cheese-t1'] },
+        expectSelector: '.member-picker__chip',
+      },
+      {
+        name: '忙着：整个不可改',
+        note: '正在发请求时整件停用：搜索框、候选行都点不动，免得在路上去改选中。',
+        props: { options: PICKER_CANDIDATES, modelValue: ['alice'], disabled: true },
+        expectSelector: '.member-picker',
       },
     ],
   },

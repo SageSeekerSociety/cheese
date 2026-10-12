@@ -16,18 +16,33 @@ const ROOM = [
   { member_handle: 'carol', name: 'Carol', role: 'member', agent: false, avatar_id: 77 },
   { member_handle: 'cheese-t1', name: '芝士', role: 'member', agent: true, avatar_id: null },
 ]
-const server = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }))
+const server = vi.hoisted(() => ({
+  rows: [] as Record<string, unknown>[],
+  failFor: new Set<string>(),
+  // 每一次请人的尝试，记成 `topicId:handle` —— 用来断言「请不成的才重试」「切了频道
+  // 之后整批仍进原来的频道」。
+  attempts: [] as string[],
+  // 把请人那个来回挂住：切频道要卡在它中间。
+  hold: null as null | { promise: Promise<void>; release: () => void },
+}))
 
 vi.mock('../api/http', async () => {
   const actual = await vi.importActual<typeof import('../api/http')>('../api/http')
   return {
     ...actual,
     request: (path: string, init?: RequestInit) => {
-      if (path === '/topics/t1/members' && init?.method === 'POST') {
+      const invite = /^\/topics\/([^/]+)\/members$/.exec(path)
+      if (invite && init?.method === 'POST') {
+        const topicId = invite[1]
         const { handle } = JSON.parse(String(init.body)) as { handle: string }
-        const row = { member_handle: handle, name: handle, role: 'member', agent: false, avatar_id: null }
-        server.rows.push(row)
-        return Promise.resolve(row)
+        server.attempts.push(`${topicId}:${handle}`)
+        if (server.failFor.has(handle)) return Promise.reject(new Error('邀请失败'))
+        const commit = () => {
+          const row = { member_handle: handle, name: handle, role: 'member', agent: false, avatar_id: null }
+          server.rows.push(row)
+          return row
+        }
+        return server.hold ? server.hold.promise.then(commit) : Promise.resolve(commit())
       }
       return actual.request(path, init)
     },
@@ -108,6 +123,17 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
+// 「挑人」那张单子上的每一行（头像 + 名字 + @handle + 标）。名册还没读到（列不出
+// 候选）时是空的 —— 那是要的：不知道房里已经有谁就不该让人挑。
+function pickerRows(): string[] {
+  return Array.from(document.querySelectorAll('.member-picker__row')).map((n) => n.textContent ?? '')
+}
+function pickerRowOf(text: string): HTMLElement {
+  return Array.from(document.querySelectorAll<HTMLElement>('.member-picker__row')).find((n) =>
+    n.textContent?.includes(text)
+  )!
+}
+
 async function openRoster(extra: Record<string, unknown> = {}) {
   const utils = render(Roster, {
     props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice', canManage: true, ...extra },
@@ -148,6 +174,9 @@ function session(id: string, seat: string, overrides: Partial<SessionEnvironment
 beforeEach(() => {
   setLocale('zh-CN')
   server.rows = ROOM.map((row) => ({ ...row }))
+  server.failFor = new Set()
+  server.attempts = []
+  server.hold = null
   document.body.innerHTML = ''
   machines.get.mockReset().mockResolvedValue(roomEnvironments())
   machines.setSession.mockReset().mockResolvedValue({})
@@ -169,12 +198,12 @@ describe('成员名册', () => {
   it('不管这个频道的人只能看，不能加人也不能移人', async () => {
     await openRoster({ canManage: false })
     expect(document.querySelector('.roster__remove')).toBeNull()
-    expect(document.querySelector('.roster__select')).toBeNull()
+    expect(document.querySelector('.member-picker')).toBeNull()
   })
 
   it('私密频道里的人不管频道也能拉人，但移不了人', async () => {
     await openRoster({ canManage: false, canInvite: true })
-    expect(document.querySelector('.roster__select')).not.toBeNull()
+    expect(document.querySelector('.member-picker')).not.toBeNull()
     expect(document.querySelector('.roster__remove')).toBeNull()
   })
 
@@ -185,9 +214,7 @@ describe('成员名册', () => {
     const agent = rows.find((r) => r.textContent?.includes('cheese-t1'))!
     expect(bobRow.querySelector('.roster__remove')).toBeNull()
     expect(agent.querySelector('.roster__remove')).not.toBeNull()
-    await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
-    await settle()
-    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
+    const items = pickerRows()
     expect(items.length).toBeGreaterThan(0)
     expect(items.every((t) => t.includes('AI 队友'))).toBe(true)
   })
@@ -206,9 +233,7 @@ describe('成员名册', () => {
 
   it('「添加」列表里有还没进房间的队友，和人排在同一张单子上', async () => {
     await openRoster()
-    await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
-    await settle()
-    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
+    const items = pickerRows()
     expect(items.some((t) => t.includes('评审') && t.includes('AI 队友'))).toBe(true)
     // 已经坐在房间里的那个不再列出来；停用的也不列。
     expect(items.some((t) => t.includes('芝士'))).toBe(false)
@@ -230,6 +255,102 @@ describe('成员名册', () => {
       Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
     expect(rowOf('alice').textContent).toContain('管理者')
     expect(rowOf('bob').textContent).not.toContain('管理者')
+  })
+
+  it('往外交出「管理者」时给的是一整个身份，不是一个名字', async () => {
+    // 频道详情要画头像：名册出口必须带 handle/avatarId/agent，否则接的人只能写个名字。
+    const utils = await openRoster()
+    const calls = utils.emitted('manager') as unknown[][]
+    const last = calls.at(-1)![0] as Record<string, unknown>
+    expect(last).toEqual({ handle: 'alice', name: 'Alice', avatarId: null, agent: false })
+  })
+
+  it('批量请人：请不成的留在选中里、请成的退出去，再按一次只重试没成的', async () => {
+    // 两个都还不在房间里的候选：Dave 会成，评审（cheese-a2）会失败。
+    await openRoster()
+    server.failFor.add('cheese-a2')
+    await fireEvent.click(pickerRowOf('Dave'))
+    await fireEvent.click(pickerRowOf('评审'))
+    await settle()
+    // 勾两个人，先看清 chip 上有这两位，还没发请求。
+    expect(Array.from(document.querySelectorAll('.member-picker__chip')).map((n) => n.textContent)).toEqual([
+      expect.stringContaining('Dave'),
+      expect.stringContaining('评审'),
+    ])
+
+    await fireEvent.click(
+      Array.from(document.querySelectorAll('.roster__add button')).find((b) => b.textContent?.trim() === '加入')!
+    )
+    await waitFor(() =>
+      expect(Array.from(document.querySelectorAll('.roster__item')).some((r) => r.textContent?.includes('dave'))).toBe(
+        true
+      )
+    )
+    // 成的（Dave）从选中里退出去；没成的（评审）留在原地等再按一次。
+    expect(Array.from(document.querySelectorAll('.member-picker__chip')).map((n) => n.textContent)).toEqual([
+      expect.stringContaining('评审'),
+    ])
+    expect(document.querySelector('.roster__error')?.textContent).toContain('邀请失败')
+    expect(server.attempts).toEqual(['t1:dave', 't1:cheese-a2'])
+
+    // 再按一次：只把评审再请一遍，不再动已经坐在里面的 Dave。
+    server.failFor.delete('cheese-a2')
+    await fireEvent.click(
+      Array.from(document.querySelectorAll('.roster__add button')).find((b) => b.textContent?.trim() === '加入')!
+    )
+    await waitFor(() =>
+      expect(
+        Array.from(document.querySelectorAll('.roster__item')).some((r) => r.textContent?.includes('cheese-a2'))
+      ).toBe(true)
+    )
+    expect(document.querySelectorAll('.member-picker__chip')).toHaveLength(0)
+    // Dave 一共只请过一次：成的不重请。
+    expect(server.attempts.filter((a) => a === 't1:dave')).toHaveLength(1)
+    expect(server.attempts.filter((a) => a === 't1:cheese-a2')).toHaveLength(2)
+  })
+
+  it('名册第一次就没读回来：不知道房里已经有谁，先不许挑人', async () => {
+    vi.mocked(listTopicMembers).mockImplementationOnce(() => Promise.reject(new Error('读不到名册')))
+    await openRoster()
+    // 名册没到手（读失败），loading 已经变成 false，但挑人这一件整个停用。
+    const search = document.querySelector<HTMLInputElement>('.member-picker__search input')
+    expect(search?.disabled).toBe(true)
+    const add = Array.from(document.querySelectorAll<HTMLButtonElement>('.roster__add button')).find(
+      (b) => b.textContent?.trim() === '加入'
+    )!
+    expect(add.disabled).toBe(true)
+    // 点也不该发出任何请求。
+    await fireEvent.click(pickerRowOf('Dave'))
+    await settle()
+    expect(server.attempts).toEqual([])
+  })
+
+  it('请人还没回来就切了频道：整批只进原来的频道，新频道的选择不被盖上', async () => {
+    const utils = await openRoster()
+    let release!: () => void
+    server.hold = { promise: new Promise<void>((r) => (release = r)), release: () => release() }
+    await fireEvent.click(pickerRowOf('Dave'))
+    await fireEvent.click(pickerRowOf('评审'))
+    await settle()
+    await fireEvent.click(
+      Array.from(document.querySelectorAll('.roster__add button')).find((b) => b.textContent?.trim() === '加入')!
+    )
+    await settle()
+    // 请人卡在半路，切去另一个频道。
+    await utils.rerender({
+      props: { topicId: 't2', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice', canManage: true },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await settle()
+    server.hold.release()
+    await settle()
+    // 两笔都进了 t1，一笔都没落到切过去的 t2。
+    expect(server.attempts).toEqual(['t1:dave', 't1:cheese-a2'])
+    expect(server.attempts.some((a) => a.startsWith('t2:'))).toBe(false)
+    // 切了频道，旧频道挑的人不留到新频道上。
+    expect(document.querySelectorAll('.member-picker__chip')).toHaveLength(0)
+    // 旧频道那一下的报错也不该挂到新频道上（那批人是请进了 t1 的）。
+    expect(document.querySelector('.roster__error')).toBeNull()
   })
 })
 
@@ -282,9 +403,7 @@ describe('外部成员在房间里', () => {
 
   it('「添加」只从项目成员里挑，外部成员在单子上也标着「外部」', async () => {
     await openRoster()
-    await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
-    await settle()
-    const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
+    const items = pickerRows()
     const dave = items.find((t) => t.includes('Dave'))!
     expect(dave).toContain('外部')
     // 单子上只有项目名册里还没进房间的人和队友，没有别的来源。
@@ -385,14 +504,13 @@ it('回到看过的频道：名册先画上次那份，重取的时候不换成�
 
 it('加一位进来，名册当场多他一行，不用重开房间', async () => {
   await openRoster()
-  expect(document.body.textContent).not.toContain('dave')
+  // 名册上还没有他（他现在只出现在「添加」那张单子里）。
+  const onRoster = () =>
+    Array.from(document.querySelectorAll('.roster__item')).some((r) => r.textContent?.includes('dave'))
+  expect(onRoster()).toBe(false)
 
-  await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
-  await settle()
-  const dave = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).find((n) =>
-    n.textContent?.includes('Dave')
-  ) as HTMLElement
-  await fireEvent.click(dave)
+  // 勾一个：勾了不该发请求，只是选中。
+  await fireEvent.click(pickerRowOf('Dave'))
   await settle()
   const add = Array.from(document.querySelectorAll('.roster__add button')).find(
     (b) => b.textContent?.trim() === '加入'
@@ -424,12 +542,11 @@ describe('队友名字下面那串 handle', () => {
     expect(handles).toContain('cheese')
     expect(handles).not.toContain('cheese-68ec1f2dbcad')
 
-    await fireEvent.mouseDown(document.querySelector('.roster__select .v-field')!)
-    await settle()
-    const options = Array.from(document.querySelectorAll('.v-overlay .roster__handle')).map((el) =>
+    // 「添加」那张单子上，名字下面那行 @handle 用的是 IdentityView 的 handleLine。
+    const options = Array.from(document.querySelectorAll('.member-picker__row .identity-view__handle')).map((el) =>
       el.textContent?.trim()
     )
-    expect(options).toContain('reviewer')
-    expect(options).not.toContain('cheese-a2')
+    expect(options).toContain('@reviewer')
+    expect(options).not.toContain('@cheese-a2')
   })
 })

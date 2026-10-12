@@ -14,6 +14,7 @@
 // nobody watches them. Now they load once, when the popover is opened.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
+import type { PersonIdentity } from '@/lib/personIdentity'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -146,7 +147,7 @@ const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf
 
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
-const managerName = ref<string | null>(null)
+const manager = ref<PersonIdentity | null>(null)
 // 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
   computed(() => ({ ...projectQuery(props.topic.project_id), enabled: detailsOpen.value })),
@@ -213,7 +214,7 @@ useCommands(roomCommands)
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
-        @manager="managerName = $event"
+        @manager="manager = $event"
       />
 
       <ChannelDetailsDialog
@@ -222,7 +223,7 @@ useCommands(roomCommands)
         :topic="topic"
         :can-manage="topic.can_manage === true"
         :manages-project="managesProject"
-        :manager-name="managerName"
+        :manager="manager"
         :level="store.levelOf(topic.id)"
         :muted-until="store.mutedUntil(topic.id)"
         @rename="(next) => emit('rename', next)"

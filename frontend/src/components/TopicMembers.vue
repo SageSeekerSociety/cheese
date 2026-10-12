@@ -6,6 +6,8 @@
 // 每个 AI 队友的会话有自己的执行环境（#2320），写在它那一行下面，各改各的；名册
 // 底下一行是新会话默认用的环境，改它不搬已经开工的会话。
 import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
+import type { MemberCandidate } from '../lib/memberPicker'
+import type { PersonIdentity } from '../lib/personIdentity'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '../types/compute'
 import type { MenuAction } from './common/menuAction'
 
@@ -25,6 +27,7 @@ import AdaptiveMenu from './common/AdaptiveMenu.vue'
 import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import UserAvatar from './common/UserAvatar.vue'
+import MemberPicker from './room/MemberPicker.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
 import EnvironmentMenu from './EnvironmentMenu.vue'
 
@@ -47,8 +50,10 @@ const props = defineProps<{
   general?: boolean
 }>()
 const emit = defineEmits<{
-  // 管这个频道的人叫什么：频道详情的「关于」里写它。名册是唯一记着它的地方。
-  (e: 'manager', name: string | null): void
+  // 管这个频道的人是谁：频道详情的「关于」里写它。名册是唯一记着它的地方。传一整
+  // 个身份（handle / 名字 / 头像 / 是不是队友）而不是一个名字：只给名字，接的人就
+  // 画不出头像，也分不出队友和人（见 lib/personIdentity）。
+  (e: 'manager', manager: PersonIdentity | null): void
 }>()
 
 // 切回来过的房间先画上次那份名册，背后再重取（`query/room`）。骨架只在手上什么
@@ -59,10 +64,15 @@ const roster = useQuery(
 )
 const members = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
 const loading = computed(() => roster.isPending.value && !roster.isError.value)
+// 名册到手过没有（含缓存里那一份）。挑人要看它、不看 loading：首次读失败时
+// loading 是 false，可我们并不知道房里已经有谁 —— 照着空名单让人挑，就会把已经
+// 在里面的人再请一遍。读过一次（有缓存）就照常让挑，不因后台重取卡住。
+const rosterLoaded = computed(() => roster.data.value !== undefined)
 const busy = ref(false)
 const error = ref('')
 const open = ref(false)
-const addHandle = ref<string | null>(null)
+// 勾了谁（handle）。点「加入」之前一个请求都不发。
+const addHandles = ref<string[]>([])
 
 const loadError = computed(() =>
   roster.error.value ? roster.error.value.message || t('work.room.roster.loadFailed') : ''
@@ -74,7 +84,17 @@ watch(
   members,
   (rows) => {
     const owner = rows.find((m) => m.role === 'owner' && !m.agent)
-    emit('manager', owner ? memberName(owner) || owner.member_handle : null)
+    emit(
+      'manager',
+      owner
+        ? {
+            handle: owner.member_handle,
+            name: memberName(owner) || null,
+            avatarId: owner.avatar_id ?? null,
+            agent: false,
+          }
+        : null
+    )
   },
   { immediate: true }
 )
@@ -160,7 +180,7 @@ const externals = computed(() => externalHandles(props.projectMembers))
 // 成员里挑，团队以外的人得先被邀请成外部成员。请一个 AI 队友进房间和请一个人
 // 是同一件事（往名册上加一行），所以它们本来就在同一张项目名册上，这里不再把两
 // 份拼起来。已停用的队友不列：停用就是为了挡住新的邀请。
-const addable = computed(() => {
+const candidates = computed<MemberCandidate[]>(() => {
   const inRoom = new Set(members.value.map((m) => m.member_handle))
   return (
     props.projectMembers
@@ -169,14 +189,22 @@ const addable = computed(() => {
       // 「综合」里本来就有项目里的每个人，只剩 AI 队友可请。
       .filter((m) => !props.general || m.agent)
       .map((m) => ({
-        title: memberName(m) || m.user_handle,
-        value: m.user_handle,
-        handle: shownHandle(m.user_handle, m),
+        handle: m.user_handle,
+        name: memberName(m) || m.user_handle,
+        avatarId: m.avatar_id ?? null,
         agent: !!m.agent,
         external: externals.value.has(m.user_handle),
-        face: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : '',
+        sub: shownHandle(m.user_handle, m),
       }))
   )
+})
+
+// 名册一变，选中里的人可能已经不在候选里了（别人先把他加进来了、被停用了）——那是
+// 看不见的旧选项，不能拿它去请。真正请谁以此刻的候选为准，勾了但已经请不到的当场剔掉。
+// 只是暂时缩了候选（重读名册）不算：那时 candidates 里还有他，选中不丢。
+const pickable = computed(() => {
+  const available = new Set(candidates.value.map((c) => c.handle))
+  return addHandles.value.filter((h) => available.has(h))
 })
 
 async function guard<T>(fn: () => Promise<T>): Promise<void> {
@@ -193,12 +221,53 @@ async function guard<T>(fn: () => Promise<T>): Promise<void> {
   }
 }
 
+// 一个一个地请：接口一次只收一个人。**每个各写各的**，成与不成互不牵连 —— 前一个
+// 失败不停下后面的。发完再重取一次名册，把没成的那几个退回选中里（成的不退：再按一次
+// 会重复请）。失败只留最后一次的报错话，逐条列会挤满这一格。
+//
+// 这一次请进哪个频道，开工前先记下：循环里再不读 props.topicId。请人这个来回可能
+// 跨过用户切频道那一下，若中途改读 props，后半批人就会落到**另一个**频道里去。
 async function onAdd() {
-  const handle = addHandle.value
-  if (!handle) return
-  await guard(() => addTopicMember(props.topicId, handle))
-  addHandle.value = null
+  const wanted = pickable.value.slice()
+  if (!wanted.length || busy.value) return
+  const topicId = props.topicId
+  busy.value = true
+  error.value = ''
+  const failed: string[] = []
+  for (const handle of wanted) {
+    try {
+      await addTopicMember(topicId, handle)
+    } catch (e) {
+      failed.push(handle)
+      error.value = e instanceof Error ? e.message : t('work.room.roster.failed')
+    }
+  }
+  try {
+    await roster.refetch()
+  } catch {
+    // 名册那一下没刷回来，不是「没请进来」：成过的不该被退回选中、再请一遍。
+    // 名册自己读不回来的错，那一格（shownError）会说。
+  }
+  // 这一段跑完时可能已经切了频道：切了就别把旧频道的结果盖到新频道的选择/报错上。
+  if (props.topicId === topicId) {
+    // 成功的从选中里拿掉，没成的留在原地等着再按一次 —— 不把成功的再请一遍。
+    addHandles.value = failed
+  } else {
+    addHandles.value = []
+    error.value = ''
+  }
+  busy.value = false
 }
+
+// 换频道就把挑了一半的人清掉：那是上一个频道的名单。清在这里，onAdd 里再兜一次
+// 「跑完发现换了频道」，两头都不会把旧频道的选择留在新频道上。
+watch(
+  () => props.topicId,
+  () => {
+    addHandles.value = []
+    error.value = ''
+  }
+)
 
 async function onRemove(handle: string) {
   await guard(() => removeTopicMember(props.topicId, handle))
@@ -353,48 +422,23 @@ async function onRemove(handle: string) {
         <button type="button" class="roster__retry" @click="loadMachines">{{ t('global.loadError.retry') }}</button>
       </div>
 
-      <!-- 频道里的人从项目成员里加人；「综合」里只剩 AI 队友可加。 -->
+      <!-- Channel members are added from project members; in General only AI
+           teammates. Nobody is pickable until the roster has loaded — without it
+           we do not know who is already in the room, so an unread roster means no
+           inviting (see rosterLoaded). -->
       <div v-if="canManage || canInvite" class="roster__add">
-        <v-select
-          v-model="addHandle"
-          autocomplete="off"
-          :items="addable"
-          density="compact"
-          variant="outlined"
-          hide-details
-          :placeholder="t('work.room.roster.addPlaceholder')"
-          :no-data-text="t('work.room.roster.allIn')"
-          class="roster__select"
-        >
-          <!-- 每一行和上面名册里那一行同一个样子：头像、名字、@handle、标。只有一串
-               名字的话，好几个「芝士X」分不出谁是谁。 -->
-          <template #item="{ props: ip, item }">
-            <v-list-item v-bind="ip" :title="undefined" class="roster__option">
-              <template #prepend>
-                <CheeseAvatar v-if="item.raw.agent" :size="26" :name="item.raw.title" :handle="item.raw.value" />
-                <UserAvatar
-                  v-else
-                  class="roster__avatar"
-                  :size="26"
-                  :name="item.raw.title"
-                  :seed="item.raw.value"
-                  :avatar="item.raw.face"
-                />
-              </template>
-              <span class="roster__who">
-                <span class="roster__name">{{ item.raw.title }}</span>
-                <span class="roster__handle">{{ item.raw.handle }}</span>
-              </span>
-              <template #append>
-                <span v-if="item.raw.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
-                <ExternalTag v-else-if="item.raw.external" />
-              </template>
-            </v-list-item>
-          </template>
-        </v-select>
-        <BaseButton kind="secondary" size="sm" :disabled="!addHandle || busy" :loading="busy" @click="onAdd">
-          {{ t('work.room.roster.add') }}
-        </BaseButton>
+        <MemberPicker v-model="addHandles" :options="candidates" :disabled="busy || !rosterLoaded" />
+        <div class="roster__add-actions">
+          <BaseButton
+            kind="secondary"
+            size="sm"
+            :disabled="!pickable.length || busy || !rosterLoaded"
+            :loading="busy"
+            @click="onAdd"
+          >
+            {{ t('work.room.roster.add') }}
+          </BaseButton>
+        </div>
       </div>
       <div v-else class="roster__hint">{{ t('work.room.roster.readOnly') }}</div>
     </div>
@@ -579,13 +623,6 @@ async function onRemove(handle: string) {
   flex: none;
   overflow: hidden;
 }
-/* 「添加成员」下拉里的一行：头像和名字之间留出和名册一样的间距。 */
-.roster__option :deep(.v-list-item__prepend) {
-  margin-inline-end: 10px;
-}
-.roster__option :deep(.v-list-item__spacer) {
-  display: none;
-}
 .roster__who {
   display: flex;
   flex-direction: column;
@@ -651,12 +688,13 @@ async function onRemove(handle: string) {
 }
 .roster__add {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
   padding: 10px 14px;
   border-top: 1px solid var(--line-2);
 }
-.roster__select {
-  flex: 1 1 auto;
+.roster__add-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 </style>
