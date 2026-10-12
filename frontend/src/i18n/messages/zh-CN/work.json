@@ -692,6 +692,7 @@
       "source": {
         "baseline": "最初的样子",
         "upload": "上传",
+        "template": "从模板新建",
         "ai": "AI 队友修改",
         "editor": "在线编辑保存",
         "restore": "恢复",

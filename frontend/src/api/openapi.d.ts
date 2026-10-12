@@ -7372,11 +7372,14 @@ export interface paths {
         };
         /**
          * List Files
-         * @description 这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。
+         * @description 这个房间自己的文件：路径、大小、最后一次改动、是谁写的，最近改的在最前。
          *
          *     这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫
-         *     什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，
-         *     这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *     什么名字。定时任务交回的结果、芝士交付的文档、有人放进来的文件都落在同一个目录
+         *     下，这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *
+         *     作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存
+         *     补齐，没保存过的那几份照列。
          *
          *     `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
          */
@@ -16125,7 +16128,12 @@ export interface components {
         };
         /**
          * RoomFileOut
-         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间。
+         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间，以及最后是谁从哪条路
+         *     放下的。
+         *
+         *     作者是平台按写下来的那次动作记的（谁按的保存、谁交的），不是谁自己填的。三个
+         *     字段都可能空：目录里的一份文件可能从没有过保存记录（清单列的是目录本身，字节
+         *     可以由别的东西直接放进去），那时界面照列，只是说不出是谁写的。
          */
         RoomFileOut: {
             /** Path */
@@ -16134,6 +16142,12 @@ export interface components {
             bytes: number;
             /** Modified At */
             modified_at: string;
+            /** Author */
+            author: string | null;
+            /** Author Kind */
+            author_kind: string | null;
+            /** Source */
+            source: string | null;
         };
         /** RoutineIn */
         RoutineIn: {
