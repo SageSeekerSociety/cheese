@@ -164,7 +164,8 @@ export const DASHBOARD_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-dashboard-usage-who',
     title: 'AdminDashboardUsageWho',
-    about: '用量那一屏的下半：谁触发了多少、各项目用了哪些模型、最近的调用，每张都带缓存命中率。',
+    about:
+      '用量那一屏的下半：谁触发了多少、各项目用了哪些模型、最近的用量记录（网关行标「汇总」），每张都带缓存命中率。',
     file: 'src/components/admin/dashboard/AdminDashboardUsageWho.vue',
     component: AdminDashboardUsageWho,
     needs: UI,

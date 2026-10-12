@@ -136,12 +136,11 @@ describe('AdminLineChart', () => {
     expect(tickCount(container, '0')).toBe(1)
   })
 
-  it('x 轴抽稀：7 点全标，30 点标 7 个（末点直标出现时让位）', () => {
-    // 末点直标落在最后一天的刻度位上：那个刻度让位（同一个位置两个数，留结论）。
-    // 所以 7 天窗口标的是前 6 个，d7 由直标接管；30 天同理 —— x29 让位，剩 6 个刻度。
+  it('x 轴抽稀：7 点全标，30 点标 7 个，最后一天总在轴上（有末点直标也一样）', () => {
+    // 末点直标画在最后一个点上方，它不替最后一天的日期：点画到了哪一天，轴上就要读得出
+    // 那一天 —— 读的人问的正是「今天 / 最近这个小时是多少」。
     const { container } = mountChart(SEVEN)
-    for (const label of SEVEN.xLabels.slice(0, -1)) expect(tickCount(container, label)).toBe(1)
-    expect(tickCount(container, 'd7')).toBe(0)
+    for (const label of SEVEN.xLabels) expect(tickCount(container, label)).toBe(1)
     // 直标是主系列的最后一天值（fmtNum 全值），不开 tooltip 也有结论。
     const endLabel = container.querySelector('.alc__endlabel')
     expect(endLabel).toBeTruthy()
@@ -152,16 +151,53 @@ describe('AdminLineChart', () => {
       series: [{ name: '新增', values: Array.from({ length: 30 }, (_, i) => i), style: 'solid' as const }],
     }
     const again = mountChart(thirty)
-    // stride = ceil(30/6) = 5：0/5/10/15/20/25 六个 + 最后一天（x29）共 7 个刻度，
-    // 其中 x29 让位给直标 —— 轴上剩 6 个，直标是「29」。
+    // stride = ceil(30/6) = 5：0/5/10/15/20/25 六个 + 最后一天（x29）共 7 个刻度。
     const shown = thirty.xLabels.filter((label) => tickCount(again.container, label) > 0)
-    expect(shown).toEqual(['x0', 'x5', 'x10', 'x15', 'x20', 'x25'])
+    expect(shown).toEqual(['x0', 'x5', 'x10', 'x15', 'x20', 'x25', 'x29'])
     expect(again.container.querySelector('.alc__endlabel')!.textContent?.trim()).toBe('29')
+  })
+
+  it('每小时那张图：最后一个小时的标签在轴上，hover 也够得到它', async () => {
+    // 7 天窗口的每小时序列 ~160 个点，标签是「10-12 17:00」这种长串。线画到了
+    // 10-12 17:00，轴字曾经停在 10-11 18:00。
+    const start = Date.UTC(2026, 9, 5, 16)
+    const hours = Array.from({ length: 162 }, (_, i) => {
+      const d = new Date(start + i * 3600_000)
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0')
+      const dd = String(d.getUTCDate()).padStart(2, '0')
+      return `${mm}-${dd} ${String(d.getUTCHours()).padStart(2, '0')}:00`
+    })
+    const last = hours[hours.length - 1]!
+    const { container } = mountChart({
+      xLabels: hours,
+      series: [{ name: '用量', values: hours.map((_, i) => (i * 37) % 101), style: 'solid' }],
+    })
+    expect(tickCount(container, last)).toBe(1)
+
+    // 指针移到画布最右缘，读数是最后一个小时。
+    await fireEvent.mouseMove(container.querySelector('.alc__hit')!, { clientX: 627, clientY: 40 })
+    expect(container.querySelector('.alc__tooltip')!.textContent).toContain(last)
+
+    // 手机宽度上两端都在，且轴上的字两两不重叠（12px 轴字一个字符约 7px 宽，第一个
+    // 字从它的 x 往右写、最后一个往左写、其余以 x 居中）。
+    FakeResizeObserver.instances[0]!.trigger(330)
+    await nextTick()
+    const ticks = Array.from(container.querySelectorAll('.alc__plot text.alc__ink'))
+      .filter((el) => hours.includes(el.textContent!.trim()))
+      .map((el) => {
+        const at = Number(el.getAttribute('x'))
+        const w = 7 * el.textContent!.trim().length
+        const anchor = el.getAttribute('text-anchor')
+        const left = anchor === 'start' ? at : anchor === 'end' ? at - w : at - w / 2
+        return { label: el.textContent!.trim(), left, right: left + w }
+      })
+    expect(ticks[0]!.label).toBe(hours[0])
+    expect(ticks[ticks.length - 1]!.label).toBe(last)
+    for (let k = 1; k < ticks.length; k++) expect(ticks[k]!.left).toBeGreaterThanOrEqual(ticks[k - 1]!.right)
   })
 
   it('窄画布上相邻的日期字不叠在一起，两端仍在', async () => {
     // 390px 宽的统计页：7 天窗口跨进两位数日期，「10/10」和「10/11」曾经画在同一处。
-    // 主系列恒值，没有末点直标，最后一天的刻度自己出现。
     const week = {
       xLabels: ['10/5', '10/6', '10/7', '10/8', '10/9', '10/10', '10/11'],
       series: [{ name: '用量', values: [3, 3, 3, 3, 3, 3, 3], style: 'solid' as const }],
@@ -185,7 +221,6 @@ describe('AdminLineChart', () => {
       series: [{ name: '新增', values: [0, 0, 0, 0, 0, 0, 0], style: 'solid' }],
     })
     expect(container.querySelector('.alc__endlabel')).toBeNull()
-    // 直标不出现时，最后一天的刻度照常 —— 7 天全标。
     for (const label of SEVEN.xLabels) expect(tickCount(container, label)).toBe(1)
   })
 

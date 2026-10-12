@@ -419,6 +419,25 @@ describe('统计页', () => {
     expect(container.querySelectorAll('.ad__perf-toggle[disabled]').length).toBeGreaterThan(0)
   })
 
+  it('「更新于」按北京时间写，和页上其余时刻同一个时区，浏览器在别的时区也一样', async () => {
+    // 同一页上的每小时序列和最近的账本行都是北京时间；页头这一个时刻曾经按浏览器时区
+    // 读，人在美西时页头写 14:09、表里写 05:09，读的人只会以为数据旧了九个小时。
+    const tz = process.env.TZ
+    process.env.TZ = 'America/Los_Angeles'
+    vi.useFakeTimers({ toFake: ['Date'] })
+    // 北京时间 10 月 12 日 05:09 = UTC 10 月 11 日 21:09。
+    vi.setSystemTime(new Date(Date.UTC(2026, 9, 11, 21, 9)))
+    try {
+      const { findByText } = await mountStats()
+      await loaded('pipeline')
+      expect(await findByText('更新于 05:09（北京时间）')).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+      if (tz === undefined) delete process.env.TZ
+      else process.env.TZ = tz
+    }
+  })
+
   it('数据到货后页头出现「更新于」时间戳；注册图是真人/Agent 双系列', async () => {
     const { findByText } = await mountStats()
     await loaded('pipeline')
