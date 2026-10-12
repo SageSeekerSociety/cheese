@@ -57,6 +57,7 @@ onBeforeUnmount(reset)
 
 <template>
   <div class="attachment-video">
+    <!-- eslint-disable-next-line vuejs-accessibility/media-has-caption -- user-uploaded videos have no supplied caption track; keep native controls and download available -->
     <video
       v-if="url && !failure"
       :src="url"

@@ -27,7 +27,7 @@ def media_bytes_response(
     size = len(data)
     try:
         if not match or not any(match.groups()):
-            raise ValueError("invalid range")
+            raise ValueError
         first, last = match.groups()
         if first:
             start = int(first)
@@ -35,10 +35,10 @@ def media_bytes_response(
         else:
             length = int(last)
             if length <= 0:
-                raise ValueError("empty suffix")
+                raise ValueError
             start, end = max(0, size - length), size - 1
         if start >= size or start > end:
-            raise ValueError("unsatisfiable range")
+            raise ValueError
     except ValueError:
         return Response(
             status_code=416,

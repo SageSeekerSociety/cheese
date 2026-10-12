@@ -91,9 +91,9 @@ describe('输入框下面那一行', () => {
     const input = view.container.querySelector('input[accept]') as HTMLInputElement
     expect(input.accept.split(',')).toEqual(['image/*', 'video/*'])
     const video = new File(['video'], 'screen.mp4', { type: 'video/mp4' })
-    await fireEvent.update(input, { target: { files: [video] } })
+    await fireEvent.change(input, { target: { files: [video] } })
     expect(view.emitted('files')).toEqual([[[video]]])
-    await fireEvent.update(input, { target: { files: [video] } })
+    await fireEvent.change(input, { target: { files: [video] } })
     expect(view.emitted('files')).toHaveLength(2)
   })
 
