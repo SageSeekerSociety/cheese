@@ -58,6 +58,114 @@ async def test_gateway_failure_is_kept_and_alerts_once(monkeypatch, kind):
 STACK = 'Traceback:\n  File "app/api/routes/x.py", line 12, in go\nValueError: nope'
 
 
+# --- what the metering proxy observed around a dropped model turn -------------
+
+
+def test_the_stream_note_is_shown_but_never_fingerprinted() -> None:
+    """The count rides beside the message, never inside it. `fingerprint()` reads
+    the message, so a number in it would split one recurring failure into a new
+    error every time the turn happened to be cut somewhere else."""
+    from app.domain.backend_log import _headline
+
+    zero = _err(
+        exc_type="GatewayStreamError",
+        where="model gateway",
+        received_events=0,
+        upstream_failure="timeout",
+        ended_by="upstream",
+    )
+    many = _err(
+        exc_type="GatewayStreamError",
+        where="model gateway",
+        received_events=8123,
+        upstream_failure="timeout",
+        ended_by="upstream",
+    )
+    assert fingerprint(zero) == fingerprint(many)
+    assert "events: 0" in _headline(zero)
+    assert "events: 8123" in _headline(many)
+    assert "upstream: timeout" in _headline(many)
+    assert "ended by: upstream" in _headline(many)
+
+
+def test_event_meta_carries_what_the_proxy_observed() -> None:
+    from app.domain.backend_log import Verdict
+
+    meta = event_meta(
+        _err(
+            exc_type="SubscriptionStreamError",
+            where="model subscription",
+            received_events=12,
+            upstream_failure="transport",
+            ended_by="upstream",
+        ),
+        Verdict("event"),
+    )
+    assert meta["received_events"] == 12
+    assert meta["upstream_failure"] == "transport"
+    assert meta["ended_by"] == "upstream"
+
+
+def _recorded(monkeypatch):
+    """The intake's three side effects captured, for the alert tests."""
+    from app.core import alerting
+    from app.domain import backend_log
+
+    topic = SimpleNamespace(id=uuid.uuid4(), project_id=uuid.uuid4())
+    monkeypatch.setattr(
+        backend_log, "_where", AsyncMock(return_value=(topic.project_id, topic.id))
+    )
+    monkeypatch.setattr(backend_log, "intake", BackendErrorIntake())
+    added = AsyncMock()
+    monkeypatch.setattr(backend_log, "keep_record", added)
+    alerts = []
+    monkeypatch.setattr(alerting, "send", lambda *args, **kw: alerts.append((args, kw)))
+    return backend_log, topic, added, alerts
+
+
+async def test_a_subscription_lane_failure_alerts_like_a_gateway_one(monkeypatch):
+    """The lane is not what makes a failure: before this, only
+    `where == "model gateway"` alerted, so a stalled subscription room paged
+    nobody — and the record itself was missing entirely (#1447)."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    error = BackendErrorIn(
+        message="Model response stream was cut before the upstream ended it",
+        exc_type="SubscriptionStreamError",
+        where="model subscription",
+        request_id="req-1",
+        received_events=0,
+        upstream_failure="timeout",
+        ended_by="upstream",
+    )
+    await backend_log.record(
+        None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+    )
+    assert added.await_count == 1
+    assert len(alerts) == 1
+    assert alerts[0][1]["key"] == "model-gateway:SubscriptionStreamError"
+    lines = " ".join(alerts[0][0][1])
+    assert "events: 0" in lines and "upstream: timeout" in lines
+
+
+async def test_a_caller_hanging_up_is_recorded_without_alarming(monkeypatch):
+    """The blind spot is worth a record — it is the shape that told us nothing
+    before — but it is not evidence that the model failed the room, and an hour
+    of people pressing Esc would take the alert slot from the failures under it."""
+    backend_log, topic, added, alerts = _recorded(monkeypatch)
+    error = BackendErrorIn(
+        message="The caller disconnected before the answer finished",
+        exc_type="ClientAbandonedTurn",
+        where="model subscription",
+        received_events=3,
+        ended_by="client",
+    )
+    await backend_log.record(
+        None, project_id=topic.project_id, topic_id=topic.id, errors=[error]
+    )
+    assert added.await_count == 1
+    assert alerts == []
+
+
 def _err(**kw) -> BackendErrorIn:
     return BackendErrorIn(**{"message": "boom", "exc_type": "ValueError", **kw})
 

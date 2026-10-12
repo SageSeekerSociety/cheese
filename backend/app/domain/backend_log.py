@@ -92,6 +92,20 @@ class BackendErrorIn(BaseModel):
     # Correlation id (obs.py binds one per request) so a report can be joined
     # back to the stdout stream when someone *does* have the logs.
     request_id: str | None = Field(default=None, max_length=64)
+    # How a model turn ended, as its proxy observed it. Separate fields rather
+    # than a sentence inside `message` on purpose: `fingerprint()` keys on the
+    # message, so a number in it would turn one recurring failure into a new
+    # error every time the turn was cut somewhere else.
+    #
+    # `received_events` — SSE events already forwarded to the caller. None when
+    # there was no stream to count; 0 is the silent stall, where the model said
+    # nothing at all before the stream died.
+    received_events: int | None = Field(default=None, ge=0)
+    # Class of upstream failure the proxy recognised: connection, timeout,
+    # transport, dns, tls, rate_limit, http_error, http_auth, egress_offline.
+    upstream_failure: str | None = Field(default=None, max_length=40)
+    # Who ended the turn first: client, upstream, gateway, or the proxy itself.
+    ended_by: str | None = Field(default=None, max_length=20)
 
 
 class BackendErrorBatchIn(BaseModel):
@@ -288,11 +302,49 @@ class BackendErrorIntake:
 intake = BackendErrorIntake()
 
 
+def _stream_note(err: BackendErrorIn) -> str:
+    """What the metering proxy watched a dropped model turn do, in one bracket.
+
+    Display only. `fingerprint()` reads `message`, so nothing here can split one
+    recurring failure into several records."""
+    parts = []
+    if err.upstream_failure:
+        parts.append(f"upstream: {err.upstream_failure}")
+    if err.received_events is not None:
+        parts.append(f"events: {err.received_events}")
+    if err.ended_by:
+        parts.append(f"ended by: {err.ended_by}")
+    return f" [{', '.join(parts)}]" if parts else ""
+
+
+#: What the metering proxy calls a model turn that failed or never happened.
+#: Keyed on exc_type and not on `where`: the two lanes report from different
+#: places (`model gateway`, `model subscription`) and both have to alert.
+#:
+#: ClientAbandonedTurn is deliberately NOT here. A caller that hung up is
+#: recorded, because that is a shape which used to leave no trace at all, but by
+#: itself it is not evidence that the model failed the room — and an hour of
+#: people pressing Esc would take the alert slot from the failures underneath.
+_MODEL_FAILURE_TYPES = frozenset(
+    {
+        "GatewayHTTPError",
+        "GatewayStreamError",
+        "GatewayUnreachable",
+        "SubscriptionHTTPError",
+        "SubscriptionStreamError",
+        "SubscriptionRateLimited",
+        "SubscriptionEgressOffline",
+        "SubscriptionUnreachable",
+    }
+)
+
+
 def _headline(err: BackendErrorIn) -> str:
     message = err.message.strip().splitlines()[0] if err.message.strip() else ""
     if len(message) > _CONTENT_MESSAGE_LIMIT:
         message = message[: _CONTENT_MESSAGE_LIMIT - 1] + "…"
-    return f"{err.exc_type}: {message}" if err.exc_type else message
+    line = f"{err.exc_type}: {message}" if err.exc_type else message
+    return line + _stream_note(err)
 
 
 def event_content(err: BackendErrorIn) -> str:
@@ -328,6 +380,12 @@ def event_meta(err: BackendErrorIn, verdict: Verdict) -> dict:
         meta["where"] = err.where
     if err.request_id:
         meta["request_id"] = err.request_id
+    if err.received_events is not None:
+        meta["received_events"] = err.received_events
+    if err.upstream_failure:
+        meta["upstream_failure"] = err.upstream_failure
+    if err.ended_by:
+        meta["ended_by"] = err.ended_by
     if verdict.kind == "summary":
         meta["summary"] = True
         meta["count"] = verdict.count
@@ -445,16 +503,13 @@ async def record(
             meta=_record_meta(event_meta(err, verdict), conversation),
         )
         accepted += 1
-        if err.where == "model gateway" and err.exc_type in (
-            "GatewayHTTPError",
-            "GatewayStreamError",
-        ):
+        if err.exc_type in _MODEL_FAILURE_TYPES:
             alerting.send(
                 "模型请求失败",
                 [
                     f"项目：{project}",
                     f"对话：{conversation}",
-                    scrub_secrets(err.message),
+                    scrub_secrets(err.message) + _stream_note(err),
                     f"请求：{err.request_id or 'unknown'}",
                 ],
                 key=f"model-gateway:{err.exc_type}",
