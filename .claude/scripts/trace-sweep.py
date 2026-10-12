@@ -94,6 +94,12 @@ _REDACT = [
 def redact(text: str) -> str:
     for pattern, repl in _REDACT:
         text = pattern.sub(repl, text)
+    # The credentials this script was given may appear verbatim in a recorded
+    # command line, with no key name in front of them for the patterns to catch.
+    for name in ("OKCHEESE_PASSWORD", "OKCHEESE_TOKEN"):
+        secret = os.environ.get(name)
+        if secret and len(secret) >= 6:
+            text = text.replace(secret, "[REDACTED]")
     return text
 
 
@@ -354,6 +360,13 @@ def self_test() -> int:
         "redacts bearer", redact("Authorization: Bearer abcdefghijklmnop"), "Authorization: Bearer [REDACTED]"
     )
     check("redacts password", redact('{"password":"hunter22"}'), '{"password":"[REDACTED]"}')
+    os.environ["OKCHEESE_PASSWORD"] = "s3cret-value!"
+    check(
+        "redacts a known secret anywhere",
+        redact("login with s3cret-value! here"),
+        "login with [REDACTED] here",
+    )
+    del os.environ["OKCHEESE_PASSWORD"]
     check("folds ids", signature("Topic 3f2b1c4d-1111-2222-3333-444455556666 gone"), "Topic <id> gone")
     check("folds numbers", signature("exit code 137"), "exit code N")
     check("classifies schema", classify("InputValidationError: Bash failed")[0], "工具参数类型不符")
