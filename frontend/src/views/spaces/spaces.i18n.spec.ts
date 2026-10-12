@@ -39,6 +39,16 @@ vi.mock('@/api/spaces', () => ({
   },
 }))
 
+// 发题页那份附件上传（`composables/useAttachmentUploads.ts`）挂载时会问一次单份文件的
+// 上限。这一页只量自己画的字，但真去问就是一条没人接的请求（happy-dom 下打到默认地址
+// 127.0.0.1:3000）。上限值本身不是这一页的文案，给一个就好。
+vi.mock('@/api/attachments', () => ({
+  AttachmentsApi: {
+    limits: vi.fn().mockResolvedValue({ maxFileBytes: 20 * 1024 * 1024 }),
+    upload: vi.fn(),
+  },
+}))
+
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 vi.mock('@/components/tasks/TaskForm.vue', async () => {
