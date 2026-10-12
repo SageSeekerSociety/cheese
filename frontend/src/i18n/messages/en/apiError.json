@@ -1020,5 +1020,11 @@
   "specDevicesOf": "{name}'s devices",
   "environmentDefaultPeopleOnly": "The default execution environment for new teammates is set by people; an AI teammate can only change its own",
   "environmentOwnOnly": "An AI teammate can only change its own execution environment",
-  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices."
+  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices.",
+  "appNotFound": "This mini-app doesn't exist",
+  "appVersionNotFound": "This mini-app has no version {version}",
+  "appAgentOnly": "Only 芝士 writes a mini-app's code; to change it, ask 芝士",
+  "appCodeTooLarge": "The mini-app's code is over {limit} KB. Something that size belongs in the project as a website",
+  "appRunFailed": "The mini-app failed when it ran and was not kept: {why}",
+  "appShotMissing": "This version has no picture at this width"
 }

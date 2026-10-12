@@ -314,6 +314,12 @@ class Settings(BaseSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # Where the frontend serves the mini-app shell it builds (`frontend/miniapp/`),
+    # as reached from here: `<this>/v1/index.html` is shell 1. The content
+    # domain's `apps.` host answers with it, and a new mini-app is run in it
+    # once before it is kept (`app/domain/web_snippet/check.py`). Unset, no
+    # mini-app runs anywhere and new ones are kept unchecked.
+    miniapp_shell_url: str | None = None
     # A DNS-over-HTTPS resolver (JSON API), asked only on a machine whose own DNS
     # answers every name with a fake-IP placeholder (198.18.0.0/15): fetch has
     # to see the real address to know it is public. See domain/fetch/guard.py.

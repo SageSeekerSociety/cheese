@@ -830,6 +830,11 @@ from app.domain.site.hosting import SiteHostMiddleware  # noqa: E402
 
 app.add_middleware(SiteHostMiddleware, platform=app)
 
+# Outside the site host, which refuses every label of the domain but a project's.
+from app.api.app_shell_host import AppShellHostMiddleware  # noqa: E402
+
+app.add_middleware(AppShellHostMiddleware, platform=app)
+
 from app.api.preview_host import PreviewHostMiddleware  # noqa: E402
 
 app.add_middleware(PreviewHostMiddleware, platform=app)

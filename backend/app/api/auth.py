@@ -64,6 +64,10 @@ _log = get_logger("cheesex.auth")
 DELEGATED_ROUTES: dict[str, bool] = {
     "app.api.routes.living_docs.get_document": False,
     "app.api.routes.living_docs.edit_doc_passages": True,
+    "app.api.routes.doc_apps.get_app": False,
+    "app.api.routes.doc_apps.get_app_version": False,
+    "app.api.routes.doc_apps.create_app": True,
+    "app.api.routes.doc_apps.add_app_version": True,
     "app.api.routes.project_context.search_project_context": False,
     "app.api.routes.topics_preview.preview_file": False,
     "app.api.routes.memory_files.list_memory_files": False,

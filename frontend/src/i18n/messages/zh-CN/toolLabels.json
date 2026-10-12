@@ -46,6 +46,8 @@
   "cheeseDocEdit": "修改文档",
   "cheeseDocNew": "新建文档",
   "cheeseDocList": "查看资料库文档",
+  "cheeseAppSave": "保存小程序",
+  "cheeseAppGet": "读小程序",
   "cheeseDocCommentReply": "回复文档评论",
   "cheeseTask": "创建任务",
   "cheeseWorktree": "准备工作目录",

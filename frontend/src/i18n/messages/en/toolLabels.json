@@ -46,6 +46,8 @@
   "cheeseDocEdit": "Edit the doc",
   "cheeseDocNew": "Create a doc",
   "cheeseDocList": "List library docs",
+  "cheeseAppSave": "Save a mini-app",
+  "cheeseAppGet": "Read a mini-app",
   "cheeseDocCommentReply": "Reply to a doc comment",
   "cheeseTask": "Create a task",
   "cheeseWorktree": "Prepare the working directory",
