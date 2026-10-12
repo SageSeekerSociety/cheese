@@ -18,6 +18,7 @@
 """
 
 import time
+import uuid
 from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,7 +35,14 @@ from app.domain.platform_stats.performance import performance_snapshot
 from app.domain.platform_stats.pipeline import PipelineRepository
 from app.domain.platform_stats.product import ProductHealthRepository
 from app.domain.platform_stats.repositories import MachineInventoryRepository
+from app.domain.platform_stats.usage_detail import (
+    HOURLY_MAX_DAYS,
+    RECENT_CALLS,
+    TOP_USERS,
+    UsageDetailRepository,
+)
 from app.domain.platform_stats.windows import dense_series, utc_day_window
+from app.domain.usage.models import ResourceUsage
 from app.domain.usage.services import UsageService
 from app.domain.user.services import AccountService
 
@@ -59,6 +67,7 @@ class PlatformStatsService:
         self._product = ProductHealthRepository(session)
         self._integrations = IntegrationsRepository(session)
         self._gaps = GapRepository(session)
+        self._usage_detail = UsageDetailRepository(session)
 
     async def feedback(self, *, days: int, handle: str) -> dict:
         """反馈那一块：**全量口径**的总量/四栏/四级状态，加窗口内的三条曲线。
@@ -112,6 +121,12 @@ class PlatformStatsService:
         `totals.cost_usd` 一起给 —— 少了它，几百万 token 上印一个 `$0.0000` 读起来
         像「这个月没花钱」。
 
+        谁在用、什么时候用、缓存命中多少，口径在 `usage_detail` 的模块 docstring：
+        `cache` 与各行的 `cache_hit` 只算记了缓存的那些行（None = 账本说不出），
+        `top_users` 是**触发**了多少消耗，不是贡献，平台自己发起的那部分在
+        `unattributed`；`hourly` 只在窗口不长于 `HOURLY_MAX_DAYS` 天时给，否则是
+        None（按天那条线已经够读，不是「这段时间没有数」）。
+
         `claude_accounts` 是这一块里唯一不来自数据库的东西：它是计量代理写在账本旁边
         的快照文件（见 `claude_pool`）。读不到时它自己带一句原因，不让这一小块把整条
         路由带红 —— 开发环境根本没有订阅版代理。
@@ -128,6 +143,28 @@ class PlatformStatsService:
         # 模型」（`unpriced_tokens` 来自哪条路，也在这条拆分上看）。
         models = await self._usage.by_model(since=since, until=until, limit=TOP_MODELS)
         routes = await self._usage.by_route(since=since, until=until)
+        detail = self._usage_detail
+        model_hits = await detail.cache_hit_by(
+            ResourceUsage.model,
+            [row["model"] for row in models],
+            since=since,
+            until=until,
+        )
+        for row in models:
+            row["cache_hit"] = model_hits.get(row["model"])
+        project_ids = [uuid.UUID(row["project_id"]) for row in top]
+        project_hits = await detail.cache_hit_by(
+            ResourceUsage.project_id, project_ids, since=since, until=until
+        )
+        project_models = await detail.models_of_projects(
+            project_ids, since=since, until=until
+        )
+        for row, project_id in zip(top, project_ids, strict=True):
+            row["cache_hit"] = project_hits.get(project_id)
+            row["models"] = project_models.get(project_id, [])
+        users, unattributed = await detail.top_users(
+            since=since, until=until, limit=TOP_USERS
+        )
         return {
             "days": days,
             "totals": totals,
@@ -142,6 +179,15 @@ class PlatformStatsService:
             "top_projects": top,
             "by_model": models,
             "by_route": routes,
+            "cache": await detail.cache_totals(since=since, until=until),
+            "top_users": users,
+            "unattributed": unattributed,
+            "hourly": (
+                await detail.hourly(since=since, until=until)
+                if days <= HOURLY_MAX_DAYS
+                else None
+            ),
+            "recent": await detail.recent(since=since, until=until, limit=RECENT_CALLS),
             # 上一窗口的同一口径合计（环比用）。`unpriced_tokens` 不进 prev：环比那
             # 三张卡是 token / 调用 / 成本，prev 的形状与那三张一一对应。
             "prev": {
