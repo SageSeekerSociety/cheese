@@ -205,7 +205,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 闸门 | 命令 | 拦什么 |
 |---|---|---|
 | ESLint | `pnpm run lint`（`task fe:lint:check`） | 代码问题；故意不传 `--fix` —— 会重写工作区的闸门可以在它偷偷修好的违规上退出 0 |
-| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`@/network/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算，这条非对称判据见 `scripts/import-boundary-ratchet-core.mjs`）；四条组件原则见 `.claude/rules/architecture.md` |
+| 组件边界 | `pnpm run lint:boundary` | `src/components/**` 里新增的 `@/api`、`@/services/*`、`@/network/*`、`vue-router` 导入（取数那一半只看值导入，`vue-router` 那一半 `import type` 也算，这条非对称判据见 `frontend/scripts/import-boundary-ratchet-core.mjs`）；四条组件原则见 `.claude/rules/architecture.md` |
 | 无障碍 | `pnpm run lint:a11y` | `src/**/*.vue` 模板里新增的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，配置在 `eslint.a11y.config.mjs`）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
 | 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错 |
