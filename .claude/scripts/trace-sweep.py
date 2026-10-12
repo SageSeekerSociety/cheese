@@ -212,6 +212,16 @@ def _tasks(channel: str, token: str, since: str) -> list[dict]:
     return [t for t in tasks if (t.get("updated_at") or "") >= since]
 
 
+def _command_of(meta: dict) -> str:
+    """The command a tool call ran.
+
+    A call that gave a description shows the description instead of the command,
+    and the command moves to `detail`; a plain call has no `detail` and keeps it
+    in `arg`. Reading only `detail` sees an empty command for every call of the
+    second kind, which is most of them."""
+    return str(meta.get("detail") or meta.get("arg") or "")
+
+
 def _tool_calls(task: dict, token: str, since: str, until: str):
     """Yield (block id, at, tool, command, error) for every tool call inside the window."""
     before = None
@@ -230,7 +240,7 @@ def _tool_calls(task: dict, token: str, since: str, until: str):
                     block.get("id") or f"{task['id']}:{at}",
                     at,
                     tool or "?",
-                    str(meta.get("detail") or ""),
+                    _command_of(meta),
                     error if isinstance(error, str) and error else "",
                 )
         before = page.get("oldest_id")
@@ -552,6 +562,17 @@ def self_test() -> int:
     check("a blind edit block is counted", edit_blocks(edits + [("b", "Bash", "uv run pytest -q")]), [9])
     check("a check ends the block", edit_blocks(edits[:4] + [("b", "Bash", "ruff check .")] + edits[:4]), [])
     check("other commands do not", edit_blocks(edits[:4] + [("b", "Bash", "git status")] + edits[:4]), [8])
+    check(
+        "a described command reads through detail",
+        _command_of({"arg": "跑测试", "detail": "uv run pytest -q"}),
+        "uv run pytest -q",
+    )
+    check("a plain command reads from arg", _command_of({"arg": "uv run pytest -q"}), "uv run pytest -q")
+    check(
+        "a check with no description still ends the block",
+        edit_blocks(edits[:4] + [("b", "Bash", _command_of({"arg": "ruff check ."}))] + edits[:4]),
+        [],
+    )
     check("tasks sort by number", ledger["s"]["tasks"], ["2", "10"])
     check("a task without a number keeps its id", _label({"number": None, "id": "abcdef12"}), "?abcdef")
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)
@@ -591,7 +612,13 @@ def retro(argv: list[str]) -> int:
     spec = importlib.util.spec_from_file_location("trace_retro", Path(__file__).with_name("trace_retro.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    if "--room" in argv and "--self-test" not in argv:
+    # One implementation of the platform reads, so a refused token fails the
+    # same way here as in the sweep.
+    module._request, module.token_from_env = _request, token_from_env
+    # `--room x` and `--room=x` are the same request to argparse; both need the
+    # token armed, or the platform half silently runs without one.
+    room = next((a for a in argv if a == "--room" or a.startswith("--room=")), None)
+    if room is not None and "--self-test" not in argv:
         # The same credentials as the sweep, password login included.
         os.environ["OKCHEESE_TOKEN"] = token_from_env()
     return module.retro_main(argv)

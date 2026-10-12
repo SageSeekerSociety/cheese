@@ -397,8 +397,15 @@ def first_error(jobs: list[dict]) -> str | None:
     return failed[0]["name"]
 
 
-def merge_queue_exits(timeline: list[dict], runs: list[dict], repo: str) -> list[dict]:
-    """Every time the PR left the merge queue, and whether that exit was a failure.
+def merge_queue_exits(
+    timeline: list[dict], runs: list[dict], repo: str, since: datetime, until: datetime
+) -> list[dict]:
+    """Every time the PR left the merge queue inside the window, and whether that
+    was a failure.
+
+    The timeline comes back whole for a PR that only merged inside the window,
+    so the window is applied here: an exit the PR took before it is not this
+    window's.
 
     A `removed_from_merge_queue` event is the queue letting go of the PR. It is
     NOT a failure by itself: the queue also removes an entry at the instant it
@@ -417,7 +424,7 @@ def merge_queue_exits(timeline: list[dict], runs: list[dict], repo: str) -> list
         if e.get("event") != "removed_from_merge_queue":
             continue
         at = e.get("created_at")
-        if not at:
+        if not at or not (since <= _iso(at) <= until):
             continue
         entry = None
         for r in runs:
@@ -440,6 +447,15 @@ def merge_queue_exits(timeline: list[dict], runs: list[dict], repo: str) -> list
     return out
 
 
+def first_judged_head(pushes: list[dict]) -> dict | None:
+    """The first head CI actually ran on, or None when it never ran.
+
+    `heads_of` also lists a multi-commit push's non-tip commits, which ran no CI
+    at all; reading `pushes[0]` blindly takes one of those as "the first push had
+    no rounds" and fails both 严格 and 宽松 for a PR whose real first head passed."""
+    return next((p for p in pushes if p["rounds"]), None)
+
+
 def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
     """One record per merged PR, every GitHub-side fact the retro needs."""
     prs = merged_prs(repo, since, until)
@@ -452,7 +468,7 @@ def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
         pushes = []
         for sha in heads:
             pushes.append({"sha": sha, "rounds": ci_rounds(required_checks(repo, sha))})
-        first_push = pushes[0]["rounds"] if pushes else []
+        first = first_judged_head(pushes)
 
         reports.append(
             {
@@ -463,10 +479,10 @@ def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
                 "pushes": len(heads),
                 "ci_runs": sum(len(p["rounds"]) for p in pushes),
                 "push_detail": pushes,
-                "first_head": heads[0] if heads else None,
-                "strict_first_pass": strict_pass(pushes[0]) if pushes else False,
-                "lenient_first_pass": _lenient(first_push, pushes),
-                "exits": merge_queue_exits(timeline, mg.get(number, []), repo),
+                "first_head": first["sha"] if first else None,
+                "strict_first_pass": strict_pass(first) if first else False,
+                "lenient_first_pass": _lenient(first["rounds"] if first else [], pushes),
+                "exits": merge_queue_exits(timeline, mg.get(number, []), repo, since, until),
             }
         )
     return reports
@@ -501,10 +517,10 @@ def _lenient(first_push: list[dict], pushes: list[dict]) -> bool:
 
 # ==========================================================================
 # Platform half — the accept cards, the task clock, the turns that failed.
-# `_request` and `token_from_env` are the SAME functions trace-sweep.py carries
-# (its module docstring is the contract: OKCHEESE_TOKEN, or a login); they are
-# repeated here only because this file is a standalone draft. When this merges
-# into trace-sweep.py, delete them and call that module's copies.
+# `_request` and `token_from_env` below serve a standalone run of this file. A
+# run driven by trace-sweep.py gets that module's copies instead (its `retro()`
+# writes them into this module), so the sweep's password login and its 401/403
+# message are what such a run uses.
 # ==========================================================================
 
 
@@ -659,10 +675,13 @@ def green_of(report: dict) -> str | None:
     """When this PR's head first reached green required CI — the boundary the
     递卡→采纳 split is measured at.
 
-    "First green" = the earliest round on the FINAL head whose outcome is green.
-    The final head is the one that merged, so its green is the one the accept
-    click waited for; an earlier head that went green and was then pushed over
-    is not what CI was pending on."""
+    "First green" = the earliest FULL-tier round on the FINAL head whose outcome
+    is green. The final head is the one that merged, so its green is the one the
+    accept click waited for; an earlier head that went green and was then pushed
+    over is not what CI was pending on. The tier matters for the same reason it
+    does in `_lenient`: a draft head runs `CI required (draft quick)` on the very
+    commit that later runs full, and the accept was blocked until the full one —
+    a green draft round is not the boundary."""
     pushes = report.get("push_detail") or []
     if not pushes:
         return None
@@ -670,7 +689,11 @@ def green_of(report: dict) -> str | None:
     if not last:
         return None
     # When the required check reported green, not when its round started.
-    greens = [r.get("completed_at") or r["started_at"] for r in last["rounds"] if r["outcome"] == "green"]
+    greens = [
+        r.get("completed_at") or r["started_at"]
+        for r in last["rounds"]
+        if r["outcome"] == "green" and r.get("tier") == "full"
+    ]
     return min(greens) if greens else None
 
 
@@ -870,7 +893,8 @@ def render_markdown(report: dict) -> str:
         ),
         (
             "- **首推（严格）**：该 PR 第一个 head 的第一轮必需 CI 就 `success`。被新推顶掉的 "
-            "`cancelled` 轮算失败——那次推送没过，是被换掉了。"
+            "`cancelled` 轮算失败——那次推送没过，是被换掉了。「第一个 head」指第一个跑过必需 CI 的 "
+            "head：一次推多个提交时，非尖端提交不会跑 CI，也就不是被检查判过的那个 head。"
         ),
         (
             "- **首推（宽松）**：只看第一个 head，去掉被新推顶掉的 `cancelled` 轮和 draft 层"
@@ -884,13 +908,14 @@ def render_markdown(report: dict) -> str:
             "（draft 轮 / `ready_for_review` 后的 full 轮）各算一次。"
         ),
         (
-            "- **掉出合并队列（失败）**：`removed_from_merge_queue` 事件看它那次 entry 的 "
+            "- **掉出合并队列（失败）**：窗口内的 `removed_from_merge_queue` 事件看它那次 entry 的 "
             "`merge_group` 运行——运行 `failure` 才算失败（正常合并时事件也在，运行是 `success`）。"
         ),
         "  事件本身 REST 里**没有** `reason` 字段（已核实），原因从运行的失败 check 读。",
         (
             "- **递卡→采纳**：窗口内采纳的卡，卡 `created_at`（第一次递）→ `decided_at`。拆成「等 CI 绿」"
-            "（递卡到该 PR 最终 head 的必需检查报绿，递时已绿记 0）和「CI 绿后等总调度」，两段相加等于全程。"
+            "（递卡到该 PR 最终 head 的 **full 层**必需检查报绿，递时已绿记 0；draft 层那次不算，"
+            "采纳在草稿期是拦着的）和「CI 绿后等总调度」，两段相加等于全程。"
             "退回后再递的卡仍从第一次递算起，所以比按最后一次递卡时间算的长。"
         ),
         (
@@ -1002,8 +1027,11 @@ def render_markdown(report: dict) -> str:
         f"- 首推严格：{s['strict_first_pass']['pct']}（复盘 4/12 = 33%）",
         (
             f"- 首推宽松：{s['lenient_first_pass']['pct']}（复盘 7/12 = 58%）"
-            "——把被顶掉的 cancelled 轮和 draft 层去掉后，第一个 head 上有没有一次绿的 full 必需检查。"
+            "——把被顶掉的 cancelled 轮和 draft 层去掉后，第一个跑过必需 CI 的 head 上有没有一次绿的 "
+            "full 必需检查。"
         ),
+        "  本窗口比复盘多一条：#3493 的首个 `committed` 一次 CI 都没跑过（不是它的 head），"
+        "按 head 判它是 draft 红后 full 绿，算过；把提交列表的第一项当首个 head 就得到复盘那 7 条。",
     ]
     return "\n".join(lines)
 
@@ -1162,6 +1190,22 @@ def self_test() -> int:
     check(
         "lenient: a draft-tier red before the full green passes (#3496 shape)",
         _lenient(draft_red_then_full_green, []),
+        True,
+    )
+    # first_judged_head: a non-tip commit of a multi-commit push ran no CI, and
+    # it must not stand in for the first push (#3493 / #3487 shape).
+    check("a head that ran no CI is not the first push", first_judged_head([rnd("a")]) is None, True)
+    check(
+        "首推 judges the first head that ran CI",
+        strict_pass(first_judged_head([rnd("a"), rnd("b", "green")])),
+        True,
+    )
+    check(
+        "lenient follows the same head",
+        _lenient(
+            first_judged_head([rnd("a"), rnd("b", "cancelled", "green")])["rounds"],
+            [rnd("a"), rnd("b", "cancelled", "green")],
+        ),
         True,
     )
 
