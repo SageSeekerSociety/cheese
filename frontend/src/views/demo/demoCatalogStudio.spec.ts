@@ -43,6 +43,12 @@ describe('地址', () => {
     expect(parseCatalogPath('/')).toEqual({ id: null, frame: null })
   })
 
+  it('只是开头像，不算组件站的地址', () => {
+    // 前缀命中：`/demo/catalog-archive` 不是这一站的页面，不该被当成目录。
+    expect(parseCatalogPath('/demo/catalog-archive')).toEqual({ id: null, frame: null })
+    expect(parseCatalogPath('/demo/catalogX')).toEqual({ id: null, frame: null })
+  })
+
   it('单格那一页的地址把主题、动效、底都带上：iframe 里是另一篇文档', () => {
     expect(stageHref('user-ref', 0, { theme: 'dark', motion: 'slow', bg: 'canvas' })).toBe(
       '/demo/catalog/user-ref/frame/0?theme=dark&motion=slow&bg=canvas'

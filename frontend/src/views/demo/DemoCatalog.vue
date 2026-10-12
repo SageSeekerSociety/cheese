@@ -15,7 +15,7 @@ import type { BackdropId } from './demoCatalogStudio'
 import type { MotionMode } from './demoMotion'
 
 import { computed, onBeforeUnmount, provide, reactive, ref, watch } from 'vue'
-import { useTheme } from 'vuetify'
+import { useDisplay, useTheme } from 'vuetify'
 
 import { CATALOG, catalogEntry, catalogGroup } from './catalog'
 import CatalogDetailPage from './CatalogDetailPage.vue'
@@ -124,6 +124,21 @@ onBeforeUnmount(() => clearTimeout(settle))
 /** 窄屏那一下抽屉：宽屏上左栏一直在，这个开关在宽屏上根本不显示。 */
 const drawer = ref(false)
 
+// 窄不窄和 CSS 那条 `@media (width <= 900px)` 是同一个数：窄屏上左栏才收成抽屉。
+// 这个数还要在 JS 里用一次 —— 收起时那一栏只是被 `translateX(-100%)` 挪出画面，
+// 人眼看不见，键盘却还走得到它里面那排按钮，所以得给它 `inert`。
+const NARROW_MAX_WIDTH = 900
+const display = useDisplay()
+const narrow = computed(() => (display.width.value ?? 0) <= NARROW_MAX_WIDTH)
+/** 左栏这一会儿是不是看不见：宽屏上永远看得见，窄屏上要抽屉开着才看得见。 */
+const railHidden = computed(() => narrow.value && !drawer.value)
+
+// 抽屉开着的时候把窗口拉过 900px：CSS 那条 media 不再命中，遮罩那层就退回成一颗没有
+// 样式的空按钮，留在页尾。宽回去了就自己把抽屉关掉，不留这颗东西。
+watch(narrow, (isNarrow) => {
+  if (!isNarrow) drawer.value = false
+})
+
 /** 搜到东西就直接看结果，不管现在站在哪一页上。 */
 const showingIndex = computed(() => (id.value === null || query.value.trim() !== '') && !missing.value)
 
@@ -209,7 +224,7 @@ function toggleTheme(): void {
     </header>
 
     <div class="studio-body">
-      <aside id="studio-rail" class="studio-rail">
+      <aside id="studio-rail" class="studio-rail" :inert="railHidden || undefined">
         <CatalogRail :groups="allGroups" :current="missing ? null : id" />
       </aside>
 

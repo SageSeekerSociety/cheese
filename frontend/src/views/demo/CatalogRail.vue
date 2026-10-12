@@ -110,13 +110,13 @@ function toggle(name: string): void {
 
 .rail-name {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   word-break: break-all;
 }
 
 .rail-count {
   margin-left: auto;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--faint);
 }
 

@@ -6,16 +6,16 @@
 import type { CatalogEntry, CatalogState } from './catalog'
 import type { BackdropId, DeviceId, ThemeId } from './demoCatalogStudio'
 
-import { computed, inject, ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { stateProps } from './catalog'
 import CatalogStage from './CatalogStage.vue'
-import { DEVICES, needsOf, STUDIO } from './demoCatalogStudio'
+import { DEVICES, needsOf, useStudio } from './demoCatalogStudio'
 import { MOTION_MODES } from './demoMotion'
 
 const props = defineProps<{ entry: CatalogEntry }>()
 
-const studio = inject(STUDIO)!
+const studio = useStudio()
 
 const THEMES: ReadonlyArray<{ id: ThemeId; label: string }> = [
   { id: 'light', label: '浅色' },
@@ -45,16 +45,21 @@ function pickDevice(id: DeviceId | 'dual'): void {
  * 引用关系打满整屏。这三种各自换成一句话，剩下的照常给人看。
  */
 function safeJson(value: unknown): string {
-  const seen = new WeakSet<object>()
+  // 认环靠的是**当前这条祖先链**，不是「这个对象见过没有」：同一个对象挂在两个字段下
+  // （不是环，只是共用）是正常的，按「见过」判会把它第二次写成「循环引用」，参数表里
+  // 显示的就不是真参数了。`JSON.stringify` 不给「离开一层」的回调，但每调用一次替换函数，
+  // `this` 就是此刻在遍历的那个对象 —— 靠它把栈收敛回当前这一条链。
+  const chain: unknown[] = []
   try {
     return JSON.stringify(
       value,
-      (_key, item: unknown) => {
+      function (this: unknown, _key: string, item: unknown) {
         if (typeof item === 'function') return '[函数]'
         if (item instanceof HTMLElement) return '[DOM 节点]'
         if (typeof item === 'object' && item !== null) {
-          if (seen.has(item)) return '[循环引用]'
-          seen.add(item)
+          while (chain.length && chain[chain.length - 1] !== this) chain.pop()
+          if (chain.includes(item)) return '[循环引用]'
+          chain.push(item)
         }
         return item
       },
@@ -81,7 +86,7 @@ const cases = computed(() => props.entry.states.map((state, i) => ({ state, id: 
         <code class="crumb-file">{{ entry.file }}</code>
       </nav>
 
-      <h1 class="catalog-name">{{ entry.title }}</h1>
+      <h1 class="catalog-name t-page-title">{{ entry.title }}</h1>
       <p class="catalog-about">{{ entry.about }}</p>
       <p class="catalog-card-meta">
         <span>独立渲染需要：{{ needsOf(entry.needs) }}</span>
@@ -216,11 +221,10 @@ const cases = computed(() => props.entry.states.map((state, i) => ({ state, id: 
   color: var(--faint);
 }
 
+/* 字号和字重走 `.t-page-title`（23px 那一档）：手写 20px 不在设计系统的字号阶梯上，
+   而这一页的标题就是这一页的页面标题。 */
 .catalog-name {
   margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--ink);
 }
 
 .catalog-about {

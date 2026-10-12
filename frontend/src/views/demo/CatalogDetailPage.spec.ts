@@ -14,10 +14,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CatalogDetailPage from './CatalogDetailPage.vue'
 import { defaultPrefs, STUDIO } from './demoCatalogStudio'
 
+// 同一个对象挂在两个字段下（共用，不是环）：参数表要两处都写得出来。
+export const REUSED = { where: 'reused' }
+
 vi.mock('./catalog', () => ({
   stateProps: (entry: { args?: Record<string, unknown> }, state: { props?: Record<string, unknown> }) => ({
     ...entry.args,
     ...state.props,
+    // 第一格额外带两个指向同一个对象的字段。
+    ...(state.name === '默认' ? { left: REUSED, right: REUSED } : {}),
   }),
 }))
 
@@ -143,6 +148,14 @@ describe('单组件页', () => {
     await fireEvent.click(phone)
     expect(phone.getAttribute('aria-pressed')).toBe('true')
     expect(button(view, '设备', '跟随容器').getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('两个字段指同一个对象时照原样写，不误报成环', () => {
+    const { view } = mount()
+    const body = view.container.querySelector('.case-args-body')?.textContent ?? ''
+    // 这一格参数里的 `shared` 被两个字段引着：是共用，不是环，两处都该写得出来。
+    expect(body.match(/reused/g)?.length).toBe(2)
+    expect(body).not.toContain('循环引用')
   })
 
   it('每一格都写着参数，能序列化的就照原样给人看', () => {

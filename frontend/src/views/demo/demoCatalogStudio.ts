@@ -6,6 +6,8 @@ import type { InjectionKey } from 'vue'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 import type { MotionMode } from './demoMotion'
 
+import { inject } from 'vue'
+
 import { prefersReducedMotion } from './demoMotion'
 
 /* ------------------------------------------------------------------ 地址 */
@@ -23,7 +25,9 @@ export interface CatalogRoute {
   frame: number | null
 }
 
-const ROUTE = /^\/demo\/catalog(?:\/([\w-]+))?(?:\/frame\/(\d+))?/
+// 结尾的 `$` 和路径边界都要有：少了它，`/demo/catalog-archive` 也会命中这条前缀，
+// 被当成组件目录。入口那边的正则挡得住，但读地址这种事不该指望调用方先挡一遍。
+const ROUTE = /^\/demo\/catalog(?:\/([\w-]+))?(?:\/frame\/(\d+))?$/
 
 export function parseCatalogPath(path: string): CatalogRoute {
   const hit = ROUTE.exec(path)
@@ -82,6 +86,17 @@ export interface StudioPrefs {
 
 /** 工具条这一排偏好在整棵子树里共用：`DemoCatalog` 提供，舞台和单组件页取。 */
 export const STUDIO: InjectionKey<StudioPrefs> = Symbol('catalog-studio')
+
+/**
+ * 取工具条那份偏好。没人在上头提供就当场炸，不要 `inject(STUDIO)!` 那样一路拖到
+ * 「读 undefined 的 device」才以一句对不上号的话崩掉 —— 那两个页面本来就只有挂在
+ * `DemoCatalog` 底下才成立。
+ */
+export function useStudio(): StudioPrefs {
+  const studio = inject(STUDIO)
+  if (!studio) throw new Error('组件站的那几页要挂在 DemoCatalog 底下：没有取到工具条偏好。')
+  return studio
+}
 
 /** 深色/浅色的初值读的是**文档现在的**那一个（演示页可能被 `?theme=` 指定了）。 */
 export function documentTheme(): ThemeId {

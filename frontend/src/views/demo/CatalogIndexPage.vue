@@ -16,7 +16,7 @@ defineProps<{
 
 <template>
   <div class="index">
-    <h1 class="catalog-name">组件目录</h1>
+    <h1 class="catalog-name t-page-title">组件目录</h1>
     <p class="catalog-lede">
       每个组件一页，用真产品的形状渲染几种状态。这一页不连后端、不登录 —— <code>pnpm dev</code> 打开
       <code>/demo/catalog</code> 就能看。加一个组件：<code>node scripts/catalog-scaffold.mjs</code> 按 props
@@ -54,11 +54,10 @@ defineProps<{
   padding: 16px 24px 32px;
 }
 
+/* 字号和字重走 `.t-page-title`（23px 那一档，设计系统里的页面标题）：手写 20px 不在
+   12/13/14/15/18/23 这条阶梯上，而这一页的标题就是全站的页面标题。 */
 .catalog-name {
   margin: 0 0 4px;
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--ink);
 }
 
 .catalog-lede {

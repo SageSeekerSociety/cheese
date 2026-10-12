@@ -7,11 +7,11 @@
 //   双端               → 上面两头的组合：桌面那台和手机那台并排
 import type { CatalogEntry, CatalogState } from './catalog'
 
-import { computed, inject } from 'vue'
+import { computed } from 'vue'
 
 import { stateProps } from './catalog'
 import CatalogFrame from './CatalogFrame.vue'
-import { deviceOf, DUAL_DEVICES, stageHref, STUDIO } from './demoCatalogStudio'
+import { deviceOf, DUAL_DEVICES, stageHref, useStudio } from './demoCatalogStudio'
 
 const props = defineProps<{
   entry: CatalogEntry
@@ -21,7 +21,7 @@ const props = defineProps<{
   replay: number
 }>()
 
-const studio = inject(STUDIO)!
+const studio = useStudio()
 
 const frames = computed(() => {
   if (studio.dual) return DUAL_DEVICES.map(deviceOf)

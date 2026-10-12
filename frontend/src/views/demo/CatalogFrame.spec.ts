@@ -63,26 +63,40 @@ describe('设备框', () => {
     expect(view.container.querySelector('.frame-scale')?.textContent).toBe('原始大小')
   })
 
-  it('报回来的高度不合规矩就不认：还是占位的那个高度', async () => {
+  it('自己那一页报回来的高度才认', async () => {
     const view = mount()
     const inner = () => view.container.querySelector('.frame-inner')!.getAttribute('style') ?? ''
+    const frame = view.container.querySelector('iframe')!
     // 同一个源里直接读一把是量不到东西的（测试里那一页是空的），所以高度是占位值。
     await nextTick()
     expect(inner()).toContain('320px')
 
-    // 页面上别的东西发的消息：标记对不上，丢掉。
-    window.dispatchEvent(new MessageEvent('message', { data: { source: '别的东西', height: 900 } }))
+    const fromFrame = (data: unknown): void => {
+      // `source` 必须是这一格的 contentWindow 才认，所以这里给它真的那一个。之前的写法
+      // 忘了给 source，`measure()` 在头一句就 return 了 —— 后面那两条校验根本没走到。
+      const event = new MessageEvent('message', { data })
+      Object.defineProperty(event, 'source', { value: frame.contentWindow })
+      window.dispatchEvent(event)
+    }
+
+    // 真报回来的高度照收。
+    fromFrame({ source: FRAME_MESSAGE, height: 777 })
     await nextTick()
-    expect(inner()).toContain('320px')
+    expect(inner()).toContain('777px')
+
+    // 页面上别的东西发的消息：标记对不上，丢掉。
+    fromFrame({ source: '别的东西', height: 900 })
+    await nextTick()
+    expect(inner()).toContain('777px')
 
     // 标记对上了，但高度不是个数：也丢掉。
-    window.dispatchEvent(new MessageEvent('message', { data: { source: FRAME_MESSAGE, height: 'nine' } }))
+    fromFrame({ source: FRAME_MESSAGE, height: 'nine' })
     await nextTick()
-    expect(inner()).toContain('320px')
+    expect(inner()).toContain('777px')
 
     // 量不出高度时那一页刚 load 完：不该把框收成 0。
-    view.container.querySelector('iframe')!.dispatchEvent(new Event('load'))
+    frame.dispatchEvent(new Event('load'))
     await nextTick()
-    expect(inner()).toContain('320px')
+    expect(inner()).not.toContain('height: 0px')
   })
 })
