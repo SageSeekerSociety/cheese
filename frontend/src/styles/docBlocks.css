@@ -61,6 +61,12 @@
 .doc-reading.doc-prose > :is(.tableWrapper, pre, [data-math='block']) {
   content-visibility: visible;
 }
+/* 小程序也不跳：它的框要能盖满整个屏幕（全屏），被跳过的块把它关在自己里面；它在
+   另一个进程里画，跳过它也省不下什么。 */
+.md-reader > [data-block='app'],
+.doc-reading.doc-prose > [data-block='app'] {
+  content-visibility: visible;
+}
 
 /* ---- Video: a Bilibili player at 16:9, no wider than a reading column ---- */
 
@@ -824,6 +830,14 @@ div[data-footnote]::before {
   color: var(--muted);
 }
 
+/* The name of a group of rows (a mini-app's versions). */
+.doc-menu__heading {
+  padding: 6px 12px 2px;
+  font-size: 12px;
+  line-height: var(--lh-12);
+  color: var(--muted);
+}
+
 .doc-menu__sep {
   flex: none;
   height: 1px;
@@ -1255,199 +1269,382 @@ div[data-footnote]::before {
 
 /* ---- Mini-app ------------------------------------------------------------ */
 
-/* A card like a chart: the head, the sentence that says what it shows, and the
-   app (appView.ts). Filling the screen, the inner box is fixed over the page
-   and the block keeps its height in the document. */
+/* As the #2423 prototype settled it (appView.ts): a card whose head is the
+   title with the sentence under it, a full screen button and a ⋯ menu; the
+   app under a rule. Full screen pins the same card over the page. */
 [data-block='app'] {
   margin: 16px 0;
 }
 
 .doc-app__box {
+  overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background: var(--surface);
 }
 
 .doc-app__head {
   display: flex;
+  gap: 2px;
   align-items: center;
-  gap: 8px;
-  min-height: 24px;
-  padding: 10px 12px 0 16px;
+  padding: 6px 6px 6px 14px;
+  border-bottom: 1px solid var(--line);
 }
 
-.doc-app__title {
+.doc-app__titles {
+  display: grid;
+  flex: 1;
   min-width: 0;
-  overflow: hidden;
+}
+
+.doc-app__name {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
   font-size: 14px;
   font-weight: 600;
   line-height: var(--lh-14);
   color: var(--ink);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .doc-app__version {
-  flex: none;
-  margin-right: auto;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--faint);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: var(--lh-12);
+  color: var(--accent-ink);
 }
 
-:is(.doc-prose, .doc-reading) :is(.doc-app__tool, .doc-app__back, .doc-app__action, .doc-app__all, .doc-app__run) {
-  padding: 0 6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  font: inherit;
+.doc-app__text {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
-  background: none;
-  cursor: pointer;
 }
 
-:is(.doc-app__tool, .doc-app__back, .doc-app__action, .doc-app__all, .doc-app__run):hover,
-.doc-app__more[aria-expanded='true'] {
+:is(.doc-prose, .doc-reading) .doc-app__icon {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-md);
+  color: var(--muted);
+  background: none;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+
+.doc-app__icon:hover,
+.doc-app__icon[aria-expanded='true'] {
   color: var(--ink);
   background: var(--fill);
 }
 
+.doc-app__icon svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.doc-app__more svg {
+  fill: currentcolor;
+  stroke: none;
+}
+
 .doc-app__back {
-  display: none;
-}
-
-.doc-app__text {
-  padding: 2px 16px 8px;
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--muted);
-}
-
-.doc-app__text:empty {
-  display: none;
-}
-
-.ProseMirror[contenteditable='true'] .doc-app__text:empty {
-  display: block;
-  min-height: var(--lh-13);
+  display: none !important;
 }
 
 .doc-app__stage {
   position: relative;
-  padding: 4px 16px 12px;
 }
 
-.doc-app__frame {
-  display: block;
-  width: 100%;
-  height: 120px;
-  border: 0;
-  background: var(--surface);
-  color-scheme: normal;
-}
-
-/* Taller than a screen and a half: it fades out, and full screen shows it all. */
-.doc-app__all {
+/* Nothing to run (no access, no such version): the controls go with it. */
+.doc-app.is-closed :is(.doc-app__full, .doc-app__more) {
   display: none;
 }
 
-.doc-app__stage.is-capped .doc-app__frame {
-  /* A mask reads only alpha: any opaque colour is "keep". */
-  mask-image: linear-gradient(to bottom, var(--ink) calc(100% - 96px), transparent);
+.doc-app__stage iframe {
+  display: block;
+  width: 100%;
+  height: 300px;
+  border: 0;
+  background: var(--surface);
+  transition: height var(--dur-quick) var(--ease-standard);
+}
+
+/* Taller than a screen and a half: it fades out, with a way into full screen,
+   instead of a second scroll inside the document. */
+:is(.doc-prose, .doc-reading) .doc-app__all {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  z-index: var(--z-raised-2);
+  display: none;
+  padding: 6px 16px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: var(--lh-13);
+  color: var(--surface);
+  background: var(--ink);
+  cursor: pointer;
+  transform: translateX(-50%);
+}
+
+.doc-app__stage.is-capped::after {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: var(--z-raised);
+  height: 96px;
+  background: linear-gradient(to bottom, transparent, var(--surface) 75%);
+  pointer-events: none;
+  content: '';
 }
 
 .doc-app__stage.is-capped .doc-app__all {
   display: block;
-  margin: 4px auto 0;
 }
 
-.doc-app__picture {
+/* The picture taken when the version was kept, run on a tap. */
+:is(.doc-prose, .doc-reading) .doc-app__shot {
   position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
 }
 
-.doc-app__shot {
+.doc-app__shot img {
   display: block;
   width: 100%;
   height: auto;
 }
 
-.doc-app__picture .doc-app__run {
+.doc-app__shot.is-empty {
+  min-height: 160px;
+  background: var(--fill);
+}
+
+.doc-app__tap {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  top: 50%;
+  left: 50%;
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  color: var(--surface);
+  background: var(--ink);
+  transform: translate(-50%, -50%);
+}
+
+.doc-app__old {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 12px;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
+  background: var(--accent-wash);
+}
+
+:is(.doc-prose, .doc-reading, .doc-app-sheet) .doc-app__button {
+  padding: 2px 10px;
   border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--text);
   background: var(--surface);
+  cursor: pointer;
+}
+
+:is(.doc-prose, .doc-reading) .doc-app__button--primary {
+  border-color: var(--ink);
+  color: var(--surface);
+  background: var(--ink);
+}
+
+.doc-app__error {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  font-size: 14px;
+  line-height: var(--lh-14);
+  color: var(--text);
+}
+
+.doc-app__message {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: pre-wrap;
+  color: var(--danger-ink);
+  background: var(--danger-wash);
+}
+
+.doc-app__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
 
 .doc-app__note {
-  padding: 8px 0;
+  padding: 14px;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
 }
 
-.doc-app__stage.is-failed .doc-app__note {
-  color: var(--danger-ink);
+/* Full screen: the same card, pinned over the page, under its own bar. */
+html.doc-app-open,
+html.doc-app-open body {
+  overflow: hidden;
 }
 
-.doc-app__actions {
-  display: flex;
-  gap: 8px;
-  margin-top: 6px;
-}
-
-.doc-app__source {
-  padding: 0 16px 12px;
-  border-top: 1px solid var(--line);
-}
-
-.doc-app__source pre {
-  max-height: 360px;
-  margin: 8px 0 0;
-  overflow: auto;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  line-height: var(--lh-13);
-}
-
-.doc-app__source .doc-app__action {
-  margin-top: 8px;
-}
-
-/* Full screen: the same frame over the whole page, with a bar that gives way
-   to the notch. */
 .doc-app.is-full .doc-app__box {
   position: fixed;
   inset: 0;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   z-index: var(--z-overlay);
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   border: 0;
   border-radius: 0;
 }
 
 .doc-app.is-full .doc-app__head {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--line);
+  padding: calc(4px + env(safe-area-inset-top, 0px)) 6px 4px;
 }
 
 .doc-app.is-full .doc-app__back {
-  display: inline-block;
+  display: inline-grid !important;
+  color: var(--ink);
 }
 
-.doc-app.is-full :is(.doc-app__text, .doc-app__source, .doc-app__all, .doc-app__inline) {
-  display: none;
+.doc-app.is-full .doc-app__name {
+  overflow: hidden;
+  font-size: 15px;
+  line-height: var(--lh-15);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-app.is-full :is(.doc-app__text, .doc-app__full, .doc-app__old, .doc-app__all) {
+  display: none !important;
 }
 
 .doc-app.is-full .doc-app__stage {
-  flex: 1;
   min-height: 0;
-  padding: 0;
 }
 
-.doc-app.is-full .doc-app__frame {
-  height: 100%;
-  mask-image: none;
+.doc-app.is-full .doc-app__stage iframe {
+  height: 100% !important;
+  transition: none;
+}
+
+.doc-app.is-full .doc-app__stage.is-capped::after {
+  display: none;
+}
+
+.doc-app-toast {
+  position: fixed;
+  bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  left: 50%;
+  z-index: var(--z-banner);
+  max-width: calc(100% - 32px);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--surface);
+  background: var(--ink);
+  transform: translateX(-50%);
+}
+
+/* The source, in a sheet: from the bottom on a phone, centred on a computer. */
+.doc-app-sheet {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: end center;
+  z-index: var(--z-overlay-2);
+  padding-top: env(safe-area-inset-top, 0px);
+  background: var(--overlay);
+}
+
+.doc-app-sheet__body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(860px, 100%);
+  max-height: 88vh;
+  overflow: hidden;
+  border-top-left-radius: var(--radius-lg);
+  border-top-right-radius: var(--radius-lg);
+  color: var(--text);
+  background: var(--surface);
+}
+
+@media (min-width: 700px) {
+  .doc-app-sheet {
+    place-items: center;
+  }
+
+  .doc-app-sheet__body {
+    border-radius: var(--radius-lg);
+  }
+}
+
+.doc-app-sheet__head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.doc-app-sheet__title {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: var(--lh-14);
+  color: var(--ink);
+}
+
+.doc-app-sheet__note {
+  font-size: 13px;
+  font-weight: 400;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.doc-app-sheet pre {
+  margin: 0;
+  padding: 12px 14px calc(14px + env(safe-area-inset-bottom, 0px));
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  background: var(--fill);
 }

@@ -120,7 +120,7 @@ async def run(code: str, shell: int) -> Ran | None:
                 return None
             height = int(view["element_height"])
             if height <= 0:
-                raise Refused("运行后什么都没画出来：app 里没有放进任何内容。")
+                raise Refused("运行后什么都没画出来：代码没有往页面里放任何内容。")
             ran.heights[view["width"]] = height
             ran.shots[f"{view['width']}-{theme}"] = base64.b64decode(view["png_b64"])
     return ran

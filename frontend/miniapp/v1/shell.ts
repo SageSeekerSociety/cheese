@@ -27,6 +27,7 @@ type Listener = (value: string) => void
 const CHANNEL = 'cheese-app'
 // Read by 芝士 when the check refuses a version, and shown as the error's text.
 const RUNAWAY = '小程序的高度一直在变大，停止跟随。常见原因：内嵌时用了 vh 或 100% 高度。'
+const EMPTY = '运行后什么都没画出来：代码没有往页面里放任何内容。'
 const NOT_SANDBOXED = 'This page runs a mini-app only inside a sandboxed frame.'
 
 const root = document.getElementById('cheese-app') as HTMLElement
@@ -99,6 +100,7 @@ function run(code: string): void {
     script.textContent = old.textContent
     document.body.append(script)
   }
+  if (!root.children.length && !root.textContent?.trim()) fail(EMPTY)
 }
 
 addEventListener('message', (event: MessageEvent) => {

@@ -29,6 +29,7 @@ body {
    number is what the reader sees. */
 #cheese-app {
   display: flow-root;
+  padding: 12px 14px 14px;
 }
 
 html[data-mode='full'] #cheese-app {
