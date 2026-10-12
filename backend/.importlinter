@@ -22,7 +22,7 @@
 # and were never going to: the layering was held by 26 upward imports that exist
 # *because* they dodge a cycle, the routes imported 56 model modules directly,
 # and the knot under `app.domain` would have taken 178 dependency removals to
-# untie (today's counts are in `.claude/rules/architecture.md`). Turning the
+# untie (today's counts are in `docs/manual/dev/arch-metrics.md`). Turning the
 # contracts on with no exceptions would have meant either a month of unfunded
 # refactoring before anyone could merge, or a check switched off on day one.
 #

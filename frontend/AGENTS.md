@@ -18,7 +18,9 @@ The rule above still holds — never `vue-router`, not even `import type`. Inste
 lightest first: `<NavLink :to="…">` (`components/common/NavLink.vue`),
 `useNavigation()?.route` (`composables/useNavigation.ts`), or
 `useNavigation()?.navigate(to)`; props and emits otherwise. Type a `to` as
-`NavTarget` (`lib/navTarget.ts`), never `RouteLocationRaw`.
+`NavTarget` (`lib/navTarget.ts`), never `RouteLocationRaw` — why the two halves
+of the boundary disagree about `import type` is in
+`scripts/import-boundary-ratchet-core.mjs`.
 
 ## The component preview site
 

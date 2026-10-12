@@ -26,7 +26,8 @@ WHAT IT MEASURES, and how each number is obtained:
                            — read, not re-derived: the ESLint rule that produces
                            them needs node_modules, and this has to run anywhere.
   backend.contracts        Frozen `importer -> imported` pairs per contract in
-                           `backend/.importlinter`, C1 + C2 + C3.
+                           `backend/.importlinter` (the board's own numbers, and
+                           what they were a month ago: `docs/manual/dev/arch-metrics.md`).
   backend.deferred_imports `Import`/`ImportFrom` statements lexically inside a
                            function body under `backend/app`, via `ast`. This is
                            the shape a cycle is dodged with, which is why the

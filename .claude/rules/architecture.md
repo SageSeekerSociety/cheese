@@ -55,12 +55,6 @@ principles, in the order they matter:
    file is on: a file that needs a server to render is a view or a container,
    not a component.
 
-The API half of the rule does not count an `import type`, because a type
-binding is erased before anything runs and so cannot fetch; the `vue-router`
-half keeps counting it, because there the alternative
-(`NavTarget` from `lib/navTarget.ts`) is a type too, and naming it is what lets
-a component render with no router at all.
-
 ## Frontend: one API module per domain behind `src/api.ts`
 
 `frontend/src/api.ts` holds nothing but `export … from` statements

@@ -138,11 +138,10 @@ export const boundaryRule = {
      * architecture.md`: "Data in by prop … **the shape of the props is on
      * you**"). 21 of the 95 frozen violations were this and nothing else.
      *
-     * The vue-router half keeps counting type-only imports on purpose
-     * (`frontend/AGENTS.md`): there *is* a house alternative — `NavTarget` from
-     * `lib/navTarget.ts` — and naming it is what lets the same component render
-     * with no router at all. A rule only pays for itself where the fix it asks
-     * for exists.
+     * The vue-router half keeps counting type-only imports on purpose: there
+     * *is* a house alternative — `NavTarget` from `lib/navTarget.ts` — and
+     * naming it is what lets the same component render with no router at all.
+     * A rule only pays for itself where the fix it asks for exists.
      */
     function isTypeOnly(node) {
       if (node.importKind === 'type' || node.exportKind === 'type') return true

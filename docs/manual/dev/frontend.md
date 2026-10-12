@@ -112,7 +112,7 @@ nginx（`frontend/nginx.conf`）把两条路分开：`location /` 走 `try_files
 
 `composables/useNavigation.ts` 读的是**应用**上的 `$router` / `$route`（`app.use(router)` 把它们挂在 `appContext.config.globalProperties` 上），拿不到就整个返回 `null` —— 没有路由的树里同一颗组件照样渲染，少的只是「去处」，而且不报警告。模板那一半是 `NavLink`：它画的是真 `<a>`，有路由才有 `href`，没有就不给（一个看起来能点、按下去什么都不发生的东西，比不画更糟）。`to` 的类型取 `lib/navTarget.ts` 的 `NavTarget`，不要从 `vue-router` 取 `RouteLocationRaw` —— 那一个 `import type` 同样算违规。
 
-为什么是注入而不是 props、哪 17 颗是这样转过来的：`frontend/AGENTS.md`。
+为什么是注入而不是 props：见上面「收 props 加 emit 仍然是默认答案」一段。
 
 ## 房间：一列对话，一块工作面板 {#room}
 

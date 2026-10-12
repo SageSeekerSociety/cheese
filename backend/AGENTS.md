@@ -13,9 +13,9 @@ function. The contracts and the frozen `importer -> imported` pairs are in
 Imports inside a function body may only go down: lift one to the top of the
 module, or say why it cannot be with `# deferred-import: <reason>` on the same
 line or the line above. Unexplained ones are frozen per file in
-`deferred-import-baseline.json`; a new file may have none. The reasons that
-count, and which of them the check can see:
-[`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
+`deferred-import-baseline.json`; a new file may have none. What counts as a
+reason, how the count is taken, and the shrink-only refresh command are in
+`scripts/check_deferred_imports.py`.
 
 ## Refactors must preserve the callers and the frozen graph
 
