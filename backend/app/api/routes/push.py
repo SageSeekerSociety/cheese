@@ -7,22 +7,17 @@
 `user.id` 上，而按 handle 认人的那一族没有 id。
 """
 
-from typing import Annotated
-
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
-from app.core.db import get_db
 from app.domain.notification.push import PushSubscriptionRepository
 
 router = APIRouter(prefix="/push", tags=["push"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class PushSubscriptionIn(BaseModel):

@@ -10,10 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_chat_service
+from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
-from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import notice_keys, say
 from app.domain.agent.chat import ChatService
@@ -41,8 +40,8 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
 router = APIRouter(prefix="/projects/{project_id}/environment", tags=["environment"])
-Db = Annotated[AsyncSession, Depends(get_db)]
-User = Annotated[AuthUserInfo, Depends(require_auth_user)]
+
+
 Chat = Annotated[ChatService, Depends(get_chat_service)]
 
 
@@ -122,7 +121,7 @@ async def require_idle(db: AsyncSession, topic: Topic) -> None:
 
 
 @router.get("")
-async def get_environment(project_id: uuid.UUID, db: Db, user: User) -> dict:
+async def get_environment(project_id: uuid.UUID, db: DbSession, user: AuthUser) -> dict:
     project, can_edit = await access(db, project_id, user)
     topics = (
         await db.scalars(
@@ -160,7 +159,7 @@ async def get_environment(project_id: uuid.UUID, db: Db, user: User) -> dict:
 
 @router.put("")
 async def save_environment(
-    project_id: uuid.UUID, body: EnvironmentConfig, db: Db, user: User
+    project_id: uuid.UUID, body: EnvironmentConfig, db: DbSession, user: AuthUser
 ) -> dict:
     await access(db, project_id, user, write=True)
     project = await db.scalar(
@@ -176,7 +175,7 @@ async def save_environment(
 
 @router.get("/rooms/{topic_id}")
 async def get_room_environment(
-    project_id: uuid.UUID, topic_id: uuid.UUID, db: Db, user: User
+    project_id: uuid.UUID, topic_id: uuid.UUID, db: DbSession, user: AuthUser
 ) -> dict:
     await access(db, project_id, user)
     topic = await room(db, project_id, topic_id, viewer=user)
@@ -260,8 +259,8 @@ async def apply_environment(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     body: ApplyEnvironment,
-    db: Db,
-    user: User,
+    db: DbSession,
+    user: AuthUser,
     chat: Chat,
 ) -> dict:
     # deferred-import: tests patch this name on app.api.deps
@@ -311,7 +310,7 @@ async def apply_environment(
 
 @router.post("/rooms/{topic_id}/diagnose")
 async def diagnose_environment(
-    project_id: uuid.UUID, topic_id: uuid.UUID, db: Db, user: User
+    project_id: uuid.UUID, topic_id: uuid.UUID, db: DbSession, user: AuthUser
 ) -> dict:
     """「让芝士看看」: why this channel's latest failure happened and what to
     change, read from its log and the scripts it ran. Nothing is changed:

@@ -3,7 +3,8 @@ from typing import Literal
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from app.api.routes.admin_common import DbSession, PlatformAdminDep
+from app.api.request_deps import DbSession
+from app.api.routes.admin_common import PlatformAdminDep
 from app.domain.space.review_service import SpaceReviewService
 
 router = APIRouter(prefix="/admin/spaces", tags=["admin"])

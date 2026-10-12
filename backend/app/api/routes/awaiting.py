@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import running_tasks
 from app.domain.block.repositories import BlockRepository
@@ -62,9 +62,6 @@ def _one_line(text: str, limit: int = 140) -> str:
     """第二行只放一行：折掉换行，过长就截断。"""
     flat = " ".join(text.split())
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
-
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _room_cards(

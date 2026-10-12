@@ -26,7 +26,7 @@ import re
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.routes.admin_common import DbSession
+from app.api.request_deps import DbSession
 from app.core.redis import get_redis_client
 from app.domain.docs_site import access, visits
 from app.domain.docs_site.visits import VisitLimits

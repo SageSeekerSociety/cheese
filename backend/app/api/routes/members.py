@@ -12,14 +12,12 @@ door late, because this docstring still promised the old behaviour.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent_instance.own import ensure_for_member
 from app.domain.membership.roster import roster
@@ -34,8 +32,6 @@ from app.domain.membership.services import InvitationService, MemberService
 from app.domain.project.services import ProjectService
 
 router = APIRouter(prefix="", tags=["members"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post("/projects/{project_id}/members")

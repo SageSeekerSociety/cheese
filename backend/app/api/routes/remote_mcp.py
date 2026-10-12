@@ -7,20 +7,20 @@ a token or a secret value.
 
 import json
 import uuid
-from typing import Annotated, Any
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep, require_seated_agent
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     AppError,
     AuthenticationRequiredError,
@@ -39,7 +39,6 @@ from app.domain.remote_mcp import oauth, service, upstream
 from app.domain.topic.services import TopicService
 
 router = APIRouter(tags=["remote-mcp"])
-Db = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def member(
@@ -61,7 +60,7 @@ async def member(
 
 @router.get("/projects/{project_id}/mcp/servers")
 async def list_servers(
-    project_id: uuid.UUID, db: Db, resolver: ActorResolverDep
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await member(db, project_id, resolver)
     return ok(await service.settings_view(db, project_id))
@@ -72,7 +71,7 @@ async def connect(
     project_id: uuid.UUID,
     name: str,
     request: Request,
-    db: Db,
+    db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
     handle = await member(db, project_id, resolver)
@@ -84,7 +83,7 @@ async def connect(
 
 @router.delete("/projects/{project_id}/mcp/servers/{name}/connection")
 async def disconnect(
-    project_id: uuid.UUID, name: str, db: Db, resolver: ActorResolverDep
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await member(db, project_id, resolver)
     await service.disconnect(db, project_id, name)
@@ -97,7 +96,11 @@ class SecretIn(BaseModel):
 
 @router.put("/projects/{project_id}/mcp/secrets/{name}")
 async def set_secret(
-    project_id: uuid.UUID, name: str, body: SecretIn, db: Db, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    name: str,
+    body: SecretIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
 ) -> dict:
     handle = await member(db, project_id, resolver)
     await service.set_secret(db, project_id, name, body.value, handle)
@@ -106,7 +109,7 @@ async def set_secret(
 
 @router.delete("/projects/{project_id}/mcp/secrets/{name}")
 async def clear_secret(
-    project_id: uuid.UUID, name: str, db: Db, resolver: ActorResolverDep
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     await member(db, project_id, resolver)
     await service.clear_secret(db, project_id, name)
@@ -139,7 +142,7 @@ def _failure(exc: AppError | BaseError) -> dict[str, str]:
 
 @router.get("/mcp/oauth/callback")
 async def callback(
-    db: Db,
+    db: DbSession,
     state: str = "",
     code: str = "",
     error: str = "",
@@ -173,7 +176,7 @@ class ProxyIn(BaseModel):
 
 @router.post("/topics/{topic_id}/mcp/{name}", include_in_schema=False)
 async def proxy(
-    topic_id: uuid.UUID, name: str, body: ProxyIn, request: Request, db: Db
+    topic_id: uuid.UUID, name: str, body: ProxyIn, request: Request, db: DbSession
 ) -> dict:
     """A session's request to one of its project's remote servers. Authenticated
     by the room's credential; the credential for the server is attached here."""
@@ -212,7 +215,9 @@ async def proxy(
 
 
 @router.get("/topics/{topic_id}/mcp/servers")
-async def room_servers(topic_id: uuid.UUID, db: Db, resolver: ActorResolverDep) -> dict:
+async def room_servers(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
     """The room's read-only view: whose authorization its sessions act with."""
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(

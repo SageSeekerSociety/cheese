@@ -20,9 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.deps import get_broker, get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     ConflictError,
     NotFoundError,
@@ -50,8 +50,6 @@ from app.domain.topic.services import TopicService
 logger = logging.getLogger("cheesex.room_files")
 
 router = APIRouter(tags=["room-files"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _in_room(
