@@ -27,10 +27,10 @@
   width: var(--chat-frozen-w);
   min-width: var(--chat-frozen-w);
 }
-/* 对话和面板之间那条可拖的线。看得见的只有 1px，但用专给分隔线的那一档色
-   （--line-2，比发丝线 --line 深一档），静止时就分得出来；再粗就不再是一条线了
-   （它原来是一条 5px 的灰带，比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给
-   主操作）。能抓的范围左右各多 4px（::before），不然一条细线很难按准。 */
+/* 对话和面板之间那条可拖的线。2px，用专给分隔线的那一档色（--line-2，比发丝线
+   --line 深一档），静止时就分得出来。它原来是一条 5px 的灰带，比屏幕上任何一条线
+   都粗，悬停还变琥珀——琥珀留给主操作。能抓的范围左右各多 4px（::before），不然
+   一条细线很难按准。 */
 .chat-rail {
   display: flex;
   position: relative;
@@ -54,7 +54,7 @@
 .pane-resizer {
   position: relative;
   z-index: var(--z-raised);
-  flex: 0 0 1px;
+  flex: 0 0 2px;
   cursor: col-resize;
   background: var(--line-2);
   transition: background-color var(--dur-quick) var(--ease-standard);
