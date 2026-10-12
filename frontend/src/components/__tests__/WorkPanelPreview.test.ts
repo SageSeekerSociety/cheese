@@ -94,7 +94,11 @@ function mountPanel(working = false) {
   })
 }
 
-/** 拿到面板暴露出去的那几个方法（`defineExpose`）。根元素上就挂着它的实例。 */
+/** 拿到面板暴露出去的那几个方法（`defineExpose`）。根元素上就挂着它的实例。
+ *
+ *  但先确认这个实例属于被测的那个宿主：如果测试把一个子组件 stub 掉了、由它渲染了
+ *  这个根元素，`__vueParentComponent` 拿到的是那个替身，`exposed` 也就不是你想要的
+ *  那几个方法——往上爬到真宿主，或者别 stub 渲染根的那个组件。 */
 function panelApi(container: Element): { previewShown?: () => void } {
   const inst = (
     container.firstElementChild as HTMLElement & {
