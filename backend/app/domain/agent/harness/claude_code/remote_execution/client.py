@@ -45,6 +45,7 @@ if __package__:
         PlatformHost,
         RemoteClient,
         dial_runner,
+        failure_text,
         read_file_on_the_machine,
         session_path,
         session_servers,
@@ -81,6 +82,7 @@ else:
         PlatformHost,
         RemoteClient,
         dial_runner,
+        failure_text,
         read_file_on_the_machine,
         session_path,
         session_servers,
@@ -1484,10 +1486,8 @@ def transport(config, target_path):
         host = PlatformHost(client, invoke, call_id, doc_versions)
         try:
             text = cheese.run_platform_tool(tool, args, host)
-        except MachineOutOfReach:
-            return {"error": MACHINE_OUT_OF_REACH}
         except Exception as exc:  # noqa: BLE001 — the agent reads the reason
-            return {"error": str(exc)}
+            return {"error": failure_text(exc)}
         return {"value": {"stdout": text, "stderr": ""}}
 
     def handle(request):
@@ -1706,7 +1706,7 @@ def transport(config, target_path):
             response = {
                 "jsonrpc": "2.0",
                 "id": request["id"],
-                "error": {"code": -32000, "message": str(exc)},
+                "error": {"code": -32000, "message": failure_text(exc)},
             }
         with output_lock:
             print(json.dumps(response), flush=True)
