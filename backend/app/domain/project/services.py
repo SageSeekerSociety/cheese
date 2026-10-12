@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _intent_brief(intent: str) -> str:
-    """把用户写的那句话拼成新项目总览的开头；没写就返回空串，调用方不写任何东西。
+    """把用户写的那句话拼成新项目目标的开头；没写就返回空串，调用方不写任何东西。
 
     纯模板，不调模型——``seed_overview`` 的约定是「平台把已有的文字搬个地方」，
     所以它署 system 而不是芝士（见 ``ProjectService.seed_overview`` 的注释）。这也
@@ -40,7 +40,10 @@ def _intent_brief(intent: str) -> str:
     text = intent.strip()
     if not text:
         return ""
-    return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下方对话中说明你要做什么。"
+    return (
+        f"## 要做成什么\n\n{text}\n\n"
+        "下一步：补上什么时候做成、这阶段不做什么，然后在下方对话中说明你要做什么。"
+    )
 
 
 class ProjectArchivedError(ConflictError):
@@ -95,7 +98,7 @@ class ProjectService:
 
         ``intent`` is what the person said they wanted to do, when the creation
         form asked (#946 片 C). It is stored as written and, if non-empty, copied
-        into the project's overview — see :func:`_intent_brief`.
+        into the project's goals — see :func:`_intent_brief`.
         """
         owner_handle = owner_handle or None  # '' would seed a broken root roster
         if project_id is not None and (earlier := await self._repo.get(project_id)):
@@ -146,7 +149,7 @@ class ProjectService:
         if forge_kind == "forgejo":
             await provision_repository(project.id, self._session)
         # What the person said they wanted to do, carried into the project's
-        # overview, which 综合 shows first and every AI teammate reads.
+        # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
         if brief:
             await self.seed_overview(project, brief)
@@ -204,7 +207,7 @@ class ProjectService:
         return project
 
     async def overview_document(self, project: Project):
-        """The project's overview, made empty (version 0) the first time anyone
+        """The project's goals document, made empty (version 0) the first time anyone
         needs it: whoever opens, writes or comments on it needs its id first."""
 
         documents = Documents(self._session)
@@ -212,7 +215,7 @@ class ProjectService:
             doc = await documents.get(project.overview_document_id)
             if doc is not None:
                 return doc
-        # Two first readers at once must not make two overviews. NO KEY
+        # Two first readers at once must not make two goals documents. NO KEY
         # UPDATE, not FOR UPDATE: this runs inside a turn's assembly, and a
         # full row lock on the project stops every write whose foreign key
         # names the project (each block takes KEY SHARE on it) until the turn
@@ -234,7 +237,7 @@ class ProjectService:
         return doc
 
     async def seed_overview(self, project: Project, content: str) -> None:
-        """Write a new project's overview from text it already had: what its
+        """Write a new project's goals from text it already had: what its
         creator said they wanted, or its 赛题. Author is `system`: the platform
         moved existing words, nobody wrote them here."""
 
@@ -243,7 +246,7 @@ class ProjectService:
         await seed(self._session, doc, content)
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
-        """Whether a document is some project's overview."""
+        """Whether a document is some project's goals document."""
         return (
             await self._session.scalar(
                 select(Project.id).where(Project.overview_document_id == document_id)

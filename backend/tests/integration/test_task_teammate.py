@@ -88,6 +88,44 @@ def test_a_task_a_teammate_created_is_worked_by_that_teammate(client):
     assert _instructed(client, task) == [seat]
 
 
+def test_a_title_too_wide_for_the_sidebar_is_refused_not_cut(client):
+    """The teammate is told the width and writes a shorter one, rather than the
+    platform quietly cutting the title somewhere in the middle."""
+    project, channel, seat = _channel_with_teammate(client)
+    too_wide = "把这一条过于冗长的任务标题改短到侧栏一行里放得下"
+    headers = {
+        "X-Cheese-Token": mint_scoped_token(
+            project_id=project, topic_id=channel, agent_handle=seat
+        )
+    }
+
+    refused = client.post(
+        f"/topics/{channel}/teammate-tasks",
+        json={"title": too_wide, "summary": "标题太宽，应该被拒"},
+        headers=headers,
+    )
+
+    assert refused.status_code == 422, refused.text
+    # 说的是上限和量到的宽度，够 AI 自己改短。
+    assert str(24) in refused.json()["error"]["message"]
+    assert str(len(too_wide) * 2) in refused.json()["error"]["message"]
+    assert (
+        client.get(
+            f"/topics/{channel}/tasks", headers=session_auth_headers("alice")
+        ).json()["data"]["data"]
+        == []
+    )
+
+    # 同一个入口，改短了就建得出来。
+    made = client.post(
+        f"/topics/{channel}/teammate-tasks",
+        json={"title": "统一任务标题字数上限", "summary": "改短之后应该建得出来"},
+        headers=headers,
+    )
+    assert made.status_code == 200, made.text
+    assert made.json()["data"]["title"] == "统一任务标题字数上限"
+
+
 def test_a_message_asking_a_teammate_turned_into_a_task_keeps_that_teammate(client):
     _project, channel, seat = _channel_with_teammate(client)
     asked = post_message(

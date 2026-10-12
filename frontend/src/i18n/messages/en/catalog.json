@@ -1151,14 +1151,14 @@
     }
   },
   "projectOverviewView": {
-    "about": "The page you land on entering a project: the project-overview document, recent progress (by day), who's doing what (by owner), and what's been made (handed-over artifacts and sites).",
+    "about": "The page you land on entering a project: the project goals, recent progress (by day), who's doing what (by owner), and what's been made (handed-over artifacts and sites).",
     "s1": {
       "name": "All four blocks present",
-      "note": "Default cell: the left column is the project-overview document (with an 'Edit') and recent progress; the right column is who's doing what and what's been made (those two artifacts)."
+      "note": "Default cell: the left column is the project goals (with an 'Edit project goals') and recent progress; the right column is who's doing what and what's been made (those two artifacts)."
     },
     "s2": {
       "name": "No document yet",
-      "note": "When the document is empty (not unreadable) it offers a 'No project overview yet' line and a 'Write one'."
+      "note": "When the document is empty (not unreadable) it offers a 'No project goals yet' line saying what to write, and a 'Write project goals'."
     },
     "s3": {
       "name": "Progress unreadable",

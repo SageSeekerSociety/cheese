@@ -142,7 +142,6 @@
     "src/components/tasks/TaskDescription.vue",
     "src/components/tasks/VerifyInfoForm.vue",
     "src/components/tasks/form/TaskFormContent.vue",
-    "src/components/topic-sidebar/TopicRailAllTasksRow.vue",
     "src/components/topic-sidebar/TopicRailBrowseRow.vue",
     "src/components/topic-sidebar/TopicRailMembers.vue",
     "src/components/topic-sidebar/TopicRailTaskRow.vue",

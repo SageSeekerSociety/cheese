@@ -426,7 +426,7 @@ export const PROJECT_PROGRESS: ProgressItem[] = [
   },
 ]
 
-/** 项目总览的那份文档。 */
+/** 项目目标那份文档。 */
 export const OVERVIEW_TEXT = '## 这门课在做什么\n\n整理操作系统课这一学期的课件与作业。'
 
 // ---- 做出了什么（`ArtifactManifest` 的 `api` + 清单）-----------------------

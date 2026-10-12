@@ -161,7 +161,7 @@ class TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
-    # 注入用的项目总览（`project/overview.py`），和芝士读写它时要用的编号。
+    # 注入用的项目目标（`project/overview.py`），和芝士读写它时要用的编号。
     overview_doc_text: str | None
     overview_doc_id: uuid.UUID | None
     # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
@@ -505,7 +505,7 @@ class TurnPreparation:
             teaching = await teaching_context.for_project(
                 session=session, project=project
             )
-            # 人和 agent 共同看的那一份（结论 7）：项目总览。它不是记忆，所以不走
+            # 人和 agent 共同看的那一份（结论 7）：项目目标。它不是记忆，所以不走
             # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
             # 这正是共享记忆池做不到的两件事。
             overview_doc = (

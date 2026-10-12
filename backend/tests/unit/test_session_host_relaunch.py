@@ -122,6 +122,9 @@ class Driver:
     def images(self, images):
         return []
 
+    async def last_words(self, wire, host, ref, launched):
+        return ""
+
     async def adopt(self, wire, found):
         pass
 

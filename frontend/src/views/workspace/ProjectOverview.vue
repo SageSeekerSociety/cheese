@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 项目总览（容器）：读项目总览那份文档、最近进展、项目的任务和名册，去任务页、文档
+// 项目总览（容器）：读项目目标、最近进展、项目的任务和名册，去任务页、文档
 // 页、全部任务都在这里；画面在同目录的 ProjectOverviewView。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask } from '@/cx_types'
@@ -55,7 +55,7 @@ const work = useQuery(
 holdRevealUntil(() => !overview.isPending.value && !recent.isPending.value && !work.isPending.value)
 
 // 从一道题领出来的项目：总览上方写这一份报名截到哪一刻。项目那一行里带着
-// （`challenge_deadline`，后端按报名算），不是总览文档里写死的字 —— 那份是领取时写的，
+// （`challenge_deadline`，后端按报名算），不是项目目标里写死的字 —— 那份是领取时写的，
 // 那时还没批准，也不知道读的人在哪个时区。
 const project = useQuery(
   computed(() => projectQuery(props.projectId)),

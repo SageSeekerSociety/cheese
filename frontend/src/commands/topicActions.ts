@@ -61,6 +61,19 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
       run: () => void newTask(topic, router),
     })
   }
+  // 全部任务：这个频道的任务一整页，进行中的、已结束的都在，按谁的筛。侧栏频道下面只
+  // 挂几条，展开也只到进行中的，要看全部从这里走。
+  actions.push({
+    id: 'topic.allTasks',
+    title: t('work.room.menu.allTasks'),
+    icon: 'mdi-format-list-checks',
+    run: () =>
+      void router.push({
+        name: 'project-tasks',
+        params: { projectId: topic.project_id },
+        query: { channel: topic.id },
+      }),
+  })
   // 文件：这个频道自己的东西都在那一页上——贴进来的图、芝士交付的文档、定时任务交回
   // 的结果。看是随时能看的，归档了也在，所以不问状态。
   actions.push({

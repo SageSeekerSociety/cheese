@@ -61,6 +61,8 @@ _LEDGER: dict[str, tuple[str, ...]] = {
     # --- 会话核心：每个骨架的驱动在这里，驱动认得骨架的零件，也只在这里 ---
     "app.domain.agent.session_host.claude_code": (
         "ClaudeLaunch",
+        # How its runner says a launch never came up (`last_words`).
+        "NEVER_STARTED",
         "Subscription",
         "accepts_inputs",
         "control_state",

@@ -1,4 +1,4 @@
-// 项目总览：项目总览那份文档照原样显示，没写过就给一个「写一份」；谁在做什么按负责人
+// 项目总览：项目目标照原样显示，没写过就给一个去写的入口；谁在做什么按负责人
 // 分、我在最前，停住的和做完的不在里面；最近进展里点一件就去那件任务。任务和进展还
 // 没读到时不写「0」、不写「暂无」。
 import type { RoomTask } from '@/cx_types'
@@ -81,14 +81,14 @@ function mount(extra: Record<string, unknown> = {}) {
   })
 }
 
-it('项目总览那份文档照原样显示', async () => {
+it('项目目标照原样显示', async () => {
   const view = mount({ overviewText: '## 现在到哪了\n\n报名和审核已经能用。' })
   const doc = view.getByTestId('overview-document')
   await vi.waitFor(() => expect(doc.textContent).toContain('报名和审核已经能用。'))
   expect(doc.textContent).toContain('现在到哪了')
 })
 
-it('没写过项目总览：点「写一份」去写', async () => {
+it('没写过项目目标：点去写的入口', async () => {
   const view = mount({ overviewText: '' })
   await fireEvent.click(view.getByRole('button', { name: t('work.overview.write') }))
   expect(view.emitted('edit-overview')).toHaveLength(1)

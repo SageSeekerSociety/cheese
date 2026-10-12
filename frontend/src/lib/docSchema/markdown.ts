@@ -24,7 +24,7 @@ import markedCjkFriendly from 'marked-cjk-friendly'
 // 1. A BARE TAG. `<img>`, `<div>`, `</p>` are valid HTML to any markdown
 //    parser, so they are tokenized as HTML and handed to the schema — which has
 //    no node for a lone `img`/`div`/`p`, so the token is dropped and the tag
-//    goes with it. Measured on the project overview: `优先渲染 <img>、@error`
+//    goes with it. Measured on a project's goals document: `优先渲染 <img>、@error`
 //    came back as `优先渲染 、@error`, and a line that was just `<img>` came
 //    back empty. The FILE is the source of truth, so a tag the editor cannot
 //    represent has to survive as LITERAL TEXT (军规 1). The claim is narrow on

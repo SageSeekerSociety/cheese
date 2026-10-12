@@ -52,7 +52,7 @@ export interface PanelDocProps {
   agentName?: string
   /** 项目 AI 队友的 handle。 */
   agentHandle?: string | null
-  /** 画在一整页里（资料库的那份章程）：总览的其余两块不在那儿画，也就不去取。 */
+  /** 画在一整页里（项目文档页的项目目标）：总览的其余两块不在那儿画，也就不去取。 */
   bare?: boolean
 }
 

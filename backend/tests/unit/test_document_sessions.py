@@ -38,9 +38,7 @@ AGENT = Bound(
     wire_model="fixture-model",
     supply="gateway",
 )
-AROUND = Surroundings(
-    content="", messages="", charter="本项目做存储选型。", memory=None
-)
+AROUND = Surroundings(content="", messages="", goals="本项目做存储选型。", memory=None)
 
 
 @pytest.fixture

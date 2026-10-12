@@ -1,8 +1,8 @@
 /**
  * 组件预览站里「侧栏那一组」的条目。
  *
- * 这六件是 TopicSidebar 拆出来、只管画的那几件：一行话题、顶上那组置顶入口、项目名
- * 那一行、一个组头、一组已归档，外加那颗未读角标。它们和别的条目没有两样，单独放一
+ * 这几件是 TopicSidebar 拆出来、只管画的那几件：一行话题、顶上那组置顶入口、项目名
+ * 那一行、一个组头、一组已归档、频道下面「展开其余」那一行，外加那颗未读角标。它们和别的条目没有两样，单独放一
  * 份只是因为 `frontend/src` 下的文件有一千行的上限，而 `catalog.ts` 是一份会一直长
  * 下去的注册表——这一组自己的三百多行搬出来，两边都离上限远一点。条目的规矩（这是什
  * 么 / 在哪儿 / 需要哪几样 / 看哪几格）见 `catalog.ts`；数据见 `catalogFixtures.ts`。
@@ -16,6 +16,7 @@ import { RAIL_ACTIONS, RAIL_MARKS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_
 
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
+import TopicRailMoreTasksRow from '@/components/topic-sidebar/TopicRailMoreTasksRow.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
@@ -273,6 +274,37 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           canLeave: true,
         },
         expect: '课程项目',
+      },
+    ],
+  },
+  {
+    id: 'topic-rail-more-tasks-row',
+    title: 'TopicRailMoreTasksRow',
+    about:
+      '频道下面任务那几行的最后一行：侧栏先只挂和我有关的几条，这一行就地展开这个频道其余进行中的任务，再点一下收回。它不换页。',
+    file: 'src/components/topic-sidebar/TopicRailMoreTasksRow.vue',
+    component: TopicRailMoreTasksRow,
+    // 那个箭头是 v-icon，所以要 Vuetify；字由调用方递进来，不读词表。
+    needs: UI,
+    args: { channelId: 'room-1' },
+    states: [
+      {
+        name: '收着',
+        note: '说清还有几个没挂出来；箭头朝下。',
+        props: { label: '展开其余 7 个', expanded: false },
+        expect: '展开其余 7 个',
+      },
+      {
+        name: '展开了',
+        note: '其余的已经接在上面，这一行改成收起；箭头朝上。',
+        props: { label: '收起', expanded: true },
+        expect: '收起',
+      },
+      {
+        name: '挂在子频道下面',
+        note: '竖线和文字左缘跟着频道在树里的层级往里缩。',
+        props: { label: '展开其余 2 个', expanded: false, depth: 1 },
+        expect: '展开其余 2 个',
       },
     ],
   },

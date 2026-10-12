@@ -101,7 +101,7 @@ class TestTaskIntegration:
             response = api_client.get(f"/projects/{project['id']}", headers=headers)
             assert response.status_code == 200, response.text
             assert response.json()["data"]["external_task_id"] == task_id
-            # The 赛题 is the project's overview, which every member reads.
+            # The 赛题 is the project's goals, which every member reads.
             document = overview_of(api_client, project["id"], headers=headers)
             response = api_client.get(f"/documents/{document}", headers=headers)
             assert response.status_code == 200, response.text

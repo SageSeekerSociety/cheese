@@ -13,6 +13,8 @@ which the broker learns from the turn frames it already relays.
 """
 
 import time
+import uuid
+from collections.abc import Mapping
 
 #: How long one typing ping keeps a person "typing". The client pings every
 #: three seconds while the input changes, so the mark goes within about five
@@ -160,6 +162,23 @@ class RoomActivity:
         since = current[0] if live and current else time.time()
         room[member] = (since, now + TYPING_TTL_S)
         return activity_frame(member, TYPING, True, since)
+
+    def working_in(self, threads: Mapping[str, uuid.UUID]) -> dict[uuid.UUID, set[str]]:
+        """{room: the seats with a live turn in one of that room's 支线}, for the
+        支线 in `threads` (each mapped to its room).
+
+        A room's 支线 turns are the room's own doings, the same way a turn on
+        the room's channel is: a channel has no line of 芝士's own, so what it
+        answers to a main-line message it says in that message's 支线. Walking
+        the live turns and looking each up is what keeps this to the turns
+        actually running rather than one scan of every 支线 a project has.
+        """
+        found: dict[uuid.UUID, set[str]] = {}
+        for (channel, _), agent in self._turn_agents.items():
+            room = threads.get(channel)
+            if room is not None:
+                found.setdefault(room, set()).add(agent)
+        return found
 
     def snapshot(self, channel: str) -> list[dict]:
         """Everyone active on this channel now, in the frames' entry shape."""

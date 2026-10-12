@@ -1,9 +1,9 @@
 """建项目时写的那一句「你打算做什么」去了哪里（#946 片 C）。
 
-有值：新项目的总览写上第一版 —— 署名 system，内容是那句话加一句下一步。
-没值（或只有空白）：什么都不写，总览照旧是空的。
+有值：新项目的项目目标写上第一版 —— 署名 system，内容是那句话加一句下一步。
+没值（或只有空白）：什么都不写，项目目标照旧是空的。
 
-判据取「总览里写了什么」，而不是「服务被调过」：总览是每段对话的 AI 队友都读的
+判据取「项目目标里写了什么」，而不是「服务被调过」：项目目标是每段对话的 AI 队友都读的
 那一份，也是人打开项目时读到的东西。署名也要一起断言 —— 它由平台拼出来，不是芝
 士说的话，署错了就等于凭空替芝士开口。
 """
@@ -39,7 +39,7 @@ def test_intent_becomes_the_new_projects_overview(
 
         assert project.intent == said, "原话要存下来，下次打开项目还看得到"
         doc = await projects.overview_document(project)
-        assert doc.version > 0, "说了要做什么的项目，总览该带着这句话开门"
+        assert doc.version > 0, "说了要做什么的项目，项目目标该带着这句话开门"
         # 署名是「system」：平台产的，不是芝士，也不是某个人。
         assert doc.author == "system"
         assert said in doc.content
@@ -51,7 +51,7 @@ def test_intent_becomes_the_new_projects_overview(
 def test_no_intent_leaves_the_overview_unwritten(
     db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
-    """不答这一问是允许的：总览照常空着，没有半份空简报。"""
+    """不答这一问是允许的：项目目标照常空着，没有半份空简报。"""
 
     async def _run() -> None:
         from app.domain.project.services import ProjectService
@@ -70,7 +70,7 @@ def test_no_intent_leaves_the_overview_unwritten(
 def test_whitespace_only_intent_is_not_an_intent(
     db_session: AsyncSession, _portal: BlockingPortal, stub_project_forge
 ):
-    """空格不是答案。滑过输入框敲了个空格的人，不该得到一份空白的总览。
+    """空格不是答案。滑过输入框敲了个空格的人，不该得到一份空白的项目目标。
 
     ``_intent_brief`` 自己 strip 一次，不指望调用方去猜 —— 前端也 trim 了，但两边
     各修各的，删掉任意一边都不该改变结果。

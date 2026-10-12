@@ -11,6 +11,7 @@ import type { Project, RoomTask, Topic } from '../cx_types'
 import type { TopicUnread } from '../types/channels'
 import type { MenuAction } from './common/menuAction'
 import type { VirtualListHandle } from './common/VirtualList.vue'
+import type { MoreTasks } from './topic-sidebar/moreTasks'
 
 import { computed, ref, watch } from 'vue'
 
@@ -29,9 +30,9 @@ import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
 import UserAvatar from './common/UserAvatar.vue'
 import VirtualList from './common/VirtualList.vue'
-import TopicRailAllTasksRow from './topic-sidebar/TopicRailAllTasksRow.vue'
 import TopicRailBrowseRow from './topic-sidebar/TopicRailBrowseRow.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
+import TopicRailMoreTasksRow from './topic-sidebar/TopicRailMoreTasksRow.vue'
 import TopicRailPinnedRows from './topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRootRow from './topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from './topic-sidebar/TopicRailRow.vue'
@@ -73,8 +74,8 @@ const props = defineProps<{
   roomTasks?: Record<string, Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>[]>
   // 每个频道里一共还有几条任务在进行；侧栏只列其中和我有关的几条（`roomTasks`）。
   roomTaskTotals?: Record<string, number>
-  // 正在看哪个频道的「全部任务」。
-  allTasksChannelId?: string | null
+  /** 就地展开了的频道（频道 id → 它其余进行中的任务读到哪一步）；不在里面的就是收着的。 */
+  moreTasks?: Record<string, MoreTasks>
   /** 正打开的任务。 */
   selectedTaskId?: string | null
   /** 正打开的东西在哪个频道里（见 `useTopicRail` 的同名字段）。 */
@@ -86,7 +87,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'select-topic', id: string): void
   (e: 'select-task', task: { roomId: string; taskId: string }): void
-  (e: 'all-tasks', channelId: string): void
+  // 频道下面最后那一行：展开或收起这个频道其余进行中的任务（读失败时是再读一次）。
+  (e: 'toggle-tasks', channelId: string): void
   // 「浏览频道」：去看这个项目的全部频道（侧栏只列加入了的）。
   (e: 'browse-channels'): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
@@ -103,7 +105,7 @@ const emit = defineEmits<{
   // Rename a topic's title from the row's ⋯ actions. A name a person chose is
   // final: the platform stops renaming that room from then on.
   (e: 'rename-topic', payload: { id: string; title: string }): void
-  // Open 项目文档 in the main area. The rail always asks for 章程 — the page
+  // Open 项目文档 in the main area. The rail always asks for 项目目标 — the page
   // itself carries the tabs that reach the other two.
   (e: 'select-docs', kind: 'charter' | 'weeklies' | 'memory'): void
 }>()
@@ -136,6 +138,26 @@ const {
   toggleTitle,
   topicById,
 } = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
+
+// 频道下面的任务：先挂和我有关的几条，最后一行就地展开这个频道其余进行中的任务。
+// 「其余几个」= 频道里进行中的总数减去已经挂着的，展开后接上的就是这几个。
+function hiddenTasks(channelId: string): number {
+  return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - (props.roomTasks?.[channelId]?.length ?? 0))
+}
+function moreTaskRows(channelId: string) {
+  const more = props.moreTasks?.[channelId]
+  return more?.state === 'ready' ? more.rows : []
+}
+function hasMoreRow(channelId: string): boolean {
+  return !!props.moreTasks?.[channelId] || hiddenTasks(channelId) > 0
+}
+function moreLabel(channelId: string): string {
+  const more = props.moreTasks?.[channelId]
+  if (!more) return t('work.sidebar.moreTasks', { count: hiddenTasks(channelId) })
+  if (more.state === 'loading') return t('work.sidebar.tasksLoading')
+  if (more.state === 'failed') return t('work.sidebar.tasksFailed')
+  return t('work.sidebar.fewerTasks')
+}
 
 // ---- 路由那一半 ----
 // 这个文件里一行 vue-router 都没有：换页、预热、行菜单那几项都从这一道取。
@@ -343,7 +365,7 @@ const rowSheetActions = computed<MenuAction[]>(() =>
   rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
 )
 
-// 项目文档 (C4): 章程 / 周报集 / 记忆 在侧栏只占一行，点开进章程；
+// 项目文档 (C4): 项目目标 / 周报集 / 记忆 在侧栏只占一行，点开进项目目标；
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
 const onDocs = computed(() => !!props.activeDocs)
@@ -485,13 +507,21 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
               />
-              <TopicRailAllTasksRow
-                v-if="rootTopic && roomTaskTotals?.[rootTopic.id]"
+              <TopicRailTaskRow
+                v-for="task in rootTopic ? moreTaskRows(rootTopic.id) : []"
+                :key="task.id"
+                :task="task"
+                :selected="task.id === selectedTaskId"
+                :unread="unreadOf(task.id)"
+                @select="emit('select-task', $event)"
+                @press="emit('press-task', $event)"
+              />
+              <TopicRailMoreTasksRow
+                v-if="rootTopic && hasMoreRow(rootTopic.id)"
                 :channel-id="rootTopic.id"
-                :total="roomTaskTotals[rootTopic.id]"
-                :label="t('work.sidebar.allTasks')"
-                :selected="allTasksChannelId === rootTopic.id"
-                @select="emit('all-tasks', $event)"
+                :label="moreLabel(rootTopic.id)"
+                :expanded="!!moreTasks?.[rootTopic.id]"
+                @toggle="emit('toggle-tasks', $event)"
               />
             </template>
           </TopicRailRootRow>
@@ -575,14 +605,23 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"
                       />
-                      <TopicRailAllTasksRow
-                        v-if="roomTaskTotals?.[item.topic.id]"
-                        :channel-id="item.topic.id"
-                        :total="roomTaskTotals[item.topic.id]"
+                      <TopicRailTaskRow
+                        v-for="task in moreTaskRows(item.topic.id)"
+                        :key="task.id"
+                        :task="task"
                         :depth="item.depth"
-                        :label="t('work.sidebar.allTasks')"
-                        :selected="allTasksChannelId === item.topic.id"
-                        @select="emit('all-tasks', $event)"
+                        :selected="task.id === selectedTaskId"
+                        :unread="unreadOf(task.id)"
+                        @select="emit('select-task', $event)"
+                        @press="emit('press-task', $event)"
+                      />
+                      <TopicRailMoreTasksRow
+                        v-if="hasMoreRow(item.topic.id)"
+                        :channel-id="item.topic.id"
+                        :depth="item.depth"
+                        :label="moreLabel(item.topic.id)"
+                        :expanded="!!moreTasks?.[item.topic.id]"
+                        @toggle="emit('toggle-tasks', $event)"
                       />
                     </div>
                   </template>

@@ -76,13 +76,13 @@
   },
   "docs": {
     "kind": {
-      "charter": "Charter",
+      "charter": "Project goals",
       "weeklies": "Weekly reports",
       "memory": "Memory"
     },
     "loadFailed": "Couldn't load",
     "askInRoom": "Ask it in General",
-    "charterHint": "Editing this is giving {name} instructions",
+    "charterHint": "{name} reads this in every conversation",
     "memoryEmpty": "No memories",
     "memoryHint": "Say “remember…” in a conversation, or it writes here when it judges something important",
     "memoryUser": "Personal memory",
@@ -90,7 +90,7 @@
     "memoryDelete": "Delete this memory",
     "memoryDeleteTitle": "Delete this memory?",
     "memoryDeleteBody": "It can't be recovered, and {name} will no longer remember it.",
-    "noCharter": "This project has no editable charter yet",
+    "noCharter": "This project has no editable goals yet",
     "fromTopic": "From channel",
     "weekliesEmpty": "No weekly reports",
     "weekliesHint": "Mention {'@'}{name} in the project channel and ask for “this week's project report”. It is recorded here once written",

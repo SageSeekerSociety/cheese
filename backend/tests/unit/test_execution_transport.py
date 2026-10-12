@@ -1285,6 +1285,8 @@ class LeasingPlatform:
                             "token": "execution-only",
                         }
                         if platform.lease == "ready"
+                        else {"unavailable": "环境仍在准备", "preparing": True}
+                        if platform.lease == "preparing"
                         else {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
                     }
                 else:
@@ -1475,17 +1477,21 @@ def test_a_transcript_left_in_pieces_resumes_with_all_of_them(leased_session):
     assert not (placeholder / "s.jsonl").exists()
 
 
-def test_a_session_never_starts_at_the_machines_path_without_the_machine(
-    leased_session,
+@pytest.mark.parametrize("lease", ["preparing", "unavailable"])
+def test_a_session_whose_machine_cannot_be_had_yet_starts_at_the_placeholder(
+    leased_session, lease
 ):
-    """A lease the platform cannot hand out when the session starts fails the
-    start, with the platform's reason: a session at the machine's path that
-    has not read the project's instructions, hooks and MCP servers is not one
-    that machine would run."""
-    platform, _, launch = leased_session
-    platform.lease = "unavailable"
-    with pytest.raises(RuntimeError, match="工作电脑未连接"):
-        launch()
+    """A relaunch onto a machine the platform cannot hand out at that moment
+    (being prepared again, or gone) still starts, and never at the machine's
+    path: at the placeholder, as when its machine did not answer, so the turn
+    it was started for is not lost. Its first project tool then takes the
+    machine as any placeholder session's does
+    (`test_a_tool_waits_while_its_machine_is_prepared_unless_it_is_cancelled`)."""
+    platform, work, launch = leased_session
+    platform.lease = lease
+    started = launch()
+    assert started["workspace"] == "/unavailable-project"
+    assert str(work) not in json.dumps(started)
     assert platform.seen == ["lease"]
 
 

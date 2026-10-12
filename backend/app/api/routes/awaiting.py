@@ -24,6 +24,7 @@ from app.core.db import get_db
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import running_tasks
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import threads_of_rooms
 from app.domain.delivery.addressing import (
     REASON_ASKED,
     REASON_REVIEWER,
@@ -39,7 +40,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import awaiting, presentation
 from app.domain.room_task.repositories import TaskRepository
-from app.domain.thread.services import onto_rooms, threads_of_rooms
+from app.domain.thread.services import onto_rooms
 from app.domain.topic.repositories import TopicRepository
 
 router = APIRouter(prefix="/awaiting-me", tags=["awaiting"])
