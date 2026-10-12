@@ -288,6 +288,19 @@ class Task(UuidPk, Timestamps, Base):
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # 归档：把它从列表里收起来。谁都能关自己的活，但一条活收不收起来是有人特意做的
+    # 一件事，所以它自己有一个时刻，和 `closed_at` 分开 —— 一件上个星期关掉、今天才
+    # 被收走的活，两个时刻不是同一个，而「什么时候不做的」不该被收走那一下覆盖掉。
+    #
+    # **归档的一定是关掉的**（`TaskService.archive` 先关再收），所以「开着」和「已归
+    # 档」不会同时成立：那一堆读 `status == open` 的判据不用各自再问一遍这一列，只有
+    # 列清单的地方要多问这一句。反过来说，`reopen` 必须把它清掉。
+    #
+    # 不新增 `TaskStatus` 的取值：那个枚举的两个值说的是「这活做没做完」，而归档是
+    # 另一件事（见它自己的 docstring）。
+    archived_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # The main-line message this task was made from, or whose 支线 it was made
     # in: the task shows under it. A message can have any number of tasks.
     # use_alter: tasks↔blocks is a circular FK; add this one via ALTER.

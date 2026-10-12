@@ -6039,9 +6039,10 @@ export interface paths {
          * List Project Tasks
          * @description Every thread in the project, each with the card it currently rides on.
          *
-         *     `status` keeps only threads in that state. The sidebar polls for the open
-         *     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
-         *     read.
+         *     `status` keeps only threads in that state: `open`, `closed`, or `archived` —
+         *     tasks their owner put away, which are in none of the other two. The sidebar
+         *     polls for the open ones: 128 of the 1,716 on dev (2026-10-08), and every row
+         *     is rebuilt per read.
          *
          *     With `limit` (and a `status`) it is a page instead, of the threads that
          *     most recently moved: the closed ones only grow, and the all-tasks page
@@ -11042,6 +11043,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/topics/{topic_id}/task/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive Task
+         * @description 归档：the task's owner puts it away — out of every list, and read-only.
+         *
+         *     Talking about a task and closing it stay inside the room, where everyone can
+         *     see the work happened; archiving is the owner tidying his own list, so it is
+         *     his alone, the same as 「关闭任务」 and 「重新打开」. A channel being archived
+         *     is the other thing, and it still takes the channel's manager.
+         *
+         *     A task still going is closed first (`TaskService.archive`), so this is also
+         *     how "I am not doing this after all, and I do not want to look at it" is
+         *     said. Its PR is closed with the task, as 「关闭任务」 does.
+         */
+        post: operations["archive_task_topics__topic_id__task_archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/task/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unarchive Task
+         * @description 取消归档：back in the lists. It comes back closed — put away while it was
+         *     going or long after, the task does not start again by itself; its owner
+         *     reopens it (「重新打开任务」) if there is more to do.
+         */
+        post: operations["unarchive_task_topics__topic_id__task_unarchive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/topics/{topic_id}/start": {
         parameters: {
             query?: never;
@@ -15622,6 +15674,21 @@ export interface components {
                 [key: string]: components["schemas"]["EventChoiceIn"];
             };
         };
+        /**
+         * PresentationOut
+         * @description 看板上这一格：哪一列，卡面写什么。
+         *
+         *     两个字段一起出，因为它们是一个答案的两半 —— 列说「该谁动」，短语说「在等什
+         *     么」，而每一列只能说属于自己的话（`room_task/presentation.py`）。客户端拿到
+         *     的是结论，不是原料：状态从来不存库，是读的时候从事实算出来的，算的地方只有
+         *     后端这一处，所以网页、CLI 和以后任何一个客户端不可能给出不同答案。
+         */
+        PresentationOut: {
+            /** Column */
+            column: string;
+            /** Phrase */
+            phrase: string;
+        };
         /** PreviewSelection */
         PreviewSelection: {
             /** Artifact Id */
@@ -16555,6 +16622,115 @@ export interface components {
             title?: string | null;
         };
         /**
+         * TaskPageOut
+         * @description 一条活交给它自己那页的样子：就是 `TaskOut` 再加一个「在等谁」。
+         *
+         *     只有把整页交回去的端点用它（`GET /topics/{task}/task`，以及关闭、重新打
+         *     开、归档这几条会改到那页的写路径），房间清单里那一行不带这一位。
+         */
+        TaskPageOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /**
+             * Room Id
+             * Format: uuid
+             */
+            room_id: string;
+            /** Number */
+            number?: number | null;
+            /** Title */
+            title: string;
+            /**
+             * Title Source
+             * @default human
+             */
+            title_source: string;
+            status: components["schemas"]["TaskStatus"];
+            /** Owner Handle */
+            owner_handle?: string | null;
+            /** Reviewer Handle */
+            reviewer_handle?: string | null;
+            /** Reporter Handle */
+            reporter_handle?: string | null;
+            /** Contributor Handles */
+            contributor_handles?: string[];
+            /** Created By */
+            created_by?: string | null;
+            /** Branch Name */
+            branch_name?: string | null;
+            /** Base Branch */
+            base_branch?: string | null;
+            /** Base Task Id */
+            base_task_id?: string | null;
+            /** Historical Delivery Id */
+            historical_delivery_id?: string | null;
+            /** Pr Number */
+            pr_number?: number | null;
+            /** Pr Url */
+            pr_url?: string | null;
+            /** Delivered Head */
+            delivered_head?: string | null;
+            /** Agent Handle */
+            agent_handle?: string | null;
+            /** Document Id */
+            document_id?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Started By */
+            started_by?: string | null;
+            /** Started Doc Version */
+            started_doc_version?: number | null;
+            /** Accepted By */
+            accepted_by?: string | null;
+            /** Accepted At */
+            accepted_at?: string | null;
+            /** Closed At */
+            closed_at?: string | null;
+            /** Archived At */
+            archived_at?: string | null;
+            /** Upgraded From Block Id */
+            upgraded_from_block_id?: string | null;
+            /** Conclusion */
+            conclusion?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            presentation?: components["schemas"]["PresentationOut"] | null;
+            /** Waiting On */
+            waiting_on?: string | null;
+        };
+        /** TaskPageOutEnvelope */
+        TaskPageOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["TaskPageOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
          * TaskParticipantRequest
          * @description Body for joining a task (user or team). All fields optional.
          */
@@ -16577,6 +16753,23 @@ export interface components {
             /** Reviewer Handle */
             reviewer_handle?: string | null;
         };
+        /**
+         * TaskStatus
+         * @description Whether this piece of work is still going.
+         *
+         *     Two values, because two is what is actually observable: work is either being
+         *     done or it is not. A richer vocabulary (blocked / in review / …) would be a
+         *     word nothing writes and nothing acts on — see the module docstring on
+         *     dependencies for the same reasoning.
+         *
+         *     A task may deliver in several steps: accepting the step its card calls the
+         *     last closes the task, accepting an earlier one leaves it open
+         *     (`review/task_landing.py`). A task may also close without delivery.
+         *     `accepted_at` records the latest approval and `delivered_head` the latest
+         *     merged revision, kept even if that approval is later revoked.
+         * @enum {string}
+         */
+        TaskStatus: "open" | "closed";
         /** TaskUpdateIn */
         TaskUpdateIn: {
             /** Owner Handle */
@@ -29313,7 +29506,7 @@ export interface operations {
     list_project_tasks_projects__project_id__tasks_get: {
         parameters: {
             query?: {
-                status?: ("open" | "closed") | null;
+                status?: ("open" | "closed" | "archived") | null;
                 channel?: string | null;
                 whose?: ("mine" | "helping" | "others") | null;
                 limit?: number | null;
@@ -40360,6 +40553,68 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_task_topics__topic_id__task_archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPageOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unarchive_task_topics__topic_id__task_unarchive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskPageOutEnvelope"];
                 };
             };
             /** @description Validation Error */

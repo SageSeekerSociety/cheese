@@ -14,6 +14,7 @@ from app.domain.identity.handles import names_a_person
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
+from app.domain.room_task.closing import StopsWork, close_task
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
     LockKind,
@@ -467,6 +468,33 @@ class TaskService:
         task.last_check_detail = ""
         await self._session.flush()
 
+    async def archive(
+        self, task: Task, work: StopsWork | None, *, conclusion: str | None = None
+    ) -> Task:
+        """归档：put ``task`` away — out of every list, and read-only.
+
+        It is closed first if it was not already, so that "archived" and "going"
+        never hold at once (`models.Task.archived_at` says why that matters).
+        Closing also stops whatever a teammate still has running in it, which is
+        what archiving a live task has to mean: the work is over, and not
+        because its last delivery landed.
+
+        Archiving does not reopen, and unarchiving does not either — a task put
+        away while it was going comes back closed, and 「重新打开」 is its own
+        act. Two timestamps, so a task closed last week and put away today still
+        says when it stopped being live.
+        """
+        await close_task(self._session, task, work, conclusion=conclusion)
+        task.archived_at = datetime.now(UTC)
+        await self._session.flush()
+        return task
+
+    async def unarchive(self, task: Task) -> Task:
+        """取消归档：back in the lists. It stays closed — see `archive`."""
+        task.archived_at = None
+        await self._session.flush()
+        return task
+
     async def reopen(self, task: Task) -> Task:
         """重新打开：the task is going again. One that has landed something goes
         on from the project's latest code, like a task whose step landed."""
@@ -475,6 +503,11 @@ class TaskService:
         task.status = TaskStatus.open
         task.closed_at = None
         task.conclusion = None
+        # An open task is never archived (`archive` closes first), so opening one
+        # that was put away also takes it out of the archive — otherwise it would
+        # be going and hidden at the same time, the one combination the column is
+        # not allowed to mean.
+        task.archived_at = None
         if task.branch_name is not None and task.delivered_head is not None:
             await self.next_step(task)
         else:

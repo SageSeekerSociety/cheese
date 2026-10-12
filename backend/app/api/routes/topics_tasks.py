@@ -4,10 +4,15 @@
 `POST /topics/{conversation}/teammate-tasks` is an AI teammate creating one
 from where it is talking: those are the room's. Everything about one task is
 addressed by the task's own conversation id — `GET|PATCH /topics/{task}/task`
-(the task, handing it over), `POST /topics/{task}/start`, `/close` and
-`/reopen`. Talking in a task, naming it and reading its
-document go through the same routes as a room's (`/messages`, `/title`,
+(the task, handing it over), `POST /topics/{task}/start`, `/close`, `/reopen`,
+`/task/archive` and `/task/unarchive`. Talking in a task, naming it and reading
+its document go through the same routes as a room's (`/messages`, `/title`,
 `/document`), with the task's id.
+
+Putting a task away sits under `/task/` because plain `/archive` on that same id
+is the channel's own (`app.api.routes.topics.archive_topic`): a topic id is
+either a room or a task, and `POST /topics/{id}/archive` has meant "archive this
+channel" since long before tasks could be put away.
 
 `_actor_in_place`, `DbSession` and the block/project/usage repositories come from
 topics.py, so the import guard and `.importlinter` see no new edges; the accept
@@ -27,7 +32,7 @@ from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.room_task_rows import named_task, task_rows
 from app.api.routes.topics import BlockRepository, ProjectRepository, UsageRepository
 from app.api.task_instructions import dispatch, teammate_source_text, tell_task
@@ -65,7 +70,7 @@ from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.closing import close_task
-from app.domain.room_task.schemas import TaskOut
+from app.domain.room_task.schemas import TaskOut, TaskPageOut
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import ConclusionIn
@@ -404,6 +409,86 @@ async def reopen_task(
         task_id=task.id,
         content=say("taskReopened", actor=f"<@{actor.handle}>", title=said_title(task)),
         meta={"platform": True, "action": "task_reopened", "task_id": str(task.id)},
+    )
+    out = await _task_out(db, chat, task)
+    await db.commit()
+    return ok(out)
+
+
+@router.post(
+    "/{topic_id}/task/archive",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TaskPageOut),
+)
+async def archive_task(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """归档：the task's owner puts it away — out of every list, and read-only.
+
+    Talking about a task and closing it stay inside the room, where everyone can
+    see the work happened; archiving is the owner tidying his own list, so it is
+    his alone, the same as 「关闭任务」 and 「重新打开」. A channel being archived
+    is the other thing, and it still takes the channel's manager.
+
+    A task still going is closed first (`TaskService.archive`), so this is also
+    how "I am not doing this after all, and I do not want to look at it" is
+    said. Its PR is closed with the task, as 「关闭任务」 does.
+    """
+    place, actor, task = await task_conversation(db, resolver, topic_id)
+    if not actor.authenticated or actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
+    task = await TaskService(db).archive(task, chat)
+    close_pr_after_commit(db, task)
+    # The room the task hangs in says so, and so does the discussion it came
+    # from: the work is gone from the lists, and「凭空少了什么」is worse than a
+    # line saying where it went.
+    put_away = say("taskArchived", actor=f"<@{actor.handle}>", title=said_title(task))
+    await announce(
+        db,
+        place_id=place.room_id,
+        task_id=task.id,
+        content=put_away,
+        meta={"platform": True, "action": "task_archived", "task_id": str(task.id)},
+    )
+    await tell_origin(db, task, put_away)
+    out = await _task_out(db, chat, task)
+    await db.commit()
+    return ok(out)
+
+
+@router.post(
+    "/{topic_id}/task/unarchive",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TaskPageOut),
+)
+async def unarchive_task(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+) -> dict:
+    """取消归档：back in the lists. It comes back closed — put away while it was
+    going or long after, the task does not start again by itself; its owner
+    reopens it (「重新打开任务」) if there is more to do."""
+    place, actor, task = await task_conversation(db, resolver, topic_id)
+    if not actor.authenticated or actor.handle != task.owner_handle:
+        raise ForbiddenError(say("taskOwnerOnly"))
+    task = await TaskService(db).unarchive(task)
+    await announce(
+        db,
+        place_id=place.room_id,
+        task_id=task.id,
+        content=say(
+            "taskUnarchived", actor=f"<@{actor.handle}>", title=said_title(task)
+        ),
+        meta={
+            "platform": True,
+            "action": "task_unarchived",
+            "task_id": str(task.id),
+        },
     )
     out = await _task_out(db, chat, task)
     await db.commit()

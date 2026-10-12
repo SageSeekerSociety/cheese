@@ -63,6 +63,9 @@ class TaskOut(BaseModel):
     accepted_by: str | None = None
     accepted_at: datetime | None = None
     closed_at: datetime | None = None
+    # 被收起来的时刻（`Task.archived_at`）：那一刻起它不在任何清单里，页面也变成
+    # 只读。非空的一定是关掉的，所以客户端问「能不能发言」还是只看 `status`。
+    archived_at: datetime | None = None
     upgraded_from_block_id: uuid.UUID | None = None
     # 关闭时留下的一句话。
     conclusion: str | None = None
@@ -72,3 +75,15 @@ class TaskOut(BaseModel):
     # 端点会填（见 tasks 列表和 `GET /topics/{id}`），别处保持 None —— 意思是
     # 「没人算过」，不是「没有」。ORM 行上没有这个属性，from_attributes 会留默认值。
     presentation: PresentationOut | None = None
+
+
+class TaskPageOut(TaskOut):
+    """一条活交给它自己那页的样子：就是 `TaskOut` 再加一个「在等谁」。
+
+    只有把整页交回去的端点用它（`GET /topics/{task}/task`，以及关闭、重新打
+    开、归档这几条会改到那页的写路径），房间清单里那一行不带这一位。
+    """
+
+    #: 卡面写「待 某某 审阅/回答/开始」的那个某某，不是在等一个具体的人就是
+    #: None（`presentation.waiting_on`）。
+    waiting_on: str | None = None
