@@ -522,7 +522,6 @@
       "sourceUnavailable": "Couldn't open this task. View another source",
       "noRepo": "No code repository",
       "switchToCommitted": "Switch to the committed version",
-      "missingInTask": "{path} is not in this task",
       "conflict": "This file changed while you were editing. Saving now overwrites those changes",
       "reloadLatest": "Load the latest version",
       "saveAnyway": "Save anyway",

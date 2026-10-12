@@ -181,7 +181,6 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     refreshing: ref(v.refreshing),
     errorMsg: ref(v.errorMsg),
     noRepo: ref(v.noRepo),
-    missing: ref(v.missing),
     fileDiffs: computed(() => v.fileDiffs),
     diffByPath: computed(() => v.diffByPath),
     treeFiles: computed(() => v.treeFiles),

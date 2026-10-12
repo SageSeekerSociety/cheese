@@ -522,7 +522,6 @@
       "sourceUnavailable": "无法打开这个任务，换一个来源查看",
       "noRepo": "暂无代码仓库",
       "switchToCommitted": "切换到已提交版本",
-      "missingInTask": "{path} 不在这个任务里",
       "conflict": "你编辑期间，这个文件已被修改，直接保存会覆盖这些修改",
       "reloadLatest": "载入最新版本",
       "saveAnyway": "仍要保存",
