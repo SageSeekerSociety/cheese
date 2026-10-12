@@ -74,6 +74,14 @@ everything is still allowed to answer unknown.
 - Scope comes from the same `select()` + path map as Required CI; the guards
   run on every invocation. Changes include committed, staged, unstaged,
   untracked, deleted and both sides of a rename.
+- A path the map does not name could be any kind of code, so this tier widens
+  the scope to both product suites. Prose cannot be, so a diff of only `.md`
+  files (`DOC_GLOBS`) is not an unknown path: `README.md`, `AGENTS.md` and a
+  skill's `SKILL.md` are named nowhere in the map, and treating them as unknown
+  turned a docs-only draft into the full suite, which the tier cannot fit — it
+  answered unknown. The doc checks that do read them (anchors, links, titles,
+  repo rules) are guards and run either way; a non-doc path next to a `.md`
+  still widens.
 - Backend test selection is a pure static reverse-import graph over the AST
   (never file-name tokens), plus the always-on tree/i18n guard files. The
   pytest run loads a small audit plugin (`-p ci_fast_pytest_plugin`) that
@@ -133,9 +141,10 @@ head, base and dirty-tree fingerprint.
 - The frontend's Vitest parallelism is derived from that same cap
   (`vitest_workers`): one fork per 3072 MiB, also bounded by cores − 1 and 16 —
   the rule `frontend/vite.config.ts` already applies to the same box (a fork
-  peaks at 1.7–2.1 GB). A local quick run therefore still gets one worker; a
-  runner whose ceiling can back several gets several — measured at 3580 MiB for
-  the whole suite on three forks, parent process included, against 9216 MiB.
+  peaks at 1.7–2.1 GB). A local quick run therefore still gets one worker, and
+  keeps the in-process, one-file-at-a-time form it had before; a runner whose
+  ceiling can back several gets several — measured at 3580 MiB for the whole
+  suite on three forks, parent process included, against 9216 MiB.
 - The environment handed to each check is scrubbed of variables that would
   change its verdict (`SKIP`, `PRE_COMMIT_COLOR`, stray `GIT_*`, `PYTEST_ADDOPTS`,
   `NODE_OPTIONS`); `PATH`/`HOME` are kept so tools resolve.

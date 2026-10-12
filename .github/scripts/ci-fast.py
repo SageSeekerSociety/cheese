@@ -9,7 +9,10 @@ Direct Python invocation defaults to the legacy static tier (no tests/types).
 Use --title for a proposed PR title; otherwise read the actual PR title with gh.
 A missing title is unverified, never replaced by a possibly unrelated HEAD title.
 
-Scope comes from Required CI's select()/path map. Changes include committed,
+Scope comes from Required CI's select()/path map, plus one local widening: a
+path the map does not name could be any kind of code, so it turns both product
+suites on — except for prose, which cannot hold the code a suite covers and is
+evidence for the doc checks alone (DOC_GLOBS). Changes include committed,
 staged, unstaged, untracked, deleted and both renamed paths. Hook commands
 remain in pre-commit config; tests reuse existing pytest/Vitest/type-ratchet
 entry points. No installs, no result cache, no hook or compiler config changes.
@@ -57,6 +60,15 @@ TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
 # their own per-check timeout reports them unknown if the budget really is gone.
 JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
 MERGE_BASE_HOOKS = {"file-size", "migration-fork"}
+# Prose, in any of the forms this repo keeps it: contents that cannot be the
+# code a product suite covers, so a diff of only these is unknown-path widening
+# that proves nothing about backend or frontend. The shared path map already
+# names `docs/**` for guards; what this adds is the doc paths it does not name —
+# `README.md`, `AGENTS.md`, a skill's `SKILL.md` — which read as unknown and
+# turned a docs-only draft run into the full suite, which cannot fit that tier's
+# budget, so it answered unknown (reported 2026-10-12). Guards still run on
+# every invocation, so the doc checks themselves are unaffected.
+DOC_GLOBS = ("*.md", "docs/**")
 # Group RSS the sampled ceiling may be set to. The default (3072 MiB) is the
 # work machine's own session cap — what a local run can actually be backed by —
 # so a local run keeps it. A CI runner has its own memory and no session cap:
@@ -221,7 +233,14 @@ def run(args, report, finish, started):
     if not base_sha:
         scope = {suite: True for suite in paths_map}
         report["fallback"] = True
-    unknown = [p for p in changed if not any(fnmatch.fnmatchcase(p, pat) for patterns in paths_map.values() for pat in patterns)]
+    # A path the shared map does not name could be any kind of code, so the tier
+    # widens to both product suites; prose cannot be, so it is not an unknown
+    # path (DOC_GLOBS). Everything else widens exactly as before.
+    unknown = [
+        p for p in changed
+        if not any(fnmatch.fnmatchcase(p, pat) for patterns in paths_map.values() for pat in patterns)
+        and not any(fnmatch.fnmatchcase(p, pat) for pat in DOC_GLOBS)
+    ]
     if unknown:
         scope["backend"] = scope["frontend"] = True
         report["unknown_paths"] = unknown

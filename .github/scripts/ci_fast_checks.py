@@ -69,7 +69,16 @@ def vitest_workers(memory_mib):
 
 
 def vitest_flags(memory_mib):
-    return [f"--maxWorkers={vitest_workers(memory_mib)}", *VITEST_FLAGS]
+    """The Vitest arguments for a run given this memory ceiling.
+
+    A single worker keeps the file-in-process form the tier had while its pool
+    was pinned to one: that is the local default, the run under the work
+    machine's own 3 GiB cap. Several workers means the ceiling backs a pool, so
+    the serial-file pin goes and the pool size is what bounds memory.
+    """
+    workers = vitest_workers(memory_mib)
+    serial = ["--no-file-parallelism"] if workers == 1 else []
+    return [f"--maxWorkers={workers}", *serial, *VITEST_FLAGS]
 
 
 def _narrow_config(root, tmp, ts_files):

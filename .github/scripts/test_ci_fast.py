@@ -281,6 +281,33 @@ class CiFastTest(unittest.TestCase):
         self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
         self.assertIn("strange-dir/thing.xyz", self.report()["unknown_paths"])
 
+    # --- prose is not an unknown path: a docs-only diff must not pull in the
+    # product suites. The map leaves README.md/AGENTS.md/SKILL.md unnamed, so
+    # before this they widened the scope to the full suite — which a quick run
+    # cannot fit, so a docs-only draft answered "unknown" (2026-10-12).
+    def test_docs_only_diff_does_not_widen_scope(self):
+        self.write_hooks()
+        self.make_base_and_head("README.md")
+        for path in ("AGENTS.md", "docs/manual/dev/ci.md", ".claude/skills/x/SKILL.md"):
+            self.commit_file(path)
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(FRONTEND_HOOKS & self.ran_hooks())
+        self.assertFalse(BACKEND_HOOKS & self.ran_hooks())
+        self.assertTrue(GUARD_HOOKS <= self.ran_hooks())
+        self.assertEqual(self.report()["unknown_paths"], [])
+
+    # --- ...but prose alongside a path the map cannot place does not excuse it
+    def test_docs_next_to_an_unknown_path_still_widens(self):
+        self.write_hooks()
+        self.make_base_and_head("README.md")
+        self.commit_file("strange-dir/thing.xyz")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(FRONTEND_HOOKS & self.ran_hooks())
+        self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
+        self.assertEqual(self.report()["unknown_paths"], ["strange-dir/thing.xyz"])
+
     # --- staged + unstaged + untracked all count, and the report proves it
     def test_dirty_worktree_selected_and_fingerprinted(self):
         self.write_hooks()
@@ -907,10 +934,13 @@ class SelectionEvidenceTest(unittest.TestCase):
             # the flags, not the single-worker pin this replaced.
             self.assertNotIn("--maxWorkers=1", flags)
         self.assertIn("--no-passWithNoTests", flags)
-        # File parallelism stays at Vitest's default, as full CI runs it; what
-        # bounds memory here is the pool size the ceiling buys, not a
-        # serial-file pin (which is what the old fixed --maxWorkers=1 did).
-        self.assertNotIn("--no-file-parallelism", flags)
+        # A single worker keeps the files in the process that started Vitest —
+        # the form the tier had while its pool was pinned to one, and the local
+        # default under the work machine's own 3 GiB cap. Once the ceiling backs
+        # a pool, the pool is what bounds memory and the serial-file pin goes.
+        self.assertIn("--no-file-parallelism", vitest_flags(3072))
+        if _cores() >= 3:
+            self.assertNotIn("--no-file-parallelism", flags)
 
     def test_frontend_meta_and_ambient_force_full_typecheck(self):
         from ci_fast_checks import test_plan
