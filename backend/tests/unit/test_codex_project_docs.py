@@ -65,6 +65,27 @@ def test_project_instructions_follow_in_repository_symlinks(tmp_path):
     assert (root / "AGENTS.md").read_bytes() == b"linked rules\n"
 
 
+def test_project_instructions_follow_symlinked_directories(tmp_path):
+    context = Context({"real/AGENTS.md": b"directory link rules\n"})
+    context.entries["sub"] = {
+        "kind": "symlink",
+        "target": "real",
+        "size": len("real"),
+        "mtime_ns": 98,
+    }
+    context.entries["AGENTS.md"] = {
+        "kind": "symlink",
+        "target": "sub/AGENTS.md",
+        "size": len("sub/AGENTS.md"),
+        "mtime_ns": 99,
+    }
+    root = tmp_path / "codex-workspace"
+    mirror = tools(context, root)
+
+    assert mirror.sync_project_docs(context.entries) is True
+    assert (root / "AGENTS.md").read_bytes() == b"directory link rules\n"
+
+
 def test_project_instruction_snapshot_removes_stale_files(tmp_path):
     context = Context({"AGENTS.md": b"current\n"})
     root = tmp_path / "codex-workspace"

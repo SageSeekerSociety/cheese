@@ -166,6 +166,33 @@ class RemoteTools:
                     path.unlink()
             self.docs_mirrored = {}
 
+        def source_file(name: str) -> tuple[str, dict] | None:
+            source = name
+            seen = set()
+            while source not in seen:
+                seen.add(source)
+                parts = source.split("/")
+                for index in range(1, len(parts) + 1):
+                    prefix = "/".join(parts[:index])
+                    link = entries.get(prefix, {})
+                    if link.get("kind") != "symlink":
+                        continue
+                    target = link.get("target")
+                    if not isinstance(target, str) or target.startswith("/"):
+                        return None
+                    source = posixpath.normpath(
+                        posixpath.join(
+                            posixpath.dirname(prefix), target, *parts[index:]
+                        )
+                    )
+                    if source == ".." or source.startswith(("../", "/")):
+                        return None
+                    break
+                else:
+                    entry = entries.get(source, {})
+                    return (source, entry) if entry.get("kind") == "file" else None
+            return None
+
         wanted: dict[str, tuple[str, int, int]] = {}
         for name, entry in entries.items():
             if (
@@ -177,26 +204,9 @@ class RemoteTools:
                 or name.startswith("../")
             ):
                 continue
-            source = name
-            source_entry = entry
-            seen = {name}
-            while source_entry.get("kind") == "symlink":
-                target = source_entry.get("target")
-                if not isinstance(target, str) or target.startswith("/"):
-                    break
-                source = posixpath.normpath(
-                    posixpath.join(posixpath.dirname(source), target)
-                )
-                if (
-                    source in seen
-                    or source == ".."
-                    or source.startswith("../")
-                    or source.startswith("/")
-                ):
-                    break
-                seen.add(source)
-                source_entry = entries.get(source, {})
-            if source_entry.get("kind") == "file":
+            resolved = source_file(name)
+            if resolved is not None:
+                source, source_entry = resolved
                 wanted[name] = (
                     source,
                     source_entry["size"],
