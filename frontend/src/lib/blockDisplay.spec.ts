@@ -43,6 +43,8 @@ describe('视频附件的内联播放入口', () => {
     ['clip', 'video/mp4'],
     ['clip.html', 'video/mp4'],
     ['clip.svg', 'video/webm'],
+    ['notes.constructor', 'application/octet-stream'],
+    ['notes.__proto__', 'application/octet-stream'],
   ])('不在媒体读取白名单的 %s 走下载，即使 MIME 是 %s', (name, mime) => {
     const block = { ...said('alice', `library/${name}`), kind: 'attachment', mime_type: mime } as Block
     expect(isVideoBlock(block)).toBe(false)
