@@ -21,7 +21,7 @@ from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.channel import ScreenSetupError
+from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
 from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
@@ -81,6 +81,7 @@ def _hub(online=lambda device: True):
         is_online=online,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
+        all_online_screens=lambda: [],
     )
 
 
@@ -258,3 +259,65 @@ async def test_another_members_machine_is_never_an_own_agents_session_host(clien
                 needs_place=False,
             )
         )
+
+
+async def _launch_target(client, own, *, leased_on):
+    """The execution target Bob's laptop is handed to start his own Claude
+    Code with, once its lease is ready on ``leased_on`` and that machine
+    answers."""
+    async with client.test_factory() as db:
+        row = await AgentSessionService(db).ensure(
+            own.topic_id, own.handle, harness="claude-code"
+        )
+        row.work_lease = {
+            "kind": "device",
+            "device_id": leased_on,
+            "generation": str(uuid.uuid4()),
+            "status": "ready",
+            "workspace": "/where/the/executor/holds/it",
+            "url": "http://platform/execution",
+            "state": "/where/the/executor/keeps/state",
+        }
+        await db.commit()
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    async def prepare():
+        precheck = await channel.precheck(session, needs_place=True)
+        token = mint_session_token(own.project_id, own.topic_id, precheck.agent_handle)
+        async with channel.prepare_session(
+            session=session, token=token, env={}, precheck=precheck
+        ) as prepared:
+            return json.loads(prepared.env["CHEESE_EXECUTION_TARGET"])
+
+    return client.portal.call(prepare)
+
+
+async def test_an_own_session_is_told_when_its_executor_is_on_another_machine(
+    client, monkeypatch
+):
+    # Bob's laptop has no view of a project held elsewhere: it must start the
+    # session in a directory of its own, not at a path it does not have.
+    own = await _own_session(client, environment_on="alice")
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    target = await _launch_target(client, own, leased_on=own.alices_desk)
+
+    assert target["workspace"] == "/where/the/executor/holds/it"
+    assert target.get("local") and target.get("apart")
+
+
+async def test_an_own_session_on_its_executors_machine_sees_the_project_there(
+    client, monkeypatch
+):
+    own = await _own_session(client, environment_on="bob")
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    target = await _launch_target(client, own, leased_on=own.bobs_laptop)
+
+    assert target["workspace"] == "/where/the/executor/holds/it"
+    assert target.get("local") and not target.get("apart")
