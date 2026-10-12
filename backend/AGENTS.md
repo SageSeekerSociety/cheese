@@ -65,7 +65,7 @@ and cache-pricing constraints in
 
 ## Caps and conventions
 
-- `app/**/*.py` over **1500 lines** may not grow — 16 files are already there and
+- `app/**/*.py` over **1500 lines** may not grow — 4 files are already there and
   are frozen at their current size. `.claude/scripts/check-file-sizes.py` judges
   only the files this branch changed, each against the size it had at the merge
   base with `origin/main`.

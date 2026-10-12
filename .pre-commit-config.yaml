@@ -253,7 +253,7 @@ repos:
         pass_filenames: false
         files: ^docs/manual/
 
-      # A file-size ratchet, not a cliff: 35 files are already past their cap
+      # A file-size ratchet, not a cliff: 7 files are already past their cap
       # (frontend/src 1000 lines, backend/app 1500) and each is frozen at the
       # size it had where this branch left main — the merge base, which is why
       # main moving on cannot fail a branch for a file it never touched. Only
