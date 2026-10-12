@@ -28,6 +28,7 @@ const cases: { name: string; test: ContractCase; call: () => Promise<unknown> }[
     test: {
       method: 'GET',
       path: '/notifications',
+      args: [{ type: 'MENTION', read: false, pageStart: 'cursor-1', pageSize: 20 }],
       query: [
         ['type', 'MENTION'],
         ['read', 'false'],
@@ -37,25 +38,29 @@ const cases: { name: string; test: ContractCase; call: () => Promise<unknown> }[
     },
     call: () => notifications.list({ type: 'MENTION', read: false, pageStart: 'cursor-1', pageSize: 20 }),
   },
-  { name: 'del', test: { method: 'DELETE', path: '/notifications/9' }, call: () => notifications.del(9) },
+  {
+    name: 'del',
+    test: { method: 'DELETE', path: '/notifications/9', args: [9] },
+    call: () => notifications.del(9),
+  },
   {
     name: 'updateStatus',
-    test: { method: 'PATCH', path: '/notifications/9', body: { read: true } },
+    test: { method: 'PATCH', path: '/notifications/9', args: [9, true], body: { read: true } },
     call: () => notifications.updateStatus(9, true),
   },
   {
     name: 'markAllAsRead',
-    test: { method: 'PUT', path: '/notifications/status', body: { read: true } },
+    test: { method: 'PUT', path: '/notifications/status', args: [], body: { read: true } },
     call: () => notifications.markAllAsRead(),
   },
   {
     name: 'getUnreadNotificationCount',
-    test: { method: 'GET', path: '/notifications/unread-count' },
+    test: { method: 'GET', path: '/notifications/unread-count', args: [] },
     call: () => notifications.getUnreadNotificationCount(),
   },
   {
     name: 'liveToken',
-    test: { method: 'POST', path: '/notifications/live-token' },
+    test: { method: 'POST', path: '/notifications/live-token', args: [] },
     call: () => notifications.liveToken(),
   },
 ]

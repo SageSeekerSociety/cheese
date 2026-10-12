@@ -52,12 +52,14 @@ function reads() {
     {
       base: newer,
       path: '/notifications/unread-count',
+      args: [],
       payload: { count: 7 },
       next: () => notifications.getUnreadNotificationCount(),
     },
     {
       base: newer,
       path: '/tasks/12/attachments',
+      args: [12],
       payload: {
         attachments: [
           { id: 3, name: 'notes.pdf', size: 8, contentType: 'application/pdf', downloadCount: 2, createdAt: 0 },
@@ -72,7 +74,7 @@ function reads() {
 describe('four-domain pilot against the HTTP contract', () => {
   it('reads the authenticated payload without adding a query or body', async () => {
     for (const read of reads()) {
-      await contractRequest({ method: 'GET', path: read.path }, read.next, read.base)
+      await contractRequest({ method: 'GET', path: read.path, args: read.args }, read.next, read.base)
     }
   })
 
