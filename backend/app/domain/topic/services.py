@@ -938,7 +938,7 @@ class TopicService:
         room = place.room
         if room.status == TopicStatus.archived:
             raise UnprocessableEntityError(say("topicArchivedFrozen"))
-        if room.is_private:
+        if self._in_private(room):
             raise UnprocessableEntityError(say("privateChatHasNoThreads"))
         named = title.strip()[:300]
         if not named:
@@ -983,10 +983,19 @@ class TopicService:
         )
 
     @staticmethod
+    def _in_private(room: Topic) -> bool:
+        """这间房是不是名册两席的私聊（结论 19）。
+
+        整个文件只在这里读 ``is_private``：任务和支线都不是两个人之间的事，两处
+        拒绝问的是同一句，就问一次。
+        """
+        return room.is_private
+
+    @staticmethod
     def refuse_tasks_in_private(room: Topic) -> None:
         """A task is the project's: everyone in it can see it. A private chat is
         two people's, so nothing said there becomes one, nor is proposed to."""
-        if room.is_private:
+        if TopicService._in_private(room):
             raise ValidationError(say("privateChatHasNoTasks"))
 
     async def create_task(
