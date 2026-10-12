@@ -67,3 +67,14 @@ def test_a_failed_turns_notice_is_stored_without_the_token():
     assert secret not in stored
     # The service's words are still kept, only the credential is gone.
     assert "upstream refused" in stored
+
+
+def test_a_failing_processs_log_is_stored_without_the_token():
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+    log = f"git clone https://x-access-token:{secret}@github.com/o/r.git failed"
+    _, meta = _turn_failure_notice("x", "session_start_unknown", log=log)
+    assert meta["failed"] is True
+    assert secret not in meta["error"]
+    assert "git clone" in meta["error"]
