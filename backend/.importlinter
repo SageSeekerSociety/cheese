@@ -501,7 +501,6 @@ ignore_imports =
     app.api.routes.task_inheritance -> app.api.routes.tasks._common
     app.api.routes.tasks._common -> app.api.routes.spaces
     app.api.routes.topics -> app.api.routes.projects
-    app.api.routes.topics -> app.api.routes.topics_rows
     app.api.routes.topics_asks -> app.api.routes.topics
     app.api.routes.topics_attachments -> app.api.routes.topics_file_sources
     app.api.routes.topics_compute -> app.api.routes.topics
