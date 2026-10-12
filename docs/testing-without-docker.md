@@ -17,7 +17,7 @@ bash .claude/scripts/dev-db.sh stop --purge      # 停掉并删数据目录
 - 下载的东西放在 `${XDG_CACHE_HOME:-~/.cache}/cheesex-dev-db`，删了只是下次重新下载。`stop --purge` 只删数据目录，不删安装和下载。
 - 版本钉子一改（Postgres 版本、`pg_search` 版本、安装位置），`start` 会认出端口上那个由本脚本早先启动、钉子不同的 Postgres：没有客户端就停掉它、换成当前版本（旧大版本的数据目录一并删掉，反正是测试数据）；有客户端就报错退出，说明有几个连接，留着它不动。本脚本起的 Redis 不是钉住的 Valkey 时同样处理。不是本脚本起的服务器照旧拒绝、不碰。这段逻辑由 `.claude/scripts/test-dev-db.sh` 用假二进制测试,跑在 repo guards 里。
 - `tests/unit/` 不需要 Postgres（`conftest.py` 只给主动要的测试建 schema），但其中一部分要 Redis，例如 `test_consumptions.py`、`test_admission.py`。`tests/unit/` 以外的一律是 DB-backed。
-- `check.sh --no-tests`（质量闸门用的那条）完全跳过 pytest——要真正跑套件就用上面的方子。
+- `task guards` 只跑静态守卫，不跑 pytest；要真正跑套件就用上面的方子。
 
 ## 唯一要自己补的:provider 凭据
 

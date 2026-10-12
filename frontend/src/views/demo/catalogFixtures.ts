@@ -862,7 +862,7 @@ const DOC_BASE = {
     stopAgent: noopAsync,
   } as DocThreadActions,
   fetchDocNodes: async () => [],
-  imageSrc: (src: string) => src,
+  imageSrc: async (src: string) => src,
   toggleEditable: noop,
   setError: noop,
 }

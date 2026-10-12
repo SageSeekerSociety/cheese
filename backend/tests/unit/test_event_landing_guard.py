@@ -113,6 +113,19 @@ def _picked_in_place(call: ast.Call, landing_names: set[str]) -> list[str]:
     return bad
 
 
+def _failure_message(offenders: list[str]) -> str:
+    return (
+        "这些事件的落点是调用点自己挑的，不是从 block/about.py 的 landing() 取的：\n"
+        + "\n".join(offenders)
+        + "\n改法：在事件写入前用 landed = landing(EventAbout.<档>, ...) 取落点，"
+        "再给 blocks.add(...) 传 project_id=landed.project_id、"
+        "conversation_id=landed.conversation_id；两个字段都从同一返回值取。\n"
+        "按事件关于 task/thread/room/project 哪一档选择 EventAbout，并补齐该档 id。"
+        "规则和四档表：backend/app/domain/block/about.py 的模块说明与 landing()。\n"
+        "复查：cd backend && uv run pytest tests/unit/test_event_landing_guard.py -q"
+    )
+
+
 def test_every_event_takes_its_landing_from_the_closed_table():
     offenders: list[str] = []
     for path, rel in _sources():
@@ -124,10 +137,17 @@ def test_every_event_takes_its_landing_from_the_closed_table():
             bad = _picked_in_place(node, landing_names)
             if bad:
                 offenders.append(f"{rel}:{node.lineno} — {', '.join(bad)}")
-    assert not offenders, (
-        "这些事件的落点是调用点自己挑的，不是从 block/about.py 的 landing() 取的：\n"
-        + "\n".join(offenders)
-    )
+    assert not offenders, _failure_message(offenders)
+
+
+def test_failure_text_contains_the_landing_repair_recipe():
+    message = _failure_message(["backend/app/example.py:12 — project_id"])
+    assert "backend/app/example.py:12" in message
+    assert "landed = landing(EventAbout.<档>" in message
+    assert "project_id=landed.project_id" in message
+    assert "conversation_id=landed.conversation_id" in message
+    assert "backend/app/domain/block/about.py" in message
+    assert "test_event_landing_guard.py" in message
 
 
 def test_the_guard_reads_an_annotated_landing_binding():

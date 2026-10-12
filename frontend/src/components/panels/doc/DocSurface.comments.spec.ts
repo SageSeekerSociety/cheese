@@ -102,7 +102,7 @@ async function mountDoc(html: string, askAgent = true) {
                 canComment: canComment.value,
                 loading: false,
                 session,
-                imageSrc: (src: string) => src,
+                imageSrc: async (src: string) => src,
                 pulse: () => {},
                 fetchDocNodes: async () => [] as Block[],
                 openThreads: openThreads.value,
