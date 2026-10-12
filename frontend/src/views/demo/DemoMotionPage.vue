@@ -8,12 +8,12 @@
 //
 // 「全部重放」和每一格的「重放」都只是换一个 key，把那一格重新挂一遍：动效从初始态
 // 再走一次。不做「播放/暂停」那种播放器，因为它会给人一个产品里并不存在的状态。
+import type { MotionMode } from './demoMotion'
+
 import { computed, ref } from 'vue'
 
 import { useStudio } from './demoCatalogStudio'
-import { MOTION_MODES } from './demoMotion'
-import { MOTION_FACTOR } from './demoMotion'
-import { prefersReducedMotion } from './demoMotion'
+import { MOTION_FACTOR, MOTION_MODES, prefersReducedMotion } from './demoMotion'
 import { documentTokenScopes, numericValue, previewOf } from './demoTokens'
 import { TRANSITIONS } from './demoTransitions'
 import MotionSample from './MotionSample.vue'
@@ -29,12 +29,26 @@ const slowMs = computed(() => (baseMs.value === null ? null : baseMs.value * MOT
 /** 说的是不是真话：这个环境里读不到样式表就只说倍数，不编一个毫秒数。 */
 const factorNote = computed(() => {
   if (studio.motion !== 'slow') return ''
-  if (baseMs.value === null || slowMs.value === null) return '动效已放慢 4 倍。'
-  return `动效已放慢 4 倍：--dur-base 从 ${baseMs.value}ms 变成 ${slowMs.value}ms。`
+  // 倍数从档位里取，不写死：`MOTION_FACTOR.slow` 改了，这句话跟着改。
+  const times = `${MOTION_FACTOR.slow} 倍`
+  if (baseMs.value === null || slowMs.value === null) return `动效已放慢 ${times}。`
+  return `动效已放慢 ${times}：--dur-base 从 ${baseMs.value}ms 变成 ${slowMs.value}ms。`
 })
 
 /** 系统开着「减少动态效果」时，上面的开关默认就落在「关」——把这件事说出来。 */
 const reduced = prefersReducedMotion()
+
+/**
+ * 这个环境下这一档还起不起作用。
+ *
+ * 慢放把产品的时长 token 乘几倍写回去，可产品自己在「减少动态效果」时有一条全局规则
+ * （`style.css` 的 `@media (prefers-reduced-motion: reduce)`）用 `!important` 把每一段
+ * 过渡压成了 0.001ms。那条规则赢，乘几倍都落不到屏幕上——档位摆在那里只会骗人，所以
+ * 标成不可用，并在下面那句里说清为什么。
+ */
+function unavailable(id: MotionMode): boolean {
+  return reduced && id === 'slow'
+}
 
 /** 时间线上一共几条。产品里有几条就该有几条：清单在 demoTransitions.ts。 */
 const count = computed(() => TRANSITIONS.length)
@@ -76,6 +90,8 @@ function replaysOf(id: string): number {
           type="button"
           class="motion-btn"
           :aria-pressed="studio.motion === mode.id"
+          :disabled="unavailable(mode.id)"
+          :aria-describedby="unavailable(mode.id) ? 'motion-reduced-note' : undefined"
           @click="studio.motion = mode.id"
         >
           {{ mode.label }}
@@ -85,16 +101,18 @@ function replaysOf(id: string): number {
       <p v-if="factorNote" class="motion-note" role="status">{{ factorNote }}</p>
     </div>
 
-    <p v-if="reduced" class="motion-reduced">
+    <p v-if="reduced" id="motion-reduced-note" class="motion-reduced">
       系统开着「减少动态效果」，所以这一档默认落在「关」：过渡还在，只是不花时间，终态和正常档一模一样。
+      慢放档在这个环境下不起作用——产品的全局规则把每一段过渡压成了 0.001ms，乘几倍都落不到屏幕上——所以标成不可用。
     </p>
 
     <p class="motion-count">{{ count }} 条时间线，全部引产品自己的时长与曲线 token。</p>
 
     <ul class="motion-grid">
       <li v-for="item in TRANSITIONS" :key="item.id" class="motion-cell">
-        <!-- 重放就是把这一格整个换掉（key 里带上次数）：换 key 会重新挂一遍，动效从初始
-             态再走一次。不是给它一个「播放」信号——产品里没有那个状态，别造一个。 -->
+        <!-- Replay replaces the whole cell (its key carries the count): a new key remounts
+             it, so the transition runs from its initial state again. Not a "play" signal —
+             the product has no such state, so do not invent one. -->
         <MotionSample :id="item.id" :key="`${item.id}-${replaysOf(item.id)}`" />
 
         <div class="motion-info">
@@ -160,9 +178,16 @@ function replaysOf(id: string): number {
   border-radius: var(--radius-pill);
 }
 
-.motion-btn:hover {
+/* 不可用的那一档不给「可以点」的样子：悬停不变色。 */
+.motion-btn:not(:disabled):hover {
   color: var(--ink);
   border-color: var(--accent);
+}
+
+/* 这个环境下不起作用的那一档：看得见、点不动，理由写在下面那句里。 */
+.motion-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .motion-btn[aria-pressed='true'] {

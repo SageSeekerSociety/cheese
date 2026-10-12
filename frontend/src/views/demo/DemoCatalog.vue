@@ -161,7 +161,7 @@ function toggleTheme(): void {
 </script>
 
 <template>
-  <!-- iframe 取的那一格：不带壳，只有这一格本身。 -->
+  <!-- The cell the iframe pulls: no shell around it, just the cell itself. -->
   <CatalogFramePage
     v-if="frameState && entry"
     :entry="entry"

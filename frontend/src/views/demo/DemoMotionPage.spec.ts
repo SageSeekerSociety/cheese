@@ -9,13 +9,14 @@ import { fireEvent, render } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { defaultPrefs, STUDIO } from './demoCatalogStudio'
+import { MOTION_FACTOR } from './demoMotion'
 import DemoMotionPage from './DemoMotionPage.vue'
 import { TRANSITIONS } from './demoTransitions'
 
 /** 产品那四条时长，名字和值照抄 `src/style.css` 的 `:root`。 */
+const BASE_MS = 220
 const style = document.createElement('style')
-style.textContent =
-  ':root { --dur-press: 100ms; --dur-quick: 150ms; --dur-base: 220ms; --dur-slow: 320ms; --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); }'
+style.textContent = `:root { --dur-press: 100ms; --dur-quick: 150ms; --dur-base: ${BASE_MS}ms; --dur-slow: 320ms; --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1); }`
 document.head.appendChild(style)
 
 /** 页面要的那份偏好是工具条和舞台共用的一份，所以照真页面那样 provide 进去。 */
@@ -76,8 +77,13 @@ describe('动效台', () => {
   it('慢放那一档把话说全：倍数和它算出来的毫秒数', async () => {
     const { view } = mount({ motion: 'slow' })
     await nextTick()
-    // --dur-base 是 220ms，×4 就是 880ms。用的是页面读到的原值，不是这里另写一个数。
-    expect(view.getByRole('status').textContent).toBe('动效已放慢 4 倍：--dur-base 从 220ms 变成 880ms。')
+    // 不钉整句：这一句的写法会改，钉住的是它必须说出的那几件事——哪条 token、原值、
+    // 以及倍数乘出来的值。原值和倍数都从页面读的那一份来，不是这里另写一个数。
+    const note = view.getByRole('status').textContent ?? ''
+    expect(note).toContain('--dur-base')
+    expect(note).toContain(`${MOTION_FACTOR.slow} 倍`)
+    expect(note).toContain(`${BASE_MS}ms`)
+    expect(note).toContain(`${BASE_MS * MOTION_FACTOR.slow}ms`)
   })
 
   it('不是慢放那一档就不说这句话', () => {
@@ -90,6 +96,29 @@ describe('动效台', () => {
     const { view, studio } = mount()
     expect(studio.motion).toBe('off')
     expect(view.container.querySelector('.motion-reduced')).not.toBeNull()
+  })
+
+  it('系统开着「减少动态效果」时慢放档标成不可用，并说清为什么', () => {
+    // 产品自己的全局规则（带 !important）已经把每一段过渡压成 0.001ms，慢放乘几倍都
+    // 落不到屏幕上：这一档摆在那里只会骗人。
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query.includes('reduced-motion') }))
+    const { view } = mount()
+    const slow = Array.from(view.container.querySelectorAll('.motion-btn')).find(
+      (button) => button.textContent === '慢放 ×4'
+    )!
+    expect(slow.hasAttribute('disabled')).toBe(true)
+    expect(slow.getAttribute('aria-describedby')).toBe('motion-reduced-note')
+    expect(view.container.querySelector('.motion-reduced')?.textContent).toContain('慢放')
+  })
+
+  it('系统没开时慢放档照常能点，也不说那句话', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    const { view } = mount()
+    const slow = Array.from(view.container.querySelectorAll('.motion-btn')).find(
+      (button) => button.textContent === '慢放 ×4'
+    )!
+    expect(slow.hasAttribute('disabled')).toBe(false)
+    expect(slow.getAttribute('aria-describedby')).toBeNull()
   })
 
   it('系统没开时不说，免得变成一句常驻的废话', () => {

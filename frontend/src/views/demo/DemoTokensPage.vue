@@ -10,7 +10,15 @@
 // 引用要就地解开。
 import type { TokenPreview } from './demoTokens'
 
-import { documentTokenScopes, groupColors, numericValue, previewOf, resolveIn, tokenNames } from './demoTokens'
+import {
+  conditionalValue,
+  documentTokenScopes,
+  groupColors,
+  numericValue,
+  previewOf,
+  resolveIn,
+  tokenNames,
+} from './demoTokens'
 
 /** 一条 token 的两档值。读一次就存着：整页要问上百次，每次重算一遍没有意义。 */
 const scopes = documentTokenScopes()
@@ -37,6 +45,18 @@ function stackOf(name: string): string {
 /** 一族的名字，按声明顺序。 */
 function family(prefix: string): string[] {
   return tokenNames(scopes, prefix)
+}
+
+/**
+ * 这条 token 在窄视口下另有的那个值，没有就空着。
+ *
+ * 上面那一列是**定义处**那一版（`demoTokens.ts` 只认 `:root` 自己那一条）；产品另有
+ * 一条媒体查询把两条页宽在窄屏改成别的值。这一节画的是一张表，所以那个值补在下面
+ * 一行，不把上面那一列改掉——改了，看这页的人就以为桌面上的页宽是那个数。
+ */
+function narrowOf(name: string): string {
+  const value = conditionalValue(name, scopes)
+  return value ? `窄视口下 ${value}` : ''
 }
 
 /* ------------------------------------------------------------------ 用在哪 */
@@ -233,9 +253,9 @@ const FONT_ROLE: Record<string, string> = {
       <p class="tokens-note">{{ section.note }}</p>
       <ul class="swatches">
         <li v-for="name in section.names" :key="name" class="swatch">
-          <!-- 色块的颜色是**算出来的值**（= 声明的颜色字面量本身）刷上去的：这一页画的
-               就是那个字面量，用 var(--name) 画出来的是当前主题那一版，浅深两个色块会
-               变成同一个颜色。 -->
+          <!-- The swatch is painted with the **resolved value** (the declared colour literal
+               itself): this page draws that literal. Painting var(--name) instead gives the
+               current theme's value, which makes the light and dark swatches identical. -->
           <span class="swatch-paint" :style="{ background: preview(name)?.light }" />
           <span class="swatch-paint" :style="{ background: preview(name)?.dark }" />
           <span class="swatch-text">
@@ -358,6 +378,10 @@ const FONT_ROLE: Record<string, string> = {
           <code class="def-name">{{ name }}</code>
           <span class="def-role">{{ WIDTH_ROLE[name] ?? '' }}</span>
           <span class="def-value">{{ valueOf(name) }}</span>
+          <!-- The product's own breakpoints override these widths in a `@media` block, so
+               the definition-site value above is not the whole story. This line is the
+               other half: a note under the table, not a second token. -->
+          <span v-if="narrowOf(name)" class="def-stack">{{ narrowOf(name) }}</span>
         </li>
       </ul>
     </section>

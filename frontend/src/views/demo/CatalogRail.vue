@@ -55,7 +55,7 @@ function toggle(name: string): void {
           <code class="rail-name">{{ group.name }}</code>
           <span class="rail-count">{{ group.items.length }}</span>
         </button>
-        <!-- 收起来的那几组不在 DOM 里：v-show 也会把这一列全部 273 条建出来。 -->
+        <!-- Collapsed groups stay out of the DOM: v-show would still build all 273 rows. -->
         <ul v-if="open.includes(group.name)" class="rail-items">
           <li v-for="item in group.items" :key="item.id">
             <a

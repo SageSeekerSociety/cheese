@@ -22,7 +22,7 @@ onMounted(() => requestAnimationFrame(() => (on.value = true)))
 
 <template>
   <div class="sample" :data-on="on ? 'on' : 'off'" :data-id="id">
-    <!-- 卡片展开：高度和透明度一起走。 -->
+    <!-- Card expanding: height and opacity move together. -->
     <div v-if="id === 'expand'" class="card">
       <p class="card-head">这一格在讲什么</p>
       <p class="card-tail">点一下，内容从收着到展开。</p>
@@ -31,7 +31,7 @@ onMounted(() => requestAnimationFrame(() => (on.value = true)))
       </div>
     </div>
 
-    <!-- 浮层出现：遮罩先淡进来，对话框从 92% 长到 100%。 -->
+    <!-- Overlay appearing: the scrim fades in first, the dialog grows from 92% to 100%. -->
     <div v-else-if="id === 'dialog'" class="scrim">
       <div class="dialog">
         <p class="dialog-head">归档这个频道？</p>
@@ -39,12 +39,12 @@ onMounted(() => requestAnimationFrame(() => (on.value = true)))
       </div>
     </div>
 
-    <!-- 面板收放：从右边推进来。 -->
+    <!-- Panel: slides in from the right. -->
     <div v-else-if="id === 'drawer'" class="drawer-well">
       <div class="drawer">工作面板</div>
     </div>
 
-    <!-- 页签指示条：在同一条轨道上滑过去，不淡出再淡入。 -->
+    <!-- Tab indicator: slides along the same track, not fade out then in. -->
     <div v-else-if="id === 'tabs'" class="tabs">
       <span class="tabs-pill" />
       <span class="tabs-tab">对话</span>
@@ -52,18 +52,18 @@ onMounted(() => requestAnimationFrame(() => (on.value = true)))
       <span class="tabs-tab">文档</span>
     </div>
 
-    <!-- 新消息进入：从下方 8px 淡进来，落位就停。 -->
+    <!-- New message: fades in from 8px below and stops where it lands. -->
     <p v-else-if="id === 'row'" class="row">芝士人：找到了，页面刚加载时浏览器自己滚了一下。</p>
 
-    <!-- 按下回执：按下的那一刻就沉下去，不等松手。 -->
+    <!-- Press feedback: sinks on the press itself, not on release. -->
     <div v-else-if="id === 'ripple'" class="press">采纳</div>
 
-    <!-- 手机底部弹层：从底部升起来，停下贴住底。 -->
+    <!-- Phone bottom sheet: rises from the bottom and sits flush against it. -->
     <div v-else-if="id === 'sheet'" class="sheet-well">
       <div class="sheet">在浏览器打开</div>
     </div>
 
-    <!-- 骨架到内容：先是灰条，内容到了原地换上。 -->
+    <!-- Skeleton to content: grey bars first, swapped in place once the content arrives. -->
     <div v-else class="skeleton">
       <span class="skeleton-line" />
       <span class="skeleton-line" />

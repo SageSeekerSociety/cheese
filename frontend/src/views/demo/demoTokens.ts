@@ -5,8 +5,9 @@
 // 「改 token 之前先在这里看后果」。所以值一律从 `document.styleSheets` 里现读，读不到
 // 就如实说读不到，不猜一个默认值。
 //
-// 读的是 `:root` 和 `:root[data-theme='dark']` 这两条选择器底下的声明，也就是设计
-// token 的定义处；组件自己临时声明的自定义属性不算设计 token，不往这一页上摆。
+// 读的是选择器**正好**是 `:root` 和 `:root[data-theme='dark']` 那两条规则里的声明，
+// 也就是设计 token 的定义处：组件自己临时声明的自定义属性不是设计 token，`@media`
+// 里那些只在某个宽度下成立的值也不是（那种垫在下面，只在没有定义处时才露出来）。
 // `demoMotion.ts` 读的是同一批声明（那边的 `--dur-*` 名字），差别是它改值、这里显值。
 
 /** 只用到一条规则身上这几样，好让测试摆一份假的样式表进来。 */
@@ -35,12 +36,38 @@ export interface TokenScopes {
   light: Map<string, string>
   /** `:root[data-theme='dark']` 里**重新声明过**的。没在这个 map 里的，深色下就是浅色那份值。 */
   dark: Map<string, string>
+  /**
+   * 在 `@media` 之类条件下**改过定义处**的值，浅色档。
+   *
+   * 上面两档已经把这一层垫在定义处下面了（所以 `light` 里是桌面那一版）。这里另留一
+   * 份，是为了让页面能标出「这个值是哪个条件下的」——产品的页宽就是：920px 是定义处，
+   * 959.98px 以下那条 `:root` 把它改成 720px。
+   */
+  conditional: Map<string, string>
 }
 
 const CUSTOM_PROPERTY = /^--/
-const DARK_SELECTOR = /data-theme=['"]?dark/
-/** 只管 `:root` 自己那一条：设计 token 的定义处，别的选择器不当 token 表。 */
-const ROOT_SELECTOR = /:root\b/
+/** 定义处的两条选择器。只有**整条**对得上才算，见 `scopeOf`。 */
+const LIGHT_SELECTOR = /^:root$/i
+const DARK_SELECTOR = /^:root\[\s*data-theme\s*=\s*['"]?dark['"]?\s*\]$/i
+
+/** 一条 token 落在哪一档。 */
+type Scope = 'light' | 'dark'
+
+/**
+ * 这条规则定义的是哪一档；不是 token 的定义处就返回 null。
+ *
+ * 判据必须整条对得上，不能用「选择器里出现 `:root` 就算」：产品里有
+ * `:root[data-theme='dark'] .v-menu > .v-overlay__content { --fill: var(--fill-2) }`
+ * 这种给浮层打补丁的规则，它改的是组件局部。认了它，深色格上的 `--fill` 就会显示成
+ * `--fill-2` 的值，而这一页存在的全部理由就是「改 token 之前先在这里看一眼」。
+ */
+function scopeOf(selectorText: string | null | undefined): Scope | null {
+  const selector = (selectorText ?? '').trim()
+  if (LIGHT_SELECTOR.test(selector)) return 'light'
+  if (DARK_SELECTOR.test(selector)) return 'dark'
+  return null
+}
 
 /**
  * 某一档主题下，一条 token 最后算出什么值。
@@ -67,22 +94,30 @@ export function resolveIn(
   return out.trim()
 }
 
-function collect(rule: StyleRule, into: (selector: string, decls: TokenDecls) => void): void {
-  const selector = rule.selectorText ?? ''
-  if (rule.style && ROOT_SELECTOR.test(selector)) into(selector, rule.style)
+function collect(
+  rule: StyleRule,
+  into: (scope: Scope, decls: TokenDecls, inCondition: boolean) => void,
+  inCondition: boolean
+): void {
+  const scope = scopeOf(rule.selectorText)
+  if (scope && rule.style) into(scope, rule.style, inCondition)
   if (!rule.cssRules) return
   for (let i = 0; i < rule.cssRules.length; i += 1) {
     const inner = rule.cssRules[i]
-    if (inner) collect(inner, into)
+    // 套在别人里头的规则就是**有条件**的：`@media`、`@supports`、`@layer` 里那一条
+    // `:root` 只在那个条件下成立，不是这一条 token 的定义处。
+    if (inner) collect(inner, into, true)
   }
 }
 
 /** 从几份样式表里读出两档 token。读不到的样式表（跨域、坏规则）跳过，不影响其余。 */
 export function readTokenScopes(sheets: StyleSheetsLike): TokenScopes {
-  const light = new Map<string, string>()
-  const dark = new Map<string, string>()
-  const take = (selector: string, decls: TokenDecls): void => {
-    const into = DARK_SELECTOR.test(selector) ? dark : light
+  /** 顶层那一条 `:root` / `:root[data-theme='dark']` 里声明的：定义处。 */
+  const plain: Record<Scope, Map<string, string>> = { light: new Map(), dark: new Map() }
+  /** 媒体查询之类条件下声明的同名 token：只在那个条件下成立，搁在下面垫着。 */
+  const guarded: Record<Scope, Map<string, string>> = { light: new Map(), dark: new Map() }
+  const take = (scope: Scope, decls: TokenDecls, inCondition: boolean): void => {
+    const into = (inCondition ? guarded : plain)[scope]
     for (let i = 0; i < decls.length; i += 1) {
       const name = decls.item(i)
       if (!name || !CUSTOM_PROPERTY.test(name)) continue
@@ -98,19 +133,39 @@ export function readTokenScopes(sheets: StyleSheetsLike): TokenScopes {
       if (!rules) continue
       for (let j = 0; j < rules.length; j += 1) {
         const rule = rules[j]
-        if (rule) collect(rule, take)
+        if (rule) collect(rule, take, false)
       }
     } catch {
       // 读不到就少几行，不影响读得到的那些。
     }
   }
-  return { light, dark }
+  // 有条件的垫在定义处下面：`@media (max-width: 959.98px)` 里那条 `--page-w: 720px`
+  // 是这一条 token 在窄屏上的值，不是它的定义处——盖掉 920px，这一页就会把产品在
+  // 桌面上的页宽说错。只有产品**只在**那个条件下声明过的 token 才从这一层露出来。
+  return {
+    light: new Map([...guarded.light, ...plain.light]),
+    dark: new Map([...guarded.dark, ...plain.dark]),
+    // 只留**改过定义处**的那些：它确实在某个条件下生效，页面上标得出来。只在条件里
+    // 出现的（定义处没有）不进这一层——它已经垫进 `light` 了，标「另有一个值」不成立。
+    conditional: new Map(
+      [...guarded.light].filter(([name, value]) => plain.light.has(name) && plain.light.get(name) !== value)
+    ),
+  }
 }
 
-/** 文档里这几份样式表读出来的 token。`document` 不在时（测试、构建期）返回两条空档。 */
+/** 文档里这几份样式表读出来的 token。`document` 不在时（测试、构建期）返回空档。 */
 export function documentTokenScopes(): TokenScopes {
-  if (typeof document === 'undefined') return { light: new Map(), dark: new Map() }
+  if (typeof document === 'undefined') return emptyScopes()
   return readTokenScopes(document.styleSheets)
+}
+
+function emptyScopes(): TokenScopes {
+  return { light: new Map(), dark: new Map(), conditional: new Map() }
+}
+
+/** 这一条在某个条件下另有一个值。没有就返回 null。 */
+export function conditionalValue(name: string, scopes: TokenScopes): string | null {
+  return scopes.conditional.get(name) ?? null
 }
 
 export interface TokenPreview {

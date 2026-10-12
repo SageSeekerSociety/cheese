@@ -88,6 +88,17 @@ describe('设计 token 页', () => {
     }
   })
 
+  it('页宽摆的是定义处那一版，窄视口那一版补在下面一行', () => {
+    withStyle(html)
+    const view = render(DemoTokensPage)
+    const defs = Array.from(view.container.querySelectorAll('.def'))
+    const width = defs.find((def) => def.querySelector('.def-name')?.textContent === '--page-w')
+    expect(width, '--page-w 那一行').toBeTruthy()
+    expect(width?.querySelector('.def-value')?.textContent).toBe('920px')
+    // 产品在 959.98px 以下把两条页宽都改成 720：那个值不进上面那一列，但也不该丢。
+    expect(width?.querySelector('.def-stack')?.textContent).toContain('720px')
+  })
+
   it('动效那两条真读到了值：时长摆的是毫秒、曲线画得出来', () => {
     withStyle(html)
     const view = render(DemoTokensPage)

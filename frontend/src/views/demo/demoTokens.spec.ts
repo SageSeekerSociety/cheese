@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   colorTokens,
+  conditionalValue,
   documentTokenScopes,
   groupColors,
   isColorValue,
@@ -69,11 +70,28 @@ describe('从样式表里读两档 token', () => {
     expect([...scopes.light.keys()]).toEqual(['--ink'])
   })
 
-  it('@media 里包着的 :root 也走得到', () => {
+  it('选择器里带 :root 的后代规则不算定义处', () => {
     const scopes = readTokenScopes([
-      sheetOf(rule('@media (width <= 900px)', {}, [rule(':root', { '--page-w': '100%' })])),
+      sheetOf(
+        rule(":root[data-theme='dark']", { '--fill': '#212429' }),
+        // 产品给浮层打的补丁：改的是那几个组件局部，不是深色档的定义。
+        rule(":root[data-theme='dark'] .v-menu > .v-overlay__content", { '--fill': 'var(--fill-2)' })
+      ),
     ])
-    expect(scopes.light.get('--page-w')).toBe('100%')
+    expect(scopes.dark.get('--fill')).toBe('#212429')
+  })
+
+  it('@media 里的 :root 不盖掉定义处，只在没有定义处时才收', () => {
+    const scopes = readTokenScopes([
+      sheetOf(
+        rule(':root', { '--page-w': '920px' }),
+        rule('@media (max-width: 959.98px)', {}, [rule(':root', { '--page-w': '720px', '--only-narrow': '720px' })])
+      ),
+    ])
+    // 窄屏那一版是这一条 token 在某个宽度下的值，不是它的定义处。
+    expect(scopes.light.get('--page-w')).toBe('920px')
+    // 只在那个条件下声明过的还是收得到，不然只在窄屏存在的 token 就漏了。
+    expect(scopes.light.get('--only-narrow')).toBe('720px')
   })
 
   it('不是自定义属性的、空的，都不收', () => {
@@ -95,7 +113,30 @@ describe('从样式表里读两档 token', () => {
   })
 
   it('一条都没有的文档不会炸，只是两档都空着', () => {
-    expect(readTokenScopes([])).toEqual({ light: new Map(), dark: new Map() })
+    const scopes = readTokenScopes([])
+    expect([...scopes.light.keys()]).toEqual([])
+    expect([...scopes.dark.keys()]).toEqual([])
+  })
+
+  it('没有条件覆盖时，conditional 那一层是空的', () => {
+    const scopes = readTokenScopes([
+      sheetOf(
+        rule(':root', { '--ink': '#191a1c' }),
+        rule('@media (max-width: 600px)', {}, [rule(':root', { '--x': '1' })])
+      ),
+    ])
+    expect([...scopes.conditional.keys()]).toEqual([])
+  })
+
+  it('有条件覆盖定义处的那条，落在 conditional 里，值是有条件那一版', () => {
+    const scopes = readTokenScopes([
+      sheetOf(
+        rule(':root', { '--page-w': '920px' }),
+        rule('@media (max-width: 959.98px)', {}, [rule(':root', { '--page-w': '720px' })])
+      ),
+    ])
+    expect(scopes.light.get('--page-w')).toBe('920px')
+    expect(conditionalValue('--page-w', scopes)).toBe('720px')
   })
 })
 
@@ -228,6 +269,22 @@ describe('拿真的 src/style.css 跑一遍', () => {
     for (const name of read.dark.keys()) {
       expect(read.light.has(name), `${name} 只在深色档里有`).toBe(true)
     }
+  })
+
+  it('页宽拿的是定义处那一版，窄屏那一版另记在 conditional 里', () => {
+    const read = scopes()
+    // style.css 里 959.98px 以下的 `:root` 把两条页宽都改成 720；那是窄屏下的值。
+    expect(previewOf('--page-w', read)?.light).toBe('920px')
+    expect(previewOf('--page-w-wide', read)?.light).toBe('1100px')
+    // 有条件那一版不该丢：页面上补一句「窄屏下是 720」用的就是它。
+    expect(conditionalValue('--page-w', read)).toBe('720px')
+    expect(conditionalValue('--page-w-wide', read)).toBe('720px')
+  })
+
+  it('深色 --fill 是定义处那一版，不是浮层补丁那一版', () => {
+    // 浮层里那条 `--fill: var(--fill-2)` 只在那几个组件上成立；拿它当深色档的值，
+    // 深色格会把 #212429 显示成 #282c31。
+    expect(previewOf('--fill', scopes())?.dark).toBe('#212429')
   })
 
   it('颜色一条不落：每一节都有东西，没有一条掉进「其余」', () => {
