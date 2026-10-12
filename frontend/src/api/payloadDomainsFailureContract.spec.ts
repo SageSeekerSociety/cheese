@@ -159,7 +159,10 @@ describe('domain migration: structured refusals keep their meaning', () => {
     const after = await domain.read(next).catch((error) => error)
     expect(before).toBeInstanceOf(Error)
     expect(after).toBeInstanceOf(Error)
-    expect(after.message).toBe(before.message)
+    // Narrowed after the assertions above: both are transport failures, so the
+    // sentence they carry is the contract (the old stack wraps one, the new
+    // surfaces the other; the caller sees the same message).
+    expect((after as Error).message).toBe((before as Error).message)
   })
 
   it.each(domains)('$label uses the caller fallback for a lost network', async (domain) => {

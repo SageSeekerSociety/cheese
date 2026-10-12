@@ -4,23 +4,21 @@
 // answer (the old envelope's `.data` versus the new payload) must agree. Teams
 // has always ridden the new origin (`NewApiInstance` before, `axiosNewApi`
 // now), so both sides answer from `${newer}`. The failure and edge evidence —
-// a structured refusal, a locked team reaching its handler, the auth flow and
-// the empty-command success bit — lives in the second half, driven through the
-// real consumers rather than by asserting an exception type alone. The
+// a structured refusal, a locked team reaching its handler, the unnamed
+// sentence and the empty-command success bit — lives in the second half, driven
+// through the real consumers rather than by asserting an exception type alone.
+// The 401 refresh/redirect flow is in `teamsAuthContract.spec.ts`; the
 // per-method happy path for the five shared domains is in
 // `payloadDomainsContract.spec.ts`; spaces and the task board have their own.
 import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
-  auth,
   compareRequests,
   type ContractCase,
   contractEnvironment,
   envelope,
   newer,
-  refresh,
-  replace,
   server,
 } from './migrationContract.spec.helper'
 
@@ -237,14 +235,17 @@ describe('teams migration: structured refusals keep their meaning', () => {
     })
     expect(newError).toMatchObject({ code: 'TeamLockedError', status: 403, data: { lockingTasks: lockedTasks } })
 
-    toast.warning.mockClear()
+    // `toast.warning` is typed as the real function; at runtime `vuetify-sonner`
+    // is mocked, so read the calls off a mock-typed alias.
+    const warning = toast.warning as unknown as ReturnType<typeof vi.fn>
+    warning.mockClear()
     // A registered refusal is swallowed: the caller sees `undefined`, not a
     // half-typed throw, and the user sees the warning.
     expect(await handler.withErrorHandling(() => oldTeams.del(7))).toBeUndefined()
     expect(await handler.withErrorHandling(() => newTeams.del(7))).toBeUndefined()
-    expect(toast.warning).toHaveBeenCalledTimes(2)
-    const [oldSentence] = toast.warning.mock.calls[0]
-    const [newSentence] = toast.warning.mock.calls[1]
+    expect(warning).toHaveBeenCalledTimes(2)
+    const [oldSentence] = warning.mock.calls[0]
+    const [newSentence] = warning.mock.calls[1]
     expect(oldSentence).toContain(lockedTasks)
     expect(newSentence).toBe(oldSentence)
   })
@@ -331,89 +332,5 @@ describe('teams migration: a read never invents a command success', () => {
     if (caught !== undefined) failure()
     expect(caught).toBeUndefined()
     expect(failure).not.toHaveBeenCalled()
-  })
-})
-
-describe('teams migration: authentication edge cases', () => {
-  // The old `NewApiInstance` and the new `axiosNewApi` share the new origin, so
-  // both carry the same bearer; the 401 refresh/redirect flow is exercised on
-  // the migrated (new) path, which is where the contract changed.
-  const unauthorized = () => {
-    let requests = 0
-    server.use(
-      http.get(`${newer}/teams/7`, ({ request }) => {
-        requests++
-        expect(request.url.startsWith(`${newer}/teams/7`)).toBe(true)
-        return new HttpResponse(null, { status: 401 })
-      })
-    )
-    return () => requests
-  }
-
-  it('sends no bearer for a logged-out or empty-token caller on either stack', async () => {
-    for (const state of [
-      { loggedIn: false, accessToken: 'contract-token' },
-      { loggedIn: true, accessToken: '' },
-    ]) {
-      auth.loggedIn = state.loggedIn
-      auth.accessToken = state.accessToken
-      server.use(
-        http.get(`${newer}/teams/7`, ({ request }) => {
-          expect(request.headers.get('authorization')).toBeNull()
-          return HttpResponse.json(envelope({ team: { id: 7 } }))
-        })
-      )
-      expect(await newTeams.detail(7)).toEqual({ team: { id: 7 } })
-      expect((await oldTeams.detail(7)).data).toEqual({ team: { id: 7 } })
-    }
-  })
-
-  it('refreshes once and retries with the returned token', async () => {
-    refresh.mockReset().mockImplementation(async () => {
-      auth.accessToken = 'refreshed-token'
-      return { kind: 'ok', token: 'refreshed-token' }
-    })
-    const authorization: (string | null)[] = []
-    server.use(
-      http.get(`${newer}/teams/7`, ({ request }) => {
-        expect(request.url.startsWith(`${newer}/teams/7`)).toBe(true)
-        authorization.push(request.headers.get('authorization'))
-        if (authorization.length === 1) return new HttpResponse(null, { status: 401 })
-        return HttpResponse.json(envelope({ team: { id: 7 } }))
-      })
-    )
-    expect(await newTeams.detail(7)).toEqual({ team: { id: 7 } })
-    expect(authorization).toEqual(['Bearer contract-token', 'Bearer refreshed-token'])
-    expect(refresh).toHaveBeenCalledOnce()
-  })
-
-  it('redirects to sign-in when the refresh is rejected, without a retry', async () => {
-    const count = unauthorized()
-    refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
-    replace.mockReset()
-    await expect(newTeams.detail(7)).rejects.toBeInstanceOf(Error)
-    expect(count()).toBe(1)
-    expect(replace).toHaveBeenCalledWith('/account/signin')
-  })
-
-  it('does not redirect when the refresh is unreachable', async () => {
-    const count = unauthorized()
-    refresh.mockReset().mockResolvedValue({ kind: 'unreachable' })
-    replace.mockReset()
-    await expect(newTeams.detail(7)).rejects.toBeInstanceOf(Error)
-    expect(count()).toBe(1)
-    expect(replace).not.toHaveBeenCalled()
-  })
-
-  it('stops after a refreshed request is still unauthorized', async () => {
-    const count = unauthorized()
-    refresh.mockReset().mockImplementation(async () => {
-      auth.accessToken = 'refreshed-token'
-      return { kind: 'ok', token: 'refreshed-token' }
-    })
-    const error = await newTeams.detail(7).catch((failure) => failure)
-    expect(error).toBeInstanceOf(Error)
-    expect(count()).toBe(2)
-    expect(refresh).toHaveBeenCalledOnce()
   })
 })

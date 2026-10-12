@@ -91,7 +91,11 @@ describe.skipIf(!RUN)('task board upload: real wall-clock 30s / 60s boundary', (
     vi.unstubAllEnvs()
   })
 
-  const file = () => new File(['%PDF-1.7'], 'notes.pdf', { type: 'application/pdf' })
+  // `node:buffer`'s File is what the real `http` adapter's FormData serialises,
+  // but the API signatures take the DOM File; bridge the two at the call site
+  // rather than swapping in jsdom's File, which `form-data` will not accept.
+  const file = () =>
+    new File(['%PDF-1.7'], 'notes.pdf', { type: 'application/pdf' }) as unknown as globalThis.File
 
   it('lets a 45s answer through on the 60s upload dial (new)', async () => {
     const { TaskBoardApi } = await import('./taskBoard')
