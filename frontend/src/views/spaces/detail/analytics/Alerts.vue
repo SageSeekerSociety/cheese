@@ -1,29 +1,18 @@
-<template>
-  <div class="an-section">
-    <v-progress-linear v-if="loading && !alerts" indeterminate color="primary" />
-    <!-- A failed reload must replace the block, not leave the previous filter's alerts standing (docs/design-system.md §3.10). -->
-    <BaseLoadError v-if="failed" :title="t('spaces.analytics.alerts.loadFailed')" :error="errorDetail" @retry="load" />
-    <AnalyticsAlertGrid v-else-if="alerts" :alerts="alerts" @open="openTasks" />
-    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.alerts.empty')" />
-  </div>
-</template>
-
 <script setup lang="ts">
-import type { SpaceAnalyticsAlerts } from '@/network/api/spaces/types'
+import type { SpaceAnalyticsAlerts } from '@/types'
 import type { SpaceAnalyticsQueryState } from './utils'
 
 import { ref, watch } from 'vue'
-import { useI18n } from 'vue-i18n'
 
-import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
+import AlertsView from './AlertsView.vue'
 
-import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { SpacesApi } from '@/network/api/spaces'
 
-const { t } = useI18n()
+// 管理员看板「告警」那一格（`/spaces/:id/analytics/alerts`）：取数在这里，画法在
+// `AlertsView.vue`。这一层只做三件事 —— 拿 spaceId 取一次、空间换了重取一次、点一个能
+// 处理的数时带着筛选跳去「题目」那一格。判「失败/空/有数据」在画面那一半。
 const { pushToSection, spaceId } = useSpaceAnalyticsFilters()
 
 const loading = ref(false)
@@ -60,4 +49,13 @@ watch(
 const openTasks = (patch: Partial<SpaceAnalyticsQueryState>) => pushToSection(ANALYTICS_ROUTE_NAMES.tasks, patch)
 </script>
 
-<style scoped src="./analytics.css"></style>
+<template>
+  <AlertsView
+    :loading="loading"
+    :failed="failed"
+    :error-detail="errorDetail"
+    :alerts="alerts"
+    @load="load"
+    @open-tasks="openTasks"
+  />
+</template>
