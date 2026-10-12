@@ -45,12 +45,12 @@ on:
     types: [created]
   repository_dispatch:
     types: [claude-review]
-  push: # DEMO ONLY, removed before merge
-    branches: [task/ee8164cd]
+  pull_request: # DEMO ONLY, removed before merge
+    types: [synchronize]
 
 jobs:
   auto-review:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.head_ref != 'task/ee8164cd'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -96,7 +96,7 @@ jobs:
           trigger_phrase: "@claude"
 
   dispatched:
-    if: github.event_name == 'repository_dispatch' || github.event_name == 'push'
+    if: github.event_name == 'repository_dispatch' || github.head_ref == 'task/ee8164cd'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     concurrency:
@@ -136,7 +136,7 @@ jobs:
       # branch, never from the tree under review.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event_name == 'push' && github.sha || github.event.repository.default_branch }}
+          ref: ${{ github.event_name == 'pull_request' && github.sha || github.event.repository.default_branch }}
           path: .review-trusted
           sparse-checkout: .github/claude-review
 
