@@ -843,6 +843,7 @@
   "sourceTopicInvalid": "source_topic_id isn't a valid channel ID",
   "attachmentOneSource": "Either upload a file or pick one from the library",
   "attachmentImageOnly": "Only image attachments can be read",
+  "attachmentMediaOnly": "Only image or video attachments can be read",
   "commentEmpty": "The comment can't be empty",
   "workComputerPreparing": "The environment is still being prepared. Chat and platform tools are still available",
   "atMustBeIso": "at must be an ISO-8601 time",

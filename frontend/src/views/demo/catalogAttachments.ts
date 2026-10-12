@@ -21,6 +21,7 @@ import type { CatalogEntry } from './catalog'
 
 import AttachmentDocThumb from '@/components/AttachmentDocThumb.vue'
 import AttachmentImage from '@/components/AttachmentImage.vue'
+import AttachmentVideo from '@/components/AttachmentVideo.vue'
 import ImageLightbox from '@/components/ImageLightbox.vue'
 
 /** 预览站里的两张图：内联 SVG，不去网上取，也不进仓库（`src` 吃的是一个地址，什么地址都行）。
@@ -36,6 +37,24 @@ const PORTRAIT =
   '<rect x="240" y="900" width="300" height="36" rx="18" fill="%23867a63"/></svg>'
 
 export const ATTACHMENT_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'attachment-video',
+    title: 'AttachmentVideo',
+    about: '对话里的视频附件：点开后加载，手动播放；无法读取或解码时仍可下载。',
+    file: 'src/components/AttachmentVideo.vue',
+    component: AttachmentVideo,
+    needs: ['vuetify', 'i18n'],
+    args: { topicId: 't-1', path: 'library/screen.mp4' },
+    events: ['download'],
+    states: [
+      {
+        name: '等待点开',
+        note: '进入对话不会加载视频字节或自动播放。点开才尝试读取；目录站没有字节源，会显示读取失败与重新加载入口。',
+        props: {},
+        expectSelector: '.attachment-video',
+      },
+    ],
+  },
   {
     id: 'attachment-image',
     title: 'AttachmentImage',

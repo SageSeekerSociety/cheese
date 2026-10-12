@@ -146,7 +146,7 @@ const summonText = computed(() => ({
     <input
       ref="imageInput"
       type="file"
-      accept="image/*"
+      accept="image/*,video/*"
       multiple
       class="visually-hidden"
       tabindex="-1"
