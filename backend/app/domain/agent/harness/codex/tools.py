@@ -151,8 +151,8 @@ class RemoteTools:
     def sync_project_docs(self, entries: dict[str, dict]) -> bool:
         """Mirror AGENTS.md files into Codex's cwd without interpreting them.
 
-        Codex owns discovery and its 32 KiB per-file limit. The executor only
-        supplies the same relative paths and bytes, so root and nested files
+        Codex owns discovery and its 32 KiB combined instruction limit. The
+        executor supplies the same relative paths and bytes, so root and nested files
         retain Codex's normal precedence and scope.
         """
         if self.project_docs is None:
