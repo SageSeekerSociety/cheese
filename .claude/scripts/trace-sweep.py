@@ -20,6 +20,13 @@ With --ledger-doc the result is merged into a library document that keeps the
 running ledger: one row per error signature, the tasks it appeared in, first
 and last seen, and a status. A signature reaching two tasks is marked
 「待深挖」; a status a person set by hand (any other text) is kept.
+
+The ledger also says whether a deep dive is due: 25 or more task lines since
+the last one, any candidate newly reaching two lines, or seven days without
+one. After running the deep dive, pass --mark-deep-dive once to reset the
+counters. The deep dive itself (falsifying candidates, checking the in-flight
+list, placing each by the fix-priority table) is a person's or an agent's
+job, not this script's.
 """
 
 from __future__ import annotations
@@ -37,6 +44,10 @@ API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 LEDGER_OPEN = "<!-- trace-sweep-ledger"
 LEDGER_CLOSE = "trace-sweep-ledger -->"
 DEEP_DIVE = "待深挖"
+META_OPEN = "<!-- trace-sweep-meta"
+META_CLOSE = "trace-sweep-meta -->"
+DEEP_DIVE_LINES = 25  # about half a day at ~50 task lines a day
+DEEP_DIVE_MAX_DAYS = 7
 NEW = "新"
 
 # (kind, who should fix it, pattern). First match wins; the order matters.
@@ -173,7 +184,14 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
             row["count"] += 1
             row["tasks"].add(task["number"])
             row["first"], row["last"] = min(row["first"], at), max(row["last"], at)
-    return {"since": since, "until": until, "tasks": len(tasks), "errors": calls, "rows": found}
+    return {
+        "since": since,
+        "until": until,
+        "tasks": len(tasks),
+        "task_numbers": sorted(t["number"] for t in tasks),
+        "errors": calls,
+        "rows": found,
+    }
 
 
 def summarize(result: dict) -> str:
@@ -228,10 +246,33 @@ def merge_ledger(ledger: dict, result: dict) -> dict:
         entry["count"] += r["count"]
         if entry["status"] == NEW and len(entry["tasks"]) >= 2:
             entry["status"] = DEEP_DIVE
+            entry["flagged"] = result["until"]
     return ledger
 
 
-def render_ledger(ledger: dict, swept: str) -> str:
+def deep_dive_due(meta: dict, ledger: dict, now: str, lines: int = DEEP_DIVE_LINES) -> str | None:
+    """Why a deep dive is due now, or None. Three triggers, any one is enough."""
+    last = meta.get("last_deep_dive", "")
+    new_lines = len(meta.get("lines_since", []))
+    if new_lines >= lines:
+        return f"上次深挖后新增 {new_lines} 条任务线（阈值 {lines}）"
+    flagged = [e for e in ledger.values() if e.get("status") == DEEP_DIVE and e.get("flagged", "") > last]
+    if flagged:
+        return f"{len(flagged)} 个候选在上次深挖后攒到 2 条以上的线"
+    if not last or datetime.fromisoformat(now) - datetime.fromisoformat(last) >= timedelta(
+        days=DEEP_DIVE_MAX_DAYS
+    ):
+        return f"距上次深挖已满 {DEEP_DIVE_MAX_DAYS} 天（兜底）"
+    return None
+
+
+def parse_meta(content: str) -> dict:
+    start, end = content.find(META_OPEN), content.find(META_CLOSE)
+    return json.loads(content[start + len(META_OPEN) : end]) if start >= 0 and end >= 0 else {}
+
+
+def render_ledger(ledger: dict, swept: str, meta: dict | None = None) -> str:
+    meta = meta or {}
     rows = sorted(ledger.items(), key=lambda kv: (-len(kv[1]["tasks"]), -kv[1]["count"]))
     out = [
         (
@@ -249,7 +290,15 @@ def render_ledger(ledger: dict, swept: str) -> str:
             f"| {e['status']} | {len(e['tasks'])} | {e['count']} | {e['owner']} | {e['kind']} | "
             f"{sample} | {tasks} | {e['first'][:16]} | {e['last'][:16]} |"
         )
+    due = deep_dive_due(meta, ledger, swept)
+    head = [
+        f"上次深挖：{meta.get('last_deep_dive') or '还没有'}；之后新增任务线 {len(meta.get('lines_since', []))} 条。",
+        f"该不该深挖：{'该，' + due if due else '还不用'}。",
+        "",
+    ]
+    out = head + out
     out += ["", LEDGER_OPEN, json.dumps(ledger, ensure_ascii=False), LEDGER_CLOSE]
+    out += [META_OPEN, json.dumps(meta, ensure_ascii=False), META_CLOSE]
     return "\n".join(out)
 
 
@@ -275,17 +324,23 @@ def _apply_hand_statuses(ledger: dict, content: str) -> None:
                 e["status"] = cells[0]
 
 
-def update_doc(doc: str, token: str, result: dict) -> None:
+def update_doc(doc: str, token: str, result: dict, mark_deep_dive: bool = False) -> str | None:
+    """Merge into the ledger document; return why a deep dive is due, if it is."""
     current = _request("GET", f"/documents/{doc}", token)
     ledger = parse_ledger(current["content"])
+    meta = parse_meta(current["content"])
     _apply_hand_statuses(ledger, current["content"])
     merge_ledger(ledger, result)
+    meta["lines_since"] = sorted(set(meta.get("lines_since", [])) | set(result["task_numbers"]))
+    if mark_deep_dive:
+        meta["last_deep_dive"], meta["lines_since"] = result["until"], []
     _request(
         "PUT",
         f"/documents/{doc}",
         token,
-        {"content": render_ledger(ledger, result["until"]), "expected_version": current["doc_version"]},
+        {"content": render_ledger(ledger, result["until"], meta), "expected_version": current["doc_version"]},
     )
+    return deep_dive_due(meta, ledger, result["until"])
 
 
 def self_test() -> int:
@@ -324,6 +379,16 @@ def self_test() -> int:
     merge_ledger(ledger, result)
     check("hand status kept", ledger["s"]["status"], "已开 #1")
     check("ledger round-trips", parse_ledger(render_ledger(ledger, "z")), ledger)
+    check("meta round-trips", parse_meta(render_ledger({}, "z", {"lines_since": [1]})), {"lines_since": [1]})
+    now = "2026-10-12T12:00:00"
+    recent = {"last_deep_dive": "2026-10-12T11:00:00", "lines_since": []}
+    check("quiet ledger is not due", deep_dive_due(recent, {}, now), None)
+    many = dict(recent, lines_since=list(range(25)))
+    check("enough new lines is due", bool(deep_dive_due(many, {}, now)), True)
+    fresh = {"s": {"status": DEEP_DIVE, "flagged": "2026-10-12T11:30:00"}}
+    check("fresh candidate is due", bool(deep_dive_due(recent, fresh, now)), True)
+    old = {"last_deep_dive": "2026-10-01T00:00:00", "lines_since": []}
+    check("a week without one is due", bool(deep_dive_due(old, {}, now)), True)
     for f in failures:
         print("FAIL", f)
     print("self-test:", "ok" if not failures else f"{len(failures)} failed")
@@ -336,6 +401,9 @@ def main() -> int:
     parser.add_argument("--hours", type=float, default=3.0, help="window length ending now (default 3)")
     parser.add_argument("--since", help="window start, ISO UTC; overrides --hours")
     parser.add_argument("--ledger-doc", help="library document id to merge the result into")
+    parser.add_argument(
+        "--mark-deep-dive", action="store_true", help="record that a deep dive just ran (resets the counters)"
+    )
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
@@ -349,8 +417,9 @@ def main() -> int:
     result = sweep(args.channel, token, since, until)
     print(summarize(result))
     if args.ledger_doc:
-        update_doc(args.ledger_doc, token, result)
+        due = update_doc(args.ledger_doc, token, result, args.mark_deep_dive)
         print(f"\n总账已更新：document {args.ledger_doc}")
+        print(f"该不该深挖：{'该，' + due if due else '还不用'}")
     return 0
 
 
