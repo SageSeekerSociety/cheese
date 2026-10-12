@@ -84,9 +84,7 @@ async function mount(path: string) {
 it('从地址恢复三组筛选与频道，离开任务后返回仍保留', async () => {
   const { view, router } = await mount('/projects/p1/tasks?status=closed&whose=mine&delivery=accepted&channel=front')
   const row = await view.findByRole('button', { name: /已采纳交付的任务/ })
-  expect(
-    view.getByRole('button', { name: t('work.channelTasks.closed'), exact: true }).getAttribute('aria-pressed')
-  ).toBe('true')
+  expect(view.getByRole('button', { name: t('work.channelTasks.closed') }).getAttribute('aria-pressed')).toBe('true')
   expect(view.getByRole('button', { name: t('taskList.acceptedDelivery') }).getAttribute('aria-pressed')).toBe('true')
   expect(view.getByRole('button', { name: /^我负责的 1$/ }).getAttribute('aria-pressed')).toBe('true')
   expect(api.page).toHaveBeenCalledWith(
@@ -123,7 +121,7 @@ it('交付筛选使用独立的分页结果与总数，不串到未筛选的缓�
 it('无效和重复的地址参数回到默认筛选，不产生无效请求', async () => {
   const { view } = await mount('/projects/p1/tasks?status=wrong&delivery=wrong&whose=mine&whose=mine')
   await waitFor(() => expect(view.getByRole('button', { name: /^全部 0$/ }).getAttribute('aria-pressed')).toBe('true'))
-  expect(view.getByRole('button', { name: t('taskList.open'), exact: true }).getAttribute('aria-pressed')).toBe('true')
+  expect(view.getByRole('button', { name: t('taskList.open') }).getAttribute('aria-pressed')).toBe('true')
   expect(view.getByRole('button', { name: t('taskList.anyDelivery') }).getAttribute('aria-pressed')).toBe('true')
   expect(api.page).not.toHaveBeenCalled()
 })
