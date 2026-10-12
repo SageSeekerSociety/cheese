@@ -38,3 +38,18 @@ async def test_a_failed_steps_error_is_stored_without_the_token(monkeypatch):
     )
     assert "ghp_" not in stored["error"]
     assert "push failed" in stored["error"]
+
+
+def test_a_tool_lines_command_is_stored_without_the_token():
+    from app.domain.agent.event_lines import _format_tool_event, _tool_event_meta
+    from app.domain.agent.tool_preview import ToolPreview
+
+    command = (
+        "git push https://x:ghp_abcdefgh12345@github.com/o/r && echo password=hunter22"
+    )
+    preview = ToolPreview(text=command)
+    meta = _tool_event_meta("Bash", preview, platform=False, detail=command)
+    text = _format_tool_event("Bash", preview)
+    for stored in (meta["arg"], meta["detail"], text):
+        assert "ghp_" not in stored and "hunter22" not in stored
+        assert "git push" in stored
