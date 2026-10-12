@@ -70,24 +70,31 @@ def _retry_offered(client, task_id: str) -> bool:
     return any((b.get("meta") or {}).get("retryable") is True for b in blocks)
 
 
-def _summon(client, task_id: str) -> dict:
+def _summon(client, task_id: str, *, retry_block_id: str | None = None) -> dict:
     r = client.post(
-        f"/topics/{task_id}/summon", json={}, headers=session_auth_headers("alice")
+        f"/topics/{task_id}/summon",
+        json={"retry_block_id": retry_block_id} if retry_block_id else {},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
 
+@pytest.mark.parametrize("explicit_card", [False, True])
 def test_the_retry_a_card_offers_sends_the_instruction_the_platform_is_holding(
-    client, stub_hooks
+    client, stub_hooks, explicit_card
 ):
     task_id = _started_task(client)
     assert _retry_offered(client, task_id)
+    blocks = client.get(f"/topics/{task_id}/blocks").json()["data"]["data"]
+    failure = next(b for b in blocks if (b.get("meta") or {}).get("retryable"))
 
     # 机器连上了 —— 那是这一轮唯一缺的东西。
     stub_hooks.online = True
 
-    assert _summon(client, task_id) == {"started": True}
+    assert _summon(
+        client, task_id, retry_block_id=failure["id"] if explicit_card else None
+    ) == {"started": True}
     wait_work_idle()
     # 交出去的是那句指令本身，不是「房间里有人有东西没读到」。
     assert "接口分页" in (stub_hooks.told or "")

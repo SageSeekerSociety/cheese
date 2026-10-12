@@ -5,8 +5,8 @@ from sqlalchemy import select
 from app.domain.delivery.models import NativeInput
 
 
-async def failed_work_inputs(session, *, conversation_id, recipient_handle, work_id):
-    """Lock only this seat's exact failed work, before claiming its retry card.
+async def failed_work_inputs(session, *, conversation_id, work_id):
+    """Lock this exact failed work, before claiming its retry card.
 
     A terminated input frees the seat but deliberately keeps its batch held.
     User-authorized retry may re-admit that batch; it must never manufacture
@@ -17,7 +17,6 @@ async def failed_work_inputs(session, *, conversation_id, recipient_handle, work
             select(NativeInput)
             .where(
                 NativeInput.conversation_id == conversation_id,
-                NativeInput.recipient_handle == recipient_handle,
                 (NativeInput.execution_work_id == work_id)
                 | (NativeInput.work_id == work_id),
             )
@@ -29,7 +28,7 @@ async def failed_work_inputs(session, *, conversation_id, recipient_handle, work
 
 
 def can_retry_inputs(rows):
-    return all(
+    return bool(rows) and all(
         row.completed_at is None
         and row.terminated_at is not None
         and row.termination == "is_error"

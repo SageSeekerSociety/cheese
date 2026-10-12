@@ -66,7 +66,6 @@ async def take_failed_reply(session, conversation_id, *, block_id=None, seats=()
         and turn.agent_handle is not None
         and turn.stopped_at is not None
         and turn.delivered_at is not None
-        and turn.agent_handle in seats
     ):
         newer = await session.scalar(
             select(AgentTurn.id)
@@ -80,15 +79,18 @@ async def take_failed_reply(session, conversation_id, *, block_id=None, seats=()
         inputs = await failed_work_inputs(
             session,
             conversation_id=conversation_id,
-            recipient_handle=turn.agent_handle,
             work_id=turn.id,
         )
-        settled_failure = can_retry_inputs(inputs)
+        # Turns store the session identity; inputs store the addressable seat.
+        recipients = {row.recipient_handle for row in inputs}
+        seat = next(iter(recipients)) if len(recipients) == 1 else None
+        settled_failure = seat in seats and can_retry_inputs(inputs)
         source = turn
         if source.is_resume and source.continuation_id != source.id:
             source = await session.get(AgentTurn, source.continuation_id)
         if (
             newer is None
+            and seat is not None
             and settled_failure
             and source is not None
             and source.conversation_id == conversation_id
@@ -97,7 +99,7 @@ async def take_failed_reply(session, conversation_id, *, block_id=None, seats=()
         ):
             candidate = FailedReply(
                 content=source.content,
-                seat=turn.agent_handle,
+                seat=seat,
                 continuation_id=turn.continuation_id,
                 reply_to=str(turn.reply_to) if turn.reply_to else None,
             )

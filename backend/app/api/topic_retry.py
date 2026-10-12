@@ -50,6 +50,16 @@ async def summon_in_place(*, place, actor, body, db, chat, runner):
         )
         return ok({"started": True})
     if block_id is not None:
+        # Only this card's demonstrably never-sent instruction may be retried.
+        attempt_id = changed.get("turn_id") if changed is not None else None
+        if attempt_id is not None and await redispatch_undelivered(
+            chat.session_factory,
+            conversation_id=place.conversation_id,
+            chat=chat,
+            runner=runner,
+            attempt_id=uuid.UUID(attempt_id),
+        ):
+            return ok({"started": True})
         # An explicit card must not turn into unrelated unread-message work.
         return ok({"started": False, "reason": "nothing_pending"})
     if not await chat.has_unread_input(place.conversation_id):
