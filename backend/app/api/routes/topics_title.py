@@ -23,6 +23,7 @@ from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.staleness import announce_stale
 from app.domain.room_task.services import TaskService
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -62,6 +63,14 @@ async def set_title(
         own_session = resolver.credential_conversation() == task.id
         if not own_session and not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
+        # A task's own session names it to the same width a teammate creating
+        # one is held to (`cheese_title`): told, not cut. A person renaming a
+        # task is left to `title[:80]` — the width rule is about what an AI
+        # teammate writes, and a person can be trusted to know what they meant.
+        if own_session and not title_fits(title):
+            raise ValidationError(
+                say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(title))
+            )
         TaskService(db).rename(
             task,
             title[:80],

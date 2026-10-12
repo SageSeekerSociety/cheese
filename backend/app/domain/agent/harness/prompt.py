@@ -32,6 +32,7 @@ from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.instructions import MEMORY_INSTRUCTIONS, memory_block
+from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.task.teaching import TeachingContext
 
 _BARE_PATH_RE = re.compile(
@@ -341,7 +342,8 @@ DOC_SKILL = (
 #: 提示词：起完名就不该再说，而系统提示词在会话里是不变的。
 UNTITLED_TASK = (
     "这个任务还叫「新任务」（未命名）。等你弄清楚要做的是什么，用 `cheese_title` "
-    "给它起一个不超过 12 字的简短标题。只起一次，定了别反复改。"
+    f"给它起一个宽度不超过 {TITLE_CHARS} 个汉字的简短标题（一个汉字算一个，"
+    "英文、数字、空格各算半个）。只起一次，定了别反复改。"
 )
 
 #: 实况文档那一节里，和文档现在写了什么无关的那几句。文档的内容在会话的开场快照里。

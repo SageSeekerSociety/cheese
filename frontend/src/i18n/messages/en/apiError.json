@@ -18,6 +18,7 @@
   "noDefaultModel": "This project has no default model available. Check the model service",
   "taskModelUnavailable": "The model {model} this task is bound to isn't available in this project. Choose another one",
   "titleRequired": "Title can't be empty",
+  "taskTitleTooLong": "This title doesn't fit one sidebar line: a line holds about {limit} half-width characters (a CJK character counts as 2) and this one is {now}. Write a shorter one and try again.",
   "taskNotFound": "No such task",
   "taskClosedNoTurn": "This task has ended and takes no more messages",
   "taskOwnerOnly": "Only the task's owner can do this",
