@@ -44,7 +44,7 @@ from app.domain.block.models import (
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
-from app.domain.conversation.services import room_of
+from app.domain.conversation.services import room_of, threads_of_rooms
 from app.domain.delivery.agent import redispatch_undelivered
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
@@ -62,7 +62,7 @@ from app.domain.room_task.services import (
 )
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
-from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
+from app.domain.thread.services import onto_rooms, thread_opening
 from app.domain.topic.schemas import (
     CheckResultIn,
     LockIn,
@@ -176,6 +176,25 @@ def _asks_me(
     return {tid for tid, who in asked.items() if who == viewer}
 
 
+async def _working_in_threads(
+    db: AsyncSession, broker: InProcessBroker, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, set[str]]:
+    """{房间: 正在它的某条支线里干活的队友} —— 一次查完一个项目。
+
+    一条支线是这间房自己的：芝士在这条频道没有自己那条线，人 @ 它、它回话，都发生
+    在那条消息的支线里（`_answering_in`）。所以「谁在管这间房」不只看主线，这份是
+    主线之外那一半，用来把 `waits` 里已经在处理的成员去掉（`_topic_out`）。哪条支线
+    属于哪个房间以数据库为准，不是 broker 记的那份：broker 只在一条支线里装过轮次时
+    才认得它（`RoomActivity.note_thread`）。
+    """
+    if not room_ids:
+        return {}
+    threads = await threads_of_rooms(db, room_ids)
+    return broker.activity.working_in(
+        {str(thread_id): room_id for thread_id, room_id in threads.items()}
+    )
+
+
 async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:
     """这些房间（连同名下的活）上还没结算的验收卡，一次查完。
 
@@ -242,6 +261,7 @@ def _topic_out(
     asks_me: set[uuid.UUID] | None = None,
     activity: list[dict] | None = None,
     waits: list[MemberWait] | None = None,
+    working_in_threads: set[str] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
@@ -269,8 +289,13 @@ def _topic_out(
         if entry["kind"] == WORKING
     ]
     # A member working here right now is not one the room is waiting on: it is
-    # the one handling it.
+    # the one handling it. 在支线里跑的轮次同样算「在管这间房」：芝士在这条频道
+    # 没有自己那条线，它答一条主线上的消息就是在那条消息的支线里说
+    # （`_answering_in`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
+    # 显示成「没人管」（`useTopicRail` 的 REPLY_STALL_MS）。`activity` 本身照旧只放
+    # 主线 —— 侧栏那一格画的是这间房自己那条线。
     working = {a.member for a in out.activity if a.kind == WORKING}
+    working.update(working_in_threads or ())
     out.waits = [
         MemberWaitOut(member=w.member, reason=w.reason, since=w.since, pr=w.pr)
         for w in waits or []
@@ -354,6 +379,8 @@ async def list_topics(
     waits = await MemberWaits(db).for_rooms(
         [t.id for t in topics], now=now, stuck_rooms=_stuck_on_checks(live)
     )
+    # 支线里在跑的轮次也是「在管这间房」，`waits` 里这些成员要去掉（一次查完）。
+    threads_working = await _working_in_threads(db, broker, [t.id for t in topics])
     rails = await rail_tasks(db, chat, actor, [t.id for t in topics])
     items = [
         {
@@ -369,6 +396,7 @@ async def list_topics(
                 asks_me,
                 activity=broker.activity.snapshot(str(t.id)),
                 waits=waits.get(t.id),
+                working_in_threads=threads_working.get(t.id),
             ),
             "my_tasks": rails[t.id],
         }
@@ -465,6 +493,7 @@ async def get_topic(
     waits = await MemberWaits(db).for_rooms(
         [topic.id], now=datetime.now(UTC), stuck_rooms=_stuck_on_checks(live)
     )
+    threads_working = await _working_in_threads(db, broker, [topic.id])
     rails = await rail_tasks(db, chat, actor, [topic.id])
     return ok(
         {
@@ -479,6 +508,7 @@ async def get_topic(
                 asks_me=_asks_me(asked, _viewer(actor)),
                 activity=broker.activity.snapshot(str(topic.id)),
                 waits=waits.get(topic.id),
+                working_in_threads=threads_working.get(topic.id),
             ),
             "my_tasks": rails[topic.id],
         }

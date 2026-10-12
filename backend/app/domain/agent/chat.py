@@ -178,6 +178,7 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import threads_of_rooms
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -201,7 +202,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.thread.services import conversation_inputs, threads_of_rooms
+from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import load_topic
 from app.domain.user.services import language_of

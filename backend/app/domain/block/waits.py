@@ -41,6 +41,7 @@ from app.domain.conversation.services import (
     conversations_of,
     of_rooms,
     room_column,
+    threads_of_rooms,
 )
 from app.domain.identity.handles import agent_handle_column, recipient_seat
 from app.domain.run_record.models import RunRecord
@@ -151,24 +152,43 @@ class MemberWaits:
     async def _last_said(
         self, topic_ids: list[uuid.UUID], since: datetime
     ) -> dict[tuple[uuid.UUID, str], datetime]:
-        """{(room, agent): when it last said something on the room's own line}."""
+        """{(room, agent): when it last said something of the room's own} — the
+        room's main line and its 支线.
+
+        A 支线 is where the room is answered: a channel has no line of 芝士's
+        own, so what it replies to a message in the channel's main line is said
+        in that message's 支线 and nowhere else. A task's is not: a task is a
+        board of its own with a card of its own, and what is said on one is not
+        the room's own doings.
+        """
+        threads = await threads_of_rooms(self._session, topic_ids)
         # 筛选条件用字面量（`indexed_rows.LAST_SAID_ROWS`），和部分索引的谓词逐字
         # 相同 —— ORM 那版把 `kind`、`author_type`、署名前缀都绑成参数，缓存下来的
         # 通用计划看不见它们，就证不出这条查询蕴含索引的 WHERE，索引被绕过（实测）。
+        # 支线顺着房间一起进同一个数组参数，不是另起一次查询也不是子查询：形状
+        # 不变，索引才照样用得上（`_among`、`conversations_of`）。
         stmt = (
             select(Block.conversation_id, Block.author, Block.created_at)
             .where(
-                _among(Block.conversation_id, topic_ids, Uuid),
+                _among(Block.conversation_id, [*topic_ids, *threads], Uuid),
                 Block.created_at >= since,
                 LAST_SAID_ROWS,
             )
             .order_by(Block.conversation_id, Block.author, Block.created_at.desc())
             .distinct(Block.conversation_id, Block.author)
         )
-        return {
-            (room, author): at
-            for room, author, at in (await self._session.execute(stmt)).all()
-        }
+        said: dict[tuple[uuid.UUID, str], datetime] = {}
+        for row in (await self._session.execute(stmt)).all():
+            conversation, author, at = row[0], row[1], row[2]
+            room: uuid.UUID | None = threads.get(conversation, conversation)
+            if room is None or author is None:
+                continue
+            # 支线里的那句和主线上的那句归到同一个房间：同一个队友两处都说过时，留晚的
+            # 那句 —— `_answered` 比的就是「这个人有没有比那条消息更晚说过话」。
+            held = said.get((room, author))
+            if held is None or at > held:
+                said[(room, author)] = at
+        return said
 
     @staticmethod
     def _answered(

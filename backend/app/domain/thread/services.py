@@ -172,18 +172,6 @@ async def conversation_inputs(
     return [*await thread_opening(session, conversation_id), *blocks]
 
 
-async def threads_of_rooms(
-    session: AsyncSession, room_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, uuid.UUID]:
-    """Every 支线 of these channels, mapped to its channel."""
-    if not room_ids:
-        return {}
-    rows = await session.execute(
-        select(Thread.id, Thread.room_id).where(Thread.room_id.in_(room_ids))
-    )
-    return {thread_id: room_id for thread_id, room_id in rows}
-
-
 def onto_rooms(found: dict, rooms_of: dict[uuid.UUID, uuid.UUID]) -> dict:
     """What was found per 支线 (``found``, keyed by conversation) said of its
     channel too, where the channel has nothing of its own: a question 芝士 asks
