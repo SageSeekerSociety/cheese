@@ -92,6 +92,13 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
   return URL.createObjectURL(await res.blob())
 }
 
+/** A video object URL fetched with Authorization; the browser can then seek it. */
+export async function attachmentMediaUrl(topicId: string, path: string): Promise<string> {
+  const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
+  if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
+  return URL.createObjectURL(await res.blob())
+}
+
 /** A published file's bytes, for a viewer that draws them in the page. */
 export async function previewFileBytes(
   topicId: string,

@@ -419,5 +419,6 @@
   "mainChecksFailed": "Checks failed after merge: {checks}. {agent} will fix them in this step",
   "mainChecksFailedReopened": "Checks failed after merge: {checks}. The task is reopened for {agent} to fix",
   "deployedTo": "Deployed to {environment}",
-  "deployFailedTo": "Deploying to {environment} failed"
+  "deployFailedTo": "Deploying to {environment} failed",
+  "cloudHostGivenUp": "Cloud host {host} was given up: {lost} working sandboxes were lost with it, and {replaced} sandboxes being prepared moved to another host"
 }

@@ -4,8 +4,7 @@
  *
  * 从上到下回答四个问题：池子此刻够不够用（四张卡，外加「此刻在拒绝新会话」那一句）；
  * 每台宿主机走到哪一步、上面有谁（一台一行，点开列出它的沙箱）；过去一天沙箱起得
- * 多快、有多少没起来；温机池里有什么。看不见的那两件事（被拒的会话、丢掉的沙箱）
- * 照实写在过去一天那一块的底下，不画成 0。
+ * 多快、有多少没起来、拒了多少会话、丢了几台宿主机；温机池里有什么。
  */
 import type { HostPhase, MachineHost, MachineSandbox, MachinesOverview, SandboxState } from '@/views/admin/machinesApi'
 
@@ -107,10 +106,27 @@ function sandboxWhen(s: MachineSandbox): string {
   if (s.state === 'stopping') return t('admin.machines.when.stopping', { for: since(s.stopped_at) })
   const active = t('admin.machines.when.active', { ago: since(s.active_at) })
   if (s.state === 'idle' && s.idle_deadline) {
-    const left = until(s.idle_deadline)
-    return left ? `${active} · ${t('admin.machines.when.reclaim', { in: left })}` : active
+    const due = new Date(s.idle_deadline).getTime() <= nowMs.value
+    const after = due
+      ? t('admin.machines.when.overdue')
+      : t('admin.machines.when.reclaim', { in: until(s.idle_deadline) })
+    return `${active} · ${after}`
   }
   return active
+}
+
+// 温机的状态是后端的代号；认不出的照原样画，不替它编一个词。
+const WARM_LABEL: Record<string, string> = {
+  preparing: 'admin.machines.warmState.preparing',
+  ready: 'admin.machines.warmState.ready',
+  reserved: 'admin.machines.warmState.reserved',
+  claim_failed: 'admin.machines.warmState.claimFailed',
+  deleting: 'admin.machines.warmState.deleting',
+  cleanup_failed: 'admin.machines.warmState.cleanupFailed',
+}
+function warmState(state: string): string {
+  const key = WARM_LABEL[state]
+  return key ? t(key) : state
 }
 
 const open = ref<Set<string>>(new Set())
@@ -151,7 +167,7 @@ const failureNote = computed(() =>
       <div class="mc-kpis">
         <AdminKpiCard
           :label="t('admin.machines.kpi.hosts')"
-          :value="pool ? `${n(pool.hosts)} / ${n(pool.max_hosts)}` : ''"
+          :value="pool ? `${n(pool.hosts + pool.vms)} / ${n(pool.max_hosts)}` : ''"
           :loading="first"
           :note="pool ? hostsNote : undefined"
         />
@@ -200,7 +216,7 @@ const failureNote = computed(() =>
     </template>
 
     <BaseLoadError v-if="failed && !overview" @retry="emit('retry')" />
-    <template v-else-if="overview">
+    <div v-else-if="overview" class="admin-page__body">
       <section class="mc-section">
         <h2 class="t-title">{{ t('admin.machines.hosts') }}</h2>
         <BaseEmptyState v-if="!hosts.length" :title="t('admin.machines.noHosts')" />
@@ -298,6 +314,35 @@ const failureNote = computed(() =>
             <dd class="mc-num">{{ n(history.abandoned) }}</dd>
           </div>
           <div>
+            <dt>{{ t('admin.machines.fact.refused') }}</dt>
+            <dd class="mc-num">
+              {{
+                t('admin.machines.fact.refusedValue', {
+                  sessions: history.refused_sessions,
+                  full: history.refused_by_reason.pool_full ?? 0,
+                  failing: history.refused_by_reason.provider_failing ?? 0,
+                })
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t('admin.machines.fact.hostsLost') }}</dt>
+            <dd class="mc-num">
+              {{
+                t('admin.machines.fact.hostsLostValue', {
+                  n: history.hosts_lost,
+                  error: history.hosts_lost_by_reason.provider_error ?? 0,
+                  away: history.hosts_lost_by_reason.connector_away ?? 0,
+                  never: history.hosts_lost_by_reason.never_enrolled ?? 0,
+                })
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t('admin.machines.fact.sandboxesLost') }}</dt>
+            <dd class="mc-num">{{ n(history.sandboxes_lost) }}</dd>
+          </div>
+          <div>
             <dt>{{ t('admin.machines.fact.replaced') }}</dt>
             <dd class="mc-num">{{ n(history.replaced) }}</dd>
           </div>
@@ -310,7 +355,6 @@ const failureNote = computed(() =>
             </dd>
           </div>
         </dl>
-        <p class="mc-foot mc-blind">{{ t('admin.machines.blind') }}</p>
       </section>
 
       <section class="mc-section">
@@ -323,7 +367,7 @@ const failureNote = computed(() =>
                 class="status-dot"
                 :class="w.error ? 'status-dot--danger' : w.state === 'ready' ? 'status-dot--ok' : 'status-dot--muted'"
               />
-              <span class="mc-mono">{{ w.state }}</span>
+              <span>{{ warmState(w.state) }}</span>
             </span>
             <span v-if="w.machine_id !== null" class="t-meta">#{{ w.machine_id }}</span>
             <span class="mc-dim"
@@ -346,7 +390,7 @@ const failureNote = computed(() =>
           })
         }}
       </p>
-    </template>
+    </div>
   </AdminPage>
 </template>
 
@@ -385,7 +429,7 @@ const failureNote = computed(() =>
    「阶段」两列下面。 */
 .mc-row {
   display: grid;
-  grid-template-columns: 16px minmax(160px, 1.2fr) 112px 140px 104px 56px minmax(160px, 1.6fr);
+  grid-template-columns: 16px minmax(160px, 1.2fr) 112px 140px 104px 76px minmax(160px, 1.6fr);
   align-items: center;
   gap: 12px;
   width: 100%;
@@ -453,6 +497,9 @@ const failureNote = computed(() =>
 }
 .mc-num {
   font-variant-numeric: tabular-nums;
+}
+.mc-age {
+  white-space: nowrap;
 }
 .mc-slots {
   display: flex;

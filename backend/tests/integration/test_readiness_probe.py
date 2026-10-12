@@ -13,8 +13,7 @@ from contextlib import asynccontextmanager
 
 from httpx import ASGITransport, AsyncClient
 
-from app.api.routes import health
-from app.core import db
+from app.core import db, health
 from app.main import app
 
 

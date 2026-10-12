@@ -97,6 +97,11 @@ class MachineHistoryOut(BaseModel):
     wait_p50_s: float | None
     wait_p95_s: float | None
     wait_max_s: float | None
+    refused_sessions: int
+    refused_by_reason: dict[str, int]
+    hosts_lost: int
+    hosts_lost_by_reason: dict[str, int]
+    sandboxes_lost: int
 
 
 class MachinesOverviewOut(BaseModel):

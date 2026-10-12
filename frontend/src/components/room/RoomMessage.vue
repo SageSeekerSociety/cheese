@@ -14,11 +14,19 @@ import type { FaceState } from '../../lib/agentFace'
 import { computed, ref } from 'vue'
 
 import { useMessageFold } from '../../composables/useMessageFold'
-import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
+import {
+  artifactKind,
+  artifactName,
+  askOptions,
+  isImageBlock,
+  isVideoBlock,
+  replySnippet,
+} from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
+import AttachmentVideo from '../AttachmentVideo.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 import MarkdownView from '../common/MarkdownView.vue'
@@ -77,6 +85,9 @@ const props = defineProps<{
   /**
    * 正在改这条自己发过的消息：正文换成输入框，里面先放着 `editText`。
    * `saving` 是保存请求还在路上。
+   *
+   * 这一行同时挂上 `im-row--editing`（见 room-row.css）：编辑时要抬掉这一行的
+   * containment，否则 @ 候选菜单弹不出这一行，人只看得见贴着框沿的一条。
    */
   editing?: boolean
   editText?: string
@@ -175,6 +186,7 @@ function renderPlain(text: string): string {
       'im-row--self': mine,
       'im-row--pending': !!outgoing,
       'im-row--active': active,
+      'im-row--editing': editing,
     }"
     :data-mid="block.id"
     :data-actions="outgoing ? undefined : ''"
@@ -237,6 +249,12 @@ function renderPlain(text: string): string {
            (click opens it larger, in place, see ImageLightbox). 字节在
            AttachmentImage 里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
         <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
+        <AttachmentVideo
+          v-else-if="isVideoBlock(block)"
+          :topic-id="topicId"
+          :path="block.content"
+          @download="emit('download', block)"
+        />
         <BaseButton
           v-else-if="block.kind === 'attachment'"
           kind="ghost"

@@ -429,6 +429,7 @@
     },
     "message": {
       "copy": "复制",
+      "copySelection": "复制选中文字",
       "copied": "已复制",
       "copyLink": "复制链接",
       "linkCopied": "已复制链接",
@@ -470,7 +471,7 @@
       "placeholderDm": "给{name}发消息",
       "placeholder": "输入消息，{'@'}{name} 交给它处理",
       "attachFiles": "上传文件（每个最大 10MB）",
-      "sendPhotos": "发送照片",
+      "sendPhotos": "发送照片或视频",
       "more": "更多操作",
       "send": "发送",
       "sendUploading": "附件上传中，传完再发",
@@ -1083,6 +1084,14 @@
       "ci": "等待检查",
       "human": "待审阅",
       "platform": "平台处理中"
+    },
+    "video": {
+      "label": "视频：{name}",
+      "open": "打开视频",
+      "loading": "视频加载中",
+      "retry": "重新加载",
+      "loadFailed": "无法读取视频，可以重新加载或下载",
+      "playFailed": "浏览器无法播放这个视频，可以下载后观看"
     },
     "attachments": {
       "imageSnippet": "[图片]",

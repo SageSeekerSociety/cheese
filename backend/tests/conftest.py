@@ -1029,10 +1029,10 @@ def _fresh_dependency_probe() -> Iterator[None]:
     """No test reads a readiness answer another test left behind.
 
     The database and Redis probes are shared and their answer reused for a
-    second (``dependency_probe`` in app/api/routes/health.py), so a test that
+    second (``dependency_probe`` in app/core/health.py), so a test that
     patches a probe would otherwise read the previous test's answer.
     """
-    from app.api.routes.health import dependency_probe
+    from app.core.health import dependency_probe
 
     dependency_probe.forget()
     yield

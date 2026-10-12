@@ -79,7 +79,11 @@ def _conventions(root: str) -> list[str]:
             if not os.path.isfile(full) or os.path.islink(full):
                 continue
             is_rule = relative[:2] == [".claude", "rules"]
-            nested = directory != root and name in ("CLAUDE.md", "CLAUDE.local.md")
+            nested = directory != root and name in (
+                "AGENTS.md",
+                "CLAUDE.md",
+                "CLAUDE.local.md",
+            )
             if is_rule or nested or (directory == root and name in CONTEXT_FILES):
                 found.append(full)
     return found

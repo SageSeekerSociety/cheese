@@ -429,6 +429,7 @@
     },
     "message": {
       "copy": "Copy",
+      "copySelection": "Copy selected text",
       "copied": "Copied",
       "copyLink": "Copy link",
       "linkCopied": "Link copied",
@@ -470,7 +471,7 @@
       "placeholderDm": "Message {name}",
       "placeholder": "Type a message, or {'@'}{name} to hand it over",
       "attachFiles": "Upload files (up to 10 MB each)",
-      "sendPhotos": "Send photos",
+      "sendPhotos": "Send photos or videos",
       "more": "More actions",
       "send": "Send",
       "sendUploading": "Uploading attachments — send once they finish",
@@ -1083,6 +1084,14 @@
       "ci": "Waiting for checks",
       "human": "Waiting for review",
       "platform": "Platform is on it"
+    },
+    "video": {
+      "label": "Video: {name}",
+      "open": "Open video",
+      "loading": "Loading video",
+      "retry": "Reload",
+      "loadFailed": "Unable to load this video. Reload or download it",
+      "playFailed": "This browser cannot play the video. Download it to watch"
     },
     "attachments": {
       "imageSnippet": "[Image]",

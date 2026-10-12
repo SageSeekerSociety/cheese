@@ -419,5 +419,6 @@
   "mainChecksFailed": "合并后检查未通过：{checks}。{agent} 会在这一步一起修复",
   "mainChecksFailedReopened": "合并后检查未通过：{checks}。任务已重新打开，由 {agent} 修复",
   "deployedTo": "已部署到 {environment}",
-  "deployFailedTo": "部署到 {environment} 失败"
+  "deployFailedTo": "部署到 {environment} 失败",
+  "cloudHostGivenUp": "云端宿主机 {host} 已放弃：{lost} 个工作中的沙箱随它丢失，{replaced} 个准备中的沙箱换到了别的宿主机"
 }

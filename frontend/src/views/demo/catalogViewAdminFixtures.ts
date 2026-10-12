@@ -457,5 +457,10 @@ export const CRV_MACHINES: MachinesOverview = {
     wait_p50_s: 48,
     wait_p95_s: 210,
     wait_max_s: 260,
+    refused_sessions: 2,
+    refused_by_reason: { provider_failing: 2 },
+    hosts_lost: 1,
+    hosts_lost_by_reason: { provider_error: 1 },
+    sandboxes_lost: 0,
   },
 }

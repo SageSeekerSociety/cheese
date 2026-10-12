@@ -91,6 +91,53 @@ def test_upload_then_raw_roundtrip(client):
     assert raw.headers["cache-control"] == "private, no-cache"
 
 
+def test_video_can_be_referenced_and_seeked_without_opening_active_files(client):
+    _, topic_id = _create_project_and_topic(client)
+    content = b"0123456789"
+    uploaded = client.post(
+        f"/topics/{topic_id}/attachments",
+        files={"file": ("screen.MP4", content, "video/mp4")},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+    att = uploaded.json()["data"]
+    assert att["mime"] == "video/mp4"
+
+    inline = client.get(
+        f"/topics/{topic_id}/attachments/raw", params={"path": att["path"]}
+    )
+    assert inline.status_code == 200
+    assert inline.headers["content-type"].startswith("video/mp4")
+    assert inline.headers["accept-ranges"] == "bytes"
+    assert inline.content == content
+
+    partial = client.get(
+        f"/topics/{topic_id}/attachments/raw",
+        params={"path": att["path"]},
+        headers={"Range": "bytes=3-6"},
+    )
+    assert partial.status_code == 206
+    assert partial.headers["content-range"] == "bytes 3-6/10"
+    assert partial.content == b"3456"
+
+    library_ref = client.post(
+        f"/topics/{topic_id}/attachments",
+        data={"library_path": "screen.MP4"},
+    )
+    assert library_ref.status_code == 200, library_ref.text
+    assert library_ref.json()["data"]["mime"] == "video/mp4"
+
+    for filename, mime in (("clip.html", "text/html"), ("clip.svg", "image/svg+xml")):
+        uploaded_bad = client.post(
+            f"/topics/{topic_id}/attachments",
+            files={"file": (filename, b"not a media document", mime)},
+        ).json()["data"]
+        blocked = client.get(
+            f"/topics/{topic_id}/attachments/raw",
+            params={"path": uploaded_bad["path"]},
+        )
+        assert blocked.status_code == 422
+
+
 @pytest.mark.parametrize(
     ("filename", "content", "mime"),
     [
