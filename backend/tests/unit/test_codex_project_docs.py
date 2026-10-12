@@ -51,7 +51,7 @@ def test_project_instructions_keep_codex_native_paths_and_bytes(tmp_path):
 
 
 def test_project_instructions_follow_in_repository_symlinks(tmp_path):
-    context = Context({"instructions.md": b"linked rules\\n"})
+    context = Context({"instructions.md": b"linked rules\n"})
     context.entries["AGENTS.md"] = {
         "kind": "symlink",
         "target": "instructions.md",
@@ -62,7 +62,7 @@ def test_project_instructions_follow_in_repository_symlinks(tmp_path):
     mirror = tools(context, root)
 
     assert mirror.sync_project_docs(context.entries) is True
-    assert (root / "AGENTS.md").read_bytes() == b"linked rules\\n"
+    assert (root / "AGENTS.md").read_bytes() == b"linked rules\n"
 
 
 def test_project_instruction_snapshot_removes_stale_files(tmp_path):
