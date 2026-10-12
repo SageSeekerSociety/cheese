@@ -25,6 +25,20 @@ import { parseApprovalsInput, parseCheckPaths } from '@/lib/branchProtection'
 /** 这一块自己的四态：GET 可能慢到要单独显示加载中/失败。 */
 export type BranchProtectionLoadState = 'loading' | 'loaded' | 'error'
 
+/**
+ * 下拉里的一行：`title` 是纯文本兜底（Vuetify 拿它当没画出来的那一眼），身份字段
+ * 交给 `IdentityView` 画头像 + 姓名。`handle` 空 = 这一行不是某个人（比如「未指定」），
+ * 画纯文字。字段名跟着 `IdentityView` 的 props 走，免得两边再对一次。
+ */
+export interface MergeMemberItem {
+  title: string
+  value: string
+  handle: string
+  name: string
+  avatarId: number | null
+  agent: boolean | null
+}
+
 export function useBranchProtection(projectId: () => string) {
   const bpLoadState = ref<BranchProtectionLoadState>('loading')
   const bpLoadError = ref<string | null>(null)
@@ -47,18 +61,21 @@ export function useBranchProtection(projectId: () => string) {
   const ghEnforced = computed(() => bp.value?.github_protection.enforced ?? false)
   const bpBusy = computed(() => bpSaving.value !== null)
 
-  const bpMemberItems = computed(() =>
+  const bpMemberItems = computed<MergeMemberItem[]>(() =>
     bpMembers.value
       .filter((m) => !m.agent)
       .map((m) => ({
-        title: m.name
-          ? t('work.projectSettings.merge.memberOption', { name: m.name, handle: m.user_handle })
-          : m.user_handle,
+        title: m.name ?? m.user_handle,
         value: m.user_handle,
+        handle: m.user_handle,
+        name: m.name ?? '',
+        avatarId: m.avatar_id ?? null,
+        agent: false,
       }))
   )
-  const bpReviewerItems = computed(() => [
-    { title: t('work.projectSettings.merge.unassigned'), value: '' },
+  const bpReviewerItems = computed<MergeMemberItem[]>(() => [
+    // 「未指定」不是某个人，`handle` 空着，模板据此画纯文字而不是一张脸。
+    { title: t('work.projectSettings.merge.unassigned'), value: '', handle: '', name: '', avatarId: null, agent: null },
     ...bpMemberItems.value,
   ])
 

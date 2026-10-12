@@ -1820,7 +1820,6 @@
       "defaultReviewerHint": "Reviews tasks that don't say who should review them",
       "unassigned": "Unassigned",
       "saveFailed": "Couldn't save branch protection",
-      "memberOption": "{name} ({handle})",
       "pathSeparator": ", "
     },
     "environment": {

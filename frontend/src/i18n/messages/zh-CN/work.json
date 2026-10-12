@@ -1820,7 +1820,6 @@
       "defaultReviewerHint": "任务没有指定由谁审阅时，由这个人审阅",
       "unassigned": "未指定",
       "saveFailed": "保存分支保护规则失败",
-      "memberOption": "{name}（{handle}）",
       "pathSeparator": "、"
     },
     "environment": {
