@@ -16,10 +16,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // 读待审核数。都挡在假数据上，测试不碰网络。
 const detail = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: { detail: (...a: unknown[]) => detail(...a) },
 }))
-vi.mock('@/network/api/tasks', () => ({ TasksApi: { list: vi.fn(), applications: vi.fn() } }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: { list: vi.fn() } }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn(), success: vi.fn() } }))
 
 // `isManager` 读的是「我」，那份身份住在 account 这个单例上。它也是守卫 await 的那
@@ -62,7 +62,7 @@ function signedInAs(userId: number, admins: Admin[]) {
   setActivePinia(createPinia())
   // 只关心「我是谁」这一个字段，界面上别的字段这里用不到。
   ;(AccountService._user as { value: { id: number } | null }).value = { id: userId }
-  detail.mockResolvedValue({ data: { space: { id: SPACE_ID, name: '数据结构空间', admins } } })
+  detail.mockResolvedValue({ space: { id: SPACE_ID, name: '数据结构空间', admins } })
 }
 
 beforeEach(() => {

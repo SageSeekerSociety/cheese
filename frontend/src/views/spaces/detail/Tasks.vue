@@ -20,9 +20,9 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import TasksView from './TasksView.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
+import { SpacesApi } from '@/api/spaces'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { useCommands } from '@/commands'
-import { SpacesApi } from '@/network/api/spaces'
-import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 
 type SortBy = 'createdAt' | 'updatedAt' | 'deadline'
@@ -64,7 +64,7 @@ const fetchHotTopics = async () => {
   const sId = Number(route.params.spaceId)
   if (!sId) return
   try {
-    const { data } = await SpacesApi.getSpaceTopics(sId, 20, 'popularity')
+    const data = await SpacesApi.getSpaceTopics(sId, 20, 'popularity')
     hotTopics.value = data.topics || []
   } catch (e) {
     console.error('Fetch top topics failed', e)
@@ -151,7 +151,7 @@ const {
 } = usePaging<Task, QueryOptions, string>(
   async (pageStart, queryOptions) => {
     if (!queryOptions || !queryOptions.space) return createEmptyResult<Task, string>()
-    const { data } = await TasksApi.list({
+    const data = await TaskBoardApi.list({
       space: queryOptions.space,
       pageStart: pageStart,
       sort_by: queryOptions?.by ?? 'createdAt',
@@ -183,7 +183,7 @@ const loadPublishedTasks = async () => {
   publishedFailed.value = false
   publishedError.value = null
   try {
-    const { data } = await SpacesApi.getMyPublishedTasks(spaceId, {
+    const data = await SpacesApi.getMyPublishedTasks(spaceId, {
       categoryId: selectedCategoryId.value ?? undefined,
       sortBy: 'publishedAt',
       sortOrder: 'desc',

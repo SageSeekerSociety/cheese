@@ -1,4 +1,4 @@
-import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
+import type { SpaceLearningExcerpt } from '@/types/apiSpaces'
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 

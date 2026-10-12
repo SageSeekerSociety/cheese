@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { SpaceAnalyticsAlerts } from '@/types'
+import type { SpaceAnalyticsAlerts } from '@/types/apiSpaces'
 import type { SpaceAnalyticsQueryState } from './utils'
 
 import { ref, watch } from 'vue'
@@ -7,8 +7,8 @@ import { ref, watch } from 'vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 import AlertsView from './AlertsView.vue'
 
+import { SpacesApi } from '@/api/spaces'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { SpacesApi } from '@/network/api/spaces'
 
 // 管理员看板「告警」那一格（`/spaces/:id/analytics/alerts`）：取数在这里，画法在
 // `AlertsView.vue`。这一层只做三件事 —— 拿 spaceId 取一次、空间换了重取一次、点一个能
@@ -26,7 +26,7 @@ const load = async () => {
   failed.value = false
   errorDetail.value = null
   try {
-    const { data } = await SpacesApi.getAnalyticsAlerts(spaceId.value)
+    const data = await SpacesApi.getAnalyticsAlerts(spaceId.value)
     alerts.value = data
   } catch (error) {
     console.error('load analytics alerts failed', error)

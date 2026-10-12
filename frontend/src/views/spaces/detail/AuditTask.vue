@@ -31,8 +31,8 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import AuditTaskView from './AuditTaskView.vue'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { TasksApi } from '@/network/api/tasks'
 import { CancelError, useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 
@@ -56,7 +56,7 @@ const {
   if (!currentSpaceId.value) {
     return createEmptyResult<Task, string>()
   }
-  const { data } = await TasksApi.list({
+  const data = await TaskBoardApi.list({
     space: currentSpaceId.value,
     pageStart: pageStart,
     sort_by: 'createdAt',
@@ -79,7 +79,7 @@ const forbidden = computed(() => isForbidden(error.value))
 
 const approveTask = async (taskId: number) => {
   try {
-    await TasksApi.update(taskId, { approved: 'APPROVED' })
+    await TaskBoardApi.update(taskId, { approved: 'APPROVED' })
     toast.success(t('spaces.detail.auditTasks.operationSuccess'))
   } catch (error) {
     console.error(error)
@@ -104,7 +104,7 @@ const rejectTask = async (taskId: number) => {
       toast.error(t('spaces.detail.auditTasks.rejectReasonRequired'))
       return
     }
-    await TasksApi.update(taskId, { approved: 'DISAPPROVED', rejectReason: reason })
+    await TaskBoardApi.update(taskId, { approved: 'DISAPPROVED', rejectReason: reason })
     toast.success(t('spaces.detail.auditTasks.operationSuccess'))
   } catch (error) {
     if (error instanceof CancelError) {

@@ -24,8 +24,8 @@ vi.mock('@/api', () => ({
   deleteUnderstanding: vi.fn(),
 }))
 vi.mock('@/me', () => ({ myHandle: () => me.handle }))
-vi.mock('@/network/api/avatars', () => ({
-  AvatarsApi: { getDefaultAvatarId: vi.fn().mockResolvedValue({ data: { avatarId: 1 } }) },
+vi.mock('@/api/avatars', () => ({
+  getDefaultAvatarId: vi.fn().mockResolvedValue({ avatarId: 1 }),
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 

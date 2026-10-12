@@ -20,9 +20,9 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 
+import { AnswersApi } from '@/api/answers'
 import AnswerCard from '@/components/answer/AnswerCard.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
-import { AnswersApi } from '@/network/api/answers'
 
 const { t } = useI18n()
 
@@ -35,10 +35,7 @@ const questionId = computed(() => parseInt(route.params.questionId as string))
 const answerId = computed(() => parseInt(route.params.answerId as string))
 
 onMounted(async () => {
-  const {
-    data: { question, answer },
-  } = await AnswersApi.getAnswerDetail(questionId.value, answerId.value)
-  console.log(question, answer)
+  const { question, answer } = await AnswersApi.getAnswerDetail(questionId.value, answerId.value)
   questionData.value = question
   answerData.value = answer
 })

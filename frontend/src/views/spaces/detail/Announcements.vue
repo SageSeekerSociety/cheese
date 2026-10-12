@@ -41,8 +41,8 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import AnnouncementsView from './AnnouncementsView.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
+import { SpacesApi } from '@/api/spaces'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { SpacesApi } from '@/network/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 

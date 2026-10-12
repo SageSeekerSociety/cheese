@@ -12,11 +12,11 @@ import type { Answer, Question } from '@/types'
 import { computed, inject, toValue } from 'vue'
 import { toast } from 'vuetify-sonner'
 
+import { AnswersApi } from '@/api/answers'
+import { QuestionApi } from '@/api/questions'
 import { NewAttitudeType } from '@/constants'
 import { t } from '@/i18n'
 import { refreshInjectionKey } from '@/keys'
-import { AnswersApi } from '@/network/api/answers'
-import { QuestionApi } from '@/network/api/questions'
 import { currentUserId } from '@/services/account'
 
 /**
@@ -46,8 +46,8 @@ export function useAnswerActions(answer: Ref<Answer>, question: MaybeRefOrGetter
 
   /** 三种投票是同一个请求的三个取值，差别只在服务端的 `attitude_type`。 */
   async function vote(type: NewAttitudeType): Promise<void> {
-    const { data } = await AnswersApi.postAttitude(answer.value.question_id, answer.value.id, type)
-    answer.value.attitudes = data.attitudes
+    const { attitudes } = await AnswersApi.postAttitude(answer.value.question_id, answer.value.id, type)
+    answer.value.attitudes = attitudes
   }
 
   async function favorite(): Promise<void> {

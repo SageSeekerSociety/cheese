@@ -193,8 +193,8 @@
 </template>
 
 <script setup lang="ts">
-import type { AcceptedDocuments, ConsentMethod } from '@/network/api/legal/types'
 import type { OAuthState } from '@/network/api/users/types'
+import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
 
 import { ref, watch } from 'vue'
 

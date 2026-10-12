@@ -1,5 +1,5 @@
-import type { Notification } from '@/network/api/notifications/types'
-import type { EntityInfo } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
+import type { EntityInfo } from '@/types/apiNotifications'
 
 import { topicTitle } from '@/lib/topicState'
 

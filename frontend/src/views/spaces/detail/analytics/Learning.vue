@@ -122,7 +122,7 @@ import type {
   SpaceLearningOutline,
   SpaceLearningQuestion,
   SpaceLearningQueues,
-} from '@/network/api/spaces/types'
+} from '@/types/apiSpaces'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -135,10 +135,10 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { dedupeBlockIds, formatCount } from './helpers'
 import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
+import { SpacesApi } from '@/api/spaces'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import { SpacesApi } from '@/network/api/spaces'
 
 const { t } = useI18n()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
@@ -195,7 +195,7 @@ const summary = computed(() => {
 
 const loadFilters = async () => {
   try {
-    const { data } = await SpacesApi.getLearningFilters(spaceId.value)
+    const data = await SpacesApi.getLearningFilters(spaceId.value)
     learningFilters.value = data
   } catch (error) {
     console.error('load learning filters failed', error)
@@ -204,15 +204,12 @@ const loadFilters = async () => {
 }
 
 const loadQueues = async () => {
-  const { data } = await SpacesApi.getLearningQueues(spaceId.value, buildLearningQueueParams(filters.value))
+  const data = await SpacesApi.getLearningQueues(spaceId.value, buildLearningQueueParams(filters.value))
   queues.value = data
 }
 
 const loadQuestions = async () => {
-  const { data } = await SpacesApi.getLearningQuestions(
-    spaceId.value,
-    buildAnalyticsApiParams('learning', filters.value)
-  )
+  const data = await SpacesApi.getLearningQuestions(spaceId.value, buildAnalyticsApiParams('learning', filters.value))
   questions.value = data.questions
 }
 
@@ -271,7 +268,7 @@ const buildOutline = async () => {
 
   outlineLoading.value = true
   try {
-    const { data } = await SpacesApi.buildLearningOutline(spaceId.value, { blockIds })
+    const data = await SpacesApi.buildLearningOutline(spaceId.value, { blockIds })
     outline.value = data
   } catch (error) {
     console.error('build learning outline failed', error)

@@ -5,9 +5,9 @@ import type { Team } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 
+import { TeamsApi } from '@/api/teams'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
 
 const props = defineProps<{ team: Team }>()
 const open = defineModel<boolean>({ required: true })

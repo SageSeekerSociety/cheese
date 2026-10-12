@@ -1,4 +1,4 @@
-import type { AcceptedDocuments, ConsentMethod } from '@/network/api/legal/types'
+import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
 
 import { defineStore } from 'pinia'
 

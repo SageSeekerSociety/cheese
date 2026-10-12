@@ -21,7 +21,7 @@
 </template>
 
 <script setup lang="ts">
-import type { LegalDocumentFull } from '@/network/api/legal/types'
+import type { LegalDocumentFull } from '@/types/apiLegal'
 
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
