@@ -368,7 +368,7 @@ describe('发题页：发一道', () => {
     await boardAs(MEMBER)
     spaceDetail.mockImplementation(async () => {
       const body = spaceBody()
-      ;(body.data.space as Record<string, unknown>).taskTemplates = JSON.stringify([
+      ;(body.space as Record<string, unknown>).taskTemplates = JSON.stringify([
         { name: '实验题', description: '每周实验', title: '实验 N：', content: '', submitterType: 'USER', rank: 2 },
       ])
       return body
