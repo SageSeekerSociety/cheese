@@ -162,6 +162,10 @@ class TaskRepository:
         - ``latest``: only the newest N — by when they closed for closed tasks,
           by when they were created otherwise — newest first.
 
+        Put-away tasks are left out unless ``ids``/``origins`` name them: a room
+        lists the work in it, and archiving is exactly the act of taking one out
+        of every such list.
+
         Ties on created_at break by id so the order is total — the backfill
         stamps a whole project's tasks from `topics.created_at`, and rows that
         were created in the same instant must still come back in one fixed
@@ -170,6 +174,11 @@ class TaskRepository:
         stmt = select(Task).where(Task.room_id == room_id)
         if status is not None:
             stmt = stmt.where(Task.status == TaskStatus(status))
+        if ids is None and origins is None:
+            # 归档的活不在房间的清单里 —— 这正是归档的意思（`Task.archived_at`）。
+            # 有人点名要它时才给：一块消息带着的任务、从某块拆出来的活，那条线索
+            # 还在原处，不能因为后来把它收起来了就断掉。
+            stmt = stmt.where(Task.archived_at.is_(None))
         if ids is not None or origins is not None:
             # One array parameter each, not one per id: a whole timeline's
             # blocks (a room read without a limit) can be tens of thousands,
@@ -235,11 +244,15 @@ class TaskRepository:
         status: str,
         channel: uuid.UUID | None,
     ):
-        stmt = stmt.where(
-            Task.project_id == project_id,
-            Task.room_id.in_(list(rooms)),
-            Task.status == TaskStatus(status),
-        )
+        stmt = stmt.where(Task.project_id == project_id, Task.room_id.in_(list(rooms)))
+        if status == "archived":
+            # 已归档是一份自己的清单：收起来的东西和「进行中」「已关闭」不重叠，
+            # 否则「已关闭」会越积越长，归档就白做了。
+            stmt = stmt.where(Task.archived_at.is_not(None))
+        else:
+            stmt = stmt.where(
+                Task.status == TaskStatus(status), Task.archived_at.is_(None)
+            )
         return stmt if channel is None else stmt.where(Task.room_id == channel)
 
     async def page_for_project(

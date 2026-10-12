@@ -6,10 +6,12 @@
 // 进行中、未开始。等你的那几件在行上用暖色写出来，不单独拉一组——「需要我处理」
 // 只在首页「待办」一处。十四天没动静的收进最底下的「已停滞」，点开才列出来。
 //
-// 筛选：谁的（全部 / 我负责的 / 我协作的 / 其他人的）、哪个频道、看已关闭的。数据和
-// 去处都由容器 ProjectTasks 给。进行中的是整份，在这里分组、筛选、数；已关闭的只会越
-// 积越多，容器一页一页读（服务端筛好、数好），这里往下滚到底时要下一页（`more`）。
-import type { TaskFilter } from '@/api/tasks'
+// 筛选：谁的（全部 / 我负责的 / 我协作的 / 其他人的）、哪个频道、看三份清单里的哪一份。
+// 数据和去处都由容器 ProjectTasks 给。进行中的是整份，在这里分组、筛选、数；已关闭的
+// 和已归档的（负责人特意收起来的，`Task.archived_at`）只会越积越多，容器各自一页一页读
+// （服务端筛好、数好），这里往下滚到底时要下一页（`more`）。三份互不重叠：收起来的不留在
+// 「已关闭」里。
+import type { TaskFilter, TaskTab } from '@/api/tasks'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { BoardColumn, RoomTask } from '@/cx_types'
 
@@ -38,18 +40,19 @@ const props = defineProps<{
   me: string
   loading: boolean
   failed: boolean
-  /** 已关闭的那一页页读到的（服务端已按频道、谁的筛好，最近有动静的在前）。 */
-  closedTasks: RoomTask[]
-  /** 已关闭的一共几件，按谁的分；还没读到是 null。 */
-  closedCounts: Record<TaskFilter, number> | null
-  closedHasMore: boolean
+  /** 一页页读到的那份（已关闭的、或已归档的；服务端已按频道、谁的筛好，最近有动静的
+   *  在前）。看哪一份由 `tab` 说。 */
+  pagedTasks: RoomTask[]
+  /** 那一份一共几件，按谁的分；还没读到是 null。 */
+  pagedCounts: Record<TaskFilter, number> | null
+  pagedHasMore: boolean
   /** 正在读下一页、或下一页读失败了。 */
-  closedLoading: boolean
-  closedFailed: boolean
+  pagedLoading: boolean
+  pagedFailed: boolean
 }>()
 
-/** 看哪一边：进行中的，还是已关闭的。 */
-const closed = defineModel<boolean>('closed', { default: false })
+/** 看哪一份：进行中的、已关闭的、已归档的。 */
+const tab = defineModel<TaskTab>('tab', { default: 'open' })
 /** 谁的。 */
 const whose = defineModel<TaskFilter>('whose', { default: 'all' })
 
@@ -77,9 +80,10 @@ const belongs: Record<TaskFilter, (task: RoomTask) => boolean> = {
   helping,
   others: (task) => task.owner_handle !== props.me && !helping(task),
 }
+const paged = computed(() => tab.value !== 'open')
 const counts = computed<Record<TaskFilter, number> | null>(() =>
-  closed.value
-    ? props.closedCounts
+  paged.value
+    ? props.pagedCounts
     : {
         all: inView.value.length,
         mine: inView.value.filter(belongs.mine).length,
@@ -89,7 +93,7 @@ const counts = computed<Record<TaskFilter, number> | null>(() =>
 )
 const moved = (task: RoomTask) => Date.parse(task.last_activity_at ?? task.updated_at) || 0
 const shown = computed(() =>
-  closed.value ? props.closedTasks : inView.value.filter(belongs[whose.value]).sort((a, b) => moved(b) - moved(a))
+  paged.value ? props.pagedTasks : inView.value.filter(belongs[whose.value]).sort((a, b) => moved(b) - moved(a))
 )
 
 // 已关闭的滚到最底下那一行露出来时要下一页。
@@ -103,12 +107,20 @@ const groups = computed(() =>
   })).filter((group) => group.tasks.length)
 )
 const stalled = computed(() => shown.value.filter((task) => task.stalled))
+// 一页页读的那两份都只有一格：这一格写哪一份，就是它读的是哪一份。
+const doneGroup = computed(() => ({ column: tab.value === 'archived' ? 'archived' : 'done', tasks: shown.value }))
 
 const filters: { id: TaskFilter; label: string }[] = [
   { id: 'all', label: t('work.channelTasks.all') },
   { id: 'mine', label: t('work.channelTasks.mine') },
   { id: 'helping', label: t('work.channelTasks.helping') },
   { id: 'others', label: t('work.channelTasks.others') },
+]
+// 「收尾了的」两份各自一颗：已关闭是「做完了、不做了」的那些，已归档是负责人特意
+// 收起来的那些（`Task.archived_at`）——它们不重叠。
+const doneTabs: { tab: TaskTab; label: string }[] = [
+  { tab: 'closed', label: t('work.channelTasks.closed') },
+  { tab: 'archived', label: t('work.channelTasks.archived') },
 ]
 const channelActions = computed<MenuAction[]>(() => [
   {
@@ -177,14 +189,19 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           </button>
         </template>
       </AdaptiveMenu>
+      <!-- 三份清单互相不重叠：进行中 / 已关闭 / 已归档。收起来的活不留在「已关闭」里，
+           否则那一份会一直长出没人想再看的东西。点开着的那一颗就回到进行中的那一份。 -->
       <button
+        v-for="picker in doneTabs"
+        :key="picker.tab"
         type="button"
         class="tasks__chip t-body"
-        :class="{ 'tasks__chip--on': closed }"
-        :aria-pressed="closed"
-        @click="closed = !closed"
+        :class="{ 'tasks__chip--on': tab === picker.tab }"
+        :aria-pressed="tab === picker.tab"
+        :data-testid="`tasks-${picker.tab}`"
+        @click="tab = tab === picker.tab ? 'open' : picker.tab"
       >
-        {{ t('work.channelTasks.closed') }}
+        {{ picker.label }}
       </button>
     </div>
 
@@ -201,15 +218,11 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
       {{ t('work.channelTasks.empty') }}
     </div>
     <template v-else>
-      <!-- 已关闭的不再分组：它们都在「已完成」那一格。 -->
-      <section
-        v-for="group in closed ? [{ column: 'done', tasks: shown }] : groups"
-        :key="group.column"
-        class="tasks__group"
-      >
+      <!-- 收尾的那两份不再分格：已关闭的都在「已完成」那一格，已归档的都在「已归档」那一格。 -->
+      <section v-for="group in paged ? [doneGroup] : groups" :key="group.column" class="tasks__group">
         <h2 class="tasks__group-head">
           {{ columnLabel(group.column as BoardColumn) }}
-          <span class="tasks__count">{{ closed ? counts?.[whose] ?? '' : group.tasks.length }}</span>
+          <span class="tasks__count">{{ paged ? counts?.[whose] ?? '' : group.tasks.length }}</span>
         </h2>
         <ul class="tasks__list">
           <li v-for="task in group.tasks" :key="task.id">
@@ -241,17 +254,17 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         </ul>
       </section>
 
-      <div v-if="closed && closedFailed" class="tasks__empty t-body c-muted" role="alert">
+      <div v-if="paged && pagedFailed" class="tasks__empty t-body c-muted" role="alert">
         {{ t('work.channelTasks.loadFailed') }}
         <button type="button" class="tasks__retry" @click="emit('more')">
           {{ t('global.loadError.retry') }}
         </button>
       </div>
-      <div v-else-if="closed && closedHasMore" ref="sentinel" class="tasks__more" data-testid="tasks-more">
-        <v-progress-circular v-if="closedLoading" indeterminate size="16" width="2" />
+      <div v-else-if="paged && pagedHasMore" ref="sentinel" class="tasks__more" data-testid="tasks-more">
+        <v-progress-circular v-if="pagedLoading" indeterminate size="16" width="2" />
       </div>
 
-      <section v-if="!closed && stalled.length" class="tasks__group" data-testid="tasks-stalled">
+      <section v-if="!paged && stalled.length" class="tasks__group" data-testid="tasks-stalled">
         <button
           type="button"
           class="tasks__fold t-body"

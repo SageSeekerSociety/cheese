@@ -401,7 +401,7 @@ async def list_project_tasks(
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     if_none_match: Annotated[str | None, Header()] = None,
-    status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+    status: Annotated[Literal["open", "closed", "archived"] | None, Query()] = None,
     channel: uuid.UUID | None = None,
     whose: Annotated[Literal["mine", "helping", "others"] | None, Query()] = None,
     limit: Annotated[int | None, Query(ge=1, le=200)] = None,
@@ -409,9 +409,10 @@ async def list_project_tasks(
 ) -> Response:
     """Every thread in the project, each with the card it currently rides on.
 
-    `status` keeps only threads in that state. The sidebar polls for the open
-    ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
-    read.
+    `status` keeps only threads in that state: `open`, `closed`, or `archived` —
+    tasks their owner put away, which are in none of the other two. The sidebar
+    polls for the open ones: 128 of the 1,716 on dev (2026-10-08), and every row
+    is rebuilt per read.
 
     With `limit` (and a `status`) it is a page instead, of the threads that
     most recently moved: the closed ones only grow, and the all-tasks page
@@ -489,10 +490,21 @@ async def list_project_tasks(
     tasks = [
         t
         for t in await TaskService(db).list_in_project(project_id)
-        if t.room_id in seen and (status is None or t.status == status)
+        if t.room_id in seen and _task_in_status(t, status)
     ]
     items = await _project_task_rows(db, chat, actor.handle or "", tasks)
     return conditional_json(ok(page(items, len(items))), if_none_match)
+
+
+def _task_in_status(task, status: str | None) -> bool:
+    """这一条活算不算 ``status``（`/projects/{id}/tasks` 没有分页、整份读的那一支）。
+
+    `archived` 是一份自己的清单，别处都不要它：不这样区分的话，收起来的东西还留在
+    「已关闭」里越积越长，归档就白做了 —— 而侧栏那条 rail 读的正是没有状态的这一份。
+    """
+    if status == "archived":
+        return task.archived_at is not None
+    return task.archived_at is None and (status is None or task.status == status)
 
 
 def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:

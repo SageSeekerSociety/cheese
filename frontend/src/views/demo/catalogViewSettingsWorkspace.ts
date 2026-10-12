@@ -633,12 +633,12 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       me: 'wangxiaoming',
       loading: false,
       failed: false,
-      closedTasks: [],
-      closedCounts: null,
-      closedHasMore: false,
-      closedLoading: false,
-      closedFailed: false,
-      closed: false,
+      pagedTasks: [],
+      pagedCounts: null,
+      pagedHasMore: false,
+      pagedLoading: false,
+      pagedFailed: false,
+      tab: 'open',
       whose: 'all',
     },
     states: [
@@ -692,7 +692,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.projectTasksView.s5.note')
         },
-        props: { closed: true, closedTasks: [CLOSED_TASK], closedCounts: { all: 1, mine: 1, helping: 0, others: 0 } },
+        props: { tab: 'closed', pagedTasks: [CLOSED_TASK], pagedCounts: { all: 1, mine: 1, helping: 0, others: 0 } },
         expectSelector: '.tasks__group',
         expect: '把实验指导书发下去',
       },

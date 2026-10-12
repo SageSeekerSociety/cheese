@@ -65,11 +65,11 @@ function mount(tasks: RoomTask[], extra: Record<string, unknown> = {}) {
       me: 'alice',
       loading: false,
       failed: false,
-      closedTasks: [],
-      closedCounts: null,
-      closedHasMore: false,
-      closedLoading: false,
-      closedFailed: false,
+      pagedTasks: [],
+      pagedCounts: null,
+      pagedHasMore: false,
+      pagedLoading: false,
+      pagedFailed: false,
       ...extra,
     },
     global: { plugins: [createVuetify({ components, directives })] },
@@ -134,15 +134,45 @@ it('看已关闭的：列的是读回来的那一页，筛选上写的是一共�
     presentation: { column: 'done', phrase: 'completed' },
   })
   const view = mount([], {
-    closed: true,
-    closedTasks: [done],
-    closedCounts: { all: 120, mine: 40, helping: 3, others: 77 },
-    closedHasMore: true,
+    tab: 'closed',
+    pagedTasks: [done],
+    pagedCounts: { all: 120, mine: 40, helping: 3, others: 77 },
+    pagedHasMore: true,
   })
 
   expect(titles(view)).toEqual(['做完的'])
   expect(view.container.textContent).toContain('120')
   expect(view.getByTestId('tasks-more')).toBeTruthy()
+})
+
+// 收起来的活是一份自己的清单：它不在「进行中」里，也不在「已关闭」里（后端 `archived_at`）。
+it('看已归档的：列的是收起来的那些，和已关闭的不重叠', async () => {
+  const putAway = task({
+    id: 'a1',
+    title: '收起来的',
+    status: 'closed',
+    archived_at: '2026-10-05T00:00:00Z',
+    presentation: { column: 'archived', phrase: 'archived' },
+  })
+  const view = mount([], {
+    tab: 'archived',
+    pagedTasks: [putAway],
+    pagedCounts: { all: 1, mine: 1, helping: 0, others: 0 },
+  })
+
+  expect(titles(view)).toEqual(['收起来的'])
+  expect(view.getByTestId('tasks-archived').getAttribute('aria-pressed')).toBe('true')
+  expect(view.getByTestId('tasks-closed').getAttribute('aria-pressed')).toBe('false')
+})
+
+// 开着的那一份里，被收起来的活不出现；「已归档」那颗点了才去读那一份。
+it('进行中的那一份不含已归档的，点「已归档」就切过去', async () => {
+  const running = task({ title: '在做的' })
+  const view = mount([running])
+  expect(titles(view)).toEqual(['在做的'])
+
+  await fireEvent.click(view.getByTestId('tasks-archived'))
+  expect((view.emitted('update:tab') as unknown[][])[0]).toEqual(['archived'])
 })
 
 it('频道菜单里每个频道只写名字，符号由图标画，私密频道是一把锁', async () => {

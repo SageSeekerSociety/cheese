@@ -273,6 +273,9 @@ class TaskFacts:
     awaiting_answer: bool = False
     #: 最后一次交付已经合并，AI 队友正在写总结，写完就关闭（`Task.closing_since`）。
     closing: bool = False
+    #: 被收起来了（`Task.archived_at`）。归档的一定也关掉了，所以这一位压过下面
+    #: 「关了就是结束」那一条：它不只是结束了，还从清单里拿走了。
+    archived: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -329,6 +332,7 @@ def facts_for_task(
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
         closing=task.closing_since is not None,
+        archived=task.archived_at is not None,
     )
 
 
@@ -525,8 +529,11 @@ _BOUNCED_TO_AGENT = frozenset({"rejected", "gate_failed", "gate_blocked"})
 def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     """一条活此刻在哪一列、显示哪句话。
 
-    三条优先级规矩：
+    四条优先级规矩：
 
+    0. **收起来的不再是一件事**：归档的活写「已归档」。它不是「结束了」的一种说
+       法 —— 已归档和已关闭两个状态一个收走、一个留着，说的是两件事，而把它归到
+       「已关闭」里，看的人就分不出哪些是自己收走、哪些还挂在原来那一栏。
     1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，留了结论的写「已完成」，
        都没有的写「已关闭」。还开着的任务就算采纳过前几步，也还在做；只有最后一步
        合并后 AI 队友写总结的那一会儿例外，它已经是「已采纳」。
@@ -538,6 +545,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     `now` 收在签名里是为了和 `room_presentation` 同一个形状。
     """
     del now
+    if facts.archived:
+        return _show(Archived.archived)
     if facts.closing:
         return _show(Done.accepted)
     if facts.status == TaskStatus.closed:

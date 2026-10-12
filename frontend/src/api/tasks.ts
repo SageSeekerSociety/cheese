@@ -38,6 +38,9 @@ export function listProjectTasks(
 export type Whose = 'mine' | 'helping' | 'others'
 /** 「全部任务」那一排筛选：全部，或其中一种谁的。 */
 export type TaskFilter = 'all' | Whose
+/** 「全部任务」看哪一份：进行中的、已关闭的、已归档的。三份互不重叠——收起来的活
+ *  不留在「已关闭」里。 */
+export type TaskTab = 'open' | 'closed' | 'archived'
 
 export interface ProjectTaskPage extends ListPayload<RoomTask> {
   has_more: boolean
@@ -49,10 +52,11 @@ export interface ProjectTaskPage extends ListPayload<RoomTask> {
 
 // 项目里某一种状态的活，一页一页读：最近有动静的在前。已经结束的只会越积越多，「全部
 // 任务」往下滚到哪读到哪，不整份读。频道、谁的都在服务端筛，计数也是服务端数的。
+// `archived` 是一份自己的清单：收起来的活不在「进行中」也不在「已关闭」里。
 export function pageProjectTasks(
   projectId: string,
   opts: {
-    status: 'open' | 'closed'
+    status: 'open' | 'closed' | 'archived'
     limit: number
     before?: string | null
     channel?: string | null
@@ -149,6 +153,18 @@ export function closeTask(taskId: string, conclusion?: string): Promise<RoomTask
 /** 重新打开一件关了的任务。交付过的从项目最新的代码接着做。 */
 export function reopenTask(taskId: string): Promise<RoomTask> {
   return request<RoomTask>(`${taskPath(taskId)}/reopen`, { method: 'POST' })
+}
+
+// 归档的路径在 `/task/` 下面：`/topics/{id}/archive` 是收频道，和收一条活不是
+// 一回事（后端 `topics_tasks` 的模块说明写了为什么）。
+/** 归档：把它从各处清单里收起来。只有负责人能做，还开着的先关掉。 */
+export function archiveTask(taskId: string): Promise<RoomTask> {
+  return request<RoomTask>(`${taskPath(taskId)}/task/archive`, { method: 'POST' })
+}
+
+/** 取消归档：放回清单里，还是关着的（要接着做再「重新打开任务」）。 */
+export function unarchiveTask(taskId: string): Promise<RoomTask> {
+  return request<RoomTask>(`${taskPath(taskId)}/task/unarchive`, { method: 'POST' })
 }
 
 export interface DocumentComparison {

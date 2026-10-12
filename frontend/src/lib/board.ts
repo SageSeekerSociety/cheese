@@ -57,9 +57,12 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
 
 /** 还有人要管的那些任务：去掉已归档频道里没走完的。
  *
- *  任务不归档，频道归档：一个频道收了尾，里面没走完的任务后端照样按它自己的状态落在
- *  未开始 / 进行中 / 检查中 / 待处理里，可频道归档了就没人会再去动它们——全部任务答的
- *  是「接下来谁要动什么」，它们不该在上面。已完成不筛：那是交付过的东西。 */
+ *  一个频道收了尾，里面没走完的任务后端照样按它自己的状态落在未开始 / 进行中 / 检查中 /
+ *  待处理里，可频道归档了就没人会再去动它们——全部任务答的是「接下来谁要动什么」，它们
+ *  不该在上面。已完成不筛：那是交付过的东西。
+ *
+ *  被负责人收起来的任务（`archived_at`）不在这里筛：后端压根不把它们放进「进行中」那份
+ *  清单，它们只在「已归档」里。 */
 export function liveTasks<T extends { room_id: string; presentation: { column: BoardColumn } }>(
   tasks: readonly T[],
   archivedRoomIds: ReadonlySet<string>

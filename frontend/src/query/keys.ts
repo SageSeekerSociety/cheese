@@ -25,8 +25,13 @@ export const keys = {
   /** 项目里的任务：前缀标过期时所有筛选一起作废。 */
   projectTasks: (projectId: string) => ['project', projectId, 'tasks'] as const,
   projectOpenTasks: (projectId: string) => ['project', projectId, 'tasks', 'open'] as const,
-  projectClosedTasks: (projectId: string, filter: { channel: string | null; whose: TaskFilter }) =>
-    ['project', projectId, 'tasks', 'closed', filter] as const,
+  /** 「全部任务」里一页一页读的那两份：已关闭的和已归档的。两份各是各的缓存，
+   *  所以状态也是键的一部分。 */
+  projectPagedTasks: (
+    projectId: string,
+    status: 'closed' | 'archived',
+    filter: { channel: string | null; whose: TaskFilter }
+  ) => ['project', projectId, 'tasks', status, filter] as const,
   projectOverview: (projectId: string) => ['project', projectId, 'overview'] as const,
   projectProgress: (projectId: string) => ['project', projectId, 'progress'] as const,
   projectDocs: (projectId: string, kind: string) => ['project', projectId, 'docs', kind] as const,

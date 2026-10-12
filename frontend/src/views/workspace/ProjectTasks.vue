@@ -3,9 +3,9 @@
 // 这里，画面在同目录的 ProjectTasksView。频道下面那一行「全部任务」进来时地址上带着
 // `?channel=`，筛选已经选好那个频道。
 //
-// 进行中的整份读（和侧栏、项目总览同一份）；已关闭的只会越积越多，一页一页读，换筛选
-// 就从第一页重读。
-import type { TaskFilter } from '@/api/tasks'
+// 进行中的整份读（和侧栏、项目总览同一份）；已关闭的和已归档的只会越积越多，各自一页一页
+// 读，换标签、换筛选就从第一页重读。
+import type { TaskFilter, TaskTab } from '@/api/tasks'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -20,7 +20,7 @@ import { liveTasks } from '@/lib/board'
 import { channelGlyph, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { closedProjectTasksQuery, openProjectTasksQuery } from '@/query/tasks'
+import { openProjectTasksQuery, pagedProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectTasksView from '@/views/workspace/ProjectTasksView.vue'
 
@@ -40,34 +40,40 @@ const loading = computed(() => openRead.isPending.value && !openRead.isError.val
 
 const channelId = computed(() => (typeof route.query.channel === 'string' ? route.query.channel : null))
 
-// ---- 已关闭的，一页一页 ----
-const closed = ref(false)
+// ---- 已关闭的、已归档的，各自一页一页 ----
+const tab = ref<TaskTab>('open')
 const whose = ref<TaskFilter>('all')
-const closedRead = useInfiniteQuery(
+// 一页一页读的那两份共用一次查询：切标签时换成另一份（key 里带着状态，两份互不干扰），
+// 「进行中」那一份不从这里读。
+const pagedStatus = computed<'closed' | 'archived' | null>(() => (tab.value === 'open' ? null : tab.value))
+const pagedRead = useInfiniteQuery(
   computed(() => ({
-    ...closedProjectTasksQuery(props.projectId, { channel: channelId.value, whose: whose.value }),
-    enabled: closed.value,
+    ...pagedProjectTasksQuery(props.projectId, pagedStatus.value ?? 'closed', {
+      channel: channelId.value,
+      whose: whose.value,
+    }),
+    enabled: pagedStatus.value !== null,
   })),
   queryClient
 )
-const closedTasks = computed<RoomTask[]>(() => closedRead.data.value?.pages.flatMap((page) => page.data) ?? [])
-const closedCounts = computed<Record<TaskFilter, number> | null>(() => closedRead.data.value?.pages[0]?.counts ?? null)
-const closedHasMore = computed(() => closedRead.hasNextPage.value)
-const closedLoading = computed(() => closedRead.isFetching.value)
-const closedFailed = computed(() => closedRead.isError.value)
+const pagedTasks = computed<RoomTask[]>(() => pagedRead.data.value?.pages.flatMap((page) => page.data) ?? [])
+const pagedCounts = computed<Record<TaskFilter, number> | null>(() => pagedRead.data.value?.pages[0]?.counts ?? null)
+const pagedHasMore = computed(() => pagedRead.hasNextPage.value)
+const pagedLoading = computed(() => pagedRead.isFetching.value)
+const pagedFailed = computed(() => pagedRead.isError.value)
 
 // 401/403 不是「没读出来」：登录没了，或者人已经不在这个项目里。重试换不来别的答案，
 // 交给整页那一屏（ProjectAccessNotice），它给的是去登录的路。
 const denied = (e: Error | null) => !!e && store.noteAccess(e)
 watch(() => openRead.error.value, denied)
-watch(() => closedRead.error.value, denied)
+watch(() => pagedRead.error.value, denied)
 const failed = computed(() => openRead.isError.value && !store.accessDenied)
 
 // 下一页没读成时，「重试」就是再读一次这一页。
-function moreClosed() {
-  if (closedRead.isFetchingNextPage.value) return
-  if (closedRead.isError.value && !closedRead.data.value) void closedRead.refetch()
-  else void closedRead.fetchNextPage()
+function morePaged() {
+  if (pagedRead.isFetchingNextPage.value) return
+  if (pagedRead.isError.value && !pagedRead.data.value) void pagedRead.refetch()
+  else void pagedRead.fetchNextPage()
 }
 function pickChannel(id: string | null) {
   const query = { ...route.query }
@@ -114,7 +120,7 @@ function create() {
 
 <template>
   <ProjectTasksView
-    v-model:closed="closed"
+    v-model:tab="tab"
     v-model:whose="whose"
     :tasks="live"
     :channels="channels"
@@ -122,17 +128,17 @@ function create() {
     :names="names"
     :avatars="avatars"
     :me="myHandle()"
-    :loading="loading || (closed && closedCounts === null && !closedFailed)"
-    :failed="failed || (closed && closedFailed && !closedTasks.length && !store.accessDenied)"
-    :closed-tasks="closedTasks"
-    :closed-counts="closedCounts"
-    :closed-has-more="closedHasMore"
-    :closed-loading="closedLoading"
-    :closed-failed="closedFailed"
+    :loading="tab === 'open' ? loading : pagedCounts === null && !pagedFailed"
+    :failed="failed || (pagedStatus !== null && pagedFailed && !pagedTasks.length && !store.accessDenied)"
+    :paged-tasks="pagedTasks"
+    :paged-counts="pagedCounts"
+    :paged-has-more="pagedHasMore"
+    :paged-loading="pagedLoading"
+    :paged-failed="pagedFailed"
     @open-task="openTask"
     @new-task="create"
-    @retry="closed ? moreClosed() : openRead.refetch()"
+    @retry="pagedStatus !== null ? morePaged() : openRead.refetch()"
     @pick-channel="pickChannel"
-    @more="moreClosed"
+    @more="morePaged"
   />
 </template>

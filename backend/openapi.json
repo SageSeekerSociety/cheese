@@ -21751,7 +21751,7 @@
           "projects"
         ],
         "summary": "List Project Tasks",
-        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state. The sidebar polls for the open\nones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per\nread.\n\nWith `limit` (and a `status`) it is a page instead, of the threads that\nmost recently moved: the closed ones only grow, and the all-tasks page\nscrolls through them rather than reading them whole. A page can be narrowed\nto one `channel` and to `whose` the threads are to the reader (`mine`: they\nown it; `helping`: they are among its contributors; `others`: neither).\n`next` is the cursor to pass as `before` for the page after; `counts` says\nhow many there are in all and by whose, for the same status and channel.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
+        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state: `open`, `closed`, or `archived` —\ntasks their owner put away, which are in none of the other two. The sidebar\npolls for the open ones: 128 of the 1,716 on dev (2026-10-08), and every row\nis rebuilt per read.\n\nWith `limit` (and a `status`) it is a page instead, of the threads that\nmost recently moved: the closed ones only grow, and the all-tasks page\nscrolls through them rather than reading them whole. A page can be narrowed\nto one `channel` and to `whose` the threads are to the reader (`mine`: they\nown it; `helping`: they are among its contributors; `others`: neither).\n`next` is the cursor to pass as `before` for the page after; `counts` says\nhow many there are in all and by whose, for the same status and channel.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
         "operationId": "list_project_tasks_projects__project_id__tasks_get",
         "parameters": [
           {
@@ -21773,7 +21773,8 @@
                 {
                   "enum": [
                     "open",
-                    "closed"
+                    "closed",
+                    "archived"
                   ],
                   "type": "string"
                 },
@@ -44670,6 +44671,94 @@
         }
       }
     },
+    "/topics/{topic_id}/task/archive": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Archive Task",
+        "description": "归档：the task's owner puts it away — out of every list, and read-only.\n\nTalking about a task and closing it stay inside the room, where everyone can\nsee the work happened; archiving is the owner tidying his own list, so it is\nhis alone, the same as 「关闭任务」 and 「重新打开」. A channel being archived\nis the other thing, and it still takes the channel's manager.\n\nA task still going is closed first (`TaskService.archive`), so this is also\nhow \"I am not doing this after all, and I do not want to look at it\" is\nsaid. Its PR is closed with the task, as 「关闭任务」 does.",
+        "operationId": "archive_task_topics__topic_id__task_archive_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPageOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/task/unarchive": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Unarchive Task",
+        "description": "取消归档：back in the lists. It comes back closed — put away while it was\ngoing or long after, the task does not start again by itself; its owner\nreopens it (「重新打开任务」) if there is more to do.",
+        "operationId": "unarchive_task_topics__topic_id__task_unarchive_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPageOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/topics/{topic_id}/start": {
       "post": {
         "tags": [
@@ -59470,6 +59559,25 @@
         "title": "PreferencesIn",
         "description": "整份偏好。缺的字段用设计稿的默认，于是老前端少传一列也不会把它清成 false。"
       },
+      "PresentationOut": {
+        "properties": {
+          "column": {
+            "type": "string",
+            "title": "Column"
+          },
+          "phrase": {
+            "type": "string",
+            "title": "Phrase"
+          }
+        },
+        "type": "object",
+        "required": [
+          "column",
+          "phrase"
+        ],
+        "title": "PresentationOut",
+        "description": "看板上这一格：哪一列，卡面写什么。\n\n两个字段一起出，因为它们是一个答案的两半 —— 列说「该谁动」，短语说「在等什\n么」，而每一列只能说属于自己的话（`room_task/presentation.py`）。客户端拿到\n的是结论，不是原料：状态从来不存库，是读的时候从事实算出来的，算的地方只有\n后端这一处，所以网页、CLI 和以后任何一个客户端不可能给出不同答案。"
+      },
       "PreviewSelection": {
         "properties": {
           "artifact_id": {
@@ -61789,6 +61897,384 @@
         "type": "object",
         "title": "TaskCreateIn"
       },
+      "TaskPageOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "room_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Room Id"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "title_source": {
+            "type": "string",
+            "title": "Title Source",
+            "default": "human"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "owner_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Handle"
+          },
+          "reviewer_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Handle"
+          },
+          "reporter_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reporter Handle"
+          },
+          "contributor_handles": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Contributor Handles"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "branch_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Branch Name"
+          },
+          "base_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Branch"
+          },
+          "base_task_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Task Id"
+          },
+          "historical_delivery_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Historical Delivery Id"
+          },
+          "pr_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Number"
+          },
+          "pr_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pr Url"
+          },
+          "delivered_head": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered Head"
+          },
+          "agent_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Agent Handle"
+          },
+          "document_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Id"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "started_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started By"
+          },
+          "started_doc_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started Doc Version"
+          },
+          "accepted_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted By"
+          },
+          "accepted_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "archived_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archived At"
+          },
+          "upgraded_from_block_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upgraded From Block Id"
+          },
+          "conclusion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conclusion"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Updated At"
+          },
+          "presentation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PresentationOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "waiting_on": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting On"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "project_id",
+          "room_id",
+          "title",
+          "status",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "TaskPageOut",
+        "description": "一条活交给它自己那页的样子：就是 `TaskOut` 再加一个「在等谁」。\n\n只有把整页交回去的端点用它（`GET /topics/{task}/task`，以及关闭、重新打\n开、归档这几条会改到那页的写路径），房间清单里那一行不带这一位。"
+      },
+      "TaskPageOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TaskPageOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TaskPageOutEnvelope"
+      },
       "TaskParticipantRequest": {
         "properties": {
           "deadline": {
@@ -61879,6 +62365,15 @@
         },
         "type": "object",
         "title": "TaskStartIn"
+      },
+      "TaskStatus": {
+        "type": "string",
+        "enum": [
+          "open",
+          "closed"
+        ],
+        "title": "TaskStatus",
+        "description": "Whether this piece of work is still going.\n\nTwo values, because two is what is actually observable: work is either being\ndone or it is not. A richer vocabulary (blocked / in review / …) would be a\nword nothing writes and nothing acts on — see the module docstring on\ndependencies for the same reasoning.\n\nA task may deliver in several steps: accepting the step its card calls the\nlast closes the task, accepting an earlier one leaves it open\n(`review/task_landing.py`). A task may also close without delivery.\n`accepted_at` records the latest approval and `delivered_head` the latest\nmerged revision, kept even if that approval is later revoked."
       },
       "TaskUpdateIn": {
         "properties": {

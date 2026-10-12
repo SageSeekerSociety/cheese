@@ -2158,6 +2158,8 @@
     "more": "More actions",
     "close": "Close task",
     "reopen": "Reopen task",
+    "archive": "Archive task",
+    "unarchive": "Unarchive",
     "closeTitle": "Close this task?",
     "closeBody": "Write a conclusion if it is done; leave it empty if it is no longer needed.",
     "handOver": "Hand over",
@@ -2175,6 +2177,7 @@
     "helping": "Helping",
     "others": "Others'",
     "closed": "Closed",
+    "archived": "Archived",
     "empty": "No tasks here",
     "loadFailed": "Could not load the tasks"
   },
