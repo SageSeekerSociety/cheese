@@ -302,7 +302,6 @@ const getStatusText = (status: string) => {
       return t('teams.members.status.unknown')
   }
 }
-
 </script>
 
 <style scoped>

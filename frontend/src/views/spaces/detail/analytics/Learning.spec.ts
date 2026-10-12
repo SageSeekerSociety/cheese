@@ -1,33 +1,52 @@
 import { createMemoryHistory, createRouter } from 'vue-router'
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { defineComponent } from 'vue'
+import { cleanup, render as renderComponent } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const api = vi.hoisted(() => ({
-  getLearningFilters: vi.fn(), getLearningQueues: vi.fn(), getLearningQuestions: vi.fn(), buildLearningOutline: vi.fn(),
+  getLearningFilters: vi.fn(),
+  getLearningQueues: vi.fn(),
+  getLearningQuestions: vi.fn(),
+  buildLearningOutline: vi.fn(),
 }))
 vi.mock('@/network/api/spaces', () => ({ SpacesApi: api }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 import Learning from './Learning.vue'
-import LearningView from './LearningView.vue'
 
 import i18n from '@/i18n'
-import { LEARNING_FILTERS, LEARNING_OUTLINE, LEARNING_QUESTIONS, LEARNING_QUEUES } from '@/views/demo/catalogScenesMisc3Fixtures'
+import {
+  LEARNING_FILTERS,
+  LEARNING_OUTLINE,
+  LEARNING_QUESTIONS,
+  LEARNING_QUEUES,
+} from '@/views/demo/catalogScenesMisc3Fixtures'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => { resolve = done })
+  const promise = new Promise<T>((done) => {
+    resolve = done
+  })
   return { promise, resolve }
 }
-const mounted: { unmount: () => void }[] = []
+const flushPromises = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+let state: Record<string, unknown>
+let send: (event: string, ...args: unknown[]) => void
+const Probe = defineComponent({
+  props: ['student', 'knowledgePoint', 'loading', 'outlineLoading', 'learningFilters', 'queues', 'questions', 'outline', 'failed', 'errorDetail', 'selected'],
+  setup(props, { emit }) {
+    state = props
+    send = emit
+    return () => null
+  },
+})
 async function render(query = '') {
   const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/spaces/:spaceId/learning', component: Learning }] })
   await router.push(`/spaces/7/learning${query}`)
   await router.isReady()
-  const wrapper = shallowMount(Learning, { global: { plugins: [router, i18n] } })
-  mounted.push(wrapper)
+  renderComponent(Learning, { global: { plugins: [router, i18n], stubs: { LearningView: Probe } } })
   await flushPromises()
-  return { view: wrapper.findComponent(LearningView), router }
+  return { router }
 }
 beforeEach(() => {
   vi.resetAllMocks()
@@ -37,7 +56,7 @@ beforeEach(() => {
   api.buildLearningOutline.mockResolvedValue({ data: LEARNING_OUTLINE })
 })
 afterEach(() => {
-  mounted.splice(0).forEach((view) => view.unmount())
+  cleanup()
   vi.restoreAllMocks()
 })
 
@@ -47,86 +66,89 @@ describe('学习看板容器', () => {
     const questions = deferred<{ data: { questions: typeof LEARNING_QUESTIONS } }>()
     api.getLearningQueues.mockReturnValueOnce(queues.promise)
     api.getLearningQuestions.mockReturnValueOnce(questions.promise)
-    const { view } = await render()
+    await render()
     expect(api.getLearningQueues).toHaveBeenCalledOnce()
     expect(api.getLearningQuestions).toHaveBeenCalledOnce()
-    expect(view.props('loading')).toBe(true)
+    expect(state['loading']).toBe(true)
     queues.resolve({ data: LEARNING_QUEUES })
     await flushPromises()
-    expect(view.props('loading')).toBe(true)
+    expect(state['loading']).toBe(true)
     questions.resolve({ data: { questions: LEARNING_QUESTIONS } })
     await flushPromises()
-    expect(view.props('loading')).toBe(false)
+    expect(state['loading']).toBe(false)
   })
 
   it('路由筛选映射到两个模型，模型变化写回路由且后退更新模型', async () => {
-    const { view, router } = await render('?student=alice&knowledgePoint=7')
-    expect(view.props('student')).toBe('alice')
-    expect(view.props('knowledgePoint')).toBe(7)
-    expect(api.getLearningQueues).toHaveBeenCalledWith(7, expect.objectContaining({ student: 'alice', knowledgePoint: 7 }))
-    view.vm.$emit('update:student', 'bob')
-    view.vm.$emit('update:knowledgePoint', null)
+    const { router } = await render('?student=alice&knowledgePoint=7')
+    expect(state['student']).toBe('alice')
+    expect(state['knowledgePoint']).toBe(7)
+    expect(api.getLearningQuestions).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ student: 'alice', knowledgePoint: 7 })
+    )
+    send('update:student', 'bob')
+    send('update:knowledgePoint', null)
     await flushPromises()
     expect(router.currentRoute.value.query.student).toBe('bob')
     expect(router.currentRoute.value.query.knowledgePoint).toBeUndefined()
     await router.push({ query: { student: 'alice', knowledgePoint: '7' } })
     await flushPromises()
-    expect(view.props('student')).toBe('alice')
-    expect(view.props('knowledgePoint')).toBe(7)
+    expect(state['student']).toBe('alice')
+    expect(state['knowledgePoint']).toBe(7)
   })
 
   it('选择去重且保留插入顺序，移除再勾选排到末尾；筛选与刷新不清空选择或提纲', async () => {
-    const { view, router } = await render()
-    view.vm.$emit('setSelected', 'b-2', true)
-    view.vm.$emit('setSelected', 'b-1', true)
-    view.vm.$emit('setSelected', 'b-2', true)
+    const { router } = await render()
+    send('setSelected', 'b-2', true)
+    send('setSelected', 'b-1', true)
+    send('setSelected', 'b-2', true)
     await flushPromises()
-    expect(view.props('selected')).toEqual(['b-2', 'b-1'])
-    view.vm.$emit('buildOutline')
+    expect(state['selected']).toEqual(['b-2', 'b-1'])
+    send('buildOutline')
     await flushPromises()
     expect(api.buildLearningOutline).toHaveBeenCalledWith(7, { blockIds: ['b-2', 'b-1'] })
-    view.vm.$emit('setSelected', 'b-2', false)
-    view.vm.$emit('setSelected', 'b-2', true)
+    send('setSelected', 'b-2', false)
+    send('setSelected', 'b-2', true)
     await flushPromises()
-    expect(view.props('selected')).toEqual(['b-1', 'b-2'])
+    expect(state['selected']).toEqual(['b-1', 'b-2'])
     const refresh = deferred<{ data: typeof LEARNING_QUEUES }>()
-    api.getLearningQueues.mockReturnValueOnce(refresh.promise)
+    api.getLearningQueues.mockReturnValue(refresh.promise)
     await router.push({ query: { student: 'bob' } })
     await flushPromises()
-    expect(view.props('loading')).toBe(true)
-    expect(view.props('queues')).toEqual(LEARNING_QUEUES)
-    expect(view.props('selected')).toEqual(['b-1', 'b-2'])
-    expect(view.props('outline')).toEqual(LEARNING_OUTLINE)
+    expect(state['loading']).toBe(true)
+    expect(state['queues']).toEqual(LEARNING_QUEUES)
+    expect(state['selected']).toEqual(['b-1', 'b-2'])
+    expect(state['outline']).toEqual(LEARNING_OUTLINE)
     refresh.resolve({ data: LEARNING_QUEUES })
     await flushPromises()
     const outline = deferred<{ data: typeof LEARNING_OUTLINE }>()
     api.buildLearningOutline.mockReturnValueOnce(outline.promise)
-    view.vm.$emit('buildOutline')
+    send('buildOutline')
     await flushPromises()
-    expect(view.props('outlineLoading')).toBe(true)
-    expect(view.props('outline')).toEqual(LEARNING_OUTLINE)
+    expect(state['outlineLoading']).toBe(true)
+    expect(state['outline']).toEqual(LEARNING_OUTLINE)
     outline.resolve({ data: LEARNING_OUTLINE })
     await flushPromises()
-    expect(view.props('outlineLoading')).toBe(false)
-    view.vm.$emit('clearSelection')
+    expect(state['outlineLoading']).toBe(false)
+    send('clearSelection')
     await flushPromises()
-    view.vm.$emit('buildOutline')
+    send('buildOutline')
     await flushPromises()
     expect(api.buildLearningOutline).toHaveBeenCalledTimes(2)
-    expect(view.props('outline')).toEqual(LEARNING_OUTLINE)
+    expect(state['outline']).toEqual(LEARNING_OUTLINE)
   })
 
   it('队列读取失败单独暴露原因，重试恢复而不清空已有数据', async () => {
-    const { view } = await render()
+    await render()
     api.getLearningQueues.mockRejectedValueOnce(new Error('queue timeout'))
-    view.vm.$emit('load')
+    send('load')
     await flushPromises()
-    expect(view.props('failed')).toBe(true)
-    expect(view.props('errorDetail')).toBe('queue timeout')
-    expect(view.props('queues')).toEqual(LEARNING_QUEUES)
-    view.vm.$emit('load')
+    expect(state['failed']).toBe(true)
+    expect(state['errorDetail']).toBe('queue timeout')
+    expect(state['queues']).toEqual(LEARNING_QUEUES)
+    send('load')
     await flushPromises()
-    expect(view.props('failed')).toBe(false)
-    expect(view.props('errorDetail')).toBeNull()
+    expect(state['failed']).toBe(false)
+    expect(state['errorDetail']).toBeNull()
   })
 })

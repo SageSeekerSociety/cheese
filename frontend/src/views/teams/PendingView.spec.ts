@@ -7,11 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import PendingView from './PendingView.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
-import {
-  PENDING_INVITATIONS,
-  PENDING_REQUESTS,
-  PROJECT_INVITATIONS,
-} from '@/views/demo/catalogScenesMisc3Fixtures'
+import { PENDING_INVITATIONS, PENDING_REQUESTS, PROJECT_INVITATIONS } from '@/views/demo/catalogScenesMisc3Fixtures'
 
 type Props = InstanceType<typeof PendingView>['$props']
 const base: Props = {
@@ -41,8 +37,22 @@ afterEach(cleanup)
 describe('申请与邀请的独立画面', () => {
   it.each([
     ['myRequests', 'loadingMyRequests', 'failedMyRequests', 'myRequestsError', 'noRequests', 'retryRequests'],
-    ['myInvitations', 'loadingMyInvitations', 'failedMyInvitations', 'myInvitationsError', 'noInvitations', 'retryInvitations'],
-    ['projectInvitations', 'loadingProjectInvitations', 'failedProjectInvitations', 'projectInvitationsError', 'noProjectInvitations', 'retryProjectInvitations'],
+    [
+      'myInvitations',
+      'loadingMyInvitations',
+      'failedMyInvitations',
+      'myInvitationsError',
+      'noInvitations',
+      'retryInvitations',
+    ],
+    [
+      'projectInvitations',
+      'loadingProjectInvitations',
+      'failedProjectInvitations',
+      'projectInvitationsError',
+      'noProjectInvitations',
+      'retryProjectInvitations',
+    ],
   ])('%s 独立显示加载、失败与空态，重试只通知对应段', async (rows, loading, failed, error, empty, event) => {
     const view = mount({ [rows]: [], [loading]: true })
     expect(view.container.querySelector('.v-progress-circular')).not.toBeNull()
@@ -50,7 +60,7 @@ describe('申请与邀请的独立画面', () => {
     await view.rerender({ [loading]: false, [failed]: true, [error]: 'timeout' })
     expect(view.queryByText('timeout')).not.toBeNull()
     expect(view.queryByText(t(`teams.pending.${empty}`))).toBeNull()
-    await fireEvent.click(view.getByRole('button', { name: t('global.retry') }))
+    await fireEvent.click(view.getByRole('button', { name: t('global.loadError.retry') }))
     expect(view.emitted()[event]).toEqual([[]])
     await view.rerender({ [failed]: false })
     expect(view.queryByText(t(`teams.pending.${empty}`))).not.toBeNull()

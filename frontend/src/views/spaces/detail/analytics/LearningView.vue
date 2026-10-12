@@ -101,7 +101,12 @@
           <BaseButton v-if="selected.length" kind="ghost" @click="emit('clearSelection')">
             {{ t('spaces.analytics.learning.clear') }}
           </BaseButton>
-          <BaseButton kind="primary" :loading="outlineLoading" :disabled="!selected.length" @click="emit('buildOutline')">
+          <BaseButton
+            kind="primary"
+            :loading="outlineLoading"
+            :disabled="!selected.length"
+            @click="emit('buildOutline')"
+          >
             {{ t('spaces.analytics.learning.buildOutline') }}
           </BaseButton>
         </div>
@@ -173,7 +178,6 @@ const summary = computed(() => {
     stuck: formatCount(props.queues?.stuckPoints.length ?? 0),
   })
 })
-
 </script>
 
 <style scoped src="./analytics.css"></style>
