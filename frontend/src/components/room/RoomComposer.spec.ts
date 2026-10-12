@@ -549,12 +549,12 @@ describe('拖文件进来的落区', () => {
 })
 
 describe('动作行', () => {
-  it('两个藏起来的选择框：一个什么都不挑，一个只挑图片', () => {
+  it('两个藏起来的选择框：一个什么都不挑，一个挑照片和视频', () => {
     const { container } = mount()
     const inputs = Array.from(container.querySelectorAll<HTMLInputElement>('input[type="file"]'))
     expect(inputs).toHaveLength(2)
     expect(inputs[0].accept).toBe('')
-    expect(inputs[1].accept).toBe('image/*')
+    expect(inputs[1].accept).toBe('image/*,video/*')
   })
 
   it('挑完文件发出去，并且把选择框自己清空——同一个文件再挑一次还得有反应', async () => {

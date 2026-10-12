@@ -10301,8 +10301,7 @@ export interface paths {
         };
         /**
          * Attachment Raw
-         * @description Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
-         *     to images so this can never serve executable HTML from the worktree.
+         * @description Authorized raster images and video bytes, never executable HTML/SVG.
          */
         get: operations["attachment_raw_topics__topic_id__attachments_raw_get"];
         put?: never;
@@ -15355,6 +15354,20 @@ export interface components {
             wait_p95_s: number | null;
             /** Wait Max S */
             wait_max_s: number | null;
+            /** Refused Sessions */
+            refused_sessions: number;
+            /** Refused By Reason */
+            refused_by_reason: {
+                [key: string]: number;
+            };
+            /** Hosts Lost */
+            hosts_lost: number;
+            /** Hosts Lost By Reason */
+            hosts_lost_by_reason: {
+                [key: string]: number;
+            };
+            /** Sandboxes Lost */
+            sandboxes_lost: number;
         };
         /** MachineHostOut */
         MachineHostOut: {

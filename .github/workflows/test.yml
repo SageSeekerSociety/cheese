@@ -336,15 +336,27 @@ jobs:
       # tests/pinned_claude.py: every command an executor runs goes through the
       # pinned build's `mcp serve`, so the remote-execution tests need the
       # binary itself. The pool has it preinstalled; a hosted runner does not.
+      #
+      # The contract layer runs none of them: its harness cases feed recorded
+      # provider records through each harness's own Assembler
+      # (tests/contract/test_harness_contract.py), and nothing under
+      # tests/contract names a CHEESE_TEST_* variable. Installing anyway made
+      # that layer depend on the network for nothing — run 38251886139's
+      # `backend / contract` job died here on an HTTP 500 from pi's checksum
+      # fetch and ran zero tests. Its own steps are `uv sync`, a database and
+      # pytest; no binary of these three.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: matrix.layer != 'contract'
         with:
           node-version: 22
       # Restore only: warm-caches.yml saves this key on main.
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: matrix.layer != 'contract'
         with:
           path: ~/.npm
           key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
       - name: Install pinned harness binaries
+        if: matrix.layer != 'contract'
         run: |
           packages="$(uv run python - <<'PY'
           from app.domain.agent.capability.matrix import written

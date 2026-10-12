@@ -74,6 +74,22 @@ const IMAGE_MIME: Record<string, string> = {
   webp: 'image/webp',
 }
 
+/** Container recognition is not a promise that this browser decodes its codec. */
+const VIDEO_MIME: Record<string, string> = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/quicktime',
+  webm: 'video/webm',
+  ogv: 'video/ogg',
+}
+
+export function videoMimeOf(path: string, mime?: string | null): string | null {
+  const suffix = suffixOf(path)
+  if (Object.prototype.hasOwnProperty.call(VIDEO_MIME, suffix)) return VIDEO_MIME[suffix]
+  const type = mime?.split(';')[0]?.trim().toLowerCase()
+  return type && type.startsWith('video/') ? type : null
+}
+
 export function imageMimeOf(suffix: string): string {
   return IMAGE_MIME[suffix] ?? 'image/jpeg'
 }
@@ -141,7 +157,9 @@ export function suffixOf(path: string): string {
 /** 附件块左边那个方格里的图标，给没有缩略图可画的类型用。认不出的拿一张白纸:
  *  不是出错，只是这个类型没有更具体的说法。 */
 export function fileIcon(path: string): string {
-  return DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
+  return videoMimeOf(path)
+    ? 'mdi-video-outline'
+    : DOCUMENT_TYPES[suffixOf(path)]?.icon ?? WEB_TYPES[suffixOf(path)]?.icon ?? 'mdi-file-outline'
 }
 
 /** 浏览器直接画得出、因此 DOCUMENT_TYPES 里没有的那几种。

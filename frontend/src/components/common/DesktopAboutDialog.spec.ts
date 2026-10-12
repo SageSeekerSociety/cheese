@@ -129,6 +129,78 @@ describe('关于 in the desktop app', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('这台电脑正在接入，接入完成后再重启'))
   })
 
+  it.each(['install-failed', 'failed', 'restart-failed'])(
+    'reports a failed request (%s) and permits retry',
+    async (error) => {
+      const install = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
+      desktopApp(NEW_APP, {
+        status: { state: 'ready', version: '0.1.43' },
+        restart: install,
+      })
+      const { toast } = await import('vuetify-sonner')
+      vi.mocked(toast.error).mockClear()
+      await mount()
+      const button = await screen.findByRole('button', { name: '重启以完成更新' })
+      await fireEvent.click(button)
+      await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+      await fireEvent.click(button)
+      await waitFor(() => expect(install).toHaveBeenCalledTimes(2))
+    }
+  )
+
+  it('distinguishes installation failures from restart failures without depending on the copy', async () => {
+    const install = vi
+      .fn()
+      .mockRejectedValueOnce('install-failed')
+      .mockRejectedValueOnce('failed')
+      .mockRejectedValueOnce('restart-failed')
+    desktopApp(NEW_APP, { status: { state: 'ready', version: '0.1.43' }, restart: install })
+    const { toast } = await import('vuetify-sonner')
+    vi.mocked(toast.error).mockClear()
+    await mount()
+    const button = await screen.findByRole('button', { name: '重启以完成更新' })
+    for (const count of [1, 2, 3]) {
+      await fireEvent.click(button)
+      await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(count))
+    }
+    const messages = vi.mocked(toast.error).mock.calls.map(([message]) => message)
+    expect(messages[0]).toBe(messages[1])
+    expect(messages[0]).not.toBe(messages[2])
+  })
+
+  it('allows checking again after a background installation fails', async () => {
+    const app = desktopApp(NEW_APP)
+    await mount()
+    await waitFor(() => expect(app.handlers.has('show-about')).toBe(true))
+    app.send('show-about')
+    app.send('update-status', { state: 'install-failed' })
+    await fireEvent.click(await screen.findByRole('button', { name: '检查更新' }))
+    expect(app.invoke).toHaveBeenCalledWith('check_for_updates')
+    expect(app.invoke).not.toHaveBeenCalledWith('restart_to_update')
+  })
+
+  it('does not request another install while a restart is pending or already accepted', async () => {
+    let accept!: () => void
+    const install = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          accept = resolve
+        })
+    )
+    desktopApp(NEW_APP, {
+      status: { state: 'ready', version: '0.1.43' },
+      restart: install,
+    })
+    await mount()
+    const button = await screen.findByRole('button', { name: '重启以完成更新' })
+    await fireEvent.click(button)
+    await fireEvent.click(button)
+    expect(install).toHaveBeenCalledTimes(1)
+    accept()
+    await fireEvent.click(button)
+    expect(install).toHaveBeenCalledTimes(1)
+  })
+
   it('asks an app from before updates could be checked for nothing', async () => {
     const app = desktopApp({ can: ['notices', 'badge', 'autostart', 'links'] })
     const { aboutOpen } = await mount()

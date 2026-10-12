@@ -65,6 +65,9 @@ def skill(directory: Path, name: str, description: str, body: str) -> None:
 def project(path: Path) -> None:
     path.mkdir()
     subprocess.run(["git", "init", "--quiet", str(path)], check=True)
+    (path / "AGENTS.md").write_text("ROOT_AGENT_INSTRUCTIONS\n")
+    (path / "pkg").mkdir()
+    (path / "pkg/AGENTS.md").write_text("NESTED_AGENT_INSTRUCTIONS\n")
     skill(
         path / ".agents/skills/greet",
         "greet",
@@ -291,6 +294,12 @@ async def test_a_repositorys_skills_work_in_a_codex_room(tmp_path, machine):
         async with asyncio.timeout(120):
             first = await turn("hello")
             listing = offered(first)
+            assert (state / "workspace/AGENTS.md").read_text() == (
+                "ROOT_AGENT_INSTRUCTIONS\n"
+            )
+            assert (state / "workspace/pkg/AGENTS.md").read_text() == (
+                "NESTED_AGENT_INSTRUCTIONS\n"
+            )
             assert "GREET_LISTED" in listing
             assert "TIDY_LISTED" in listing
             assert "OTHER_LISTED" not in listing
