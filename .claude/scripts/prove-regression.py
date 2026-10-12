@@ -33,7 +33,7 @@ worktree is removed afterwards unless you pass --keep.
 The first run must fail and the second must pass. Exit 0 proven, 1 not proven,
 2 could not judge — the last for a node id that does not resolve, a revision that
 is not a commit here, a layout this script has no runner for, a --copy file that
-is missing or that would land outside the worktree, a runner that is not on PATH,
+is missing, unreadable or would land outside the worktree, a runner that is not on PATH,
 an inferred run that did not end in a verdict or that collected no test, a
 command that exited 127 without ever running. If your test is not one of the two layouts below, say how to run it
 with --command; the script will not guess a runner it does not know, because a
@@ -44,8 +44,10 @@ are results. Each runner is asked for its version before either half is read, an
 the run itself is read only when it ends in 0 or 1. Anything else is refused,
 whatever the number. That asymmetry is the point: the codes a runner uses when
 the test never ran are its own to choose, and pytest spreads them over a range —
-2 for a collection error, 4 for a node id that collected nothing, 5 for a run
-that collected nothing at all — so a table of them would always be one short.
+2 for a collection error the file alone names, 4 for a `::name` it found no
+collector for (the code a name that is not there and a module this half cannot
+import both give that form), 5 for a run that collected nothing at all — so a
+table of them would always be one short.
 Vitest chooses differently: 1 is a failing test *and* a spec it could not load,
 so there the code is not a verdict on its own either, and the vitest half is
 judged only when the run also wrote a report counting the tests it collected
@@ -71,6 +73,7 @@ The runners it infers are the two this repository uses: pytest over `backend/`
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import shutil
@@ -118,10 +121,11 @@ CANNOT_RUN = 127
 #: What an inferred runner exits when the test passed and when it failed.
 #: Everything else is a run that did not reach a verdict, and is refused rather
 #: than judged. For pytest these two are exactly the verdicts: its codes are a
-#: range as wide as its failure modes — 2 "interrupted" (a collection error, a
-#: module the test imports that this half does not have), 3 an internal error, 4
-#: "found no collectors" for a `::name` that is not there, 5 nothing collected —
-#: and `uv` passes them through, so a table of them would always be one short.
+#: range as wide as its failure modes — 2 "interrupted" (a collection error, but
+#: only when the node id names the file alone), 3 an internal error, 4 "found no
+#: collectors" for a `::name` (the code whether the name is absent or the module
+#: it names cannot be imported in this half), 5 nothing collected — and `uv`
+#: passes them through, so a table of them would always be one short.
 #: Vitest chooses differently: 1 is a failing test *and* a spec it could not
 #: load, a transform error, a run that found no test file at all, so there the
 #: code alone is not a verdict and the half is judged only when it also wrote a
@@ -247,8 +251,15 @@ def runner_for(node: str, relative: str) -> tuple[list[str], str, bool] | None:
 
 
 def report_path(tag: str) -> Path:
-    """A path for one half's report, before anything has written it."""
-    fd, name = tempfile.mkstemp(prefix=f"{WORKTREE_PREFIX}{tag}-", suffix=".json")
+    """A path for one half's report, before anything has written it.
+
+    The name carries this run's pid, the way a worktree's does, so that a run
+    killed before its `finally` could unlink leaves a report a later run can
+    tell from a live one's — `reclaim_stale` collects them by the same rule.
+    """
+    fd, name = tempfile.mkstemp(
+        prefix=f"{WORKTREE_PREFIX}{tag}-{os.getpid()}-", suffix=".json"
+    )
     os.close(fd)
     path = Path(name)
     # Nothing wrote it yet, and a file left from an earlier run would be read as
@@ -343,15 +354,17 @@ def _alive(pid: int) -> bool:
 
 
 def reclaim_stale(root: Path) -> None:
-    """Clear worktrees earlier runs left behind.
+    """Clear worktrees and reports earlier runs left behind.
 
     A run killed outright — SIGKILL, an OOM kill, a reboot — cannot clean up
     after itself, and nothing else ever will: without this, `git worktree list`
-    accumulates dead checkouts. The path carries the pid that made it, so a
-    later run can usually tell whether the process that owns it is still going —
-    a concurrent run's worktree is left alone, and so is this one, whose pid is
-    the caller's. `prune` drops the registrations whose directory is already
-    gone, which is the state a reboot out of /tmp leaves.
+    accumulates dead checkouts and the temp directory accumulates one report per
+    interrupted frontend half. Each carries the pid that made it, so a later run
+    can usually tell whether the process that owns it is still going — a
+    concurrent run's worktree is left alone, and so is this one, whose pid is
+    the caller's, and the same for its report. `prune` drops the registrations
+    whose directory is already gone, which is the state a reboot out of /tmp
+    leaves.
 
     The pid alone is not enough, because it is recycled: once a dead run's
     number belongs to some unrelated process, liveness reads the leftover as
@@ -368,6 +381,36 @@ def reclaim_stale(root: Path) -> None:
         if pid.isdigit() and _alive(int(pid)) and not _older_than(path, now):
             continue
         remove_worktree(root, path)
+    for leftover in _stale_reports(now):
+        leftover.unlink(missing_ok=True)
+
+
+def _stale_reports(now: float) -> list[Path]:
+    """Report files a killed run left in the temp directory.
+
+    A report is written by the runner, registered nowhere, and unlinked only by
+    `check`'s `finally`, which a signal does not run — so without a sweep every
+    interrupted frontend half adds one. Its name is `<tag>-<pid>-<random>.json`
+    under the worktree prefix, so the rule that decides a worktree is the same
+    one that decides a report: a concurrent run's is fresh and its owner is
+    alive; everything else is litter.
+    """
+    stale: list[Path] = []
+    for entry in Path(tempfile.gettempdir()).iterdir():
+        name = entry.name
+        if not name.startswith(WORKTREE_PREFIX) or not name.endswith(".json"):
+            continue
+        parts = name[len(WORKTREE_PREFIX) : -len(".json")].split("-")
+        if len(parts) != 3 or not parts[1].isdigit() or not entry.is_file():
+            continue
+        pid = int(parts[1])
+        # The rule the worktree loop uses, and the reason it is the same rule:
+        # this run's own pid is alive, so its reports are kept; a killed run's
+        # is not; a recycled one is settled by the age.
+        if _alive(pid) and not _older_than(entry, now):
+            continue
+        stale.append(entry)
+    return stale
 
 
 def _older_than(path: Path, now: float) -> bool:
@@ -402,8 +445,9 @@ def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool)
     """Check `sha` out into `tree` and put the test file there too.
 
     `tree` is what the caller registered for cleanup before calling this, so a
-    failure here — a --copy path that is not a file, a directory it cannot write
-    — cannot leave the worktree behind. It runs no test.
+    failure here — a --copy path that is not a file or that cannot be read, a
+    directory it cannot write — cannot leave the worktree behind. It runs no
+    test.
     """
     # A worktree whose directory was cleared away (a reboot emptied /tmp) still
     # holds a registration, and that alone makes the next add fail.
@@ -422,9 +466,32 @@ def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool)
         if not source.is_file():
             print(f"prove-regression: --copy {relative} is not a file", file=sys.stderr)
             raise SystemExit(2)
+        if not os.access(source, os.R_OK):
+            # A regular file the caller cannot read passes `is_file`, a
+            # stat-level test, and first fails when the copy opens it: a
+            # PermissionError out of `shutil`, past every handler here, which
+            # ends the program at exit 1 — the code for NOT PROVEN. A directory
+            # and a dangling symlink are refused above; an unreadable file is
+            # the third kind of source the comparison cannot be set up from, so
+            # it is refused here too, before the copy, and as "could not judge".
+            print(
+                f"prove-regression: --copy {relative} is not readable",
+                file=sys.stderr,
+            )
+            raise SystemExit(2)
         destination = destination_for(relative, tree)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        try:
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+        except OSError as exc:
+            # What `os.access` cannot answer for — a race, an ACL it did not
+            # read, a destination under a directory it cannot write — would
+            # otherwise escape the same way, so it lands on the same refusal.
+            print(
+                f"prove-regression: --copy {relative} could not be copied ({exc})",
+                file=sys.stderr,
+            )
+            raise SystemExit(2) from exc
     note = sha[:12] + (f", reusing {', '.join(linked)}" if linked else "")
     if keep:
         note += f", left at {tree} (the next run removes it)"
@@ -486,8 +553,10 @@ def run(
         raise SystemExit(2)
     if probe is not None and done.returncode not in FAILURE_CODES:
         # An inferred runner ended somewhere other than a pass or a failure, so
-        # the test did not reach a verdict: pytest's 2 is a collection error, its
-        # 4 is a `::name` that collected nothing, its 5 is nothing collected at
+        # the test did not reach a verdict: pytest's 2 is a collection error when
+        # the node id names the file alone, its 4 is a `::name` it found no
+        # collector for — the code a name that is not there and a module this
+        # half cannot import both give that form — its 5 is nothing collected at
         # all, 3 is an error inside pytest, and vitest's 254 is a binary it could
         # not load. Nothing was asserted, so a red half here would credit the fix
         # with a failure that was the run's, and a before half that only could
@@ -601,6 +670,20 @@ class _Tally:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
 
 
+def _self_test_exit(tally: _Tally) -> int:
+    """The only place a bad count becomes a non-zero exit for `--self-test`.
+
+    Built into the tail of `self_test` it would be reached only by the real run,
+    which is green — so nothing held the conversion the repo-guards step reads.
+    Pulled out, a case can hand it a tally that is bad on purpose.
+    """
+    if tally.bad:
+        print(f"self-test: {tally.bad} of {tally.total} cases FAILED")
+        return 1
+    print(f"self-test: all {tally.total} cases passed")
+    return 0
+
+
 def self_test() -> int:
     """Prove the pieces that decide the verdict, and the worktree round trip.
 
@@ -630,6 +713,15 @@ def self_test() -> int:
         except ValueError:
             ok = True
         tally.case(f"{bad!r} is rejected as not a test file", ok)
+    # Listed literally rather than read from TEST_SUFFIXES: a case that iterated
+    # the constant would stay green with the constant trimmed to one entry,
+    # which is the mutation it is here to catch.
+    for suffix in (".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".vue"):
+        try:
+            named = test_path_of(f"src/a{suffix}")
+        except ValueError:
+            named = None
+        tally.case(f"{suffix} names a test file", named == f"src/a{suffix}")
 
     for before, after, want, label in (
         (1, 0, 0, "red without, green with is PROVEN"),
@@ -678,6 +770,24 @@ def self_test() -> int:
             f"{relative} has no inferred runner",
             runner_for(relative, relative) is None,
         )
+    # The probe is what tells a runner that could not load its test from one
+    # that ran and failed, so its shape matters: the layout's own runner, asked
+    # for the version of the package it drives — and nothing for a --command,
+    # whose caller owns whether it can start.
+    tally.case(
+        "the pytest layout's probe asks pytest for its version",
+        runner_probe(["uv", "run", "--no-sync", "pytest", "tests/x.py::t", "-q"])
+        == ["uv", "run", "--no-sync", "pytest", "--version"],
+    )
+    tally.case(
+        "the vitest layout's probe asks vitest for its version",
+        runner_probe(["pnpm", "exec", "vitest", "run", "src/a.spec.ts"])
+        == ["pnpm", "exec", "vitest", "--version"],
+    )
+    tally.case(
+        "a --command is given no probe",
+        runner_probe(["sh", "-c", "pytest -q"]) is None,
+    )
 
     # What vitest's report says about a half, which is the only thing that turns
     # its exit 1 into a verdict. A report that is missing, unreadable or shaped
@@ -743,6 +853,26 @@ def self_test() -> int:
         tally.case(
             "a worktree's own dependency directory is replaced, not merged",
             (stale / "backend" / ".venv").is_symlink(),
+        )
+
+        # All four, not only the one this fixture happens to have: a tree that
+        # installed `node_modules` or `.venv` at the repository root gets those
+        # linked too, and a DEPENDENCY_DIRS trimmed to one entry would still
+        # pass every case above.
+        full = holder / "full"
+        for relative in (
+            "backend/.venv",
+            "frontend/node_modules",
+            "node_modules",
+            ".venv",
+        ):
+            (full / relative).mkdir(parents=True)
+        every = holder / "every"
+        every.mkdir()
+        tally.case(
+            "all four dependency directories are linked, not just backend/.venv",
+            relink_dependencies(full, every)
+            == ["backend/.venv", "frontend/node_modules", "node_modules", ".venv"],
         )
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -917,6 +1047,12 @@ def self_test() -> int:
             and left is not None
             and text_of(left / "ran.marker") == "yes",
         )
+        # The note is what says the worktree was left on purpose: without it
+        # --keep reads as an ordinary run that happened to leave a directory.
+        tally.case(
+            "end to end: --keep says where the worktree was left",
+            "left at" in kept.stdout and "the next run removes it" in kept.stdout,
+        )
         if left is not None:
             subprocess.run(
                 ["git", "worktree", "remove", "--force", str(left)],
@@ -941,6 +1077,30 @@ def self_test() -> int:
             prove(without, runs, copy="nope.py").returncode == 2
             and _extra_worktrees(repo) == [],
         )
+        # The third kind of --copy source that cannot set the comparison up, and
+        # the one `is_file` passes: a regular file the caller cannot read, where
+        # the copy is what fails and a PermissionError out of it ends the program
+        # at exit 1, the code for NOT PROVEN. Refused before the copy instead.
+        secret = repo / "secret.py"
+        secret.write_text("x = 1\n", encoding="utf-8")
+        secret.chmod(0)
+        # A uid that can read a mode-000 file — root — has nothing to refuse
+        # here, so the guard is only exercised where there is one to exercise.
+        readable_anyway = os.access(secret, os.R_OK)
+        try:
+            unreadable = prove(without, runs, copy="secret.py")
+        finally:
+            secret.chmod(0o644)
+        secret.unlink()
+        tally.case(
+            "end to end: an unreadable --copy source is not judged",
+            readable_anyway
+            or (
+                unreadable.returncode == 2
+                and "is not readable" in unreadable.stderr
+                and "NOT PROVEN" not in unreadable.stdout
+            ),
+        )
         # Refusing is only half the fix; the caller has to be told what to pass
         # instead, or the next thing they try is the same guess this avoids.
         told = prove(without, None, node="e2e/tests/a.spec.ts")
@@ -953,22 +1113,31 @@ def self_test() -> int:
         # the program subprocess could not start, and the shell that could not
         # find what --command named. Judging either would put a verdict on a test
         # that never ran.
-        for argv, label in (
-            (["prove-regression-no-such-program-xyz"], "a runner that is not on PATH"),
-            (
-                ["sh", "-c", "prove-regression-no-such-command-xyz"],
-                "a --command whose program does not exist",
-            ),
-        ):
-            with _Muffle():
-                try:
-                    run(argv, repo)
-                    code = 0
-                except SystemExit as exc:
-                    code = exc.code
-                except OSError:
-                    code = -1
-            tally.case(f"{label} is not judged", code == 2)
+        with _Captured() as said:
+            try:
+                run(["prove-regression-no-such-program-xyz"], repo)
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+            except OSError:
+                code = -1
+        # The message matters as much as the code: this refusal is the one the
+        # caller sees instead of a traceback, and it has to name the program.
+        tally.case(
+            "a runner that is not on PATH is not judged, and is named",
+            code == 2
+            and "prove-regression-no-such-program-xyz is not on PATH"
+            in said.err.getvalue(),
+        )
+        with _Muffle():
+            try:
+                run(["sh", "-c", "prove-regression-no-such-command-xyz"], repo)
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+            except OSError:
+                code = -1
+        tally.case("a --command whose program does not exist is not judged", code == 2)
         tally.case(
             "end to end: a --command that never ran is not judged",
             prove(without, "prove-regression-no-such-command-xyz").returncode == 2,
@@ -1036,12 +1205,13 @@ def self_test() -> int:
         # stand in for: the runner starts — `--version` answers 0 — and the run
         # ends somewhere other than a pass or a failure. Every such code is
         # refused rather than the ones someone happened to see, because they are
-        # a range: pytest exits 2 for a collection error (a module the test
-        # imports that this half does not have), 3 for an error inside pytest, 4
-        # for a `::name` that collected nothing, 5 for nothing collected at all,
-        # and `uv` passes each through — so a table of them is one short as soon
-        # as the test file grows an import or the node id grows a name, which is
-        # the shape the PR's own example took. A verdict here would be about the
+        # a range: pytest exits 2 for a collection error named by the file alone,
+        # 4 for a `::name` it found no collector for — the code a missing name
+        # and a module this half cannot import both give that form — 3 for an
+        # error inside pytest, 5 for nothing collected at all, and `uv` passes
+        # each through — so a table of them is one short as soon as the test file
+        # grows an import or the node id grows a name, which is the shape the
+        # PR's own example took. A verdict here would be about the
         # run, not the test. The shim answers 0 for the probe, so the probe
         # cannot be what refuses it.
         for code in (2, 3, 4, 5):
@@ -1117,6 +1287,12 @@ def self_test() -> int:
             body = (
                 "#!/bin/sh\n"
                 'case "$*" in *--version*) exit 0;; esac\n'
+                # Real vitest writes the json report because the command asked
+                # for a json reporter. A shim that wrote one regardless stayed
+                # green with VITEST_REPORT_FLAGS emptied, which is the flag it is
+                # here to hold: without one it writes nothing, as vitest would,
+                # and the half is refused for having collected no test.
+                'case "$*" in *--reporter=json*) : ;; *) exit 0;; esac\n'
                 'for a in "$@"; do case "$a" in --outputFile=*) '
                 'out="${a#--outputFile=}";; esac; done\n'
             ) + tail
@@ -1187,17 +1363,23 @@ def self_test() -> int:
         )
         # The probe runs once per half, in that half's own directory, so a runner
         # that answers in one tree and not the other is refused on the side that
-        # cannot. This shim reads the tree it was pointed at — the worktree is the
-        # commit without the fix, whose app.py still says 1 — so the before half
-        # runs and goes red while the after half's probe refuses. Dropping the
-        # probe from that second call would let the run happen, and `run` would
-        # refuse it with its own message, so asserting *this* message is what
-        # pins the probe rather than the check that follows it.
+        # cannot. This shim reads the tree it was pointed at and answers the
+        # `--version` probe only there — the worktree is the commit without the
+        # fix, whose app.py still says 1 — so the before half runs and goes red
+        # while the after half's own probe refuses. Dropping the probe from that
+        # second call would let the run happen and `run` would refuse it with its
+        # own message, so asserting *this* message is what pins the probe rather
+        # than the check that follows it.
         split = Path(scratch) / "split-shims"
         split.mkdir()
         (split / "uv").write_text(
             "#!/bin/sh\n"
-            'if grep -q "value = 2" ../app.py 2>/dev/null; then exit 2; fi\n'
+            'case "$*" in\n'
+            "  *--version*)\n"
+            '    if grep -q "value = 2" ../app.py 2>/dev/null; then exit 2; fi\n'
+            "    exit 0\n"
+            "    ;;\n"
+            "esac\n"
             "exit 1\n",
             encoding="utf-8",
         )
@@ -1218,7 +1400,7 @@ def self_test() -> int:
         # reaches it: those shims exist, so the program subprocess hands them
         # runs. Without it a runner that is not on PATH raises instead of saying
         # so, and the caller gets a traceback where "could not judge" belongs.
-        with _Muffle():
+        with _Captured() as said:
             try:
                 cannot_start(["prove-regression-no-such-program-xyz", "--version"], repo)
                 code = 0
@@ -1226,7 +1408,12 @@ def self_test() -> int:
                 code = exc.code
             except OSError:
                 code = -1
-        tally.case("a probe whose runner is not on PATH is refused too", code == 2)
+        tally.case(
+            "a probe whose runner is not on PATH is refused too, and is named",
+            code == 2
+            and "prove-regression-no-such-program-xyz is not on PATH"
+            in said.err.getvalue(),
+        )
 
         # The bookkeeping that decides whether a worktree is registered has to
         # compare real paths: `git worktree add` resolves a symlink before it
@@ -1268,6 +1455,13 @@ def self_test() -> int:
             red_with.returncode == 1
             and "does not pass with the fix" in red_with.stdout,
         )
+        # What a NOT PROVEN exit tells the caller to do next. main() prints the
+        # hint on that code and on no other, so this reads it where the caller
+        # would, instead of trusting that the print is still there.
+        tally.case(
+            "end to end: a NOT PROVEN run prints how to fix the comparison",
+            "修法" in green_without.stdout and FIX_HINT in red_with.stdout,
+        )
         tally.case(
             "end to end: an unknown revision cannot be judged",
             prove("no-such-rev", runs).returncode == 2,
@@ -1284,6 +1478,25 @@ def self_test() -> int:
             except SystemExit as exc:
                 code = exc.code
         tally.case("an unknown revision is refused before any worktree is made", code == 2)
+
+        # A revision that resolves but is not a commit — a tree, or a tag that
+        # points at one. `^{commit}` is what refuses it, before `worktree add` is
+        # handed a sha it could never check out.
+        tree_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=str(repo),
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        with _Muffle():
+            try:
+                resolve_rev(repo, tree_sha)
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+        tally.case("a revision that is not a commit is refused", code == 2)
 
         # A run killed mid-flight cannot clean up after itself; the next run has
         # to, or `git worktree list` only grows. A concurrent run's worktree has
@@ -1347,9 +1560,107 @@ def self_test() -> int:
             other.kill()
             other.wait()
 
+        # The number the reclaim rule turns on. An hour would take a worktree
+        # out from under a run that is still using it, so the boundary is where
+        # the value shows; only the age can settle a recycled pid, which is what
+        # the case above rests on.
+        aged = Path(scratch) / "aged"
+        aged.mkdir()
+        moment = time.time()
+        for age, stale in ((23 * 60 * 60, False), (25 * 60 * 60, True)):
+            when = moment - age
+            os.utime(aged, (when, when))
+            tally.case(
+                f"a leftover {age // 3600}h old is stale: {stale}",
+                _older_than(aged, moment) is stale,
+            )
+
+        # `prune` is what clears a registration whose directory is gone, and it
+        # is the only thing that does: the loop above reaches only names that
+        # carry this tool's prefix, so a registration under any other name — the
+        # state a reboot out of /tmp leaves another tool's worktree in — is
+        # dropped by nothing else.
+        stray = Path(tempfile.gettempdir()) / f"some-other-tool-{os.getpid()}"
+        git("worktree", "remove", "--force", str(stray), cwd=repo)
+        shutil.rmtree(stray, ignore_errors=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(stray), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        shutil.rmtree(stray)
+        with _Muffle():
+            reclaim_stale(repo)
+        tally.case(
+            "prune drops a registration whose directory is already gone",
+            not _registered(repo, stray),
+        )
+
+        # A report is not a worktree, so `git worktree list` never shows it and
+        # the sweep over the temp directory is the only thing that collects a
+        # killed run's half. Its name carries the pid for exactly this: the
+        # report of a live run is not litter.
+        leaked = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}before-{free}-leak.json"
+        leaked.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        mine = report_path("after")
+        mine.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        with _Muffle():
+            reclaim_stale(repo)
+        tally.case(
+            "a report whose run is gone is reclaimed; a live run's is left alone",
+            not leaked.exists() and mine.exists(),
+        )
+        mine.unlink(missing_ok=True)
+
+        # A registration whose directory was cleared away — the same reboot out
+        # of /tmp — makes the next `worktree add` fail with "missing but already
+        # registered", so the add is preceded by a remove. The checkout has to
+        # survive a state the fixture above never reaches.
+        stranded = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}stranded-{free}"
+        git("worktree", "remove", "--force", str(stranded), cwd=repo)
+        shutil.rmtree(stranded, ignore_errors=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(stranded), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        shutil.rmtree(stranded)
+        with _Muffle():
+            try:
+                without_fix(repo, without, stranded, ["test_app.py"], False)
+                ok = (
+                    text_of(stranded / "app.py") == "value = 1\n"
+                    and text_of(stranded / "test_app.py") is not None
+                )
+            except SystemExit:
+                ok = False
+        tally.case(
+            "a stranded registration does not stop the without-the-fix checkout",
+            ok,
+        )
+        remove_worktree(repo, stranded)
+
+        def relative_of(node: str) -> str | None:
+            """`locate`'s answer, or None where it refuses — a case about which
+            root a node id is found under has to read as a FAIL, not crash the
+            suite, when the root it names is gone."""
+            with _Muffle():
+                try:
+                    return locate(node, repo)[1]
+                except SystemExit:
+                    return None
+
         tally.case(
             "a node id that is not repo-relative is found under backend/",
-            locate("tests/test_app.py", repo)[1] == "backend/tests/test_app.py",
+            relative_of("tests/test_app.py") == "backend/tests/test_app.py",
+        )
+        tally.case(
+            "a node id that is not repo-relative is found under frontend/",
+            relative_of("src/a.spec.ts") == "frontend/src/a.spec.ts",
         )
 
         # The child is run from a directory outside the fixture. Where that
@@ -1385,11 +1696,57 @@ def self_test() -> int:
             and "run this from inside the repository" not in inside.stderr,
         )
 
-    if tally.bad:
-        print(f"self-test: {tally.bad} of {tally.total} cases FAILED")
-        return 1
-    print(f"self-test: all {tally.total} cases passed")
-    return 0
+    # The line the repo-guards step reads is the process's exit code, so the
+    # conversion from a bad count to it is proven the way the gate reads it: a
+    # child run forced to fail a case, not this process reporting on itself.
+    # In the child the real suite runs, so the count is one it produced, and a
+    # case genuinely failing is what makes it red — the mutation at the end of
+    # the suite has to answer for. The child is told not to recurse: its own
+    # `self_test` would otherwise reach this line and spawn another.
+    if os.environ.get("PROVE_REGRESSION_EXIT_CODE_CHILD") != "1":
+        child_note = (
+            "import importlib.util, sys\n"
+            "spec = importlib.util.spec_from_file_location('pr', sys.argv[1])\n"
+            "pr = importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(pr)\n"
+            "pr.judge = lambda before, after, node: 0\n"
+            "raise SystemExit(pr.self_test())\n"
+        )
+        broken = subprocess.run(
+            [sys.executable, "-c", child_note, str(Path(__file__).resolve())],
+            env={**os.environ, "PROVE_REGRESSION_EXIT_CODE_CHILD": "1"},
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        tail = broken.stdout.splitlines()[-1] if broken.stdout.splitlines() else ""
+        # Both halves: the code the gate reads, and the summary a person reads.
+        # A build that prints FAIL and exits 0 is the thing being ruled out.
+        tally.case(
+            "a genuinely failing case makes the whole suite exit non-zero",
+            broken.returncode == 1 and "FAILED" in tail and "all" not in tail,
+        )
+    return _self_test_exit(tally)
+
+
+class _Captured:
+    """Keep what a refusal said, where `_Muffle` throws it away.
+
+    A case about a refusal's message cannot read it through `_Muffle`, which is
+    why this exists; the two are not interchangeable. This swaps `sys.stdout`
+    and `sys.stderr`, which is all a refusal raised in this process needs — it
+    fails before it starts a runner, so nothing reaches a file descriptor. A
+    refusal printed by a child shell still needs `_Muffle`'s descriptors.
+    """
+
+    def __enter__(self) -> "_Captured":
+        self._saved = sys.stdout, sys.stderr
+        self.out, self.err = io.StringIO(), io.StringIO()
+        sys.stdout, sys.stderr = self.out, self.err
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        sys.stdout, sys.stderr = self._saved
 
 
 class _Muffle:
