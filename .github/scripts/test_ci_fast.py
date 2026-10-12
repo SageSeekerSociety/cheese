@@ -29,12 +29,12 @@ SCRIPT = Path(__file__).with_name("ci-fast.py")
 ALL_HOOKS = [
     "ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork",
     "eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet",
-    "repo-rules", "action-pins", "manual-anchors", "file-size",
+    "repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references",
     "pyright", "frontend-typecheck",
 ]
 BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
-GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size"}
+GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
 
 
 def git(repo, *args):
