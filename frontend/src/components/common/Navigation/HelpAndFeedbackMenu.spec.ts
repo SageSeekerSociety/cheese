@@ -40,6 +40,7 @@ import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import AccountService from '@/services/account'
+import { useFeedbackStore } from '@/stores/feedback'
 import { openFirstPaint } from '@/test/firstPaint'
 
 /** 挂一次，`meta` 与 `counts` 由调用方给的桩决定。 */
@@ -231,5 +232,28 @@ describe('帮助与反馈，在桌面 app 里', () => {
     } finally {
       vi.unstubAllEnvs()
     }
+  })
+
+  it('登出要重问一趟：上一个人的「管理后台」和未读点不能留在顶栏上', async () => {
+    // 会话过期、或者另一个标签页登出时会落在这个状态：壳还在，人已经不是那个人了。
+    // 这两个接口对匿名请求照样答 200，所以重问这一趟本身就能把两项清掉。
+    const { container } = await mount({}, { admin: true, unread: 4 })
+    const store = useFeedbackStore()
+    await waitFor(() => expect(store.isAdmin).toBe(true))
+    expect(store.counts.unread).toBe(4)
+
+    getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
+    getFeedbackMeta.mockResolvedValue({
+      is_admin: false,
+      is_platform_admin: false,
+      tabs: ['all'],
+      kinds: ['bug'],
+      hot_supports: 5,
+    })
+    AccountService._loggedIn.value = false
+
+    await waitFor(() => expect(store.isAdmin).toBe(false))
+    await waitFor(() => expect(store.counts.unread).toBe(0))
+    expect(container.querySelector('.help-entry .v-badge')).toBeNull()
   })
 })

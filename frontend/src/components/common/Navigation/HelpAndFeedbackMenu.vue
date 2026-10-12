@@ -101,6 +101,7 @@ watch(
   ([yes, painted]) => {
     if (!yes) {
       asked = false
+      refresh()
       return
     }
     if (!painted || asked) return
