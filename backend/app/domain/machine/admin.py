@@ -1,4 +1,5 @@
-"""管理后台「机器」：平台的云端宿主机此刻是什么样子，过去一天沙箱起得怎么样。
+"""管理后台「机器」（``GET /admin/stats/machines``）：平台的云端宿主机此刻是什么
+样子，过去一天沙箱起得怎么样。
 
 此刻的部分读台账：``cloud_hosts`` 每台一行（还在池里的，和已经放弃、provider 还没
 确认删掉的），``sandbox_homes`` 每个沙箱一行，``warm_machines`` 每台温机一行。状态
@@ -51,7 +52,7 @@ WORKING_WITHIN = timedelta(minutes=2)
 
 #: 项目叫什么、房间叫什么：只读这两列，不为它把项目、话题领域拉进来。
 _projects = table("projects", column("id", Uuid), column("name", String))
-_rooms = table("conversations", column("id", Uuid), column("title", String))
+_rooms = table("topics", column("id", Uuid), column("title", String))
 
 
 def _iso(at: datetime | None) -> str | None:
@@ -117,30 +118,20 @@ async def _names(
         h.project_id for h in hosts if h.project_id is not None
     }
     room_ids = {h.topic_id for h in homes}
-    projects = (
-        dict(
-            (
-                await session.execute(
-                    select(_projects.c.id, _projects.c.name).where(
-                        _projects.c.id.in_(project_ids)
-                    )
-                )
-            ).all()
-        )
-        if project_ids
-        else {}
-    )
-    rooms = (
-        dict(
-            (
-                await session.execute(
-                    select(_rooms.c.id, _rooms.c.title).where(_rooms.c.id.in_(room_ids))
-                )
-            ).all()
-        )
-        if room_ids
-        else {}
-    )
+    projects: dict[uuid.UUID, str] = {}
+    rooms: dict[uuid.UUID, str] = {}
+    if project_ids:
+        for row_id, name in await session.execute(
+            select(_projects.c.id, _projects.c.name).where(
+                _projects.c.id.in_(project_ids)
+            )
+        ):
+            projects[row_id] = name
+    if room_ids:
+        for row_id, title in await session.execute(
+            select(_rooms.c.id, _rooms.c.title).where(_rooms.c.id.in_(room_ids))
+        ):
+            rooms[row_id] = title
     return projects, rooms
 
 
@@ -184,9 +175,7 @@ async def _history(
             started.setdefault(home, at)
         elif kind == "cloud_provisioning" and home in started and home not in ready:
             ready[home] = at
-    waits = sorted(
-        (ready[home] - started[home]).total_seconds() for home in ready
-    )
+    waits = sorted((ready[home] - started[home]).total_seconds() for home in ready)
     # 开始准备了、一直没就绪、此刻也不在等：中途被放弃（宿主机起不来、会话走了）。
     abandoned = sum(
         1 for home in started if home not in ready and home not in waiting_now
@@ -350,7 +339,5 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             }
             for w in warm
         ],
-        "history": await _history(
-            session, now, {str(h.id) for h in waiting}
-        ),
+        "history": await _history(session, now, {str(h.id) for h in waiting}),
     }

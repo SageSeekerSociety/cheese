@@ -69,9 +69,9 @@ def _seed(client, build) -> None:
 
 
 def test_only_a_platform_admin_reads_it(client, admin):
-    assert client.get("/admin/machines", headers=admin).status_code == 200
+    assert client.get("/admin/stats/machines", headers=admin).status_code == 200
     stranger = session_auth_headers("someone")
-    assert client.get("/admin/machines", headers=stranger).status_code == 403
+    assert client.get("/admin/stats/machines", headers=stranger).status_code == 403
 
 
 def test_each_host_shows_its_sandboxes_and_the_pool_counts_who_waits(client, admin):
@@ -92,7 +92,7 @@ def test_each_host_shows_its_sandboxes_and_the_pool_counts_who_waits(client, adm
 
     _seed(client, build)
 
-    data = client.get("/admin/machines", headers=admin).json()["data"]
+    data = client.get("/admin/stats/machines", headers=admin).json()["data"]
     hosts = {h["hostname"]: h for h in data["hosts"]}
     assert hosts["busy"]["used"] == 2
     assert {s["room"] for s in hosts["busy"]["sandboxes"]} == {"Room"}
@@ -124,7 +124,7 @@ def test_the_pool_says_it_refuses_new_sessions_while_the_provider_keeps_failing(
 
     _seed(client, build)
 
-    pool = client.get("/admin/machines", headers=admin).json()["data"]["pool"]
+    pool = client.get("/admin/stats/machines", headers=admin).json()["data"]["pool"]
     assert pool["provider_failures"] == 3
     assert pool["refusing"] is True
     # Given up on: not counted as hosts of the pool.
@@ -139,7 +139,7 @@ def test_a_few_failures_do_not_make_the_pool_refuse(client, admin):
 
     _seed(client, build)
 
-    pool = client.get("/admin/machines", headers=admin).json()["data"]["pool"]
+    pool = client.get("/admin/stats/machines", headers=admin).json()["data"]["pool"]
     assert (pool["provider_failures"], pool["refusing"]) == (1, False)
 
 
@@ -183,7 +183,9 @@ def test_the_wait_for_a_sandbox_is_from_preparing_to_ready(client, admin):
 
     _seed(client, build)
 
-    history = client.get("/admin/machines", headers=admin).json()["data"]["history"]
+    history = client.get("/admin/stats/machines", headers=admin).json()["data"][
+        "history"
+    ]
     assert (history["prepared"], history["ready"], history["abandoned"]) == (3, 2, 1)
     assert history["wait_max_s"] == pytest.approx(300, abs=1)
     assert 30 <= history["wait_p50_s"] <= 300
