@@ -715,8 +715,10 @@ sys.exit(0)
 
     def test_quick_unreadable_pull_request_is_unknown(self):
         # A payload that is not JSON (gh writing its error into the file, say)
-        # leaves both the title and the draft flag unread: unknown, never a
-        # pass, and never a judgement on a title nobody read.
+        # leaves both the title and the draft flag unread: that one check is
+        # unknown, never a pass, and never a judgement on a title nobody read.
+        # It is the title alone that is lost — the rest of the tier still runs,
+        # which is what the rows below hold.
         self.write_hooks()
         self.make_base_and_head("frontend/src/probe.ts")
         payload = self.tmp / "pull.json"
@@ -724,7 +726,27 @@ sys.exit(0)
         proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
                                 env_extra=self.quick_tools())
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertEqual(self.report()["status"], "unknown")
+        rep = self.report()
+        self.assertEqual(rep["status"], "unknown")
+        rows = {row["id"]: row for row in rep["ran"]}
+        self.assertEqual(rows["commit-title"]["result"], "unknown")
+        self.assertIn("pull-request", rows["commit-title"]["reason"])
+        self.assertIn("file-size", rows, "the tier judged nothing at all")
+
+    def test_an_unreadable_pull_request_still_judges_the_change(self):
+        # The same payload with a check that really fails: the failure must
+        # reach the verdict. Aborting at the payload instead reported unknown
+        # having executed nothing, so a failure in the same commit went unseen
+        # and the draft was green — the false green this tier exists to remove.
+        self.write_hooks(failing={"file-size"})
+        self.make_base_and_head("frontend/src/probe.ts")
+        payload = self.tmp / "pull.json"
+        payload.write_text("gh: Not Found (HTTP 404)")
+        proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
+                                env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertEqual(self.report()["status"], "fail")
+        self.assertIn("file-size", self.ran_hooks())
 
     def test_quick_pull_request_that_is_not_an_object_is_unknown(self):
         # JSON that parses but is not a PR object — a scalar, a list, a
@@ -744,6 +766,7 @@ sys.exit(0)
             report = self.report()
             self.assertEqual(report["status"], "unknown", text)
             self.assertIn("pull-request", " ".join(report["reasons"]), text)
+            self.assertIn("file-size", [row["id"] for row in report["ran"]], text)
         # ...and a PR object whose title is not a string is the same story: it
         # would reach check-commit-title.py as an argv element and raise there.
         payload = self.tmp / "pull.json"

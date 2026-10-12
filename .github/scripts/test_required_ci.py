@@ -567,28 +567,42 @@ def run_draft_step(text, tmp, ci_fast_exit=0, report=None, gh_exit=0, jq=None):
     """Run the draft job's real shell against stub commands, and return the process.
 
     ``ci_fast_exit`` is the status the stubbed ci-fast leaves behind, and
-    ``report`` the report it is to write there (absent means it reached no
-    verdict at all, which is what a bad argument or a killed process looks
-    like). ``jq``, when given, replaces the report renderer. The stubbed
-    ``python3`` delegates ``-c`` to the real interpreter, because the step reads
-    the report's own status with one line of Python and that read is part of
-    what is under test.
+    ``report`` the report it writes to the file its own ``--report`` argument
+    names (absent means it reached no verdict at all, which is what a bad
+    argument or a killed process looks like). ``jq``, when given, replaces the
+    report renderer. The stubbed ``python3`` delegates ``-c`` to the real
+    interpreter, because the step reads the report's own status with one line
+    of Python and that read is part of what is under test.
+
+    The stub writes to the path it is handed and nowhere else, because that is
+    what ci-fast does and the two halves are only wired together if they agree
+    on the path: ci-fast's own default is the repository's git dir, so a step
+    that stopped passing ``--report`` would put the report somewhere the
+    step's read never looks, ``|| true`` would swallow the miss, and the draft
+    would redden as "no verdict". Planting the fixture's report at the path
+    the step reads instead would keep every test green through exactly that.
     """
     tmp = Path(tmp)
     bindir = tmp / "bin"
     bindir.mkdir()
-    if report is not None:
-        (tmp / "ci-fast-report.json").write_text(json.dumps(report))
     _stub(bindir, "gh",
           f'printf "%s" \'{{"title": "feat: x", "draft": true}}\'\nexit {gh_exit}\n')
     _stub(bindir, "python3",
           f'if [ "$1" = "-c" ]; then exec "{sys.executable}" "$@"; fi\n'
-          f'printf "%s\\0" "$@" >> "$STUB_ARGV"\nexit {ci_fast_exit}\n')
+          f'printf "%s\\0" "$@" >> "$STUB_ARGV"\n'
+          f'prev=""; for a in "$@"; do\n'
+          f'  if [ "$prev" = "--report" ] && [ -n "$STUB_REPORT" ]; then\n'
+          f'    printf "%s" "$STUB_REPORT" > "$a"\n'
+          f'  fi\n'
+          f'  prev="$a"\n'
+          f'done\n'
+          f'exit {ci_fast_exit}\n')
     if jq is not None:
         _stub(bindir, "jq", jq)
     env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
            "RUNNER_TEMP": str(tmp), "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1",
            "GH_TOKEN": "x", "STUB_ARGV": str(tmp / "argv"),
+           "STUB_REPORT": "" if report is None else json.dumps(report),
            "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
     # `-e` is the shell the runner gives a `run:` step (GitHub's implicit
     # default for a Linux job is `bash -e`), and two of the ways this step can
@@ -734,9 +748,24 @@ class WorkflowTextTest(unittest.TestCase):
                                   report={"status": "unknown", "exit": 2})
             argv = (Path(tmp) / "argv").read_text().split("\0")[:-1]
             summary = (Path(tmp) / "summary").read_text()
+            payload = Path(argv[argv.index("--pull-request") + 1])
+            unread = payload.read_text()
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("--pull-request", argv, f"ci-fast was not handed the payload: {argv}")
         self.assertIn("what it could not judge", summary)
+        # What the guard hands over is the point of guarding the read. The flag
+        # being present says ci-fast was pointed somewhere; it does not say the
+        # file holds the guard's message rather than the empty file a failed
+        # `gh api ... > pull.json` leaves behind (the redirect truncates before
+        # the command fails), a path the fallback wrote elsewhere, or a
+        # placeholder that parses as a PR — the last of which would report a
+        # draft green on the runner's network, the failure this guard exists to
+        # prevent.
+        self.assertIn("could not read", unread,
+                      f"ci-fast was handed a payload the guard did not write: {payload}")
+        with self.assertRaises(json.JSONDecodeError,
+                               msg=f"the unread payload parses as a PR: {unread}"):
+            json.loads(unread)
 
     def test_the_draft_job_says_what_the_green_does_not_cover(self):
         # The green of this check is honest only next to the list of what was
