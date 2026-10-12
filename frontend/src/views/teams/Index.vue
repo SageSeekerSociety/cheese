@@ -87,7 +87,7 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { t } from '@/i18n'
-import { AvatarsApi } from '@/network/api/avatars'
+import { createAvatar } from '@/api/avatars'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
 
@@ -123,9 +123,7 @@ const createTeam = async () => {
       intro = `${intro.slice(0, 250)}…`
     }
 
-    const {
-      data: { avatarId },
-    } = teamAvatar.value ? await AvatarsApi.createAvatar(teamAvatar.value) : { data: { avatarId: null } }
+    const { avatarId } = teamAvatar.value ? await createAvatar(teamAvatar.value) : { avatarId: null }
 
     const { team } = await TeamsApi.create({
       name: teamName.value,

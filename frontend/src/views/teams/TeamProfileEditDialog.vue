@@ -15,7 +15,7 @@ import { TeamsApi } from '@/api/teams'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import { t } from '@/i18n'
-import { AvatarsApi } from '@/network/api/avatars'
+import { createAvatar } from '@/api/avatars'
 
 const props = defineProps<{ team: Team }>()
 const emit = defineEmits<{ updated: [team: Team] }>()
@@ -57,7 +57,7 @@ const save = async () => {
   try {
     // 换头像 = 先把图传上去换一个 id，再把它和另外两项一起 PATCH 上去；
     // 没换图就不带 avatarId，免得把现成的头像覆盖掉。
-    const avatarId = avatarFile.value ? (await AvatarsApi.createAvatar(avatarFile.value)).data.avatarId : null
+    const avatarId = avatarFile.value ? (await createAvatar(avatarFile.value)).avatarId : null
 
     const { team } = await TeamsApi.update(props.team.id, {
       name: trimmedName,

@@ -34,8 +34,8 @@ vi.mock('@/api/spaces', () => ({
   },
 }))
 
-vi.mock('@/network/api/avatars', () => ({
-  AvatarsApi: { createAvatar: (...a: unknown[]) => uploadAvatar(...a) },
+vi.mock('@/api/avatars', () => ({
+  createAvatar: (...a: unknown[]) => uploadAvatar(...a),
 }))
 
 // 对话框本身住在 App.vue（跨路由活着），这一页只是把它叫起来。
@@ -108,7 +108,7 @@ beforeAll(() => {
 })
 
 beforeEach(() => {
-  uploadAvatar.mockReset().mockResolvedValue({ data: { avatarId: 77 } })
+  uploadAvatar.mockReset().mockResolvedValue({ avatarId: 77 })
   resubmit.mockReset().mockResolvedValue({})
   URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
   applications.mockReset().mockResolvedValue({ items: [] })

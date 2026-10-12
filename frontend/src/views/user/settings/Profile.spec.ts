@@ -10,10 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Profile from './Profile.vue'
 
-import { createAvatar } from '@/api/avatars'
+import { createAvatar, getDefaultAvatarId } from '@/api/avatars'
 import { ApiError } from '@/api/http'
 import { setLocale } from '@/i18n'
-import { AvatarsApi } from '@/network/api/avatars'
 import { UserApi } from '@/network/api/users'
 import AccountService from '@/services/account'
 
@@ -21,10 +20,7 @@ const DEFAULT_AVATAR = 1
 const CHOSEN_AVATAR = 30
 
 vi.mock('@/network/api/users', () => ({ UserApi: { updateUserInfo: vi.fn() } }))
-vi.mock('@/api/avatars', () => ({ createAvatar: vi.fn() }))
-vi.mock('@/network/api/avatars', () => ({
-  AvatarsApi: { getDefaultAvatarId: vi.fn() },
-}))
+vi.mock('@/api/avatars', () => ({ createAvatar: vi.fn(), getDefaultAvatarId: vi.fn() }))
 vi.mock('@/services/account', async () => {
   const { reactive } = await import('vue')
   return { default: reactive({ loggedIn: true, user: null as unknown, updateUserInfo: vi.fn() }) }
@@ -70,7 +66,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
-  vi.mocked(AvatarsApi.getDefaultAvatarId).mockResolvedValue({ data: { avatarId: DEFAULT_AVATAR } } as never)
+  vi.mocked(getDefaultAvatarId).mockResolvedValue({ avatarId: DEFAULT_AVATAR } as never)
   vi.mocked(UserApi.updateUserInfo).mockResolvedValue({} as never)
   signIn()
 })

@@ -236,7 +236,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { AvatarsApi } from '@/network/api/avatars'
+import { createAvatar } from '@/api/avatars'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()
@@ -316,8 +316,8 @@ async function createSpace() {
   try {
     const payload: PostSpaceRequestData = { name: spaceName.value.trim(), intro: spaceIntro.value.trim() }
     if (selectedAvatar.value) {
-      const { data } = await AvatarsApi.createAvatar(selectedAvatar.value)
-      payload.avatarId = data.avatarId
+      const { avatarId } = await createAvatar(selectedAvatar.value)
+      payload.avatarId = avatarId
     }
     if (resubmittingId.value !== null) {
       await SpacesApi.resubmit(resubmittingId.value, payload)

@@ -10,7 +10,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const update = vi.fn()
 const uploadAvatar = vi.fn()
 vi.mock('@/api/teams', () => ({ TeamsApi: { update: (...a: unknown[]) => update(...a) } }))
-vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { createAvatar: (...a: unknown[]) => uploadAvatar(...a) } }))
+vi.mock('@/api/avatars', () => ({ createAvatar: (...a: unknown[]) => uploadAvatar(...a) }))
 
 import TeamProfileEditDialog from './TeamProfileEditDialog.vue'
 
@@ -66,7 +66,7 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   update.mockReset().mockResolvedValue({ team: team({ name: '芝士社', intro: '新的介绍' }) })
-  uploadAvatar.mockReset().mockResolvedValue({ data: { avatarId: 77 } })
+  uploadAvatar.mockReset().mockResolvedValue({ avatarId: 77 })
   URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
 })
 afterEach(cleanup)

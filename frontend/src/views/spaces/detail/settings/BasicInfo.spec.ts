@@ -34,8 +34,8 @@ vi.mock('@/network/api/tasks', () => ({
   TasksApi: { list: vi.fn().mockResolvedValue({ data: { tasks: [], page: { total: 0 } } }) },
 }))
 
-vi.mock('@/network/api/avatars', () => ({
-  AvatarsApi: { createAvatar: vi.fn() },
+vi.mock('@/api/avatars', () => ({
+  createAvatar: vi.fn(),
 }))
 
 vi.mock('vuetify-sonner', () => ({

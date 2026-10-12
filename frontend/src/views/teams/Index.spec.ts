@@ -16,7 +16,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 const create = vi.fn()
 const toastError = vi.fn()
 vi.mock('@/api/teams', () => ({ TeamsApi: { create: (...a: unknown[]) => create(...a) } }))
-vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { createAvatar: vi.fn() } }))
+vi.mock('@/api/avatars', () => ({ createAvatar: vi.fn() }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: (...a: unknown[]) => toastError(...a), success: vi.fn() } }))
 
 import TeamsIndex from './Index.vue'
