@@ -170,7 +170,7 @@ parts:
     text: 你 刚刚开始
     at: 4
   - kind: doc
-    headings: 目标 | 现状 | 需要谁做什么 | 已确定
+    headings: 用三句话介绍项目的 README | 等你确认内容后开始
     at: 2
   - kind: composer
     placeholder: 给芝士发消息

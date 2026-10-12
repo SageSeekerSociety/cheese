@@ -2133,7 +2133,7 @@
     "checklist": "{name}这一轮的清单",
     "opening": {
       "drafting": "{name}正在整理…",
-      "draftingWhat": "把原讨论整理成这件任务的文档：目标、现状、已确定、待决",
+      "draftingWhat": "把原讨论整理成这件任务的文档",
       "waiting": "还没能开始，环境连上后会继续",
       "failed": "{name}没能整理出文档",
       "failedWhy": "这一轮没有完成",
