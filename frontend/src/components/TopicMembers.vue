@@ -239,7 +239,11 @@ async function onAdd() {
       await addTopicMember(topicId, handle)
     } catch (e) {
       failed.push(handle)
-      error.value = e instanceof Error ? e.message : t('work.room.roster.failed')
+      // 半路失败也要看有没有切走：切了就别把这一批的报错盖到新频道那一格上。中间几条
+      // 失败、后面还成着的时候尤其明显 —— 整批没跑完，报错已经先落在别人家的选择上了。
+      if (props.topicId === topicId) {
+        error.value = e instanceof Error ? e.message : t('work.room.roster.failed')
+      }
     }
   }
   try {

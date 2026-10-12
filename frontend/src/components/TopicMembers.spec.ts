@@ -24,6 +24,10 @@ const server = vi.hoisted(() => ({
   attempts: [] as string[],
   // 把请人那个来回挂住：切频道要卡在它中间。
   hold: null as null | { promise: Promise<void>; release: () => void },
+  // 逐笔控制请人的来回（一笔一个闸）：要让「第一笔已回来、第二笔还卡着」这种中途
+  // 状态停住，单独一个 hold 挂不住——它把整批都挂在同一道门上。闸放行就提交那一行，
+  // 闸拒绝就当这一笔失败了。
+  gates: [] as { promise: Promise<void>; release: () => void; fail: (e: Error) => void }[],
 }))
 
 vi.mock('../api/http', async () => {
@@ -36,12 +40,14 @@ vi.mock('../api/http', async () => {
         const topicId = invite[1]
         const { handle } = JSON.parse(String(init.body)) as { handle: string }
         server.attempts.push(`${topicId}:${handle}`)
-        if (server.failFor.has(handle)) return Promise.reject(new Error('邀请失败'))
         const commit = () => {
           const row = { member_handle: handle, name: handle, role: 'member', agent: false, avatar_id: null }
           server.rows.push(row)
           return row
         }
+        const gate = server.gates.shift()
+        if (gate) return gate.promise.then(commit)
+        if (server.failFor.has(handle)) return Promise.reject(new Error('邀请失败'))
         return server.hold ? server.hold.promise.then(commit) : Promise.resolve(commit())
       }
       return actual.request(path, init)
@@ -145,6 +151,25 @@ async function openRoster(extra: Record<string, unknown> = {}) {
   return utils
 }
 
+// 一道闸把一笔请人挂住，直到测试说放行或失败。放进 `server.gates`，`shift()` 按请人的
+// 先后一笔一笔对上。
+function gate() {
+  let release!: () => void
+  let fail!: (e: Error) => void
+  const promise = new Promise<void>((res, rej) => {
+    release = res
+    fail = rej
+  })
+  return { promise, release, fail }
+}
+
+// 「加入」那颗按钮（请人单子底部）。
+function addButton(): HTMLElement {
+  return Array.from(document.querySelectorAll<HTMLElement>('.roster__add button')).find(
+    (b) => b.textContent?.trim() === '加入'
+  )!
+}
+
 function roomEnvironments(overrides: Partial<TopicEnvironment> = {}): TopicEnvironment {
   return {
     default: { kind: 'sandbox', spec: 'standard' },
@@ -177,6 +202,7 @@ beforeEach(() => {
   server.failFor = new Set()
   server.attempts = []
   server.hold = null
+  server.gates = []
   document.body.innerHTML = ''
   machines.get.mockReset().mockResolvedValue(roomEnvironments())
   machines.setSession.mockReset().mockResolvedValue({})
@@ -332,14 +358,16 @@ describe('成员名册', () => {
     await fireEvent.click(pickerRowOf('Dave'))
     await fireEvent.click(pickerRowOf('评审'))
     await settle()
-    await fireEvent.click(
-      Array.from(document.querySelectorAll('.roster__add button')).find((b) => b.textContent?.trim() === '加入')!
-    )
+    await fireEvent.click(addButton())
     await settle()
-    // 请人卡在半路，切去另一个频道。
+    // 请人卡在半路，切去另一个频道。`rerender` 收的就是 props 本身，别包成 `{ props }`：
+    // 包错了它当没这回事，`topicId` 根本没换、这个用例就白测了。
     await utils.rerender({
-      props: { topicId: 't2', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice', canManage: true },
-      global: { plugins: [createVuetify({ components, directives })] },
+      topicId: 't2',
+      projectId: 'p1',
+      projectMembers: PROJECT_MEMBERS,
+      me: 'alice',
+      canManage: true,
     })
     await settle()
     server.hold.release()
@@ -350,6 +378,35 @@ describe('成员名册', () => {
     // 切了频道，旧频道挑的人不留到新频道上。
     expect(document.querySelectorAll('.member-picker__chip')).toHaveLength(0)
     // 旧频道那一下的报错也不该挂到新频道上（那批人是请进了 t1 的）。
+    expect(document.querySelector('.roster__error')).toBeNull()
+  })
+
+  it('请人中途失败落在切走之后：整批没跑完前，新频道不挂旧频道那笔的报错', async () => {
+    const utils = await openRoster()
+    const first = gate()
+    const second = gate()
+    server.gates = [first, second]
+    await fireEvent.click(pickerRowOf('Dave'))
+    await fireEvent.click(pickerRowOf('评审'))
+    await settle()
+    await fireEvent.click(addButton())
+    await settle()
+    // 第一笔放行（Dave 进了 t1），第二笔还卡着 —— 这里正是「整批没跑完」。
+    first.release()
+    await settle()
+    // 还卡着的时候切去另一个频道。
+    await utils.rerender({
+      topicId: 't2',
+      projectId: 'p1',
+      projectMembers: PROJECT_MEMBERS,
+      me: 'alice',
+      canManage: true,
+    })
+    await settle()
+    // 现在让第二笔失败：它落在切走之后，旧频道那笔的报错不能挂到新频道那一格上。
+    second.fail(new Error('邀请失败'))
+    await settle()
+    expect(server.attempts).toEqual(['t1:dave', 't1:cheese-a2'])
     expect(document.querySelector('.roster__error')).toBeNull()
   })
 })
