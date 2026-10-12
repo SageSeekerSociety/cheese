@@ -481,6 +481,11 @@ def pr_report(pr: dict, heads: list[dict], exits: list[dict]) -> dict:
         "title": pr.get("title"),
         "merged_at": pr.get("mergedAt"),
         "merge_commit": (pr.get("mergeCommit") or {}).get("oid"),
+        # The head the PR merged, which is also the head the accept waited on.
+        # `push_detail` is in timeline order, so a force-push back to an older
+        # sha leaves that head earlier in the list than the push that was
+        # abandoned; green_of needs this to read the right one.
+        "head_ref_oid": pr.get("headRefOid"),
         "pushes": len(pushes),
         "ci_runs": sum(len(p["rounds"]) for p in pushes),
         "push_detail": pushes,
@@ -709,7 +714,12 @@ def green_of(report: dict) -> str | None:
     pushes = report.get("push_detail") or []
     if not pushes:
         return None
-    last = pushes[-1]  # push_detail holds heads CI ran on, so the last is the merged head
+    # The merged head is the one the PR names (`headRefOid`), not the last entry
+    # in push_detail: push_detail is in timeline order, so a force-push back to
+    # an older sha puts the abandoned head last and the merged one before it.
+    # Falls back to the last push only when the report has no head recorded.
+    merged_head = report.get("head_ref_oid")
+    last = next((p for p in pushes if merged_head and p.get("sha") == merged_head), pushes[-1])
     # When the required check reported green, not when its round started.
     greens = [
         r.get("completed_at") or r["started_at"]
@@ -1121,7 +1131,12 @@ def retro_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
     global CACHE_DIR
     CACHE_DIR = args.cache
-    since, until = _iso(args.since), _iso(args.until)
+    try:
+        since, until = _iso(args.since), _iso(args.until)
+    except ValueError as exc:
+        # Exit 2 with a usage line, like argparse does for a missing flag: a
+        # typo in the window is a mistyped argument, not a traceback to read.
+        parser.error(f"窗口不是 ISO 时间（{exc}）：--since/--until 写成 2026-10-12T11:00:00Z 这样")
     report = build(args.repo, since, until, args.room)
     if args.json:
         json.dump(report, sys.stdout, ensure_ascii=False, indent=2, default=str)
@@ -1346,6 +1361,311 @@ def self_test() -> int:
     )
     check("only touched lines appear", [r["task"] for r in lt], [1445])
     check("a merged pr is named", lt[0]["merged_prs"], [3495])
+
+    # ------------------------------------------------------------------
+    # The report tables themselves. Everything above checks a piece; these
+    # check that the numbers the three tables print are still the numbers the
+    # pieces produce, because those tables are what this tool is for (首推通过率
+    # is a decision input) and nothing else calls these five functions.
+    # ------------------------------------------------------------------
+
+    # _stats / _median: which statistic lands in which column. 「中位」 is the
+    # middle value, not the mean — they agree only by coincidence.
+    st = _stats([20.0, 90.0, 10.0, None])
+    check("_stats counts only the known values", st["n"], 3)
+    check("_stats median is the middle value, not the mean", st["median"], 20.0)
+    check("_stats mean is the mean", st["mean"], 40.0)
+    check("_stats max is the slowest", st["max"], 90.0)
+    check("_stats of nothing is n=0", _stats([None, None])["n"], 0)
+    check("_stats of nothing has no median", _stats([])["median"], None)
+    check("_stats of nothing has no max", _stats([])["max"], None)
+    check("an odd list takes the middle one, sorted", _median([90.0, 10.0, 20.0]), 20.0)
+    check("an even list averages the middle two", _median([10.0, 20.0, 30.0, 80.0]), 25.0)
+
+    # One PR's row as pr_report builds it, and one merge-queue exit.
+    def exit_row(failed: bool, at: str) -> dict:
+        return {
+            "failed": failed,
+            "at": at,
+            "run_id": 1,
+            "run_conclusion": "failure" if failed else "success",
+            "failed_checks": ["backend / integration (1/5)"] if failed else [],
+            "first_error": "boom" if failed else None,
+        }
+
+    def rep(number: int, strict: bool, lenient: bool, pushes: int, ci_runs: int, exits: list) -> dict:
+        return {
+            "number": number,
+            "merged_at": "2026-10-12T12:00:00",
+            "pushes": pushes,
+            "ci_runs": ci_runs,
+            "strict_first_pass": strict,
+            "lenient_first_pass": lenient,
+            "exits": exits,
+        }
+
+    pr1 = rep(1, True, True, 1, 2, [exit_row(False, "2026-10-12T12:10:00")])
+    pr2 = rep(
+        2, False, True, 2, 3, [exit_row(False, "2026-10-12T12:20:00"), exit_row(True, "2026-10-12T12:30:00")]
+    )
+    both = [pr1, pr2]
+
+    # Cards as summarize receives them: the waits already resolved by
+    # join_cards. Three decided inside the window (their totals are 60 / 30 /
+    # 110, where the median 60.0 and the mean 66.7 differ), one outside it, one
+    # still pending.
+    cards = [
+        {
+            "status": "accepted",
+            "filed_at": "2026-10-12T11:30:00",
+            "decided_at": "2026-10-12T12:30:00",
+            "wait_ci_minutes": 10.0,
+            "wait_scheduler_minutes": 50.0,
+        },
+        {
+            "status": "accepted",
+            "filed_at": "2026-10-12T11:45:00",
+            "decided_at": "2026-10-12T12:15:00",
+            "wait_ci_minutes": 20.0,
+            "wait_scheduler_minutes": 10.0,
+        },
+        {
+            "status": "accepted",
+            "filed_at": "2026-10-12T11:10:00",
+            "decided_at": "2026-10-12T13:00:00",
+            "wait_ci_minutes": 5.0,
+            "wait_scheduler_minutes": 105.0,
+        },
+        {
+            "status": "accepted",
+            "filed_at": "2026-10-12T17:00:00",
+            "decided_at": "2026-10-12T18:00:00",
+            "wait_ci_minutes": 5.0,
+            "wait_scheduler_minutes": 55.0,
+        },
+        {
+            "status": "pending",
+            "filed_at": "2026-10-12T11:40:00",
+            "decided_at": None,
+            "wait_ci_minutes": None,
+            "wait_scheduler_minutes": None,
+        },
+    ]
+    since, until = "2026-10-12T11:00:00", "2026-10-12T14:05:00"
+
+    # summarize: the headline table's numbers.
+    s = summarize(both, cards, since, until)
+    check("the merged PRs are counted", s["merged_prs"], 2)
+    check("严格 counts the strict passes", s["strict_first_pass"], {"n": 1, "pct": "1/2 = 50%"})
+    check("宽松 counts the lenient passes", s["lenient_first_pass"], {"n": 2, "pct": "2/2 = 100%"})
+    check("pushes per PR is the sum over the PRs", s["pushes_per_pr"], 1.5)
+    check("CI runs per PR is the sum over the PRs", s["ci_runs_per_pr"], 2.5)
+    check("only failed exits are counted", s["merge_queue_failed_exits"], 1)
+    check("the PR that dropped out is named", s["merge_queue_failed_prs"], [2])
+    check(
+        "the dropped-out PRs are listed smallest first",
+        summarize(
+            [rep(9, False, False, 1, 1, [exit_row(True, "t")]), rep(3, False, False, 1, 1, [exit_row(True, "t")])]
+        )["merge_queue_failed_prs"],
+        [3, 9],
+    )
+    check("only cards decided inside the window count", s["accept_dwell"]["n"], 3)
+    check("递卡→采纳 is the median of the whole wait", s["accept_dwell"]["total"]["median"], 60.0)
+    check("递卡→采纳's mean is not its median", s["accept_dwell"]["total"]["mean"], 66.7)
+    check("递卡→采纳's max is the slowest", s["accept_dwell"]["total"]["max"], 110.0)
+    check("等 CI 绿 is its own column", s["accept_dwell"]["wait_ci"]["median"], 10.0)
+    check("CI 绿后等总调度 is its own column", s["accept_dwell"]["wait_review"]["median"], 50.0)
+    check("a pending card is not in the dwell", s["accept_dwell"]["n"], 3)
+    check("a card decided outside the window is not in it", s["accept_dwell"]["total"]["n"], 3)
+    check("without the platform half there is no dwell", "accept_dwell" in summarize(both, None, since, until), False)
+
+    # render_markdown: the tables print the summary's numbers, one row per PR
+    # and one row per failed exit. A count printed as 0, a swapped column or a
+    # dropped row shows up here.
+    md = render_markdown({"since": since, "until": until, "prs": both, "platform": None, "summary": s})
+    check("the headline prints the merged count", "| 合并 PR | 2 |" in md, True)
+    check("the headline prints the strict rate", "| 首推一次过 CI（严格） | 1/2 = 50% |" in md, True)
+    check("the headline prints the lenient rate", "| 首推一次过 CI（宽松） | 2/2 = 100% |" in md, True)
+    check("the headline prints the pushes per PR", "| 每 PR 轮数（按推送） | 1.5 |" in md, True)
+    check("the headline prints the failed exits", "| 掉出合并队列（失败） | 1 次，全在 PR [2] |" in md, True)
+    check(
+        "the dwell row prints the median first",
+        "| 递卡→采纳 | 中位 60.0 分、均值 66.7、最慢 110.0（n=3） |" in md,
+        True,
+    )
+    check("a PR gets a detail row", "| #2 | 2026-10-12T12:00:00 | 2 | 3 | ✗ | ✓ | 1 | boom |" in md, True)
+    check(
+        "a failed exit gets an exit row",
+        "| #2 | 2026-10-12T12:30:00 | 1 | failure | backend / integration (1/5) | boom |" in md,
+        True,
+    )
+    check("a passing exit gets no row", "| #1 | 2026-10-12T12:10:00 | 1 | success" in md, False)
+    check("the comparison block echoes the same numbers", "- 合并 PR：2（复盘 12）" in md, True)
+
+    # Without the platform half the dwell rows are 未测, not a zero nobody
+    # measured: an unmeasured column printed as 0 is the kind of number this
+    # tool must not put in front of a decision.
+    md_offline = render_markdown(
+        {
+            "since": since,
+            "until": until,
+            "prs": both,
+            "platform": None,
+            "summary": summarize(both, None, since, until),
+        }
+    )
+    check("without the platform half the tables say 未测", "未测：没有 OKCHEESE_TOKEN" in md_offline, True)
+    check(
+        "and the dwell row is 未测, not a zero",
+        "| 递卡→采纳 | 未测（没有 OKCHEESE_TOKEN，平台那一半没跑） |" in md_offline,
+        True,
+    )
+
+    # The platform half's three tables, off the same report.
+    md_room = render_markdown(
+        {
+            "since": since,
+            "until": until,
+            "prs": both,
+            "summary": s,
+            "platform": {
+                "lines": lines_table(
+                    [{"number": 1445, "seat": "s1", "status": "open"}],
+                    [{"task": 1445, "seat": "s1", "status": "accepted", "pr_number": 1}],
+                    both,
+                ),
+                "first_pr_lag": first_pr_lag(
+                    [{"number": 1, "seat": "s1", "started_at": "2026-10-12T11:00:00"}],
+                    [{"task": 1, "filed_at": "2026-10-12T11:20:00"}],
+                    since,
+                    until,
+                ),
+                "turns_by_seat": turns_by_seat(
+                    [
+                        {"seat": "s1", "code": "response_truncated", "event_type": "platform_error", "task": 1},
+                        {"seat": "s2", "code": "turn_timeout", "event_type": "turn_timeout", "task": 2},
+                        {"seat": "s2", "code": "turn_timeout", "event_type": "turn_timeout", "task": 3},
+                    ]
+                ),
+            },
+        }
+    )
+    check("the line table prints a row per touched line", "| #1445 | s1 | open |" in md_room, True)
+    check(
+        "the lag table prints the minutes",
+        "| #1 | s1 | 2026-10-12T11:00:00 | 2026-10-12T11:20:00 | 20.0 |" in md_room,
+        True,
+    )
+    check("the seat table prints the counts", "| s2 | 2 | 0 | 0 | turn_timeout×2 | #2, #3 |" in md_room, True)
+    check(
+        "the seats are printed busiest first",
+        md_room.index("| s2 | 2 | 0 | 0 |") < md_room.index("| s1 | 1 | 1 | 1 |"),
+        True,
+    )
+
+    # first_pr_lag: 开工→首个 PR, and which tasks the window keeps. A task that
+    # filed nothing keeps a None, not a 0.
+    lag = first_pr_lag(
+        [
+            {"number": 1, "seat": "s1", "started_at": "2026-10-12T11:00:00"},
+            {"number": 2, "seat": "s1", "started_at": "2026-10-12T10:00:00"},
+            {"number": 3, "seat": "s2", "started_at": "2026-10-12T13:00:00"},
+            {"number": 4, "seat": "s2", "started_at": "2026-10-11T09:00:00"},
+        ],
+        [
+            {"task": 1, "filed_at": "2026-10-12T11:45:00"},
+            {"task": 1, "filed_at": "2026-10-12T11:20:00"},
+            {"task": 2, "filed_at": "2026-10-12T12:10:00"},
+            {"task": 4, "filed_at": "2026-10-11T10:00:00"},
+        ],
+        since,
+        until,
+    )
+    check(
+        "the lag runs from 开工 to the earliest card",
+        [(r["task"], r["lag_minutes"]) for r in lag],
+        [(1, 20.0), (2, 130.0), (3, None)],
+    )
+    check("a task whose card came before the window is dropped", [r["task"] for r in lag], [1, 2, 3])
+
+    # join_cards: the two waits a card's row carries, and the None discipline.
+    joined = join_cards(
+        [
+            {"pr_number": 11, "filed_at": "2026-10-12T11:30:00", "decided_at": "2026-10-12T12:30:00"},
+            {"pr_number": 99, "filed_at": "2026-10-12T11:30:00", "decided_at": "2026-10-12T12:30:00"},
+            {"pr_number": None, "filed_at": "2026-10-12T11:30:00", "decided_at": None},
+        ],
+        [
+            {
+                "number": 11,
+                "push_detail": [
+                    {
+                        "sha": "a",
+                        "rounds": [
+                            {"outcome": "red", "tier": "full", "started_at": "2026-10-12T11:00:00"}
+                        ],
+                    },
+                    {
+                        "sha": "b",
+                        "rounds": [
+                            {"outcome": "green", "tier": "full", "completed_at": "2026-10-12T12:00:00"}
+                        ],
+                    },
+                ],
+            }
+        ],
+    )
+    check("等 CI 绿 runs from 递卡 to the green", joined[0]["wait_ci_minutes"], 30.0)
+    check("CI 绿后等总调度 runs from the green to 采纳", joined[0]["wait_scheduler_minutes"], 30.0)
+    check(
+        "the two waits add up to 递卡→采纳",
+        joined[0]["wait_ci_minutes"] + joined[0]["wait_scheduler_minutes"],
+        60.0,
+    )
+    check("a card whose PR has no green waits nothing at CI", joined[1]["wait_ci_minutes"], None)
+    check("and its 总调度 wait is None too, not 0", joined[1]["wait_scheduler_minutes"], None)
+    check("a card with no PR at all is None on both", joined[2]["wait_ci_minutes"], None)
+
+    # green_of reads the head the PR merged, not the last push on the timeline:
+    # a force-push back to an older sha leaves that head earlier in the list.
+    pushed_back = [
+        {"sha": "a", "rounds": [{"outcome": "green", "tier": "full", "started_at": "2026-10-12T12:00:00"}]},
+        {"sha": "b", "rounds": [{"outcome": "green", "tier": "full", "started_at": "2026-10-12T11:00:00"}]},
+    ]
+    check(
+        "green_of reads the merged head, not the last push",
+        green_of({"head_ref_oid": "a", "push_detail": pushed_back}),
+        "2026-10-12T12:00:00",
+    )
+    check(
+        "green_of falls back to the last push when no head is recorded",
+        green_of({"push_detail": pushed_back}),
+        "2026-10-12T11:00:00",
+    )
+    check(
+        "pr_report records the merged head for green_of",
+        pr_report(pr_row(9) | {"headRefOid": "b"}, [rnd("a", "green"), rnd("b", "green")], [])["head_ref_oid"],
+        "b",
+    )
+
+    # A mistyped window is a usage error, not a traceback. `build` is stubbed so
+    # a regression here cannot reach the network from an offline self-test.
+    import contextlib
+    import io
+
+    real_build = globals()["build"]
+    globals()["build"] = lambda *_a, **_k: check("build must not run on a bad window", "ran", "not at all")
+    try:
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            try:
+                retro_main(["--since", "2026/10/12", "--until", "2026-10-12T14:00:00Z"])
+                check("a bad --since exits with a usage error", "no exit", 2)
+            except SystemExit as exc:
+                check("a bad --since exits with a usage error", exc.code, 2)
+        check("and says what a window looks like", "ISO" in err.getvalue(), True)
+    finally:
+        globals()["build"] = real_build
 
     # _gh: a failed call is not data. `gh` prints the API's error body — itself
     # JSON — on stdout, so an exit code nobody reads turns a rate-limited call
