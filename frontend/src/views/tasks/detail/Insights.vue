@@ -29,8 +29,8 @@ import { useRoute } from 'vue-router'
 
 import InsightsView from './InsightsView.vue'
 
-import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { SpacesApi } from '@/api/spaces'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { TasksApi } from '@/network/api/tasks'
 
 const props = defineProps<{

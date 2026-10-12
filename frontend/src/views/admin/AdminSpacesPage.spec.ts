@@ -150,8 +150,8 @@ describe('space review queue · 列表', () => {
   // 两次（第二遍是前一遍的前缀）。包含时只画长的那句。
   it('一句是另一句的开头时只画长的那句', async () => {
     reviews.mockResolvedValue({
-        items: [application({ intro: 'Hands-on d3. Anyone may join.', description: 'Hands-on d3.' })],
-      })
+      items: [application({ intro: 'Hands-on d3. Anyone may join.', description: 'Hands-on d3.' })],
+    })
     const page = mountPage()
     await page.findByText('Programming course')
     expect(page.getByText('Hands-on d3. Anyone may join.')).toBeTruthy()

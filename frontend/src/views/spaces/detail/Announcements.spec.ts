@@ -141,14 +141,14 @@ beforeEach(() => {
   setLocale('zh-CN')
   setActivePinia(createPinia())
   spaceDetail.mockImplementation(async () => ({
-      space: {
-        id: SPACE_ID,
-        name: '数据分析课',
-        admins: [{ user: { id: OWNER_ID, nickname: '林夏' }, role: 'OWNER' }],
-        taskTemplates: '[]',
-        classificationTopics: [],
-      },
-    }))
+    space: {
+      id: SPACE_ID,
+      name: '数据分析课',
+      admins: [{ user: { id: OWNER_ID, nickname: '林夏' }, role: 'OWNER' }],
+      taskTemplates: '[]',
+      classificationTopics: [],
+    },
+  }))
   listAnnouncements.mockImplementation(async () => ({ current: CURRENT, expired: EXPIRED, notifyCount: 3 }))
   updateAnnouncement.mockImplementation(async () => ({}))
   publishAnnouncement.mockImplementation(async () => ({}))

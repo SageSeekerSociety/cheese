@@ -33,8 +33,8 @@ import { toast } from 'vuetify-sonner'
 
 import SpaceMaterialsView from './SpaceMaterialsView.vue'
 
-import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { SpacesApi } from '@/api/spaces'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 
 const route = useRoute()
 const { t } = useI18n()

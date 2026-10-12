@@ -221,7 +221,10 @@ describe('筛选', () => {
 describe('空态', () => {
   it('一个成员项目都读不到时，画的是空态而不是空列表', async () => {
     getLearningFilters.mockResolvedValue({ students: [], knowledgePoints: [], projectCount: 0 })
-    getLearningQueues.mockResolvedValue({ reviewFlag: { available: false, reason: REVIEW_REASON, items: [] }, stuckPoints: [] })
+    getLearningQueues.mockResolvedValue({
+      reviewFlag: { available: false, reason: REVIEW_REASON, items: [] },
+      stuckPoints: [],
+    })
     getLearningQuestions.mockResolvedValue({ questions: [], total: 0 })
 
     const { findByText } = mount()

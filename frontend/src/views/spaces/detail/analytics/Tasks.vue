@@ -1,7 +1,11 @@
 <template>
   <div class="an-section">
     <div class="an-bar">
-      <AnalyticsPublisherSelect v-model="publisherIdModel" :publishers="publisherOptions" :loading="publishersLoading" />
+      <AnalyticsPublisherSelect
+        v-model="publisherIdModel"
+        :publishers="publisherOptions"
+        :loading="publishersLoading"
+      />
       <v-select
         v-model="sortByModel"
         autocomplete="off"
@@ -109,20 +113,21 @@ import type { SpaceAnalyticsTask } from '@/types/apiSpaces'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
+
 import AnalyticsExportButton from './components/AnalyticsExportButton.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
-import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 import { formatCount, formatDate, formatPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import { SpacesApi } from '@/api/spaces'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import TablePager from '@/components/base/TablePager.vue'
 import { useClientTable } from '@/components/base/tableSort'
-import { SpacesApi } from '@/api/spaces'
 
 const { t } = useI18n()
 const options = useAnalyticsOptions()

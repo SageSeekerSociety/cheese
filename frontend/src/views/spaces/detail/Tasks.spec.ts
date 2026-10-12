@@ -165,11 +165,11 @@ describe('题目列表的范围', () => {
 
   it('「只看待处理」只留有待评审提交的题', async () => {
     myPublished.mockImplementation(async () => ({
-        tasks: [
-          publishedTask(5, '没有待处理的题', { approved: 'APPROVED', visibilityStatus: 'APPROVED_VISIBLE' }),
-          publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 1 }),
-        ],
-      }))
+      tasks: [
+        publishedTask(5, '没有待处理的题', { approved: 'APPROVED', visibilityStatus: 'APPROVED_VISIBLE' }),
+        publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 1 }),
+      ],
+    }))
     const router = await mount({ filter: 'publishing' })
     await waitFor(() => expect(screen.getByText('没有待处理的题')).toBeTruthy())
 
@@ -181,7 +181,9 @@ describe('题目列表的范围', () => {
   })
 
   it('待评审的提交带出题人去「领取者」页签处理', async () => {
-    myPublished.mockImplementation(async () => ({ tasks: [publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 2 })] }))
+    myPublished.mockImplementation(async () => ({
+      tasks: [publishedTask(6, '有提交待评审的题', { approved: 'APPROVED', pendingReviewCount: 2 })],
+    }))
     const router = await mount({ filter: 'publishing' })
 
     await fireEvent.click(await screen.findByText(/2 个待评审/))

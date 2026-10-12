@@ -135,10 +135,10 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { dedupeBlockIds, formatCount } from './helpers'
 import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
+import { SpacesApi } from '@/api/spaces'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
-import { SpacesApi } from '@/api/spaces'
 
 const { t } = useI18n()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
@@ -209,10 +209,7 @@ const loadQueues = async () => {
 }
 
 const loadQuestions = async () => {
-  const data = await SpacesApi.getLearningQuestions(
-    spaceId.value,
-    buildAnalyticsApiParams('learning', filters.value)
-  )
+  const data = await SpacesApi.getLearningQuestions(spaceId.value, buildAnalyticsApiParams('learning', filters.value))
   questions.value = data.questions
 }
 

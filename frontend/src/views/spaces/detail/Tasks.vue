@@ -20,8 +20,8 @@ import { useSpaceData } from '@/composables/useSpaceData'
 import TasksView from './TasksView.vue'
 import { useSpaceAnnouncements } from './useSpaceAnnouncements'
 
-import { useCommands } from '@/commands'
 import { SpacesApi } from '@/api/spaces'
+import { useCommands } from '@/commands'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 

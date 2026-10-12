@@ -1,7 +1,11 @@
 <template>
   <div class="an-section">
     <div class="an-bar">
-      <AnalyticsPublisherSelect v-model="publisherIdModel" :publishers="publisherOptions" :loading="publishersLoading" />
+      <AnalyticsPublisherSelect
+        v-model="publisherIdModel"
+        :publishers="publisherOptions"
+        :loading="publishersLoading"
+      />
       <v-select
         v-model="groupByModel"
         autocomplete="off"
@@ -78,11 +82,12 @@ import type { AnalyticsGroupBy, SpaceAnalyticsQueryState } from './utils'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
+
 import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
 import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
 import AnalyticsMetricCard from './components/AnalyticsMetricCard.vue'
 import AnalyticsPublisherSelect from './components/AnalyticsPublisherSelect.vue'
-import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 import AnalyticsStatStrip from './components/AnalyticsStatStrip.vue'
 import AnalyticsTrendCard from './components/AnalyticsTrendCard.vue'
 import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
@@ -90,10 +95,10 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatPercent, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import { SpacesApi } from '@/api/spaces'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { SpacesApi } from '@/api/spaces'
 
 const analyticsNames = ANALYTICS_ROUTE_NAMES
 const { filters, pushToSection, replaceFilters, spaceId } = useSpaceAnalyticsFilters()

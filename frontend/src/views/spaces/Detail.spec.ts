@@ -49,8 +49,8 @@ const Page = defineComponent({ render: () => h('div', '题目列表') }) as Comp
 async function mount(userId: number, extra: Record<string, unknown> = {}, child: Component = Blank) {
   AccountService._user.value = { id: userId } as never
   spacesDetail.mockResolvedValue({
-      space: { id: SPACE_ID, name: '数据结构空间', admins: [{ user: { id: ADMIN_ID }, role: 'ADMIN' }], ...extra },
-    })
+    space: { id: SPACE_ID, name: '数据结构空间', admins: [{ user: { id: ADMIN_ID }, role: 'ADMIN' }], ...extra },
+  })
   taskList.mockResolvedValue({ data: { tasks: [], page: { total: 3 } } })
   listCategories.mockResolvedValue({ categories: [] })
 

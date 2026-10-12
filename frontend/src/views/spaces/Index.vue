@@ -209,8 +209,8 @@
 </template>
 
 <script lang="ts" setup>
-import type { PostSpaceRequestData, SpaceApplication } from '@/types/apiSpaces'
 import type { Space } from '@/types'
+import type { PostSpaceRequestData, SpaceApplication } from '@/types/apiSpaces'
 
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -223,6 +223,7 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import { SpacesApi } from '@/api/spaces'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -236,7 +237,6 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
 import { AvatarsApi } from '@/network/api/avatars'
-import { SpacesApi } from '@/api/spaces'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()

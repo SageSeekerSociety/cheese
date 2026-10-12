@@ -1,5 +1,7 @@
 import { Blob as NodeBlob, File as NodeFile } from 'node:buffer'
+
 import type { AxiosInstance } from 'axios'
+
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
 import { afterAll, afterEach, beforeAll, beforeEach, expect, vi } from 'vitest'
@@ -23,9 +25,13 @@ export function contractEnvironment() {
   let instances: AxiosInstance[]
   let adapters: AxiosInstance['defaults']['adapter'][]
   beforeAll(async () => {
-    const nativeFormData = (await new Request('https://form-data.example.test', {
-      method: 'POST', body: 'probe=value', headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    }).formData()).constructor
+    const nativeFormData = (
+      await new Request('https://form-data.example.test', {
+        method: 'POST',
+        body: 'probe=value',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      }).formData()
+    ).constructor
     vi.stubGlobal('FormData', nativeFormData)
     vi.stubGlobal('File', NodeFile)
     vi.stubGlobal('Blob', NodeBlob)
@@ -35,7 +41,7 @@ export function contractEnvironment() {
     const oldHttp = await import('@/network/api')
     const newHttp = await import('./axiosHttp')
     instances = [oldHttp.default.instance, oldHttp.NewApiInstance.instance, newHttp.axiosApi, newHttp.axiosNewApi]
-    adapters = instances.map(instance => instance.defaults.adapter)
+    adapters = instances.map((instance) => instance.defaults.adapter)
     for (const instance of instances) instance.defaults.adapter = 'xhr'
   })
   beforeEach(() => {
@@ -46,7 +52,9 @@ export function contractEnvironment() {
   })
   afterEach(() => server.resetHandlers())
   afterAll(() => {
-    instances?.forEach((instance, index) => { instance.defaults.adapter = adapters[index] })
+    instances?.forEach((instance, index) => {
+      instance.defaults.adapter = adapters[index]
+    })
     server.close()
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
@@ -65,45 +73,66 @@ export type ContractCase = {
 
 /** Capture the observable browser request, not axios config or wrapper source. */
 export async function compareRequests(
-  test: ContractCase, oldCall: () => Promise<unknown>, newCall: () => Promise<unknown>, base = newer,
+  test: ContractCase,
+  oldCall: () => Promise<unknown>,
+  newCall: () => Promise<unknown>,
+  base = newer
 ) {
   const captures: unknown[] = []
   const payload = { contract: 'payload' }
-  server.use(http.all(`${base}${test.path}`, async ({ request }) => {
-    const url = new URL(request.url)
-    expect(request.method).toBe(test.method)
-    expect([...url.searchParams.entries()]).toEqual(test.query ?? [])
-    expect(request.headers.get('authorization')).toBe('Bearer contract-token')
-    let body: unknown
-    if (test.fileFields) {
-      expect(request.headers.get('content-type')).toContain('multipart/form-data; boundary=')
-      const form = await request.formData()
-      body = Object.fromEntries(await Promise.all([...form.entries()].map(async ([key, value]) => [key,
-        typeof value === 'string' ? value : { name: value.name, type: value.type, bytes: [...new Uint8Array(await value.arrayBuffer())] },
-      ])))
-      expect(body).toEqual({ ...test.fileFields, file: { name: 'notes.pdf', type: 'application/pdf', bytes: [...new TextEncoder().encode('%PDF-1.7')] } })
-    } else {
-      const text = await request.text()
-      body = text ? JSON.parse(text) : undefined
-      expect(body).toEqual(test.body)
-    }
-    captures.push({ method: request.method, url: request.url, authorization: request.headers.get('authorization'),
-      contentType: test.fileFields ? 'multipart/form-data' : request.headers.get('content-type'), body })
-    return test.blob
-      ? new HttpResponse('download-bytes', { headers: { 'Content-Type': 'application/pdf' } })
-      : HttpResponse.json(envelope(payload, 201), { status: 201 })
-  }))
+  server.use(
+    http.all(`${base}${test.path}`, async ({ request }) => {
+      const url = new URL(request.url)
+      expect(request.method).toBe(test.method)
+      expect([...url.searchParams.entries()]).toEqual(test.query ?? [])
+      expect(request.headers.get('authorization')).toBe('Bearer contract-token')
+      let body: unknown
+      if (test.fileFields) {
+        expect(request.headers.get('content-type')).toContain('multipart/form-data; boundary=')
+        const form = await request.formData()
+        body = Object.fromEntries(
+          await Promise.all(
+            [...form.entries()].map(async ([key, value]) => [
+              key,
+              typeof value === 'string'
+                ? value
+                : { name: value.name, type: value.type, bytes: [...new Uint8Array(await value.arrayBuffer())] },
+            ])
+          )
+        )
+        expect(body).toEqual({
+          ...test.fileFields,
+          file: { name: 'notes.pdf', type: 'application/pdf', bytes: [...new TextEncoder().encode('%PDF-1.7')] },
+        })
+      } else {
+        const text = await request.text()
+        body = text ? JSON.parse(text) : undefined
+        expect(body).toEqual(test.body)
+      }
+      captures.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers.get('authorization'),
+        contentType: test.fileFields ? 'multipart/form-data' : request.headers.get('content-type'),
+        body,
+      })
+      return test.blob
+        ? new HttpResponse('download-bytes', { headers: { 'Content-Type': 'application/pdf' } })
+        : HttpResponse.json(envelope(payload, 201), { status: 201 })
+    })
+  )
   const old = await oldCall()
   const next = await newCall()
   if (test.blob) {
     // XHR returns the browser's Blob realm, not the multipart undici realm.
-    const read = (value: unknown) => typeof (value as Blob).text === 'function'
-      ? (value as Blob).text()
-      : new Promise(resolve => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result)
-        reader.readAsText(value as Blob)
-      })
+    const read = (value: unknown) =>
+      typeof (value as Blob).text === 'function'
+        ? (value as Blob).text()
+        : new Promise((resolve) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result)
+            reader.readAsText(value as Blob)
+          })
     expect(await read(old)).toBe('download-bytes')
     expect(await read(next)).toBe('download-bytes')
   } else {

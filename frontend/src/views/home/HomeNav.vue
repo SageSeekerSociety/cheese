@@ -22,11 +22,11 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
+import { SpacesApi } from '@/api/spaces'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { SpacesApi } from '@/api/spaces'
 import { TeamsApi } from '@/network/api/teams'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'

@@ -205,13 +205,13 @@ describe('这一张码是谁的、给谁用的', () => {
 
   it('建码人与说明都摆出来，不藏在只有点开才看得到的地方', async () => {
     listInviteCodes.mockImplementation(async () => ({
-        inviteCodes: [
-          code({
-            createdBy: { id: 3, username: 'lin', nickname: '林' },
-            note: '给新来的设计师',
-          }),
-        ],
-      }))
+      inviteCodes: [
+        code({
+          createdBy: { id: 3, username: 'lin', nickname: '林' },
+          note: '给新来的设计师',
+        }),
+      ],
+    }))
     await mount()
 
     expect(document.body.textContent).toMatch(/建码人\s*@林/)
@@ -301,12 +301,12 @@ describe('当前使用中的码', () => {
 
   it('拿的是还能用的那一张，不是列表第一格', async () => {
     listInviteCodes.mockImplementation(async () => ({
-        inviteCodes: [
-          // 第一格就是用尽的 —— 照着第一格发给下一个人是发不出去的。
-          code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
-          code({ id: 8, code: 'LIVE2222BB', maxUses: 5, useCount: 0 }),
-        ],
-      }))
+      inviteCodes: [
+        // 第一格就是用尽的 —— 照着第一格发给下一个人是发不出去的。
+        code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
+        code({ id: 8, code: 'LIVE2222BB', maxUses: 5, useCount: 0 }),
+      ],
+    }))
     await mount('LIVE2222BB')
 
     expect(currentBlock().querySelector('.current__code')?.textContent).toContain('LIVE2222BB')
@@ -315,17 +315,17 @@ describe('当前使用中的码', () => {
 
   it('全是用尽或过期的，就没有当前码', async () => {
     listInviteCodes.mockImplementation(async () => ({
-        inviteCodes: [
-          code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
-          code({
-            id: 8,
-            code: 'DEAD2222BB',
-            maxUses: 5,
-            useCount: 0,
-            expiresAt: Date.now() - 1000,
-          }),
-        ],
-      }))
+      inviteCodes: [
+        code({ id: 7, code: 'USED1111AA', maxUses: 1, useCount: 1 }),
+        code({
+          id: 8,
+          code: 'DEAD2222BB',
+          maxUses: 5,
+          useCount: 0,
+          expiresAt: Date.now() - 1000,
+        }),
+      ],
+    }))
     await mount('DEAD2222BB')
 
     expect(currentBlock().querySelector('.current__code')).toBeNull()

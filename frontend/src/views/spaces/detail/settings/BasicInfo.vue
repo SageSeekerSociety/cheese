@@ -24,8 +24,8 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import BasicInfoView from './BasicInfoView.vue'
 
-import { AvatarsApi } from '@/network/api/avatars'
 import { SpacesApi } from '@/api/spaces'
+import { AvatarsApi } from '@/network/api/avatars'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 

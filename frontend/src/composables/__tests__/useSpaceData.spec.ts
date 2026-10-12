@@ -322,7 +322,9 @@ describe('模板与公告', () => {
   })
 
   it('删模板按下标删，改的是存进去的那一份', async () => {
-    spaceDetail.mockResolvedValue({ space: space(SPACE_ID, { taskTemplates: JSON.stringify([{ title: '甲' }, { title: '乙' }]) }) })
+    spaceDetail.mockResolvedValue({
+      space: space(SPACE_ID, { taskTemplates: JSON.stringify([{ title: '甲' }, { title: '乙' }]) }),
+    })
     await data().fetchSpace(SPACE_ID)
     spaceUpdate.mockClear()
 
@@ -367,7 +369,9 @@ describe('分类话题', () => {
   beforeEach(async () => {
     spaceDetail.mockResolvedValue({ space: space(SPACE_ID, { classificationTopics: [{ id: 1 }, { id: 2 }] }) })
     // 服务端把改完之后的那张名单原样送回来，就像真接口那样。
-    spaceUpdate.mockImplementation(async (id: number, patch: { classificationTopics: number[] }) => ({ space: space(id, { classificationTopics: patch.classificationTopics.map((tid) => ({ id: tid })) }) }))
+    spaceUpdate.mockImplementation(async (id: number, patch: { classificationTopics: number[] }) => ({
+      space: space(id, { classificationTopics: patch.classificationTopics.map((tid) => ({ id: tid })) }),
+    }))
     await data().fetchSpace(SPACE_ID)
     spaceUpdate.mockClear()
   })

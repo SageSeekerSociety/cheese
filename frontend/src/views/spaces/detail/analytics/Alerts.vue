@@ -18,10 +18,10 @@ import { useI18n } from 'vue-i18n'
 import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
 import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters'
 
+import { SpacesApi } from '@/api/spaces'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { SpacesApi } from '@/api/spaces'
 
 const { t } = useI18n()
 const { pushToSection, spaceId } = useSpaceAnalyticsFilters()

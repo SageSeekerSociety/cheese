@@ -18,8 +18,8 @@ import dayjs from 'dayjs'
 
 import InviteCodesView from './InviteCodesView.vue'
 
-import { userRefRoute } from '@/lib/userRef'
 import { SpacesApi } from '@/api/spaces'
+import { userRefRoute } from '@/lib/userRef'
 
 const route = useRoute()
 const router = useRouter()

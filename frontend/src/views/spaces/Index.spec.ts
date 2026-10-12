@@ -198,17 +198,17 @@ describe('space creation', () => {
   it('hands over the invite code first, then lands in the new space', async () => {
     listProjects.mockResolvedValue({ data: [] })
     spacesCreate.mockResolvedValue({
-        space: { id: 7 },
-        inviteCode: {
-          id: 1,
-          spaceId: 7,
-          code: '9F3A-2C71-B8E4',
-          maxUses: 50,
-          useCount: 0,
-          expiresAt: null,
-          createdAt: 0,
-        },
-      })
+      space: { id: 7 },
+      inviteCode: {
+        id: 1,
+        spaceId: 7,
+        code: '9F3A-2C71-B8E4',
+        maxUses: 50,
+        useCount: 0,
+        expiresAt: null,
+        createdAt: 0,
+      },
+    })
     const page = mountPage()
     await fireEvent.click(page.getByRole('button', { name: 'spaces.create.open' }))
     await flush()

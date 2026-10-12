@@ -32,8 +32,8 @@ import dayjs from 'dayjs'
 
 import RosterView from './RosterView.vue'
 
-import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { SpacesApi } from '@/api/spaces'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { TasksApi } from '@/network/api/tasks'
 import { useEvents } from '@/views/tasks/events'
 

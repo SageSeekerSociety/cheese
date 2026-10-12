@@ -49,7 +49,7 @@ async function load() {
   loadError.value = null
   try {
     // 多要一条：见文件开头第 5 条。多的那一条只决定下一页按钮亮不亮。
-    const { items: rows } = (await SpacesApi.reviews(status.value, offset.value, PAGE + 1))
+    const { items: rows } = await SpacesApi.reviews(status.value, offset.value, PAGE + 1)
     hasMore.value = rows.length > PAGE
     items.value = hasMore.value ? rows.slice(0, PAGE) : rows
   } catch (e) {

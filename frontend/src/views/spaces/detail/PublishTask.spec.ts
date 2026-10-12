@@ -204,15 +204,15 @@ function categoriesBody() {
 /** 空间那一份：角色是拿登录的人跟 `admins` 对出来的。 */
 function spaceBody() {
   return {
-      space: {
-        id: SPACE_ID,
-        name: '数据结构空间',
-        admins: [
-          { role: 'OWNER', user: { id: 1, username: 'owner', nickname: '所有者' } },
-          { role: 'ADMIN', user: MANAGER },
-        ],
-      },
-    }
+    space: {
+      id: SPACE_ID,
+      name: '数据结构空间',
+      admins: [
+        { role: 'OWNER', user: { id: 1, username: 'owner', nickname: '所有者' } },
+        { role: 'ADMIN', user: MANAGER },
+      ],
+    },
+  }
 }
 
 /** 以某个人的身份打开这一页（角色由空间 store 按登录的人算）。 */

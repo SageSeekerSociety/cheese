@@ -13,12 +13,12 @@ import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 
 import { toast } from 'vuetify-sonner'
 
-import { t } from '@/i18n'
 import { SpacesApi } from '@/api/spaces'
-import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
+import { t } from '@/i18n'
 import { TagsApi } from '@/network/api/tags'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
+import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
 
 export function useSpaceData() {
   const space = useSpaceStore()
