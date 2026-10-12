@@ -352,33 +352,32 @@ class RemoteDeviceHub:
             remaining = deadline - time.monotonic()
             return min(backoff, OWNER_CONNECT_RETRY_MAX_DELAY_S, remaining)
 
-        async for attempt in AsyncRetrying(
+        async def once() -> httpx.Response:
+            nonlocal payload, answer_timeout
+            if operation_deadline is not None:
+                remaining_budget = operation_deadline - time.monotonic()
+                if remaining_budget <= 0:
+                    raise TimeoutError("Device call deadline expired before dispatch")
+                payload = {**payload, "timeout": remaining_budget}
+                answer_timeout = httpx.Timeout(
+                    remaining_budget + OWNER_CALL_TIMEOUT_SLACK_S,
+                    connect=min(OWNER_CONNECT_TIMEOUT_S, remaining_budget),
+                )
+            return await self._request(
+                "POST",
+                f"/internal/device-connection/call/{name}",
+                json=payload,
+                timeout=answer_timeout,
+            )
+
+        return await AsyncRetrying(
             retry=retry_if_exception_type(
                 (httpx.ConnectError, httpx.ConnectTimeout, OwnerDraining)
             ),
             stop=lambda _: time.monotonic() >= deadline,
             wait=wait,
             reraise=True,
-        ):
-            with attempt:
-                if operation_deadline is not None:
-                    remaining_budget = operation_deadline - time.monotonic()
-                    if remaining_budget <= 0:
-                        raise TimeoutError(
-                            "Device call deadline expired before dispatch"
-                        )
-                    payload = {**payload, "timeout": remaining_budget}
-                    answer_timeout = httpx.Timeout(
-                        remaining_budget + OWNER_CALL_TIMEOUT_SLACK_S,
-                        connect=min(OWNER_CONNECT_TIMEOUT_S, remaining_budget),
-                    )
-                return await self._request(
-                    "POST",
-                    f"/internal/device-connection/call/{name}",
-                    json=payload,
-                    timeout=answer_timeout,
-                )
-        raise AssertionError("unreachable: reraise=True ends every failed run")
+        )(once)
 
     async def _call(self, name: str, payload: dict[str, Any]) -> Any:
         response = await self._call_owner(name, payload)
