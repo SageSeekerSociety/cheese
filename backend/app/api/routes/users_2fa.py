@@ -18,7 +18,7 @@ is named anywhere else in the tree.
 
 What stays behind, and why. `_spend_sudo_ticket` is not this group's: it is
 what every sudo-gated route in the tree redeems a ticket through, so it lives
-in `users_common.py` with the reservation scope it claims in, and this module
+in `users_deps.py` with the reservation scope it claims in, and this module
 imports it together with the shared SudoTicketRequest. `GET /users/{userId}/2fa/status`
 reads whether the account has a passkey through `PasskeyService`, using the same
 request session as the second-factor status query.
@@ -52,7 +52,7 @@ from fastapi import APIRouter, Body, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
-from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
+from app.api.users_deps import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose

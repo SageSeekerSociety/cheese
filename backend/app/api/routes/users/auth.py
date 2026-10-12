@@ -32,7 +32,7 @@ from app.api.routes.users._common import (
     _trusted_device,
     logger,
 )
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     _SUDO_TICKET_SCOPE,
     REFRESH_COOKIE,
     _clear_refresh_cookie,

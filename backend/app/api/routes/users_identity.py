@@ -15,11 +15,11 @@ and the two shapes they read, `PutUserIdentityRequest` and
 `PatchUserIdentityRequest`: nothing else in the tree names either, so they are
 this module's own request models rather than two more classes at the top of
 the file being split. SudoTicketRequest is shared with passkey and two-factor
-operations, so it is imported from users_common beside the ticket spender.
+operations, so it is imported from users_deps beside the ticket spender.
 
 The three writes and the precise read each spend a sudo ticket; that is the
 decision this slice had to make once for all three of its modules, and it is
-recorded on `users_common.py`, which is where `_spend_sudo_ticket` now lives.
+recorded on `users_deps.py`, which is where `_spend_sudo_ticket` now lives.
 `get_user_realname_service` is a FastAPI dependency assembled in `app/api/deps.py`,
 alongside the other account service dependencies.
 
@@ -44,7 +44,7 @@ from fastapi import APIRouter, Body, Depends, Path, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.deps import get_user_realname_service
-from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
+from app.api.users_deps import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose

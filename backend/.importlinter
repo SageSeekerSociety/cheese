@@ -470,7 +470,6 @@ unmatched_ignore_imports_alerting = warn
 ignore_imports =
     app.api.routes.addresses -> app.api.routes.topics
     app.api.routes.app_sign_in -> app.api.routes.users.auth
-    app.api.routes.app_sign_in -> app.api.routes.users_common
     app.api.routes.chat -> app.api.room_snapshot
     app.api.routes.dashboard -> app.api.routes.spaces
     app.api.routes.document_agent -> app.api.routes.document_comments
@@ -506,17 +505,8 @@ ignore_imports =
     app.api.routes.topics_threads -> app.api.routes.topics
     app.api.routes.topics_title -> app.api.routes.topics_tasks
     app.api.routes.topics_transcript -> app.api.routes.topics
-    app.api.routes.users._common -> app.api.routes.users_common
-    app.api.routes.users.auth -> app.api.routes.users_common
-    app.api.routes.users.connections -> app.api.routes.users_common
     app.api.routes.users.oauth -> app.api.routes.legal
-    app.api.routes.users.oauth -> app.api.routes.users_common
     app.api.routes.users.registration -> app.api.routes.legal
-    app.api.routes.users.registration -> app.api.routes.users_common
-    app.api.routes.users_2fa -> app.api.routes.users_common
-    app.api.routes.users_identity -> app.api.routes.users_common
-    app.api.routes.users_passkey -> app.api.routes.users_common
-    app.api.routes.users_password -> app.api.routes.users_common
     app.api.routes.users_team -> app.api.routes.teams
     app.api.task_instructions -> app.api.routes.topics
     app.api.task_origin -> app.api.routes.topics

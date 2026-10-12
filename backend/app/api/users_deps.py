@@ -17,7 +17,7 @@ issuer, `_issue_sudo_ticket`, is the only other writer, and it lives in
 passkey-enrollment offer a finished sign-in hands back). Leaving the constant
 in `users.py` while the spender imports it would make these two modules import
 each other; importing it from here keeps the dependency one-way (`users.py` ->
-`users_common.py`) and keeps both halves claiming in the same namespace, so
+`users_deps.py`) and keeps both halves claiming in the same namespace, so
 they cannot drift apart.
 
 The second group is the session every sign-in funnels through: `issue_session`

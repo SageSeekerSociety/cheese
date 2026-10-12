@@ -318,7 +318,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/users/preferences.py": 2,
     "app/api/routes/users/registration.py": 8,
     "app/api/routes/users_2fa.py": 9,
-    "app/api/routes/users_common.py": 3,
+    "app/api/users_deps.py": 3,
     "app/api/routes/users_identity.py": 5,
     "app/api/routes/users_language.py": 2,
     "app/api/routes/users_passkey.py": 10,
