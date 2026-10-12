@@ -73,8 +73,16 @@ describe('an agent’s change over a pending suggestion', () => {
       agentAuthors: new Set(['cheese-agent']),
     })
     expect(result).toMatchObject({ ok: false, status: 409, body: { error: 'edit', index: 0, reason: 'suggested' } })
-    expect(nodeMarkdown(withoutSuggestions(live))).toBe('第一段讲目标。')
-    expect(pendingSuggestions(live)).toEqual([expect.objectContaining({ author: 'teacher' })])
+    // 「什么都没丢」要在**一份真的被改过的文档**上读，不能断在传进去的那份上：
+    // applyEdits 从不写它，那两条断言换成原样返回的空实现也照样绿。这里落一笔
+    // 碰不到建议的改动 —— 人的建议还在，而它该在的那句话原样没动。
+    const after = applyEdits(live, [{ old: '第一段', new: '第一部分' }], 'direct', 'cheese-agent', {
+      editorIsAgent: true,
+      agentAuthors: new Set(['cheese-agent']),
+    })
+    if (!after.ok) throw new Error(JSON.stringify(after))
+    expect(pendingSuggestions(after.doc)).toEqual([expect.objectContaining({ author: 'teacher' })])
+    expect(nodeMarkdown(withoutSuggestions(after.doc))).toBe('第一部分讲目标。')
   })
 
   it('a person’s change is refused, even over an agent’s suggestion', () => {

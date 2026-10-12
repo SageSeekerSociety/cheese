@@ -123,9 +123,17 @@ def test_the_title_nudge_reads_the_same_string_the_merge_gates_do():
 
     assert nudge is not None
     assert nudge.note_code is notes.NoteCode.pr_title_disagrees
-    # 展示那一行照旧是洗过的，并且点破差别在看不见的地方。
+    # 展示的那一行是洗过的：控制字符不许原样送到读的人眼前。
     assert "\x1b" not in nudge.content
-    assert "含不可见字符" in nudge.content
+    # 洗掉的只是不可见字节，不是标题本身 —— 看得见的差别原样给读者，不然他
+    # 根本没法照着改。
+    visible = nudges._title_nudge(
+        card=card,
+        topic=topic,
+        status=SimpleNamespace(title="fix(review): lands another line"),
+    )
+    assert visible is not None
+    assert "fix(review): lands another line" in visible.content
     # 逐字相同时不报。
     assert (
         nudges._title_nudge(card=card, topic=topic, status=SimpleNamespace(title=line))

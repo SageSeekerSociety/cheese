@@ -1675,6 +1675,36 @@ def test_poll_holds_the_notice_and_the_armed_merge_while_the_titles_disagree(
     assert card["status"] == "pending"  # 没有以布防人的名义被合掉
 
 
+def test_the_poll_clears_the_title_mismatch_face_once_the_two_lines_agree_again(
+    client, app_world
+):
+    """两行又对上之后，卡面那行「合并已暂停」要跟着消失。
+
+    改 PR 标题**不动 head**，所以换 head 时那次清理永远轮不到它：只有「还分不
+    分家」这条判据自己收回，卡面才会空下来。不清，卡面一直亮着红灯，而同一
+    次轮询已经在下边报了「可以合了」—— 同屏两句话互相打脸。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    # 先把两行拆开：轮询把这句写到卡面上。
+    fake.prs[number]["title"] = "fix(review): land the title the checks judged"
+    _poll(client)
+    wait_work_idle()
+    assert "不一致" in _cards(client, tid)[0]["note"]
+    assert fake.merge_calls == []  # 检查绿也不合
+
+    # 人把 GitHub 上的标题改回卡片那一行。**head 一个字没动**。
+    fake.prs[number]["title"] = "chore(test): file an accept card"
+    _poll(client)
+    wait_work_idle()
+
+    card = _cards(client, tid)[0]
+    assert card["pr_head_sha"] == head_sha  # 这一轮 head 没动
+    assert card["note"] == ""  # 那句说的是过去，跟着消失
+    assert card["note_level"] is None
+
+
 def test_merge_anyway_will_not_land_a_line_the_repository_never_checked(
     client, app_world
 ):
