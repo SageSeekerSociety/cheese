@@ -10,14 +10,22 @@ commands and turns each command's report into a verdict nobody can fake:
     never a pass. Running only the always-on guards never proves a changed
     module has coverage — its consumer files must appear in the report.
   * The report decides pass/fail for suites; the exit code only widens it to
-    unknown (pytest 2/3/4/5, Vitest --no-passWithNoTests on an empty graph).
+    unknown (pytest 2/3/4/5, Vitest --noPassWithNoTests on an empty graph).
   * Frontend scope only falls back to the full Vitest run when the change
     cannot be narrowed — a config/.github edit, a test-harness source or an
-    unknown scope. A deletion, a locale/style edit, a prose change or a
-    types-only input keeps the related run seeded by the surviving roots, and
-    when nothing seeds it at all the tier runs only the i18n guards and reports
-    frontend-unit as not run rather than expanding to the suite. A full run must
-    show both i18n guard specs actually executed.
+    unknown scope. A deletion, a style edit, a prose change or a types-only
+    input keeps the related run seeded by the surviving roots. A change under
+    src/ that seeds no root — a locale catalog, a ratchet baseline, an asset —
+    widens: `related` is seeded from the changed source files, and a file the
+    suite reads off disk rather than imports (styles/docBlocks.spec.ts reads
+    its stylesheet with readFileSync) has no edge to the spec that reads it, so
+    the guards alone would pass the tier with the test that answers for the
+    edit never run — measured: 6px -> 8px on the padding-left of
+    .doc-status[data-status] left both i18n guards green and only
+    docBlocks.spec.ts red. A prose change seeds nothing and leaves the suite
+    nothing to judge, so it runs the guards alone and reports frontend-unit as
+    not run rather than expanding to it. A full run must show both i18n guard
+    specs actually executed.
   * The frontend's parallelism is derived from the memory ceiling the caller
     passed (vitest_workers), not pinned: a run given a ceiling that backs
     several forks gets several, and the local default still gets one.
@@ -129,12 +137,26 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
         roots = [p.removeprefix("frontend/") for p in surviving
                  if p.startswith("frontend/src/") and p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
                  and not p.endswith(".d.ts")]
+        # A frontend change with no surviving source root cannot be narrowed
+        # when it carries runtime content: `related` is seeded from the changed
+        # source files, and a file the suite reads off disk rather than imports
+        # has no edge to the spec that reads it — catalog.spec.ts scans the
+        # locale JSON with readFileSync, styles/docBlocks.spec.ts reads its
+        # stylesheet the same way. The guards do not stand in for it either:
+        # measured, a broken rule in docBlocks.css (padding-left 6px -> 8px on
+        # .doc-status[data-status]) left both i18n guards green and only
+        # docBlocks.spec.ts red. Prose is judged by the doc checks and a
+        # declaration file compiles to no runtime, so both may leave the suite
+        # nothing to judge.
+        carries_runtime = any(not p.endswith((".md", ".d.ts"))
+                              and not p.startswith("docs/") for p in frontend_paths)
         # Config, ambient hooks, test-harness sources and unknown scopes cannot
         # be narrowed: nothing tells the related graph what they affect.
         unjudgeable = (conservative
                        or any(p in FRONTEND_META for p in changed)
                        or any(p.startswith(".github/") for p in changed)
-                       or any(p.startswith(("frontend/src/test/", "frontend/scripts/")) for p in frontend_paths))
+                       or any(p.startswith(("frontend/src/test/", "frontend/scripts/")) for p in frontend_paths)
+                       or (carries_runtime and not roots))
         output = tmp / "vitest.json"
         i18n_output = tmp / "i18n.json"
         i18n_check = {"id": "frontend-i18n", "cwd": root / "frontend",

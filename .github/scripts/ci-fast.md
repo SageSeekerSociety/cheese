@@ -104,12 +104,22 @@ everything is still allowed to answer unknown.
   Required CI runs — is left untouched.
 - Frontend Vitest runs the whole suite only when the change cannot be narrowed:
   a config edit, a `.github/` edit, a `frontend/src/test/` or `frontend/scripts/`
-  edit, an unknown path, or no merge base. The full run must be shown to have
-  executed both i18n guard specs. Everything else stays narrow: a deletion, a
-  catalog/asset edit or a prose change still seeds `related` from the surviving
-  source roots, and when nothing seeds it the tier runs only the i18n guards and
-  records `frontend-unit` as not-run with a reason — it does not expand to the
-  suite. The narrow type project extends the real `frontend/tsconfig.json`,
+  edit, an unknown path, no merge base, or a change that seeds no related root
+  while carrying runtime content — a catalog, a ratchet baseline, a stylesheet,
+  a deletion with no surviving root. The full run must be shown to have executed
+  both i18n guard specs. Everything else stays narrow: a deletion beside a
+  surviving source root, and a catalog or prose edit next to a changed source
+  file, still seed `related` from those roots. Only a change that seeds nothing
+  *and* is prose or a declaration file — judged by the doc checks and the type
+  check respectively — leaves the tier running the guards alone with
+  `frontend-unit` recorded not-run and a reason. A seedless change is never left
+  to the guards: `related` is seeded from the changed source files, and a file
+  read off disk — `src/styles/docBlocks.css` is read by `docBlocks.spec.ts` with
+  `readFileSync`, never imported — has no edge to the spec that reads it. A
+  broken rule there passes the narrow tier; measured, changing the
+  `padding-left` of `.doc-status[data-status]` from 6px to 8px left both i18n
+  guards green and only `docBlocks.spec.ts` red. The narrow type project
+  extends the real `frontend/tsconfig.json`,
   bridges `node_modules`, and checks only the surviving changed files against the
   existing tsc-ratchet baseline; a deleted non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.

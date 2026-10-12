@@ -903,6 +903,8 @@ class SelectionEvidenceTest(unittest.TestCase):
             (["frontend/src/test/harness.ts", "frontend/src/keep.ts"], False),   # test harness
             (["frontend/package.json", "frontend/src/keep.ts"], False),         # config edit
             ([".github/workflows/ci-fast.yml", "frontend/src/keep.ts"], False),  # .github edit
+            (["frontend/vite.board-proto.config.mts"], False),                   # config outside FRONTEND_META
+            (["frontend/collab/vitest.config.ts"], False),                       # a second Vitest config
         ):
             plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root, conservative)
             unit = next(p for p in plan if p["id"] == "frontend-unit")
@@ -951,23 +953,53 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-changed" for p in plan))
         self.assertFalse(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
-    def test_frontend_seedless_change_runs_guards_not_the_suite(self):
-        # A catalog-only locale edit seeds no source root. The honest form is
-        # the guard specs plus a stated omission — not the whole suite.
+    def test_frontend_seedless_change_widens_unless_it_is_prose(self):
+        # A seedless change that carries runtime content cannot be judged
+        # narrow, and the guards are not what judges it: a catalog, a ratchet
+        # baseline and a stylesheet are each read by a filesystem scan rather
+        # than through an import edge, so no test file is selected for them and
+        # the guard specs never look at them — a broken rule in docBlocks.css
+        # passes both guards and fails only src/styles/docBlocks.spec.ts, which
+        # reads the stylesheet off disk. The suite is what answers for the
+        # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
-        plan, omissions = test_plan(self.root, ["frontend/src/i18n/zh-CN.json"], {"frontend": True}, self.root)
-        self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
-        self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
-        self.assertEqual([o["id"] for o in omissions], ["frontend-unit", "frontend-typecheck-changed"])
-        self.assertIn("related graph", omissions[0]["reason"])
-        self.assertIn("no changed TS/Vue files", omissions[1]["reason"])
-        self.assertFalse(any(p["id"].startswith("frontend-typecheck") for p in plan))
-        # A prose-only edit and a pure deletion with no surviving root land in
-        # the same place.
-        for changed in (["frontend/README.md"], ["frontend/src/gone.ts"]):
+        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
+        self.put("frontend/scene-baseline.json", "{}\n")
+        for changed in (["frontend/src/i18n/messages/en/tasks.json"],
+                        ["frontend/scene-baseline.json"],
+                        ["frontend/src/styles/docBlocks.css"],
+                        ["frontend/src/gone.ts"]):
+            plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)
+            unit = next(p for p in plan if p["id"] == "frontend-unit")
+            self.assertEqual(unit["evidence"]["mode"], "full", changed)
+            self.assertNotIn("frontend-unit", [o["id"] for o in omissions], changed)
+            self.assertFalse(any(p["id"] == "frontend-i18n" for p in plan), changed)
+        # Prose is judged by the doc checks and a declaration file compiles to
+        # no runtime, so both leave the suite nothing to judge: the guards run
+        # and frontend-unit is stated as not run rather than expanded to.
+        self.put("frontend/src/api/openapi.d.ts", "export {}\n")
+        for changed in (["frontend/README.md"], ["frontend/src/api/openapi.d.ts"]):
             plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)
             self.assertFalse(any(p["id"] == "frontend-unit" for p in plan), changed)
+            self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan), changed)
             self.assertEqual(omissions[0]["id"], "frontend-unit", changed)
+            self.assertIn("no changed frontend source", omissions[0]["reason"], changed)
+
+    def test_frontend_locale_edit_beside_a_root_stays_narrow(self):
+        # The ordinary frontend change: a component and the catalog entries it
+        # uses. The component seeds the related run; the catalog is the guard
+        # specs' subject, and they run beside it in the same tier.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/views/Index.vue", "<template><p>x</p></template>")
+        self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
+        plan, omissions = test_plan(
+            self.root, ["frontend/src/views/Index.vue", "frontend/src/i18n/messages/en/tasks.json"],
+            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        self.assertEqual(unit["evidence"]["roots"], ["src/views/Index.vue"])
+        self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
+        self.assertNotIn("frontend-unit", [o["id"] for o in omissions])
 
     def test_vitest_workers_follow_the_memory_ceiling(self):
         # The arithmetic bounds the black-box path below cannot reach: the core
