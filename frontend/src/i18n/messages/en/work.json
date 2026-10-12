@@ -791,7 +791,8 @@
         "math": "Formula",
         "chart": "Chart",
         "diagram": "Diagram",
-        "status": "Status tag"
+        "status": "Status tag",
+        "canvas": "Canvas"
       },
       "selectionToolbar": "Selection actions",
       "copy": "Copy",
@@ -916,6 +917,31 @@
           "image": "Image",
           "video": "Video"
         }
+      },
+      "canvas": {
+        "untitled": "Untitled canvas",
+        "title": "Canvas title",
+        "about": "What the canvas shows",
+        "full": "Full screen",
+        "exitFull": "Exit full screen",
+        "saveFailed": "Couldn't save",
+        "loadFailed": "Can't read this canvas",
+        "notMade": "No canvas yet",
+        "make": "New canvas",
+        "elsewhere": "The canvas isn't shown here",
+        "height": "Drag to resize",
+        "empty": "No cards yet",
+        "addCard": "Add card",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out",
+        "fit": "Fit to view",
+        "openTask": "Open task",
+        "taskHidden": "You can't see this task",
+        "cardText": "Card text",
+        "emptyCard": "Empty card",
+        "removeCard": "Delete card",
+        "lineLabel": "Line label",
+        "removeLine": "Delete line"
       },
       "historyView": "Show",
       "historyDiff": "Compare with previous",
