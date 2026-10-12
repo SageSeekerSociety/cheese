@@ -49,6 +49,9 @@ async def summon_in_place(*, place, actor, body, db, chat, runner):
             continuation_id=candidate.continuation_id,
         )
         return ok({"started": True})
+    if block_id is not None:
+        # An explicit card must not turn into unrelated unread-message work.
+        return ok({"started": False, "reason": "nothing_pending"})
     if not await chat.has_unread_input(place.conversation_id):
         # Only demonstrably never-sent deliveries may be redispatched here.
         if await redispatch_undelivered(

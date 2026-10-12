@@ -1,15 +1,20 @@
 """Retry continues a failed reply even though its input was already read."""
 
+import asyncio
 import uuid
 
 import pytest
+from sqlalchemy import select
 
 from app.api.deps import get_chat_service
+from app.domain.agent.models import AgentTurn
+from app.domain.delivery.models import NativeInput
 from tests.conftest import StubChannel, settle_turn, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     post_message,
     post_project,
+    room_agent_seat,
     room_socket,
     session_auth_headers,
 )
@@ -44,7 +49,29 @@ def stub_hooks():
     return FailsAfterReading()
 
 
-def failed_reply(client, *, forgotten_mention=False):
+def work_state(client, conversation):
+    async def read():
+        async with client.test_factory() as session:
+            turns = list(
+                await session.scalars(
+                    select(AgentTurn)
+                    .where(AgentTurn.conversation_id == uuid.UUID(conversation))
+                    .order_by(AgentTurn.started_at)
+                )
+            )
+            inputs = list(
+                await session.scalars(
+                    select(NativeInput).where(
+                        NativeInput.conversation_id == uuid.UUID(conversation)
+                    )
+                )
+            )
+            return turns, inputs
+
+    return asyncio.run(read())
+
+
+def failed_reply(client, stub_hooks, *, forgotten_mention=False):
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
@@ -72,27 +99,64 @@ def failed_reply(client, *, forgotten_mention=False):
         b for b in blocks if b["author"] == "alice" and "核对分页方案" in b["content"]
     )
     failure = next(b for b in blocks if (b.get("meta") or {}).get("retryable"))
-    assert bool(message["meta"]["consumed_turn"]) is not forgotten_mention
+    # A failed reply is not successful completion. Receipt is its own fact.
+    assert message["meta"]["consumed_turn"] is None
+    assert "核对分页方案" in stub_hooks.prompts[-1][1]
+    turns, inputs = work_state(client, thread)
+    assert inputs and any(row.echoed_at is not None for row in inputs)
+    assert all(row.completed_at is None for row in inputs)
+    assert stub_hooks.prompts[-1][0] == room_agent_seat(client, room)
+    assert any(str(turn.id) == failure["turn_id"] for turn in turns)
     assert ERROR in failure["meta"]["detail"]
     return thread, failure
 
 
-def summon(client, thread, failure):
+def summon(client, thread, failure, *, require_started=False):
     response = client.post(
         f"/topics/{thread}/summon",
         json={"retry_block_id": failure["id"]},
         headers=session_auth_headers("alice"),
     )
     assert response.status_code == 200, response.text
-    return response.json()["data"]
+    result = response.json()["data"]
+    if require_started and result != {"started": True}:
+        turns, inputs = work_state(client, thread)
+        state = {
+            "turns": [
+                {
+                    "id": str(t.id),
+                    "seat": t.agent_handle,
+                    "content": t.content,
+                    "continuation": str(t.continuation_id),
+                    "delivered": t.delivered_at,
+                    "stopped": t.stopped_at,
+                    "resendable": t.resendable,
+                }
+                for t in turns
+            ],
+            "inputs": [
+                {
+                    "work": str(i.work_id),
+                    "execution": str(i.execution_work_id),
+                    "seat": i.recipient_handle,
+                    "echoed": i.echoed_at,
+                    "completed": i.completed_at,
+                    "terminated": i.terminated_at,
+                    "termination": i.termination,
+                }
+                for i in inputs
+            ],
+        }
+        pytest.fail(f"Retry did not start: {result}; failure={failure}; state={state}")
+    return result
 
 
 def test_retry_continues_the_read_but_failed_request_once(client, stub_hooks):
-    thread, failure = failed_reply(client)
+    thread, failure = failed_reply(client, stub_hooks)
     original_seat = stub_hooks.prompts[-1][0]
     stub_hooks.fail = False
 
-    assert summon(client, thread, failure) == {"started": True}
+    assert summon(client, thread, failure, require_started=True) == {"started": True}
     service = client.app.dependency_overrides[get_chat_service]()
     client.portal.call(settle_turn, service, uuid.UUID(thread))
     wait_work_idle()
@@ -118,8 +182,8 @@ def test_retry_continues_the_read_but_failed_request_once(client, stub_hooks):
 def test_a_second_failure_can_be_retried_without_reviving_the_old_card(
     client, stub_hooks
 ):
-    thread, first = failed_reply(client)
-    assert summon(client, thread, first) == {"started": True}
+    thread, first = failed_reply(client, stub_hooks)
+    assert summon(client, thread, first, require_started=True) == {"started": True}
     service = client.app.dependency_overrides[get_chat_service]()
     client.portal.call(settle_turn, service, uuid.UUID(thread))
     wait_work_idle()
@@ -131,16 +195,16 @@ def test_a_second_failure_can_be_retried_without_reviving_the_old_card(
         "reason": "nothing_pending",
     }
     stub_hooks.fail = False
-    assert summon(client, thread, second) == {"started": True}
+    assert summon(client, thread, second, require_started=True) == {"started": True}
     client.portal.call(settle_turn, service, uuid.UUID(thread))
     wait_work_idle()
     assert len(stub_hooks.prompts) == 3
 
 
 def test_retry_re_admits_the_failed_unread_batch(client, stub_hooks):
-    thread, failure = failed_reply(client, forgotten_mention=True)
+    thread, failure = failed_reply(client, stub_hooks, forgotten_mention=True)
     stub_hooks.fail = False
-    assert summon(client, thread, failure) == {"started": True}
+    assert summon(client, thread, failure, require_started=True) == {"started": True}
     service = client.app.dependency_overrides[get_chat_service]()
     client.portal.call(settle_turn, service, uuid.UUID(thread))
     wait_work_idle()
@@ -158,8 +222,8 @@ def test_retry_re_admits_the_failed_unread_batch(client, stub_hooks):
 
 
 def test_retry_cannot_target_a_failure_in_another_conversation(client, stub_hooks):
-    first_thread, first = failed_reply(client)
-    second_thread, second = failed_reply(client)
+    first_thread, first = failed_reply(client, stub_hooks)
+    second_thread, second = failed_reply(client, stub_hooks)
     assert first_thread != second_thread
     assert summon(client, first_thread, second) == {
         "started": False,
@@ -167,7 +231,9 @@ def test_retry_cannot_target_a_failure_in_another_conversation(client, stub_hook
     }
     assert len(stub_hooks.prompts) == 2
     stub_hooks.fail = False
-    assert summon(client, first_thread, first) == {"started": True}
+    assert summon(client, first_thread, first, require_started=True) == {
+        "started": True
+    }
     service = client.app.dependency_overrides[get_chat_service]()
     client.portal.call(settle_turn, service, uuid.UUID(first_thread))
     wait_work_idle()
