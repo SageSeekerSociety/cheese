@@ -159,8 +159,10 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .more__label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .more__tail{display:flex;align-items:center;gap:6px;flex:none}
 .more__chev{color:var(--faint);font-size:12px}
-.more--ghost{color:var(--faint)}
-.more--ghost .more__label{text-decoration:line-through;text-decoration-color:var(--line-2)}
+.more--open{color:var(--ink)}
+.more--end{color:var(--faint);pointer-events:none}
+/* 展开以后接着挂的其余任务 */
+.tk--rest .tk__t{color:var(--muted)}
 
 /* ---- 主区 ---- */
 .view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--canvas);min-height:0}
@@ -390,11 +392,11 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
        fix:'收起来的频道行尾巴上留一个小数字和一颗灯，看下面「客服值班」：数字是这个频道里进行中的任务数，灯沿用现有口径——绿 = 有队友在跑，黄 = 有事等你。你正打开的那条任务不会被收掉，单独留在下面并标上「你正打开的」。收一下左边「综合」就能看到。',
        ask:'要不要留你正打开的那一条？这一版留着，理由是侧栏对频道已经有同一条规矩——正待着的频道即便没加入也留在列表上（useTopicRail.ts 的 hereChannelId）。不留的话，收起来就一起去掉。',
        work:'TopicSidebar.vue 画 rollup 和这一条；选中任务从 useTopicRail.ts 的 selectedTaskId 拿。'},
-    6:{t:'「展开其余 N 个」这行留不留', s:'这一版专门留给你定的一处',
-       now:'现在它是频道下面最后一行，点一下把频道里其余进行中的任务接在下面。',
-       fix:'这一版把它去掉了（划掉的那一行就是它原来的位置）：新规则下和你有关的都挂着，它剩下的意义只是「看别人的任务」。去掉以后想找这个频道别人的任务，去频道页的「全部任务」。',
-       ask:'三种挑一个：① 去掉（这一版是这样）；② 留着，只管这个频道其余的任务；③ 留着，改成「这个频道全部任务」的一个入口。',
-       work:'去掉 = 前端删 TopicRailMoreTasksRow.vue 那一处渲染和 moreTasks.ts，后端不用动；要留就什么都不用改。'},
+    6:{t:'「展开其余 N 个」这行留着', s:'你说留着，我改回来了——点一下把别人的接在下面，再点收起来',
+       now:'现在它是频道下面最后一行，点一下把频道里其余进行中的任务接在下面。它当初是为了接回「你自己的第 6 条」，所以第 1 条改完以后我把它划掉了。',
+       fix:'留着。第 1 条之后它管的事变了：和你有关的都直接挂着，它接的是这个频道里和你无关的任务——那些还是会有很多，所以这行照样有用。现在点一下原地展开，再点收起来。看「综合」：上面 6 条是你的，展开以后接着挂别人的。',
+       ask:'',
+       work:'不用改。TopicRailMoreTasksRow.vue 和 moreTasks.ts 都留着。'},
     7:{t:'一条都没有的频道', s:'第 2 条照字面读出来的结果',
        now:'和你没有任何关系的频道下面一直空着，什么都不挂。',
        fix:'这一版照字面做：像「测试频道」这样，你一条都没有，也补到 3 条，全是别人的（都带「补足」标签）。',
@@ -403,6 +405,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   };
 
   var seen = {}, current = 0, mode = 'new', selTask = '电脑端待办入口位置', selChannel = 'general';
+  var moreOpen = {};   // 哪个频道的「展开其余 N 个」正开着
   var $ = function(s,r){ return (r||document).querySelector(s); };
   var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
 
@@ -499,22 +502,30 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
         parts.push('</span></button>');
       });
 
-      // 最后那行「展开其余 N 个」
-      if (ch.open) {
-        if (mode === 'now') {
-          var hidden = Math.max(0, ch.open - Math.min(5, ch.mine.length));
-          if (hidden) {
-            parts.push('<button class="more" data-more="1">'
-              + '<span class="more__label">展开其余 '+hidden+' 个</span>'
-              + '<span class="more__tail">'
-              + (ch.id === 'general' ? mk(6) : '')
-              + '<span class="more__chev">⌄</span></span></button>');
+      // 最后那行「展开其余 N 个」：这一行留着。它管的是「这个频道里和我无关的任务」，
+      // 新规则把它自己那几条都挂出来了，别人的还是看不全，所以照样得有。
+      var rest = Math.max(0, ch.open - all.length);
+      if (rest) {
+        var isOpen = !!moreOpen[ch.id];
+        parts.push('<button class="more'+(isOpen?' more--open':'')+'" data-more="'+ch.id+'">'
+          + '<span class="more__label">展开其余 '+rest+' 个</span>'
+          + '<span class="more__tail">'
+          + (ch.id === 'general' ? mk(6) : '')
+          + '<span class="more__chev">'+(isOpen?'⌃':'⌄')+'</span></span></button>');
+        if (isOpen) {
+          // 这一版只用假数据里的几条演一下，条数对不上时末尾交代一句。
+          var padN = mode === 'now' ? 0 : Math.max(0, 3 - ch.mine.length);
+          var restRows = ch.others.slice(padN);
+          restRows.forEach(function(o){
+            parts.push('<button class="tk tk--rest" data-task="'+esc(o.t)+'" data-chid="'+ch.id+'">'
+              + '<span class="tk__t">'+esc(o.t)+'</span>'
+              + '<span class="tk__tail"><span class="t-meta">'+esc(o.when)+'</span></span></button>');
+          });
+          var left = rest - restRows.length;
+          if (left > 0) {
+            parts.push('<span class="more more--end"><span class="more__label">还有 '+left
+              + ' 个，去频道页的「全部任务」</span></span>');
           }
-        } else if (ch.id === 'general') {
-          var rest = Math.max(0, ch.open - ch.mine.length);
-          parts.push('<button class="more more--ghost" data-more="1">'
-            + '<span class="more__label">展开其余 '+rest+' 个</span>'
-            + '<span class="more__tail">'+mk(6)+'</span></button>');
         }
       }
     });
@@ -587,10 +598,18 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
       return;
     }
     var more = e.target.closest('[data-more]');
-    if (more) { openSheet(6); return; }
+    if (more) {
+      var mid = more.dataset.more;
+      moreOpen[mid] = !moreOpen[mid];
+      // 展开/收起这一块是为了看清那一行的作用，顺手把第 6 条也摆出来。
+      if (moreOpen[mid]) openSheet(6);
+      render();
+      return;
+    }
 
     var seg = e.target.closest('#modeSeg button');
     if (seg) {
+      moreOpen = {};
       mode = seg.dataset.mode;
       $$('#modeSeg button').forEach(function(b){ b.classList.toggle('is-on', b === seg); });
       render();
