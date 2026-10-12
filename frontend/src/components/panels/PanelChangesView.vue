@@ -515,7 +515,7 @@ const fileRows = computed(() =>
                       v-if="props.fileToolReady"
                       kind="ghost"
                       size="sm"
-                      prepend-icon="mdi-file-search-outline"
+                      prepend-icon="mdi-magnify"
                       @click="pickerOpen = true"
                     >
                       {{ t('work.room.changes.openOther') }}
