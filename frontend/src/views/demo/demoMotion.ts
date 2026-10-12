@@ -12,13 +12,25 @@ export type MotionMode = 'normal' | 'slow' | 'off'
 /** 倍数。关掉不是删过渡——过渡还在，只是不花时间，终态和正常档一模一样。 */
 export const MOTION_FACTOR: Record<MotionMode, number> = { normal: 1, slow: 4, off: 0 }
 
+// 档位上的倍数从 `MOTION_FACTOR` 拼出来，不在这里再写一遍数：倍数改了，按钮上的字
+// 和那句说明一起改，不会出现「按钮写着 ×4、实际乘了 2」。改倍数时另有两处跟着改——
+// `demoMotion.spec.ts` 和 `CatalogDetailPage.spec.ts` 里按 label 找按钮的那两行。
 export const MOTION_MODES: ReadonlyArray<{ id: MotionMode; label: string }> = [
   { id: 'normal', label: '正常' },
-  { id: 'slow', label: '慢放 ×4' },
+  { id: 'slow', label: `慢放 ×${MOTION_FACTOR.slow}` },
   { id: 'off', label: '关' },
 ]
 
 const DURATION_NAME = /^--dur-/
+
+/**
+ * 产品自己那四条时长 token 的名字，照 `src/style.css` 的 `:root` 抄。
+ *
+ * 慢放改的就是它们（这是这个文件存在的理由）；动效台给每一格标「用的哪条 token」时
+ * 也要拿它来核对 —— 两边都从这一份读，不各写一份名字。token 改名时这份要跟着改，
+ * 忘了 `demoTransitions.spec.ts` 会把名字和 `style.css` 对一遍，对不上就红。
+ */
+export const DURATION_TOKENS = ['--dur-press', '--dur-quick', '--dur-base', '--dur-slow']
 
 /**
  * 每条 token 的原值，见过一次就记下来。

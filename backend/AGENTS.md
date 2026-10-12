@@ -7,28 +7,15 @@ Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here
 `app/` is layered **api -> domain -> core**. Imports that point backwards, a
 route reaching into another domain's models, or a cycle between sibling domains
 under `app.domain` are failures — including when the import sits inside a
-function. Pre-existing violations are frozen in `.importlinter` as exact
-`importer -> imported` pairs; new ones are not.
-
-```bash
-uv run python scripts/check_boundaries.py            # what CI runs (add --self-test)
-uv run lint-imports                                  # the same, unfiltered
-uv run python scripts/boundary_baseline.py --update  # drop stale frozen lines (never adds)
-```
-
-There is no wildcard exemption: if a pair is in the freeze, it names that module
-and that target. Full reasoning, and which rules are conventions rather than
-checks: [`../.claude/rules/architecture.md`](../.claude/rules/architecture.md).
+function. The contracts and the frozen `importer -> imported` pairs are in
+`.importlinter`; `task boundaries` (`Taskfile.yml`) runs them.
 
 Imports inside a function body may only go down: lift one to the top of the
 module, or say why it cannot be with `# deferred-import: <reason>` on the same
 line or the line above. Unexplained ones are frozen per file in
-`deferred-import-baseline.json`; a new file may have none.
-
-```bash
-uv run python scripts/check_deferred_imports.py            # what CI runs (add --self-test)
-uv run python scripts/check_deferred_imports.py --update   # lower the baseline (never raises)
-```
+`deferred-import-baseline.json`; a new file may have none. What counts as a
+reason, how the count is taken, and the shrink-only refresh command are in
+`scripts/check_deferred_imports.py`.
 
 ## Refactors must preserve the callers and the frozen graph
 
@@ -65,13 +52,12 @@ and cache-pricing constraints in
 
 ## Caps and conventions
 
-- `app/**/*.py` over **1500 lines** may not grow — 4 files are already there and
-  are frozen at their current size. `.claude/scripts/check-file-sizes.py` judges
-  only the files this branch changed, each against the size it had at the merge
-  base with `origin/main`.
-- From the repository root, run `task ci:fast` before you push: it runs the
-  checks your changed paths select, inside a time budget. Add `--types` when you
-  touch shared types; `task be:check` runs the whole backend check locally.
+- `app/**/*.py` over **1500 lines** may not grow: a file already over the cap is
+  frozen at the size it had at the merge base with `origin/main`. The cap, the
+  reason and the exception list are in `.claude/scripts/check-file-sizes.py`.
+- Run `task ci:fast` from the repository root before you push (see
+  [`../AGENTS.md`](../AGENTS.md)); add `--types` when you touch shared types.
+  `task be:check` runs the whole backend check locally.
 - Migrations: [`../.claude/rules/migrations.md`](../.claude/rules/migrations.md)
   — the alembic chain has exactly one head at all times.
 - Test pitfalls by symptom:
