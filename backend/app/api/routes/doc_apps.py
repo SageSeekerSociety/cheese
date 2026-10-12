@@ -23,12 +23,14 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.doc_access import Reached, reach, require_writable
 from app.api.request_deps import DbSession
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.web_snippet import check
 from app.domain.web_snippet.services import SHELL, Snippets, shot_name
 
-router = APIRouter(tags=["documents"])
+# Who writes is decided in the handler: 芝士 only (`_writer`).
+router = APIRouter(tags=["documents"], dependencies=[ROUTE_DECIDES])
 
 #: Larger than this is not a snippet any more: a page that size belongs in the
 #: project as a website.

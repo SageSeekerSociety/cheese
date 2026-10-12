@@ -400,14 +400,14 @@ def test_frozen_does_not_exempt_other_method_or_new_registration():
 def test_existing_frozen_debt_keeps_exact_b9_leaves():
     (pair,) = FROZEN
     assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        706,
-        730,
+        711,
+        735,
         "http",
         "GET",
     )
     records = [
-        replace(record(706, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(730, pair.later_path), endpoint=pair.later_endpoint),
+        replace(record(711, pair.earlier_path), endpoint=pair.earlier_endpoint),
+        replace(record(735, pair.later_path), endpoint=pair.later_endpoint),
     ]
     assert checked_findings(records, FROZEN) == []
 

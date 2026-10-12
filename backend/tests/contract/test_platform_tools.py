@@ -71,6 +71,13 @@ CALLS = {
         "/projects/fixture-project/documents",
     ),
     "cheese_doc_list": ({}, "GET", "/projects/fixture-project/documents"),
+    # 小程序跟着文档走：新建落在这份文档下，改和读按它的短号。
+    "cheese_app_save": (
+        {"code": "<div>试算</div>", "title": "试算"},
+        "POST",
+        "/documents/fixture-id/apps",
+    ),
+    "cheese_app_get": ({"app": "q7m2kx4t"}, "GET", "/apps/q7m2kx4t"),
     "cheese_task": (
         {"title": "数据清洗", "summary": "按新口径重算", "start": False},
         "POST",

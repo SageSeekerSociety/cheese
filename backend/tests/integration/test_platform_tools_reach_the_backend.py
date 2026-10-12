@@ -342,3 +342,34 @@ def test_a_document_made_in_a_thread_is_shown_in_that_thread(client, room):
 
     assert len(lines(thread)) == 1
     assert lines(topic) == []
+
+
+def test_a_new_version_of_a_mini_app_is_what_the_document_then_shows(
+    client, task, monkeypatch
+):
+    """Saving a new version moves the document's block onto it: an app saved
+    and a document still naming the old version is the step a writer forgets."""
+    from app.domain.web_snippet import check
+
+    async def ran(code, shell):
+        return check.Ran(heights={400: 200, 720: 180})
+
+    monkeypatch.setattr(check, "run", ran)
+    host = BackendHost(client, *task)
+
+    made = cheese.run_platform_tool(
+        "cheese_app_save", {"code": "<p>第一版</p>", "title": "试算"}, host
+    )
+    block = made[made.index(":::app") :].replace("一句话说明", "拖动看结果。")
+    key = block.split()[1].split("@")[0]
+    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc_set", {"content": f"正文\n\n{block}\n"}, host)
+
+    said = cheese.run_platform_tool(
+        "cheese_app_save", {"code": "<p>第二版</p>", "app": key}, host
+    )
+
+    assert "第 2 版" in said
+    shown = cheese.run_platform_tool("cheese_doc_get", {}, host)
+    assert f":::app {key}@2 试算" in shown
+    assert f"{key}@1" not in shown
