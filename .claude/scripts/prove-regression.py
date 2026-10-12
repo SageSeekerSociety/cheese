@@ -17,12 +17,15 @@ believe. AGENTS.md states the rule; this only makes obeying it cheap.
 HOW IT RUNS THE TWO HALVES. A detached git worktree at the revision you name is
 the "without the fix" state; your working tree is the "with the fix" state. The
 test file, plus anything you pass with --copy, is copied into the worktree so the
-new test exists on both sides. backend/.venv and frontend/node_modules are
-symlinked in, so the worktree runs the same interpreter and packages as your tree
-instead of installing them again. The "with the fix" half runs in your tree, so
-running it can write there too (a `uv run` in a tree with no `backend/.venv`
-creates one); nothing else in your tree is touched, and the worktree is removed
-afterwards unless you pass --keep.
+new test exists on both sides; four dependency directories — backend/.venv,
+frontend/node_modules, node_modules and .venv, at the repository root — are
+symlinked in when they exist, so the worktree runs the same interpreter and
+packages as your tree instead of installing them again. Both halves can write
+where they run, so the "with the fix" half writes in your tree. What it writes
+there is its runner's doing, not this script's: a `uv run` installs into a tree
+that has no environment of its own, and so does `task`, which is why
+`--command` gets no probe. Nothing else in your tree is touched, and the
+worktree is removed afterwards unless you pass --keep.
 
   python3 .claude/scripts/prove-regression.py backend/tests/unit/test_x.py::test_y \
       --without <revision without the fix>
@@ -31,22 +34,27 @@ The first run must fail and the second must pass. Exit 0 proven, 1 not proven,
 2 could not judge — the last for a node id that does not resolve, a revision that
 is not a commit here, a layout this script has no runner for, a --copy file that
 is missing or that would land outside the worktree, a runner that is not on PATH,
-an inferred runner whose dependencies are not installed, a command that exited 127
-without ever running. If your test is not one of the two layouts below, say how to
-run it with --command; the script will not guess a runner it does not know,
-because a runner that is not installed looks exactly like a test that does not
-fail. The two it does know it asks first, and reads the answer after: a runner
-that cannot start, and a run that ends before the test reaches a verdict — a
-dependency that is not installed, a module the test imports that this half does
-not have, a test that only collects with the fix in place — are refusals rather
-than results. A fix that adds a module the test imports is a real regression
-guard, and it is refused here too; pass --command to have that code read as the
-failure it looks like, which is the price of never calling a test that was not
-collected "watched failing". With --command it can ask nothing, and a program
-that starts but cannot run its test still reads as a result, so keeping that
-command's dependencies installed is yours to do. A test that needs Postgres
-needs the dev stack up first (`eval "$(bash .claude/scripts/dev-db.sh env)"`);
-this script never starts it.
+an inferred run that did not end in a verdict, a command that exited 127 without
+ever running. If your test is not one of the two layouts below, say how to run it
+with --command; the script will not guess a runner it does not know, because a
+runner that is not installed looks exactly like a test that does not fail.
+
+The two it does know get no guessing either: for them, only a pass and a failure
+are results. Each runner is asked for its version before either half is read, and
+the run itself is read only when it ends in 0 or 1 — pytest's 1 is "some tests
+failed", vitest's 1 is "tests failed". Anything else is refused, whatever the
+number. That asymmetry is the point: the codes a runner uses when the test never
+ran are its own to choose, and pytest spreads them over a range — 2 for a
+collection error, 4 for a node id that collected nothing, 5 for a run that
+collected nothing at all — so a table of them would always be one short. With
+--command the script is told nothing, because the caller named that command and
+the tree it runs in; its dependencies are theirs to keep installed. A fix that adds a module the test
+imports is a real regression guard, and it is refused on the inferred runner too,
+because the test is copied into the worktree but that module is not there; pass
+`--command` to have the code read as the failure it looks like, which is the
+price of never calling a test that was not collected "watched failing". A test
+that needs Postgres needs the dev stack up first (`eval "$(bash
+.claude/scripts/dev-db.sh env)"`); this script never starts it.
 
 The runners it infers are the two this repository uses: pytest over `backend/`
 (`uv run --no-sync`), vitest over `frontend/` (`pnpm exec`).
@@ -100,17 +108,19 @@ STALE_AFTER = 24 * 60 * 60
 #: to avoid, arriving by the other door.
 CANNOT_RUN = 127
 
-#: What an inferred runner exits when the test did not reach a verdict: `uv run
-#: --no-sync pytest` on a tree whose dependencies are not installed exits 2,
-#: `pnpm exec vitest` exits 254, and `uv` passes pytest's own 2 through —
-#: "interrupted", an error during collection, a module the test imports that this
-#: half does not have. A test that ran and failed exits 1, so none of these is a
-#: result. They are the same mistake CANNOT_RUN guards against, one door along:
-#: the runner started, so the check for a program that never did misses it, and
-#: only asking the runner first, and reading its code after, tells that apart
-#: from a red half. `cannot_start` reads the answer to `--version`; `run` reads
-#: the run's own code — the second catches what reached pytest and never got out.
-CANNOT_SPAWN = {"uv": 2, "pnpm": 254}
+#: What each inferred runner exits when the test failed. Everything else is a run
+#: that did not reach a verdict, and is refused rather than judged. pytest's
+#: codes are a range as wide as its failure modes — 2 "interrupted" (a collection
+#: error, a module the test imports that this half does not have), 3 an internal
+#: error, 4 "found no collectors" for a `::name` that is not there, 5 nothing
+#: collected — and `uv` passes them through, so a table of them would always be
+#: one short. Vitest has its own: it exits 1 for failed tests and 254 for a
+#: binary it could not load. Neither number is a verdict, and the two that are
+#: are the same in both. This is the mistake CANNOT_RUN guards
+#: against, one door along — the runner started, so the check for a program that
+#: never did misses it — and it closes the same way from both sides: asking the
+#: runner up front (`cannot_start`) and reading the run's own code after (`run`).
+FAILURE_CODES = {0, 1}
 
 FIX_HINT = (
     "修法：把 --without 指到「不含这个修复」的提交（通常是你那条修复提交的父提交）。"
@@ -213,9 +223,11 @@ def runner_probe(argv: list[str]) -> list[str] | None:
 
     Both layouts below run through "use what is already installed" (`uv run
     --no-sync`, `pnpm exec`), so a tree whose dependencies are missing gives a
-    runner that starts and then exits without running the test — the codes in
-    CANNOT_SPAWN, none of which is a result. Asking the same runner for its
-    version first puts that answer where it can be told apart from a red half.
+    runner that starts and then exits without running the test — a code outside
+    FAILURE_CODES, which is no result. Asking the same runner for its version
+    first puts that answer where it can be told apart from a red half, and the
+    question is asked greedily: anything but 0 is a runner that could not load
+    the test, because that is the only answer that means it could.
 
     `--command` gets no probe: the caller named that command, and whether it can
     start is the caller's to know.
@@ -364,18 +376,20 @@ def without_fix(root: Path, sha: str, tree: Path, copies: list[str], keep: bool)
 def cannot_start(probe: list[str], where: Path) -> None:
     """Stop when an inferred runner started and could not load its test.
 
-    Only the code that runner uses for that answer counts (`CANNOT_SPAWN`); any
-    other reply to `--version` is not this script's business, and the run that
-    follows is what decides. Judging a runner that never ran would put a verdict
-    on a test that was not executed — the mistake `runner_for` refuses to make
-    for layouts it does not know, arriving for the ones it does.
+    Only 0 is that answer. A runner that could not load its test has no reason
+    to exit 0 from `--version`, and it chooses its own code for every other way
+    of failing — 2 for `uv` with no environment, 254 for `pnpm` exec with no
+    vitest — so asking which non-zero code means "cannot load" would be a table
+    one short. Judging a runner that never ran would put a verdict on a test
+    that was not executed — the mistake `runner_for` refuses to make for layouts
+    it does not know, arriving for the ones it does.
     """
     try:
         done = subprocess.run(probe, cwd=str(where), capture_output=True, check=False)
     except FileNotFoundError as exc:
         print(f"prove-regression: {exc.filename} is not on PATH", file=sys.stderr)
         raise SystemExit(2) from exc
-    if done.returncode == CANNOT_SPAWN.get(probe[0]):
+    if done.returncode:
         print(
             f"prove-regression: {' '.join(probe)} could not load the test "
             f"({probe[0]} exited {done.returncode}); the test did not run",
@@ -403,21 +417,20 @@ def run(argv: list[str], where: Path, probe: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         raise SystemExit(2)
-    if done.returncode == CANNOT_SPAWN.get(argv[0]):
-        # The runner started and then ended without the test reaching a verdict:
-        # `uv` passes pytest's own 2 through, which is "interrupted", an error
-        # during collection, or a module the test imports that this half does not
-        # have. Nothing was asserted, so a red half here would credit the fix
-        # with a failure that was the run's, and a green half with nothing at
-        # all — and a before half that only could not be collected is exactly the
-        # "was this test ever red" this tool exists to answer. The price is that
-        # a fix which adds a module the test imports fails here instead of
-        # proving itself; --command is the way to have that code read as a
-        # failure. Only the two inferred runners have a code to compare: with
-        # --command, argv[0] is the shell and this never fires.
+    if probe is not None and done.returncode not in FAILURE_CODES:
+        # An inferred runner ended somewhere other than a pass or a failure, so
+        # the test did not reach a verdict: pytest's 2 is a collection error, its
+        # 4 is a `::name` that collected nothing, its 5 is nothing collected at
+        # all, 3 is an error inside pytest, and `pnpm exec vitest` has a range of
+        # its own. Nothing was asserted, so a red half here would credit the fix
+        # with a failure that was the run's, and a before half that only could
+        # not be collected is exactly the "was this test ever red" this tool
+        # exists to answer. Keyed on the probe rather than on the runner's name,
+        # because --command does not name one: a caller who names the command
+        # and keeps the tree it runs in owns both the code and the blame.
         print(
             f"prove-regression: {' '.join(argv)} exited {done.returncode} without "
-            "the test reaching a verdict — the test could not be collected, or the "
+            "the test reaching a verdict — the test was not collected, or the "
             "runner stopped. Pass --command to have a code like this read as the "
             "failure it looks like.",
             file=sys.stderr,
@@ -859,12 +872,13 @@ def self_test() -> int:
             escaped,
         )
 
-        # A runner that starts and then cannot find its test exits with its own
-        # code — 2 under uv, 254 under pnpm — and a test that ran and failed
-        # exits 1. Reading the first as the second is the mistake the 127 guard
-        # was added to close, one door along: nothing ran either way. Both
-        # layouts, because the probe and the code it is compared against are
-        # per runner.
+        # A runner that is there but cannot load its test — the program exists,
+        # the package it drives does not — exits with its own code: 2 under uv,
+        # 254 under pnpm. A test that ran and failed exits 1. Reading the first
+        # as the second is the mistake the 127 guard was added to close, one door
+        # along: nothing ran either way. A runner that cannot load its test
+        # cannot answer for itself either, so this is the probe's door, and it is
+        # a different program in each layout.
         broken = Path(scratch) / "broken-shims"
         broken.mkdir()
         for name, code in (("uv", 2), ("pnpm", 254)):
@@ -883,27 +897,61 @@ def self_test() -> int:
                 and "NOT PROVEN" not in stalled.stdout,
             )
 
-        # The same mistake one door along again: the runner starts — `--version`
-        # answers — and then ends without the test reaching a verdict, which is
-        # the code `--version` was being read for. A verdict here would be about
-        # the run, not the test. This shim answers 0 for the probe and 2 for the
-        # run, so the probe cannot be what refuses it.
-        verdictless = Path(scratch) / "verdictless-shims"
-        verdictless.mkdir()
-        (verdictless / "uv").write_text(
-            "#!/bin/sh\ncase \"$*\" in *--version*) exit 0;; esac\nexit 2\n",
+        # The same mistake one door along again, and the door the probe cannot
+        # stand in for: the runner starts — `--version` answers 0 — and the run
+        # ends somewhere other than a pass or a failure. Every such code is
+        # refused rather than the ones someone happened to see, because they are
+        # a range: pytest exits 2 for a collection error (a module the test
+        # imports that this half does not have), 3 for an error inside pytest, 4
+        # for a `::name` that collected nothing, 5 for nothing collected at all,
+        # and `uv` passes each through — so a table of them is one short as soon
+        # as the test file grows an import or the node id grows a name, which is
+        # the shape the PR's own example took. A verdict here would be about the
+        # run, not the test. The shim answers 0 for the probe, so the probe
+        # cannot be what refuses it.
+        for code in (2, 3, 4, 5):
+            shim_dir = Path(scratch) / f"verdictless-{code}"
+            shim_dir.mkdir()
+            (shim_dir / "uv").write_text(
+                f'#!/bin/sh\ncase "$*" in *--version*) exit 0;; esac\nexit {code}\n',
+                encoding="utf-8",
+            )
+            (shim_dir / "uv").chmod(0o755)
+            stalled_run = prove(
+                without,
+                None,
+                node="backend/tests/test_app.py::test_add",
+                path=f"{shim_dir}{os.pathsep}{env.get('PATH', '')}",
+            )
+            tally.case(
+                f"end to end: a uv run exiting {code} is not judged",
+                stalled_run.returncode == 2
+                and "without the test reaching a verdict" in stalled_run.stderr
+                and "--command" in stalled_run.stderr
+                and "NOT PROVEN" not in stalled_run.stdout,
+            )
+        # The same door from the other runner, and the reason a check written
+        # against uv's numbers is not enough: pnpm's is 254 for a binary it could
+        # not load, and a `::name` in a vitest node id is no more collected than
+        # pytest's.
+        shuttle = Path(scratch) / "verdictless-pnpm"
+        shuttle.mkdir()
+        (shuttle / "pnpm").write_text(
+            '#!/bin/sh\ncase "$*" in *--version*) exit 0;; esac\nexit 254\n',
             encoding="utf-8",
         )
-        (verdictless / "uv").chmod(0o755)
-        verdictless_path = f"{verdictless}{os.pathsep}{env.get('PATH', '')}"
-        stalled_run = prove(
-            without, None, node="backend/tests/test_app.py", path=verdictless_path
+        (shuttle / "pnpm").chmod(0o755)
+        stalled_pnpm = prove(
+            without,
+            None,
+            node="frontend/src/a.spec.ts",
+            path=f"{shuttle}{os.pathsep}{env.get('PATH', '')}",
         )
         tally.case(
-            "end to end: a run that never reaches a verdict is not judged",
-            stalled_run.returncode == 2
-            and "without the test reaching a verdict" in stalled_run.stderr
-            and "NOT PROVEN" not in stalled_run.stdout,
+            "end to end: a pnpm run exiting 254 is not judged",
+            stalled_pnpm.returncode == 2
+            and "without the test reaching a verdict" in stalled_pnpm.stderr
+            and "NOT PROVEN" not in stalled_pnpm.stdout,
         )
         # ... and it is the code that decides, not the shim: the same shape
         # failing with 1 is an ordinary red half and is judged like one.
@@ -923,6 +971,22 @@ def self_test() -> int:
         tally.case(
             "end to end: the same shim failing with 1 is still judged",
             ordinary.returncode == 1 and "NOT PROVEN" in ordinary.stdout,
+        )
+        # ... and the refusal is the probe's, not the exit code's on its own.
+        # `--command` is a command the caller named and a tree they keep
+        # installed, so its numbers mean what they say they mean, and a code that
+        # is neither 0 nor 1 is still a failure to answer: this one fails with 2
+        # without the fix — the fix's own file is what it looks for — and passes
+        # with it, which is PROVEN and not "could not judge". Reading the code
+        # the same way as an inferred runner's would refuse the one case the
+        # escape hatch exists for.
+        from_command = prove(
+            without,
+            'if grep -q "value = 2" app.py; then exit 0; else exit 2; fi',
+        )
+        tally.case(
+            "end to end: a --command that exits 2 is judged, not refused",
+            from_command.returncode == 0 and "PROVEN" in from_command.stdout,
         )
         # The probe runs once per half, in that half's own directory, so a runner
         # that answers in one tree and not the other is refused on the side that
