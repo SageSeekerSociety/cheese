@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -429,6 +430,34 @@ def test_an_idle_sandbox_is_destroyed_and_the_next_tool_call_gets_a_new_one(clou
     assert not (home / "room" / "notes.md").exists()
     # Told once.
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
+
+
+def test_a_session_that_will_not_wait_is_answered_however_slow_the_new_sandbox(
+    cloud, monkeypatch
+):
+    """A session that asks for its hands without waiting for them (a relaunch,
+    or a tool asking first so that it can say the machine is being prepared)
+    is answered within its own time, not the 50 s a waiting call may take,
+    however long a step of making its new sandbox takes (dev, 2026-10-12: a
+    relaunch held 50 s and then failed its start)."""
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 50.0)
+    monkeypatch.setattr(work_lease, "ANSWER_S", 1.0, raising=False)
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    time_passes(cloud, seat, timedelta(minutes=11))
+    assert sweep(cloud)["destroyed"] == 1
+
+    async def slow(target, method, params, **kwargs):
+        # The new sandbox's executor takes its time to come up.
+        await asyncio.sleep(30)
+        return await cloud.hosts.executor(target, method, params, **kwargs)
+
+    monkeypatch.setattr(execution, "call", slow)
+    asked = time.monotonic()
+    answer = tool_call(cloud, seat, timeout=0.001)
+    assert time.monotonic() - asked < 10
+    assert answer.get("preparing"), answer
+    assert "target" not in answer
 
 
 def test_a_sandbox_is_kept_while_its_conversation_runs_a_turn_or_it_was_just_used(

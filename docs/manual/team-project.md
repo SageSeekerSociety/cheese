@@ -252,7 +252,7 @@ parts:
     at: 1
     until: 2
   - kind: doc
-    headings: 目标 | 现状 | 需要谁做什么 | 已确定 | 待决
+    headings: 3 阶 B 树的插入和查找，周五前通过测试 | 等你点「开始」
     at: 2
     until: 3
   - kind: msg

@@ -20,6 +20,7 @@ import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminPage from '@/components/admin/AdminPage.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import { dayStamp } from '@/lib/dateText'
 
 defineOptions({ name: 'AdminRunRecordsPageView' })
 
@@ -95,11 +96,7 @@ function idOf(g: RunRecordGroup): string {
 }
 
 function clock(iso: string): string {
-  const at = new Date(iso)
-  const sameDay = new Date().toDateString() === at.toDateString()
-  return sameDay
-    ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : at.toLocaleDateString([], { month: '2-digit', day: '2-digit' })
+  return dayStamp(new Date(iso).getTime())
 }
 
 function peak(g: RunRecordGroup): number {

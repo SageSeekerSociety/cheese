@@ -137,11 +137,11 @@ parts:
     done: 2
     at: 3
   - kind: doc
-    headings: 目标 | 现状 | 需要谁做什么 | 已确定
+    headings: 给新同学的组会报名说明 | 等你确认内容后开始
     at: 1
     until: 2
   - kind: doc
-    headings: 目标 | 现状
+    headings: 给新同学的组会报名说明 | 已开始，初稿写好后提交审阅
     at: 2
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理

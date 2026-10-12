@@ -617,6 +617,12 @@ async def switch_environment(
 # operation deadline. It is kept well inside the 300s the HTTP front gives any
 # response.
 PREPARING_WAIT_S = 50.0
+# How long a request that will not wait for a machine being prepared may still
+# take to be answered: one attempt at its hands, which a ready machine answers
+# well inside this (dev, 2026-10: under 4 s). Past it the request answers that
+# the machine is being prepared; holding it for the waiting bound instead kept
+# a session that asked not to wait from starting for 50 s.
+ANSWER_S = 10.0
 # How often a waiting request looks at the signal it waits on. Each look is
 # one row read and the hub's in-memory online set.
 PREPARING_POLL_S = 1.0

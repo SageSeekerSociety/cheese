@@ -33,6 +33,7 @@ import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
 import { replySnippet } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
+import { clockTime } from '@/lib/dateText'
 import { renderPlain } from '@/lib/renderMessage'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -143,9 +144,7 @@ const subtitle = computed(() => {
     ? `${head} · ${t('work.room.thread.lastReply', { name: nameOf(root.value.author), text: replySnippet(root.value, refs.value, 40) })}`
     : head
 })
-const rootTime = computed(() =>
-  root.value ? new Date(root.value.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
-)
+const rootTime = computed(() => (root.value ? clockTime(new Date(root.value.created_at).getTime()) : ''))
 const tasks = computed(() => {
   const id = root.value?.id
   return madeHere.value
