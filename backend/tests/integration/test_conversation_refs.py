@@ -52,7 +52,7 @@ def _warnings_naming(answer: dict, ref: str) -> list[str]:
 def test_a_reference_says_whether_it_names_a_channel_a_task_or_a_thread(client):
     project = new_project(client)
     channel = _channel(client, project["id"], "前端")
-    task = open_task(client, channel["id"], "修滚动", owner="owner", start=False)
+    task = open_task(client, channel["id"], "修滚动", owner="owner")
     thread = in_thread(client, channel["id"], "owner")
     nothing = str(uuid.uuid4())
 
@@ -90,7 +90,7 @@ def test_a_document_naming_nothing_is_written_and_its_writer_told(client):
     channel = _channel(client, project["id"], "前端")
     thread = in_thread(client, channel["id"], "owner")
     elsewhere = _channel(client, new_project(client, "Q")["id"], "别的项目")
-    task = open_task(client, channel["id"], owner="owner", start=False)["id"]
+    task = open_task(client, channel["id"], owner="owner")["id"]
     doc = f"/documents/{document_of(client, task)}"
     nothing = str(uuid.uuid4())
 
