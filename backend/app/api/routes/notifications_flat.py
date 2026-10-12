@@ -35,9 +35,10 @@ from app.domain.notification.entity_resolvers import (
     TeamMembershipApplicationEntityResolver,
     UserEntityResolver,
 )
-from app.domain.notification.models import NotificationType
-from app.domain.notification.repositories import NotificationRepository
-from app.domain.notification.services import NotificationQueryService
+from app.domain.notification.services import (
+    NotificationQueryService,
+    notification_type_of,
+)
 from app.domain.project.services import ProjectService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
@@ -110,14 +111,14 @@ def _read_service(db: AsyncSession) -> NotificationQueryService:
         ProjectEntityResolver(ProjectService(db)),
         TeamMembershipApplicationEntityResolver(TeamService(TeamRepository(db))),
     ]
-    return NotificationQueryService(NotificationRepository(db), resolvers=resolvers)
+    return NotificationQueryService.from_session(db, resolvers=resolvers)
 
 
-def _parse_type(type_: str | None) -> NotificationType | None:
+def _parse_type(type_: str | None):
     if type_ is None:
         return None
     try:
-        return NotificationType(type_)
+        return notification_type_of(type_)
     except ValueError:
         raise BadRequestError(f"Unknown notification type: {type_}") from None
 

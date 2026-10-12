@@ -106,6 +106,26 @@ describe('useSaveState', () => {
     stop()
   })
 
+  it.each(['success', 'failure'])('reset 隔离在途保存的 %s 回执与新保存', async (outcome) => {
+    const { value: state, stop } = inScope(() => useSaveState({ feedback: 'inline' }))
+    const old = deferred<string>()
+    const fresh = deferred<string>()
+    const first = state.run(() => old.promise)
+    state.reset()
+    const second = state.run(() => fresh.promise)
+    if (outcome === 'success') old.resolve('old')
+    else old.reject(new Error('old failure'))
+    expect(await first).toBeUndefined()
+    expect(state.saving.value).toBe(true)
+    expect(state.saved.value).toBe(false)
+    expect(state.error.value).toBe('')
+    fresh.resolve('fresh')
+    expect(await second).toBe('fresh')
+    expect(state.saved.value).toBe(true)
+    expect(state.saving.value).toBe(false)
+    stop()
+  })
+
   it('dirty 跟着调用方给的判据走', async () => {
     const changed = ref(false)
     const { value: state, stop } = inScope(() => useSaveState({ dirty: () => changed.value }))

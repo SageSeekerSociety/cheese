@@ -161,6 +161,15 @@ class AttachmentService:
         """
         return attachment.meta.get("uploaderId") == user_id
 
+    def is_image(self, attachment: Attachment) -> bool:
+        """这一行是不是一张图片。
+
+        判据（``type == image``）收在这里，读它的地方是通用读路由的放行规则：图片对
+        登录用户放行、其余只有上传者（见 ``routes/attachments.py`` 顶部）。放在
+        service 上，路由就不必为了这一个值 import ``attachment.models``。
+        """
+        return attachment.type == AttachmentType.IMAGE.value
+
     async def download(self, attachment_id: int) -> tuple[bytes, str, str]:
         """Download attachment and return (content, filename, content_type)."""
         attachment = await self.get(attachment_id)

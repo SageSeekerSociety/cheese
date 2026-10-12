@@ -337,8 +337,11 @@ class Assembler:
         reason = self.facts.get("error") or str(
             record.get("terminal_reason") or record.get("subtype") or ""
         )
-        errors = [str(e) for e in record.get("errors") or [] if str(e)] or [reason]
-        said = str(record.get("result") or "").strip()
+        told = [str(e) for e in record.get("errors") or [] if str(e)]
+        errors = told or [reason]
+        # A run that fails before it asks the model anything (a conversation it
+        # cannot resume) carries no result, only the build's own words for it.
+        said = str(record.get("result") or "").strip() or "\n".join(told)
         status = record.get("api_error_status")
         return AgentResult(
             text=f"{said}（{reason}）" if said else f"AI 服务拒绝了请求（{reason}）",

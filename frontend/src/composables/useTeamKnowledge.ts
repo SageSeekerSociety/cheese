@@ -21,11 +21,11 @@ import type {
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
+import { uploadMaterial } from '@/api/materials'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { knowledgeDraftContent, materialKindForFile } from '@/lib/knowledgeDraft'
 import { KnowledgesApi } from '@/network/api/knowledges'
-import { MaterialsApi } from '@/network/api/materials'
 import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 import { parseKnowledgeContent, stringifyKnowledgeContent } from '@/types'
@@ -199,8 +199,8 @@ export function useTeamKnowledge() {
       let materialId: number | undefined
 
       if (draft.type === 'MATERIAL' && draft.file) {
-        const res = await MaterialsApi.upload(draft.file, materialKindForFile(draft.file))
-        materialId = res.data.id
+        const res = await uploadMaterial(draft.file, materialKindForFile(draft.file))
+        materialId = res.id
       }
 
       const request: CreateKnowledgeRequest = {

@@ -46,14 +46,14 @@ tasks:
       - echo "Setup complete! Run 'task dev' to start backend + frontend."
 
   git:config:
-    desc: Repo-local git settings that CLAUDE.md's rules depend on
+    desc: Repo-local git settings that AGENTS.md's rules depend on
     cmds:
       # autostash turns `git pull` into a stash push and pop, and the stash is
       # one stack for the whole repository — no worktree owns an entry, and
       # nothing warns either side. Agents work in parallel worktrees here, so an
       # autostash pop lands somebody else's uncommitted work in your tree and
       # drops it from theirs. Two entries in this repo's stash are already
-      # labelled as having been popped by the wrong worktree. CLAUDE.md says
+      # labelled as having been popped by the wrong worktree. AGENTS.md says
       # never to stash; git does it for you unless this is off, and it is on by
       # default for many people through their global config.
       - git config --local merge.autoStash false
@@ -128,16 +128,15 @@ tasks:
     cmds:
       - uvx pre-commit run --all-files
 
-  # Static fast check before opening a PR: picks pre-commit hook IDs by the
-  # merge-diff scope (same select() and path map as the Required CI gate) and
-  # runs only those. v1 is static checks ONLY — pytest/typecheck/build/e2e do
-  # not run here and the summary says so; full CI stays the merge gate.
-  # `task ci:fast -- --types` adds pyright/vue-tsc. Exit 0 means the selected
-  # static checks really ran green, nothing more.
+  # Fast check before opening a PR: picks pre-commit hook IDs by the
+  # merge-diff scope (same select() and path map as the Required CI gate), then
+  # adds bounded related frontend tests, changed-file types, selected pure
+  # backend tests and their i18n/tree guards. Build, integration, remote and
+  # E2E suites remain owned by full CI.
   ci:fast:
-    desc: Static fast check scoped to the merge diff (not full CI)
+    desc: Three-minute scoped fast check (not full CI)
     cmds:
-      - python3 .github/scripts/ci-fast.py {{.CLI_ARGS}}
+      - python3 .github/scripts/ci-fast.py --tier quick {{.CLI_ARGS}}
 
   infra:
     desc: Start infrastructure services (PG, Valkey)

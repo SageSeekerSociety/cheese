@@ -87,6 +87,23 @@ def live(tmp_path):
     return root, call
 
 
+def test_a_machine_says_whether_the_copy_or_the_file_is_missing(live, tmp_path):
+    root, call = live
+    executor = object.__new__(Executor)
+    executor.env = {"HOME": str(tmp_path)}
+    elsewhere = str(uuid.uuid4())
+
+    for operation in ("read", "write", "tree", "diff"):
+        assert executor.task_fs(
+            {"task_id": elsewhere, "operation": operation, "path": "a.md"}
+        ) == {"error": "not_found", "missing": "worktree"}
+    for operation in ("read", "write"):
+        assert call(operation, path="a.md") == {
+            "error": "not_found",
+            "missing": "file",
+        }
+
+
 def test_live_read_and_conditional_save_preserve_concurrent_agent_edit(live):
     root, call = live
     (root / "report.md").write_text("draft")

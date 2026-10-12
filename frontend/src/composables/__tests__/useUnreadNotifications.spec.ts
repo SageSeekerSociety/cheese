@@ -13,9 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const getUnreadCount = vi.fn()
 const loggedIn = ref(true)
 
-vi.mock('@/network/api/notifications', () => ({
-  NotificationsApi: { getUnreadCount: () => getUnreadCount() },
-}))
+vi.mock('@/api/notifications', () => ({ getUnreadNotificationCount: () => getUnreadCount() }))
 vi.mock('@/services/account', () => ({ default: { _loggedIn: loggedIn } }))
 
 const Blank = { render: () => null }
@@ -60,13 +58,38 @@ afterEach(() => {
 })
 
 describe('未读小点读的那个数', () => {
+  it('请求失败保留已经读到的非零计数', async () => {
+    getUnreadCount.mockResolvedValueOnce({ count: 3 })
+    const { router, countText } = await mountAt('/projects/p-1')
+    await waitFor(() => expect(countText()).toBe('3'))
+    getUnreadCount.mockRejectedValueOnce(new Error('offline'))
+    await router.push('/inbox')
+    await settle()
+    expect(getUnreadCount).toHaveBeenCalledTimes(2)
+    expect(countText()).toBe('3')
+  })
+
+  it('未登录不请求，登录后读计数，登出清零', async () => {
+    loggedIn.value = false
+    getUnreadCount.mockResolvedValue({ count: 4 })
+    const { countText } = await mountAt('/projects/p-1')
+    await settle()
+    expect(getUnreadCount).not.toHaveBeenCalled()
+    expect(countText()).toBe('0')
+    loggedIn.value = true
+    await waitFor(() => expect(countText()).toBe('4'))
+    loggedIn.value = false
+    await waitFor(() => expect(countText()).toBe('0'))
+    expect(getUnreadCount).toHaveBeenCalledTimes(1)
+  })
+
   it('回到待办页时重新问一次：在别处读掉的未读，小点当场灭', async () => {
-    getUnreadCount.mockResolvedValue({ data: { count: 1 } })
+    getUnreadCount.mockResolvedValue({ count: 1 })
     const { router, countText } = await mountAt('/projects/p-1')
     await waitFor(() => expect(countText()).toBe('1'))
 
     // 这一条在别的窗口里被读掉了。
-    getUnreadCount.mockResolvedValue({ data: { count: 0 } })
+    getUnreadCount.mockResolvedValue({ count: 0 })
     await router.push('/inbox')
 
     await waitFor(() => expect(countText()).toBe('0'))
@@ -75,7 +98,7 @@ describe('未读小点读的那个数', () => {
   it('窗口重新拿到焦点时也问一次，但刚问过就不为同一个数再问', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
-    getUnreadCount.mockResolvedValue({ data: { count: 0 } })
+    getUnreadCount.mockResolvedValue({ count: 0 })
     const { countText } = await mountAt('/projects/p-1')
     await waitFor(() => expect(countText()).toBe('0'))
     expect(getUnreadCount).toHaveBeenCalledTimes(1)
@@ -87,7 +110,7 @@ describe('未读小点读的那个数', () => {
 
     // 人真的走开了一趟再回来：这时候该问——开着窗口来的一条新未读得让小点亮起来。
     vi.setSystemTime(new Date('2026-01-01T00:01:00Z'))
-    getUnreadCount.mockResolvedValue({ data: { count: 2 } })
+    getUnreadCount.mockResolvedValue({ count: 2 })
     window.dispatchEvent(new Event('focus'))
 
     await waitFor(() => expect(countText()).toBe('2'))

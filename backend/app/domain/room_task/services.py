@@ -477,6 +477,11 @@ class TaskService:
         task.conclusion = None
         if task.branch_name is not None and task.delivered_head is not None:
             await self.next_step(task)
+        else:
+            # Closing the task closed its PR (`review.task_pr`) and kept its
+            # branch. Forgetting the PR lets the draft sweep open one for the
+            # branch again, or adopt the PR still open where that close failed.
+            task.pr_number = task.pr_url = None
         await self._session.flush()
         return task
 

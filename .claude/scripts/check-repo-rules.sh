@@ -23,7 +23,7 @@
 # agent remembered to read the rules" and "the build is red".
 #
 # Each rule below is STATED here, next to its enforcement, and nowhere else.
-# They used to be written in CLAUDE.md too, until that file was cut back to
+# They used to be written in AGENTS.md too, until that file was cut back to
 # principles: a rule a script already enforces does not need a second home, and
 # a second home is somewhere it can drift out of sync with what actually runs.
 #
@@ -289,37 +289,37 @@ check_fixed_palette() {
     "$hits"
 }
 
-# Rule 7 — CLAUDE.md's "This repo does not adapt to the platform": a repository
+# Rule 7 — AGENTS.md's "This repo does not adapt to the platform": a repository
 # must never have to change in order to be hosted, so nothing equally true of
-# every hosted repo belongs in THIS repo's CLAUDE.md. The `cheese` CLI is the
+# every hosted repo belongs in THIS repo's AGENTS.md. The `cheese` CLI is the
 # sharpest form of that leak. It already reaches every hosted repo: the tools
 # carry their own descriptions and the subcommands are in the `cheese` skill
 # every session receives, so a
 # second copy here rots on its own schedule AND demonstrates the very adaptation
 # we promise nobody has to make. This guard exists because the leak is invisible
 # from inside: we are both the platform and a repo it hosts, so platform prose
-# reads perfectly natural here — a jj section sat at the top of CLAUDE.md for
+# reads perfectly natural here — a jj section sat at the top of AGENTS.md for
 # months opening with a sentence that is false on any laptop.
 #
 # The tool names come from the CLI's own tool table and the subcommands from the
 # skill's command table, so a new one is guarded the day it exists and there is
-# nothing here to update. Scoped to invocations, never the bare word: CLAUDE.md may name the
+# nothing here to update. Scoped to invocations, never the bare word: AGENTS.md may name the
 # product, the skill's path, and `cheese` among the CLIs that describe
 # themselves — and it does all three.
 check_platform_cli_in_claude_md() {
   local skill="$ROOT/backend/sandbox/skills/cheese/SKILL.md" cli="$ROOT/backend/sandbox/cheese" subs hits targets=()
   [ -f "$skill" ] || return 0
-  [ -f "$ROOT/CLAUDE.md" ] && targets+=("$ROOT/CLAUDE.md")
+  [ -f "$ROOT/AGENTS.md" ] && targets+=("$ROOT/AGENTS.md")
   # .claude/rules/ too, and not as an afterthought: the leak this guard was
   # written for turned up there next, in a rules file that was ENTIRELY platform
   # knowledge (cheese gh-token, the App's permission model, how to pull CI logs
-  # from a sandbox) while this guard watched only CLAUDE.md. Same reasoning, and
+  # from a sandbox) while this guard watched only AGENTS.md. Same reasoning, and
   # rules are worse in one way — they carry a `paths:` trigger, so platform
   # knowledge filed under one gets loaded on an unrelated criterion.
   for f in "$ROOT"/.claude/rules/*.md; do [ -e "$f" ] && targets+=("$f"); done
   [ ${#targets[@]} -eq 0 ] && return 0
   # A tool (`cheese_doc_set`) and a subcommand (`cheese sync`) name the same
-  # kind of thing, and either spelling in CLAUDE.md is the leak. `|| true`: a
+  # kind of thing, and either spelling in AGENTS.md is the leak. `|| true`: a
   # skill or CLI with no names must leave this guard inert, not abort the
   # script under `set -e`.
   subs="$( { grep -oE '`cheese [a-z][a-z-]*' "$skill" 2>/dev/null | sed 's/.*cheese //'; \
@@ -330,7 +330,7 @@ check_platform_cli_in_claude_md() {
   hits="$(grep -nE "cheese ($subs)\b|cheese_($tools)\b" "${targets[@]}" 2>/dev/null || true)"
   [ -z "$hits" ] && return 0
   echo "FAIL: platform CLI documented in a file only this repo sees"
-  report "the cheese CLI in CLAUDE.md / .claude/rules — a hosted repo never sees either" \
+  report "the cheese CLI in AGENTS.md / .claude/rules — a hosted repo never sees either" \
     "move it to backend/sandbox/skills/cheese/SKILL.md (or the tool's own description), which every session receives" \
     "$hits"
 }
@@ -603,24 +603,24 @@ if [ "$SELF_TEST" = 1 ]; then
   [ -z "$JSON_OUT" ] || self_fail "a check that did not run must emit no record (got: $JSON_OUT)"
 
   # Rule 7. The subcommand list is read from the skill, so the fixture supplies
-  # both halves — a skill that documents `cheese doc`, and a CLAUDE.md that
+  # both halves — a skill that documents `cheese doc`, and an AGENTS.md that
   # leaks it.
   mkdir -p "$tmp/backend/sandbox/skills/cheese"
   printf '| `cheese doc set <file>` | set the live doc |\n' \
     > "$tmp/backend/sandbox/skills/cheese/SKILL.md"
-  printf '# Project\n\nPublish with `cheese doc set ./x.md`.\n' > "$tmp/CLAUDE.md"
-  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the cheese CLI in CLAUDE.md must fail"
+  printf '# Project\n\nPublish with `cheese doc set ./x.md`.\n' > "$tmp/AGENTS.md"
+  bash "$me" "$tmp" >/dev/null 2>&1 && self_fail "the cheese CLI in AGENTS.md must fail"
   # Naming the product, the skill path, and the bare binary must all pass —
   # a guard that fires on the word would make this section unwritable.
   printf '# Project\n\nThe `cheese` CLI is documented in backend/sandbox/skills/cheese/SKILL.md.\nReview via the cheese-py-code-review skill; any repo running on cheese gets it.\n' \
-    > "$tmp/CLAUDE.md"
+    > "$tmp/AGENTS.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "naming the product must pass"
   # A subcommand the skill does not document is not this guard's business.
-  printf '# Project\n\nRun `cheese frobnicate` daily.\n' > "$tmp/CLAUDE.md"
+  printf '# Project\n\nRun `cheese frobnicate` daily.\n' > "$tmp/AGENTS.md"
   bash "$me" "$tmp" >/dev/null 2>&1 || self_fail "an undocumented subcommand must not fire"
   # The same leak in .claude/rules/ — where it actually turned up, after this
-  # guard had been watching CLAUDE.md alone.
-  rm -f "$tmp/CLAUDE.md"
+  # guard had been watching AGENTS.md alone.
+  rm -f "$tmp/AGENTS.md"
   mkdir -p "$tmp/.claude/rules"
   printf -- '---\npaths:\n  - "backend/**"\n---\n\nPublish with `cheese doc set ./x.md`.\n' \
     > "$tmp/.claude/rules/leaky.md"
@@ -710,4 +710,4 @@ if [ "$FAILED" = 1 ]; then
   echo "Each rule above is stated where it is enforced; the comment on it says why it exists."
   exit 1
 fi
-echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in CLAUDE.md, retired author_type name as a string, room-derived agent handle)"
+echo "PASS: repo rules (naive datetime, raw HTTPException, duplicate topic notes, supply reverse lookup, fixed-palette colours, platform CLI in AGENTS.md, retired author_type name as a string, room-derived agent handle)"

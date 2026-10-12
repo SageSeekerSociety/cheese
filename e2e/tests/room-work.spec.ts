@@ -132,9 +132,12 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
   await apiLogin(page);
   await openFirstProject(page);
   const project = await projectIdOf(page);
-  const room = await freshRoom(page, `文件来源 ${Date.now()}`);
-  const first = await dispatch(page, room, "调整登录样式");
-  const second = await dispatch(page, room, "修复登录校验");
+  const stamp = Date.now();
+  const room = await freshRoom(page, `文件来源 ${stamp}`);
+  const firstTitle = `调整登录样式 ${stamp}`;
+  const secondTitle = `修复登录校验 ${stamp}`;
+  const first = await dispatch(page, room, firstTitle);
+  const second = await dispatch(page, room, secondTitle);
   // The fixture commits through the native CLI and serves file requests through
   // an enrolled device, leaving the browser and backend paths unmodified.
   const log = openSync(testInfo.outputPath("machine.log"), "w");
@@ -178,8 +181,12 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
     await page.goto(taskPage(first));
     const panel = page.locator(".panel-changes");
     // 草稿记在这一次打开的页面里：换任务走侧栏，不重新载入页面。
-    const switchTo = async (title: string) => {
+    const switchTo = async (task: { number: number }, title: string) => {
       await page.locator(".rail-task", { hasText: title }).click();
+      // Resolving the task's short address is asynchronous; the old page's tabs
+      // remain clickable until that navigation lands.
+      await expect(page).toHaveURL(new RegExp(`/tasks/${task.number}(\\?|$)`));
+      await expect(page.locator(".task-header__title")).toHaveText(title);
       await page.getByRole("tab", { name: /改动/ }).click();
     };
     // 「改动」只看这一件任务：全部改动里是它改过的文件，点那一段的「打开」单独看它。
@@ -199,9 +206,9 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
     await expect(
       panel.getByRole("button", { name: "保存", exact: true }),
     ).toBeEnabled();
-    await switchTo("修复登录校验");
+    await switchTo(second, secondTitle);
     await expect(panel).toContainText("second task");
-    await switchTo("调整登录样式");
+    await switchTo(first, firstTitle);
     // 回来时又是全部改动那一面；打开那份文件，没保存的草稿还在，直接是编辑那一面。
     await openLogin();
     await expect(panel.locator(".monaco-editor")).toContainText(

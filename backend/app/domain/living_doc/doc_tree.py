@@ -4,7 +4,7 @@ Besides its Markdown, a document keeps its top-level blocks as rows
 (`app.domain.living_doc.models.DocumentNode`), so each has an id a search hit
 can point at and an author. This module is the pure, deterministic bridge
 between a markdown string and a flat list of document nodes — NO
-natural-language semantics are inferred, only structure (allowed by CLAUDE.md).
+natural-language semantics are inferred, only structure (allowed by AGENTS.md).
 
 Phase 1 granularity: a node is a top-level markdown block separated by blank
 lines (a paragraph, a heading, a whole list, a fenced code block, a blockquote).

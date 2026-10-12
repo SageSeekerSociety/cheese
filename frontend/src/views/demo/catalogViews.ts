@@ -20,6 +20,11 @@ import {
   ARTIFACT_VERSIONS_WITHOUT_FILE,
   teamProfile,
 } from './catalogSharedFixtures'
+import { VIEW_SPACE_TASKS_ENTRIES } from './catalogSpaceTasks'
+import { VIEW_ACCOUNT_ENTRIES } from './catalogViewAccount'
+import { VIEW_ADMIN_ENTRIES } from './catalogViewAdmin'
+import { VIEW_ADMIN_STATS_ENTRIES } from './catalogViewAdminStats'
+import { VIEW_SETTINGS_WORKSPACE_ENTRIES } from './catalogViewSettingsWorkspace'
 
 import ArtifactVersionList from '@/views/artifact/ArtifactVersionList.vue'
 import SpaceReviewNoticeView from '@/views/spaces/detail/SpaceReviewNoticeView.vue'
@@ -32,6 +37,17 @@ const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 const join = async () => {}
 
 export const VIEW_ENTRIES: CatalogEntry[] = [
+  // 账号那一组整页（登录进门到设置密码的每一屏）单放一册，展开进来。
+  ...VIEW_ACCOUNT_ENTRIES,
+  // 后台那一组整页（方案与额度、棘轮、运行记录、协议、统计）各单放一册，展开进来。
+  ...VIEW_ADMIN_ENTRIES,
+  ...VIEW_ADMIN_STATS_ENTRIES,
+  // 空间与题目那一组整页（空间设置四栏、发题页、被拒进门，和题目详情下三个页签）也在
+  // 自己那一册里，展开进来。
+  ...VIEW_SPACE_TASKS_ENTRIES,
+  // 账号设置的那几屏（通用、通知、资料、实名、密码与安全、这台设备）和项目工作台的那几
+  // 屏（浏览频道、全部任务、项目总览）也在自己那一册里，展开进来。
+  ...VIEW_SETTINGS_WORKSPACE_ENTRIES,
   {
     id: 'artifact-version-list',
     title: 'ArtifactVersionList',

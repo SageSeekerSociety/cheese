@@ -24,6 +24,7 @@ from app.domain.review import (
 from app.domain.review.merge_state import MergeVerdict, Who
 from app.domain.review.models import (
     AcceptCard,
+    AcceptStatus,
     GateOutcome,
 )
 from app.domain.review.repositories import AcceptCardRepository
@@ -153,6 +154,49 @@ class AcceptService:
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> tuple[list[AcceptCard], int]:
         return await cards.list_for_topic(self, topic_id=topic_id)
+
+    async def latest_cards_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        return await cards.latest_cards_by_task(self, task_ids=task_ids)
+
+    async def live_cards_for_places(
+        self, place_ids: list[uuid.UUID]
+    ) -> list[AcceptCard]:
+        return await cards.live_cards_for_places(self, place_ids=place_ids)
+
+    async def list_recent_for_places(
+        self,
+        place_ids: list[uuid.UUID],
+        *,
+        open_statuses: tuple[AcceptStatus, ...],
+        settled_since: datetime,
+    ) -> list[AcceptCard]:
+        """这些地方的卡：还没结算的全部，加上 ``settled_since`` 之后递的已结算的。
+
+        The board's one read (`_live_cards`): which card each room or piece of
+        work is parked on. A route reaching the repository for this bytes the
+        domain's reader (the status table in `review/archive.py` and the
+        lookback a caller passes) straight into the HTTP layer, so it comes
+        through here instead — the same query, one call deeper.
+        """
+        return await self._repo.list_recent_for_places(
+            place_ids,
+            open_statuses=open_statuses,
+            settled_since=settled_since,
+        )
+
+    async def latest_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        """每条活上最新那张卡，一次查完。
+
+        The task page (`topics_tasks.py`) reads one card per thread this way.
+        A route reaching the repository for it leaks the domain's reader into
+        the HTTP layer, so it comes through here instead — the same query, one
+        call deeper.
+        """
+        return await self._repo.latest_by_task(task_ids)
 
     async def open_pr_card_ids(
         self, project_id: uuid.UUID | None = None

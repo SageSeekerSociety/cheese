@@ -213,6 +213,55 @@ class SpaceService:
         self._material_service = material_service
         self._session = session
 
+    @classmethod
+    def for_routes(
+        cls,
+        session: "AsyncSession",
+        *,
+        task_repo: "TaskRepository | None" = None,
+        knowledge_service: "KnowledgeService | None" = None,
+        material_service: "MaterialService | None" = None,
+    ) -> "SpaceService":
+        """The board service the space routes hand out — wired here rather than in
+        the route.
+
+        Assembling it needs nine ``space.repositories``; a route that builds them
+        itself reaches past this domain's service layer (architecture guard C2),
+        so the wiring lives with the repositories it wires. ``task_repo`` /
+        ``knowledge_service`` / ``material_service`` are passed in by the caller
+        because the write side of ``teaching``'s references reaches into those
+        domains, and this module keeps those out of its runtime imports.
+        """
+        return cls(
+            repo=SpaceRepository(session),
+            category_repo=SpaceCategoryRepository(session),
+            admin_repo=SpaceAdminRelationRepository(session),
+            rank_repo=SpaceUserRankRepository(session),
+            task_repo=task_repo,
+            classification_topics_repo=SpaceClassificationTopicsRepository(session),
+            domain_group_repo=SpaceDomainGroupRepository(session),
+            domain_group_domain_repo=SpaceDomainGroupDomainRepository(session),
+            member_repo=SpaceMemberRepository(session),
+            invite_code_repo=SpaceInviteCodeRepository(session),
+            knowledge_service=knowledge_service,
+            material_service=material_service,
+            session=session,
+        )
+
+    @classmethod
+    def for_visibility(cls, session: "AsyncSession") -> "SpaceService":
+        """Wired for the two plain reads a visibility gate needs — the board
+        (``get_space``) and one person's membership (``is_member``).
+
+        ``require_reviewed_space`` runs on every board request, so this build
+        stays small: the full constructor's other repositories are not needed to
+        answer "does this board exist / is this person in it".
+        """
+        return cls(
+            repo=SpaceRepository(session),
+            category_repo=SpaceCategoryRepository(session),
+        )
+
     # ------------------------------------------------------------------
     # Classification topics
     # ------------------------------------------------------------------
@@ -282,6 +331,39 @@ class SpaceService:
         if user_id is None or self._rank_repo is None:
             return None
         return await self._rank_repo.get_rank(space_id=space_id, user_id=user_id)
+
+    async def is_member(self, *, space_id: int, user_id: int) -> bool:
+        return await self._repo.is_member(space_id=space_id, user_id=user_id)
+
+    @staticmethod
+    def admin_role_name(role: int) -> str:
+        """The name the API shows for an admin relation's stored role.
+
+        Lives beside the enum so a route can label a row without importing
+        ``SpaceAdminRole`` to read it off the model.
+        """
+        if role == SpaceAdminRole.OWNER.value:
+            return "OWNER"
+        return "ADMIN"
+
+    @staticmethod
+    def admin_role_from_name(name: str) -> SpaceAdminRole | None:
+        """The stored role for a client-supplied role name (``OWNER``/``ADMIN``).
+
+        ``None`` for anything else, so the caller keeps its own error message.
+        Beside the enum so a route can turn the name into the value
+        ``add_admin`` / ``update_admin_role`` expect without importing
+        ``SpaceAdminRole`` itself.
+        """
+        return {
+            "OWNER": SpaceAdminRole.OWNER,
+            "ADMIN": SpaceAdminRole.ADMIN,
+        }.get(name.upper())
+
+    async def invite_codes_by_ids(
+        self, code_ids: Sequence[int]
+    ) -> dict[int, SpaceInviteCode]:
+        return await self._require_invite_code_repo().get_by_ids(code_ids)
 
     # ------------------------------------------------------------------
     # Space lifecycle

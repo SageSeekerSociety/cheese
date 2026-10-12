@@ -768,14 +768,47 @@ def project_dir(config, path):
     return Path(config) / "projects" / name
 
 
-def carry_transcripts(config, before, after):
-    """A session resumed at another path keeps writing the transcript where it
-    found it, and a session started there writes it where the build keeps that
-    path's. So the conversations begun at `before` move to `after`'s, before a
-    session relaunched there resumes one."""
-    source = project_dir(config, before)
-    if source.is_dir():
-        move_into(source, project_dir(config, after))
+def carry_conversation(config, launch_args, cwd):
+    """The build resumes a conversation only from the directory it keeps for
+    the session's cwd, but one config dir holds every conversation the session
+    runs, each started wherever its own place was then: the placeholder, one
+    machine path, another. So the conversation this launch resumes (the
+    runner appends `--resume <id>`, `claude_code.runner.Runner.start`) is
+    gathered there from wherever its pieces are, and nothing else is moved:
+    another conversation may still be writing where it is.
+
+    A conversation resumed at another path goes on writing its transcript where
+    it found it, but starts a new file there once that one has been moved away,
+    so one transcript can be in several pieces. They are joined in the order
+    they were last written."""
+    args = list(launch_args)
+    if "--resume" not in args[:-1]:
+        return
+    session_id = args[args.index("--resume") + 1]
+    destination = project_dir(config, cwd)
+    projects = Path(config) / "projects"
+    for path in list(projects.glob(f"*/{session_id}")):
+        if path.is_dir() and path.parent != destination:
+            move_into(path, destination / session_id)
+    pieces = sorted(
+        (path for path in projects.glob(f"*/{session_id}.jsonl") if path.is_file()),
+        key=lambda path: path.stat().st_mtime_ns,
+    )
+    target = destination / f"{session_id}.jsonl"
+    if not pieces or pieces == [target]:
+        return
+    destination.mkdir(parents=True, exist_ok=True)
+    joined = destination / f".{session_id}.jsonl.joining"
+    with joined.open("wb") as out:
+        for piece in pieces:
+            data = piece.read_bytes()
+            out.write(data)
+            if data and not data.endswith(b"\n"):
+                out.write(b"\n")
+    joined.replace(target)
+    for piece in pieces:
+        if piece != target:
+            piece.unlink()
 
 
 def move_into(source, destination):

@@ -218,11 +218,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.answers", "app.domain.discussion.repositories"),
         ("app.api.routes.answers", "app.domain.questions.repositories"),
         ("app.api.routes.answers", "app.domain.user.repositories"),
-        ("app.api.routes.attachments", "app.domain.attachment.repositories"),
         ("app.api.routes.avatars", "app.domain.avatars.repositories"),
         ("app.api.routes.awaiting", "app.domain.block.repositories"),
         ("app.api.routes.awaiting", "app.domain.project.repositories"),
-        ("app.api.routes.awaiting", "app.domain.review.repositories"),
         ("app.api.routes.awaiting", "app.domain.room_task.repositories"),
         ("app.api.routes.awaiting", "app.domain.topic.repositories"),
         ("app.api.routes.blocks", "app.domain.block.repositories"),
@@ -247,48 +245,36 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.llm_proxy", "app.domain.project.repositories"),
         ("app.api.routes.materialbundles", "app.domain.materials.repositories"),
         ("app.api.routes.materials", "app.domain.materials.repositories"),
-        ("app.api.routes.notifications_flat", "app.domain.notification.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.team.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.user.repositories"),
-        ("app.api.routes.project_environment", "app.domain.machine.repositories"),
         ("app.api.routes.project_environment", "app.domain.user.repositories"),
-        ("app.api.routes.projects", "app.domain.project.repositories"),
         ("app.api.routes.questions", "app.domain.answers.repositories"),
         ("app.api.routes.questions", "app.domain.discussion.repositories"),
         ("app.api.routes.questions", "app.domain.questions.repositories"),
         ("app.api.routes.questions", "app.domain.user.repositories"),
-        ("app.api.routes.recruitment", "app.domain.team.recruitment_repositories"),
-        ("app.api.routes.recruitment", "app.domain.team.repositories"),
         ("app.api.routes.recruitment", "app.domain.user.repositories"),
-        ("app.api.routes.spaces", "app.domain.space.repositories"),
         ("app.api.routes.spaces", "app.domain.task.repositories"),
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks._common", "app.domain.space.repositories"),
-        ("app.api.routes.tasks._common", "app.domain.task.repositories"),
         ("app.api.routes.tasks._common", "app.domain.team.repositories"),
         ("app.api.routes.tasks._common", "app.domain.user.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.space.repositories"),
-        ("app.api.routes.tasks.lifecycle", "app.domain.task.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.team.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.user.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.space.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.task.repositories"),
-        ("app.api.routes.tasks.participation", "app.domain.team.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.user.repositories"),
         ("app.api.routes.tasks.publish_pdf", "app.domain.space.repositories"),
         ("app.api.routes.tasks.publish_pdf", "app.domain.tag.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),
-        ("app.api.routes.teams", "app.domain.team.repositories"),
         ("app.api.routes.teams", "app.domain.user.repositories"),
         ("app.api.routes.topic_members", "app.domain.identity.repositories"),
         ("app.api.routes.topic_members", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
-        ("app.api.routes.topics", "app.domain.review.repositories"),
-        ("app.api.routes.topics", "app.domain.topic.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
         # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读
         # 和写那一条选择，外加一条会话对那台机器的租约）。它摸的 repository 只有
@@ -301,7 +287,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # users.py 名下的三条 repository 债按代码现在住的地方重新入账：账户读写、用户
         # 目录查询、用户偏好各自摸自己摸的那几条。拆模块没有新增跨包的边，也没还掉任何
         # 一条，只是发起方换了名字，所以按同一笔债入账（记法同下面的 users_team）。
-        ("app.api.routes.users.account", "app.domain.user.repositories"),
         ("app.api.routes.users.directory", "app.domain.answers.repositories"),
         ("app.api.routes.users.directory", "app.domain.questions.repositories"),
         ("app.api.routes.users.directory", "app.domain.user.repositories"),
@@ -413,7 +398,7 @@ def _stale_exemptions(
 
     **发起方模块在这棵树里根本不存在的，不算陈行。** 棘轮这一半主张的是「债还完
     了，把行删掉」；文件都不在这个 checkout 里，这个主张就无从谈起——本仓的工作区
-    经常落后于 main（见 CLAUDE.md），照 CI 在更新的 main 上报的违规入账时，那条
+    经常落后于 main（见 AGENTS.md），照 CI 在更新的 main 上报的违规入账时，那条
     豁免在旧 base 上必然找不到对应文件。不加这层判断，棘轮就会把「你的 checkout
     落后」误报成「这笔债还完了」，而正确的动作恰恰相反。
 

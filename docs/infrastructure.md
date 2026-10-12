@@ -75,11 +75,25 @@ other API paths continue through the active backend switch. Updating the owner
 itself is a separate release operation because it closes the connections it
 owns. Dispatch **Release device connection owner** with a tested ref and target;
 that workflow runs `deploy/release-device-connection.sh`, which pulls and
-force-recreates only `device-connection`, then waits for its health check. It is
-manual-only, waits for the owner to atomically enter draining after all device
-calls finish, and is never called by the normal app deployment workflows. It
-reads the same box-local deploy environment and compose overlays as the app
+force-recreates only `device-connection`, then waits for its health check. It
+waits for the owner to atomically enter draining after all device calls finish,
+and reads the same box-local deploy environment and compose overlays as the app
 deployment.
+
+An app deploy runs the same script itself in one case: its migrations may drop
+schema the owner's image still maps. The owner's models list every column their
+tables had when its image was built, and a query that loads a model asks for
+all of them, so a dropped column fails every such query until the owner is
+released; #3411 left the dev owner answering ~1500 executor calls with 500 that
+way. Before migrating, `hold_owners_behind_schema` in `deploy/deploy-docker.sh`
+runs `deploy/schema-map.py` in the owner and in the release image. A migration
+only drops what the previous release no longer mapped
+(`check-migration-safety.py`), so anything the owner maps and the release does
+not may go. If there is any, the deploy drains the device owner (waiting the
+usual 45 s, then interrupting what still runs), migrates, and recreates it on the
+release's image; a failed migration resumes the old owner instead. The preview
+owner, which has no drain, is recreated after the migrations the same way. An
+owner that maps nothing the release dropped is left running.
 
 Each standing owner's database pool is set in the compose file
 (`DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=5` on `device-connection`; `3` and `2` on
@@ -91,15 +105,15 @@ post-superuser budget exactly. That arithmetic is checked by
 rather than only the device one; raising either owner pool without re-checking
 it spends a connection the server does not have.
 
-Neither side moves on its own: nothing a deploy changes reaches a running owner.
-`ensure_device_connection_owner` in `deploy/deploy-docker.sh` looks only at
+Neither side moves on its own: apart from the schema case above, nothing a
+deploy changes reaches a running owner. `ensure_device_connection_owner` in `deploy/deploy-docker.sh` looks only at
 whether the container is running, and if it is, the deploy logs that it is
 leaving it alone and returns without ever calling `docker compose up` on it. So
 a change to the compose file's `device-connection` block (its pool, or an
 `extra_hosts` entry) reaches the owner exactly as a change that lives only in
 the image — `app/core/config.py`, or anything else the backend carries — does:
 when the owner is started, which on an ordinary deploy happens only if the
-deploy finds it absent, or otherwise through a release. So
+deploy finds it absent or behind the schema, or otherwise through a release. So
 on a box whose server still has the default 100 (prod, etrip), **a release that
 raises the backend pool goes out owner-first**: until the owner is released it
 holds the pool its running image was built with, and a backend rollout beside it
@@ -131,7 +145,8 @@ with the routes untouched.
 
 Updating the owner itself drops every live preview tunnel, and unlike the device
 owner it has no drain endpoint — the helper redials on its own, so there is
-nothing to wait for. It is therefore a separate manual operation: dispatch
+nothing to wait for. Apart from a deploy whose migrations may drop schema the
+owner maps (above), it is therefore a separate manual operation: dispatch
 **Release preview connection owner**, which runs
 `deploy/release-preview-connection.sh`, pulls and force-recreates only
 `preview-connection`, and waits for its health check. It demands

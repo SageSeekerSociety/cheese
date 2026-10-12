@@ -44,7 +44,11 @@ def machines(client, monkeypatch, tmp_path):
             raise DeviceCallError(GONE)
         if target["device_id"] == "failing":
             raise DeviceCallError("git: index.lock exists")
-        return executor.task_fs(params)
+        answer = executor.task_fs(params)
+        if target["device_id"] == "old":
+            # An executor installed before `not_found` said what is missing.
+            answer.pop("missing", None)
+        return answer
 
     monkeypatch.setattr(execution, "call", call)
     return tmp_path / "working", asked
@@ -203,6 +207,119 @@ def test_pushed_work_shows_while_its_machine_has_no_copy_of_it(client, machines)
     assert _diffed(diff.json()["data"]["diff"]) == badge
     assert set(badge) <= {f["path"] for f in listing.json()["data"]["data"]}
     assert asked == ["working", "working"]
+
+
+def _read(client, pid, room, task, path):
+    return client.get(
+        f"/projects/{pid}/file",
+        params={
+            "source": "live",
+            "path": path,
+            "topic": str(room),
+            "task": str(task.id),
+        },
+        headers=_owner(client),
+    )
+
+
+def test_a_file_reads_from_the_branch_while_its_machine_has_no_copy_of_it(
+    client, machines
+):
+    # The machine answers, but its home has no directory for the task yet: one
+    # file of the pushed branch reads like the listing and the diff do.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="working")
+
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+    raw = client.get(
+        f"/projects/{pid}/file/raw",
+        params={
+            "source": "live",
+            "path": "backend/usage/models.py",
+            "topic": str(room),
+            "task": str(task.id),
+        },
+        headers=_owner(client),
+    )
+    absent = _read(client, pid, room, task, "backend/usage/missing.py")
+
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["content"] == "POOL = 1\n"
+    assert read.json()["data"]["source"] == "committed"
+    assert read.json()["data"]["editable"] is False
+    assert raw.status_code == 200, raw.text
+    assert raw.content == b"POOL = 1\n"
+    assert raw.headers["X-Cheese-File-Source"] == "committed"
+    assert absent.status_code == 404, absent.text
+    assert "working" in asked
+
+
+def test_a_task_with_no_copy_on_its_machine_takes_no_writes(client, machines):
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="working")
+
+    saved = client.put(
+        f"/projects/{pid}/file",
+        params={"topic": str(room), "task": str(task.id)},
+        json={
+            "path": "backend/usage/models.py",
+            "content": "POOL = 2\n",
+            "version": "0" * 16,
+            "base": "POOL = 1\n",
+        },
+        headers=_owner(client),
+    )
+
+    assert saved.status_code == 404, saved.text
+    assert saved.json()["error"]["message"] == "环境里还没有这个任务文件"
+
+
+def test_a_file_missing_from_a_present_copy_is_not_read_from_the_branch(
+    client, machines
+):
+    # The copy is on the machine and the file is not in it (deleted there, say):
+    # the branch's version of it is not the task's file.
+    home, _ = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="working")
+    worktree = home / ".cheese/tasks" / str(task.id)
+    worktree.mkdir(parents=True)
+    subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
+
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+
+    assert read.status_code == 404, read.text
+    assert read.json()["error"]["message"] == "环境里还没有这个任务文件"
+
+
+def test_an_older_executor_without_a_copy_still_says_the_file_is_not_there(
+    client, machines
+):
+    # Its `not_found` cannot tell a missing directory from a missing file, so a
+    # file stays "not on the machine"; the listing still comes from the branch.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="old")
+
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+    listing = _live(client, pid, room, task, "files")
+
+    assert read.status_code == 404, read.text
+    assert read.json()["error"]["message"] == "环境里还没有这个任务文件"
+    assert listing.status_code == 200, listing.text
+    assert "backend/usage/models.py" in {
+        f["path"] for f in listing.json()["data"]["data"]
+    }
+    assert asked == ["old", "old"]
 
 
 def test_a_task_reads_its_own_machine_not_the_newest_in_the_channel(client, machines):

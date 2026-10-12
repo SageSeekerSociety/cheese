@@ -1,7 +1,7 @@
 """Guard: no test file may mint its own handle-only token.
 
 This is deliberately a *static* test, which is the one exception to the
-"test behaviour, don't inspect source" rule in CLAUDE.md — the thing being
+"test behaviour, don't inspect source" rule in AGENTS.md — the thing being
 tested IS a property of the source tree.
 
 Why it exists: ``.claude/rules/backend-tests.md`` used to carry the sentence

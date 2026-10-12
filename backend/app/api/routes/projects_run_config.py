@@ -28,21 +28,17 @@ What stays behind, and why. `ProjectService`, `MemberService`, `ok`,
 stay, so each is imported here from the module that owns it
 (`app.domain.project.services`, `app.domain.membership.services`,
 `app.api.response`, `app.api.auth`, `app.core.config`, `app.core.errors`) rather
-than re-exported through projects.py. Two names do come from there: `DbSession`
-is projects.py's own alias for the session dependency, and `ProjectRepository`
-is a repository the handlers that stay also read -- and the one the guard in
-`tests/unit/test_domain_import_guard.py` freezes under projects.py -- so it is
-taken from there the way `topics_compute.py` takes its own pair from topics.py.
+than re-exported through projects.py. `DbSession` comes from there as its alias
+for the session dependency. Project reads and settings writes go through
+`ProjectService`, which owns persistence rather than exposing a repository
+through a sibling route.
 The imports the block alone used (`ProjectDefaultModelUpdate`, the
 `compute_configs` triple, the `market` triple, `HostPool`, `gate` and
 `model_choices`) left projects.py with it; ruff's F401 is what found the
 complete list.
 
-No frozen edge moves and no contract grows. The block reads no domain *model*
-module -- C2 freezes `app.api.routes.projects -> app.domain.*.models`, and no
-import of that shape is in it -- and no *repository* module directly: it reaches
-`ProjectRepository` through projects.py, so the pair the guard freezes stays
-exactly where it was. `.importlinter` is untouched.
+The block reads no domain model or repository module; project persistence stays
+behind the domain service. No new frozen edge is needed.
 
 Ordering. This module sorts after `projects_artifacts.py` (`projects_a` <
 `projects_r`) and before `push.py`, so its paths mount later in the route table
@@ -68,7 +64,7 @@ from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
-from app.api.routes.projects import DbSession, ProjectRepository
+from app.api.routes.projects import DbSession
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
@@ -128,7 +124,7 @@ async def get_default_model(
 ) -> dict:
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     access = await UsageService(db).model_access(project.team_id)
@@ -195,7 +191,7 @@ async def get_compute_configs(
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     can_manage = True
@@ -284,14 +280,14 @@ async def save_compute_configs(
     already working moves."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    repo = ProjectRepository(db)
-    project = await repo.get(project_id)
+    service = ProjectService(db)
+    project = await service.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
     environment = parse(body.default)
     await check_allowed(db, project, environment, actor)
-    await repo.merge_settings(
+    await service.merge_settings(
         project, {"execution_environment": environment.model_dump()}
     )
     return ok({"default": dump(environment)})
