@@ -45,7 +45,6 @@ export const ATTACHMENT_ENTRIES: CatalogEntry[] = [
     component: AttachmentVideo,
     needs: ['vuetify', 'i18n'],
     args: { topicId: 't-1', path: 'library/screen.mp4' },
-    events: ['download'],
     states: [
       {
         name: '等待点开',
