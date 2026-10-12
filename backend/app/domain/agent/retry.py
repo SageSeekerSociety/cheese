@@ -10,7 +10,11 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
-from app.domain.block.indexed_rows import FAILED_TURN_EVENTS, SHOWN_ROWS
+from app.domain.block.indexed_rows import (
+    FAILED_TURN_EVENTS,
+    FAILED_TURN_ROWS,
+    SHOWN_ROWS,
+)
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.retry import (
@@ -35,12 +39,16 @@ async def take_failed_reply(session, conversation_id, *, block_id=None, seats=()
     cannot revive the same failed attempt, and a later turn supersedes it even
     if its output has not arrived yet. The caller commits before starting work.
     """
-    block = await session.scalar(
-        select(Block)
-        .where(Block.conversation_id == conversation_id, SHOWN_ROWS)
-        .order_by(Block.seq.desc())
-        .limit(1)
+    statement = select(Block).where(
+        Block.conversation_id == conversation_id, SHOWN_ROWS
     )
+    if block_id is not None:
+        statement = statement.where(Block.id == block_id)
+    else:
+        statement = (
+            statement.where(FAILED_TURN_ROWS).order_by(Block.seq.desc()).limit(1)
+        )
+    block = await session.scalar(statement)
     if (
         block is None
         or (block_id is not None and block.id != block_id)
