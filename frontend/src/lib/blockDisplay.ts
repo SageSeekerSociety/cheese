@@ -23,8 +23,10 @@ export function isImageBlock(block: Block): boolean {
   return block.kind === 'attachment' && (block.mime_type || '').startsWith('image/')
 }
 
+// The raw endpoint only serves whitelisted suffixes. A video MIME can still
+// describe a download-only container such as AVI or MKV.
 export function isVideoBlock(block: Block): boolean {
-  return block.kind === 'attachment' && !!videoMimeOf(block.content, block.mime_type)
+  return block.kind === 'attachment' && !!videoMimeOf(block.content)
 }
 
 /**
