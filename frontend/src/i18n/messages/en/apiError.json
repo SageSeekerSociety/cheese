@@ -378,6 +378,7 @@
   "agentTypeNotFound": "Agent type {type} doesn't exist",
   "commentContentRequired": "The comment can't be empty",
   "docCommentNotFound": "The original document comment doesn't exist",
+  "docImageLibraryOnly": "A project document shows images from the library only (library/<name>)",
   "commentThreadUpdated": "The comment thread has been updated. Load it again",
   "commentResolvedReopenFirst": "The comment is resolved. Reopen it first",
   "commentAlreadyInState": "The comment is already in that state",

@@ -3023,6 +3023,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/documents/{document_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Image
+         * @description The bytes of an image the document references by ``path``.
+         *
+         *     A browser cannot send its credential with an ``<img src>``, so the editor
+         *     fetches these and shows them from memory.
+         */
+        get: operations["document_image_documents__document_id__image_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/feedback/meta": {
         parameters: {
             query?: never;
@@ -22641,6 +22664,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_image_documents__document_id__image_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image's bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/gif": unknown;
+                    "image/webp": unknown;
                 };
             };
             /** @description Validation Error */

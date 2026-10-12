@@ -9785,6 +9785,58 @@
         }
       }
     },
+    "/documents/{document_id}/image": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Document Image",
+        "description": "The bytes of an image the document references by ``path``.\n\nA browser cannot send its credential with an ``<img src>``, so the editor\nfetches these and shows them from memory.",
+        "operationId": "document_image_documents__document_id__image_get",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image's bytes.",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/gif": {},
+              "image/webp": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/feedback/meta": {
       "get": {
         "tags": [
