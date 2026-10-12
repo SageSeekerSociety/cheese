@@ -143,6 +143,11 @@ describe('机器', () => {
     expect(queryByText(/Launch room/)).not.toBeNull()
   })
 
+  it('宿主机数和上限放在一起比时，整机虚拟机也算进去：上限就是这样数的', () => {
+    const { getByText } = mount({ overview: overview({ hosts: 1, vms: 3, max_hosts: 4, at_cap: true }) })
+    expect(getByText('4 / 4')).toBeTruthy()
+  })
+
   it('读失败时不说「一台宿主机都没有」', () => {
     const none = i18n.global.t('admin.machines.noHosts')
     const empty = mount({ overview: overview({}, []) })

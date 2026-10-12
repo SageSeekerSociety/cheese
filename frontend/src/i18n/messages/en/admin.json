@@ -106,14 +106,14 @@
     "sub": "The platform's MicroCloud hosts, the sandboxes on each, and the warm pool; refreshed every 30 seconds",
     "kpi": {
       "hosts": "Hosts / cap",
-      "vms": "Plus {n} whole-machine VMs, which count toward the cap",
+      "vms": "{n} of them are whole VMs.",
       "slots": "Sandbox slots",
       "slotsNote": "{free} free; the pool keeps at least {min} and adds a host below that",
       "waiting": "Waiting for a sandbox",
       "waitingNote": "The longest has waited {for}",
       "failures": "Provider failures",
       "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes",
-      "hostsNote": "Counts hosts still in the pool; given-up and releasing ones are not counted."
+      "hostsNote": "Whole VMs count toward the cap; given-up and releasing hosts do not."
     },
     "alert": {
       "notConfigured": "This deployment has no MicroCloud configured; cloud sandboxes are unavailable",
@@ -160,7 +160,8 @@
       "waiting": "Waiting for {for}",
       "stopping": "Being destroyed for {for}",
       "active": "Last tool call {ago} ago",
-      "reclaim": "reclaimed in {in} at the earliest"
+      "reclaim": "reclaimed in {in} at the earliest",
+      "overdue": "past its idle time and not reclaimed yet (a later end to the room's latest turn, or a background command still running, pushes it back)"
     },
     "placed": "Placed {at}",
     "taskRoom": "task",
@@ -190,7 +191,15 @@
     "warm": "Warm pool (target {target})",
     "noWarm": "No warm machines right now",
     "warmAge": "Age {for}",
-    "config": "{perCore} sandboxes per core, {memory} GB memory each; a sandbox is destroyed after {sandboxIdle} idle, a host released after {hostIdle} idle, a whole VM after {vmIdle} idle",
-    "attempts": "1 attempt | {n} attempts"
+    "config": "Each host takes the smaller of {perCore} sandboxes per core and as many as fit in its memory at {memory} GB each; a sandbox is destroyed after {sandboxIdle} idle, a host released after {hostIdle} idle, a whole VM after {vmIdle} idle",
+    "attempts": "1 attempt | {n} attempts",
+    "warmState": {
+      "preparing": "Preparing",
+      "ready": "Ready",
+      "reserved": "Reserved",
+      "claimFailed": "Claim failed",
+      "deleting": "Deleting",
+      "cleanupFailed": "Delete failed"
+    }
   }
 }

@@ -106,14 +106,14 @@
     "sub": "平台在 MicroCloud 上的宿主机、每台上的沙箱和温机池；每 30 秒刷新",
     "kpi": {
       "hosts": "宿主机 / 上限",
-      "vms": "另有 {n} 台整机虚拟机，也算在上限里",
+      "vms": "其中 {n} 台是整机虚拟机。",
       "slots": "沙箱槽位",
       "slotsNote": "空闲 {free} 格，池子至少留 {min} 格，不够就加一台",
       "waiting": "等沙箱的会话",
       "waitingNote": "等得最久的已经 {for}",
       "failures": "provider 失败",
       "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
-      "hostsNote": "数的是还在池里的；已放弃、释放中的不算"
+      "hostsNote": "整机虚拟机也算在上限里；已放弃、释放中的不算"
     },
     "alert": {
       "notConfigured": "这个部署没有配置 MicroCloud，云端沙箱不可用",
@@ -160,7 +160,8 @@
       "waiting": "已等 {for}",
       "stopping": "销毁已 {for}",
       "active": "{ago}前用过工具",
-      "reclaim": "最早 {in}后回收"
+      "reclaim": "最早 {in}后回收",
+      "overdue": "已过空闲期还没回收（房间最近一轮结束得更晚、或后台命令还在跑，都会往后推）"
     },
     "placed": "{at} 放上来",
     "taskRoom": "任务",
@@ -190,7 +191,15 @@
     "warm": "温机池（目标 {target} 台）",
     "noWarm": "此刻没有温机",
     "warmAge": "已存在 {for}",
-    "config": "每核 {perCore} 个沙箱，每个沙箱 {memory} GB 内存；沙箱空闲 {sandboxIdle}后销毁，宿主机空闲 {hostIdle}后释放，整机虚拟机空闲 {vmIdle}后释放",
-    "attempts": "尝试 {n} 次"
+    "config": "每台宿主机放的沙箱数取两者中小的那个：每核 {perCore} 个，或内存放得下几个（每个 {memory} GB）；沙箱空闲 {sandboxIdle}后销毁，宿主机空闲 {hostIdle}后释放，整机虚拟机空闲 {vmIdle}后释放",
+    "attempts": "尝试 {n} 次",
+    "warmState": {
+      "preparing": "准备中",
+      "ready": "就绪",
+      "reserved": "已预定",
+      "claimFailed": "领用失败",
+      "deleting": "删除中",
+      "cleanupFailed": "删除失败"
+    }
   }
 }
