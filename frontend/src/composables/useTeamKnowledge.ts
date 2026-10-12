@@ -21,11 +21,11 @@ import type {
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { toast } from 'vuetify-sonner'
 
+import { KnowledgesApi } from '@/api/knowledges'
 import { uploadMaterial } from '@/api/materials'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { knowledgeDraftContent, materialKindForFile } from '@/lib/knowledgeDraft'
-import { KnowledgesApi } from '@/network/api/knowledges'
 import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
 import { parseKnowledgeContent, stringifyKnowledgeContent } from '@/types'
@@ -107,9 +107,7 @@ export function useTeamKnowledge() {
         params.labels = [filter.value.tag]
       }
 
-      const { knowledges: fetchedKnowledges, page: fetchedPage } = await KnowledgesApi.list(params).then(
-        (res) => res.data
-      )
+      const { knowledges: fetchedKnowledges, page: fetchedPage } = await KnowledgesApi.list(params)
 
       knowledges.value = fetchedKnowledges
       page.value = {
@@ -219,7 +217,7 @@ export function useTeamKnowledge() {
       const response = await KnowledgesApi.create(request)
 
       // 新的一条在最前面：这一页是倒序的，和 sort_order 一致。
-      knowledges.value = [response.data.knowledge, ...knowledges.value]
+      knowledges.value = [response.knowledge, ...knowledges.value]
 
       toast.success(t('teams.knowledge.uploadSuccess'))
       return true
