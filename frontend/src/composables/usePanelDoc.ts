@@ -12,10 +12,12 @@
 import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
 import type { DocEdit } from '../lib/docEdits'
+import type { CanvasData } from '../types/canvas'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { addComment, getDocNodes } from '../api'
+import { changeCanvas, copyCanvas, createCanvas, getCanvas, setCanvasHeight } from '../api/canvases'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
@@ -178,6 +180,20 @@ export function usePanelDoc(props: PanelDocProps) {
     return documentImageUrl(did, src.replace(/^\.\//, ''))
   }
 
+  // 文档里的画布：读写都按画布自己的编号；新建、复制一块要知道是给哪份文档的。
+  function thisDocument(): string {
+    const did = documentId.value
+    if (!did) throw new Error(t('work.room.docEdit.unavailable'))
+    return did
+  }
+  const canvas: CanvasData = {
+    load: getCanvas,
+    change: changeCanvas,
+    setHeight: setCanvasHeight,
+    create: async () => (await createCanvas(thisDocument())).id,
+    copy: async (source) => (await copyCanvas(source, thisDocument())).id,
+  }
+
   async function resolveDocument(tid: string, taskId: string | null) {
     const sequence = ++documentSequence
     try {
@@ -323,6 +339,7 @@ export function usePanelDoc(props: PanelDocProps) {
     setError,
     fetchDocNodes,
     imageSrc,
+    canvas,
     applyEdits,
   }
 }
