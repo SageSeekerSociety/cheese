@@ -44,7 +44,7 @@ Write functional tests. Do not read the source to decide what to assert: a test 
 
 ## Run `task ci:fast` before you push
 
-What the tier is, what it selects and its budget: `.github/scripts/ci-fast.md`. Run it before you push.
+What the tier is, what it selects and its budget: `.github/scripts/ci-fast.md`. Run it before you push. Its frontend type check covers only the files you changed, so do not run the whole-tree `pnpm run typecheck` or `vue-tsc` in a sandbox: it can be killed for memory.
 
 Exit 0 means the selected checks ran and passed, nothing more: an `unknown` or `blocked` result, and any check reported as not run, is not green — the tier ran out of budget, a tool was missing, or a report could not be judged, and none of that may stand in for a pass. Required CI and the merge queue remain the only merge gate.
 
