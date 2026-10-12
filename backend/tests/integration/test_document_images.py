@@ -74,7 +74,7 @@ def _image(client, doc: str, path: str, who: str):
 def test_an_image_cheese_shows_in_a_task_is_seen_in_the_tasks_document(client):
     pid = _project(client)
     room = _channel(client, pid, private=False)
-    task = open_task(client, room, owner="alice", start=False)["id"]
+    task = open_task(client, room, owner="alice")["id"]
     doc = document_of(client, task, headers=session_auth_headers("alice"))
 
     # What `cheese show figures/耗时.png` sends from the task's own session.
@@ -93,7 +93,7 @@ def test_a_private_channels_task_document_shows_its_images_to_its_people_only(
 ):
     pid = _project(client)
     room = _channel(client, pid, private=True)
-    task = open_task(client, room, owner="alice", start=False)["id"]
+    task = open_task(client, room, owner="alice")["id"]
     doc = document_of(client, task, headers=session_auth_headers("alice"))
     _show(client, task, "chart.png", session_auth_headers("alice"))
 
@@ -161,7 +161,7 @@ def test_a_project_document_does_not_reach_into_a_channels_files(client):
 def test_a_document_serves_only_images(client):
     pid = _project(client)
     room = _channel(client, pid, private=False)
-    task = open_task(client, room, owner="alice", start=False)["id"]
+    task = open_task(client, room, owner="alice")["id"]
     doc = document_of(client, task, headers=session_auth_headers("alice"))
     shown = client.post(
         f"/topics/{task}/shown",

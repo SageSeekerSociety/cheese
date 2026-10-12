@@ -23,7 +23,7 @@ def _room(client) -> tuple[str, str]:
 
 
 def _card(client, room: str, title: str) -> str:
-    return open_task(client, room, title, start=False)["id"]
+    return open_task(client, room, title)["id"]
 
 
 def _say(client, pid: str, room: str, card: str, text: str) -> str:

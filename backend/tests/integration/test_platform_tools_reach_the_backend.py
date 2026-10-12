@@ -85,7 +85,7 @@ def room(client):
 def task(client, room):
     """A task in that channel, where a living document is."""
     project, channel = room
-    return project, open_task(client, channel, "", owner="alice", start=False)["id"]
+    return project, open_task(client, channel, "", owner="alice")["id"]
 
 
 def test_a_message_is_published_as_written(client, room):
@@ -259,7 +259,7 @@ def test_a_task_session_names_its_task(client, room):
     """`cheese_title` names the task its session works in; a channel is named
     by whoever manages it, not by its AI teammate."""
     project, channel = room
-    task = open_task(client, channel, "", owner="alice", start=False)["id"]
+    task = open_task(client, channel, "", owner="alice")["id"]
     host = BackendHost(client, project, task)
     assert cheese.run_platform_tool("cheese_title", {"text": "推荐原型"}, host)
     assert client.get(f"/topics/{task}/task").json()["data"]["title"] == "推荐原型"

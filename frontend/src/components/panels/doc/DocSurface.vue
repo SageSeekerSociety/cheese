@@ -44,6 +44,7 @@ import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
+import { refsVersion } from '../../../lib/refDirectory'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 import MentionMenu from '../../room/MentionMenu.vue'
 
@@ -401,9 +402,10 @@ watch(
   () => [props.openThreads, props.activeThread],
   () => poke(commentHighlightKey)
 )
-// 名册比正文晚到：到了之后标签上的账号换成名字。
+// 名册比正文晚到：到了之后标签上的账号换成名字。`<#id>` 指着什么也是后到的
+// （lib/refDirectory）。
 watch(
-  () => [props.mentionNames, props.topicList],
+  () => [props.mentionNames, props.topicList, refsVersion.value],
   () => poke(tokenChipsKey)
 )
 function poke(key: PluginKey) {

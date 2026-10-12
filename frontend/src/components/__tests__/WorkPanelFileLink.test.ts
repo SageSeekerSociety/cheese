@@ -17,6 +17,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/api'
 import i18n, { setLocale } from '@/i18n'
 
 // 断言读的是中文界面上的那一行字，语言钉在中文上。
@@ -106,8 +107,8 @@ import PanelDocHost from '../work/PanelDocHost.vue'
 import WorkPanel from '../WorkPanel.vue'
 
 // 任务概览里的实况文档：它的正文在协同文档里，按任务的 id 认。
-function docSays(content: string) {
-  seedRoom('task-1', content)
+function docSays(content: string, taskId = 'task-1') {
+  seedRoom(taskId, content)
 }
 
 function topic(id: string): Topic {
@@ -116,8 +117,9 @@ function topic(id: string): Topic {
 
 /** 任务页上的面板：概览里是任务的实况文档，文档里点的 chip 交给面板去开——和任务页
  *  接的是同一根线。 */
-function mountPanel() {
+function mountPanel(opts: { taskId?: string; taskHasBranch?: boolean } = {}) {
   const vuetify = createVuetify({ components, directives })
+  const taskId = opts.taskId ?? 'task-1'
   let panel: { openFile: (path: string) => Promise<void> } | null = null
   const room = topic('topic-A')
   const Host = defineComponent(
@@ -129,7 +131,8 @@ function mountPanel() {
             panel = instance as typeof panel
           },
           topic: room,
-          taskId: 'task-1',
+          taskId,
+          taskHasBranch: opts.taskHasBranch ?? true,
           activityTick: 0,
         },
         {
@@ -137,7 +140,7 @@ function mountPanel() {
             h(PanelDocHost, {
               flow: true,
               topic: room,
-              taskId: 'task-1',
+              taskId,
               activityTick: 0,
               onOpenFile: (path: string) => void panel?.openFile(path),
             }),
@@ -253,28 +256,60 @@ describe('点一个文件，落在它真的在的那一格', () => {
     expect(readPreviewFile).not.toHaveBeenCalled()
   })
 
-  it('哪个库里都没有 → 说一句它不在这里，不发那次会失败的读取', async () => {
+  it('这件任务的工作副本里没有它 → 退到「项目当前版本」那一格开它', async () => {
+    // 这一支的清单里只有 src/b.ts（见 beforeEach）：老稿不是它改的。读者指名要看，
+    // 就不该因为这份文件没归到这件任务而点不开 —— 换项目当前版本那一格开。
+    readFile.mockImplementation(
+      async (_pid: unknown, path: unknown, _tid: unknown, _task: unknown, source: unknown) => {
+        // 项目当前版本里也没有它。那一格自己会说，并列出改过它的任务。
+        if (source === 'committed') throw new ApiError(404, 'file not found')
+        return { path, content: 'export const b = 1\n', version: 'v1', bytes: 19, binary: false, too_large: false }
+      }
+    )
     docSays('旧稿在 <&归档/老稿.docx>\n')
 
     const { container } = mountPanel()
     await flush()
     await clickChip(container, '归档/老稿.docx')
 
-    expect(visible(container, '.panel-changes')).toBe(true)
-    expect(container.querySelector('[data-testid="missing-file"]')?.textContent).toContain('老稿.docx')
-    // 面板还在用：文件树照常显示，读者可以换来源或者挑别的文件。
-    expect(container.querySelector('.file-list')).toBeTruthy()
-    expect(readFile).not.toHaveBeenCalled()
+    expect(visible(container, '.panel-changes')).toBe(false)
+    // 自由区那一格按文件名认。
+    expect(selectedTab(container)).toBe('老稿.docx')
+    expect(container.querySelector('[data-testid="project-file"]')).toBeTruthy()
+    await vi.waitFor(() => expect(container.querySelector('[data-testid="project-file-missing"]')).toBeTruthy())
+    // 工作副本里没有它：那次会失败的读取一次都不发。
+    expect(readFile).not.toHaveBeenCalledWith('p1', '归档/老稿.docx', 'topic-A', 'task-1', 'live')
+  })
+
+  it('还没有分支的任务（没有机器打开过它）→ 也退到项目当前版本', async () => {
+    // 这样的任务没有工作区，「改动」那一格只能说他打不开这件任务。文件照样要点得开。
+    readFile.mockImplementation(
+      async (_pid: unknown, path: unknown, _tid: unknown, _task: unknown, source: unknown) => {
+        if (source === 'committed') throw new ApiError(404, 'file not found')
+        return { path, content: 'export const b = 1\n', version: 'v1', bytes: 19, binary: false, too_large: false }
+      }
+    )
+    docSays('旧稿在 <&归档/老稿.docx>\n', 'task-new')
+
+    const { container } = mountPanel({ taskId: 'task-new', taskHasBranch: false })
+    await flush()
+    await clickChip(container, '归档/老稿.docx')
+
+    expect(visible(container, '.panel-changes')).toBe(false)
+    expect(container.querySelector('[data-testid="project-file"]')).toBeTruthy()
+    expect(readFile).not.toHaveBeenCalledWith('p1', '归档/老稿.docx', 'topic-A', 'task-new', 'live')
   })
 
   it('仓库树里的 .html 去「改动」：那是源码，不是房间里的那一份', async () => {
+    // 这一支的工作副本里有它：.html 在那边是源码，该开在改动那格看 diff，不是当网页画。
+    listFiles.mockResolvedValue({ data: [{ path: 'site/index.html', bytes: 40 }], total: 1 })
     docSays('源码见 <&site/index.html>\n')
 
     const { container } = mountPanel()
     await flush()
     await clickChip(container, 'site/index.html')
 
-    // 房间里没有它（读取失败），所以它落在树上——.html 在那边是 diff，不是网页。
+    // 房间里没有它（读取失败），所以它落在树上。
     expect(visible(container, '.panel-changes')).toBe(true)
     expect(selectedTab(container)).toContain('改动')
   })

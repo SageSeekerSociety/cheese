@@ -553,7 +553,7 @@ def _visible(client, room: str) -> list[dict]:
 
 def _task(client, room: str) -> str:
     """A task of alice's in ``room``."""
-    return open_task(client, room, "子活", owner="alice", start=False)["id"]
+    return open_task(client, room, "子活", owner="alice")["id"]
 
 
 def _say_in_task(client, room: str, task: str, author: str, content: str) -> str:
