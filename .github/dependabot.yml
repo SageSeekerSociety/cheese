@@ -7,6 +7,10 @@
 #
 # Production dependencies only. A devDependency bump reaches no shipped build,
 # and mixing the two is how a weekly PR queue becomes noise nobody reads.
+#
+# Minor and patch bumps of one ecosystem arrive as one grouped PR a week, so
+# the queue holds one PR per ecosystem instead of one per package. A major bump
+# can change what the code has to do, so each stays a PR of its own.
 # Times are UTC; nothing here is timezone-sensitive.
 version: 2
 updates:
@@ -26,6 +30,10 @@ updates:
     # check on a PR nobody can merge.
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      frontend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
 
   # The service that ships in the backend image (backend/Dockerfile).
   - package-ecosystem: uv
@@ -39,3 +47,7 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore(deps)"
+    groups:
+      backend-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
