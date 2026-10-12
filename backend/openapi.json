@@ -34980,6 +34980,102 @@
         }
       }
     },
+    "/topics/{topic_id}/map-card": {
+      "get": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Read Map Card",
+        "description": "The task's card, and whether the caller may change it.",
+        "operationId": "read_map_card_topics__topic_id__map_card_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapCardViewEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Change Map Card",
+        "description": "Change the card: the fields given are replaced, the rest kept. Its own\nsession writes it after a turn (`cheese_map_card`); a person edits it on the\ntask page.",
+        "operationId": "change_map_card_topics__topic_id__map_card_patch",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MapCardIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MapCardViewEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/tasks": {
       "get": {
         "tags": [
@@ -56715,6 +56811,174 @@
         ],
         "title": "ManagerIn"
       },
+      "MapCardIn": {
+        "properties": {
+          "what": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "What"
+          },
+          "progress": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 200
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Progress"
+          },
+          "waiting_on": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/WaitingOn"
+                },
+                "type": "array",
+                "maxItems": 5
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting On"
+          },
+          "terms": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/Term"
+                },
+                "type": "array",
+                "maxItems": 2
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Terms"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "MapCardIn",
+        "description": "A change to the card. A field left out stays as it is; an empty string\nor list empties it. The lists are replaced whole."
+      },
+      "MapCardOut": {
+        "properties": {
+          "what": {
+            "type": "string",
+            "title": "What"
+          },
+          "progress": {
+            "type": "string",
+            "title": "Progress"
+          },
+          "waiting_on": {
+            "items": {
+              "$ref": "#/components/schemas/WaitingOn"
+            },
+            "type": "array",
+            "title": "Waiting On"
+          },
+          "terms": {
+            "items": {
+              "$ref": "#/components/schemas/Term"
+            },
+            "type": "array",
+            "title": "Terms"
+          },
+          "updated_by": {
+            "type": "string",
+            "title": "Updated By"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "what",
+          "progress",
+          "waiting_on",
+          "terms",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "MapCardOut",
+        "description": "The card as written: every field, possibly empty."
+      },
+      "MapCardView": {
+        "properties": {
+          "card": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MapCardOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can_edit": {
+            "type": "boolean",
+            "title": "Can Edit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "card",
+          "can_edit"
+        ],
+        "title": "MapCardView",
+        "description": "What the task page reads: the card (None until someone writes one) and\nwhether the reader may change it."
+      },
+      "MapCardViewEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MapCardView"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "MapCardViewEnvelope"
+      },
       "MemberCreate": {
         "properties": {
           "user_handle": {
@@ -61799,6 +62063,30 @@
         ],
         "title": "TeammateTaskIn"
       },
+      "Term": {
+        "properties": {
+          "term": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Term"
+          },
+          "meaning": {
+            "type": "string",
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Meaning"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "term",
+          "meaning"
+        ],
+        "title": "Term",
+        "description": "A word a reader may not know, and what it means here."
+      },
       "TextRangeQuoteIn": {
         "properties": {
           "kind": {
@@ -62277,6 +62565,30 @@
         "type": "object",
         "title": "VoidDecision",
         "description": "人工作废 (2026-08-11). No `decided_by`, unlike the other decisions here:\n作废 is an authorization action, so the actor comes from the session token\nonly — a caller must never be able to name someone else as the one who\ndid it. Same shape as 改验收人 (`reassign`)."
+      },
+      "WaitingOn": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Handle"
+          },
+          "ask": {
+            "type": "string",
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Ask"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "handle",
+          "ask"
+        ],
+        "title": "WaitingOn",
+        "description": "One person the task waits on, and what is wanted of them."
       },
       "WebElementQuoteIn": {
         "properties": {

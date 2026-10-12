@@ -376,6 +376,28 @@ PROJECT_SKILLS = (
 )
 
 
+#: 任务的卡片：项目地图上的那一张，也在任务页最上面。只在任务自己的会话里有：频道、
+#: 支线里没有这张卡。什么时候写、写给谁，只在这里说，不设硬规则（负责人的原则：
+#: 只告诉 agent，相信它的判断）；工具只查格式。写给负责人，所以按他的私有记忆写——
+#: 任务会话的那一轮把负责人的私有记忆索引也读进来（`turn_speakers`）。
+MAP_CARD = (
+    "## 任务卡片\n"
+    "这个任务有一张卡片，在任务页最上面。没参与过的人只看它，就该知道这件事是干什么的、"
+    "到哪了、在等谁。卡片是写给负责人看的：用什么语言、写多详细、什么口吻，按你对他的"
+    "了解来写，记忆里有他的偏好就照着写。\n"
+    "每一轮干完，这件事的进展或在等谁有了变化，就用 `cheese_map_card` 更新它；没变化就"
+    "不写。几栏各写一两句，说人话，没内容的栏留空：\n"
+    "- 是什么：这件事是干什么的，一句直觉，不讲实现。例：「丢东西的人点『是我的』，就能"
+    "联系到捡到的人」。\n"
+    "- 到哪了：一句。例：「表设计好了，在写这一步」。\n"
+    "- 等谁：在等谁做什么，一人一条，写他在成员表里的 handle 和要他做的事；谁都不等就"
+    "清空。\n"
+    "- 名词：读的人可能不懂的词，最多两个，各一句解释。\n"
+    "这个任务从哪条消息来，平台会自己填，不用写。人也会直接改卡片：改之前不带参数调一次"
+    "读到现在的样子，别把人写的冲掉。"
+)
+
+
 def own_name(name: str) -> str:
     """The line that tells a teammate which name on the roster is its own."""
     return (
@@ -392,6 +414,7 @@ def build_system_prompt(
     role: str | None = None,
     keeps_memory: bool = False,
     name: str | None = None,
+    in_task: bool = False,
 ) -> str:
     """拼一个会话的系统提示词：只有规矩，没有项目现状。
 
@@ -409,6 +432,9 @@ def build_system_prompt(
     那一段讲的是「写进 `~/.cheese/memory/`，下一轮平台的那一份里有它」，而 codex、
     pi 没有这条回路——照说明书写下的文件永远同步不回来，agent 却以为自己在写项目
     记忆。
+
+    ``in_task``：这是一个任务自己的会话（不是频道、支线），带上任务卡片那一段
+    （:data:`MAP_CARD`）。一个会话从开到关都在同一个地方，所以它不会在会话中途变。
     """
     parts = [
         *([own_name(name)] if name else []),
@@ -424,6 +450,8 @@ def build_system_prompt(
         parts.append(skills)
     if has_doc:
         parts.append(DOC_SECTION)
+    if in_task:
+        parts.append(MAP_CARD)
     if keeps_memory:
         # 记忆这一段是有意整份在场的（照搬 CC）：四类记忆是什么、什么不该写、写前
         # 查重、用前核对——它是这个机制的说明书，而 agent 只有读了它才知道第一条

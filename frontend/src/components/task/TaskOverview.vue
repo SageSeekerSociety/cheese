@@ -1,12 +1,14 @@
 <script setup lang="ts">
-// 任务的概览：一整列，自然往下滚。从上到下是它从哪句话来的（点了回到那段对话）、谁
-// 什么时候开始的（「与开始时相比」看从那以后改了什么）、关闭时写下的结论、实况文档
-// （顶栏下面是 AI 队友这一轮的清单，只在它干活时有）、产出、相关。
+// 任务的概览：一整列，自然往下滚。最上面是任务的卡片（是什么、到哪了、等谁、名词），
+// 紧挨着它的是来源：它从哪句话来的（点了回到那段对话）。往下是谁什么时候开始的（「与
+// 开始时相比」看从那以后改了什么）、关闭时写下的结论、实况文档（顶栏下面是 AI 队友这
+// 一轮的清单，只在它干活时有）、产出、相关。
 //
 // 从讨论转出来的任务，文档还空着时先是 AI 队友在整理它：那时这里说它整理到哪了，
 // 失败了给「重试」，也可以自己写。
 import type { ProjectMemberRow, RoomTask, TodoItem, Topic } from '@/cx_types'
 import type { DocReviewRequest } from '@/lib/docReview'
+import type { MapCardChange, MapCardView } from '@/types/taskMapCard'
 import type { TaskRelated, TaskSource } from '@/types/taskOrigin'
 
 import { computed, ref, watch } from 'vue'
@@ -14,6 +16,7 @@ import { computed, ref, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
+import TaskMapCard from '@/components/task/TaskMapCard.vue'
 import TaskOutputs from '@/components/task/TaskOutputs.vue'
 import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
@@ -36,6 +39,10 @@ const props = defineProps<{
   /** AI 队友这一轮的清单；没在干活时是空的。 */
   checklist: TodoItem[]
   related: TaskRelated | null
+  /** 任务的卡片；还没读回来时是 null。 */
+  mapCard: MapCardView | null
+  mapCardSaving: boolean
+  mapCardError: string | null
   /** 能不能让 AI 队友再整理一次：做这件任务的人才能。 */
   canRetry: boolean
   retrying: boolean
@@ -51,7 +58,15 @@ const emit = defineEmits<{
   (e: 'open-source', source: TaskSource): void
   (e: 'open-document', id: string, title: string): void
   (e: 'open-file', path: string): void
+  (e: 'save-map-card', change: MapCardChange): void
 }>()
+
+// 卡片上「等谁」能点名的人：项目里的人，不含 AI 队友。
+const people = computed(() =>
+  props.members
+    .filter((m) => m.source !== 'agent')
+    .map((m) => ({ handle: m.user_handle, name: m.name || m.user_handle }))
+)
 
 // 第一轮失败后选了「自己写」：不再拦在文档前面。
 const writingMyself = ref(false)
@@ -76,6 +91,15 @@ defineExpose({
 
 <template>
   <div class="task-overview">
+    <TaskMapCard
+      :view="mapCard"
+      :member-names="memberNames"
+      :people="people"
+      :saving="mapCardSaving"
+      :error="mapCardError"
+      @save="emit('save-map-card', $event)"
+    />
+    <!-- 卡片的「来源」一栏：任务从哪句话来，平台读出来的，不在卡片里存。 -->
     <TaskSourceLine
       :source="related ? related.source : undefined"
       :task="task"

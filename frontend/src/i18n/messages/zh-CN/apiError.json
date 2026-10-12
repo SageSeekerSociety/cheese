@@ -1018,5 +1018,8 @@
   "specDevicesOf": "{name}的设备",
   "environmentDefaultPeopleOnly": "新队友的默认执行环境由人来设；AI 队友只能换自己的",
   "environmentOwnOnly": "AI 队友只能换自己的执行环境",
-  "platformSpecUnavailable": "这个部署没有平台的机器，这种沙箱放不下；对话和平台工具仍可用。可以给这位队友换一种沙箱规格，比如某个人的设备。"
+  "platformSpecUnavailable": "这个部署没有平台的机器，这种沙箱放不下；对话和平台工具仍可用。可以给这位队友换一种沙箱规格，比如某个人的设备。",
+  "taskCardParticipantsOnly": "只有任务的负责人和协作者可以修改这张卡片",
+  "taskCardClosed": "这个任务已经结束，卡片不能再改",
+  "taskCardNotMember": "{handle} 不是这个项目的成员"
 }

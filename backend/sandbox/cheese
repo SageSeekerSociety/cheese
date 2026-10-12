@@ -611,6 +611,44 @@ PLATFORM_TOOLS = ToolTable(
             ["text"],
         ),
         _tool(
+            "cheese_map_card",
+            "更新本任务的卡片：任务页最上面那一栏，读的人只看它就知道这件事是干什么的、"
+            "到哪了、在等谁。只传要改的栏，没传的栏保持原样；传空字符串或空列表就是清空"
+            "那一栏。什么都不传时只返回现在的卡片，用它先读再改。卡片从哪条消息来由平台"
+            "填，不用写。",
+            {
+                "what": _text("是什么：一句话说这件事是干什么的，≤200 字"),
+                "progress": _text("到哪了：一句话，≤200 字"),
+                "waiting_on": {
+                    "type": "array",
+                    "description": (
+                        "等谁：在等的人，一人一条，最多 5 条；谁都不等就传空列表"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "handle": _text("这个人在项目成员表里的 handle"),
+                            "ask": _text("要他做什么，一句话，≤120 字"),
+                        },
+                        "required": ["handle", "ask"],
+                    },
+                },
+                "terms": {
+                    "type": "array",
+                    "description": "名词：读的人可能不懂的词，最多 2 条",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "term": _text("这个词，≤40 字"),
+                            "meaning": _text("一句话解释，≤160 字"),
+                        },
+                        "required": ["term", "meaning"],
+                    },
+                },
+            },
+            [],
+        ),
+        _tool(
             "cheese_notify",
             "给人发通知，进通知面板；要人在对话里一键拍板用 cheese_ask。"
             "to 不填是发给这个频道名册上的人（不含芝士），不是项目里所有人。"
@@ -1353,6 +1391,15 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     if tool == "cheese_title":
         body = {"title": args["text"]}
         return {"method": "POST", "path": here + "/title", "body": body}
+    if tool == "cheese_map_card":
+        change = {
+            key: args[key]
+            for key in _MAP_CARD_FIELDS
+            if key in args and args[key] is not None
+        }
+        if not change:
+            return {"method": "GET", "path": here + "/map-card"}
+        return {"method": "PATCH", "path": here + "/map-card", "body": change}
     if tool == "cheese_docs_search":
         return {
             "method": "POST",
@@ -2715,6 +2762,31 @@ def _say_routine_report(args, data, env) -> str:
     return "\n".join(parts)
 
 
+#: The card's fields, as `cheese_map_card` takes them and `PATCH /map-card` reads them.
+_MAP_CARD_FIELDS = ("what", "progress", "waiting_on", "terms")
+
+
+def _say_map_card(args: dict, data, env) -> str:
+    view = data or {}
+    card = view.get("card")
+    if not card:
+        return "这个任务还没有卡片。"
+    lines = [
+        f"是什么：{card.get('what') or '（空）'}",
+        f"到哪了：{card.get('progress') or '（空）'}",
+    ]
+    waiting = card.get("waiting_on") or []
+    lines.append(
+        "等谁："
+        + ("；".join(f"@{w['handle']} {w['ask']}" for w in waiting) or "（空）")
+    )
+    terms = card.get("terms") or []
+    named = "；".join(f"{t['term']}：{t['meaning']}" for t in terms)
+    lines.append("名词：" + (named or "（空）"))
+    lines.append(f"最后由 {card.get('updated_by')} 在 {card.get('updated_at')} 修改。")
+    return "\n".join(lines)
+
+
 _SAY = {
     "chat_send": _say_chat_send,
     "chat_edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
@@ -2740,6 +2812,7 @@ _SAY = {
     "cheese_title": lambda a, d, e: (
         f"标题已设为：{(d or {}).get('title') or a['text']}"
     ),
+    "cheese_map_card": _say_map_card,
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
     "cheese_docs_search": _say_docs_search,

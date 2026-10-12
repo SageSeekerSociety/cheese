@@ -340,6 +340,7 @@ owners:
   space.publishing: "Learning board member publishing history; domain/space/member_publishing_service.py."
   space.organization: "Learning board categories/groups/management roles; domain/space/SpaceService and tags_service."
   tag: "Content classification labels; domain/tag/TagService."
+  task_map: "A room task's card for the project map; domain/task_map/card.py holds the table, the route checks reading (the task's room roster) and writing (owner, collaborators or the task's own session, while open) as the task document does."
   task: "External learning-task publication/participation/submission/review; domain/task services. Distinct from domain/room_task."
   team: "Team discovery/membership/shared resources; domain/team/TeamService and membership services."
   user: "Account registration/sign-in/profile/security; domain/user services, composed with OAuth/legal/invite by user route."
@@ -1003,6 +1004,9 @@ routes:
   - {protocol: "http", method: "POST", path: "/tags", auth: "legacy.answers.list_answers", owner: "tag"}
   # app.api.routes.task_inheritance
   - {protocol: "http", method: "GET", path: "/tasks/{taskId}/inheritance", auth: "legacy.task_inheritance.read", owner: "task"}
+  # app.api.routes.task_map
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/map-card", auth: "actor.topic", owner: "task_map"}
+  - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/map-card", auth: "actor.topic", owner: "task_map"}
   # app.api.routes.tasks
   - {protocol: "http", method: "POST", path: "/tasks", auth: "legacy.tasks.create_task", owner: "task"}
   - {protocol: "http", method: "GET", path: "/tasks/{taskId}/attachments", auth: "legacy.tasks.list_task_attachments", owner: "task"}

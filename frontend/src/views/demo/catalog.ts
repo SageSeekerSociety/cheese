@@ -80,6 +80,7 @@ import { SHARED_ENTRIES } from './catalogShared'
 import { SHELL_ENTRIES } from './catalogShell'
 import { SKILL_ENTRIES } from './catalogSkills'
 import { TASK_FORM_ENTRIES } from './catalogTaskForm'
+import { TASK_MAP_ENTRIES } from './catalogTaskMap'
 import { USAGE_ENTRIES } from './catalogUsage'
 import { VIEW_ENTRIES } from './catalogViews'
 
@@ -589,6 +590,7 @@ export const CATALOG: CatalogEntry[] = [
   ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
+  ...TASK_MAP_ENTRIES,
   // 几个路由页拆出来的画面那一组（设备审批、已归档的项目、打开预览 / 网站，以及项目里的
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。

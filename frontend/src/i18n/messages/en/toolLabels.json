@@ -61,6 +61,7 @@
   "cheeseUnlock": "Release a resource",
   "cheeseDecision": "Record a decision",
   "cheeseTitle": "Set the title",
+  "cheeseMapCard": "Update the task card",
   "cheeseNotify": "Send a notification",
   "cheeseAsk": "Ask the user",
   "cheeseAcceptRequest": "Submit for review",

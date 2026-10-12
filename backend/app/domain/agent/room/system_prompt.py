@@ -16,6 +16,7 @@ def session_system_prompt(
     role: str | None,
     harness: str,
     name: str,
+    in_task: bool = False,
 ) -> str:
     """The system prompt a session in this room starts with, for the teammate
     called ``name``.
@@ -40,4 +41,5 @@ def session_system_prompt(
         # 读到它只会以为自己在写项目记忆（`build_system_prompt` 那段注释）。
         keeps_memory=keeps_memory(harness),
         name=name,
+        in_task=in_task,
     )

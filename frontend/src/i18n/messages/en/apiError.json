@@ -1018,5 +1018,8 @@
   "specDevicesOf": "{name}'s devices",
   "environmentDefaultPeopleOnly": "The default execution environment for new teammates is set by people; an AI teammate can only change its own",
   "environmentOwnOnly": "An AI teammate can only change its own execution environment",
-  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices."
+  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices.",
+  "taskCardParticipantsOnly": "Only the task's owner and collaborators can change this card",
+  "taskCardClosed": "This task has ended and its card can no longer change",
+  "taskCardNotMember": "{handle} is not a member of this project"
 }

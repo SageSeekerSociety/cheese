@@ -461,6 +461,7 @@ function handleStateChanged(resource: string) {
   else if (resource === 'feedback') chatColumn.value?.reloadFeedback()
   // 技能的提议落下、被保存或被拒：那张卡跟着变。
   else if (resource === 'skills') chatColumn.value?.reloadSkills()
+  else if (resource === 'task_map_card') void taskOverview.loadMapCard()
   else if (!CACHED_RESOURCES.has(resource)) activityTick.value += 1 // doc / notify → reload
 }
 
@@ -796,6 +797,9 @@ void openPlace()
                 :compare-error="taskCompareError"
                 :checklist="taskOverview.checklist.value"
                 :related="taskOverview.related.value"
+                :map-card="taskOverview.mapCard.value"
+                :map-card-saving="taskOverview.mapCardSaving.value"
+                :map-card-error="taskOverview.mapCardError.value"
                 :can-retry="taskPage.takesPart.value"
                 :retrying="taskOverview.retrying.value"
                 :retry-error="taskOverview.retryError.value"
@@ -806,6 +810,7 @@ void openPlace()
                 @open-output="(path: string) => panelRef?.openFile?.(path)"
                 @open-file="(path: string) => panelRef?.openFile?.(path)"
                 @open-document="(id: string, title: string) => panelRef?.openDocument?.({ id, title })"
+                @save-map-card="taskOverview.saveMapCard"
                 @open-source="openSource"
               />
               <ChannelOverview

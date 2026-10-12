@@ -265,6 +265,26 @@ def test_a_task_session_names_its_task(client, room):
     assert client.get(f"/topics/{task}/task").json()["data"]["title"] == "推荐原型"
 
 
+def test_a_task_session_writes_the_card_its_page_shows(client, room):
+    """`cheese_map_card` from the task's own session: the task page reads the
+    card it wrote; called with nothing, it reads the card back."""
+    project, channel = room
+    task = open_task(client, channel, "认领按钮", owner="alice", start=False)["id"]
+    host = BackendHost(client, project, task)
+    cheese.run_platform_tool(
+        "cheese_map_card",
+        {"what": "丢东西的人点「是我的」，就能联系到捡到的人", "progress": "在写表"},
+        host,
+    )
+
+    page = client.get(
+        f"/topics/{task}/map-card", headers=session_auth_headers("alice")
+    ).json()["data"]
+    assert page["card"]["what"] == "丢东西的人点「是我的」，就能联系到捡到的人"
+    assert page["card"]["progress"] == "在写表"
+    assert "在写表" in cheese.run_platform_tool("cheese_map_card", {}, host)
+
+
 def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room):
     """芝士在频道里建一份资料库文档、列出来、点名改它：建的和改的都是那一份，
     频道里出现的是这份文档。"""

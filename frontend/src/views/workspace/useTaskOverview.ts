@@ -1,12 +1,14 @@
-// 任务概览右边那一列要的数据：从哪来（相关）、芝士这一轮的清单、第一轮整理失败后
-// 的重试。任务本身由 useTaskPage 拿着。
+// 任务概览右边那一列要的数据：任务的卡片、从哪来（相关）、芝士这一轮的清单、第一轮
+// 整理失败后的重试。任务本身由 useTaskPage 拿着。
 import type { TodoItem } from '@/cx_types'
+import type { MapCardChange, MapCardView } from '@/types/taskMapCard'
 import type { TaskRelated } from '@/types/taskOrigin'
 
 import { computed, ref, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
-import { getTaskRelated, retryTaskOpening } from '@/api/tasks'
+import { changeTaskMapCard, getTaskMapCard, getTaskRelated, retryTaskOpening } from '@/api/tasks'
+import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { roomProgressQuery } from '@/query/room'
@@ -30,6 +32,35 @@ export function useTaskOverview(opts: {
       if (opts.taskId() === id) related.value = got
     } catch {
       // 相关是背景信息，拿不到就不画。
+    }
+  }
+
+  // 任务的卡片。芝士或别人改了它，任务的连接推来 `task_map_card`，页面再读一次。
+  const mapCard = ref<MapCardView | null>(null)
+  const mapCardSaving = ref(false)
+  const mapCardError = ref<string | null>(null)
+  async function loadMapCard() {
+    const id = opts.taskId()
+    if (!id) return
+    try {
+      const got = await getTaskMapCard(id)
+      if (opts.taskId() === id) mapCard.value = got
+    } catch {
+      // 卡片拿不到就不画，下面的概览照常。
+    }
+  }
+  async function saveMapCard(change: MapCardChange) {
+    const id = opts.taskId()
+    if (!id || mapCardSaving.value) return
+    mapCardSaving.value = true
+    mapCardError.value = null
+    try {
+      const got = await changeTaskMapCard(id, change)
+      if (opts.taskId() === id) mapCard.value = got
+    } catch (e) {
+      mapCardError.value = e instanceof Error && e.message ? e.message : t('work.task.mapCard.saveFailed')
+    } finally {
+      mapCardSaving.value = false
     }
   }
 
@@ -65,6 +96,9 @@ export function useTaskOverview(opts: {
       // 先画上一次在这件任务里看到的，读回来再换（见 query/snapshot 的 `lastSeen`）。
       related.value = (id && lastSeen<TaskRelated>(keys.taskRelated(id))) || null
       void loadRelated()
+      mapCard.value = null
+      mapCardError.value = null
+      void loadMapCard()
     },
     { immediate: true }
   )
@@ -86,5 +120,17 @@ export function useTaskOverview(opts: {
     }
   }
 
-  return { related, checklist, retrying, retryError, retryOpening, loadRelated }
+  return {
+    related,
+    checklist,
+    retrying,
+    retryError,
+    retryOpening,
+    loadRelated,
+    mapCard,
+    mapCardSaving,
+    mapCardError,
+    loadMapCard,
+    saveMapCard,
+  }
 }

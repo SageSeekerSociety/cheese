@@ -8662,6 +8662,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/topics/{topic_id}/map-card": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Map Card
+         * @description The task's card, and whether the caller may change it.
+         */
+        get: operations["read_map_card_topics__topic_id__map_card_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change Map Card
+         * @description Change the card: the fields given are replaced, the rest kept. Its own
+         *     session writes it after a turn (`cheese_map_card`); a person edits it on the
+         *     task page.
+         */
+        patch: operations["change_map_card_topics__topic_id__map_card_patch"];
+        trace?: never;
+    };
     "/tasks": {
         parameters: {
             query?: never;
@@ -14819,6 +14845,65 @@ export interface components {
             /** Handle */
             handle: string;
         };
+        /**
+         * MapCardIn
+         * @description A change to the card. A field left out stays as it is; an empty string
+         *     or list empties it. The lists are replaced whole.
+         */
+        MapCardIn: {
+            /** What */
+            what?: string | null;
+            /** Progress */
+            progress?: string | null;
+            /** Waiting On */
+            waiting_on?: components["schemas"]["WaitingOn"][] | null;
+            /** Terms */
+            terms?: components["schemas"]["Term"][] | null;
+        };
+        /**
+         * MapCardOut
+         * @description The card as written: every field, possibly empty.
+         */
+        MapCardOut: {
+            /** What */
+            what: string;
+            /** Progress */
+            progress: string;
+            /** Waiting On */
+            waiting_on: components["schemas"]["WaitingOn"][];
+            /** Terms */
+            terms: components["schemas"]["Term"][];
+            /** Updated By */
+            updated_by: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
+         * MapCardView
+         * @description What the task page reads: the card (None until someone writes one) and
+         *     whether the reader may change it.
+         */
+        MapCardView: {
+            card: components["schemas"]["MapCardOut"] | null;
+            /** Can Edit */
+            can_edit: boolean;
+        };
+        /** MapCardViewEnvelope */
+        MapCardViewEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["MapCardView"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** MemberCreate */
         MemberCreate: {
             /** User Handle */
@@ -16612,6 +16697,16 @@ export interface components {
             start: boolean;
         };
         /**
+         * Term
+         * @description A word a reader may not know, and what it means here.
+         */
+        Term: {
+            /** Term */
+            term: string;
+            /** Meaning */
+            meaning: string;
+        };
+        /**
          * TextRangeQuoteIn
          * @description A passage picked out of rendered document text.
          *
@@ -16800,6 +16895,16 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /**
+         * WaitingOn
+         * @description One person the task waits on, and what is wanted of them.
+         */
+        WaitingOn: {
+            /** Handle */
+            handle: string;
+            /** Ask */
+            ask: string;
         };
         /**
          * WebElementQuoteIn
@@ -35661,6 +35766,72 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_map_card_topics__topic_id__map_card_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapCardViewEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_map_card_topics__topic_id__map_card_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MapCardIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MapCardViewEnvelope"];
                 };
             };
             /** @description Validation Error */

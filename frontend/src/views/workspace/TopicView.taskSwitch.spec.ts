@@ -81,6 +81,8 @@ vi.mock('@/api/tasks', async (importOriginal) => ({
   getTask: vi.fn(() => new Promise(() => {})),
   // 任务概览那一格的「相关」：这里不看它。
   getTaskRelated: vi.fn(() => new Promise(() => {})),
+  // 任务的卡片也是那一格的，同样不看。
+  getTaskMapCard: vi.fn(() => new Promise(() => {})),
 }))
 vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),

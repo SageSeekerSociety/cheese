@@ -11,7 +11,7 @@ import type { MemberActivityLine } from '../lib/memberActivity'
 
 /** What a room announces with a `state` frame (`state-changed` below), besides its
  *  own row (`topics`, which names the room). */
-export const ANNOUNCED = ['doc', 'pins', 'accept', 'feedback', 'skills', 'threads'] as const
+export const ANNOUNCED = ['doc', 'pins', 'accept', 'feedback', 'skills', 'threads', 'task_map_card'] as const
 
 /** Of those, what a subscription's room snapshot puts straight into the cache
  *  (`query/snapshot`): a reconnect that brought a snapshot need not re-read them. */

@@ -84,6 +84,11 @@ CALLS = {
     ),
     "cheese_ready": ({}, "POST", f"/topics/{TOPIC}/ready"),
     "cheese_title": ({"text": "推荐原型"}, "POST", f"/topics/{TOPIC}/title"),
+    "cheese_map_card": (
+        {"progress": "表设计好了，在写这一步"},
+        "PATCH",
+        f"/topics/{TOPIC}/map-card",
+    ),
     "cheese_notify": (
         {"title": "看一眼"},
         "POST",

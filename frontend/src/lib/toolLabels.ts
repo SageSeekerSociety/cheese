@@ -84,6 +84,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_unlock: 'toolLabels.cheeseUnlock',
   cheese_decision: 'toolLabels.cheeseDecision',
   cheese_title: 'toolLabels.cheeseTitle',
+  cheese_map_card: 'toolLabels.cheeseMapCard',
   cheese_notify: 'toolLabels.cheeseNotify',
   cheese_ask: 'toolLabels.cheeseAsk',
   cheese_accept_request: 'toolLabels.cheeseAcceptRequest',

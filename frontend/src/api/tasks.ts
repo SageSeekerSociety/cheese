@@ -176,3 +176,16 @@ export function getTaskRelated(taskId: string): Promise<import('../types/taskOri
 export function retryTaskOpening(taskId: string): Promise<{ opening: string }> {
   return request(`${taskPath(taskId)}/opening`, { method: 'POST' })
 }
+
+/** 任务的卡片、它从哪来，和看的人能不能改。 */
+export function getTaskMapCard(taskId: string): Promise<import('../types/taskMapCard').MapCardView> {
+  return request(`${taskPath(taskId)}/map-card`)
+}
+
+/** 改任务的卡片：给了的栏整栏换掉，没给的不动。 */
+export function changeTaskMapCard(
+  taskId: string,
+  change: import('../types/taskMapCard').MapCardChange
+): Promise<import('../types/taskMapCard').MapCardView> {
+  return request(`${taskPath(taskId)}/map-card`, { method: 'PATCH', body: JSON.stringify(change) })
+}

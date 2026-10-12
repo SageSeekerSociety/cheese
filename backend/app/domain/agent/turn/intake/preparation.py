@@ -198,6 +198,9 @@ class TurnContext:
     # What a task's session is told it may do on the machine; None outside a
     # task. It changes when the task starts, and is told again then.
     task_machine: str | None
+    # A task's own conversation, not its room's line or a 支线 in it: its
+    # session is told about the task's card (`MAP_CARD`).
+    in_task: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +339,7 @@ class TurnPreparation:
                 role=role,
                 harness=provider.harness,
                 name=agent.display_name,
+                in_task=place.task is not None and place.thread is None,
             ),
             resume_token=resume_token,
             model=model_kwargs.get("model"),
@@ -481,7 +485,18 @@ class TurnPreparation:
             # 队友手里的句柄不是一个作用域。本轮说话的这几位同时也是这一轮对账
             # 要点名的那几个（`MemoryLedger.remember_turn`），周期任务那一轮的主人也
             # 在里面：他没有署名的消息，只能从那一笔投递上认（`turn_speakers`）。
-            speakers = await turn_speakers(session, delivery_id, pending, private_owner)
+            speakers = await turn_speakers(
+                session,
+                delivery_id,
+                pending,
+                private_owner,
+                # 任务卡片写给负责人看（`MAP_CARD`）：任务自己的会话每一轮都读他那一份。
+                task_owner=(
+                    task.owner_handle
+                    if task is not None and place.thread is None
+                    else None
+                ),
+            )
             memory = await memory_index(
                 session, topic.project_id, speaker_handles=list(speakers)
             )
@@ -756,6 +771,7 @@ class TurnPreparation:
             else TASK_MACHINE_NOT_STARTED
             if task.started_at is None
             else TASK_MACHINE_STARTED,
+            in_task=task is not None and place.thread is None,
             acting_agent=acting_agent,
             agent=agent,
             agent_pool=agent_pool,
@@ -859,6 +875,7 @@ class TurnPreparation:
             role=role,
             harness=runtime.harness,
             name=prepared.agent.display_name,
+            in_task=prepared.in_task,
         )
         opening = build_session_opening(
             thread=prepared.thread_context,
