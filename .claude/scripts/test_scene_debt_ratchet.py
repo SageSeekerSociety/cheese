@@ -282,6 +282,30 @@ request()
         result = self.run_gate(rc=1)
         self.assertIn("NEW: src/views/Q.vue", result.stdout)
 
+    def test_failure_names_the_kind_and_the_shrink_only_update(self) -> None:
+        # A new route read: the failure names that kind's fix and its landing
+        # spot, says the baseline only shrinks, and does not print another
+        # kind's fix for a debt it does not have.
+        self.page("<Child/>", "import {useRoute} from 'vue-router'; useRoute()")
+        routes = self.run_gate(rc=1)
+        self.assertIn("scene-use-route —", routes.stdout)
+        self.assertIn("lint:scene-debt:update", routes.stdout)
+        self.assertNotIn("scene-non-a-children —", routes.stdout)
+
+        # --json (what ci:fast calls) stays the one record line on stdout, with
+        # the same failing verdict, and carries the same fix on stderr.
+        result = self.run_gate("--kind", "routes", "--json", rc=1)
+        lines = result.stdout.strip().splitlines()
+        self.assertEqual(len(lines), 1, result.stdout)
+        self.assertEqual(json.loads(lines[0])["status"], "fail")
+        self.assertIn("scene-use-route —", result.stderr)
+
+        # A new legacy @/network import names the network fix instead.
+        self.page("<Child/>", "import '@/network'")
+        network = self.run_gate(rc=1)
+        self.assertIn("legacy-network —", network.stdout)
+        self.assertNotIn("scene-use-route —", network.stdout)
+
     def test_json_verdict_has_the_same_failure_and_no_human_output(self) -> None:
         self.page("<Child/>", "useRoute()")
         record = json.loads(self.run_gate("--kind", "routes", "--json", rc=1).stdout)
@@ -334,6 +358,9 @@ request()
         before = self.baseline.read_bytes()
         result = self.run_gate("--base", approved, "--update", rc=1)
         self.assertIn("BASELINE GREW: src/views/P.vue", result.stdout)
+        # --update refuses while a mis-added line is present, so it cannot remove
+        # it: the report must say to restore that line by hand.
+        self.assertIn("put the added baseline line back by hand", result.stdout)
         self.assertEqual(before, self.baseline.read_bytes())
 
 

@@ -23,7 +23,12 @@ import { fileURLToPath } from 'node:url'
 
 import { ESLint } from 'eslint'
 
-import { BOUNDARY_RULE_ID, compare, parseEslintJson } from './import-boundary-ratchet-core.mjs'
+import {
+  BOUNDARY_RULE_ID,
+  compare,
+  formatBoundaryReport,
+  parseEslintJson,
+} from './import-boundary-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
@@ -60,6 +65,47 @@ describe('parseEslintJson', () => {
 
     assert.deepEqual(counts, { 'src/components/A.vue': 2 })
     assert.deepEqual(unjudged, [])
+  })
+
+  // The count is what decides, but the failure report needs the line and the
+  // rule: "A.vue: 0 -> 2" alone sends the reader to grep, and grep finds both
+  // the new violation and any frozen one in the same file. These are eslint's
+  // own line/column/message for this rule, and nothing else.
+  it('keeps the line, column and text of each of this rule’s messages', () => {
+    const { violations } = parseEslintJson(
+      eslintJson([
+        {
+          filePath: '/repo/frontend/src/components/A.vue',
+          messages: [
+            { ruleId: BOUNDARY_RULE_ID, message: 'nope', line: 4, column: 1 },
+            { ruleId: 'prettier/prettier', message: 'formatting', line: 1, column: 1 },
+            { ruleId: BOUNDARY_RULE_ID, message: 'also nope', line: 9, column: 12 },
+          ],
+        },
+      ]),
+      '/repo/frontend'
+    )
+
+    assert.deepEqual(violations, [
+      { file: 'src/components/A.vue', line: 4, column: 1, rule: BOUNDARY_RULE_ID, message: 'nope' },
+      { file: 'src/components/A.vue', line: 9, column: 12, rule: BOUNDARY_RULE_ID, message: 'also nope' },
+    ])
+  })
+
+  // A file eslint could not parse is not a violation, so it must not turn into
+  // a line in the report either.
+  it('keeps no violations for a file it could not judge', () => {
+    const { violations } = parseEslintJson(
+      eslintJson([
+        {
+          filePath: '/repo/frontend/src/components/Broken.vue',
+          fatal: true,
+          messages: [{ ruleId: null, message: 'Parsing error: Unexpected token', line: 1, column: 1 }],
+        },
+      ]),
+      '/repo/frontend'
+    )
+    assert.deepEqual(violations, [])
   })
 
   it('does not count a file eslint could not parse', () => {
@@ -124,6 +170,37 @@ describe('the ratchet arithmetic', () => {
         ['gone.vue', 2, 0],
       ]
     )
+  })
+})
+
+describe('the failure report', () => {
+  // The report the reader gets on a regression: the count, then the lines the
+  // editor would underline — so the new violation is distinguishable from any
+  // frozen one in the same file without a second run.
+  it('names the line and the rule, and points at the architecture chapter', () => {
+    const result = compare({ 'src/components/A.vue': 1 }, { 'src/components/A.vue': 2 })
+    const text = formatBoundaryReport(result, [
+      {
+        file: 'src/components/A.vue',
+        line: 7,
+        column: 1,
+        rule: BOUNDARY_RULE_ID,
+        message: 'A component under src/components must not call the API layer.',
+      },
+    ])
+
+    assert.match(text, /src\/components\/A\.vue: 1 -> 2/)
+    assert.match(
+      text,
+      /src\/components\/A\.vue:7:1 {2}boundary\/no-api-or-router {2}A component under src\/components must not call the API layer\./
+    )
+    assert.match(text, /\.claude\/rules\/architecture\.md/)
+  })
+
+  it('stays a set of counts when no diagnostics are passed', () => {
+    const text = formatBoundaryReport(compare({ 'a.vue': 1 }, { 'a.vue': 2 }))
+    assert.match(text, /a\.vue: 1 -> 2/)
+    assert.doesNotMatch(text, /:7:1/)
   })
 })
 
@@ -347,6 +424,9 @@ describe('the ratchet on a planted violation', () => {
       const blocked = runRatchet('--files', 'src/components/__boundaryProbe.vue', '--baseline', scratchBaseline)
       assert.equal(blocked.status, 1, `${blocked.stdout}${blocked.stderr}`)
       assert.match(blocked.stdout, /__boundaryProbe\.vue: 0 -> 1/)
+      // And the report carries eslint's own line:col and rule id, not only the
+      // count — the diagnostic a reader needs to fix it without grepping.
+      assert.match(blocked.stdout, /__boundaryProbe\.vue:\d+:\d+ {2}boundary\/no-api-or-router {2}/)
 
       // Freezing it (explicitly, into a scratch baseline) turns the same run green.
       const update = runRatchet(

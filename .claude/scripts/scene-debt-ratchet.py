@@ -41,6 +41,48 @@ KINDS = {
     "network": "legacy-network",
 }
 
+#: One fix per kind: the three have three repairs and three landing spots, so a
+#: catch-all sentence would send a `children` failure where a `routes` one is wrong.
+FIXES = {
+    "children": (
+        "scene-non-a-children — a scene renders from props and emits alone, so a "
+        "child it renders must not fetch/read the route/read a business store. Make "
+        "that child grade A (it takes the data as props), or make the page a "
+        "container of a grade-A <PageName>View.vue. docs/manual/dev/scenes.md"
+    ),
+    "routes": (
+        "scene-use-route — the route read belongs to the container page, not the "
+        "scene it renders. Keep the page as the container, and put the rendering in a "
+        "sibling <PageName>View.vue that takes the route's values as props. Moving "
+        "useRoute around inside the same page (still rendering in place) is not the "
+        "fix. docs/manual/dev/scenes.md"
+    ),
+    "network": (
+        "legacy-network — new code reaches the server through @/api, and a scene not "
+        "at all: replace the @/network import at its caller and pass the data in as "
+        "props. docs/manual/dev/frontend.md#state-network"
+    ),
+}
+
+
+def failure_text(new: dict[str, set[str]], expanded: dict[str, set[str]]) -> str:
+    """What to do about it. Printed on stdout, or on stderr under --json."""
+    lines = ["FAIL: new debt cannot be frozen."]
+    for kind in KINDS:
+        if new[kind]:
+            lines.append(f"  {FIXES[kind]}")
+        if expanded[kind]:
+            lines.append(
+                f"  {KINDS[kind]}: BASELINE GREW — the baseline may only shrink, and "
+                "--update refuses while this is present, so it cannot remove the line "
+                "for you: put the added baseline line back by hand."
+            )
+    lines.append(
+        "The baseline only ever shrinks; the documented tighten command is "
+        "'pnpm --dir frontend run lint:scene-debt:update' (run from the repo root)."
+    )
+    return "\n".join(lines)
+
 
 def scene_module() -> Any:
     source = Path(__file__).with_name("scene-ratchet.py")
@@ -280,6 +322,10 @@ def main() -> int:
                 print(f"cannot update baseline: {exc}", file=sys.stderr)
                 cannot_judge(check_id, str(exc))
     if as_json():
+        # --json (what ci:fast and the snapshot collector call) keeps stdout the
+        # one record line; on failure the fix report rides on stderr instead.
+        if not ok:
+            print(failure_text(new, expanded), file=sys.stderr)
         selected = kinds[0] if len(kinds) == 1 else None
         emit(
             verdict(
@@ -322,9 +368,7 @@ def main() -> int:
                 for entry in sorted(actual[kind]):
                     print(f"  {entry}")
         if not ok:
-            print(
-                "FAIL: new debt cannot be frozen; lift data/route reads and use @/api instead of network"
-            )
+            print(failure_text(new, expanded))
         elif args.update:
             print(f"Updated {path}: only removed paid-down entries")
         else:
