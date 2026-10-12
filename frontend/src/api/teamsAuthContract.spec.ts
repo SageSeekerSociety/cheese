@@ -10,15 +10,7 @@
 import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
-import {
-  auth,
-  contractEnvironment,
-  envelope,
-  newer,
-  refresh,
-  replace,
-  server,
-} from './migrationContract.spec.helper'
+import { auth, contractEnvironment, envelope, newer, refresh, replace, server } from './migrationContract.spec.helper'
 
 // The reporter is a side effect (a queued fetch to the run records), not a
 // method under test: silence it so a refusal we deliberately send does not
