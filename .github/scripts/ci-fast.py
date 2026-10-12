@@ -285,8 +285,24 @@ def run(args, report, finish, started):
             except (OSError, ValueError) as exc:
                 report["reasons"].append(f"cannot read --pull-request {args.pull_request}: {type(exc).__name__}")
                 return finish("unknown", UNKNOWN)
-            pull = payload.get("pull_request") or payload
+            nested = payload.get("pull_request") if isinstance(payload, dict) else None
+            pull = nested if isinstance(nested, dict) else payload
+            if not isinstance(pull, dict):
+                # Valid JSON that is not a PR object (a scalar, a list, a
+                # `pull_request` that is not an object, a truncated write that
+                # still parses). `.get` on it raised, and an unhandled exception
+                # exits 1 — which the caller reads as "this change is red". It
+                # is a payload nobody could read: unknown.
+                report["reasons"].append(
+                    f"cannot read --pull-request {args.pull_request}: "
+                    f"{type(payload).__name__}, not a PR object")
+                return finish("unknown", UNKNOWN)
             title, draft, source = pull.get("title"), bool(pull.get("draft")), "actual PR title"
+            if not isinstance(title, str):
+                # Same again for the title itself: a non-string would reach
+                # check-commit-title.py as an argv element and raise TypeError
+                # out of the run. No readable title is no title.
+                title = None
         elif title is None:
             source = "actual PR title"
             result = execute(["gh", "pr", "view", "--json", "title", "--jq", ".title"], REPO_ROOT,

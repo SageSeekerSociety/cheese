@@ -188,8 +188,8 @@ jobs:
           (cd backend && uv sync --frozen --all-extras)
           (cd frontend && pnpm install --frozen-lockfile)
       # `--tier quick` picks the checks; the bounds are the runner's (see the
-      # job comment). The exit code decides, and its three outcomes are not the
-      # same thing:
+      # job comment). The exit code decides, and its outcomes are not the same
+      # thing:
       #
       #   0  every check the tier selected passed.
       #   1  a check failed. The draft goes red — a real red, which is the whole
@@ -202,6 +202,10 @@ jobs:
       #      It does NOT pass either — every unjudged item is written into the
       #      step summary and a warning annotation, so the green is never read as
       #      "this was fully judged".
+      #   any other exit: no verdict at all — ci-fast never got to judge. A red,
+      #      since an `unknown` green would be indistinguishable from the case
+      #      above. What separates the two is the report ci-fast writes on every
+      #      verdict path, not the number on the shell's exit.
       #
       # GitHub has no third conclusion to report; the honest one is available
       # only to a human reading the summary, which is why the summary is not
@@ -219,7 +223,15 @@ jobs:
           # variable or $GITHUB_OUTPUT: a title containing quotes, `$(...)` or a
           # newline stays data, and ci-fast.py reads both the title and the
           # draft flag from it.
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+          #
+          # A failed read is not a verdict on the change either: this shell runs
+          # with errexit, so an unguarded `gh` would abort the step and redden
+          # the draft for the runner's own network. Hand ci-fast an unreadable
+          # file instead — it reports the title it could not read as unknown,
+          # which is what the summary below then lists.
+          if ! gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"; then
+            echo "gh api could not read PR #$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+          fi
           report="$RUNNER_TEMP/ci-fast-report.json"
           status=0
           python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216 \
@@ -231,19 +243,40 @@ jobs:
             echo "::error::ci:fast quick tier found a failure: this draft's change is red."
             exit 1
           fi
+          # Any other exit counts as "could not judge" only if ci-fast's own
+          # report says so: it writes that report on every verdict path, unknown
+          # and blocked (and interrupted) included. An exit with no such report
+          # is a run that never reached a verdict — a bad argument (argparse
+          # leaves the shell with 2, the same code UNKNOWN uses), a python3 that
+          # never started, a process killed before its handler ran — and those
+          # go red, because the alternative is dressing a tier that judged
+          # nothing as the one thing this step says when it works.
+          verdict="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["status"])' "$report" || true)"
+          case "$verdict" in
+            unknown | blocked) ;;
+            *)
+              echo "::error::ci:fast quick tier exited $status without a verdict of its own (report status: ${verdict:-none}) — nothing in it judged this change."
+              exit 1
+              ;;
+          esac
           {
             echo "### Draft quick tier: what it could not judge"
             echo
-            echo "ci:fast exited $status (2 = unknown, 3 = blocked). This did not fail the"
-            echo "draft — but it did not pass these either. \`CI required (draft quick)\` is"
+            echo "ci:fast exited $status (2 = unknown, 3 = blocked) and said which parts of"
+            echo "this change it did not judge: the list below is what this green does NOT"
+            echo "cover. That is not a failure of the draft — \`CI required (draft quick)\` is"
             echo "not the check branch protection reads, and the merge queue runs the full"
             echo "Required CI on this same commit; that run is the one to look at."
             echo
             if [ -f "$report" ]; then
-              jq -r '.ran[] | select(.result != "pass") | "- `\(.id)`: \(.result) \(.reason // "")"' "$report"
-              jq -r '.not_run[]? | "- not run `\(.id)`: \(.reason)"' "$report"
+              # Rendering the report is not allowed to fail the step: this shell
+              # runs with errexit, and jq rejecting the file (or not being there)
+              # would redden a draft the verdict above already let through.
+              jq -r '.reasons[]? | "- \(.)"' "$report" || echo "- the report at $report could not be rendered here."
+              jq -r '.ran[] | select(.result != "pass") | "- `\(.id)`: \(.result) \(.reason // "")"' "$report" || true
+              jq -r '.not_run[]? | "- not run `\(.id)`: \(.reason)"' "$report" || true
             else
-              echo "ci:fast wrote no report at $report."
+              echo "ci:fast wrote no report at $report: nothing in this tier was judged."
             fi
           } >> "$GITHUB_STEP_SUMMARY"
           echo "::warning::ci:fast quick tier could not judge everything (exit $status). See this run's step summary; this draft check is not the required gate."

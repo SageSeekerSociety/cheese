@@ -726,6 +726,33 @@ sys.exit(0)
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertEqual(self.report()["status"], "unknown")
 
+    def test_quick_pull_request_that_is_not_an_object_is_unknown(self):
+        # JSON that parses but is not a PR object — a scalar, a list, a
+        # `pull_request` that is not an object. Reading a title out of it used
+        # to raise, and an exception nobody catches exits 1: the caller reads
+        # that as "this change is red", which is a red for a payload nobody
+        # could read. No readable title is unknown, with the reason recorded.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        tools = self.quick_tools()
+        for text in ("null", "[]", '"feat: x"', "5"):
+            payload = self.tmp / "pull.json"
+            payload.write_text(text)
+            proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
+                                    env_extra=tools)
+            self.assertEqual(proc.returncode, 2, f"{text}: {proc.stdout}{proc.stderr}")
+            report = self.report()
+            self.assertEqual(report["status"], "unknown", text)
+            self.assertIn("pull-request", " ".join(report["reasons"]), text)
+        # ...and a PR object whose title is not a string is the same story: it
+        # would reach check-commit-title.py as an argv element and raise there.
+        payload = self.tmp / "pull.json"
+        payload.write_text('{"title": 5, "draft": false}')
+        proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
+                                env_extra=tools)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIsNone(self.report()["title"]["value"])
+
     def test_quick_invalid_title_fails(self):
         self.write_hooks()
         self.make_base_and_head("frontend/src/probe.ts")
@@ -891,16 +918,25 @@ class SelectionEvidenceTest(unittest.TestCase):
         # would make app.main a harness consumer and every test that builds the
         # app through it a harness test, dropping most of the suite from a tier
         # that can run it.
+        #
+        # The fixture has to use the shape that widens. `import_module` with a
+        # variable is what app/main.py does (`name = f"{routes_pkg...}";
+        # importlib.import_module(name)`); a string literal is a *static* edge
+        # in this selector, so a fixture written with one exercises no widening
+        # at all and would pass whatever the harness question did with it. The
+        # changed module is one nothing names statically, so the test below is
+        # reached only through the widening.
         from ci_fast_backend import select_backend
         self.put("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
-        self.put("backend/app/routes.py", "ROUTES = 1\n")
+        self.put("backend/app/plugin.py", "PLUGIN = 1\n")
         self.put("backend/app/main.py",
-                 'import importlib\napp = importlib.import_module("app.routes")\n')
+                 'import importlib\nname = "app.plugin"\napp = importlib.import_module(name)\n')
         self.put("backend/tests/unit/test_builds_the_app.py", "from app.main import app\n")
         selected, _, _, omitted = select_backend(
-            self.root, ["backend/app/routes.py"], harness_gap="missing: x")
+            self.root, ["backend/app/plugin.py"], harness_gap="missing: x")
+        self.assertIn("tests/unit/test_builds_the_app.py", selected,
+                      "the dynamic widening did not reach the test")
         self.assertEqual(omitted, [])
-        self.assertIn("tests/unit/test_builds_the_app.py", selected)
 
     def test_pinned_harness_gap_wants_files_not_names(self):
         from ci_fast_backend import pinned_harness_gap

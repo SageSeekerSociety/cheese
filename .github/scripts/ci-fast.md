@@ -76,8 +76,10 @@ in the run's `not_run`):
   `dev-db.sh`; a test that reaches for one FAILS where they are absent, it does
   not skip (`tests/pinned_claude.py`). Installing three binaries into every
   draft run is the full CI's job, so those tests are named not run instead —
-  and left in the run's required files, because a change whose pinpointed
-  consumers never executed was not judged, and stays unknown rather than green.
+  and left in the run's required files, where the audit names them
+  (`not_run_pure`) and reports a change whose every pinpointed consumer was
+  dropped that way as `unknown`, not green. A change that still has required
+  files the run did execute is judged by them: those are what it was for.
   The files are the transitive importers of the helper and of the variables
   themselves (measured: 30 of 186 for a pi change). This counts import
   statements only: the dynamic-import widening would make `app.main` a harness

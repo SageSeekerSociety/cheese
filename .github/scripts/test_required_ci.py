@@ -563,6 +563,43 @@ def _stub(bindir, name, script):
     return path
 
 
+def run_draft_step(text, tmp, ci_fast_exit=0, report=None, gh_exit=0, jq=None):
+    """Run the draft job's real shell against stub commands, and return the process.
+
+    ``ci_fast_exit`` is the status the stubbed ci-fast leaves behind, and
+    ``report`` the report it is to write there (absent means it reached no
+    verdict at all, which is what a bad argument or a killed process looks
+    like). ``jq``, when given, replaces the report renderer. The stubbed
+    ``python3`` delegates ``-c`` to the real interpreter, because the step reads
+    the report's own status with one line of Python and that read is part of
+    what is under test.
+    """
+    tmp = Path(tmp)
+    bindir = tmp / "bin"
+    bindir.mkdir()
+    if report is not None:
+        (tmp / "ci-fast-report.json").write_text(json.dumps(report))
+    _stub(bindir, "gh",
+          f'printf "%s" \'{{"title": "feat: x", "draft": true}}\'\nexit {gh_exit}\n')
+    _stub(bindir, "python3",
+          f'if [ "$1" = "-c" ]; then exec "{sys.executable}" "$@"; fi\n'
+          f'printf "%s\\0" "$@" >> "$STUB_ARGV"\nexit {ci_fast_exit}\n')
+    if jq is not None:
+        _stub(bindir, "jq", jq)
+    env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+           "RUNNER_TEMP": str(tmp), "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1",
+           "GH_TOKEN": "x", "STUB_ARGV": str(tmp / "argv"),
+           "GITHUB_STEP_SUMMARY": str(tmp / "summary")}
+    # `-e` is the shell the runner gives a `run:` step (GitHub's implicit
+    # default for a Linux job is `bash -e`), and two of the ways this step can
+    # redden a draft are unguarded commands failing under it. Without it here
+    # the guards for those are invisible to the test.
+    return subprocess.run(["bash", "-e", "-c", run_body_containing(text, "ci-fast.py")],
+                          env=env, cwd=tmp, capture_output=True, text=True)
+
+
+
+
 class WorkflowTextTest(unittest.TestCase):
     """Behavioural guards over required-ci.yml.
 
@@ -661,6 +698,78 @@ class WorkflowTextTest(unittest.TestCase):
         # A workflow asking for more than ci-fast accepts is a red draft run for
         # every PR, which is the failure this tier just came back from.
         self.assertLessEqual(int(flags["--memory-mib"]), cap, "ceiling ci-fast refuses")
+
+    def test_only_a_verdict_judges_the_draft(self):
+        # 0 and 1 are ci-fast's own verdicts and decide this draft. Every other
+        # exit is "could not judge" only when ci-fast's report says unknown or
+        # blocked; with no report the run never reached a verdict — argparse
+        # exits 2, the same code UNKNOWN uses, and a killed process 130+ — and
+        # the draft goes red rather than pass as a tier that judged nothing.
+        for status, report, expected, marker in (
+            (0, None, 0, None),
+            (1, None, 1, "::error::"),
+            (2, {"status": "unknown", "exit": 2}, 0, "::warning::"),
+            (3, {"status": "blocked", "exit": 3}, 0, "::warning::"),
+            (130, {"status": "unknown", "exit": 130}, 0, "::warning::"),
+            (2, None, 1, "::error::"),
+            (4, None, 1, "::error::"),
+            (137, None, 1, "::error::"),
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                proc = run_draft_step(self.text, tmp, ci_fast_exit=status, report=report)
+            self.assertEqual(proc.returncode, expected,
+                             f"exit {status} report {report}: {proc.stdout}{proc.stderr}")
+            if marker:
+                self.assertIn(marker, proc.stdout, f"exit {status}: {proc.stdout}")
+            else:
+                self.assertNotIn("::warning::", proc.stdout, f"exit {status}")
+
+    def test_the_draft_job_does_not_redden_for_a_pr_it_cannot_read(self):
+        # A failing `gh api` used to abort the step — this shell runs with
+        # errexit — and a dead step is a red draft, for the runner's own
+        # network. The read is handed to ci-fast as an unreadable payload
+        # instead, which is one of the unknowns it knows how to report.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = run_draft_step(self.text, tmp, ci_fast_exit=2, gh_exit=1,
+                                  report={"status": "unknown", "exit": 2})
+            argv = (Path(tmp) / "argv").read_text().split("\0")[:-1]
+            summary = (Path(tmp) / "summary").read_text()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("--pull-request", argv, f"ci-fast was not handed the payload: {argv}")
+        self.assertIn("what it could not judge", summary)
+
+    def test_the_draft_job_says_what_the_green_does_not_cover(self):
+        # The green of this check is honest only next to the list of what was
+        # not judged. The renderer is stubbed, so this pins what the step routes
+        # into the summary — the report it was written from, and the sentence
+        # that says what the green means — rather than jq's own formatting.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = run_draft_step(self.text, tmp, ci_fast_exit=3,
+                                  report={"status": "blocked", "exit": 3},
+                                  jq='printf "RENDERED:%s\\n" "$3"')
+            summary = (Path(tmp) / "summary").read_text()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("what it could not judge", summary)
+        # The report is rendered in three groups — why it could not judge, what
+        # did not pass, and what did not run — each of them against the report
+        # file the step was told to write. Reading a group without the reasons
+        # is the summary that says "could not judge" and nothing about why.
+        self.assertEqual([line for line in summary.splitlines() if line.startswith("RENDERED:")],
+                         [f"RENDERED:{Path(tmp) / 'ci-fast-report.json'}"] * 3)
+        self.assertIn("::warning::", proc.stdout)
+
+    def test_a_report_that_cannot_be_rendered_still_does_not_redden_the_draft(self):
+        # The shell runs with errexit, so a failing renderer used to end the
+        # step non-zero — a red draft for a report that was already judged
+        # "could not judge". The verdict stands and the annotation says it.
+        with tempfile.TemporaryDirectory() as tmp:
+            proc = run_draft_step(self.text, tmp, ci_fast_exit=2,
+                                  report={"status": "unknown", "exit": 2},
+                                  jq='exit 127\n')
+            summary = (Path(tmp) / "summary").read_text()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("could not be rendered", summary)
+        self.assertIn("::warning::", proc.stdout)
 
     def test_the_draft_job_installs_both_dependency_sets(self):
         # ci-fast widens its own scope beyond the raw select() flags (unknown
