@@ -680,6 +680,9 @@ class AcceptService:
             runner=runner,
         )
 
+    async def _note_left_merge_queue(self, *, card: AcceptCard, topic: Topic) -> None:
+        return await notices._note_left_merge_queue(self, card=card, topic=topic)
+
     def _ci_nudge(
         self,
         *,
@@ -717,6 +720,11 @@ class AcceptService:
         self, *, card: AcceptCard, status
     ) -> pr_signals.PendingNudge | None:
         return notices._conflict_nudge(self, card=card, status=status)
+
+    def _title_nudge(
+        self, *, card: AcceptCard, topic: Topic, status
+    ) -> pr_signals.PendingNudge | None:
+        return notices._title_nudge(self, card=card, topic=topic, status=status)
 
     async def _dispatch_nudges(
         self,
@@ -762,6 +770,13 @@ class AcceptService:
     ) -> NoReturn:
         return await _accept._stop_accept_pr_unavailable(
             self, card=card, topic=topic, reason=reason
+        )
+
+    async def _stop_accept_title_disagrees(
+        self, card: AcceptCard, topic: Topic, pr_title: str
+    ) -> NoReturn:
+        return await _accept._stop_accept_title_disagrees(
+            self, card=card, topic=topic, pr_title=pr_title
         )
 
     async def _stop_accept_no_branch(self, card: AcceptCard, topic: Topic) -> NoReturn:

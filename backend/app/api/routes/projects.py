@@ -402,6 +402,7 @@ async def list_project_tasks(
     chat: Annotated[ChatService, Depends(get_chat_service)],
     if_none_match: Annotated[str | None, Header()] = None,
     status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+    accepted: Annotated[bool | None, Query()] = None,
     channel: uuid.UUID | None = None,
     whose: Annotated[Literal["mine", "helping", "others"] | None, Query()] = None,
     limit: Annotated[int | None, Query(ge=1, le=200)] = None,
@@ -411,7 +412,9 @@ async def list_project_tasks(
 
     `status` keeps only threads in that state. The sidebar polls for the open
     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
-    read.
+    read. `accepted` independently keeps tasks with an approved delivery
+    (`true`) or without one (`false`); omitted, it keeps both. This applies to
+    whole lists as well as pages, regardless of whether the task is open.
 
     With `limit` (and a `status`) it is a page instead, of the threads that
     most recently moved: the closed ones only grow, and the all-tasks page
@@ -419,7 +422,8 @@ async def list_project_tasks(
     to one `channel` and to `whose` the threads are to the reader (`mine`: they
     own it; `helping`: they are among its contributors; `others`: neither).
     `next` is the cursor to pass as `before` for the page after; `counts` says
-    how many there are in all and by whose, for the same status and channel.
+    how many there are in all and by whose, for the same status, channel and
+    acceptance filter.
 
     The rail draws rooms and the work inside them, so it needs both halves at
     once. Two round trips, not two per room and one per thread: a project here
@@ -464,6 +468,7 @@ async def list_project_tasks(
             me=actor.handle or "",
             limit=limit,
             before=_task_cursor(before),
+            accepted=accepted,
         )
         tasks = [task for task, _ in page_rows]
         counts = await TaskService(db).counts_in_project(
@@ -472,6 +477,7 @@ async def list_project_tasks(
             status=status,
             channel=channel,
             me=actor.handle or "",
+            accepted=accepted,
         )
         items = await _project_task_rows(db, chat, actor.handle or "", tasks)
         last = page_rows[-1] if page_rows and has_more else None
@@ -488,7 +494,7 @@ async def list_project_tasks(
         )
     tasks = [
         t
-        for t in await TaskService(db).list_in_project(project_id)
+        for t in await TaskService(db).list_in_project(project_id, accepted=accepted)
         if t.room_id in seen and (status is None or t.status == status)
     ]
     items = await _project_task_rows(db, chat, actor.handle or "", tasks)

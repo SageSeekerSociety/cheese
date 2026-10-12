@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { test, expect } from '@playwright/test';
 import { apiLogin, openFirstProject } from './helpers';
 
@@ -99,3 +100,43 @@ test('a video selected from the album uploads, persists and plays only on reques
   await expect.poll(() => player.evaluate((video: HTMLVideoElement) => video.seeking)).toBe(false);
   expect(await player.evaluate((video: HTMLVideoElement) => video.currentTime)).toBeCloseTo(0.05, 1);
 });
+
+for (const [suffix, mimeType] of [['avi', 'video/x-msvideo'], ['mkv', 'video/x-matroska']]) {
+  test(`a download-only ${suffix} attachment does not offer an unusable player`, async ({ page }, testInfo) => {
+    await apiLogin(page);
+    const rows = await openFirstProject(page);
+    await rows.first().click();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('.composer-input textarea').first()).toBeEnabled({ timeout: 15_000 });
+
+    // Content is deliberately not a playable recording: this scenario checks
+    // MIME-based classification and byte-for-byte download, not codec support.
+    const content = Buffer.from(`download-only ${suffix} fixture`);
+    const name = `video-download-e2e-${Date.now()}.${suffix}`;
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser'),
+      page.getByTitle('发送照片或视频', { exact: true }).click(),
+    ]);
+    const upload = page.waitForResponse((response) =>
+      new URL(response.url()).pathname.endsWith('/attachments') && response.request().method() === 'POST');
+    await chooser.setFiles({ name, mimeType, buffer: content });
+    const response = await upload;
+    expect(response.ok()).toBe(true);
+    expect((await response.json()).data.mime).toBe(mimeType);
+    await expect(page.locator('.composer-send')).toBeEnabled();
+    await page.locator('.composer-send').click();
+
+    const row = page.getByTestId('chat-scroll').locator('.im-row', { hasText: name });
+    await expect(row).toBeVisible();
+    await expect(row).not.toHaveClass(/im-row--pending/);
+    await page.reload();
+    const file = row.locator('.im-file-link');
+    await expect(file).toBeVisible();
+    await expect(row.locator('.attachment-video, video')).toHaveCount(0);
+    const [download] = await Promise.all([page.waitForEvent('download'), file.click()]);
+    expect(download.suggestedFilename()).toBe(name);
+    const savedPath = testInfo.outputPath(`download-${suffix}`);
+    await download.saveAs(savedPath);
+    expect(await readFile(savedPath)).toEqual(content);
+  });
+}

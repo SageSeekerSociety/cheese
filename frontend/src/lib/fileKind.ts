@@ -84,8 +84,8 @@ const VIDEO_MIME: Record<string, string> = {
 }
 
 export function videoMimeOf(path: string, mime?: string | null): string | null {
-  const fromPath = VIDEO_MIME[suffixOf(path)]
-  if (fromPath) return fromPath
+  const suffix = suffixOf(path)
+  if (Object.prototype.hasOwnProperty.call(VIDEO_MIME, suffix)) return VIDEO_MIME[suffix]
   const type = mime?.split(';')[0]?.trim().toLowerCase()
   return type && type.startsWith('video/') ? type : null
 }

@@ -33,11 +33,15 @@ export interface OwnAgentsSettings {
   agents: OwnAgentRow[]
 }
 
+export type OwnAgentCallers = 'owner' | 'project'
+
 export interface OwnAgentRow {
   handle: string
   name: string
   owner_handle: string | null
   owner_name: string | null
+  /** 谁可以叫它：`owner` 只有主人，`project` 项目里的人都能叫。只有主人能改。 */
+  callers: OwnAgentCallers
   machines: { name: string; online: boolean }[]
 }
 

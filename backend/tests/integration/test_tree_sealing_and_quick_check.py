@@ -125,7 +125,10 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
                 admits_reviewer=_admits_anyone,
             )
             fake = app_world["fake"]
-            fake.seed_pr(11, head=first.branch_name)
+            # 假 PR 的标题就是卡片 subject：平台递卡时按它写 PR 标题，而两条
+            # 合并路径都比对这两行，不一致就停下（`pr_text.pr_title_matches_
+            # subject`）—— 少了它，这里会以「标题不一致」被拒。
+            fake.seed_pr(11, head=first.branch_name, title="feat: add first result")
             fake.prs[11]["head_sha"] = delivered_head
             fake.check_state_by_sha[delivered_head] = ("success", "")
             card.pr_number, card.pr_head_sha = 11, delivered_head
