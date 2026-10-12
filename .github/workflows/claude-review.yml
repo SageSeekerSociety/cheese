@@ -164,6 +164,9 @@ jobs:
       - uses: anthropics/claude-code-action@5ef2e550a465a721f4f45e4a7d3c340c873e1dcc # v1
         id: claude
         with:
+          # Either secret works; an API key does not expire the way a
+          # subscription OAuth token does (that one answered 401 on 2026-10-12).
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ github.token }}
           # repository_dispatch from the platform's App runs as this bot.
