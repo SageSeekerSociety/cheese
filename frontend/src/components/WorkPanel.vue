@@ -165,6 +165,13 @@ function fileKey(path: string): string {
 const openFiles = ref<OpenFileTab[]>([])
 // 自由区属于房间：切去别的房间再回来，开着的那几份还在。只记在这一次会话里。
 const { filesByTopic } = useTopicMemory()
+// 自由区那一格是从来处开出来的，关掉最后一份时回到来处——你点开这份文件之前在做的
+// 那件事（手机上是对话），比总览更像你要回去的地方。连着开几份只记第一次：回到来处
+// 说的是回到你离开的固定页签，不是退回上一份文件（那是旁边那一格的事）。
+const fileOrigin = ref<string | null>(null)
+function noteFileOrigin() {
+  if (!active.value.startsWith(FILE_TAB)) fileOrigin.value = active.value
+}
 
 const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
@@ -713,6 +720,7 @@ function placeFile(path: string, document?: { id: string; title: string }, proje
 const docRefs = new Map<string, InstanceType<typeof PanelDocHost>>()
 async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
   const path = DOC_TAB + document.id
+  noteFileOrigin()
   placeFile(path, { ...document })
   if (!(await setTab(fileKey(path)))) return
   if (!review) return
@@ -731,6 +739,7 @@ function retitle(id: string, title: string) {
 // 自由区开一格。`project` 有值时开的是「项目当前版本」那一格：只读，带着 chip 指的那几行
 // （没指就是 null）。
 function openFileTab(path: string, project?: OpenFileTab['project']) {
+  noteFileOrigin()
   placeFile(path, undefined, project)
   if (project) setFiles(openFiles.value.map((f) => (f.path === path ? { ...f, project } : f)))
   setTab(fileKey(path))
@@ -740,7 +749,7 @@ function pinFile(path: string) {
   setFiles(openFiles.value.map((f) => (f.path === path ? { ...f, pinned: true } : f)))
 }
 
-// 关掉的是正看着的那一格，就落到它旁边那一格；自由区空了就回总览。
+// 关掉的是正看着的那一格，就落到它旁边那一格；自由区空了就回到来处。
 //
 // 关掉正看着的那一格＝离开一块正在标注的图，所以先问一句，问完再动手拆。后台那几格
 // （没在看）不会拦：它们本就登记不上（见 `annotationDiscard`）。
@@ -757,7 +766,13 @@ async function closeFile(path: string) {
   mounted.value = nextMounted
   if (!wasActive) return
   const neighbour = next[Math.min(at, next.length - 1)]
-  setTab(neighbour ? fileKey(neighbour.path) : 'overview')
+  if (neighbour) {
+    setTab(fileKey(neighbour.path))
+    return
+  }
+  // 来处可能已经不在了（这件任务还没有分支、换过房间），那就还是落到兜底那一格。
+  const origin = fileOrigin.value
+  setTab(origin && tabs.value.some((t) => t.key === origin) ? origin : defaultTab.value)
 }
 
 function setFiles(next: OpenFileTab[]) {
