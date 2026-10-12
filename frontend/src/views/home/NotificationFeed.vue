@@ -61,7 +61,7 @@
 </template>
 
 <script setup lang="ts">
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -73,7 +73,7 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
-import { NotificationsApi } from '@/network/api/notifications'
+import { NotificationsApi } from '@/api/notifications'
 
 const { t } = useI18n()
 
@@ -123,7 +123,7 @@ const fetchNotifications = async (isMore = false) => {
   if (!isMore) failed.value = false
   errorReason.value = ''
   try {
-    const { data } = await NotificationsApi.list({
+    const page = await NotificationsApi.list({
       // 未读筛选只问服务端要没读的；「全部」不传这一位，行为和从前一样。
       read: filter.value === 'unread' ? false : undefined,
       pageStart: cursorStart.value,
@@ -131,9 +131,9 @@ const fetchNotifications = async (isMore = false) => {
     })
 
     if (mine !== generation) return
-    notifications.value = [...notifications.value, ...data.notifications]
-    hasMore.value = data.page.hasMore
-    cursorStart.value = data.page.nextStart
+    notifications.value = [...notifications.value, ...page.notifications]
+    hasMore.value = page.page.hasMore
+    cursorStart.value = page.page.nextStart
   } catch (error) {
     console.error('获取通知失败:', error)
     if (mine === generation) {

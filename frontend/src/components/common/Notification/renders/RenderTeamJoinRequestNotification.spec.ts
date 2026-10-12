@@ -1,6 +1,6 @@
 // 申请加入团队，在管理员「待办」的动态里就能批准或拒绝，不用再绕到团队成员页。
 // 通知的形状照后端 /notifications 真实返回的写：申请是 entities.application，带它此刻的状态。
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'

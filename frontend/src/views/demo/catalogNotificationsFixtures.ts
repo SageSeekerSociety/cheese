@@ -13,7 +13,7 @@
  *
  * 这里只出通知对象，不引任何依赖：哪一份配哪个组件、每一格看什么，在 `catalogNotifications.ts`。
  */
-import type { EntityInfo, Notification, NotificationType } from '@/network/api/notifications/types'
+import type { EntityInfo, Notification, NotificationType } from '@/types/apiNotifications'
 
 /** 一条通知的外壳：`id` / `createdAt` 取固定值，测试和预览站都不看它们。 */
 function notif(

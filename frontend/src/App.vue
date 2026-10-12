@@ -345,7 +345,7 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
-import { NotificationsApi } from '@/network/api/notifications'
+import { NotificationsApi } from '@/api/notifications'
 import { queryClient } from '@/query/client'
 import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
@@ -587,7 +587,7 @@ watch(
   () => AccountService.loggedIn && AccountService.user?.id,
   (userId, previous) => {
     if (typeof userId === 'number') {
-      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).data.token).catch(() => {})
+      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).token).catch(() => {})
     } else if (typeof previous === 'number') {
       desktopStopNotices()
     }
