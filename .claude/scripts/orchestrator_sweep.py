@@ -69,9 +69,16 @@ def gh_queue(n):
     for _ in range(3):
         r = subprocess.run(["gh", "api", "graphql", "-f", "query=" + q, "-F", f"n={n}"], capture_output=True, text=True)
         try:
-            return json.loads(r.stdout)["data"]["repository"]["pullRequest"]
+            body = json.loads(r.stdout)["data"]["repository"]["pullRequest"]
         except (ValueError, KeyError, TypeError):
             err = (r.stderr or r.stdout)[:150]
+            continue
+        # 查不到（删了、编号不属于这个仓库）时 GitHub 回的是格式正确、pullRequest 为
+        # null 的响应。它得走 "error" 那条路，不然调用方 `if "error" in pr` 直接
+        # TypeError，整趟巡检断在这里。
+        if body is None:
+            return {"error": f"GitHub 上没有 PR #{n}"}
+        return body
     return {"error": err}
 
 

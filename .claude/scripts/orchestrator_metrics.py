@@ -18,6 +18,12 @@ _cache = {}
 
 
 def gh_pr(n):
+    """PR 的合并队列时间线，GitHub 上查不到时返回 None。
+
+    查不到（删了、编号不属于这个仓库）不是查询失败：GitHub 对这两种都回一个格式
+    正确、`pullRequest` 为 null 的响应。曾经把它当成结果缓存下来，调用方接着下标
+    就抛 `TypeError`，整趟度量断在这里。所以 null 既不缓存，也不当失败重试。
+    """
     if n in _cache:
         return _cache[n]
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){'
@@ -27,10 +33,14 @@ def gh_pr(n):
     for _ in range(3):
         r = subprocess.run(["gh", "api", "graphql", "-f", "query=" + q, "-F", f"n={n}"], capture_output=True, text=True)
         try:
-            _cache[n] = json.loads(r.stdout)["data"]["repository"]["pullRequest"]
-            return _cache[n]
+            body = json.loads(r.stdout)["data"]["repository"]["pullRequest"]
         except (ValueError, KeyError, TypeError):
             err = (r.stderr or r.stdout)[:200]
+            continue
+        if body is None:
+            return None
+        _cache[n] = body
+        return body
     raise SystemExit(f"GitHub 查 PR #{n} 失败：{err}")
 
 
@@ -62,7 +72,10 @@ def main():
                 n = re.search(r"#(\d+)", m["content"])
                 if not n:
                     continue
-                tl = gh_pr(int(n.group(1)))["timelineItems"]["nodes"]
+                pr = gh_pr(int(n.group(1)))
+                if pr is None:
+                    continue
+                tl = pr["timelineItems"]["nodes"]
                 adds = [x["createdAt"] for x in tl if x["__typename"] == "AddedToMergeQueueEvent" and x["createdAt"] >= m["created_at"]]
                 if adds:
                     w = mins(m["created_at"], adds[0])
