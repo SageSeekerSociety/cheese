@@ -148,6 +148,26 @@ describe('关于 in the desktop app', () => {
     }
   )
 
+  it('distinguishes installation failures from restart failures without depending on the copy', async () => {
+    const install = vi
+      .fn()
+      .mockRejectedValueOnce('install-failed')
+      .mockRejectedValueOnce('failed')
+      .mockRejectedValueOnce('restart-failed')
+    desktopApp(NEW_APP, { status: { state: 'ready', version: '0.1.43' }, restart: install })
+    const { toast } = await import('vuetify-sonner')
+    vi.mocked(toast.error).mockClear()
+    await mount()
+    const button = await screen.findByRole('button', { name: '重启以完成更新' })
+    for (const count of [1, 2, 3]) {
+      await fireEvent.click(button)
+      await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(count))
+    }
+    const messages = vi.mocked(toast.error).mock.calls.map(([message]) => message)
+    expect(messages[0]).toBe(messages[1])
+    expect(messages[0]).not.toBe(messages[2])
+  })
+
   it('allows checking again after a background installation fails', async () => {
     const app = desktopApp(NEW_APP)
     await mount()
