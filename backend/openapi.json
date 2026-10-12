@@ -2135,6 +2135,68 @@
         }
       }
     },
+    "/admin/integrations/external-problem": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Read External Problem Account",
+        "description": "配没配、配的是谁、谁配的。**没有密码。**\n\n``configured: false`` 是那个页面要问的第一件事：没人配过时同步一律失败\n（``service.py`` 里 ``no_account``），而那是「还没到那一步」，不是错误。",
+        "operationId": "read_external_problem_account_admin_integrations_external_problem_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalProblemAccountOutEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Save External Problem Account",
+        "description": "存下账号。密码留空 = 只改账号名，密码用原来那个。\n\n换账号名**不动**已经存下的密码：页面看不到它，管理员也无从重打，要求重打就等于\n逼他把口令找回来。要换密码就连密码一起填。",
+        "operationId": "save_external_problem_account_admin_integrations_external_problem_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalProblemAccountIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalProblemAccountOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/admins": {
       "get": {
         "tags": [
@@ -38235,6 +38297,316 @@
         }
       }
     },
+    "/tasks/{taskId}/external-problem": {
+      "get": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Get External Problem Sync",
+        "description": "题号、上次同不成功、以及每个领取者的结论。\n\n没挂题号时也回 200，回的是一块空的（``problemNo: \"\"``）—— 「这道题还没接外站」\n是一个答案，和名单那条路上的「这道题还没有人报名」一样，不是错误。",
+        "operationId": "get_external_problem_tasks__taskId__external_problem_get",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Set External Problem Number",
+        "description": "挂上、或者换掉这道题在 YOJ 上的题号。返回换完之后的那一块。\n\n换成一个**另一个**题号会把上一次的结果删掉（``set_problem``）：那些数说的是另一\n道题，留着比空着更糟。同一个题号再挂一次是幂等的，结果原样留着。",
+        "operationId": "set_external_problem_tasks__taskId__external_problem_put",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalProblemIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Clear External Problem",
+        "description": "撤掉挂载：题号和结果一起没。\n\n只撤题号、把结果留成孤儿是更小的动作，但那种状态没人能修回来（没有题号就没法再\n同步一次），留着只是让一段读不懂的旧数据活着。",
+        "operationId": "clear_external_problem_tasks__taskId__external_problem_delete",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{taskId}/external-problem/sync": {
+      "post": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Sync External Problem Now",
+        "description": "现在去外站看一眼，返回看完之后的那一块。\n\n同步失败也是 200，回的那一块上 ``status: \"failed\"`` 带着原因 —— 失败的是「外站\n这一趟没去成」，不是「你这个请求不对」。上一次成功的结论**留着**（见\n``service.py`` 的取舍），所以界面要照着 ``status`` 说清这是几点的数。",
+        "operationId": "sync_external_problem_tasks__taskId__external_problem_sync_post",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/teams": {
       "get": {
         "tags": [
@@ -54384,6 +54756,155 @@
         "type": "object",
         "title": "EventChoiceIn"
       },
+      "ExternalProblemAccountIn": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "title": "ExternalProblemAccountIn",
+        "description": "账号名（对 YOJ 来说是学号或教师工号）。"
+      },
+      "ExternalProblemAccountOut": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "updated_by": {
+            "type": "string",
+            "title": "Updated By"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "source",
+          "username",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "ExternalProblemAccountOut",
+        "description": "管理员看的那一行凭据。**没有密码** —— 存进去就再也读不出来。"
+      },
+      "ExternalProblemAccountOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ExternalProblemAccountOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ExternalProblemAccountOutEnvelope"
+      },
+      "ExternalProblemIn": {
+        "properties": {
+          "problemNo": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Problemno"
+          }
+        },
+        "type": "object",
+        "required": [
+          "problemNo"
+        ],
+        "title": "ExternalProblemIn",
+        "description": "挂题号的请求体。**形状由服务判**（``service.PROBLEM_NO`` 只收数字），这里只封\n一个长度上界，免得把一兆的字符串送进去。"
+      },
+      "ExternalProblemResultOut": {
+        "properties": {
+          "participantId": {
+            "type": "integer",
+            "title": "Participantid"
+          },
+          "studentNo": {
+            "type": "string",
+            "title": "Studentno"
+          },
+          "solved": {
+            "type": "boolean",
+            "title": "Solved"
+          },
+          "acceptedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "participantId",
+          "studentNo",
+          "solved",
+          "acceptedAt"
+        ],
+        "title": "ExternalProblemResultOut",
+        "description": "一个领取者在这道题上的结论。``participantId`` 是 ``task_membership.id`` ——\n名单接口发出去的 ``participants[].id`` 就是它，前端按它把这一列贴回名单上。"
+      },
       "FeedbackAdminCounts": {
         "properties": {
           "all": {
@@ -61788,6 +62309,92 @@
         },
         "type": "object",
         "title": "TaskCreateIn"
+      },
+      "TaskExternalProblemOut": {
+        "properties": {
+          "problemNo": {
+            "type": "string",
+            "title": "Problemno"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "lastSyncedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastsyncedat"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalProblemResultOut"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "problemNo",
+          "source",
+          "lastSyncedAt",
+          "status",
+          "error",
+          "results"
+        ],
+        "title": "TaskExternalProblemOut",
+        "description": "一道题的外站那一块：题号、上次同步、以及每个领取者的结论。\n\n``status`` 是 ``\"\"``（还没同步过）/ ``ok`` / ``failed``，取值在\n``service.STATUS_OK`` 与 ``STATUS_FAILED``。``error`` 是排查用的原文（``no_account``\n这种），**不是**给人看的句子 —— 界面按 ``status`` 自己说。"
+      },
+      "TaskExternalProblemOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TaskExternalProblemOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TaskExternalProblemOutEnvelope"
       },
       "TaskParticipantRequest": {
         "properties": {

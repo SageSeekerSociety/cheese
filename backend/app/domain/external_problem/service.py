@@ -33,7 +33,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.crypto import Purpose, decrypt, encrypt
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.external_problem.models import (
     EXTERNAL_PROBLEM_ACCOUNT_ROW_ID,
@@ -62,7 +62,11 @@ def _now() -> datetime:
 
 @dataclass(frozen=True)
 class Student:
-    """名单上的一行：报名记录 id，和拿来对的那个学号（= 平台用户名）。"""
+    """名单上的一行：报名那一行的 id，和拿来对的那个学号（= 平台用户名）。
+
+    第一个数是 ``task_membership.id``，不是 user id：结果按它存，名单接口发出去的
+    ``participants[].id`` 也是它。
+    """
 
     member_id: int
     student_no: str
@@ -188,7 +192,7 @@ class ExternalProblemService:
         """存账号。``password`` 留空 = 不改已经存下的那个（页面看不到它，无从重打）。"""
         username = username.strip()
         if not username:
-            raise ValidationError(say("externalProblemAccountRequired"))
+            raise UnprocessableEntityError(say("externalProblemAccountRequired"))
         row = await self.account(source)
         if row is None:
             row = ExternalProblemAccount(
@@ -197,7 +201,7 @@ class ExternalProblemService:
         if password:
             seal_account(row, {"password": password})
         elif not row.secret:
-            raise ValidationError(say("externalProblemPasswordRequired"))
+            raise UnprocessableEntityError(say("externalProblemPasswordRequired"))
         row.username = username
         row.updated_by = by
         self._session.add(row)
@@ -221,7 +225,7 @@ class ExternalProblemService:
     ) -> TaskExternalProblem:
         problem_no = problem_no.strip()
         if not PROBLEM_NO.fullmatch(problem_no):
-            raise ValidationError(say("externalProblemNumberInvalid"))
+            raise UnprocessableEntityError(say("externalProblemNumberInvalid"))
         row = await self.binding(task_id, source)
         if row is None:
             row = TaskExternalProblem(

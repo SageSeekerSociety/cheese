@@ -13,8 +13,9 @@
 * ``task_external_problem`` —— 题目挂的外站题号，外加「上一次同步成不成」。放一张
   表而不是给 ``task`` 加两列：外站题号是可有可无的附加信息，题目表已经很大，而且
   这两个字段总是被一起读写。
-* ``external_problem_result`` —— 一个领取者一条。跟着**报名记录**（``member_id``）
-  走，不是跟着用户走：名单上一行一条，小队报名的那行没有结果。
+* ``external_problem_result`` —— 一个领取者一条。跟着**报名那一行**走，不是跟着用户
+  走：名单上一行一条，小队报名的那行没有结果。这一列叫 ``member_id``，装的却是
+  ``task_membership.id``（改名要一次迁移，不值当），下面那道定义上写着。
 
 ``source`` 现在只有 ``yoj`` 一个值，但它在每一行里。加一个站是加一个值，不是加一列
 —— 一个已经有数据的表加列要分两次发版（``.claude/rules/migrations.md``），这个代价
@@ -117,7 +118,9 @@ class ExternalProblemResult(Base):
     __tablename__ = "external_problem_result"
 
     task_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    #: 报名记录 id（``task_membership.id``）。名单上一行一条。
+    #: 报名那一行的 id（``task_membership.id``）。名单上一行一条，外站同步就按它对。
+    #: **不是 ``member_id``**：平台自己的用户 id 只在查用户名那一步用一次，名单接口
+    #: 发出去的 ``participants[].id`` 才是 ``task_membership.id``。
     member_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     source: Mapped[str] = mapped_column(String(16), primary_key=True)
     #: 拿来对的那个学号：同步当时这个人在平台上的用户名。留档是为了对不上时看得出

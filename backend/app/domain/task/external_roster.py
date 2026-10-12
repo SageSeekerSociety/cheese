@@ -22,14 +22,17 @@ from app.domain.user import services as user_services
 
 
 async def student_roster(session: AsyncSession, task_id: int) -> list[tuple[int, str]]:
-    """``(报名记录 id, 用户名)``，按报名记录 id 排好。"""
+    """``(报名记录 id, 用户名)``，按报名记录 id 排好。
+
+    第一个数是 ``task_membership.id``（报名那一行的 id），**不是** ``member_id``：
+    外站结果表按它存，名单接口发出去的 ``participants[].id`` 也是它，两边才接得上
+    （``member_id`` 是 user id，只在查用户名这一步用）。
+    """
     memberships = await TaskMembershipService.of(session).list_memberships_for_task(
         task_id=task_id
     )
-    individual = sorted(
-        (m for m in memberships if not m.is_team), key=lambda m: m.member_id
-    )
+    individual = sorted((m for m in memberships if not m.is_team), key=lambda m: m.id)
     usernames = await user_services.usernames_by_ids(
         session, [m.member_id for m in individual]
     )
-    return [(m.member_id, usernames.get(m.member_id, "")) for m in individual]
+    return [(m.id, usernames.get(m.member_id, "")) for m in individual]

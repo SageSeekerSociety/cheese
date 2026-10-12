@@ -1020,5 +1020,9 @@
   "specDevicesOf": "{name}'s devices",
   "environmentDefaultPeopleOnly": "The default execution environment for new teammates is set by people; an AI teammate can only change its own",
   "environmentOwnOnly": "An AI teammate can only change its own execution environment",
-  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices."
+  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices.",
+  "externalProblemAccountRequired": "A YOJ account name is required",
+  "externalProblemPasswordRequired": "A YOJ password is required",
+  "externalProblemNumberInvalid": "A YOJ problem number can only be digits",
+  "externalProblemNotSet": "This task has no YOJ problem number yet — set one before syncing"
 }
