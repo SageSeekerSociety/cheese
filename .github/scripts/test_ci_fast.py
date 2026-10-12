@@ -892,6 +892,37 @@ class SelectionEvidenceTest(unittest.TestCase):
                                                     {"name": "/repo/frontend/src/i18n/english.spec.ts"}]}))
         self.assertEqual(validate_evidence(evidence)["result"], "pass")
 
+    def test_related_run_holding_only_the_seeds_is_an_empty_selection(self):
+        # The seeds run whatever changed, so a report that holds only them says
+        # nothing about the change: the graph selected no test file for the
+        # changed root, which is what main reported unknown. Vitest cannot say
+        # it here — --no-passWithNoTests only fires on a run with no test file
+        # at all, and the seeds keep the run non-empty.
+        from ci_fast_checks import validate_evidence
+        path = self.root / "vitest.json"
+        seed = "/repo/frontend/src/styles/docBlocks.spec.ts"
+        evidence = {"kind": "vitest", "path": str(path), "mode": "related",
+                    "required_files": ["src/styles/docBlocks.spec.ts"],
+                    "roots": ["src/components/base/NewThing.vue"]}
+        path.write_text(json.dumps({"numPassedTests": 3, "numFailedTests": 0, "numPendingTests": 0,
+                                    "testResults": [{"name": seed}]}))
+        verdict = validate_evidence(evidence)
+        self.assertEqual(verdict["result"], "unknown")
+        self.assertEqual(verdict["evidence"]["passed"], 3)
+        # One test file the seeds do not account for is the change's coverage.
+        path.write_text(json.dumps({"numPassedTests": 4, "numFailedTests": 0, "numPendingTests": 0,
+                                    "testResults": [{"name": seed},
+                                                    {"name": "/repo/frontend/src/views/x.spec.ts"}]}))
+        self.assertEqual(validate_evidence(evidence)["result"], "pass")
+        # A full run judges by its own rule: everything it ran is a selection.
+        self.assertEqual(validate_evidence({**evidence, "mode": "full"})["result"], "pass")
+        # A changed spec is selected by being run, even though it is also a seed
+        # — a spec changed on its own seeds the graph with itself.
+        changed = {**evidence, "roots": ["src/styles/docBlocks.spec.ts"]}
+        path.write_text(json.dumps({"numPassedTests": 3, "numFailedTests": 0, "numPendingTests": 0,
+                                    "testResults": [{"name": seed}]}))
+        self.assertEqual(validate_evidence(changed)["result"], "pass")
+
     def test_frontend_scope_widens_to_full_only_when_unjudgeable(self):
         # The full run is the fallback for a change nothing can narrow. A
         # deletion is judged by the related graph (seeded by the surviving

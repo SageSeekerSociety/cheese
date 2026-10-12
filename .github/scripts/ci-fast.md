@@ -29,9 +29,10 @@ run that still exhausts 900s is reported **unknown**, never trimmed to green.
 
 The quick tier's 180s is the work machine's own limit, not a property of the
 selection. A narrowed frontend run seeds the read-off-disk specs beside the
-changed roots, and those twelve cost ~34s on a cold single-fork run: on a tight
-local budget the tier can exhaust it and report unknown where the runner (1200s)
-has room. That is the budget talking, not the change.
+changed roots, and those fifteen cost ~70s on the work machine (127 tests,
+71.4s wall, one worker per file): on a tight local budget the tier can exhaust
+it and report unknown where the runner (1200s) has room. That is the budget
+talking, not the change.
 
 Both bounds are overridable, because they describe the machine rather than the
 tier: `--budget` and `--memory-mib` default to the work machine's own limits
@@ -135,7 +136,7 @@ everything is still allowed to answer unknown.
 
   A narrowed run is seeded with the changed source roots **and** every spec that
   judges a frontend file by reading it with `node:fs` rather than importing it
-  (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the twelve specs that assert a
+  (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the fifteen specs that assert a
   component's markup, a stylesheet's rules, a page's scroll container or a whole
   directory). A read is not an import edge, so `related` would never select one
   of them for the file it answers for, whatever else the change contains:
@@ -149,7 +150,10 @@ everything is still allowed to answer unknown.
   deleted file is reached by neither the seeds nor this list, and the typecheck
   cannot stand in for it, so that case widens the run instead. The report must
   show each of those
-  specs ran, so a selection that silently drops one is unknown, not green; a new
+  specs ran, so a selection that silently drops one is unknown, not green, and
+  so is a report holding nothing but them: the seeds run whatever changed, so
+  passing only them is an empty selection wearing their exit code, which main
+  never read as green. A new
   spec that reads the tree this way belongs in that tuple — `test_ci_fast.py`
   holds it against the tree, so a renamed or newly reading spec fails the
   self-test rather than quietly leaving the tuple. The

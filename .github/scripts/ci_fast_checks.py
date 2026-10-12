@@ -8,9 +8,11 @@ commands and turns each command's report into a verdict nobody can fake:
     ran. An empty selection, a skipped test, a missing report, a selected file
     with no executed case, or a process that died by signal is unknown (exit 2),
     never a pass. Running only the always-on guards never proves a changed
-    module has coverage — its consumer files must appear in the report.
+    module has coverage — its consumer files must appear in the report: the
+    specs that read the tree off disk run whatever changed, so passing only them
+    is an empty selection wearing their exit code.
   * The report decides pass/fail for suites; the exit code only widens it to
-    unknown (pytest 2/3/4/5, Vitest --noPassWithNoTests on an empty graph).
+    unknown (pytest 2/3/4/5, Vitest --no-passWithNoTests on an empty graph).
   * Frontend scope only falls back to the full Vitest run when the change
     cannot be narrowed — an edit to one of the frontend config files this
     module watches (FRONTEND_META: the two package manifests, the vite and
@@ -77,10 +79,12 @@ I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
 # reaches the suite, beside the related selection, and the report must show they
 # did. This is every spec under frontend/src importing `node:fs` at the time of
 # writing (catalog.spec.ts is already an i18n guard; collab/ has its own config);
-# a new spec that reads the tree this way belongs in this tuple. Reading through
-# `?raw` is the same kind of read — measured, `related` draws no edge for it
-# either — so a spec that reaches a file that way, with no import edge to it,
-# belongs here too. test_ci_fast.py holds this tuple against the tree.
+# a new spec that reads the tree this way belongs in this tuple. `?raw` is left
+# out: it was measured once as drawing no `related` edge either, and the run
+# that would confirm it cannot run here — it is killed on the work machine's
+# 1.5 GiB. The two mistakes are not equal: seeding a spec that does have an edge
+# turns an empty selection green, while leaving one out only ever reads unknown,
+# so this tuple errs that way. test_ci_fast.py holds it against the tree.
 OFF_DISK_SPECS = (
     "src/branchProtectionSection.spec.ts",
     "src/components/ChatPanel.mentionMenu.spec.ts",
@@ -92,6 +96,9 @@ OFF_DISK_SPECS = (
     "src/offScreenSkipping.spec.ts",
     "src/styles/docBlocks.spec.ts",
     "src/vShowDisplayUtilities.spec.ts",
+    "src/views/demo/DemoTokensPage.spec.ts",
+    "src/views/demo/demoTokens.spec.ts",
+    "src/views/demo/demoTransitions.spec.ts",
     "src/views/feedback/scroll.spec.ts",
     "src/views/home/Landing.spec.ts",
 )
@@ -194,8 +201,12 @@ def _resolves_to(specifier, importer, frontend):
 
     Vite's own rules for the ones this repository uses: ``@/`` is frontend/src,
     a leading ``/`` is the frontend root, and ``./``/``../`` are relative to the
-    importer. A bare name is a package — except in a stylesheet, where
-    ``@import "theme.css"`` and ``url(icon.svg)`` are relative too.
+    importer. A bare name is a package, with one exception: a bare name carrying
+    one of the module suffixes this frontend imports is read as relative to the
+    importer, because that is the shape a stylesheet writes a local file in
+    (``@import "theme.css"``). An extension-less bare name is left unresolved:
+    no stylesheet here writes ``@import "theme"``, and taking any bare word as a
+    path would read package CSS as an importer of a deleted file.
     """
     specifier = specifier.split("?")[0].split("#")[0]
     if specifier.startswith("@/"):
@@ -464,6 +475,26 @@ def _audit(evidence, details):
     return "pass", ""
 
 
+def _picked_for_the_change(evidence, files):
+    """Whether the narrowed run selected a test file for the changed roots.
+
+    A related run is seeded with the specs that read the tree off disk
+    (`required_files`) as well as with the changed roots, and a seed runs
+    whatever changed. A report holding nothing but seeded files is therefore an
+    empty selection carrying the seeds' exit code — the pass main never gave it.
+    A seeded file the change itself names is its own selection: a changed spec
+    is reached by running it.
+    """
+    seeds = evidence.get("required_files", [])
+    roots = evidence.get("roots", [])
+    for name in files:
+        if any(name.endswith("/" + p) for p in roots):
+            return True
+        if not any(name.endswith("/" + p) for p in seeds):
+            return True
+    return False
+
+
 def validate_evidence(evidence):
     """Judge one report file alone. Types are decided by the exit code, in resolve()."""
     kind = evidence["kind"]
@@ -489,6 +520,10 @@ def validate_evidence(evidence):
     details.update(passed=passed, skipped=skipped, errors=errors, missing=missing)
     if errors:
         return {"result": "fail", "reason": "test report contains errors/failures", "evidence": details}
+    if kind == "vitest" and evidence.get("mode") == "related" and not _picked_for_the_change(evidence, files):
+        return {"result": "unknown",
+                "reason": "the changed roots selected no test file; the always-on seeds ran alone",
+                "evidence": details}
     if evidence.get("nodes"):
         # The run left its own account of the selection; trust that over the
         # report file, which cannot show what a filter removed.
