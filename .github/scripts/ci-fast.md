@@ -27,6 +27,18 @@ tier, which is *not* what `task ci:fast` runs — the Taskfile passes
 `extended` is the same work with more wall clock. It does not add suites, and a
 run that still exhausts 900s is reported **unknown**, never trimmed to green.
 
+## In Required CI (the draft tier)
+
+`.github/workflows/required-ci.yml` reuses this tool for **draft** pull
+requests: one inline job runs `ci-fast.py --tier quick`, and every product suite
+is skipped. The aggregating job for a draft is named `CI required (draft
+quick)` — never the `CI required` branch protection requires — so a draft's
+quick green can never satisfy the real gate, even if a selected suite is
+skipped. Promoting the draft (`ready_for_review`) starts a fresh **full** run;
+the draft-quick green is not reused. `merge_group` entries are always the full
+tier. This tier says a draft is buildable; it is not, and cannot be, the merge
+gate (see `docs/workflows.md` §6).
+
 ## What it proves, and what it does not
 
 - Scope comes from the same `select()` + path map as Required CI; the guards

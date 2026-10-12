@@ -3,9 +3,25 @@ name: Required CI
 # No push trigger: every commit reaches main through the merge queue, which has
 # already run this workflow on that exact commit (a squash onto the tested base,
 # then a fast-forward). Deployment gates read that merge_group run.
+#
+# Two tiers, decided by the event (.github/scripts/required-ci.py: tier_for):
+#
+# - DRAFT pull request → the fast tier only: one inline job runs
+#   `ci-fast.py --tier quick`, and every product suite is skipped. Its
+#   aggregating job is named `CI required (draft quick)`, so a draft's green is
+#   never the check branch protection requires. A draft is work in progress.
+# - merge_group entry, or any pull_request that is not a draft (including the
+#   `ready_for_review` that promotes a draft) → the full tier: every suite the
+#   merge diff selects, aggregated under the required check name `CI required`.
+#
+# `ready_for_review` is listed explicitly so promoting a draft starts a fresh
+# FULL run; combined with the pull_request concurrency group below (keyed by
+# ref, cancel-in-progress), it also cancels the superseded draft-quick run, so
+# the full run is the one whose result stands.
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   merge_group:
     types: [checks_requested]
 
@@ -32,6 +48,7 @@ jobs:
       equivalence: ${{ steps.scope.outputs.equivalence }}
       remote: ${{ steps.scope.outputs.remote }}
       cifast: ${{ steps.scope.outputs.cifast }}
+      tier: ${{ steps.scope.outputs.tier }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # Only the cheap selection/aggregation self-test runs here: every product
@@ -47,9 +64,94 @@ jobs:
           git fetch --no-tags --depth=1 origin "$BASE_SHA"
           python3 .github/scripts/required-ci.py scope "$BASE_SHA"
 
+  # The DRAFT tier: a bounded local-evidence run, inline so a draft adds no
+  # reusable workflow to enumerate (and a draft must not exercise the docs
+  # site's workflow-name reading of a `uses:` suite). It runs the SAME tool a
+  # developer runs before pushing — `ci-fast.py --tier quick` — never a trimmed
+  # full CI. Product suites are skipped on a draft (their `if` also requires
+  # tier == 'full'), and the aggregating job's own name is what keeps a draft's
+  # green from ever being read as `CI required`.
+  fast:
+    needs: scope
+    if: needs.scope.outputs.tier == 'quick'
+    runs-on: ubuntu-latest
+    # 180s is the quick tier's own budget, enforced inside ci-fast.py. This job
+    # timeout is only the outer backstop; dependency prep happens before the
+    # budget starts ticking and is bounded separately by the timeout.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # fetch-depth 0: ci-fast.py resolves the merge base with `git merge-base
+      # origin/main HEAD`, and a shallow clone would put that base out of reach
+      # (no common ancestor → the file-size/migration-fork hooks go unknown).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Pin origin/main to the event's base sha WITHOUT passing a custom --base:
+      # ci-fast.py treats any `--base` other than "origin/main" as unable to be
+      # honored by the merge-base hooks and records it unknown. Pointing the
+      # remote-tracking ref itself keeps the default and the hooks intact.
+      - name: Point origin/main at the merge base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git fetch --no-tags origin "+$BASE_SHA:refs/remotes/origin/main"
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          enable-cache: true
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Enable corepack
+        run: corepack enable
+      # Dependencies are installed per the scope's raw suite flags — the SAME
+      # selection Required CI uses, plus the local i18n widening ci-fast.py
+      # applies to backend (a `frontend/src/i18n/messages/**` edit is read back
+      # by the backend tree guards, so backend/.venv must be there too). Missing
+      # them would make ci-fast.py return blocked, honestly — installing is what
+      # lets the fast tier actually run.
+      - name: Install dependencies
+        env:
+          BACKEND: ${{ needs.scope.outputs.backend }}
+          FRONTEND: ${{ needs.scope.outputs.frontend }}
+        run: |
+          # origin/main was repointed at the event's base sha above, so this is
+          # the merge diff — the same set scope selected on.
+          backend_needed="$BACKEND"
+          if [ "$backend_needed" != "true" ] \
+             && git diff --name-only origin/main HEAD | grep -q '^frontend/src/i18n/messages/'; then
+            backend_needed="true"
+          fi
+          if [ "$backend_needed" = "true" ]; then (cd backend && uv sync --frozen --all-extras); fi
+          if [ "$FRONTEND" = "true" ]; then
+            (cd frontend && pnpm install --frozen-lockfile)
+          fi
+      - name: Read the pull request's live title
+        id: title
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # The live title, read from the API — NOT `gh pr view`, which needs a
+          # branch and is unreliable on this checkout (a detached merge ref).
+          title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
+          echo "value=$title" >> "$GITHUB_OUTPUT"
+      # `--tier quick` (180s) is the draft tier's whole point; a run that
+      # exhausts the budget exits unknown (2), which this step turns into a red
+      # check — the quick tier is never trimmed to green.
+      - name: ci:fast quick tier
+        env:
+          CI_FAST_PRECOMMIT: uvx pre-commit
+        run: |
+          python3 .github/scripts/ci-fast.py --tier quick --title "${{ steps.title.outputs.value }}"
+
   backend:
     needs: scope
-    if: needs.scope.outputs.backend == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.backend == 'true'
     uses: ./.github/workflows/test.yml
 
   # ci-fast's black-box tests are their own suite: they used to run inside
@@ -58,17 +160,17 @@ jobs:
   # workflow behind a suite by reading this job's `uses:`.
   cifast:
     needs: scope
-    if: needs.scope.outputs.cifast == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.cifast == 'true'
     uses: ./.github/workflows/ci-fast.yml
 
   frontend:
     needs: scope
-    if: needs.scope.outputs.frontend == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.frontend == 'true'
     uses: ./.github/workflows/frontend.yml
 
   e2e:
     needs: scope
-    if: needs.scope.outputs.e2e == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.e2e == 'true'
     permissions:
       contents: read
       actions: read
@@ -77,42 +179,54 @@ jobs:
 
   cli:
     needs: scope
-    if: needs.scope.outputs.cli == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.cli == 'true'
     uses: ./.github/workflows/cli.yml
 
   guards:
     needs: scope
-    if: needs.scope.outputs.guards == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.guards == 'true'
     uses: ./.github/workflows/repo-guards.yml
 
   deploy:
     needs: scope
-    if: needs.scope.outputs.deploy == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.deploy == 'true'
     uses: ./.github/workflows/deploy-scripts-test.yml
 
   harness:
     needs: scope
-    if: needs.scope.outputs.harness == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.harness == 'true'
     uses: ./.github/workflows/harness-contract.yml
 
   mcp:
     needs: scope
-    if: needs.scope.outputs.mcp == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.mcp == 'true'
     uses: ./.github/workflows/mcp-contract.yml
 
   equivalence:
     needs: scope
-    if: needs.scope.outputs.equivalence == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.equivalence == 'true'
     uses: ./.github/workflows/mcp-equivalence.yml
 
   required:
-    name: CI required
+    # The name IS the branch-protection check for the full tier. A draft run
+    # gets a DIFFERENT name so its (partial) green can never satisfy the
+    # required check; only a full run — merge queue or non-draft PR — answers
+    # to `CI required`.
+    #
+    # The name is keyed off the EVENT, not the scope output: if `scope` fails
+    # its `tier` output is empty, and keying off it would fall through to the
+    # bare `CI required` name on a draft run — exactly the collision this exists
+    # to prevent. The event's own `draft` flag cannot be lost that way. The
+    # aggregation still recomputes the tier from the event and rejects any
+    # scope output that disagrees (required-ci.py: failures/tier_for), so a
+    # wrong tier is red, never a mislabelled pass.
+    name: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && 'CI required (draft quick)' || 'CI required' }}
     if: ${{ !cancelled() }}
     # pull-requests: read is for the title step, which reads the PR's title.
     permissions:
       contents: read
       pull-requests: read
-    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast]
+    needs: [scope, backend, frontend, e2e, cli, guards, deploy, harness, mcp, equivalence, remote, cifast, fast]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -145,7 +259,7 @@ jobs:
 
   remote:
     needs: scope
-    if: needs.scope.outputs.remote == 'true'
+    if: needs.scope.outputs.tier == 'full' && needs.scope.outputs.remote == 'true'
     permissions:
       contents: read
       packages: read

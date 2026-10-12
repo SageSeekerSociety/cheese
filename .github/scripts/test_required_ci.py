@@ -156,7 +156,7 @@ class RequiredCITest(unittest.TestCase):
             with self.subTest(result=result):
                 needs = self.needs()
                 needs["remote"]["result"] = result
-                self.assertTrue(gate.failures(needs))
+                self.assertTrue(gate.failures(needs, "full"))
 
     def test_backend_change_selects_backend_and_e2e(self):
         selected = gate.select(["backend/app/api/rooms.py"])
@@ -213,20 +213,20 @@ class RequiredCITest(unittest.TestCase):
                 needs = self.needs()
                 needs["scope"]["outputs"]["cifast"] = "true"
                 needs["cifast"]["result"] = result
-                self.assertTrue(gate.failures(needs))
+                self.assertTrue(gate.failures(needs, "full"))
         # A selected suite whose job never reported into needs is missing too.
         needs = self.needs()
         needs["scope"]["outputs"]["cifast"] = "true"
         del needs["cifast"]
-        self.assertTrue(gate.failures(needs))
+        self.assertTrue(gate.failures(needs, "full"))
 
     def test_missing_or_invalid_cifast_scope_output_blocks(self):
         needs = self.needs()
         del needs["scope"]["outputs"]["cifast"]
-        self.assertTrue(gate.failures(needs))
+        self.assertTrue(gate.failures(needs, "full"))
         needs = self.needs()
         needs["scope"]["outputs"]["cifast"] = "banana"
-        self.assertTrue(gate.failures(needs))
+        self.assertTrue(gate.failures(needs, "full"))
 
     def test_gateway_health_changes_select_their_behavior_suite(self):
         for path in (
@@ -253,35 +253,201 @@ class RequiredCITest(unittest.TestCase):
         self.assertTrue(selected["e2e"])
 
     def needs(self):
+        """A happy-path ``toJSON(needs)`` for a non-draft (FULL) run.
+
+        A backend change selects backend, e2e, guards and remote; every other
+        suite is skipped. ``fast`` is skipped — it only runs on a draft — and
+        ``scope.outputs.tier`` is ``"full"``. This is the shape the aggregation
+        must accept, and the shape every negative test perturbs.
+        """
         selected = gate.select(["backend/app/api/rooms.py"])
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "full"
         return {
-            "scope": {
-                "result": "success",
-                "outputs": {k: str(v).lower() for k, v in selected.items()},
-            },
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "skipped"},
             **{
                 k: {"result": "success" if v else "skipped"}
                 for k, v in selected.items()
             },
         }
 
+    def quick_needs(self):
+        """A happy-path ``toJSON(needs)`` for a DRAFT (QUICK) run.
+
+        ``scope`` keeps the raw select flags — the fast job reads them to decide
+        what to install — but the tier is ``"quick"``, so NO product suite may
+        run: every one is skipped and only ``fast`` succeeds.
+        """
+        selected = gate.select(["backend/app/api/rooms.py"])
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "quick"
+        return {
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "success"},
+            **{k: {"result": "skipped"} for k in selected},
+        }
+
     def test_intentionally_skipped_suites_do_not_block(self):
-        self.assertEqual(gate.failures(self.needs()), [])
+        self.assertEqual(gate.failures(self.needs(), "full"), [])
 
     def test_failed_cancelled_skipped_or_missing_selected_suite_blocks(self):
         for result in ("failure", "cancelled", "skipped", "missing"):
             with self.subTest(result=result):
                 needs = self.needs()
                 needs["backend"]["result"] = result
-                self.assertTrue(gate.failures(needs))
+                self.assertTrue(gate.failures(needs, "full"))
 
     def test_failed_scope_or_missing_output_blocks(self):
         needs = self.needs()
         needs["scope"]["result"] = "failure"
-        self.assertTrue(gate.failures(needs))
+        self.assertTrue(gate.failures(needs, "full"))
         needs = self.needs()
         del needs["scope"]["outputs"]["backend"]
-        self.assertTrue(gate.failures(needs))
+        self.assertTrue(gate.failures(needs, "full"))
+
+
+class TierForTest(unittest.TestCase):
+    """The event → tier table, the single source of the whole scheme's safety.
+
+    Only a DRAFT pull_request is quick. Everything else — merge queue, a
+    non-draft PR, and any event this cannot read — is the full gate.
+    """
+
+    def test_merge_group_is_always_full(self):
+        # The queue entry is the run the production deploy chain reads
+        # (deploy/check-auto-deploy.py); it must be the complete gate.
+        self.assertEqual(gate.tier_for("merge_group", {}), "full")
+        self.assertEqual(
+            gate.tier_for("merge_group", {"pull_request": {"draft": True}}), "full"
+        )
+
+    def test_a_non_draft_pull_request_is_full(self):
+        # Includes ready_for_review: promoting a draft starts a full run.
+        for action in ("opened", "synchronize", "reopened", "ready_for_review"):
+            with self.subTest(action=action):
+                event = {"action": action, "pull_request": {"draft": False}}
+                self.assertEqual(gate.tier_for("pull_request", event), "full")
+
+    def test_only_a_draft_pull_request_is_quick(self):
+        for action in ("opened", "synchronize", "converted_to_draft"):
+            with self.subTest(action=action):
+                event = {"action": action, "pull_request": {"draft": True}}
+                self.assertEqual(gate.tier_for("pull_request", event), "quick")
+
+    def test_the_draft_flag_not_the_action_is_authoritative(self):
+        # Same action, opposite flag: the flag wins, so a stale/renamed action
+        # can never promote a draft to the full gate (or vice versa).
+        for action in ("opened", "ready_for_review", "synchronize", "reopened"):
+            with self.subTest(action=action, draft=False):
+                self.assertEqual(
+                    gate.tier_for(
+                        "pull_request", {"action": action, "pull_request": {"draft": False}}
+                    ),
+                    "full",
+                )
+            with self.subTest(action=action, draft=True):
+                self.assertEqual(
+                    gate.tier_for(
+                        "pull_request", {"action": action, "pull_request": {"draft": True}}
+                    ),
+                    "quick",
+                )
+
+    def test_an_unreadable_event_fails_closed_to_full(self):
+        for event_name, event in (
+            ("pull_request", {}),  # no flag
+            ("pull_request", {"pull_request": None}),
+            ("pull_request", {"pull_request": {}}),  # flag absent
+            ("pull_request", {"pull_request": {"draft": None}}),  # flag null
+            ("pull_request", None),  # payload not a dict
+            ("pull_request", "not-a-dict"),
+            ("workflow_dispatch", {"ref": "main"}),
+            ("schedule", {}),
+            ("", {}),
+        ):
+            with self.subTest(event_name=event_name, event=event):
+                self.assertEqual(gate.tier_for(event_name, event), "full")
+
+
+class AggregationTierTest(unittest.TestCase):
+    """The aggregating check accepts a run only at the tier its event demands."""
+
+    def needs(self):
+        selected = gate.select(["backend/app/api/rooms.py"])
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "full"
+        return {
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "skipped"},
+            **{
+                k: {"result": "success" if v else "skipped"}
+                for k, v in selected.items()
+            },
+        }
+
+    def quick_needs(self):
+        selected = gate.select(["backend/app/api/rooms.py"])
+        outputs = {k: str(v).lower() for k, v in selected.items()}
+        outputs["tier"] = "quick"
+        return {
+            "scope": {"result": "success", "outputs": outputs},
+            "fast": {"result": "success"},
+            **{k: {"result": "skipped"} for k in selected},
+        }
+
+    def test_quick_run_passes_with_only_the_fast_job_green(self):
+        self.assertEqual(gate.failures(self.quick_needs(), "quick"), [])
+
+    def test_quick_run_blocks_if_a_product_suite_ran(self):
+        # A draft must SKIP every full suite: a green product suite under the
+        # draft's name would be full evidence masquerading as the quick tier.
+        needs = self.quick_needs()
+        needs["backend"]["result"] = "success"
+        self.assertTrue(gate.failures(needs, "quick"))
+
+    def test_quick_run_blocks_if_fast_is_missing_or_not_success(self):
+        for result in ("failure", "cancelled", "skipped", "missing"):
+            with self.subTest(result=result):
+                needs = self.quick_needs()
+                needs["fast"]["result"] = result
+                self.assertTrue(gate.failures(needs, "quick"))
+        needs = self.quick_needs()
+        del needs["fast"]
+        self.assertTrue(gate.failures(needs, "quick"))
+
+    def test_full_run_blocks_a_green_fast_job(self):
+        # In the full tier the fast job must be skipped: if it ran, something
+        # other than the selected full suite set produced the required green.
+        needs = self.needs()
+        needs["fast"]["result"] = "success"
+        self.assertTrue(gate.failures(needs, "full"))
+
+    def test_a_full_run_does_not_satisfy_a_quick_event(self):
+        # The draft's required name is `CI required (draft quick)`; a full-tier
+        # payload must never be accepted as its answer.
+        self.assertTrue(gate.failures(self.needs(), "quick"))
+
+    def test_a_quick_run_does_not_satisfy_a_full_event(self):
+        self.assertTrue(gate.failures(self.quick_needs(), "full"))
+
+    def test_scope_tier_disagreeing_with_the_event_blocks(self):
+        needs = self.needs()
+        needs["scope"]["outputs"]["tier"] = "quick"
+        self.assertTrue(gate.failures(needs, "full"))
+        needs = self.quick_needs()
+        needs["scope"]["outputs"]["tier"] = "full"
+        self.assertTrue(gate.failures(needs, "quick"))
+
+    def test_missing_or_invalid_scope_tier_blocks(self):
+        for tier in (None, "banana", ""):
+            with self.subTest(tier=tier):
+                needs = self.needs()
+                needs["scope"]["outputs"]["tier"] = tier
+                self.assertTrue(gate.failures(needs, "full"))
+        needs = self.needs()
+        del needs["scope"]["outputs"]["tier"]
+        self.assertTrue(gate.failures(needs, "full"))
 
 
 if __name__ == "__main__":
