@@ -19,13 +19,15 @@ run on this machine, while the parent commit — whose CI never ran the backend
 layer, being a docs-only push — lost the same race in 3 of 6 runs.
 
 ``after_own_commit`` is the one place that waits for the commit that ends the
-session's transaction instead. What it must not do is *skip* a commit, or run
-the work twice. The four cases pin that contract: a released savepoint runs
-nothing and the transaction's commit answers; that commit runs the work once; a
-hook asked to wait for every commit runs for each one; a rollback spends
-nothing, so the next commit still answers.
+session's transaction instead. What it must not do is *skip* a commit, run the
+work twice, or let one hook's run stand for another's. The cases below pin that
+contract: a released savepoint runs nothing and the transaction's commit
+answers; that commit runs the work once; a hook asked to wait for every commit
+runs for each one; a rollback of a real transaction spends nothing, so the next
+commit still answers; and two hooks registered together each run.
 """
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import after_own_commit
@@ -83,6 +85,8 @@ def test_a_rollback_runs_nothing_and_the_next_commit_answers(db_session, _portal
     fired: list[str] = []
 
     async def scenario() -> list[str]:
+        # a rollback of nothing fires nothing, so the transaction has to be real
+        await db_session.execute(text("SELECT 1"))
         after_own_commit(db_session, lambda: fired.append("committed"))
         await db_session.rollback()
         assert fired == []
@@ -90,3 +94,18 @@ def test_a_rollback_runs_nothing_and_the_next_commit_answers(db_session, _portal
         return list(fired)
 
     assert _portal.call(scenario) == ["committed"]
+
+
+def test_two_hooks_on_one_transaction_each_run(db_session, _portal):
+    # one request registers several: a close stages its PR work, its stop and its
+    # after-close on the same session. A hook that shares its already-ran mark with
+    # the others would run one and swallow the rest.
+    fired: list[str] = []
+
+    async def scenario() -> list[str]:
+        after_own_commit(db_session, lambda: fired.append("first"))
+        after_own_commit(db_session, lambda: fired.append("second"))
+        await db_session.commit()
+        return list(fired)
+
+    assert _portal.call(scenario) == ["first", "second"]
