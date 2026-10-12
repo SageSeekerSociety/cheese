@@ -205,7 +205,9 @@ head, base and dirty-tree fingerprint.
   session is outside the group. Whatever cap the machine itself imposes stays
   the hard limit. A check whose sampling could not be read at all is recorded
   `unmeasured: true` in the report rather than given a ceiling of 0; the
-  wall-clock bound still applies to it.
+  wall-clock bound still applies to it, though on a machine where `ps` answers
+  slowly the kill follows the deadline by up to one sampling window (about a
+  second). No verdict turns on that.
 - The frontend's Vitest parallelism is derived from that same cap
   (`vitest_workers`): one fork per 3072 MiB, also bounded by cores − 1 and 16 —
   the rule `frontend/vite.config.ts` already applies to the same box (a fork
