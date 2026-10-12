@@ -99,12 +99,11 @@ parts:
 
 :::walk
 1. 在底部输入框中粘贴这条消息，按 `Ctrl/Cmd+Enter` 发送。芝士在消息下方回复，并创建一个任务。
-2. 点消息下方的任务，打开任务页。
-3. 点右上角的「开始」。页头下方出现提示，要求指定审阅人。
-4. 在提示右侧的「审阅人」中选择自己，再点一次「开始」。芝士开始写 README.md。
+2. 点消息下方的任务，打开任务页。任务建好就已经开始，芝士正在写任务文档。
+3. 芝士按文档写 README.md，完成后提交审阅，页头状态变为「待你审阅」。
 
 ```demo-panel
-title: 交给芝士并开始任务
+title: 交给芝士，任务自己开始
 walk: true
 align: top
 parts:
@@ -122,13 +121,13 @@ parts:
     until: 2
   - kind: thread
     text: 1 条回复
-    last: 芝士：任务已建好：写 README.md 介绍项目。请在任务里确认要写的内容，再点「开始」。
+    last: 芝士：任务已建好：写 README.md 介绍项目。我已经开始整理，有要补充的就在任务里说。
     at: 1
     until: 2
   - kind: task
     title: 写 README.md 介绍项目
     owner: 你 负责
-    status: 讨论中
+    status: 已开始
     at: 1
     until: 2
   - kind: composer
@@ -138,40 +137,33 @@ parts:
   - kind: head
     room: 综合
     title: 写 README.md 介绍项目
+    status: 已开始
     owner: 你 负责
-    button: 开始
-    press: 3
     at: 2
-    until: 3
   - kind: head
     room: 综合
     title: 写 README.md 介绍项目
+    status: 待审阅
     owner: 你 负责
-    button: 开始
-    press: 4
     at: 3
-    until: 4
-  - kind: head
-    room: 综合
-    title: 写 README.md 介绍项目
-    owner: 你 负责
-    at: 4
   - kind: strip
-    text: 需要指定由谁审阅，或在项目设置中设置默认审阅的人
-    label: 审阅人
-    value: 你
+    text: 待你审阅
     at: 3
-    until: 4
   - kind: tabs
     items: 概览 | 现场 | 改动 | 预览
     active: 概览
     at: 2
   - kind: line
-    text: 你 刚刚开始
-    at: 4
-  - kind: doc
-    headings: 用三句话介绍项目的 README | 等你确认内容后开始
+    text: 芝士 刚刚开始
     at: 2
+    until: 3
+  - kind: doc
+    headings: 用三句话介绍项目的 README | 芝士正在整理…
+    at: 2
+    until: 3
+  - kind: doc
+    headings: 用三句话介绍项目的 README | 初稿写好后提交审阅
+    at: 3
   - kind: composer
     placeholder: 给芝士发消息
     at: 2
