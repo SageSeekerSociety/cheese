@@ -100,7 +100,7 @@ input,select{font:inherit;color:var(--ink)}
   margin-left:8px;flex:1;height:22px;border-radius:var(--radius-pill);
   background:var(--surface);border:1px solid var(--line);
   display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--muted);
-  font-family:var(--mono);overflow:hidden;white-space:nowrap;
+  font-family:var(--mono);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
 }
 .frame__scroll{overflow-x:auto}
 .app{min-width:1000px;background:var(--canvas);padding:0 0 40px}
@@ -264,6 +264,7 @@ var S = {
   platform: 'luogu',           // luogu | yoj
   link: 'https://www.luogu.com.cn/problem/P1001',
   problemId: 'P1001',
+  platformFollowed: false,     // 平台是不是刚被链接带着切的
   requireReview: true,         // 「领取后需要教师审核」
   claim: 'none',               // none | pending | approved | rejected
   toast: ''
@@ -356,10 +357,15 @@ function screenForm() {
     html += '<span class="field__hint">只收 http(s) 链接；贴上来自动认平台和题号。</span></div>';
     html += '</div>';
 
-    if (parsed) {
+    if (parsed && parsed.platform === S.platform) {
       html += '<div class="note note--ok"><span>已认出：<b>' + esc(PLATFORMS[parsed.platform].name) + ' ' + esc(parsed.id) + '</b>' +
               (PLATFORMS[parsed.platform].verified ? '' : '　<span class="tag tag--warn">链接格式待核实</span>') +
-              '　<span class="t-meta">（题号已自动填好，仍可改）</span></span></div>';
+              '　<span class="t-meta">（题号已自动填好，仍可改）</span>' +
+              (S.platformFollowed ? '　<span class="t-meta">平台已跟着链接切过来</span>' : '') +
+              '</span></div>';
+    } else if (parsed) {
+      html += '<div class="note note--warn"><span>链接看着是<b>' + esc(PLATFORMS[parsed.platform].name) + ' ' + esc(parsed.id) + '</b> 的题，和上面选的「' + esc(PLATFORMS[S.platform].name) + '」对不上——题号按链接填。' +
+              '<button class="btn btn--sm btn--ghost" data-act="uselink">平台改成' + esc(PLATFORMS[parsed.platform].name) + '</button></span></div>';
     } else if (S.link.trim()) {
       html += '<div class="note note--danger"><span>这个链接认不出平台，下面手动选平台、填题号。</span></div>';
     }
@@ -563,6 +569,7 @@ function screenChanges() {
   h += '<li><b>后端</b>：<code>POST /tasks</code>、<code>PATCH /tasks/{id}</code>、序列化各加该字段；链接只收 http(s)。</li>';
   h += '<li><b>前端</b>：新增一个「题目来源」表单节，接进发题表单（<code>TaskForm.vue</code> 与 <code>useTaskForm.ts</code> 的 zod 表、初值、提交组装）。</li>';
   h += '<li><b>前端</b>：题目详情页显示来源徽标 + 「去做这道题」外链。</li>';
+  h += '<li><b>前端</b>：链接认出什么平台就填什么，平台下拉跟着它走；手动选的平台和链接对不上时以链接为准并提示。</li>';
   h += '<li><b>不做</b>：外站成绩自动同步。洛谷没有面向第三方的公开接口，YOJ 未核实；文案里不承诺。</li>';
   h += '</ol></section>';
 
@@ -616,8 +623,9 @@ function onClick(e) {
 
   if (act === 'tab') { S.screen = v; try { location.hash = v; } catch (err) {} }
   else if (act === 'source') { S.sourceKind = v; resetClaim(); }
-  else if (act === 'platform') { S.platform = el.value; S.link = PLATFORMS[el.value].example; var p = parseLink(S.link); S.problemId = p ? p.id : ''; resetClaim(); }
-  else if (act === 'example') { S.platform = v; S.link = PLATFORMS[v].example; var q = parseLink(S.link); S.problemId = q ? q.id : ''; }
+  else if (act === 'platform') { S.platform = el.value; S.platformFollowed = false; if (!S.link.trim()) { S.link = PLATFORMS[el.value].example; var p = parseLink(S.link); S.problemId = p ? p.id : ''; } resetClaim(); }
+  else if (act === 'uselink') { var u = parseLink(S.link); if (u) { S.platform = u.platform; S.platformFollowed = true; S.problemId = u.id; } }
+  else if (act === 'example') { S.platform = v; S.platformFollowed = false; S.link = PLATFORMS[v].example; var q = parseLink(S.link); S.problemId = q ? q.id : ''; }
   else if (act === 'review') {
     S.requireReview = !S.requireReview;
     if (S.claim === 'pending') S.claim = 'none'; // 换了要不要审，先把领的申请收回来重演
@@ -638,7 +646,8 @@ function onInput(e) {
   if (act === 'link') {
     S.link = el.value;
     var p = parseLink(S.link);
-    if (p) { S.platform = p.platform; S.problemId = p.id; }
+    if (p) { S.platformFollowed = (S.platform !== p.platform); S.platform = p.platform; S.problemId = p.id; }
+    else { S.platformFollowed = false; }
     var keep = el.selectionStart;
     render();
     var again = document.getElementById('f-link');
