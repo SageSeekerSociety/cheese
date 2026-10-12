@@ -35,9 +35,12 @@ an inferred runner whose dependencies are not installed, a command that exited 1
 without ever running. If your test is not one of the two layouts below, say how to
 run it with --command; the script will not guess a runner it does not know,
 because a runner that is not installed looks exactly like a test that does not
-fail. The two it does know it asks first, so a runner that starts and then cannot
-find its test is a refusal too — with --command it cannot, and a program that
-starts but cannot run its test still reads as a result, so keeping that command's
+fail. The two it does know it asks first, and reads the answer after: a runner
+that cannot start, and a run that ends before the test reaches a verdict — a
+dependency that is not installed, a module the test imports that this half does
+not have, a test that only collects with the fix in place — are refusals rather
+than results. With --command it can ask nothing, and a program that starts but
+cannot run its test still reads as a result, so keeping that command's
 dependencies installed is yours to do. A test that needs Postgres needs the dev
 stack up first (`eval "$(bash .claude/scripts/dev-db.sh env)"`); this script never
 starts it.
@@ -94,13 +97,16 @@ STALE_AFTER = 24 * 60 * 60
 #: to avoid, arriving by the other door.
 CANNOT_RUN = 127
 
-#: What an inferred runner exits when it started but could not find the thing it
-#: was asked to run: `uv run --no-sync pytest` on a tree whose dependencies are
-#: not installed exits 2, `pnpm exec vitest` exits 254. A test that ran and
-#: failed exits 1, so neither of these is a result. They are the same mistake
-#: CANNOT_RUN guards against, one door along — the runner started, so the check
-#: for a program that never did misses it, and only asking the runner up front
-#: tells that apart from a red half.
+#: What an inferred runner exits when the test did not reach a verdict: `uv run
+#: --no-sync pytest` on a tree whose dependencies are not installed exits 2,
+#: `pnpm exec vitest` exits 254, and `uv` passes pytest's own 2 through —
+#: "interrupted", an error during collection, a module the test imports that this
+#: half does not have. A test that ran and failed exits 1, so none of these is a
+#: result. They are the same mistake CANNOT_RUN guards against, one door along:
+#: the runner started, so the check for a program that never did misses it, and
+#: only asking the runner first, and reading its code after, tells that apart
+#: from a red half. `cannot_start` reads the answer to `--version`; `run` reads
+#: the run's own code — the second catches what reached pytest and never got out.
 CANNOT_SPAWN = {"uv": 2, "pnpm": 254}
 
 FIX_HINT = (
@@ -391,6 +397,20 @@ def run(argv: list[str], where: Path, probe: list[str] | None = None) -> int:
         print(
             f"prove-regression: {argv[0]} exited {CANNOT_RUN} (not found); the test "
             "did not run",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+    if done.returncode == CANNOT_SPAWN.get(argv[0]):
+        # The runner started and then ended without the test reaching a verdict:
+        # `uv` passes pytest's own 2 through, which is "interrupted", an error
+        # during collection, or a module the test imports that this half does not
+        # have. Nothing was asserted, so a red half here would credit the fix
+        # with a failure that was the run's, and a green half with nothing at
+        # all. Only the two inferred runners have a code to compare: with
+        # --command, argv[0] is the shell and this never fires.
+        print(
+            f"prove-regression: {' '.join(argv)} exited {done.returncode} without "
+            "the test reaching a verdict",
             file=sys.stderr,
         )
         raise SystemExit(2)
@@ -806,19 +826,23 @@ def self_test() -> int:
         # those two spots is what tells "refused" apart from "written somewhere
         # harmless" — the exit code alone cannot, because a copy that lands
         # outside is only a misjudgement once something reads what it wrote.
-        escape = Path(tempfile.gettempdir()) / "escape.py"
+        # Named after this run's own scratch directory. `..` from the worktree is
+        # the temp directory the worktree sits in, which every other task on the
+        # machine shares, so a fixed name would have two concurrent self-tests
+        # writing and unlinking each other's file.
+        escape_name = f"escape-{Path(scratch).name}.py"
+        escape = Path(tempfile.gettempdir()) / escape_name
         escape.write_text("outside\n", encoding="utf-8")
-        # The sentence this one would carry if it were copied: it has to differ
-        # from what is watched above, or the file landing on the watched spot
-        # would read the same either way and the assertion would decide nothing.
-        (Path(scratch) / "escape.py").write_text("copied\n", encoding="utf-8")
+        # What the copy would carry if it landed: it exists, or the refusal would
+        # be the missing-file one, and it says something else, so a file written
+        # to the watched spot is visible in what the assertion reads.
+        (Path(scratch) / escape_name).write_text("copied\n", encoding="utf-8")
         outside_tree = Path(scratch) / "absolute.py"
         outside_tree.write_text("outside\n", encoding="utf-8")
         escaped = (
-            prove(without, runs, copy="../escape.py").returncode == 2
+            prove(without, runs, copy=f"../{escape_name}").returncode == 2
             and prove(without, runs, copy=str(outside_tree)).returncode == 2
             and escape.read_text(encoding="utf-8") == "outside\n"
-            and outside_tree.read_text(encoding="utf-8") == "outside\n"
         )
         escape.unlink(missing_ok=True)
         tally.case(
@@ -849,6 +873,90 @@ def self_test() -> int:
                 and "could not load the test" in stalled.stderr
                 and "NOT PROVEN" not in stalled.stdout,
             )
+
+        # The same mistake one door along again: the runner starts — `--version`
+        # answers — and then ends without the test reaching a verdict, which is
+        # the code `--version` was being read for. A verdict here would be about
+        # the run, not the test. This shim answers 0 for the probe and 2 for the
+        # run, so the probe cannot be what refuses it.
+        verdictless = Path(scratch) / "verdictless-shims"
+        verdictless.mkdir()
+        (verdictless / "uv").write_text(
+            "#!/bin/sh\ncase \"$*\" in *--version*) exit 0;; esac\nexit 2\n",
+            encoding="utf-8",
+        )
+        (verdictless / "uv").chmod(0o755)
+        verdictless_path = f"{verdictless}{os.pathsep}{env.get('PATH', '')}"
+        stalled_run = prove(
+            without, None, node="backend/tests/test_app.py", path=verdictless_path
+        )
+        tally.case(
+            "end to end: a run that never reaches a verdict is not judged",
+            stalled_run.returncode == 2
+            and "without the test reaching a verdict" in stalled_run.stderr
+            and "NOT PROVEN" not in stalled_run.stdout,
+        )
+        # ... and it is the code that decides, not the shim: the same shape
+        # failing with 1 is an ordinary red half and is judged like one.
+        red = Path(scratch) / "red-shims"
+        red.mkdir()
+        (red / "uv").write_text(
+            "#!/bin/sh\ncase \"$*\" in *--version*) exit 0;; esac\nexit 1\n",
+            encoding="utf-8",
+        )
+        (red / "uv").chmod(0o755)
+        ordinary = prove(
+            without,
+            None,
+            node="backend/tests/test_app.py",
+            path=f"{red}{os.pathsep}{env.get('PATH', '')}",
+        )
+        tally.case(
+            "end to end: the same shim failing with 1 is still judged",
+            ordinary.returncode == 1 and "NOT PROVEN" in ordinary.stdout,
+        )
+        # The probe runs once per half, in that half's own directory, so a runner
+        # that answers in one tree and not the other is refused on the side that
+        # cannot. This shim reads the tree it was pointed at — the worktree is the
+        # commit without the fix, whose app.py still says 1 — so the before half
+        # runs and goes red while the after half's probe refuses. Dropping the
+        # probe from that second call would let the run happen, and `run` would
+        # refuse it with its own message, so asserting *this* message is what
+        # pins the probe rather than the check that follows it.
+        split = Path(scratch) / "split-shims"
+        split.mkdir()
+        (split / "uv").write_text(
+            "#!/bin/sh\n"
+            'if grep -q "value = 2" ../app.py 2>/dev/null; then exit 2; fi\n'
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        (split / "uv").chmod(0o755)
+        halved = prove(
+            without,
+            None,
+            node="backend/tests/test_app.py",
+            path=f"{split}{os.pathsep}{env.get('PATH', '')}",
+        )
+        tally.case(
+            "end to end: the half with the fix asks its own runner too",
+            halved.returncode == 2
+            and "could not load the test" in halved.stderr
+            and "NOT PROVEN" not in halved.stdout,
+        )
+        # The probe has its own FileNotFoundError branch, and nothing above
+        # reaches it: those shims exist, so the program subprocess hands them
+        # runs. Without it a runner that is not on PATH raises instead of saying
+        # so, and the caller gets a traceback where "could not judge" belongs.
+        with _Muffle():
+            try:
+                cannot_start(["prove-regression-no-such-program-xyz", "--version"], repo)
+                code = 0
+            except SystemExit as exc:
+                code = exc.code
+            except OSError:
+                code = -1
+        tally.case("a probe whose runner is not on PATH is refused too", code == 2)
 
         # The bookkeeping that decides whether a worktree is registered has to
         # compare real paths: `git worktree add` resolves a symlink before it
