@@ -66,8 +66,7 @@ function pickFiles() {
   fileInput.value?.click()
 }
 
-// 手机上单开一个「照片」：系统的文件选择器里翻相册要好几步，而 accept=image/*
-// 直接进相册/相机。桌面上不给这一颗——那儿贴一张截图或者拖进来就完事了。
+// 手机上单开相册入口，允许照片和视频。桌面上仍用附件选择或拖入。
 function pickImages() {
   imageInput.value?.click()
 }

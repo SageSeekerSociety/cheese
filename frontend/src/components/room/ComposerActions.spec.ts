@@ -85,6 +85,18 @@ afterEach(() => {
 })
 
 describe('输入框下面那一行', () => {
+  it('相册允许照片和视频，并将所选视频交给附件上传流程', async () => {
+    pointer('touch')
+    const view = mount(390)
+    const input = view.container.querySelector('input[accept]') as HTMLInputElement
+    expect(input.accept.split(',')).toEqual(['image/*', 'video/*'])
+    const video = new File(['video'], 'screen.mp4', { type: 'video/mp4' })
+    await fireEvent.update(input, { target: { files: [video] } })
+    expect(view.emitted('files')).toEqual([[[video]]])
+    await fireEvent.update(input, { target: { files: [video] } })
+    expect(view.emitted('files')).toHaveLength(2)
+  })
+
   it('触屏：不摆那颗键盘图标', () => {
     pointer('touch')
     const { container } = mount(390)
