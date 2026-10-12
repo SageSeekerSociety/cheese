@@ -214,6 +214,7 @@
   "mentionFusedDetail": "In one channel, AI teammates' mentions can start at most {limit} turns an hour, so they cannot keep mentioning each other forever. Not woken this time: {names}. Mentions by people are not limited.",
   "mentionUnknownMember": "Could not notify {member}: not a member of this project",
   "mergeQueueLeft": "PR #{pr} left the merge queue without merging",
+  "refUnknownConversation": "{ref} points to no channel, task or thread in this project; readers see a reference that opens nothing",
   "mergeRefused": "GitHub refused to merge PR #{pr}",
   "mergeRefusedDetail": "{reason}\n{url}",
   "mergeRefusedOnAccept": "Accept not completed: GitHub refused to merge PR #{pr}",

@@ -663,29 +663,26 @@ async function openFile(path: string) {
     openFileTab(want)
     return
   }
-  // 频道里没有人改项目的文件，提到的一份文件就是项目现在的样子：在自由区开一格只读的。
-  // 还没有自己分支的任务（没有电脑打开过它）也一样：它没有工作区，「改动」那一格只能
-  // 说打不开这件任务。
-  if (!props.taskId || !props.taskHasBranch) {
-    const lines = at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null
-    placeFile(want, undefined, { lines })
-    setFiles(openFiles.value.map((f) => (f.path === want ? { ...f, project: { lines } } : f)))
-    await setTab(fileKey(want))
-    return
+  // 剩下的都是源文件，分两处：这件任务的工作副本里有它，就开在「改动」那一格；没有，
+  // 就退回项目当前版本那一格只读地开它——频道里没有这一格，任务还没有分支（没有电脑
+  // 打开过它）也算没有。一枚 chip 是读者指名要看的一份文件，不该因为没归到这件任务就
+  // 点不开；当前版本里也没有它时，那一格自己会说，并列出改过它的任务。
+  if (props.taskId && props.taskHasBranch) {
+    // 画不出来的（跑着的应用）只剩预览那一格。它指着谁要现问：芝士一轮里摆出来的东西，
+    // 这里手上那份记录要等这一轮结束才更新。
+    await pollPreviewPointer()
+    if (want === previewPath.value) {
+      await setTab('preview')
+      return
+    }
+    // 这一步是用户点了一份文件，该走守卫问一句。问不到「可以走」就当场收手：`setTab`
+    // 停在原地，「改动」那一格要么是空的、要么指向一份没露面的「改动」——再往下走就是
+    // 一次没有落地、也没人知道的假动作。
+    if (!(await setTab('changes'))) return
+    await nextTick()
+    if (await changesRef.value?.openFile(want)) return
   }
-  // 剩下的画不出来的（跑着的应用）只剩预览那一格。它指着谁要现问：芝士一轮里摆出来
-  // 的东西，这里手上那份记录要等这一轮结束才更新。
-  await pollPreviewPointer()
-  if (want === previewPath.value) {
-    await setTab('preview')
-    return
-  }
-  // 这一步是用户点了一份文件，该走守卫问一句。问不到「可以走」就当场收手：`setTab`
-  // 停在原地，`changesRef` 要么是空的、要么指向一份没露面的「改动」——再往下走就是
-  // 一次没有落地、也没人知道的假动作。
-  if (!(await setTab('changes'))) return
-  await nextTick()
-  await changesRef.value?.openFile(want)
+  await openFileTab(want, { lines: at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null })
 }
 
 /** 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。 */
@@ -731,8 +728,11 @@ function retitle(id: string, title: string) {
   setFiles(openFiles.value.map((f) => (f.document?.id === id ? { ...f, document: { ...f.document, title } } : f)))
 }
 
-function openFileTab(path: string) {
-  placeFile(path)
+// 自由区开一格。`project` 有值时开的是「项目当前版本」那一格：只读，带着 chip 指的那几行
+// （没指就是 null）。
+function openFileTab(path: string, project?: OpenFileTab['project']) {
+  placeFile(path, undefined, project)
+  if (project) setFiles(openFiles.value.map((f) => (f.path === path ? { ...f, project } : f)))
   setTab(fileKey(path))
 }
 

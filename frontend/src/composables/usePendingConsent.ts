@@ -19,7 +19,6 @@ import { axiosErrorMessage } from '@/api/axiosHttp'
 import { LegalApi } from '@/api/legal'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService, { currentUserId } from '@/services/account'
 
 export function usePendingConsent() {
@@ -52,7 +51,7 @@ export function usePendingConsent() {
       await LegalApi.acceptDocuments(Object.fromEntries(pending.value.map((d) => [d.document, d.version])))
       pending.value = []
     } catch (e) {
-      error.value = axiosErrorMessage(e, requestErrorMessage(e, t('account.consentFailed')))
+      error.value = axiosErrorMessage(e, t('account.consentFailed'))
     } finally {
       accepting.value = false
     }

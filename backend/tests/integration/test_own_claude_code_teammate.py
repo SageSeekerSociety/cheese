@@ -160,7 +160,7 @@ def test_it_works_only_its_owners_tasks(client):
     project_id, room_id = _project_with_bob(client)
     _log_in_claude_code(client, "alice")
     seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
-    bobs = open_task(client, room_id, "bob 的任务", owner="bob", reviewer="bob")
+    bobs = open_task(client, room_id, "bob 的任务", owner="bob")
     alices = open_task(client, room_id, "alice 的任务", owner="alice")
 
     refused = client.patch(

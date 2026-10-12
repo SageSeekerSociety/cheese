@@ -2,9 +2,10 @@ import type { Locale } from '@/i18n'
 import type { User } from '@/types/users'
 
 import { computed, ref } from 'vue'
+import { toast } from 'vuetify-sonner'
 
 import { UserApi } from '@/api/users'
-import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale } from '@/i18n'
+import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale, t } from '@/i18n'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { identityChanges } from '@/lib/identity'
@@ -134,6 +135,9 @@ export class AccountService {
   // 重试」那一层。以前这个信息不存在：弱网冷打开时屏幕上除了空白什么都没有，恢复
   // 失败更是直接把人当生人送走。
   _restorePhase = ref<RestorePhase>('idle')
+  // 服务端结束这次登录的动作只做一遍：一次会话结束会从好几个面板各自报上来
+  // （`sessionOver`）。登录回来时清掉。
+  private endingSession = false
   // 冷打开时的「登没登录」答案。`init` 一发起就把它换成那次恢复的 promise：
   // 手里的访问令牌过期时，恢复要先去换一个（一次网络往返），在那之前 `loggedIn`
   // 是 false 而不是「还不知道」——根路径的守卫要是当场读，就会把回访用户当成
@@ -157,6 +161,7 @@ export class AccountService {
     // 的续签（lib/session.ts）。都从这里接住，内存里这份才不会和存储里的对不上。
     onSessionEvent((event) => {
       if (event.type === 'token') this.adopt(event.token, event.user)
+      else if (event.refused && this.loggedIn) void this.sessionOver()
       else void this.forget()
     })
     onLocaleChosen((locale) => void this.languageChosen(locale))
@@ -360,6 +365,7 @@ export class AccountService {
 
   /** 接过一个新令牌：这个标签页续签的，或者别的标签页续签、登录的。 */
   private adopt(accessToken: string, user?: User) {
+    this.endingSession = false
     const someoneElse = !!user && dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user.id)
     this.accessToken = accessToken
     if (user) {
@@ -377,6 +383,7 @@ export class AccountService {
   }
 
   public async login(accessToken: string, user?: User) {
+    this.endingSession = false
     const someoneElse = dropCachesIfSomeoneElseLogsIn(this.user?.id ?? storedUserId(), user?.id)
     this.loggedIn = true
     this.accessToken = accessToken
@@ -398,6 +405,30 @@ export class AccountService {
   public async logout() {
     announceSignOut()
     await this.forget()
+  }
+
+  /**
+   * 服务端把一次正在用的登录结束了（它把续签答成 401）：放下本地会话，告诉人，再把
+   * 他送到能重新登录的地方。
+   *
+   * 顺序不能反过来。`loggedIn` 还是 true 的时候去登录页，`leaveSignInWhenSignedIn`
+   * 会把这一跳弹回原来的页面——人看着就是红了一下又回来（`useUserMenu.onLogout` 先
+   * await logout 再跳，同一个原因）。而 `forget()` 里那次推送退订要走一个网络往返，
+   * 所以放下会话之前先把话说出去，别让人干等着。
+   *
+   * 这一跳只走一次：好几个面板会各自带着自己的 401 报上来，重来一遍只会多一次退订和
+   * 一片重复的提示。
+   */
+  private async sessionOver() {
+    if (this.endingSession) return
+    this.endingSession = true
+    toast.error(t('shell.errors.sessionExpired'))
+    await this.forget()
+    // 路由表建好之后才拿得到路由（见 `router/account.ts` 顶上那句）。
+    const { default: router } = await import('@/router')
+    // 已经在登录页上就不用再跳了；别处跳过去时，`carryLoginRedirect` 会把来路挂上
+    // `?redirect=`，登录完回到他刚才那一页。
+    if (router.currentRoute.value.name !== 'SignIn') void router.replace({ name: 'SignIn' })
   }
 
   /** 放下这个标签页里的登录态，不通知别人：别的标签页已经退出，或者会话已经失效。 */

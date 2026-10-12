@@ -39,11 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.write_access import ROUTE_DECIDES
 from app.common.auth import AccessClaims, verify_access_token
 from app.core import background
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -77,8 +77,6 @@ from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_device_service(db: DbSession) -> DeviceService:

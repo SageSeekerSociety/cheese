@@ -5,6 +5,10 @@ kept: its sync and its pushes are refused. Told nothing, it found out by being
 refused, read the refusal as a broken sandbox and booked a retry. Starting the
 task relaunches the session on the same conversation, so it is told again then,
 and only then does its work reach the project.
+
+A task somebody made is started where it is made, so the one that waits — and
+whose session hears this — is one an AI teammate raised on its own
+(``teammate_task``).
 """
 
 import asyncio
@@ -20,10 +24,10 @@ from app.domain.delivery.models import NativeInput
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
-    open_task,
     post_message,
     post_project,
     session_auth_headers,
+    teammate_task,
 )
 
 NOT_STARTED = "这条任务还没开始"
@@ -69,16 +73,16 @@ def test_a_task_session_hears_its_work_is_not_kept_until_the_task_starts(client)
         compute=stub_compute(channel),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    task = open_task(client, room, "先看看", owner="alice", start=False)
+    task = teammate_task(client, room, "先看看", owner="alice")
     task_id = uuid.UUID(task["id"])
 
-    post_message(client, task["id"], "alice", {"content": "这里是怎么回事"})
+    # 停着的活：芝士写初稿的那一轮就被告知改动留不下。现状只在变了的时候再
+    # 告诉一次，所以听的是它开场那一轮，不是后来的每一轮。
     _until(
-        lambda: "这里是怎么回事" in (channel.last_prompt or ""),
-        "the task's first turn never reached its session",
+        lambda: any(NOT_STARTED in prompt for prompt in heard),
+        "the task's session was never told its work is not kept",
     )
-    assert NOT_STARTED in channel.last_prompt
-    assert STARTED not in channel.last_prompt
+    assert not any(STARTED in prompt for prompt in heard)
     _until(
         lambda: all(row.completed_at for row in _inputs(client, task_id)),
         "the task's first turn never finished",

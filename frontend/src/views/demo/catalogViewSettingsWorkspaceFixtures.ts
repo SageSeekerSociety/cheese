@@ -6,7 +6,7 @@
  * `@/types/channelDirectory` 的 `ChannelEntry`，任务照 `@/cx_types` 的 `RoomTask`，
  * 进展照 `@/types/projectProgress` 的 `ProgressItem`。
  *
- * 预览站碰不得接口层，所以容器算好的那几件在这里写死。几样**不从 `@/network`
+ * 预览站碰不得接口层，所以容器算好的那几件在这里写死。几样**不从 API 层
  * 取类型**：实名的记录与访问记录、通行密钥、登录中的浏览器、以及 `SecurityView`
  * 那几个 props —— 它们各自承载在页面组件上，从 `$props` 里取（demo 源文件引用旧的
  * 网络层会把 `legacy-network` 的账记上新的一笔）。

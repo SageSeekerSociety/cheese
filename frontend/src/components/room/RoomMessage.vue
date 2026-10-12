@@ -114,6 +114,8 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'ask-reply', block: Block, text: string): void
+  /** 自己在那道题上的回答要撤回。 */
+  (e: 'ask-withdraw', block: Block): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -232,8 +234,8 @@ function renderPlain(text: string): string {
            这一份能做的事；置顶了的带一个小图钉。 -->
       <div v-if="fileBlock" class="im-file">
         <!-- 图片输入: an attachment block renders as the image itself
-           (click opens the original in a new tab). 字节在 AttachmentImage
-           里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
+           (click opens it larger, in place, see ImageLightbox). 字节在
+           AttachmentImage 里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
         <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
         <BaseButton
           v-else-if="block.kind === 'attachment'"
@@ -353,7 +355,9 @@ function renderPlain(text: string): string {
         :block="block"
         :names="refs.mentionNames"
         :closed="askClosed"
+        :viewer="viewer"
         @reply="emit('ask-reply', block, $event)"
+        @withdraw="emit('ask-withdraw', block)"
       />
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->

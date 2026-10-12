@@ -21,8 +21,9 @@ from app.api.doc_access import authorize_in_project, frozen, reach, require_writ
 from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store, tell_origin_room
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.routes.topics import _actor_in_place
 from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -45,7 +46,11 @@ from app.domain.living_doc.schemas import (
     document_snapshot,
 )
 from app.domain.living_doc.services import DocumentJournal, Documents
-from app.domain.mentions import canonicalize_refs
+from app.domain.mentions import (
+    canonicalize_refs,
+    dangling_refs,
+    dangling_refs_warning,
+)
 from app.domain.project.address import Numbered, take_number
 from app.domain.project.services import ProjectService, refuse_writes_if_archived
 from app.domain.room_task.services import TaskService
@@ -85,6 +90,18 @@ async def project_overview_document(
     doc = await projects_.overview_document(await projects_.get_or_404(project_id))
     await db.commit()
     return ok({"id": str(doc.id)})
+
+
+async def _with_ref_warnings(db, doc, answer: dict) -> dict:
+    """``answer`` with a warning for each ``<#id>`` the document now holds that
+    names nothing in its project. Read fresh from the text every time, so a
+    reference that stopped resolving is said on the next read or write, and
+    one that was fixed is not said again."""
+    dangling = await dangling_refs(db, doc.project_id, doc.content or "")
+    if not dangling:
+        return answer
+    warnings = [*(answer.get("warnings") or []), dangling_refs_warning(dangling)]
+    return {**answer, "warnings": warnings}
 
 
 def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
@@ -172,7 +189,7 @@ async def create_document(
     await tell_origin_room(
         db, _origin(resolver, actor), doc, actor.handle, created=True
     )
-    return ok(document_row(doc))
+    return await _with_ref_warnings(db, doc, ok(document_row(doc)))
 
 
 @router.get("/{document_id}/about")
@@ -238,7 +255,7 @@ async def get_document(
         return ok(None)
     snapshot = document_snapshot(doc)
     snapshot["pending_suggestions"] = await DocumentJournal(db).suggestions(doc.id)
-    return ok(snapshot)
+    return await _with_ref_warnings(db, doc, ok(snapshot))
 
 
 @router.get("/{document_id}/ticket")
@@ -354,7 +371,7 @@ async def replace_document(
     )
     await db.refresh(doc)
     await tell_origin_room(db, _origin(resolver, actor), doc, actor.handle)
-    return stored
+    return await _with_ref_warnings(db, doc, stored)
 
 
 @router.post("/{document_id}/edits")
@@ -426,14 +443,19 @@ async def edit_doc_passages(
             else None,
         )
     stored = result.get("stored") or {}
-    return ok(
-        {
-            "mode": decision.mode,
-            "requested_by": decision.requested_by,
-            "edits": result.get("edits") or [],
-            "doc_version": (stored.get("data") or {}).get("doc_version"),
-        },
-        warnings=stored.get("warnings"),
+    await db.refresh(doc)
+    return await _with_ref_warnings(
+        db,
+        doc,
+        ok(
+            {
+                "mode": decision.mode,
+                "requested_by": decision.requested_by,
+                "edits": result.get("edits") or [],
+                "doc_version": (stored.get("data") or {}).get("doc_version"),
+            },
+            warnings=stored.get("warnings"),
+        ),
     )
 
 

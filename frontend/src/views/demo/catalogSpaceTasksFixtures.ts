@@ -6,7 +6,7 @@
  * 的容器递的也是它们）。预览站碰不得接口层，所以容器算好的那几件在这里写死；条目只吃
  * props，数据只有这一处。
  *
- * 有两件的类型不从 `@/network` 取：附件的 `TaskAttachmentData` 与报名最新一版的
+ * 有两件的类型不从 API 层取：附件的 `TaskAttachmentData` 与报名最新一版的
  * `Latest`（出题人看板那张表用），两份都从承载它们的页面组件 `$props` 里取 —— demo
  * 源文件引用旧的网络层会把 `legacy-network` 的账记上新的一笔。
  */

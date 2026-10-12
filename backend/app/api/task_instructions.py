@@ -1,13 +1,20 @@
 """Telling a task's own session something: what a new task comes from, that
 its owner started it. Kept in the delivery ledger until it is delivered, so an
-instruction outlives a backend that is replaced before it is sent."""
+instruction outlives a backend that is replaced before it is sent. What the
+room is told when a task starts is said from here too, so the two ways a task
+starts — its owner saying so, or being made already started — say the same
+sentence."""
 
 import uuid
 from datetime import UTC, datetime
 
 from app.api.deps import get_work_runner
 from app.api.routes.topics import BlockRepository
+from app.core.errors import UnprocessableEntityError
+from app.core.sentences import say
+from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.room_task.services import TaskService, said_title
 
 #: How many messages before the one a task comes from its agent is shown: what
 #: was being talked about when it was said.
@@ -93,3 +100,39 @@ async def dispatch(chat: ChatService) -> None:
     from app.domain.delivery.agent import dispatch_pending
 
     await dispatch_pending(chat.session_factory, chat=chat, runner=get_work_runner())
+
+
+async def say_task_started(db, task, *, actor: str) -> None:
+    """「任务已开始」说在任务自己的对话里：谁让它开始的，它当时叫什么名字。
+
+    人在任务页点「开始」和平台建出来就顺手开始，说的是同一句 —— 后者只是把那一下
+    提前到建它的时候。名字取的是此刻的：还没命名的任务在开始那一刻名的是占位符，
+    不是后来那个名字（``said_title``）。
+    """
+    await announce(
+        db,
+        place_id=task.room_id,
+        task_id=task.id,
+        content=say("taskStarted", actor=f"<@{actor}>", title=said_title(task)),
+        meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
+    )
+
+
+async def start_task_at_once(db, task, *, by: str) -> str | None:
+    """分支任务建出来即已开始：审阅人由 ``TaskService.start`` 按档定（负责人那一
+    档不是人时落项目默认），开始时刻和当时那版文档照记 —— 改动的对照面还是开始
+    那一刻。那句话照说，说进任务自己的对话，和人点「开始」时一模一样。
+
+    人手动新建的空任务与芝士受人所托建的任务都走这里，两者只差负责人是谁。芝士
+    自想的那种（``start=false``）不走：它停在讨论中，等负责人说要做。
+
+    不成立时返回没开始的理由（沿用 ``start`` 的话），任务留在讨论中等负责人；这
+    与 `POST /start` 报同一句话，所以人自己点「开始」时看到的是同一件事。没开始
+    就没那句话 —— 这一刻没发生的事不预先说。
+    """
+    try:
+        await TaskService(db).start(task, by=by)
+    except UnprocessableEntityError as exc:
+        return str(exc)
+    await say_task_started(db, task, actor=by)
+    return None

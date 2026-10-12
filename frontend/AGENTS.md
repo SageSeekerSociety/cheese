@@ -4,8 +4,8 @@ Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here
 
 ## A component does not fetch
 
-Nothing under `src/components/**` may import `@/api`, `@/services/*`,
-`@/network/*` or `vue-router`. Data arrives as a prop or from a composable the
+Nothing under `src/components/**` may import `@/api`, `@/services/*` or
+`vue-router`. Data arrives as a prop or from a composable the
 view called; `src/views/**` is where knowing that a server exists is allowed.
 CI runs `pnpm run lint:boundary` (`lint:boundary:update` rewrites the baseline
 downward); violations are frozen in `import-boundary-baseline.json`, so read the
@@ -21,6 +21,10 @@ lightest first: `<NavLink :to="…">` (`components/common/NavLink.vue`),
 `NavTarget` (`lib/navTarget.ts`), never `RouteLocationRaw` — why the two halves
 of the boundary disagree about `import type` is in
 `scripts/import-boundary-ratchet-core.mjs`.
+
+`src/network/` no longer exists — every caller reaches the server through
+`@/api`, and `eslint.config.mjs` keeps a `no-restricted-imports` rule that
+rejects `@/network` with a message pointing at `@/api`.
 
 ## The component preview site
 
@@ -54,7 +58,8 @@ counts and the per-page table:
 ## Existing scene debt only loses dependencies
 
 `pnpm run lint:scene-debt` freezes three exact sets in `scene-debt-baseline.json`
-— non-A child edges, `useRoute` calls, legacy `src/network` imports — and
+— non-A child edges, `useRoute` calls, legacy `src/network` imports (this last
+set is empty now, and the ratchet is what keeps it that way) — and
 `lint:scene-debt:update` only removes; CI also compares the baseline to the merge
 base, so a hand-added exemption fails too. Its failure output names each new
 dependency and its repair; the rule lives in `.claude/scripts/scene-debt-ratchet.py`,

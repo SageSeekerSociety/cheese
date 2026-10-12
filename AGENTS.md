@@ -36,7 +36,7 @@ A new kind of data does not go into an existing table as one more type value or 
 
 ## Assume other agents are working right now
 
-Concurrently, in this repo, on adjacent files. Look for an open PR already making your fix before you start, and review every path your change touches before handing it off; a cache directory in that list is a stop sign. Never `git stash` — the stack is shared by every worktree, and a pop in yours applies someone else's uncommitted work and drops it from under them, silently; commit instead, and `git reset --soft HEAD~1` gives the staged state back. `task setup` turns `autoStash` off for this repository, so a plain `git pull` does not stash behind your back (`task git:config` does it for an older clone).
+Concurrently, in this repo, on adjacent files. Look for an open PR already making your fix before you start, and review every path your change touches before handing it off; a cache directory in that list is a stop sign. An independent review of a PR starts with `.claude/scripts/pr-review.sh prepare <PR>` and follows the REVIEW.md it prints, one method for every seat; do not assemble your own. Never `git stash` — the stack is shared by every worktree, and a pop in yours applies someone else's uncommitted work and drops it from under them, silently; commit instead, and `git reset --soft HEAD~1` gives the staged state back. `task setup` turns `autoStash` off for this repository, so a plain `git pull` does not stash behind your back (`task git:config` does it for an older clone).
 
 ## Test behaviour, never the implementation
 
@@ -44,7 +44,7 @@ Write functional tests. Do not read the source to decide what to assert: a test 
 
 ## Run `task ci:fast` before you push
 
-What the tier is, what it selects and its budget: `.github/scripts/ci-fast.md`. Run it before you push.
+What the tier is, what it selects and its budget: `.github/scripts/ci-fast.md`. Run it before you push. Its frontend type check covers only the files you changed, so do not run the whole-tree `pnpm run typecheck` or `vue-tsc` in a sandbox: it can be killed for memory.
 
 Exit 0 means the selected checks ran and passed, nothing more: an `unknown` or `blocked` result, and any check reported as not run, is not green — the tier ran out of budget, a tool was missing, or a report could not be judged, and none of that may stand in for a pass. Required CI and the merge queue remain the only merge gate.
 
@@ -66,4 +66,4 @@ The work here is code. Do not read or edit the terms or privacy policy (`backend
 
 ## Follow a pull request you enqueue until it is deployed
 
-Watch a pull request you put into the merge queue until the dev deploy that contains it has finished: `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>`, run from the session that owns the work, not a subagent that may end first — a loop that dies with its agent leaves a green PR unenqueued for hours.
+Watch a pull request you put into the merge queue until the dev deploy that contains it has finished: `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>`, run under a monitor from the session that owns the work, not a subagent that may end first — a loop that dies with its agent leaves a green PR unenqueued for hours, and output sent to a file or a background shell reaches the session only when the script exits, so a PR stuck short of the queue goes unheard.

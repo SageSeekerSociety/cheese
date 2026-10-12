@@ -7,8 +7,12 @@
  * 一份是因为 `catalog.ts` 顶着一千行的上限。
  *
  * 数据编在这里而不是 `catalogFixtures.ts`：只有这一件用得上，且要摆出产品里真会
- * 出现的那几种形状——定时任务交回的结果（带日期戳的一层文件夹）、人贴进来的截图、
+ * 出现的那几种形状——定时任务交回的结果（带日期戳的一层文件夹）、人放进来的文件、
  * 芝士交付的文档。`CatalogEntry` 是 type-only 引用，运行时不构成循环。
+ *
+ * 一行上写的是谁什么时候放下的，那几项都在 `RoomFile` 里（`author`／`modified_at`／
+ * `bytes`）。人写的照 handle 写（这里没有名册可查显示名），队友写的是「芝士」，说不
+ * 出谁写的写「来源未知」。
  */
 import type { RoomFile } from '@/api/roomFiles'
 import type { CatalogEntry, CatalogNeed } from './catalog'
@@ -23,19 +27,36 @@ const read = async () => new TextEncoder().encode('这个频道的一份文件�
 
 const FILES: RoomFile[] = [
   {
-    path: '2026-09-14/weekly-report.md',
+    path: 'runs/2026-09-14/weekly-report.md',
     bytes: 4210,
     modified_at: '2026-09-14T02:10:00Z',
+    author: '',
+    author_kind: 'agent',
+    source: 'scheduled',
   },
   {
-    path: 'screenshot-2026-09-12.png',
-    bytes: 88_460,
-    modified_at: '2026-09-12T07:31:00Z',
+    path: 'runs/2026-09-14/numbers.csv',
+    bytes: 21_300,
+    modified_at: '2026-09-14T02:09:00Z',
+    author: '',
+    author_kind: 'agent',
+    source: 'scheduled',
   },
   {
     path: '采购清单.xlsx',
     bytes: 12_300,
     modified_at: '2026-09-08T09:00:00Z',
+    author: 'alice',
+    author_kind: 'human',
+    source: 'upload',
+  },
+  {
+    path: '会议纪要.docx',
+    bytes: 61_400,
+    modified_at: '2026-09-07T11:00:00Z',
+    author: '',
+    author_kind: 'unknown',
+    source: 'baseline',
   },
 ]
 
@@ -44,7 +65,7 @@ export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
     id: 'channel-files-view',
     title: 'ChannelFilesView',
     about:
-      '一个频道自己的文件：贴进来的截图、芝士交付的文档、定时任务交回的结果都在这一页上，最近改的在最前；点一份在右边一栏看内容。',
+      '一个频道自己的文件：芝士交付的文档、定时任务交回的结果、有人放进来的文件都在这一页上，一层一层像文件夹；点一份在右边一栏看内容。',
     file: 'src/views/workspace/ChannelFilesView.vue',
     component: ChannelFilesView,
     needs: UI_T_R,
@@ -52,9 +73,9 @@ export const CHANNEL_FILES_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '有几份文件',
-        note: '一行一份：类型图标、名字、改动时间和大小；在文件夹里的一份把文件夹写在下面一行。',
+        note: '最上层：文件夹在前（写着里面有几份、最近改的是哪一份），文件在后，各自按最近改的排。一行上写着名字，和是谁什么时候放下的。',
         props: { files: FILES },
-        expect: 'screenshot-2026-09-12.png',
+        expect: '采购清单.xlsx',
       },
       {
         name: '一份都没有',

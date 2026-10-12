@@ -2,9 +2,8 @@
 // 任务，地址 `/topics/{task}` ＋ `readSince`/`signal` 的清单）是两个东西 —— 名字只
 // 为避开它。返回的都是 payload（新栈），不再是整只 `{code,message,data}` 信封。
 //
-// 老模块 `@/network/api/tasks` 的 `TasksApi` 逐方法搬过来，地址、查询、正文与超时
-// 一字不改：PDF 那两个用 `VITE_PDF_UPLOAD_TIMEOUT_MS`（缺省 600000），附件上传
-// 60000 且带上传进度。
+// 从旧网络栈搬过来时地址、查询、正文与超时一字未改：PDF 那两个用
+// `VITE_PDF_UPLOAD_TIMEOUT_MS`（缺省 600000），附件上传 60000 且带上传进度。
 import type { EncodedCursorPage, Page, Task, TaskMembership, TaskSubmission, TeamSummary } from '@/types'
 import type {
   AddTaskParticipantRequestData,

@@ -26,7 +26,7 @@ from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
 from app.api.doc_access import reach
-from app.api.routes.topics import DbSession
+from app.api.request_deps import DbSession
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.library import records as library_records

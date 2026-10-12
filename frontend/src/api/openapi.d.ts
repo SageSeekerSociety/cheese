@@ -387,6 +387,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/addresses/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve Refs
+         * @description What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a
+         *     task or a 支线, its title and the room it is in. An id that names none of
+         *     them, or one the caller may not see, is absent from the answer — so a
+         *     private channel is not told apart from one that was never made.
+         */
+        get: operations["resolve_refs_addresses_refs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/slug": {
         parameters: {
             query?: never;
@@ -2168,6 +2191,37 @@ export interface paths {
          */
         post: operations["toggle_reaction_blocks__block_id__reactions_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/blocks/{block_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw Answer
+         * @description Take back your own answer to a question asked with quick replies, so the
+         *     question is unanswered again and its options come back for everyone.
+         *
+         *     ``block_id`` is the question, not the answer: an answer is an ordinary
+         *     message, and what is withdrawn is the line it left on the question
+         *     (`domain/block/questions`). Only whoever answered it can — anyone else gets
+         *     a refusal, not a way to erase somebody's answer. The message the answerer
+         *     sent stays in the room; its words are not what this changes.
+         *
+         *     Whoever was watching gets the question as a `block_updated` frame, and the
+         *     agent that asked it runs another turn, because the turn it had been going
+         *     on was decided on an answer that no longer counts.
+         */
+        delete: operations["withdraw_answer_blocks__block_id__answer_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7341,11 +7395,14 @@ export interface paths {
         };
         /**
          * List Files
-         * @description 这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。
+         * @description 这个房间自己的文件：路径、大小、最后一次改动、是谁写的，最近改的在最前。
          *
          *     这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫
-         *     什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，
-         *     这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *     什么名字。定时任务交回的结果、芝士交付的文档、有人放进来的文件都落在同一个目录
+         *     下，这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *
+         *     作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存
+         *     补齐，没保存过的那几份照列。
          *
          *     `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
          */
@@ -13417,6 +13474,40 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ConversationRefOut */
+        ConversationRefOut: {
+            /** Kind */
+            kind: string;
+            /** Title */
+            title: string;
+            /** Room Id */
+            room_id: string;
+            /** Project Id */
+            project_id: string;
+        };
+        /**
+         * ConversationRefs
+         * @description What each id that names something names, by id.
+         */
+        ConversationRefs: {
+            [key: string]: components["schemas"]["ConversationRefOut"];
+        };
+        /** ConversationRefsEnvelope */
+        ConversationRefsEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ConversationRefs"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** CreateInviteCodeRequest */
         CreateInviteCodeRequest: {
             /**
@@ -16094,7 +16185,12 @@ export interface components {
         };
         /**
          * RoomFileOut
-         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间。
+         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间，以及最后是谁从哪条路
+         *     放下的。
+         *
+         *     作者是平台按写下来的那次动作记的（谁按的保存、谁交的），不是谁自己填的。三个
+         *     字段都可能空：目录里的一份文件可能从没有过保存记录（清单列的是目录本身，字节
+         *     可以由别的东西直接放进去），那时界面照列，只是说不出是谁写的。
          */
         RoomFileOut: {
             /** Path */
@@ -16103,6 +16199,12 @@ export interface components {
             bytes: number;
             /** Modified At */
             modified_at: string;
+            /** Author */
+            author: string | null;
+            /** Author Kind */
+            author_kind: string | null;
+            /** Source */
+            source: string | null;
         };
         /** RoutineIn */
         RoutineIn: {
@@ -16970,6 +17072,40 @@ export interface components {
             /** H */
             h: number;
         };
+        /**
+         * WithdrawnAnswer
+         * @description 撤回一道题的回答，回的是这道题撤回之后的样子。
+         *
+         *     和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+         *     不必再取一次。
+         */
+        WithdrawnAnswer: {
+            /** Id */
+            id: string;
+            /**
+             * Answer Log
+             * @default []
+             */
+            answer_log: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** WithdrawnAnswerEnvelope */
+        WithdrawnAnswerEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["WithdrawnAnswer"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** WorkLeaseRequest */
         WorkLeaseRequest: {
             /** Env */
@@ -17620,6 +17756,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_refs_addresses_refs_get: {
+        parameters: {
+            query?: {
+                ids?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationRefsEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -21140,6 +21307,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    withdraw_answer_blocks__block_id__answer_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawnAnswerEnvelope"];
                 };
             };
             /** @description Validation Error */

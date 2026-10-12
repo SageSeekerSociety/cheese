@@ -916,6 +916,7 @@
   "askAgentSeatOnly": "只有坐在这个房间里的 AI 队友可以提问",
   "askFieldString": "{field} 必须是字符串",
   "askFieldRequired": "{field} 必须是非空字符串",
+  "askNothingToWithdraw": "你没有回答过这道题，没有可以撤回的答复",
   "serverInternalError": "服务器内部错误",
   "resourceNotFound": "资源不存在",
   "accessDenied": "无权访问",

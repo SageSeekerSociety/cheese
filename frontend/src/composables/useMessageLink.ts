@@ -5,7 +5,8 @@
 //
 // 地址形状沿用搜索那一页的（`views/workspace/search/messages.palette.ts`）：进这个
 // 话题、落在这一条上——`?block=<id>`；这一条是某张活卡里的对话，就再多带 `tab` 和
-// `card`，卡片里的对话不在房间的对话里（那条路已经发出去过，不能改）。
+// `card`，卡片里的对话不在房间的对话里（那条路已经发出去过，不能改）。支线里的一条
+// 回复不在频道主线上，地址是那条支线的（支线那一栏认 `?block=`）。
 import type { Block } from '../cx_types'
 
 import { useNavigation } from './useNavigation'
@@ -24,11 +25,17 @@ export function useMessageLink() {
     const projectId = params?.projectId
     const topicId = params?.topicId
     const taskId = params?.taskId
+    const threadId = params?.threadId
     if (!nav || typeof projectId !== 'string' || typeof topicId !== 'string') return null
+    const query = { block: block.id }
+    // 支线页上，频道主线也还在左边：只有支线里的那几条换成支线的地址。
+    const inThread = typeof threadId === 'string' && block.conversation_id === threadId
     const path = nav.href(
-      typeof taskId === 'string'
-        ? { name: 'workspace-task', params: { projectId, topicId, taskId }, query: { block: block.id } }
-        : { name: 'workspace-topic', params: { projectId, topicId }, query: { block: block.id } }
+      inThread
+        ? { name: 'workspace-thread', params: { projectId, topicId, threadId }, query }
+        : typeof taskId === 'string'
+          ? { name: 'workspace-task', params: { projectId, topicId, taskId }, query }
+          : { name: 'workspace-topic', params: { projectId, topicId }, query }
     )
     // `href` gives a router path; the thing a person pastes needs the origin on it.
     return path ? new URL(path, window.location.origin).href : null

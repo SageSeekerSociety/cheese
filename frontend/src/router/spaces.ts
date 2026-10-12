@@ -15,8 +15,8 @@ import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from '
  * （`useSpaceData.fetchSpace`）。取数失败它自己会提示；这里只按「没拿到 = 不是
  * 管理员」往下判，于是不存在、也不属于我的板同样进不了管理那一段。
  *
- * 动态 `import()`：`@/network/api` 那条链反过来依赖路由（见
- * `network/Interceptors/hooks/refreshToken.ts`），静态导入会在建路由时成环。守卫
+ * 动态 `import()`：`@/api` 那条链反过来依赖路由（见 `@/api/axiosHttp` 的
+ * token 刷新），静态导入会在建路由时成环。守卫
  * 第一次跑到时整张依赖图早已就绪，所以这一句是懒的、不是慢的。
  */
 export async function spaceManageGuard(to: RouteLocationNormalized): Promise<RouteLocationRaw | true> {

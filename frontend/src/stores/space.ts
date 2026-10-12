@@ -10,7 +10,7 @@ import AccountService from '@/services/account'
  *
  * **取数不在这里。** 发请求的那二十来个动作住在 `composables/useSpaceData.ts`，
  * 它们把拿回来的东西写进下面这几个 ref。这一层因此不认识网络 —— 整个文件的
- * import 里没有 `@/network`，也没有 `toast`：换一块板要不要先清空、失败了弹哪句话、
+ * import 里没有 `@/api`，也没有 `toast`：换一块板要不要先清空、失败了弹哪句话、
  * 写完之后重新拉哪一份，都是取数那一层的判断。
  *
  * 这么切的用处是「场景能单独渲染」（`docs/manual/dev/scenes.md`）：页面拿一份假状态

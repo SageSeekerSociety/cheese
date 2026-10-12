@@ -1,14 +1,12 @@
 import type { AxiosError, AxiosRequestConfig, InternalAxiosRequestConfig } from 'axios'
 import type { ApiEnvelope } from '../cx_types'
 
-import { toast } from 'vuetify-sonner'
 import axios from 'axios'
 
 import { t } from '../i18n'
 import { refusalText } from '../lib/noticeText'
 import { refreshSession } from '../lib/session'
 import { isTransportFailure, transportFailureMessage } from '../lib/transportFailure'
-import router from '../router'
 import AccountService from '../services/account'
 
 import { ApiError } from './http'
@@ -58,10 +56,11 @@ for (const instance of [axiosApi, axiosNewApi]) {
           config.headers.Authorization = `Bearer ${outcome.token}`
           return instance.request(config)
         }
-        if (outcome.kind === 'rejected') {
-          toast.error(t('shell.errors.sessionExpired'))
-          void router.replace('/account/signin')
-        }
+        // A refused renewal ends the sign-in once, for every stack, where the
+        // account service can hear it: it drops the session and takes the person
+        // to a sign-in (`lib/session.ts`). Telling him from here as well — and
+        // pushing him to the sign-in page before that has happened — only got
+        // this tab bounced back by the sign-in page's own guard.
         throw error
       }
       throw mappedError(error)

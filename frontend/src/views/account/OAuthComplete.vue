@@ -43,7 +43,6 @@ import { oauthProviderName } from './oauthProvider'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const route = useRoute()
 const router = useRouter()
@@ -170,7 +169,7 @@ const loadOAuthState = async () => {
     const response = await UserAuthApi.getOAuthState(stateToken.value)
     oauthState.value = response
   } catch (err) {
-    error.value = axiosErrorMessage(err, requestErrorMessage(err, t('account.oauth.error.sessionExpired')))
+    error.value = axiosErrorMessage(err, t('account.oauth.error.sessionExpired'))
   } finally {
     loading.value = false
   }
@@ -182,7 +181,7 @@ const loadRegistrationConfig = async () => {
     requireInviteCode.value = data.requireInviteCode
     registrationConfigReady.value = true
   } catch (e) {
-    error.value = axiosErrorMessage(e, requestErrorMessage(e, t('account.registrationSettingsCouldNotBeLoadedRefresh')))
+    error.value = axiosErrorMessage(e, t('account.registrationSettingsCouldNotBeLoadedRefresh'))
   }
 }
 

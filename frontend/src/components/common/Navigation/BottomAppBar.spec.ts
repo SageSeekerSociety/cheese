@@ -4,6 +4,10 @@
 // （五个项目 = 七格，每格约 53px），而「＋新建项目」被同一个开关关掉之后
 // 手机上就建不了项目了。所以这里测两件事：格子来自清单本身，以及**没有地址、
 // 只有动作**的那种格子点得动——工作区那一格在你一个项目都没有时就是它。
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import type { NavItem } from './types'
 
 import { createRouter, createWebHistory } from 'vue-router'
@@ -14,6 +18,8 @@ import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import BottomAppBar from './BottomAppBar.vue'
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 const router = createRouter({
   history: createWebHistory(),
@@ -87,5 +93,20 @@ describe('BottomAppBar', () => {
     ])
     const lit = Array.from(container.querySelectorAll('.v-btn--active'), (el) => el.textContent?.trim())
     expect(lit).toEqual(['空间'])
+  })
+
+  it('每一格的遮罩都压掉，不只是选中那一格', () => {
+    // Vuetify 给按钮的遮罩不止选中那一层：hover 一层、聚焦一层（--v-focus-opacity
+    // 是 0.12）。手机上点过一格之后它还带着焦点，只压选中那一格的话，点过而没成
+    // 为当前格的那一格就留成一块灰底。jsdom 不套用组件里的 scoped 样式，所以这里
+    // 盯住规则本身：这一条不许收窄到 --active 上。
+    const src = readFileSync(join(here, 'BottomAppBar.vue'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const at = src.indexOf('.v-btn__overlay')
+    expect(at, '底栏要压掉 Vuetify 给按钮的遮罩').toBeGreaterThan(-1)
+    const selector = src.slice(src.lastIndexOf('}', at) + 1, src.indexOf('{', at))
+    const body = src.slice(src.indexOf('{', at) + 1, src.indexOf('}', at))
+    expect(selector).toContain(':deep(.v-btn > .v-btn__overlay)')
+    expect(selector, '只压选中那一格会漏掉点过的那一格和另外两格').not.toContain('--active')
+    expect(body).toContain('opacity: 0')
   })
 })

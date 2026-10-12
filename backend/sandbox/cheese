@@ -1812,23 +1812,27 @@ def _doc_get(args: dict, host) -> str:
     host, and the write reads it back from there."""
     document = _document(host, args)
     plan = request_plan("cheese_doc_get", args, {**host.environ, **document})
-    doc = host.request(plan).get("data") or {}
+    answer = host.request(plan)
+    doc = answer.get("data") or {}
     version = doc.get("doc_version", 0)
     host.doc_versions[document["CHEESE_DOCUMENT"]] = version
     if not doc.get("content"):
         return "这份文档还是空的；cheese_doc_set 会写下第一版。"
+    lines = [doc["content"]]
     pending = doc.get("pending_suggestions") or []
-    if not pending:
-        return doc["content"]
-    # 建议还不是正文：上面读到的是没有它们的文本。列出来，免得再提一遍。
-    head = f"--- 待处理的修改建议（{len(pending)} 处，不在正文里）"
-    lines = [doc["content"], "", head]
-    for item in pending:
-        why = f"（{item['reason']}）" if item.get("reason") else ""
-        lines.append(
-            f"- {item.get('author') or '?'}：「{item.get('old') or ''}」→"
-            f"「{item.get('new') or ''}」{why}"
-        )
+    if pending:
+        # 建议还不是正文：上面读到的是没有它们的文本。列出来，免得再提一遍。
+        lines += ["", f"--- 待处理的修改建议（{len(pending)} 处，不在正文里）"]
+        for item in pending:
+            why = f"（{item['reason']}）" if item.get("reason") else ""
+            lines.append(
+                f"- {item.get('author') or '?'}：「{item.get('old') or ''}」→"
+                f"「{item.get('new') or ''}」{why}"
+            )
+    # 文档里此刻指不到东西的引用：读的时候就说，下一次写正好改掉。
+    warnings = answer.get("warnings") or []
+    if warnings:
+        lines += [""] + [f"⚠️ {warning}" for warning in warnings]
     return "\n".join(lines)
 
 
@@ -1906,10 +1910,12 @@ def _doc_new(args: dict, host) -> str:
     doc = answer.get("data") or {}
     host.doc_versions[doc["id"]] = doc.get("doc_version", 0)
     shown = "当前对话里已经出现这份文档。" if host.environ.get("CHEESE_TOPIC") else ""
-    return (
+    lines = [
         f"已在资料库新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
         f"（第 {doc.get('doc_version', 0)} 版）。{shown}之后读写它都带上 document。"
-    )
+    ]
+    lines += [f"⚠️ {warning}" for warning in answer.get("warnings") or []]
+    return "\n".join(lines)
 
 
 def _doc_set(args: dict, host) -> str:

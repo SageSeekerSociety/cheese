@@ -762,6 +762,7 @@ class Ledger:
         turn_id: uuid.UUID | None = None,
         user_id: int | None = None,
         metered: bool = True,
+        calls: int = 1,
     ) -> float:
         """Write one usage row, naming the team that paid and the credits it
         cost, and charge those credits: the row and the deduction cannot come
@@ -785,6 +786,7 @@ class Ledger:
             team_id=payer.team_id,
             credits=credits,
             metered=metered,
+            calls=calls,
         )
         return await self.charge(payer, credits)
 
@@ -803,6 +805,7 @@ class Ledger:
         turn_id: uuid.UUID | None = None,
         metered: bool = True,
         route: str = "gateway",
+        calls: int = 1,
     ) -> None:
         """Write the usage row of a call the platform made on its own (naming a
         room, sorting old memories, consolidating a project's memory). The
@@ -823,6 +826,7 @@ class Ledger:
             metered=metered,
             route=route,
             turn_id=turn_id,
+            calls=calls,
         )
 
     # ---- issuing -----------------------------------------------------------

@@ -43,7 +43,7 @@ def _document(client) -> tuple[str, str, dict]:
     credential in the task)."""
     room, project = _room(client)
     seat = room_agent_seat(client, room)
-    task = open_task(client, room, start=False, contributors=["bob"])["id"]
+    task = open_task(client, room, contributors=["bob"])["id"]
     store = client.collab.type_in
     client.portal.call(store, uuid.UUID(task), "芝士写的第一段，讲目标。", seat)
     client.portal.call(

@@ -29,11 +29,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import Deleted, Page, ok, page, typed_response
-from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, BadRequestError
 from app.core.sentences import say
 from app.domain.admin.services import AdminService
@@ -84,9 +83,6 @@ class CommentPageOut(BaseModel):
 
 class FeedbackReadOut(BaseModel):
     last_read_at: datetime
-
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_feedback_service(db: DbSession) -> feedback_services.FeedbackService:

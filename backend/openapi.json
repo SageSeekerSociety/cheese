@@ -966,6 +966,51 @@
         }
       }
     },
+    "/addresses/refs": {
+      "get": {
+        "tags": [
+          "addresses"
+        ],
+        "summary": "Resolve Refs",
+        "description": "What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a\ntask or a 支线, its title and the room it is in. An id that names none of\nthem, or one the caller may not see, is absent from the answer — so a\nprivate channel is not told apart from one that was never made.",
+        "operationId": "resolve_refs_addresses_refs_get",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 3700,
+              "default": "",
+              "title": "Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRefsEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/slug": {
       "put": {
         "tags": [
@@ -7204,6 +7249,50 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Toggle Reaction Blocks  Block Id  Reactions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blocks/{block_id}/answer": {
+      "delete": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Withdraw Answer",
+        "description": "Take back your own answer to a question asked with quick replies, so the\nquestion is unanswered again and its options come back for everyone.\n\n``block_id`` is the question, not the answer: an answer is an ordinary\nmessage, and what is withdrawn is the line it left on the question\n(`domain/block/questions`). Only whoever answered it can — anyone else gets\na refusal, not a way to erase somebody's answer. The message the answerer\nsent stays in the room; its words are not what this changes.\n\nWhoever was watching gets the question as a `block_updated` frame, and the\nagent that asked it runs another turn, because the turn it had been going\non was decided on an answer that no longer counts.",
+        "operationId": "withdraw_answer_blocks__block_id__answer_delete",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawnAnswerEnvelope"
                 }
               }
             }
@@ -27367,7 +27456,7 @@
           "room-files"
         ],
         "summary": "List Files",
-        "description": "这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。\n\n这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫\n什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，\n这份清单就是那个目录本身，也是界面上看得见它的那一处。\n\n`truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。",
+        "description": "这个房间自己的文件：路径、大小、最后一次改动、是谁写的，最近改的在最前。\n\n这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫\n什么名字。定时任务交回的结果、芝士交付的文档、有人放进来的文件都落在同一个目录\n下，这份清单就是那个目录本身，也是界面上看得见它的那一处。\n\n作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存\n补齐，没保存过的那几份照列。\n\n`truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。",
         "operationId": "list_files_topics__topic_id__files_get",
         "parameters": [
           {
@@ -53170,6 +53259,78 @@
         ],
         "title": "ControlIn"
       },
+      "ConversationRefOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "title",
+          "room_id",
+          "project_id"
+        ],
+        "title": "ConversationRefOut"
+      },
+      "ConversationRefs": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/ConversationRefOut"
+        },
+        "type": "object",
+        "title": "ConversationRefs",
+        "description": "What each id that names something names, by id."
+      },
+      "ConversationRefsEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConversationRefs"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConversationRefsEnvelope"
+      },
       "CreateInviteCodeRequest": {
         "properties": {
           "maxUses": {
@@ -60504,16 +60665,52 @@
           "modified_at": {
             "type": "string",
             "title": "Modified At"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "author_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Kind"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
           }
         },
         "type": "object",
         "required": [
           "path",
           "bytes",
-          "modified_at"
+          "modified_at",
+          "author",
+          "author_kind",
+          "source"
         ],
         "title": "RoomFileOut",
-        "description": "文件区里的一份文件：路径、大小、最后一次改动的时间。"
+        "description": "文件区里的一份文件：路径、大小、最后一次改动的时间，以及最后是谁从哪条路\n放下的。\n\n作者是平台按写下来的那次动作记的（谁按的保存、谁交的），不是谁自己填的。三个\n字段都可能空：目录里的一份文件可能从没有过保存记录（清单列的是目录本身，字节\n可以由别的东西直接放进去），那时界面照列，只是说不出是谁写的。"
       },
       "RoutineIn": {
         "properties": {
@@ -62614,6 +62811,65 @@
         ],
         "title": "WebViewportIn",
         "description": "选区当时视口的大小，和 `WebRectIn` 一起还原出位置。"
+      },
+      "WithdrawnAnswer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "answer_log": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Answer Log",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "WithdrawnAnswer",
+        "description": "撤回一道题的回答，回的是这道题撤回之后的样子。\n\n和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，\n不必再取一次。"
+      },
+      "WithdrawnAnswerEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WithdrawnAnswer"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WithdrawnAnswerEnvelope"
       },
       "WorkLeaseRequest": {
         "properties": {

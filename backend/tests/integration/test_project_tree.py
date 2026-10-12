@@ -226,7 +226,7 @@ def test_open_and_conclude_a_task(client):
         "/topics", json={"project_id": p["id"], "title": "大话题"}
     ).json()["data"]
 
-    sub = open_task(client, topic["id"], "实现数据清洗", owner="owner", start=False)
+    sub = open_task(client, topic["id"], "实现数据清洗", owner="owner")
     # A task in the room, not a room of its own: it names the room it hangs
     # in, and it opens as work that is still going.
     assert sub["room_id"] == topic["id"]

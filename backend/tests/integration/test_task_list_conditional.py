@@ -36,7 +36,7 @@ def test_the_project_task_list_serves_an_etag_and_304(client):
     # `start=False`：起了轮的任务是「运行中」，而那一格和它写下的块都会在两次读
     # 之间变 —— 那是这份清单**该**报的变化，拿它来断言「没变就回 304」测到的只是
     # 时序。这里要断言的是同一份数据读两次。
-    open_task(client, room, "查一下分页接口", start=False)
+    open_task(client, room, "查一下分页接口")
 
     first = client.get(f"/projects/{pid}/tasks")
     assert first.status_code == 200
@@ -54,7 +54,7 @@ def test_the_project_task_list_serves_an_etag_and_304(client):
     assert again.headers.get("Cache-Control") == "private, no-cache"
 
     # 真多了一件活：同一个 ETag 不再命中，照常回整份 body。
-    open_task(client, room, "改一下侧栏", start=False)
+    open_task(client, room, "改一下侧栏")
     changed = client.get(f"/projects/{pid}/tasks", headers={"If-None-Match": etag})
     assert changed.status_code == 200
     assert changed.headers.get("ETag") != etag
@@ -65,8 +65,8 @@ def test_the_project_task_list_can_be_asked_for_open_tasks_only(client):
     """侧栏只挂还在进行的任务，每 30 秒读一次；它不必把已经关掉的上千件也拿回来。"""
     pid = _project(client)
     room = _room(client, pid, "运维")
-    going = open_task(client, room, "还在做的", start=False)
-    done = open_task(client, room, "做完了的", start=False)
+    going = open_task(client, room, "还在做的")
+    done = open_task(client, room, "做完了的")
     r = client.post(
         f"/topics/{done['id']}/close",
         json={"conclusion": "做完了"},
@@ -87,7 +87,7 @@ def test_the_room_task_list_serves_an_etag_and_304(client):
     pid = _project(client)
     room = _room(client, pid, "运维")
     # 同上：不起轮，两次读之间没有会动的格子和块。
-    open_task(client, room, "查一下分页接口", start=False)
+    open_task(client, room, "查一下分页接口")
 
     first = client.get(f"/topics/{room}/tasks", params={"limit": 0})
     assert first.status_code == 200
@@ -104,7 +104,7 @@ def test_the_room_task_list_serves_an_etag_and_304(client):
     assert again.content == b""
 
     # 房间里多了一件活：照常回整份。
-    open_task(client, room, "改一下侧栏", start=False)
+    open_task(client, room, "改一下侧栏")
     changed = client.get(
         f"/topics/{room}/tasks",
         params={"limit": 0},

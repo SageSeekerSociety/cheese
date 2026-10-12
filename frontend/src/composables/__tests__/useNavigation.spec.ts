@@ -8,7 +8,7 @@ import type { RouteLocationRaw } from 'vue-router'
 import { ref } from 'vue'
 import { createMemoryHistory, createRouter, createWebHistory } from 'vue-router'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { type Navigation, useNavigation } from '@/composables/useNavigation'
 
@@ -69,11 +69,14 @@ describe('useNavigation：宿主装了路由', () => {
 
   it('这条路不认识这个去处：href 是空，不是一条点了会炸的链接', async () => {
     const router = createRouter({ history: createMemoryHistory(), routes: [{ path: '/', component: Blank }] })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const { container } = render(Probe, {
       props: { to: { name: 'member', params: { projectId: 'p1' } } },
       global: { plugins: [router] },
     })
     expect(text(container, 'href')).toBe('-')
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('member'))
+    warn.mockRestore()
   })
 })
 
@@ -104,6 +107,7 @@ describe('useNavigation：快照之外那几样', () => {
       routes: [
         { path: '/projects/:projectId', name: 'project', component: Blank },
         { path: '/projects/:projectId/settings', name: 'settings', component: Blank },
+        { path: '/projects/:projectId/members/:handle', name: 'member', component: Blank },
         { path: '/:any(.*)*', component: Blank },
       ],
     })

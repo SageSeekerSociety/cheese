@@ -32,7 +32,7 @@ def _room(client) -> tuple[str, str]:
 
 def _task_doc(client, room) -> str:
     """The living document of a new task of owner's in the room."""
-    task = open_task(client, room, owner="owner", start=False)["id"]
+    task = open_task(client, room, owner="owner")["id"]
     return document_of(client, task, headers=OWNER)
 
 
@@ -292,7 +292,7 @@ def test_a_tasks_document_is_the_tasks_not_the_librarys(client):
     """A task's living document sits in no room, like the project's own, but
     it is the task's: the library neither lists nor finds it."""
     [(room, project, _)] = _setup(client)
-    task = open_task(client, room, owner="owner", reviewer="owner")
+    task = open_task(client, room, owner="owner")
     task_doc = client.get(f"/topics/{task['id']}/document", headers=OWNER)
     assert task_doc.status_code == 200, task_doc.text
     task_doc_id = task_doc.json()["data"]["id"]

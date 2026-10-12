@@ -29,6 +29,7 @@ from app.main import app
 from tests.conftest import StubChannel, retire_topic, stub_compute
 from tests.integration.conftest import (
     open_task,
+    post_message,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -97,9 +98,12 @@ def _working_task(client) -> tuple[KeepsWorking, dict, str]:
     app.dependency_overrides[get_chat_service] = lambda: service
     task = open_task(client, room, "验证一下", owner="alice")
     task_id = uuid.UUID(task["id"])
+    # A task is started as it is created, and nobody tells its teammate: the
+    # owner's first word in it is what brings the session up.
+    post_message(client, task["id"], "alice", {"content": "动手吧"})
     _until(
         lambda: any(key[0] == task_id for key in channel.sessions),
-        "starting the task never reached its teammate",
+        "the owner's first word never reached the task's teammate",
     )
     _until(
         lambda: any(
