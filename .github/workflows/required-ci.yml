@@ -108,46 +108,37 @@ jobs:
           node-version: 22
       - name: Enable corepack
         run: corepack enable
-      # Dependencies are installed per the scope's raw suite flags — the SAME
-      # selection Required CI uses, plus the local i18n widening ci-fast.py
-      # applies to backend (a `frontend/src/i18n/messages/**` edit is read back
-      # by the backend tree guards, so backend/.venv must be there too). Missing
-      # them would make ci-fast.py return blocked, honestly — installing is what
-      # lets the fast tier actually run.
+      # Install BOTH dependency sets, unconditionally. ci-fast widens its OWN
+      # effective scope beyond the raw select() flags this workflow sees — an
+      # unmapped/unknown changed path (e.g. a new file, or a README edit) makes
+      # it run both the backend and frontend checks, and an i18n catalog edit
+      # widens it to backend — so any scope-gated install here could leave a
+      # dependency ci-fast needs absent and report the draft blocked (a false
+      # red on a change that touched nothing). Installing both removes the
+      # coupling instead of re-deriving ci-fast's rules here and drifting.
+      # This prep runs before ci-fast's 180s quick budget starts: it is outside
+      # that budget, bounded only by this job's timeout.
       - name: Install dependencies
-        env:
-          BACKEND: ${{ needs.scope.outputs.backend }}
-          FRONTEND: ${{ needs.scope.outputs.frontend }}
         run: |
-          # origin/main was repointed at the event's base sha above, so this is
-          # the merge diff — the same set scope selected on.
-          backend_needed="$BACKEND"
-          if [ "$backend_needed" != "true" ] \
-             && git diff --name-only origin/main HEAD | grep -q '^frontend/src/i18n/messages/'; then
-            backend_needed="true"
-          fi
-          if [ "$backend_needed" = "true" ]; then (cd backend && uv sync --frozen --all-extras); fi
-          if [ "$FRONTEND" = "true" ]; then
-            (cd frontend && pnpm install --frozen-lockfile)
-          fi
-      - name: Read the pull request's live title
-        id: title
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          # The live title, read from the API — NOT `gh pr view`, which needs a
-          # branch and is unreliable on this checkout (a detached merge ref).
-          title=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)
-          echo "value=$title" >> "$GITHUB_OUTPUT"
+          (cd backend && uv sync --frozen --all-extras)
+          (cd frontend && pnpm install --frozen-lockfile)
       # `--tier quick` (180s) is the draft tier's whole point; a run that
       # exhausts the budget exits unknown (2), which this step turns into a red
       # check — the quick tier is never trimmed to green.
       - name: ci:fast quick tier
         env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
           CI_FAST_PRECOMMIT: uvx pre-commit
         run: |
-          python3 .github/scripts/ci-fast.py --tier quick --title "${{ steps.title.outputs.value }}"
+          # Read the PR's live title from the API — NOT `gh pr view`, which needs
+          # a branch and is unreliable on this detached merge ref — and pass it
+          # as a quoted argument in THIS same shell. Keeping it a shell variable
+          # means a title containing quotes, `$(...)`, or a newline stays data:
+          # no untrusted text reaches the script through a workflow expression,
+          # and nothing multiline is written to $GITHUB_OUTPUT.
+          title="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)"
+          python3 .github/scripts/ci-fast.py --tier quick --title "$title"
 
   backend:
     needs: scope

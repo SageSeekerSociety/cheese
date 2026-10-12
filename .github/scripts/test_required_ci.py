@@ -1,4 +1,10 @@
 import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -8,6 +14,8 @@ spec = importlib.util.spec_from_file_location(
 )
 gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
+
+WORKFLOW = Path(__file__).resolve().parent.parent / "workflows" / "required-ci.yml"
 
 
 class RequiredCITest(unittest.TestCase):
@@ -448,6 +456,109 @@ class AggregationTierTest(unittest.TestCase):
         needs = self.needs()
         del needs["scope"]["outputs"]["tier"]
         self.assertTrue(gate.failures(needs, "full"))
+
+
+def jobs_of(text):
+    """Split a workflow into ``{job: body}`` by two-space top-level keys."""
+    marks = list(re.finditer(r"(?m)^  ([A-Za-z0-9_]+):$", text))
+    return {m.group(1): text[m.end():marks[i + 1].start() if i + 1 < len(marks) else len(text)]
+            for i, m in enumerate(marks)}
+
+
+def run_bodies(text):
+    """The body of every ``run:`` in a workflow, block or inline."""
+    lines, i = text.splitlines(), 0
+    while i < len(lines):
+        match = re.match(r"^(\s*)run:(.*)$", lines[i])
+        if not match:
+            i += 1
+            continue
+        indent, inline, body = match.group(1), match.group(2).strip(), []
+        if inline and inline != "|" and inline != ">":
+            body.append(inline)
+        i += 1
+        while i < len(lines) and (not lines[i].strip()
+                                  or len(lines[i]) - len(lines[i].lstrip()) > len(indent)):
+            body.append(lines[i])
+            i += 1
+        yield "\n".join(body)
+
+
+class WorkflowTextTest(unittest.TestCase):
+    """Static guards over required-ci.yml text, to back claims made here.
+
+    Invariants the workflow copy must keep, checked against the file itself so a
+    later edit cannot quietly undo them.
+    """
+
+    def setUp(self):
+        self.text = WORKFLOW.read_text()
+
+    def test_no_shell_command_interpolates_a_workflow_expression(self):
+        # Untrusted text (a PR title off the API) must reach a script as data,
+        # never as a workflow expression spliced into a shell line: `${{ ... }}`
+        # in a `run:` is command-injection surface and, for a multiline value,
+        # corrupts whatever follows. Feed it through `env:` and expand the shell
+        # variable instead. (Expressions in `env:`/`if:`/`name:` are fine and are
+        # why this checks run bodies, not every line with `${{`.)
+        for body in run_bodies(self.text):
+            self.assertNotIn(
+                "${{", body,
+                f"expression spliced into a shell command: {body.strip()[:80]}",
+            )
+        # The one place the title is consumed expands the shell variable.
+        self.assertIn('--title "$title"', self.text)
+
+    def test_the_draft_job_installs_both_dependency_sets_unconditionally(self):
+        # ci-fast widens its own scope beyond the raw select() flags (unknown
+        # paths → backend+frontend, i18n → backend), so a scope-gated install
+        # could omit a dependency ci-fast then needs, blocking the draft. The
+        # install must name both installers and gate neither on a scope output.
+        match = re.search(r"(?ms)^\s*- name: Install dependencies\n(.*?)(?=^\s*- name:)", self.text)
+        self.assertIsNotNone(match, "no 'Install dependencies' step in the workflow")
+        install = match.group(0)
+        self.assertIn("uv sync", install)
+        self.assertIn("pnpm install", install)
+        self.assertNotIn("needs.scope.outputs", install)
+        self.assertNotIn("if:", install)
+
+
+class MainCliTest(unittest.TestCase):
+    """The ``scope``/``check`` wiring that the runner actually invokes."""
+
+    def _event_file(self, tmp, payload):
+        path = Path(tmp) / "event.json"
+        path.write_text(json.dumps(payload))
+        return str(path)
+
+    def test_scope_mode_emits_the_tier_and_the_selection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            env = {
+                **os.environ,
+                "GITHUB_EVENT_NAME": "pull_request",
+                "GITHUB_EVENT_PATH": self._event_file(tmp, {"pull_request": {"draft": True}}),
+                "GITHUB_OUTPUT": str(out),
+            }
+            base = subprocess.check_output(["git", "rev-parse", "HEAD~1"], text=True).strip()
+            subprocess.run([sys.executable, str(WORKFLOW.parent.parent / "scripts" / "required-ci.py"),
+                            "scope", base], env=env, cwd=WORKFLOW.parent.parent.parent,
+                           check=True, capture_output=True, text=True)
+            written = dict(line.split("=", 1) for line in out.read_text().splitlines())
+            self.assertEqual(written["tier"], "quick")
+            self.assertTrue(all(v in ("true", "false") for k, v in written.items() if k != "tier"))
+
+    def test_check_mode_fails_closed_when_the_event_is_unreadable(self):
+        env = {**os.environ, "GITHUB_EVENT_NAME": "pull_request",
+               "GITHUB_EVENT_PATH": "/nonexistent/event.json",
+               "CI_NEEDS": json.dumps({"scope": {"result": "success",
+                                                 "outputs": {k: "false" for k in gate.PATHS} | {"tier": "quick"}}})}
+        # No payload → full tier; a quick scope output then disagrees → red.
+        result = subprocess.run(
+            [sys.executable, str(WORKFLOW.parent.parent / "scripts" / "required-ci.py"), "check"],
+            env=env, cwd=WORKFLOW.parent.parent.parent, capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("does not match the event", result.stderr)
 
 
 if __name__ == "__main__":
