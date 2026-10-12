@@ -8537,13 +8537,35 @@
         }
       }
     },
+    "/connector/my/model-connections": {
+      "get": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "My Model Connections",
+        "description": "The caller's model connections across the machines they enrolled\n(#2991): what each logs in with, where it is kept, its last check. Never a\nkey.",
+        "operationId": "my_model_connections_connector_my_model_connections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConnectionsOut"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/connector/my/devices/{device_id}/claude-code": {
       "post": {
         "tags": [
           "connector"
         ],
         "summary": "Check My Claude Code",
-        "description": "Ask one of the caller's machines again whether their own Claude Code is\nlogged in there (#2991). They log in on the machine itself, which tells the\nserver nothing; the page showing that machine asks, rather than leaving the\nanswer from its last connection standing.",
+        "description": "Ask one of the caller's machines again whether their own Claude Code is\nlogged in there (#2991). They log in on the machine itself, which tells the\nserver nothing; the page showing that machine asks, rather than leaving the\nanswer from its last connection standing. A logout its owner asked for\nwhile it was away is carried out first.",
         "operationId": "check_my_claude_code_connector_my_devices__device_id__claude_code_post",
         "parameters": [
           {
@@ -8572,6 +8594,116 @@
                     }
                   ],
                   "title": "Response Check My Claude Code Connector My Devices  Device Id  Claude Code Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Revoke My Claude Code",
+        "description": "Log the caller's own Claude Code out on one of their machines, from any\nbrowser (#2991). Out of use at once; the machine logs out now when online,\nelse as it next connects.",
+        "operationId": "revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ClaudeCodeLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Revoke My Claude Code Connector My Devices  Device Id  Claude Code Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/claude-code/model-service": {
+      "put": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Use My Model Service",
+        "description": "Point the caller's own Claude Code on one of their machines at another\nmodel service, from any browser (#2991). The key is handed to the machine,\nwhich keeps it; it is not stored here. The machine has to be online.",
+        "operationId": "use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelServiceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ClaudeCodeLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Use My Model Service Connector My Devices  Device Id  Claude Code Model Service Put"
                 }
               }
             }
@@ -53997,6 +54129,83 @@
         "title": "CheckResultIn",
         "description": "What the quick check said (`cheese check`).\n\n`ok=False` covers a red check AND one that ran out of its time budget: the\nbudget is the point, so exceeding it is a result, not an absence of one."
       },
+      "ClaudeCodeLoginOut": {
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "logged_in": {
+            "type": "boolean",
+            "title": "Logged In"
+          },
+          "auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Method"
+          },
+          "subscription_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Type"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "revoking": {
+            "type": "boolean",
+            "title": "Revoking"
+          }
+        },
+        "type": "object",
+        "required": [
+          "installed",
+          "logged_in",
+          "auth_method",
+          "subscription_type",
+          "model",
+          "service_host",
+          "checked_at",
+          "revoking"
+        ],
+        "title": "ClaudeCodeLoginOut",
+        "description": "What a machine last said about its owner's Claude Code login."
+      },
       "CommentCreate": {
         "properties": {
           "body": {
@@ -59402,6 +59611,125 @@
         "title": "ModelCapabilities",
         "description": "能勾的能力。页面认这几项；网关那套 `supports_*` 字段名不出这个包。\n\n`adaptive_thinking` 必须**声明在这里**，不能指望 pydantic 把它顺手留下：网关侧\n的 `supports_adaptive_thinking` 读写都认它（`gateway_admin` 的读路径会把它读回来\n显示），但一个没声明的键会被 pydantic 默认丢弃 —— 前端勾上、保存后请求体里根本\n没有它，写网关时什么都不会发生，而读回来却显示得出来。那是一个静默的空操作。"
       },
+      "ModelConnectionOut": {
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "logged_in": {
+            "type": "boolean",
+            "title": "Logged In"
+          },
+          "auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Method"
+          },
+          "subscription_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Type"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "revoking": {
+            "type": "boolean",
+            "title": "Revoking"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "device_name": {
+            "type": "string",
+            "title": "Device Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "installed",
+          "logged_in",
+          "auth_method",
+          "subscription_type",
+          "model",
+          "service_host",
+          "checked_at",
+          "revoking",
+          "device_id",
+          "device_name",
+          "online",
+          "last_used_at"
+        ],
+        "title": "ModelConnectionOut"
+      },
+      "ModelConnectionsOut": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ModelConnectionOut"
+            },
+            "type": "array",
+            "title": "Connections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connections"
+        ],
+        "title": "ModelConnectionsOut"
+      },
       "ModelCreate": {
         "properties": {
           "api_base": {
@@ -59555,6 +59883,32 @@
         "type": "object",
         "title": "ModelPrices",
         "description": "一条模型的四个单价。\n\n用 `None` 表示「没定」，不是 0：0 是「定成免费」，`None` 是「这一栏空着」，网关的写\n接口也按这个区分（`GatewayAdmin._price_params` 只传真数字，`None` 一个都不发）。\ncache_read / cache_creation 允许缺，是因为不少上游根本没给缓存计价。"
+      },
+      "ModelServiceRequest": {
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "pattern": "^https?://[^\\s/]+",
+            "title": "Base Url"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Token"
+          },
+          "model": {
+            "type": "string",
+            "pattern": "^\\S+$",
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "base_url",
+          "token",
+          "model"
+        ],
+        "title": "ModelServiceRequest"
       },
       "ModelUpdate": {
         "properties": {

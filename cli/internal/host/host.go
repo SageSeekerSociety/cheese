@@ -549,7 +549,8 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 		}()
 	}
 
-	cmd := exec.CommandContext(ctx, m.Command[0], m.Command[1:]...)
+	name, args := h.execArgv(m.Command)
+	cmd := exec.CommandContext(ctx, name, args...)
 	if m.Cwd != "" {
 		cmd.Dir = m.Cwd
 	}
@@ -579,6 +580,28 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 	_ = h.conn.Send(link.Msg{T: "exec.result", ID: m.ID,
 		Stdout: stdout.String(), Stderr: stderr.String(), Exit: exit,
 		Truncated: stdout.truncated || stderr.truncated})
+}
+
+// selfCommand is how the server names this connector in an exec: its owner's
+// own Claude Code is logged out or pointed at a model service from a browser
+// by running the connector's `claude` commands here (`owner_login` on the
+// server). This process runs them as itself — wherever it was installed, which
+// need not be on PATH — under the config it runs with.
+const selfCommand = "cheesehost"
+
+func (h *Host) execArgv(command []string) (string, []string) {
+	if command[0] != selfCommand {
+		return command[0], command[1:]
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return command[0], command[1:]
+	}
+	args := append([]string{}, command[1:]...)
+	if h.cfgPath != "" {
+		args = append(args, "--config", h.cfgPath)
+	}
+	return self, args
 }
 
 func (h *Host) cancelExec(id string) {
