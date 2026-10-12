@@ -1,6 +1,4 @@
 import type {
-  BulkUpdateRequest,
-  BulkUpdateResponse,
   ListNotificationsParams,
   ListNotificationsResponse,
   LiveTokenResponse,
@@ -17,10 +15,6 @@ export namespace NotificationsApi {
   export const list = (params: ListNotificationsParams) =>
     axiosRequest<ListNotificationsResponse>({ url: '/notifications', method: 'GET', params }, true)
 
-  // 获取单个通知
-  export const getById = (notificationId: number) =>
-    axiosRequest<{ notification: Notification }>({ url: `/notifications/${notificationId}`, method: 'GET' }, true)
-
   // 删除通知
   export const del = (notificationId: number) =>
     axiosMutation({ url: `/notifications/${notificationId}`, method: 'DELETE' }, true)
@@ -31,10 +25,6 @@ export namespace NotificationsApi {
       { url: `/notifications/${notificationId}`, method: 'PATCH', data: { read } },
       true
     )
-
-  // 批量更新通知状态
-  export const bulkUpdate = (data: BulkUpdateRequest) =>
-    axiosRequest<BulkUpdateResponse>({ url: '/notifications', method: 'PATCH', data }, true)
 
   // 全部标为已读
   export const markAllAsRead = () =>

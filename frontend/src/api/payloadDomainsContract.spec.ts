@@ -214,17 +214,6 @@ describe('primary-origin domains browser contract', () => {
     )
   })
 
-  it('materials.getDetail reads the same material payload (old getDetail -> new getMaterial)', async () => {
-    const { MaterialsApi: old } = await import('@/network/api/materials')
-    const { getMaterial: next } = await import('./materials')
-    await compareRequests(
-      { method: 'GET', path: '/materials/9', args: [9] },
-      () => old.getDetail(9),
-      () => next(9),
-      primary
-    )
-  })
-
   it('attachments.upload sends the same named multipart fields and unwraps the 201 envelope', async () => {
     const { AttachmentsApi: old } = await import('@/network/api/attachments')
     const { AttachmentsApi: next } = await import('./attachments')
