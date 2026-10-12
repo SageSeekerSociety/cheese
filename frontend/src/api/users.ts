@@ -1,4 +1,4 @@
-import type { User } from '@/types'
+import type { Page, User } from '@/types'
 import type {
   GetAnswerListResponse,
   GetPasskeysResponse,
@@ -6,7 +6,6 @@ import type {
   GetRealNameInfoResponse,
   GetSessionsResponse,
   GetUserInfoResponse,
-  Page,
   RealNameInfo,
   UpdateRealNameInfoResponse,
   UserIdentityAccessLog,
