@@ -142,8 +142,8 @@
       "d30": "30 days",
       "d90": "90 days"
     },
-    "updatedAt": "Updated {time}",
-    "updatedAtStale": "Updated {time} · {n} min ago",
+    "updatedAt": "Updated {time} (Beijing time)",
+    "updatedAtStale": "Updated {time} (Beijing time) · {n} min ago",
     "retry": "Retry",
     "noteTip": {
       "aria": "About this metric"
@@ -234,8 +234,10 @@
       "byUserNote": "Calls inside a project count for the person who started the turn; calls outside a project count for the person who made them. This is who triggered how much, not who contributed. Turns the platform started count for nobody: {tokens} tokens, {cost} in this window.",
       "byPlatform": "Platform",
       "projectModels": "Models each project used",
-      "recent": "Recent calls",
-      "recentNote": "The latest {n} calls in the window, in Beijing time. A — in the cache column means the call did not record its cache.",
+      "recent": "Recent usage rows",
+      "recentNote": "The latest {n} usage rows in the window, in Beijing time. A row is not always one request: a subscription row is one request; a gateway row (marked “batch”) is what the gateway totalled for one model over a stretch of time and can cover many requests; a row from own credentials or a member's own Claude Code totals one model over one turn. The ledger does not record how many requests a row covers. A — in the cache column means the row did not record its cache.",
+      "batch": "batch",
+      "batchTitle": "What the gateway totalled for this model over a stretch of time; it can cover many requests, and the ledger does not record how many.",
       "col": {
         "person": "Who",
         "tokens": "Tokens",

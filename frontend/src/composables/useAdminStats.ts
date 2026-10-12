@@ -19,10 +19,15 @@ const SHOWN = 10
 const POLL_KINDS: StatsKind[] = ['platform', 'performance']
 const POLL_MS = 60_000
 
-/** 「HH:MM」（补零）。直接读 `Date` 的时分，不把字符串交给 `Date` 解析。 */
+/** 北京时间比 UTC 早 8 小时，且不过夏令时。 */
+const BEIJING_OFFSET_MS = 8 * 3_600_000
+
+/** 「HH:MM」（补零），**北京时间**：同一页上的每小时序列和最近的账本行都是后端按北京
+ *  时间给的，页头这一个时刻若按浏览器时区读，人在别的时区时两边差出几个小时，而读的人
+ *  只会以为数据旧了。先挪 8 小时再读 UTC 的时分，不经浏览器时区。 */
 function hhmm(at: number): string {
-  const d = new Date(at)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  const d = new Date(at + BEIJING_OFFSET_MS)
+  return `${String(d.getUTCHours()).padStart(2, '0')}:${String(d.getUTCMinutes()).padStart(2, '0')}`
 }
 
 /** 「FB-1042」里那串数字。列表左列要的是一个能纵向对齐、能排序的编号。 */
@@ -56,7 +61,7 @@ export function useAdminStats(kind: StatsKind) {
   const performance = computed(() => store.stats.performance)
   const integrations = computed(() => store.stats.integrations)
 
-  /** 页头那句「更新于 HH:MM」。还没成功拉到过（`statsAt` 为 null）时是空串；超过 5 分钟
+  /** 页头那句「更新于 HH:MM（北京时间）」。还没成功拉到过（`statsAt` 为 null）时是空串；超过 5 分钟
    *  追加「· N 分钟前」—— 切回这一页时一眼看出这份数据有多旧。 */
   const stampText = computed(() => {
     const at = store.statsAt[kind]
