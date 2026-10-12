@@ -14,8 +14,8 @@ import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 import { toast } from 'vuetify-sonner'
 
 import { SpacesApi } from '@/api/spaces'
+import { TagsApi } from '@/api/tags'
 import { t } from '@/i18n'
-import { TagsApi } from '@/network/api/tags'
 import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
 import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
@@ -135,8 +135,8 @@ export function useSpaceData() {
   // one" behind the topic selector. They live here so a page container can hand
   // them to a props-only selector without importing the network layer itself
   // (scene rules, docs/manual/dev/scenes.md).
-  const searchTopics = async (query: string) => (await TagsApi.search(query)).data.topics
-  const createTopic = async (name: string) => (await TagsApi.create(name)).data.id
+  const searchTopics = async (query: string) => (await TagsApi.search(query)).topics
+  const createTopic = async (name: string) => (await TagsApi.create(name)).id
 
   // Categories related methods
   // 返回读失败的那个错（读成功为 null）：调用方要能在列表区用错误态替换掉「暂无

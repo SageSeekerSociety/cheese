@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-// questions / answers / legal / attachments / knowledges 五域：逐个方法把**旧栈**与**新栈**
-// 发出去的浏览器请求对拍（方法、地址与查询、鉴权头、JSON/多分体正文），并核对新的载荷
-// 契约 —— JSON 调用直接给 payload，无载荷命令给显式成功值。前四域走老 origin（primary），
-// knowledges 走新 origin（newer）。比对的是浏览器可见的请求，不是 axios 配置或包装源码。
+// questions / answers / legal / attachments / knowledges / tags 六域：逐个方法把**旧栈**与
+// **新栈**发出去的浏览器请求对拍（方法、地址与查询、鉴权头、JSON/多分体正文），并核对新的载
+// 荷契约 —— JSON 调用直接给 payload，无载荷命令给显式成功值。knowledges 走新 origin
+// （newer），其余五域走老 origin（primary）。比对的是浏览器可见的请求，不是 axios 配置或
+// 包装源码。
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
@@ -125,6 +126,19 @@ const knowledges: Record<string, ContractCase> = {
   deleteKnowledge: { method: 'DELETE', path: '/knowledge/9', args: [9] },
 }
 
+const tags: Record<string, ContractCase> = {
+  search: {
+    method: 'GET',
+    path: '/tags',
+    args: ['设计'],
+    query: [
+      ['q', '设计'],
+      ['pageSize', '20'],
+    ],
+  },
+  create: { method: 'POST', path: '/tags', args: ['新话题'], body: { name: '新话题' } },
+}
+
 type Callable = (...args: unknown[]) => Promise<unknown>
 
 describe('primary-origin domains browser contract', () => {
@@ -164,6 +178,17 @@ describe('primary-origin domains browser contract', () => {
     )
   })
 
+  it.each(Object.entries(tags))('tags.%s preserves the request and returns the payload', async (name, test) => {
+    const { TagsApi: old } = await import('@/network/api/tags')
+    const { TagsApi: next } = await import('./tags')
+    await compareRequests(
+      test,
+      () => (old[name as keyof typeof old] as Callable)(...test.args),
+      () => (next[name as keyof typeof next] as Callable)(...test.args),
+      primary
+    )
+  })
+
   it('legal.getDocument pins a version into the path when given one', async () => {
     const { LegalApi: old } = await import('@/network/api/legal')
     const { LegalApi: next } = await import('./legal')
@@ -185,6 +210,17 @@ describe('primary-origin domains browser contract', () => {
       test,
       () => (old[name as keyof typeof old] as Callable)(...test.args),
       () => (next[name as keyof typeof next] as Callable)(...test.args),
+      primary
+    )
+  })
+
+  it('materials.getDetail reads the same material payload (old getDetail -> new getMaterial)', async () => {
+    const { MaterialsApi: old } = await import('@/network/api/materials')
+    const { getMaterial: next } = await import('./materials')
+    await compareRequests(
+      { method: 'GET', path: '/materials/9', args: [9] },
+      () => old.getDetail(9),
+      () => next(9),
       primary
     )
   })
