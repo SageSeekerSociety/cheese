@@ -125,6 +125,15 @@ def _gh(args: list[str], attempts: int = 4) -> object:
     the first `{`/`[` is found instead of assuming column 0. Pagination is left
     to the caller, and an answer is cached on disk only when `--cache` named a
     directory.
+
+    The exit code decides whether there is an answer at all. `gh api` prints the
+    API's error body — itself a JSON object — on stdout for a 403/404/422, so
+    parsing without looking at the exit code would hand the caller an error
+    object that every consumer here reads as "no data": a rate-limited call
+    would silently drop that head's CI rounds from the counts, and under
+    `--cache` the same wrong answer would be frozen and re-served on every later
+    run. Only a zero exit is data; anything else is a failed attempt, retried
+    like a dropped read and then raised.
     """
     key = " ".join(args)
     if CACHE_DIR:
@@ -138,6 +147,11 @@ def _gh(args: list[str], attempts: int = 4) -> object:
     last = ""
     for attempt in range(attempts):
         proc = subprocess.run(["gh", *args], capture_output=True, text=True, check=False)
+        if proc.returncode != 0:
+            last = f"exit {proc.returncode}: " + (proc.stderr or proc.stdout).strip()[:200]
+            if attempt + 1 < attempts:
+                time.sleep(2 * (attempt + 1))
+            continue
         out = proc.stdout
         for ch in ("{", "["):
             i = out.find(ch)
@@ -151,10 +165,10 @@ def _gh(args: list[str], attempts: int = 4) -> object:
                     with open(_cache_path(key), "w") as fh:
                         json.dump(parsed, fh)
                 return parsed
-        last = (proc.stderr or out).strip()[:200]
+        last = "no JSON: " + (proc.stderr or out).strip()[:200]
         if attempt + 1 < attempts:
             time.sleep(2 * (attempt + 1))
-    raise GhError(f"gh {' '.join(args)}: no JSON in output after {attempts} tries ({last})")
+    raise GhError(f"gh {' '.join(args)}: {attempts} tries, last {last}")
 
 
 def _iso(text: str) -> datetime:
@@ -1332,6 +1346,39 @@ def self_test() -> int:
     )
     check("only touched lines appear", [r["task"] for r in lt], [1445])
     check("a merged pr is named", lt[0]["merged_prs"], [3495])
+
+    # _gh: a failed call is not data. `gh` prints the API's error body — itself
+    # JSON — on stdout, so an exit code nobody reads turns a rate-limited call
+    # into an empty answer, and `--cache` freezes that answer on disk. `gh` is
+    # faked here, so this stays offline.
+    import tempfile
+
+    global CACHE_DIR
+
+    real_run, real_cache = subprocess.run, CACHE_DIR
+    calls = []
+
+    class FailedProc:
+        returncode = 1
+        stdout = '{"message":"API rate limit exceeded","status":"403"}\n'
+        stderr = "gh: API rate limit exceeded (HTTP 403)"
+
+    def failed_run(cmd, **_kw):
+        calls.append(cmd)
+        return FailedProc()
+
+    cache = tempfile.mkdtemp(prefix="gh-fail-")
+    subprocess.run, CACHE_DIR = failed_run, cache
+    try:
+        try:
+            _gh(["api", "rate_limit"], attempts=2)
+            check("_gh raises on a failed gh call", "returned a value instead", "GhError")
+        except GhError:
+            pass
+    finally:
+        subprocess.run, CACHE_DIR = real_run, real_cache
+    check("a failed call is retried", len(calls), 2)
+    check("a failed call caches nothing", os.listdir(cache), [])
 
     for f in failures:
         print("FAIL", f)
