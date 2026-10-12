@@ -11,9 +11,27 @@
 import type { InjectionKey } from 'vue'
 import type { UserRefTarget } from '@/lib/userRef'
 
+/**
+ * 名册上这个人的身份：一颗 chip 要画「头像 + 姓名」，就靠这三样。名册
+ * （`ProjectMemberRow`）是唯一同时知道它们的地方。
+ *
+ * 查不到这个人（不在这份名册里：切到了别的项目、这个人离开了项目或团队）时给 null，
+ * 意思是「这份名册不知道这是谁」，由调用方定降级（`useUserRef`）：退回 handle +
+ * 彩色首字母，是不是队友再按 handle 命名规则兜底（Design §3.14）——名册缺席时的 AI
+ * 又落回 `cheese` / `cheese-*` 那颗脸，别把它画成真人；认不出的人仍一律当人。
+ */
+export interface UserRefIdentity {
+  /** 显示名；名册不记名字时给 null，chip 退回 handle。 */
+  name: string | null
+  /** 这个人自己挑过的头像素材 id；null = 没挑过（画彩色首字母）。 */
+  avatarId: number | null
+  /** 是不是 AI 队友，照名册上说。 */
+  agent: boolean
+}
+
 export interface UserRefDirectory {
-  /** 名册里这个人的显示名；查不到给 null，chip 退回 handle。 */
-  name(handle: string): string | null
+  /** 名册里这个人的身份；查不到给 null，chip 退回 handle。 */
+  identity(handle: string): UserRefIdentity | null
   /**
    * 点这个人去哪。projectId 不传（undefined）时取眼下所在的项目；传 null 表示这句话
    * 不属于眼下这个项目（例如全局通知），去个人主页。没有去处给 null。
@@ -23,9 +41,10 @@ export interface UserRefDirectory {
   navigate(target: UserRefTarget): void
 }
 
-/** 没人注入时的样子：只有名字（handle 本身），没有去处。 */
+/** 没人注入时的样子：只画 handle，没有去处，也不知道谁是谁（是不是队友由上层的
+ *  handle 命名规则兜底，见 `useUserRef`）。 */
 export const OFFLINE_USER_REF_DIRECTORY: UserRefDirectory = {
-  name: () => null,
+  identity: () => null,
   target: () => null,
   navigate: () => {},
 }

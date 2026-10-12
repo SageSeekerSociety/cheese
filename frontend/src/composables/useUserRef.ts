@@ -5,9 +5,11 @@
 // 装路由」的测试/演示环境。现在名册和跳转都从注入的 UserRefDirectory 来
 // （lib/userRefDirectory.ts），外壳注入真的，没注入时只画名字。
 import type { UserRefTarget } from '@/lib/userRef'
+import type { UserRefIdentity } from '@/lib/userRefDirectory'
 
 import { computed, inject, type MaybeRefOrGetter, toValue } from 'vue'
 
+import { isAgentHandle } from '@/lib/authorship'
 import { OFFLINE_USER_REF_DIRECTORY, USER_REF_DIRECTORY } from '@/lib/userRefDirectory'
 
 /**
@@ -21,11 +23,18 @@ export function useUserRef(
 ) {
   const directory = inject(USER_REF_DIRECTORY, OFFLINE_USER_REF_DIRECTORY)
 
-  const label = computed(() => {
+  // 从名册问这个人的身份（名字、挑过的头像、是不是队友）。名册不认得这个人（切到了别的
+  // 项目、这个人离开了项目/团队）时退回 handle + 彩色首字母；此时「是不是队友」按
+  // handle 命名规则兜底（Design §3.14）——只认得出队友，一个离开名册的 AI 不会被
+  // 画成真人；认不出的人一律当人。
+  const identity = computed<UserRefIdentity>(() => {
     const h = toValue(handle)
-    if (!h) return ''
-    return directory.name(h) || h
+    const known = h ? directory.identity(h) : null
+    return known ?? { name: null, avatarId: null, agent: isAgentHandle(h || '') }
   })
+
+  /** 只画名字的那些地方（纯文字的一行，装不下 chip）：名字，查不到就画 handle。 */
+  const label = computed(() => identity.value.name || toValue(handle) || '')
 
   const to = computed<UserRefTarget | null>(() => {
     const h = toValue(handle)
@@ -39,5 +48,5 @@ export function useUserRef(
     if (target) directory.navigate(target)
   }
 
-  return { label, to, navigate }
+  return { identity, label, to, navigate }
 }

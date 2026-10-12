@@ -91,9 +91,9 @@ export const FEEDBACK_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '楼内回复，指代谁',
-        note: '服务端把 `reply_to_handle` 存下来了，所以单独一行画「回复 @谁」。顶层评论恒为 NULL，那一样它一个字都不画 —— 客户端猜不出来「回的是谁」。',
+        note: '服务端把 `reply_to_handle` 存下来了，所以单独一行画「回复」加一颗 头像 + @谁 的 chip。顶层评论恒为 NULL，那一样它一个字都不画 —— 客户端猜不出来「回的是谁」。',
         props: { comment: REPLY_COMMENT, replying: false, isReply: true, replyCount: 0 },
-        expect: '回复 @alice',
+        expect: '@alice',
       },
     ],
   },
@@ -133,9 +133,9 @@ export const FEEDBACK_ENTRIES: CatalogEntry[] = [
       '反馈详情右侧那根竖着的时间线：已收录 → 处理中 → 已修复 → 已上线。画的是整架梯子，不是只画已经走过的那几步。',
     file: 'src/components/feedback/FeedbackStatusTimeline.vue',
     component: FeedbackStatusTimeline,
-    // 一个 Vuetify 组件都不画：走过的是实心点、当前那一步额外加一圈、还没到的是空心，
-    // 全靠 CSS。时间、档位名、@名字走全局的 t()，所以一件都不用装。
-    needs: [],
+    // 梯子本身（实心点、外圈、空心）全靠 CSS，时间与档位名走全局的 t()；但「谁推进的
+    // 这一步」是一颗 @名字 chip，它前面的人像落在 Vuetify 的 v-avatar 上。
+    needs: ['vuetify'],
     states: [
       {
         name: '刚收录，后面还没到',

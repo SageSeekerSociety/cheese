@@ -161,10 +161,11 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'user-ref',
     title: 'UserRef',
-    about: '句子里提到的一个人：@名字。给了去处才可点。',
+    about: '句子里提到的一个人：头像 + @名字。给了去处才可点。',
     file: 'src/components/common/UserRef.vue',
     component: UserRef,
-    needs: [],
+    // 名字前面那颗头像是共用的 IdentityView，人那一支落到 Vuetify 的 v-avatar 上。
+    needs: UI,
     states: [
       {
         name: '有去处',

@@ -50,7 +50,7 @@ const search: McpServer = {
 const directory: Plugin = {
   install(app) {
     app.provide(USER_REF_DIRECTORY, {
-      name: () => null,
+      identity: () => null,
       target: (handle: string) => userRefRoute(handle, 'p'),
       navigate: () => {},
     })
@@ -80,9 +80,16 @@ it('a connected server says whose account it acts as, and any member can disconn
     servers: [{ ...tracker, status: 'connected', authorized_by: 'alice', authorized_at: new Date().toISOString() }],
     problem: null,
   })
-  // 授权人是一颗 @chip：和对话里 @ 到他长得一样，点了去他的成员页。
-  await waitFor(() => expect(view.container.textContent).toMatch(/由\s*@alice\s*授权/))
-  expect(view.container.querySelector('.mcp-row__state .mention')?.getAttribute('data-handle')).toBe('alice')
+  // 授权人是一颗 @chip（带本人头像）：和对话里 @ 到他是同一个人，点了去他的成员页。
+  const chip = await waitFor(() => {
+    const el = view.container.querySelector('.mcp-row__state .mention')
+    expect(el).not.toBeNull()
+    return el as HTMLElement
+  })
+  expect(chip.getAttribute('data-handle')).toBe('alice')
+  expect(chip.textContent).toContain('@alice')
+  // 句子里「由 … 授权」还在（头像把 handle 和它隔开了，别按整段纯文本匹配）。
+  expect(view.container.textContent).toMatch(/由[\s\S]*授权/)
   await fireEvent.click(view.getByRole('button', { name: '断开' }))
   expect(view.emitted('disconnect')).toEqual([
     [{ ...tracker, status: 'connected', authorized_by: 'alice', authorized_at: expect.any(String) }],

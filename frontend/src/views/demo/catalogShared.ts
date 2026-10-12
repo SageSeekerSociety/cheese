@@ -20,6 +20,7 @@ import BaseTable from '@/components/base/BaseTable.vue'
 import BaseTableTh from '@/components/base/BaseTableTh.vue'
 import AttachmentImageView from '@/components/common/Editor/AttachmentImageView.vue'
 import TipTapEditor from '@/components/common/Editor/TipTapEditor.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserRefLink from '@/components/common/UserRefLink.vue'
 
@@ -193,11 +194,12 @@ export const SHARED_ENTRIES: CatalogEntry[] = [
     about: '句子里提到的一个人：显示名从外壳注入的名册来，点了去那个人的主页；没人注入时只画名字、去不了。',
     file: 'src/components/common/UserRefLink.vue',
     component: UserRefLink,
-    needs: [],
+    // 名字那一半是文字，但 chip 前面那颗头像落到了 Vuetify 的 v-avatar 上。
+    needs: UI,
     states: [
       {
         name: '认得的人',
-        note: 'handle 和显示名都给：画成 @爱丽丝。预览站没注入名册，所以它点不动 —— 这一格看的是名字那一半。',
+        note: 'handle 和显示名都给：画成 头像 + @爱丽丝。预览站没注入名册，所以它点不动 —— 这一格看的是名字那一半。',
         props: { handle: 'alice', name: '爱丽丝' },
         expect: '@爱丽丝',
       },
@@ -212,6 +214,62 @@ export const SHARED_ENTRIES: CatalogEntry[] = [
         note: '只给 handle、名册又没注入：查不到显示名就退回 handle，画成 @alice，照样没有去处。',
         props: { handle: 'alice' },
         expect: '@alice',
+      },
+    ],
+  },
+  {
+    id: 'identity-view',
+    title: 'IdentityView',
+    about:
+      '产品里画「这是谁」的那一处：头像 + 姓名（+ 可选一行 @handle）。人和队友的分支、没挑过头像时的降级只在这里写一遍；别处只管把 handle / 名字 / 头像 id / 是不是队友喂进来。',
+    file: 'src/components/common/IdentityView.vue',
+    component: IdentityView,
+    // 人那一支落在 Vuetify 的 v-avatar / v-img 上；队友是自带的那块超椭圆 SVG。
+    needs: UI,
+    args: { handle: 'alice', name: '爱丽丝' },
+    states: [
+      {
+        name: '人，没挑过头像',
+        note: '只给 handle 和名字：画彩色首字母当降级 —— 底色按 handle 取，改名字不换颜色。',
+        props: {},
+        expectSelector: '.user-avatar-char',
+        expect: '爱丽丝',
+      },
+      {
+        name: '人，挑过一张头像',
+        note: '给了头像素材 id：先摆真图的位置（地址由 utils/materials 按 id 拼）。预览站里图取不回来，这一刻看的是「有没有为图留位子」。',
+        props: { avatarId: 12 },
+        expectSelector: '.v-img',
+      },
+      {
+        name: 'AI 队友',
+        note: 'handle 是 cheese-*（或调用方明说 agent）：换成队友那块超椭圆的脸，不画真人头像，也不吃 handle 派生的首字母。',
+        props: { handle: 'cheese-kimi', name: '芝士' },
+        expectSelector: 'svg.cheese-avatar',
+      },
+      {
+        name: '名册说「是人」，哪怕 handle 长得像队友',
+        note: 'agent=false 是名册下的结论，压过 handle 命名规则：cheese-kimi 在这里仍画成人。',
+        props: { handle: 'cheese-kimi', name: '芝士', agent: false },
+        expectSelector: '.user-avatar-char',
+      },
+      {
+        name: '句子里提到一个人',
+        note: 'mention：名字前加 @，就是消息、卡片里那种行内的 chip。',
+        props: { mention: true },
+        expect: '@爱丽丝',
+      },
+      {
+        name: '名字下面再挂一行 handle',
+        note: 'handleLine：两行身份（姓名在上、@handle 在下），成员列表那种要分清重名的地方用它。',
+        props: { handleLine: true },
+        expectSelector: '.identity-view__handle',
+      },
+      {
+        name: '很长的名字',
+        note: '名字是省略号截断的（overflow hidden + ellipsis），不是撑破容器：长名字也不能把这一行挤高。',
+        props: { handle: 'alice', name: '一个非常非常长的名字用来量省略号' },
+        expect: '一个非常非常长的名字用来量省略号',
       },
     ],
   },
