@@ -20,7 +20,10 @@ layer, being a docs-only push — lost the same race in 3 of 6 runs.
 
 ``after_own_commit`` is the one place that waits for the commit that ends the
 session's transaction instead. What it must not do is *skip* a commit, or run
-the work twice: the three cases below are the whole contract.
+the work twice. The four cases pin that contract: a released savepoint runs
+nothing and the transaction's commit answers; that commit runs the work once; a
+hook asked to wait for every commit runs for each one; a rollback spends
+nothing, so the next commit still answers.
 """
 
 from sqlalchemy.ext.asyncio import AsyncSession
