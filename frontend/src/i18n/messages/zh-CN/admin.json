@@ -180,9 +180,13 @@
       "abandoned": "没准备好就放弃",
       "replaced": "宿主机坏掉、换了一台",
       "released": "回收（空闲 / 额度用完）",
-      "releasedValue": "{idle} / {unpaid}"
+      "releasedValue": "{idle} / {unpaid}",
+      "refused": "被拒的会话（池满 / provider 失败）",
+      "refusedValue": "{sessions} 个（{full} / {failing}）",
+      "hostsLost": "放弃的宿主机（provider 报错 · 失联 · 没注册上）",
+      "hostsLostValue": "{n} 台（{error} · {away} · {never}）",
+      "sandboxesLost": "随宿主机丢失的工作中沙箱"
     },
-    "blind": "这里数不到两件事：池满或 provider 连续失败时被拒的会话，以及宿主机失联时丢掉的工作中沙箱。两者都没有留下可查的记录。",
     "warm": "温机池（目标 {target} 台）",
     "noWarm": "此刻没有温机",
     "warmAge": "已存在 {for}",

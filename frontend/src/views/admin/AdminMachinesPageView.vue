@@ -4,8 +4,7 @@
  *
  * 从上到下回答四个问题：池子此刻够不够用（四张卡，外加「此刻在拒绝新会话」那一句）；
  * 每台宿主机走到哪一步、上面有谁（一台一行，点开列出它的沙箱）；过去一天沙箱起得
- * 多快、有多少没起来；温机池里有什么。看不见的那两件事（被拒的会话、丢掉的沙箱）
- * 照实写在过去一天那一块的底下，不画成 0。
+ * 多快、有多少没起来、拒了多少会话、丢了几台宿主机；温机池里有什么。
  */
 import type { HostPhase, MachineHost, MachineSandbox, MachinesOverview, SandboxState } from '@/views/admin/machinesApi'
 
@@ -298,6 +297,35 @@ const failureNote = computed(() =>
             <dd class="mc-num">{{ n(history.abandoned) }}</dd>
           </div>
           <div>
+            <dt>{{ t('admin.machines.fact.refused') }}</dt>
+            <dd class="mc-num">
+              {{
+                t('admin.machines.fact.refusedValue', {
+                  sessions: history.refused_sessions,
+                  full: history.refused_by_reason.pool_full ?? 0,
+                  failing: history.refused_by_reason.provider_failing ?? 0,
+                })
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t('admin.machines.fact.hostsLost') }}</dt>
+            <dd class="mc-num">
+              {{
+                t('admin.machines.fact.hostsLostValue', {
+                  n: history.hosts_lost,
+                  error: history.hosts_lost_by_reason.provider_error ?? 0,
+                  away: history.hosts_lost_by_reason.connector_away ?? 0,
+                  never: history.hosts_lost_by_reason.never_enrolled ?? 0,
+                })
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>{{ t('admin.machines.fact.sandboxesLost') }}</dt>
+            <dd class="mc-num">{{ n(history.sandboxes_lost) }}</dd>
+          </div>
+          <div>
             <dt>{{ t('admin.machines.fact.replaced') }}</dt>
             <dd class="mc-num">{{ n(history.replaced) }}</dd>
           </div>
@@ -310,7 +338,6 @@ const failureNote = computed(() =>
             </dd>
           </div>
         </dl>
-        <p class="mc-foot mc-blind">{{ t('admin.machines.blind') }}</p>
       </section>
 
       <section class="mc-section">

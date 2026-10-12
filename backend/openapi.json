@@ -57005,6 +57005,32 @@
               }
             ],
             "title": "Wait Max S"
+          },
+          "refused_sessions": {
+            "type": "integer",
+            "title": "Refused Sessions"
+          },
+          "refused_by_reason": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Refused By Reason"
+          },
+          "hosts_lost": {
+            "type": "integer",
+            "title": "Hosts Lost"
+          },
+          "hosts_lost_by_reason": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Hosts Lost By Reason"
+          },
+          "sandboxes_lost": {
+            "type": "integer",
+            "title": "Sandboxes Lost"
           }
         },
         "type": "object",
@@ -57018,7 +57044,12 @@
           "released_unpaid",
           "wait_p50_s",
           "wait_p95_s",
-          "wait_max_s"
+          "wait_max_s",
+          "refused_sessions",
+          "refused_by_reason",
+          "hosts_lost",
+          "hosts_lost_by_reason",
+          "sandboxes_lost"
         ],
         "title": "MachineHistoryOut"
       },

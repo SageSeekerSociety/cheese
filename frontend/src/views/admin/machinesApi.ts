@@ -113,6 +113,12 @@ export interface MachinesOverview {
     wait_p50_s: number | null
     wait_p95_s: number | null
     wait_max_s: number | null
+    /** 被拒的会话数，按原因分开；数的是会话，不是被拒的次数。 */
+    refused_sessions: number
+    refused_by_reason: Partial<Record<'pool_full' | 'provider_failing', number>>
+    hosts_lost: number
+    hosts_lost_by_reason: Partial<Record<'provider_error' | 'never_enrolled' | 'connector_away', number>>
+    sandboxes_lost: number
   }
 }
 

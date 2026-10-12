@@ -180,9 +180,13 @@
       "abandoned": "Given up before ready",
       "replaced": "Moved off a broken host",
       "released": "Reclaimed (idle / out of credits)",
-      "releasedValue": "{idle} / {unpaid}"
+      "releasedValue": "{idle} / {unpaid}",
+      "refused": "Sessions refused (pool full / provider failing)",
+      "refusedValue": "{sessions} ({full} / {failing})",
+      "hostsLost": "Hosts given up (provider error · offline · never enrolled)",
+      "hostsLostValue": "{n} ({error} · {away} · {never})",
+      "sandboxesLost": "Working sandboxes lost with their host"
     },
-    "blind": "Two things are not counted here: sessions refused while the pool was full or the provider kept failing, and working sandboxes lost when their host went away. Neither leaves a record to count.",
     "warm": "Warm pool (target {target})",
     "noWarm": "No warm machines right now",
     "warmAge": "Age {for}",

@@ -105,6 +105,11 @@ function overview(pool: Partial<MachinesOverview['pool']> = {}, hosts = [host()]
       wait_p50_s: null,
       wait_p95_s: null,
       wait_max_s: null,
+      refused_sessions: 0,
+      refused_by_reason: {},
+      hosts_lost: 0,
+      hosts_lost_by_reason: {},
+      sandboxes_lost: 0,
     },
   }
 }
