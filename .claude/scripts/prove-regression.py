@@ -497,11 +497,23 @@ def self_test() -> int:
             "GIT_AUTHOR_EMAIL": "t@example.com",
             "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@example.com",
+            # The throwaway repository must not inherit this machine's git
+            # configuration. With `commit.gpgsign = true` and signing that
+            # cannot finish without a terminal (no gpg, or a pinentry with no
+            # tty), `git commit` exits 128, and `check=True` turns that into a
+            # traceback partway through the suite instead of a tally — the
+            # self-test failing for a reason that is not the tool's.
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
         }
 
         def g(*args: str) -> None:
             subprocess.run(
-                ["git", *args], cwd=str(repo), env=env, check=True, capture_output=True
+                ["git", "-c", "commit.gpgsign=false", *args],
+                cwd=str(repo),
+                env=env,
+                check=True,
+                capture_output=True,
             )
 
         g("init", "-q")
@@ -672,13 +684,22 @@ def self_test() -> int:
             and escape.read_text(encoding="utf-8") == "outside\n"
             and outside_tree.read_text(encoding="utf-8") == "outside\n",
         )
+        # Both NOT PROVEN paths exit 1; which one it is *is* the diagnosis, and
+        # they are one assertion apart. Reading only the code, a duplicated or
+        # swapped message would keep the suite green while the tool told an
+        # author the opposite of what happened to their test — so these two
+        # cases assert which half was red, not just that something was.
+        green_without = prove(without, "python3 -c 'raise SystemExit(0)'")
         tally.case(
-            "end to end: green without the fix → NOT PROVEN",
-            prove(without, "python3 -c 'raise SystemExit(0)'").returncode == 1,
+            "end to end: green without the fix → NOT PROVEN, and says which half",
+            green_without.returncode == 1
+            and "already passes without the fix" in green_without.stdout,
         )
+        red_with = prove("HEAD", "python3 -c 'raise SystemExit(1)'")
         tally.case(
-            "end to end: red with the fix → NOT PROVEN",
-            prove("HEAD", "python3 -c 'raise SystemExit(1)'").returncode == 1,
+            "end to end: red with the fix → NOT PROVEN, and says which half",
+            red_with.returncode == 1
+            and "does not pass with the fix" in red_with.stdout,
         )
         tally.case(
             "end to end: an unknown revision cannot be judged",
