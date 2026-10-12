@@ -1294,7 +1294,7 @@ def test_an_offline_egress_asks_the_turn_to_wait_and_come_back(monkeypatch, tmp_
 
     assert flow.response is not None and flow.response.status_code == 503
     assert flow.response.headers["retry-after"] == str(mod.EGRESS_OFFLINE_RETRY_AFTER_S)
-    assert flow.response.headers.get("x-should-retry") != "false"
+    assert "x-should-retry" not in flow.response.headers
     assert b"subscription egress is offline" in flow.response.content
     assert flow.request.stream is False
     assert flow.server_conn.via is None

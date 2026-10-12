@@ -591,8 +591,10 @@ _CLI_NOTICE_MAX = 300
 
 _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
     # The metering proxy's own answer when the machine the subscription must
-    # leave through does not respond (`deploy/metering-proxy`, a 503 Claude
-    # Code does not retry). Before the 503 pattern below, which it also matches.
+    # leave through does not respond (`deploy/metering-proxy`, a 503 carrying
+    # `retry-after`, so the client waits and asks again). Before the 503 pattern
+    # below, which it also matches — and so this fires once the turn has spent
+    # its retries and the client prints the refusal after all.
     (
         re.compile(r"^API Error:.*\bsubscription egress is offline\b", re.I),
         SUBSCRIPTION_EGRESS_OFFLINE_CODE,
