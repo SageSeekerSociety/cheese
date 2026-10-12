@@ -46,11 +46,13 @@ export const GUIDE_STEPS: GuideStep[] = [
     key: 'reply',
     anchors: ['reply-thread', 'reply-failed'],
     failed: 'reply-failed',
-    waiting: ['timeline'],
+    // 芝士还在回：指着那一行等，不说「回复了」。
+    waiting: ['reply-coming', 'timeline'],
     // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。
-    done: (c) => c.has('thread-pane') && !c.has('reply-failed'),
+    done: (c) => c.has('thread-pane') && !c.has('reply-failed') && !c.has('reply-coming'),
   },
-  { key: 'confirm', anchors: ['thread-pane'], waiting: ['reply-thread'], area: true },
+  // 圈支线的输入框本身：要人在那里回一句，浮窗就不能压着它。
+  { key: 'confirm', anchors: ['thread-composer'], waiting: ['reply-thread'] },
   {
     key: 'task',
     anchors: ['task-card', 'task-row'],
