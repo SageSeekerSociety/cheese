@@ -175,6 +175,8 @@ function renderPlain(text: string): string {
       'im-row--self': mine,
       'im-row--pending': !!outgoing,
       'im-row--active': active,
+      // 改这条消息时抬掉这一行的 containment，否则 @ 候选菜单弹不出这一行（见 room-row.css）。
+      'im-row--editing': editing,
     }"
     :data-mid="block.id"
     :data-actions="outgoing ? undefined : ''"
