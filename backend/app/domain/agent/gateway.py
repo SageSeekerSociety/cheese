@@ -397,6 +397,9 @@ class ModelSpend:
     # beside it, so cache reads / prompt is the cache-hit share.
     cache_read_tokens: int = 0
     cache_write_tokens: int = 0
+    # Model calls that answered. A failed call spends nothing and the
+    # subscription lane writes no row for one, so both lanes count the same.
+    calls: int = 0
 
 
 def _add_row(by: dict[str, ModelSpend], row: dict) -> None:
@@ -413,6 +416,7 @@ def _add_row(by: dict[str, ModelSpend], row: dict) -> None:
         + int(row.get("cache_read_input_tokens") or 0),
         cache_write_tokens=prev.cache_write_tokens
         + int(row.get("cache_creation_input_tokens") or 0),
+        calls=prev.calls + int(row.get("successful_requests") or 0),
     )
 
 
@@ -443,30 +447,37 @@ def _snapshot(by: dict[str, ModelSpend]) -> dict[str, dict]:
             "spend_usd": m.spend_usd,
             "cache_read": m.cache_read_tokens,
             "cache_write": m.cache_write_tokens,
+            "calls": m.calls,
         }
         for m in by.values()
     }
 
 
-def _prev_models(ckpt: dict | None) -> tuple[dict[str, ModelSpend], frozenset[str]]:
-    """The checkpoint's per-model day totals, and the models among them whose
-    entry was written before the checkpoint kept cache tokens.
+def _prev_models(
+    ckpt: dict | None,
+) -> tuple[dict[str, ModelSpend], frozenset[str], frozenset[str]]:
+    """The checkpoint's per-model day totals, the models among them whose entry
+    was written before the checkpoint kept cache tokens, and those whose entry
+    was written before it kept calls.
 
-    Such an entry says nothing about how much of the day's cache the earlier
-    drains already counted, so neither zero nor any other number is its cache
-    baseline: those models count no cache on this drain and start from the
+    Such an entry says nothing about how much of the day's cache (or calls) the
+    earlier drains already counted, so neither zero nor any other number is its
+    baseline: those models count none of it on this drain and start from the
     totals it stores."""
     raw = (ckpt or {}).get("models")
     if not isinstance(raw, dict):
-        return {}, frozenset()
+        return {}, frozenset(), frozenset()
     out: dict[str, ModelSpend] = {}
     uncounted: set[str] = set()
+    uncalled: set[str] = set()
     for name, v in raw.items():
         if not isinstance(v, dict):
             continue
         key = str(name)
         if "cache_read" not in v:
             uncounted.add(key)
+        if "calls" not in v:
+            uncalled.add(key)
         out[key] = ModelSpend(
             model=key,
             prompt_tokens=int(v.get("prompt") or 0),
@@ -474,14 +485,16 @@ def _prev_models(ckpt: dict | None) -> tuple[dict[str, ModelSpend], frozenset[st
             spend_usd=float(v.get("spend_usd") or 0.0),
             cache_read_tokens=int(v.get("cache_read") or 0),
             cache_write_tokens=int(v.get("cache_write") or 0),
+            calls=int(v.get("calls") or 0),
         )
-    return out, frozenset(uncounted)
+    return out, frozenset(uncounted), frozenset(uncalled)
 
 
 def _deltas(
     cur: dict[str, ModelSpend],
     prev: dict[str, ModelSpend],
     uncounted: frozenset[str] = frozenset(),
+    uncalled: frozenset[str] = frozenset(),
 ) -> list[ModelSpend]:
     """Per-model growth since ``prev``.
 
@@ -491,7 +504,7 @@ def _deltas(
     rotated its label, not spend being refunded. Negative components are
     clamped at zero and logged by the caller's regression check. A model in
     ``uncounted`` has no cache baseline (``_prev_models``) and contributes no
-    cache tokens.
+    cache tokens; one in ``uncalled`` contributes no calls.
     """
     out: list[ModelSpend] = []
     for name, c in cur.items():
@@ -508,6 +521,7 @@ def _deltas(
             cache_write_tokens=(
                 max(0, c.cache_write_tokens - p.cache_write_tokens) if known else 0
             ),
+            calls=max(0, c.calls - p.calls) if name not in uncalled else 0,
         )
         if row.prompt_tokens or row.completion_tokens or row.spend_usd:
             out.append(row)
@@ -527,6 +541,7 @@ def _regressed(
     cur: dict[str, ModelSpend],
     prev: dict[str, ModelSpend],
     uncounted: frozenset[str] = frozenset(),
+    uncalled: frozenset[str] = frozenset(),
 ) -> bool:
     """Has the cumulative read gone backwards — or lost a model we had?
 
@@ -556,6 +571,8 @@ def _regressed(
             or c.cache_write_tokens < p.cache_write_tokens
         ):
             return True
+        if name not in uncalled and c.calls < p.calls:
+            return True
     return False
 
 
@@ -571,11 +588,11 @@ async def drain_new_usage(
         {"date": "YYYY-MM-DD",
          "models": {"mimo-v2.6-pro":
                         {"prompt": 12, "completion": 3, "spend_usd": 0.01,
-                         "cache_read": 8, "cache_write": 2}}}
+                         "cache_read": 8, "cache_write": 2, "calls": 4}}}
 
     A model entry without ``cache_read`` was written before cache tokens were
     kept: its first drain lands no cache tokens, and later ones count them
-    (``_prev_models``).
+    (``_prev_models``). One without ``calls`` likewise lands no calls once.
 
     Exactly-once is unchanged: cumulative per-model sums are monotone, so a
     delta is consumed once even when LiteLLM logs rows late (they enlarge a
@@ -594,7 +611,7 @@ async def drain_new_usage(
         return await _drain_pre_split(gateway, key, ckpt, today)
 
     prev_date = str(ckpt.get("date")) if ckpt else today
-    prev, uncounted = _prev_models(ckpt)
+    prev, uncounted, uncalled = _prev_models(ckpt)
 
     days = _prior_days(prev_date, today)
     if days is None:
@@ -605,24 +622,24 @@ async def drain_new_usage(
         final = await gateway.daily_spend_by_model(key, day)
         if final is None:
             return None
-        if day == prev_date and _regressed(final, prev, uncounted):
+        if day == prev_date and _regressed(final, prev, uncounted, uncalled):
             logger.warning(
                 "gateway cumulative spend regressed; preserving checkpoint",
                 extra={"date": day},
             )
             return None
-        new.extend(_deltas(final, prev, uncounted))
-        prev, uncounted = {}, frozenset()
+        new.extend(_deltas(final, prev, uncounted, uncalled))
+        prev, uncounted, uncalled = {}, frozenset(), frozenset()
     cur = await gateway.daily_spend_by_model(key, today)
     if cur is None:
         return None
-    if prev_date == today and _regressed(cur, prev, uncounted):
+    if prev_date == today and _regressed(cur, prev, uncounted, uncalled):
         logger.warning(
             "gateway cumulative spend regressed; preserving checkpoint",
             extra={"date": today},
         )
         return None
-    new.extend(_deltas(cur, prev, uncounted))
+    new.extend(_deltas(cur, prev, uncounted, uncalled))
     return new, {"date": today, "models": _snapshot(cur)}
 
 
