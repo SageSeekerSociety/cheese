@@ -1,26 +1,25 @@
 // @vitest-environment jsdom
-// The teams domain's payload contract: every method gets a REAL old-versus-new
-// comparison — the observable request (method, URL, query, auth, body) and the
-// answer (the old envelope's `.data` versus the new payload) must agree. Teams
-// has always ridden the new origin (`NewApiInstance` before, `axiosNewApi`
-// now), so both sides answer from `${newer}`. The failure and edge evidence —
-// a structured refusal, a locked team reaching its handler, the unnamed
-// sentence and the empty-command success bit — lives in the second half, driven
-// through the real consumers rather than by asserting an exception type alone.
-// The 401 refresh/redirect flow is in `teamsAuthContract.spec.ts`; the
-// per-method happy path for the five shared domains is in
-// `payloadDomainsContract.spec.ts`; spaces and the task board have their own.
+// The teams domain's request and payload contract: every method pins the wire
+// request (method, URL, query, auth, body) and the payload the caller gets back.
+// Teams rides the new origin (`axiosNewApi`), so the handler answers from
+// `${newer}`. The failure and edge evidence — a structured refusal, a locked
+// team reaching its handler, the unnamed sentence and the empty-command success
+// bit — lives in the second half, driven through the real consumers rather than
+// by asserting an exception type alone. The 401 refresh/redirect flow is in
+// `teamsAuthContract.spec.ts`; the per-method happy path for the five shared
+// domains is in `payloadDomainsContract.spec.ts`; spaces and the task board
+// have their own.
 import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
-  compareRequests,
   type ContractCase,
   contractEnvironment,
+  contractRequest,
   envelope,
   newer,
   server,
-} from './migrationContract.spec.helper'
+} from './requestContract.spec.helper'
 
 // The reporter is a side effect (a queued fetch to the run records), not a
 // method under test: silence it so a refusal we deliberately send does not
@@ -29,18 +28,14 @@ vi.mock('@/errorReporter', () => ({ reportError: vi.fn() }))
 
 contractEnvironment()
 
-let oldTeams: typeof import('@/network/api/teams').TeamsApi
-let newTeams: typeof import('./teams').TeamsApi
+let teams: typeof import('./teams').TeamsApi
 let handler: typeof import('@/services/ErrorHandler').default
-let legacyErrorMessage: (error: unknown, fallback: string) => string
 let newErrorMessage: (error: unknown, fallback: string) => string
 let toast: typeof import('vuetify-sonner').toast
 
 beforeAll(async () => {
-  ;({ TeamsApi: oldTeams } = await import('@/network/api/teams'))
-  ;({ TeamsApi: newTeams } = await import('./teams'))
+  ;({ TeamsApi: teams } = await import('./teams'))
   ;({ default: handler } = await import('@/services/ErrorHandler'))
-  ;({ requestErrorMessage: legacyErrorMessage } = await import('@/network/utils/requestErrorMessage'))
   ;({ axiosErrorMessage: newErrorMessage } = await import('./axiosHttp'))
   ;({ toast } = await import('vuetify-sonner'))
 })
@@ -190,50 +185,33 @@ const structuredRefusal = (status: number, name = 'AccessDeniedError') =>
     { status }
   )
 
-describe('teams migration: every method keeps its request and payload', () => {
+describe('teams: every method keeps its request and payload', () => {
   it.each(Object.entries(cases))('%s preserves the request and returns the payload', async (name, test) => {
-    await compareRequests(
-      test,
-      () => (oldTeams[name as keyof typeof oldTeams] as (...args: unknown[]) => Promise<unknown>)(...test.args),
-      () => (newTeams[name as keyof typeof newTeams] as (...args: unknown[]) => Promise<unknown>)(...test.args)
+    await contractRequest(test, () =>
+      (teams[name as keyof typeof teams] as (...args: unknown[]) => Promise<unknown>)(...test.args)
     )
   })
 })
 
-describe('teams migration: structured refusals keep their meaning', () => {
+describe('teams: structured refusals keep their meaning', () => {
   it.each([400, 403, 404, 422, 500, 503])('%s keeps the condition name, sentence and data', async (status) => {
     server.use(http.get(`${newer}/teams/7`, () => structuredRefusal(status)))
-    const old = await oldTeams.detail(7).catch((error) => error)
-    const next = await newTeams.detail(7).catch((error) => error)
-    expect(old).toMatchObject({
-      message: 'You cannot change this team',
-      code: status,
-      error: { name: 'AccessDeniedError', data: { teamId: 7, lockingTasks: lockedTasks } },
-    })
-    expect(next).toMatchObject({
+    const error = await teams.detail(7).catch((failure) => failure)
+    expect(error).toMatchObject({
       message: 'You cannot change this team',
       status,
       code: 'AccessDeniedError',
       data: { teamId: 7, lockingTasks: lockedTasks },
     })
-    expect(legacyErrorMessage(old, 'fallback')).toBe('You cannot change this team')
-    expect(newErrorMessage(next, 'fallback')).toBe('You cannot change this team')
+    expect(newErrorMessage(error, 'fallback')).toBe('You cannot change this team')
   })
 
   // The real consumer: `ErrorHandler` names a refusal off the new `ApiError`
-  // `.code` / the old `BusinessError` `.name`, reads the locking tasks off
-  // `.data` / `.error.data`, and warns. Both stacks must reach the same handler
-  // with the same sentence.
-  it('routes a locked team to its handler on both stacks and warns with the locking tasks', async () => {
+  // `.code`, reads the locking tasks off `.data`, and warns.
+  it('routes a locked team to its handler and warns with the locking tasks', async () => {
     server.use(http.delete(`${newer}/teams/7`, () => structuredRefusal(403, 'TeamLockedError')))
-    const oldError = await oldTeams.del(7).catch((error) => error)
-    const newError = await newTeams.del(7).catch((error) => error)
-    expect(oldError).toMatchObject({
-      name: 'TeamLockedError',
-      code: 403,
-      error: { data: { lockingTasks: lockedTasks } },
-    })
-    expect(newError).toMatchObject({ code: 'TeamLockedError', status: 403, data: { lockingTasks: lockedTasks } })
+    const error = await teams.del(7).catch((failure) => failure)
+    expect(error).toMatchObject({ code: 'TeamLockedError', status: 403, data: { lockingTasks: lockedTasks } })
 
     // `toast.warning` is typed as the real function; at runtime `vuetify-sonner`
     // is mocked, so read the calls off a mock-typed alias.
@@ -241,13 +219,10 @@ describe('teams migration: structured refusals keep their meaning', () => {
     warning.mockClear()
     // A registered refusal is swallowed: the caller sees `undefined`, not a
     // half-typed throw, and the user sees the warning.
-    expect(await handler.withErrorHandling(() => oldTeams.del(7))).toBeUndefined()
-    expect(await handler.withErrorHandling(() => newTeams.del(7))).toBeUndefined()
-    expect(warning).toHaveBeenCalledTimes(2)
-    const [oldSentence] = warning.mock.calls[0]
-    const [newSentence] = warning.mock.calls[1]
-    expect(oldSentence).toContain(lockedTasks)
-    expect(newSentence).toBe(oldSentence)
+    expect(await handler.withErrorHandling(() => teams.del(7))).toBeUndefined()
+    expect(warning).toHaveBeenCalledTimes(1)
+    const [sentence] = warning.mock.calls[0]
+    expect(sentence).toContain(lockedTasks)
   })
 
   it('keeps an unnamed 403 sentence rather than replacing it with a generic one', async () => {
@@ -256,22 +231,16 @@ describe('teams migration: structured refusals keep their meaning', () => {
         HttpResponse.json({ code: 403, message: 'Server sentence', data: null }, { status: 403 })
       )
     )
-    const old = await oldTeams.detail(7).catch((error) => error)
-    const next = await newTeams.detail(7).catch((error) => error)
-    expect(legacyErrorMessage(old, 'fallback')).toBe('Server sentence')
-    expect(newErrorMessage(next, 'fallback')).toBe('Server sentence')
+    const error = await teams.detail(7).catch((failure) => failure)
+    expect(newErrorMessage(error, 'fallback')).toBe('Server sentence')
   })
 
   it('reads an edge page as a transport failure, including a 200 one', async () => {
     for (const status of [200, 502]) {
       server.use(http.get(`${newer}/teams/7`, () => new HttpResponse('<html>offline</html>', { status })))
-      const old = await oldTeams.detail(7).catch((error) => error)
-      const next = await newTeams.detail(7).catch((error) => error)
-      expect(old).toBeInstanceOf(Error)
-      expect(next).toBeInstanceOf(Error)
-      expect(next.message).toBe(old.message)
-      expect(legacyErrorMessage(old, 'fallback')).toBe(old.message)
-      expect(newErrorMessage(next, 'fallback')).toBe(old.message)
+      const error = (await teams.detail(7).catch((failure) => failure)) as Error
+      expect(error).toBeInstanceOf(Error)
+      expect(newErrorMessage(error, 'fallback')).toBe(error.message)
     }
   })
 
@@ -283,23 +252,17 @@ describe('teams migration: structured refusals keep their meaning', () => {
         return HttpResponse.error()
       })
     )
-    const old = await oldTeams.detail(7).catch((error) => error)
-    const next = await newTeams.detail(7).catch((error) => error)
-    expect(old).toBeInstanceOf(Error)
-    expect(next).toBeInstanceOf(Error)
-    expect(legacyErrorMessage(old, 'fallback')).toBe('fallback')
-    expect(newErrorMessage(next, 'fallback')).toBe('fallback')
-    expect(requests).toBe(2)
+    const error = await teams.detail(7).catch((failure) => failure)
+    expect(error).toBeInstanceOf(Error)
+    expect(newErrorMessage(error, 'fallback')).toBe('fallback')
+    expect(requests).toBe(1)
   })
 })
 
-describe('teams migration: a read never invents a command success', () => {
+describe('teams: a read never invents a command success', () => {
   it.each([null, false, 0, ''])('a payload read returns falsy %j unchanged', async (value) => {
     server.use(http.get(`${newer}/teams/7`, () => HttpResponse.json(envelope(value))))
-    const old = await oldTeams.detail(7)
-    const next = await newTeams.detail(7)
-    expect(old).toEqual({ code: 200, message: 'ok', data: value })
-    expect(next).toEqual(value)
+    expect(await teams.detail(7)).toEqual(value)
   })
 
   it.each(['null', 'omitted', '204'])('keeps %s command success distinct from a caught failure', async (kind) => {
@@ -310,14 +273,13 @@ describe('teams migration: a read never invents a command success', () => {
           : HttpResponse.json(kind === 'null' ? envelope(null) : { code: 200, message: 'ok' })
       )
     )
-    await expect(oldTeams.removeMember(7, 9)).resolves.not.toBeUndefined()
-    await expect(newTeams.removeMember(7, 9)).resolves.toBe(true)
+    await expect(teams.removeMember(7, 9)).resolves.toBe(true)
   })
 
   it('routes an empty command through the handler as a success, not a false failure', async () => {
     server.use(http.delete(`${newer}/teams/7/members/9`, () => HttpResponse.json(envelope(null))))
     const success = vi.fn()
-    const sentinel = await handler.withErrorHandling(() => newTeams.removeMember(7, 9), { showToast: false })
+    const sentinel = await handler.withErrorHandling(() => teams.removeMember(7, 9), { showToast: false })
     if (sentinel !== undefined) success()
     expect(sentinel).toBe(true)
     expect(success).toHaveBeenCalledOnce()
@@ -328,7 +290,7 @@ describe('teams migration: a read never invents a command success', () => {
       )
     )
     const failure = vi.fn()
-    const caught = await handler.withErrorHandling(() => newTeams.removeMember(7, 9), { showToast: false })
+    const caught = await handler.withErrorHandling(() => teams.removeMember(7, 9), { showToast: false })
     if (caught !== undefined) failure()
     expect(caught).toBeUndefined()
     expect(failure).not.toHaveBeenCalled()

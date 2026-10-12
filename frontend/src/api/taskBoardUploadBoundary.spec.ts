@@ -10,11 +10,10 @@
 // the dial, and needs ~3.5 min of wall clock, so it only runs when
 // REAL_UPLOAD_BOUNDARY is set. The default tier skips it.
 //
-// Both stacks are exercised, old then new, so the dial parity is shown, not
-// asserted from source:
-//   45s answer → both uploads resolve (the 60s upload dial holds).
-//   65s answer → the old and new 30s default dials abort before it (~30s), and
-//                the new 60s upload dial aborts at ~60s.
+// The dial behaviour is observed, not asserted from source:
+//   45s answer → the upload resolves (the 60s upload dial holds).
+//   65s answer → the 30s default dial aborts before it (~30s), and the 60s
+//                upload dial aborts at ~60s.
 import { File } from 'node:buffer'
 import { createServer, type Server } from 'node:http'
 
@@ -39,7 +38,6 @@ describe.skipIf(!RUN)('task board upload: real wall-clock 30s / 60s boundary', (
   let server: Server
   let origin: string
   let axiosNewApi: typeof import('./axiosHttp').axiosNewApi
-  let oldHttp: typeof import('@/network/api')
   // A mutable dial so each case decides how long the server holds the response.
   let delayMs = 45000
   const timers: NodeJS.Timeout[] = []
@@ -71,17 +69,13 @@ describe.skipIf(!RUN)('task board upload: real wall-clock 30s / 60s boundary', (
     const address = server.address()
     origin = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
 
-    // Stub before importing: the modules read `import.meta.env` once, at import.
-    // Both the old tasks module and the new one use the newer origin.
+    // Stub before importing: the module reads `import.meta.env` once, at import.
     vi.stubEnv('VITE_API_BASE_URL', origin)
     vi.stubEnv('VITE_NEW_API_BASE_URL', origin)
     ;({ axiosNewApi } = await import('./axiosHttp'))
-    oldHttp = await import('@/network/api')
     // The node environment has no XHR, but pin the adapter so the socket
     // timeout — not the MSW XHR shim — is what is measured.
     axiosNewApi.defaults.adapter = 'http'
-    oldHttp.NewApiInstance.instance.defaults.adapter = 'http'
-    oldHttp.default.instance.defaults.adapter = 'http'
   }, 120000)
 
   afterAll(async () => {
@@ -96,7 +90,7 @@ describe.skipIf(!RUN)('task board upload: real wall-clock 30s / 60s boundary', (
   // rather than swapping in jsdom's File, which `form-data` will not accept.
   const file = () => new File(['%PDF-1.7'], 'notes.pdf', { type: 'application/pdf' }) as unknown as globalThis.File
 
-  it('lets a 45s answer through on the 60s upload dial (new)', async () => {
+  it('lets a 45s answer through on the 60s upload dial', async () => {
     const { TaskBoardApi } = await import('./taskBoard')
     delayMs = 45000
     const started = Date.now()
@@ -107,18 +101,7 @@ describe.skipIf(!RUN)('task board upload: real wall-clock 30s / 60s boundary', (
     expect(elapsed).toBeLessThan(60000)
   }, 90000)
 
-  it('lets a 45s answer through on the 60s upload dial (old)', async () => {
-    const { TasksApi } = await import('@/network/api/tasks')
-    delayMs = 45000
-    const started = Date.now()
-    const result = (await TasksApi.uploadAttachment(7, file())) as { data: unknown }
-    const elapsed = Date.now() - started
-    expect(result.data).toEqual({ attachment: { id: 1 }, tasks: [] })
-    expect(elapsed).toBeGreaterThanOrEqual(45000)
-    expect(elapsed).toBeLessThan(60000)
-  }, 90000)
-
-  it('aborts a 65s answer on the 30s default dial, before the server answers (new)', async () => {
+  it('aborts a 65s answer on the 30s default dial, before the server answers', async () => {
     const { TaskBoardApi } = await import('./taskBoard')
     delayMs = 65000
     const started = Date.now()
@@ -130,36 +113,11 @@ describe.skipIf(!RUN)('task board upload: real wall-clock 30s / 60s boundary', (
     expect(elapsed).toBeLessThan(60000)
   }, 90000)
 
-  it('aborts a 65s answer on the 30s default dial, before the server answers (old)', async () => {
-    const { TasksApi } = await import('@/network/api/tasks')
-    delayMs = 65000
-    const started = Date.now()
-    const error = (await TasksApi.listAttachments(7).catch((failure) => failure)) as { message?: string }
-    const elapsed = Date.now() - started
-    expect(error).toBeInstanceOf(Error)
-    expect(elapsed).toBeGreaterThanOrEqual(29000)
-    expect(elapsed).toBeLessThan(60000)
-  }, 90000)
-
-  it('aborts a 65s answer on the 60s upload dial (new)', async () => {
+  it('aborts a 65s answer on the 60s upload dial', async () => {
     const { TaskBoardApi } = await import('./taskBoard')
     delayMs = 65000
     const started = Date.now()
     const error = (await TaskBoardApi.uploadAttachment(7, file()).catch((failure) => failure)) as {
-      message?: string
-    }
-    const elapsed = Date.now() - started
-    expect(error).toBeInstanceOf(Error)
-    expect(error.message).toMatch(/timeout of 60000ms/)
-    expect(elapsed).toBeGreaterThanOrEqual(59000)
-    expect(elapsed).toBeLessThan(65000)
-  }, 90000)
-
-  it('aborts a 65s answer on the 60s upload dial (old)', async () => {
-    const { TasksApi } = await import('@/network/api/tasks')
-    delayMs = 65000
-    const started = Date.now()
-    const error = (await TasksApi.uploadAttachment(7, file()).catch((failure) => failure)) as {
       message?: string
     }
     const elapsed = Date.now() - started

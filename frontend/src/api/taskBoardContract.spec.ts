@@ -1,25 +1,24 @@
 // @vitest-environment jsdom
-// 题目（板上的赛题，`/tasks/…`）一域：把老模块 `@/network/api/tasks` 的 `TasksApi` 与
-// 新模块 `./taskBoard` 的 `TaskBoardApi` 逐方法对拍 —— 发出去的浏览器请求（方法、地址与
-// 查询、鉴权头、JSON/多分体正文）必须一字不差，而载荷契约从此换了：老栈回整只
-// `{code,message,data}` 信封（调用方取 `.data`），新栈直接回 payload。这些端点在**新
-// origin**（`newer`），与 `@/api/tasks`（房间任务，`/topics/{task}`）不是一回事。
+// 题目（板上的赛题，`/tasks/…`）一域：逐个方法钉住它发出去的浏览器请求（方法、地址与
+// 查询、鉴权头、JSON/多分体正文），并核对载荷契约 —— JSON 调用直接给 payload，无载荷命令
+// 给显式成功值。这些端点在**新 origin**（`newer`），与 `@/api/tasks`（房间任务，
+// `/topics/{task}`）不是一回事。钉的是浏览器可见的请求，不是 axios 配置或包装源码。
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
 import {
-  compareRequests,
   type ContractCase,
   contractEnvironment,
+  contractRequest,
   envelope,
   newer,
   server,
   uploadFile,
-} from './migrationContract.spec.helper'
+} from './requestContract.spec.helper'
 
 contractEnvironment()
 
-/** 一个方法一例。老新两个命名空间方法名相同，`name` 拿去两边取同一支。 */
+/** 一个方法一例。`name` 是 `TaskBoardApi` 上的方法名，`test.args` 原样传给它。 */
 const cases: { label: string; name: string; test: ContractCase }[] = [
   {
     label: 'confirmFromPdf',
@@ -229,13 +228,10 @@ const cases: { label: string; name: string; test: ContractCase }[] = [
 
 describe('题目 browser contract', () => {
   it.each(cases)('$label preserves the request and returns the payload', async ({ name, test }) => {
-    const { TasksApi: old } = await import('@/network/api/tasks')
     const { TaskBoardApi: next } = await import('./taskBoard')
     const args = name === 'uploadAttachment' ? [42, uploadFile()] : test.args
-    await compareRequests(
-      test,
-      () => (old[name as keyof typeof old] as (...args: unknown[]) => Promise<unknown>)(...args),
-      () => (next[name as keyof typeof next] as (...args: unknown[]) => Promise<unknown>)(...args)
+    await contractRequest(test, () =>
+      (next[name as keyof typeof next] as (...args: unknown[]) => Promise<unknown>)(...args)
     )
   })
 
@@ -259,15 +255,11 @@ describe('题目 browser contract', () => {
         return HttpResponse.json(envelope({ drafts: [] }, 201), { status: 201 })
       })
     )
-    const { TasksApi: old } = await import('@/network/api/tasks')
     const { TaskBoardApi: next } = await import('./taskBoard')
     const data = { spaceId: 7, file: uploadFile(), templateIndex: 2, maxTasks: 3, categoryId: 4, submitterType: 'USER' }
-    const oldRes = await old.previewFromPdf(data as never)
-    const nextRes = await next.previewFromPdf(data as never)
-    expect(oldRes.data).toEqual({ drafts: [] })
-    expect(nextRes).toEqual({ drafts: [] })
-    expect(captured).toHaveLength(2)
-    expect(captured[0]).toEqual(captured[1])
+    const res = await next.previewFromPdf(data as never)
+    expect(res).toEqual({ drafts: [] })
+    expect(captured).toHaveLength(1)
     expect(captured[0]).toEqual([
       ['spaceId', '7'],
       ['file', { name: 'notes.pdf', type: 'application/pdf', bytes: [...new TextEncoder().encode('%PDF-1.7')] }],
