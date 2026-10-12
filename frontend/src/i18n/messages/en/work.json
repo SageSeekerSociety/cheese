@@ -2137,11 +2137,17 @@
       "retry": "Retry",
       "writeMyself": "Write it myself"
     },
+    "source": {
+      "channel": "From a message in #{title}",
+      "thread": "From a thread in #{title}",
+      "task": "From the task “{title}”",
+      "quote": "{name}: {text}",
+      "byPerson": "Created by {name}, not from a conversation",
+      "byAgent": "Created by {name}; which message it came from was not recorded",
+      "unknown": "Where this task came from was not recorded"
+    },
     "related": {
       "title": "Related",
-      "fromThread": "Original discussion · {count} replies in the thread",
-      "fromChannel": "Original discussion · channel",
-      "quote": "{name}: {text}",
       "untitled": "Untitled doc",
       "by": "{name}"
     },
