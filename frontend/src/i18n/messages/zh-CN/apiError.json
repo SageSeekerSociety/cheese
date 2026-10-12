@@ -723,6 +723,7 @@
   "docEditHitsSuggestion": "第 {n} 处修改碰到了还没处理的修改建议，等它被接受或拒绝后再改",
   "docEditCannotApply": "第 {n} 处修改无法应用",
   "docEditContentRefused": "第 {n} 处修改：{reason}",
+  "docReplaceHitsSuggestions": "文档里还有 {n} 处别人留下、还没处理的修改建议，整份覆盖会连它们一起丢掉。先让人处理这些建议，或者改用 cheese_doc_edit 逐处修改。",
   "requiredCheckShape": "每条必跑检查要写成 {shape}",
   "migrationOwnerUnnamed": "(没写主人)",
   "gatewayAdminHttpStatus": "网关返回 HTTP {status}",

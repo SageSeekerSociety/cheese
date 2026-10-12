@@ -723,6 +723,7 @@
   "docEditHitsSuggestion": "Edit {n} touches a suggestion that hasn't been handled yet. Wait until it's accepted or rejected, then edit",
   "docEditCannotApply": "Edit {n} can't be applied",
   "docEditContentRefused": "Edit {n}: {reason}",
+  "docReplaceHitsSuggestions": "The document still has {n} unhandled suggestion(s) left by someone; replacing the whole document would drop them. Have them handled first, or change it passage by passage with cheese_doc_edit.",
   "requiredCheckShape": "Write each required check as {shape}",
   "migrationOwnerUnnamed": "(no owner given)",
   "gatewayAdminHttpStatus": "The gateway returned HTTP {status}",

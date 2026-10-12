@@ -7,6 +7,9 @@ change is made or only proposed depends on who asked for it.
   rewriting what a person wrote becomes a suggestion; adding new text, or
   changing what the agent itself wrote, is still made directly.
 - A person editing a passage (restoring one change) edits as themselves.
+- A change that lands on a pending suggestion: one an agent seat left is
+  dropped and the change goes in, one a person left is refused. The same holds
+  for a whole-document write (cheese_doc_set), which drops every suggestion.
 
 The collaboration service is the stand-in in tests/support/collab.py.
 """
@@ -16,6 +19,7 @@ import uuid
 from datetime import UTC, datetime
 
 from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.living_doc import collab
 from tests.integration.conftest import (
     open_task,
     room_agent_seat,
@@ -225,4 +229,88 @@ def test_a_passage_that_is_not_there_changes_nothing_and_says_which(client):
     error = response.json()["error"]
     assert error["data"]["index"] == 1
     assert "第 2 处" in error["message"]
+    assert _doc(client, task)["content"] == before["content"]
+
+
+def test_an_agent_edit_over_its_own_pending_suggestion_drops_it(client):
+    """A seat left a suggestion and is gone; the next turn changes that passage.
+    The change goes in and the stale suggestion goes with it — refusing would
+    leave the passage uneditable until a person decided."""
+    task, seat, agent = _document(client)
+    _turn_started_by(client, task, seat, "system")
+    proposed = _edit(client, task, agent, ("讲范围", "讲边界"), reason="范围这个词太宽")
+    assert proposed.status_code == 200, proposed.text
+    assert proposed.json()["data"]["mode"] == "suggest"
+    assert _doc(client, task)["pending_suggestions"]
+
+    _turn_started_by(client, task, seat, "alice")
+    response = _edit(client, task, agent, ("讲范围", "讲边界和不做的事"))
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["mode"] == "direct"
+    doc = _doc(client, task)
+    assert "讲边界和不做的事" in doc["content"]
+    assert doc["pending_suggestions"] == []
+
+
+def test_an_agent_edit_over_a_persons_pending_suggestion_is_refused(client):
+    """A person's suggestion waits for their decision: an agent's change to
+    that passage is refused, and the suggestion stays."""
+    task, seat, agent = _document(client)
+    before = _doc(client, task)
+    name = collab.document_name(uuid.UUID(document_of(client, task)))
+    client.collab.pending[name] = [
+        {"id": "alice:1", "author": "alice", "old": "讲范围", "new": "讲边界"}
+    ]
+    _turn_started_by(client, task, seat, "alice")
+
+    response = _edit(client, task, agent, ("讲范围", "讲边界和不做的事"))
+
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["data"]["reason"] == "suggested"
+    assert _doc(client, task)["content"] == before["content"]
+    assert client.collab.pending[name] == [
+        {"id": "alice:1", "author": "alice", "old": "讲范围", "new": "讲边界"}
+    ]
+
+
+def test_a_whole_document_write_goes_through_when_only_a_seats_suggestion_pends(client):
+    """An agent's own suggestion is not a person's to decide: cheese_doc_set
+    still replaces the whole document, dropping it."""
+    task, seat, agent = _document(client)
+    _turn_started_by(client, task, seat, "system")
+    assert _edit(client, task, agent, ("讲范围", "讲边界")).status_code == 200
+    now = _doc(client, task)
+    assert now["pending_suggestions"]
+
+    written = client.put(
+        _path(client, task),
+        json={"content": "整份重写。", "expected_version": now["doc_version"]},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert written.status_code == 200, written.text
+    doc = _doc(client, task)
+    assert doc["content"] == "整份重写。"
+    assert doc["pending_suggestions"] == []
+
+
+def test_a_whole_document_write_is_refused_while_a_persons_suggestion_pends(client):
+    """cheese_doc_set would drop a suggestion a person is still deciding on:
+    it is refused, and the document is left alone."""
+    task, _, _ = _document(client)
+    before = _doc(client, task)
+    name = collab.document_name(uuid.UUID(document_of(client, task)))
+    client.collab.pending[name] = [
+        {"id": "alice:1", "author": "alice", "old": "讲范围", "new": "讲边界"}
+    ]
+
+    refused = client.put(
+        _path(client, task),
+        json={"content": "整份重写。", "expected_version": before["doc_version"]},
+        headers=session_auth_headers("alice"),
+    )
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"]["data"]["reason"] == "suggestions"
     assert _doc(client, task)["content"] == before["content"]

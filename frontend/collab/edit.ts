@@ -15,8 +15,10 @@
 //      blocks it touches must read the same in R as in the parse of md, or the
 //      change cannot be placed (409 unstable): Markdown does not always round-
 //      trip, and a passage that does not is not one we can locate safely.
-//   4. The change must not touch a pending suggestion (409 suggested): someone
-//      has to decide that one first.
+//   4. The change must not touch a pending suggestion (409 suggested), unless
+//      an agent is making the change and the suggestion it lands on is one an
+//      agent seat left: that suggestion is dropped and the change goes in. A
+//      suggestion a person left still waits for its decision.
 //   5. The change is replayed on the live document at the matching place,
 //      either as it is or, for a suggestion, as tracked insertions and
 //      deletions under one suggestion id per edit.
@@ -28,7 +30,7 @@
 import type { Node as PMNode, Slice } from '@tiptap/pm/model'
 import type { Mapping } from '@tiptap/pm/transform'
 
-import { revertSuggestions, transformToSuggestionTransaction } from '@handlewithcare/prosemirror-suggest-changes'
+import { revertSuggestion, revertSuggestions, transformToSuggestionTransaction } from '@handlewithcare/prosemirror-suggest-changes'
 import { EditorState, type Transaction } from '@tiptap/pm/state'
 import { Transform } from '@tiptap/pm/transform'
 import { updateYFragment } from '@tiptap/y-tiptap'
@@ -41,6 +43,7 @@ import {
   nodeMarkdown,
   parseMarkdown,
   pendingSuggestions,
+  suggestionAuthor,
   suggestionId,
   withoutSuggestions,
 } from '../src/lib/docSchema'
@@ -165,24 +168,42 @@ function locate(before: PMNode, after: PMNode, r: PMNode): Located | 'unstable' 
   return { from, to, slice: after.slice(start, endB) }
 }
 
-function suggestionAt(doc: PMNode, from: number, to: number): boolean {
-  let found = false
+/** The ids of the pending suggestions the range `[from, to)` lands on. */
+function suggestionsAt(doc: PMNode, from: number, to: number): Set<string> {
+  const ids = new Set<string>()
   if (from < to) {
     doc.nodesBetween(from, to, (node) => {
-      if (found) return false
-      if (node.marks.some((mark) => SUGGESTION_MARKS.has(mark.type.name))) found = true
-      return !found
+      for (const mark of node.marks) {
+        if (SUGGESTION_MARKS.has(mark.type.name)) ids.add(String(mark.attrs.id))
+      }
+      return true
     })
-    return found
+    return ids
   }
-  // An insertion point inside a suggested passage.
+  // An insertion point inside a suggested passage: the same suggestion on both
+  // sides of it.
   const $pos = doc.resolve(from)
-  const ids = (node: PMNode | null | undefined) =>
-    new Set(
-      (node?.marks ?? []).filter((mark) => SUGGESTION_MARKS.has(mark.type.name)).map((mark) => String(mark.attrs.id))
-    )
-  const before = ids($pos.nodeBefore)
-  return [...ids($pos.nodeAfter)].some((id) => before.has(id))
+  const before = new Set<string>()
+  for (const mark of $pos.nodeBefore?.marks ?? []) {
+    if (SUGGESTION_MARKS.has(mark.type.name)) before.add(String(mark.attrs.id))
+  }
+  for (const mark of $pos.nodeAfter?.marks ?? []) {
+    if (SUGGESTION_MARKS.has(mark.type.name) && before.has(String(mark.attrs.id))) ids.add(String(mark.attrs.id))
+  }
+  return ids
+}
+
+/** The document with the marks of the given suggestions dropped, each one
+ *  rejected: an insertion's text goes, a deletion's stays, a modification
+ *  returns to its previous value. */
+function revertMarks(doc: PMNode, ids: Iterable<string>): PMNode {
+  let out = doc
+  for (const id of ids) {
+    revertSuggestion(id)(EditorState.create({ doc: out }), (tr) => {
+      out = tr.doc
+    })
+  }
+  return out
 }
 
 /** The change as a suggestion, or null when it cannot be one. A suggestion
@@ -205,55 +226,93 @@ function suggestAs(tr: Transaction, state: EditorState, id: string): PMNode | nu
   return doc
 }
 
-/** The live document with `edits` applied by `actor`, or why they cannot be. */
-export function applyEdits(live: PMNode, edits: Edit[], mode: EditMode, actor: string): EditResult {
+/** Whether an agent making the change may drop the suggestions it lands on:
+ *  only an agent seat's own suggestions, never a person's. */
+function mayDrop(
+  touched: Set<string>,
+  editorIsAgent: boolean | undefined,
+  agentAuthors: ReadonlySet<string>
+): boolean {
+  if (touched.size === 0) return true
+  if (editorIsAgent !== true) return false
+  return [...touched].every((id) => agentAuthors.has(suggestionAuthor(id)))
+}
+
+/** The live document with `edits` applied by `actor`, or why they cannot be.
+ *
+ * `context.editorIsAgent`: the writer is an agent seat. `context.agentAuthors`:
+ * the handles among the document's pending suggestions that are agent seats —
+ * the backend judges them (a suggestion's author is the part of its id before
+ * the colon). An agent's change that lands on one of those drops it and goes in;
+ * one that lands on a person's suggestion is still refused (409 ``suggested``). */
+export function applyEdits(
+  live: PMNode,
+  edits: Edit[],
+  mode: EditMode,
+  actor: string,
+  context: { editorIsAgent?: boolean; agentAuthors?: ReadonlySet<string> } = {}
+): EditResult {
   let working = live
   const applied: AppliedEdit[] = []
+  const agentAuthors = context.agentAuthors ?? new Set<string>()
   for (const [index, edit] of edits.entries()) {
     if (!edit.old) return { ok: false, status: 422, body: { error: 'edit', index, reason: 'empty' } }
-    const { doc: r, back } = readable(working)
-    const md = nodeMarkdown(r)
-    const found = count(md, edit.old)
-    if (found !== 1) {
-      return {
-        ok: false,
-        status: 422,
-        body: { error: 'edit', index, reason: found === 0 ? 'not_found' : 'ambiguous' },
+    // An agent's change may drop the suggestions it lands on; each attempt drops
+    // at least one, so this ends.
+    for (let attempt = 0; ; attempt++) {
+      const { doc: r, back } = readable(working)
+      const md = nodeMarkdown(r)
+      const found = count(md, edit.old)
+      if (found !== 1) {
+        return {
+          ok: false,
+          status: 422,
+          body: { error: 'edit', index, reason: found === 0 ? 'not_found' : 'ambiguous' },
+        }
       }
-    }
-    const next = md.replace(edit.old, () => edit.new)
-    const problem = checkMarkdownWrite(next)
-    if (problem) {
-      return {
-        ok: false,
-        status: 422,
-        body: { error: 'content', index, message: problem.message, line: problem.line },
+      const next = md.replace(edit.old, () => edit.new)
+      const problem = checkMarkdownWrite(next)
+      if (problem) {
+        return {
+          ok: false,
+          status: 422,
+          body: { error: 'content', index, message: problem.message, line: problem.line },
+        }
       }
-    }
-    const located = locate(parseMarkdown(md), parseMarkdown(next), r)
-    if (located === 'unstable') return { ok: false, status: 409, body: { error: 'edit', index, reason: 'unstable' } }
-    if (located === null) {
-      applied.push({ old: edit.old, new: edit.new })
-      continue
-    }
-    // Back from R to the live document: a range starts after, and ends
-    // before, a suggested insertion R does not have.
-    const from = back ? back.map(located.from, 1) : located.from
-    const to = located.to === located.from ? from : back ? back.map(located.to, -1) : located.to
-    if (to < from || suggestionAt(working, from, to)) {
-      return { ok: false, status: 409, body: { error: 'edit', index, reason: 'suggested' } }
-    }
-    const state = EditorState.create({ doc: working })
-    const tr = state.tr.replace(from, to, located.slice)
-    if (mode === 'suggest') {
-      const id = suggestionId(actor)
-      const suggested = suggestAs(tr, state, id)
-      if (!suggested) return { ok: false, status: 422, body: { error: 'edit', index, reason: 'structure' } }
-      working = suggested
-      applied.push({ old: edit.old, new: edit.new, suggestion_id: id })
-    } else {
-      working = tr.doc
-      applied.push({ old: edit.old, new: edit.new })
+      const located = locate(parseMarkdown(md), parseMarkdown(next), r)
+      if (located === 'unstable') return { ok: false, status: 409, body: { error: 'edit', index, reason: 'unstable' } }
+      if (located === null) {
+        applied.push({ old: edit.old, new: edit.new })
+        break
+      }
+      // Back from R to the live document: a range starts after, and ends
+      // before, a suggested insertion R does not have.
+      const from = back ? back.map(located.from, 1) : located.from
+      const to = located.to === located.from ? from : back ? back.map(located.to, -1) : located.to
+      if (from > to) return { ok: false, status: 409, body: { error: 'edit', index, reason: 'suggested' } }
+      const touched = suggestionsAt(working, from, to)
+      if (touched.size) {
+        if (attempt >= 8 || !mayDrop(touched, context.editorIsAgent, agentAuthors)) {
+          return { ok: false, status: 409, body: { error: 'edit', index, reason: 'suggested' } }
+        }
+        // Drop the stale suggestions, then place the change on the document
+        // they were no longer part of.
+        working = revertMarks(working, touched)
+        continue
+      }
+      const state = EditorState.create({ doc: working })
+      const tr = state.tr.replace(from, to, located.slice)
+      if (mode === 'suggest') {
+        const id = suggestionId(actor)
+        const suggested = suggestAs(tr, state, id)
+        if (!suggested) return { ok: false, status: 422, body: { error: 'edit', index, reason: 'structure' } }
+        working = suggested
+        applied.push({ old: edit.old, new: edit.new, suggestion_id: id })
+      } else {
+        working = tr.doc
+        applied.push({ old: edit.old, new: edit.new })
+      }
+      break
     }
   }
   // The replayed blocks come from Markdown, without comment marks: give them back.

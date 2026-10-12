@@ -6,7 +6,14 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { Transform } from '@tiptap/pm/transform'
 import { describe, expect, it } from 'vitest'
 
-import { COMMENT_ANCHOR, commentAnchors, nodeMarkdown, parseMarkdown, withoutSuggestions } from '../src/lib/docSchema'
+import {
+  COMMENT_ANCHOR,
+  commentAnchors,
+  nodeMarkdown,
+  parseMarkdown,
+  pendingSuggestions,
+  withoutSuggestions,
+} from '../src/lib/docSchema'
 
 import { applyEdits } from './edit'
 
@@ -36,6 +43,47 @@ describe('a comment through the agent’s edit', () => {
     const result = applyEdits(live, [{ old: '五百万行', new: '一千万条' }], 'direct', 'cheese')
     if (!result.ok) throw new Error(JSON.stringify(result))
     expect(marked(result.doc, 't1')).toEqual([])
+  })
+})
+
+describe('an agent’s change over a pending suggestion', () => {
+  function proposedBy(actor: string): PMNode {
+    const live = parseMarkdown('第一段讲目标。\n')
+    const result = applyEdits(live, [{ old: '讲目标', new: '讲目的' }], 'suggest', actor)
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    return result.doc
+  }
+
+  it('drops a suggestion an agent seat left, and goes in', () => {
+    const live = proposedBy('previous-seat')
+    expect(pendingSuggestions(live)).toEqual([expect.objectContaining({ author: 'previous-seat' })])
+    const result = applyEdits(live, [{ old: '第一段讲目标。', new: '第一段讲任务。' }], 'direct', 'cheese-agent', {
+      editorIsAgent: true,
+      agentAuthors: new Set(['previous-seat', 'cheese-agent']),
+    })
+    if (!result.ok) throw new Error(JSON.stringify(result))
+    expect(nodeMarkdown(result.doc)).toBe('第一段讲任务。')
+    expect(pendingSuggestions(result.doc)).toEqual([])
+  })
+
+  it('is refused where a person’s suggestion is pending, and drops nothing', () => {
+    const live = proposedBy('teacher')
+    const result = applyEdits(live, [{ old: '第一段讲目标。', new: '第一段讲任务。' }], 'direct', 'cheese-agent', {
+      editorIsAgent: true,
+      agentAuthors: new Set(['cheese-agent']),
+    })
+    expect(result).toMatchObject({ ok: false, status: 409, body: { error: 'edit', index: 0, reason: 'suggested' } })
+    expect(nodeMarkdown(withoutSuggestions(live))).toBe('第一段讲目标。')
+    expect(pendingSuggestions(live)).toEqual([expect.objectContaining({ author: 'teacher' })])
+  })
+
+  it('a person’s change is refused, even over an agent’s suggestion', () => {
+    const live = proposedBy('cheese-agent')
+    const result = applyEdits(live, [{ old: '第一段讲目标。', new: '第一段讲任务。' }], 'direct', 'xiaowang', {
+      editorIsAgent: false,
+      agentAuthors: new Set(['cheese-agent']),
+    })
+    expect(result).toMatchObject({ ok: false, status: 409, body: { error: 'edit', index: 0, reason: 'suggested' } })
   })
 })
 

@@ -114,6 +114,7 @@ async def replace(
     actor: str,
     operation: dict | None = None,
     check: bool = False,
+    agent_authors: list[str] | None = None,
 ) -> dict:
     """Make the live document read ``content``, as ``actor``.
 
@@ -128,6 +129,10 @@ async def replace(
     ``check`` is for a write in Markdown from outside an editor: the service
     refuses it, unapplied, when converting it would lose visible text, and says
     where and how to fix it (UnprocessableEntityError, ``data.line``).
+    ``agent_authors`` are the pending suggestions' authors that are agent seats
+    (the caller judges them, see ``app.api.doc_edits``): a whole-document write
+    is refused while a person's suggestion is still pending, because it would
+    drop it silently; an agent's own pending suggestions are dropped as before.
     Returns what the store answered.
     """
     url = (
@@ -146,6 +151,7 @@ async def replace(
                     "actor": actor,
                     "operation": operation,
                     "check": check,
+                    "agent_authors": agent_authors or [],
                 },
                 headers={"Authorization": f"Bearer {_key('internal')}"},
             )
@@ -155,6 +161,11 @@ async def replace(
     if response.status_code == 422 and body.get("error") == "content":
         raise UnprocessableEntityError(body["message"], data={"line": body.get("line")})
     if response.status_code == 409:
+        if body.get("error") == "suggestions":
+            raise ConflictError(
+                say("docReplaceHitsSuggestions", n=body.get("count", 0)),
+                data={"reason": "suggestions", "count": body.get("count", 0)},
+            )
         if body.get("error") == "operation":
             raise ConflictError(body.get("message") or say("docOperationConflict"))
         raise ConflictError(
@@ -186,6 +197,8 @@ async def edit(
     requested_by: str | None = None,
     mode: str = "direct",
     reason: str | None = None,
+    editor_is_agent: bool = False,
+    agent_authors: list[str] | None = None,
 ) -> dict:
     """Change passages of the live document, as ``actor``.
 
@@ -196,8 +209,12 @@ async def edit(
     edit and why (UnprocessableEntityError for one the writer has to restate,
     ConflictError for one blocked by the document's state), ``data.index``
     counting from 0. ``requested_by`` is the person the change was made for.
-    Returns ``{"stored": <the store's answer>, "edits": [...]}``, each edit
-    carrying its ``suggestion_id`` in suggest mode.
+    ``editor_is_agent`` and ``agent_authors`` let an agent seat's edit land on
+    text an agent's pending suggestion covers — dropping that suggestion —
+    while a person's suggestion still refuses (``suggested``); the caller
+    judges both (see ``app.api.doc_edits``). Returns
+    ``{"stored": <the store's answer>, "edits": [...]}``, each edit carrying
+    its ``suggestion_id`` in suggest mode.
     """
     url = (
         settings.collab_internal_url.rstrip("/")
@@ -215,6 +232,8 @@ async def edit(
                     "requested_by": requested_by,
                     "mode": mode,
                     "reason": reason,
+                    "editor_is_agent": editor_is_agent,
+                    "agent_authors": agent_authors or [],
                 },
                 headers={"Authorization": f"Bearer {_key('internal')}"},
             )
