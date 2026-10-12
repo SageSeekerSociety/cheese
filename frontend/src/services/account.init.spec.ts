@@ -20,6 +20,12 @@ vi.mock('@/api/users', () => ({
   },
 }))
 
+// `account.ts` says something on screen when the server ends a sign-in. Nothing
+// here takes that path, but importing the module pulls vuetify-sonner in with
+// it, and the cold start that follows runs the first test's import past its 5s
+// timeout. Stubbed, the way `ErrorHandler.spec.ts` stubs it.
+vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
+
 // Stands in for the browser's channel between tabs. A fresh one per test: the
 // real one would carry a message from one test's service into the next's.
 let tabs: Set<FakeChannel>
