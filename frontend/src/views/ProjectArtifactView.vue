@@ -21,6 +21,7 @@ import { artifactVersionFileUrl, compareArtifactVersions, downloadFile, getProje
 import ArtifactVersionPreview from '../components/ArtifactVersionPreview.vue'
 import { t } from '../i18n'
 import { relTime } from '../lib/relTime'
+import { fmtFileSize } from '../lib/usageFormat'
 
 import ArtifactChanges from './artifact/ArtifactChanges.vue'
 import ArtifactCompare from './artifact/ArtifactCompare.vue'
@@ -208,12 +209,6 @@ const parent = computed(() =>
 const titles = usePageTitleStore()
 watch(title, (value) => titles.setDynamicTitle(value, 'project-artifact'), { immediate: true })
 
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
-}
-
 /** 这一版是什么：第几版、什么时候交的、谁认的、是哪一份。 */
 const facts = computed(() => {
   const now = current.value
@@ -223,7 +218,7 @@ const facts = computed(() => {
     now.delivered_at ? t('tasks.artifact.deliveredAt', { when: relTime(now.delivered_at) }) : '',
     now.decided_by ? t('tasks.artifact.acceptedBy', { who: now.decided_by }) : '',
     now.filename ?? '',
-    now.bytes !== null && now.bytes !== undefined ? fmtBytes(now.bytes) : '',
+    now.bytes !== null && now.bytes !== undefined ? fmtFileSize(now.bytes, 1) : '',
   ]
     .filter(Boolean)
     .join(' · ')

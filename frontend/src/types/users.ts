@@ -16,6 +16,11 @@ export type User = {
   // Only on the signed-in person's own record: the IANA time zone of the
   // browser they last used, null until one reports it; their quiet hours run on it.
   timezone?: string | null
+  // Only on the signed-in person's own record: when they finished or skipped the
+  // new-user guide (null until then), and what they told it about themselves.
+  onboarded_at?: string | null
+  work_role?: string | null
+  organization?: string | null
 }
 
 // 实名认证状态

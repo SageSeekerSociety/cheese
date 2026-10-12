@@ -40,11 +40,9 @@ async def get_discussion_service(db=Depends(get_db)) -> DiscussionService:
     reaction_service = DiscussionReactionService(
         reaction_repo=reaction_repo, reaction_type_repo=reaction_type_repo
     )
-    profile_repo = UserProfileRepository(session=db)
     return DiscussionService(
         repo=discussion_repo,
         reaction_service=reaction_service,
-        profile_repo=profile_repo,
         session=db,
     )
 

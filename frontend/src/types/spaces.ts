@@ -256,6 +256,23 @@ export type SpaceMyPublishedTasks = {
   tasks: SpaceMyPublishedTask[]
 }
 
+// ---- 空间分析 · 告警（`SpacesApi.getAnalyticsAlerts` 的形状）--------------------
+//
+// 原来是 `@/network/api/spaces/types` 里头那一组分析类型里的一格；挪到领域类型这儿，
+// 是因为「告警」那一格拆出来的半张画面（`views/spaces/detail/analytics/AlertsView.vue`）
+// 只认 props、不连网络层，不能从 `@/network` 取类型。网络层再从这儿转出去，对外形状
+// 一个字没变。
+
+/** 管理员看板「告警」那一格里的几个待办计数。 */
+export type SpaceAnalyticsAlerts = {
+  pendingTaskApprovalCount: number
+  pendingParticipantApprovalCount: number
+  pendingSubmissionReviewCount: number
+  stalledTaskCount: number
+  overdueUnreviewedSubmissionCount: number
+  inactivePublisherCount: number
+}
+
 // ---- 空间申请（`SpacesApi.reviews` 的形状）-------------------------------------
 //
 // 原来长在 `@/network/api/spaces/types` 里；挪到领域类型这儿，是因为「空间申请」

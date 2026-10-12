@@ -55,6 +55,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerting
+from app.core.background import PeriodicJobs
+from app.core.config import settings
 from app.core.db import async_session_factory
 from app.core.obs import scrub_secrets
 from app.core.sentences import say
@@ -496,6 +498,12 @@ async def flush_all() -> int:
     occurrences is what makes the record worth keeping.
     """
     return await flush_expired(force=True)
+
+
+def register_periodic_jobs(jobs: PeriodicJobs) -> None:
+    jobs.register(
+        "backend error flush", settings.backend_error_flush_interval_s, flush_expired
+    )
 
 
 async def report_request_failure(

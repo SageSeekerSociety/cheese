@@ -11,6 +11,8 @@ import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -190,7 +192,7 @@ async function confirmHandOver() {
 
 <template>
   <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
-    <div class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
+    <div v-guide-anchor="'task-page'" class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
       <div class="task-header__text">
         <button v-if="mdAndUp" type="button" class="task-header__room t-title" @click="emit('open-room')">
           # {{ topicTitle(room) }}
@@ -373,6 +375,7 @@ async function confirmHandOver() {
 
       <BaseButton
         v-if="task && isOwner && isOpen && !task.started_at"
+        v-guide-anchor="'task-start'"
         kind="primary"
         size="sm"
         :loading="starting"

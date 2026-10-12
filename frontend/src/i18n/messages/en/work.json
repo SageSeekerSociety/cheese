@@ -32,7 +32,6 @@
   },
   "allSpaces": "All spaces",
   "emptyTitle": "No {project} yet",
-  "firstProjectName": "{name}'s project",
   "joinAction": "Join with a code",
   "joinBody": "The space's creator provides the invite code",
   "joinCancel": "Cancel",

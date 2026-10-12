@@ -191,14 +191,9 @@ export type SpaceAnalyticsOverview = {
   trends: SpaceAnalyticsTrends
 }
 
-export type SpaceAnalyticsAlerts = {
-  pendingTaskApprovalCount: number
-  pendingParticipantApprovalCount: number
-  pendingSubmissionReviewCount: number
-  stalledTaskCount: number
-  overdueUnreviewedSubmissionCount: number
-  inactivePublisherCount: number
-}
+// 「告警」那一格拆出来的半张画面只认 props、不连网络层，不能从这儿取类型。类型挪到
+// 领域类型 `@/types/spaces.ts`，这里原样转出去，对外的 import 路径不变。
+export type { SpaceAnalyticsAlerts } from '@/types'
 
 export type SpaceAnalyticsPublisherMetrics = {
   publisherId: number

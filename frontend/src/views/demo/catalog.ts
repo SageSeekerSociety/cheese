@@ -70,6 +70,7 @@ import { RAIL_ENTRIES } from './catalogRail'
 import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
+import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
 import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
@@ -592,6 +593,10 @@ export const CATALOG: CatalogEntry[] = [
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。
   ...SCENES_MISC_ENTRIES,
+  // 第三批拆出来的画面（管理员看板告警、小队知识库、后台成员管理）在自己的文件里：
+  // `catalogScenesMisc2.ts`，数据在 `catalogScenesMisc2Fixtures.ts`（知识库那几条复用
+  // `catalogKnowledgeFixtures.ts`）。
+  ...SCENES_MISC2_ENTRIES,
   ...SCENES_SPACES_ENTRIES,
   ...SCENES_SPACES_DETAIL_ENTRIES,
   ...SCENES_WORKSPACE_ENTRIES,

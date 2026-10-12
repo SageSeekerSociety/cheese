@@ -1312,7 +1312,7 @@ class ChatService(SessionRecovery):
         """巡检一圈：哪些项目该整理记忆了，逐个跑（`periodic_jobs` 里的一个）。
 
         这一簇连同它按房间记的那四份状态搬去了 `memory_ledger.py`——判据、串行
-        和「派到哪个会话上」的文档都在那里。这里留一行委托：`core/background.py`
+        和「派到哪个会话上」的文档都在那里。这里留一行委托：`app/domain/agent/periodic.py`
         的周期任务和测试都按这个入口叫它。
         """
         return await self._memory.sweep()

@@ -15,7 +15,7 @@
 ## 谁来按铃
 
 它是个定时任务，不是进程内的闹钟：一封邮件按天、按周发，不需要谁一直醒着。仓库里
-的钟在 `app.core.background.periodic_jobs`（`notification_digest_interval_s`，默认
+的钟在 `app.periodic_jobs.periodic_jobs`（`notification_digest_interval_s`，默认
 每小时看一次，每次只处理攒够周期的人）；同一件事也可以直接由 cron 调这个入口：
 
     python -c "import anyio; from app.core.db import SessionFactory; \\

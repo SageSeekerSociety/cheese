@@ -129,11 +129,25 @@ def _sweep(client) -> dict:
 
     在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：扫底会 `submit`
     叫醒芝士的那一轮，它得落在 work runner 所在的那个循环上——生产上这一轮也正
-    是从那里跑的（`app/core/background.py` 的 "gate sweep"）。
+    是从那里跑的（应用周期接线中的 "gate sweep"）。
     """
-    from app.core import background
+    from app.api.deps import get_work_runner
+    from app.domain.review.periodic import sweep_abandoned_gates
+    from app.periodic_jobs import gate_nudge_factory
 
-    result = client.portal.call(background.sweep_abandoned_gates, _chat_service())
+    chat = _chat_service()
+
+    async def sweep():
+        return await sweep_abandoned_gates(
+            chat.session_factory,
+            nudge_factory=gate_nudge_factory(
+                chat=chat,
+                sessions=chat.session_factory,
+                get_runner=get_work_runner,
+            ),
+        )
+
+    result = client.portal.call(sweep)
     return {**result, "condemned": [str(cid) for cid in result["condemned"]]}
 
 

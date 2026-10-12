@@ -27,7 +27,7 @@ the pass logs which models those were. The table is read once per pass; when
 the gateway is configured but cannot be asked, the pass lands nothing and the
 checkpoint stays put, so an outage never makes a stretch of the log free.
 
-``ingest_once`` runs on its own interval (``app/core/background.py``) when
+``ingest_once`` runs on its own interval (``app/domain/usage/periodic.py``) when
 ``SUBSCRIPTION_USAGE_LOG`` is set.
 """
 

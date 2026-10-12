@@ -3,7 +3,7 @@
 从 `chat.py` 搬出来的那一簇——`_remember_memory_turn` / `_memory_scopes` /
 `_sync_memory*` / `sweep_memory_dreams` / `run_memory_dream` 与那两条说进总览的话，
 连同它们按房间记的四份状态。`ChatService` 上留 `sweep_memory_dreams` /
-`run_memory_dream` 两行委托，调用点（`core/background.py` 的周期任务、测试）一格
+`run_memory_dream` 两行委托，调用点（`agent/periodic.py` 的周期任务、测试）一格
 没动；`_output_tokens_since` 照旧从 `chat.py` 导得出来（有一条测试在那里导它），
 其余名字都从本模块取。
 

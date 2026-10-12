@@ -12,7 +12,8 @@ which are retired.
 - **ORM**: SQLAlchemy 2.x (async)
 - **Database**: PostgreSQL 17
 - **Configuration**: Pydantic v2 + pydantic-settings
-- **Periodic jobs**: in-process interval loops (`app/core/background.py`)
+- **Periodic jobs**: owning domains register interval loops, assembled in
+  `app/periodic_jobs.py`; `app/core/background.py` runs them
 - **Package Manager**: uv
 
 ## Quick Start

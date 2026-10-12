@@ -21,7 +21,7 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -50,6 +50,7 @@ from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
+from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
@@ -63,6 +64,7 @@ from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
     ProjectOut,
+    StartStepsOut,
 )
 from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
@@ -604,6 +606,22 @@ async def project_progress(
     )
     rows = [h.as_dict() for h in happened]
     return ok(page(rows, len(rows)))
+
+
+@router.get("/{project_id}/start-steps", **typed_response(StartStepsOut))
+async def project_start_steps(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """What the new-user guide needs to know about the caller in this project
+    (`app/domain/onboarding/start.py`): handed 芝士 something, got a reply, had a
+    delivery accepted."""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await ProjectService(db).get_or_404(project_id)
+    steps = await start_steps(db, project_id, actor.handle)
+    return ok(StartStepsOut.model_validate(steps, from_attributes=True).model_dump())
 
 
 @router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])

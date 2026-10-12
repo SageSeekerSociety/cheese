@@ -251,6 +251,7 @@
     "remove_column space.course_modules",
     "remove_column tasks.transcripts_archived_at",
     "remove_column topics.transcripts_archived_at",
+    "remove_column user.first_project_at",
     "remove_constraint agent_bindings.uq_agent_binding_user",
     "remove_index agent_turn_inputs.ix_agent_turn_inputs_turn_id",
     "remove_index agent_types_archive.ix_agent_types_space_id",

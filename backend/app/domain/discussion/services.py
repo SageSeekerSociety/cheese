@@ -13,8 +13,7 @@ from app.domain.discussion.repositories import (
     _content_str_to_json,
 )
 from app.domain.notification.models import NotificationType
-from app.domain.user.repositories import UserProfileRepository
-from app.domain.user.services import handles_by_ids
+from app.domain.user.services import handles_by_ids, user_service
 
 
 class DiscussionService:
@@ -22,12 +21,11 @@ class DiscussionService:
         self,
         repo: DiscussionRepository,
         reaction_service: DiscussionReactionService,
-        profile_repo: UserProfileRepository,
         session: AsyncSession,
     ) -> None:
         self._repo = repo
         self._reaction_service = reaction_service
-        self._profile_repo = profile_repo
+        self._user_service = user_service(session)
         self._session = session
 
     async def create_discussion(
@@ -317,12 +315,12 @@ class DiscussionService:
         user_map: dict[int, dict] = {}
         if not user_ids:
             return user_map
-        profiles = await self._profile_repo.get_profiles_by_user_ids(list(user_ids))
+        profiles = await self._user_service.get_users_by_ids(list(user_ids))
         # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了
         # 全局默认（见 UserProfileRepository.chosen_avatar_ids），直接回它会让所有没
         # 挑过头像的人共用同一张脸。没挑过的人不在映射里，这里回 None，画头像的地方
         # 据此画彩色首字母。
-        chosen_avatars = await self._profile_repo.chosen_avatar_ids(list(user_ids))
+        chosen_avatars = await self._user_service.chosen_avatar_ids(list(user_ids))
         for uid in user_ids:
             profile = profiles.get(uid)
             if profile is None:
