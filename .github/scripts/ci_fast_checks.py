@@ -15,6 +15,9 @@ commands and turns each command's report into a verdict nobody can fake:
     an unknown path falls back to the full Vitest run; the related graph is only
     trusted when it has real roots to seed it, and the full run must show both
     i18n guard specs actually executed.
+  * The frontend's parallelism is derived from the memory ceiling the caller
+    passed (vitest_workers), not pinned: a run given a ceiling that backs
+    several forks gets several, and the local default still gets one.
 """
 
 import json
@@ -31,8 +34,51 @@ FRONTEND_META = {
     "frontend/tsconfig.json", "frontend/tsconfig.app.json", "frontend/tsconfig.node.json",
     "backend/openapi.json", ".pre-commit-config.yaml",
 }
-VITEST_FLAGS = ["--maxWorkers=1", "--no-file-parallelism", "--no-passWithNoTests", "--no-allowOnly"]
+VITEST_FLAGS = ["--no-passWithNoTests", "--no-allowOnly"]
+# Sampled group RSS one Vitest fork is allowed. frontend/vite.config.ts sizes
+# its own pool the same way ("a fork peaks at 1.7-2.1 GB": happy-dom plus its
+# own Vuetify/SCSS compile), so the pool a run gets is derived from the memory
+# ceiling it was given rather than pinned to a single worker. 3072 MiB is the
+# local quick tier's ceiling and the work machine's session cap; a CI runner
+# that can back more gets more. It is deliberately generous, which is what
+# leaves the Vitest parent — in the same sampled group — its room: the whole
+# frontend suite at three forks (the 4 vCPU / 16 GiB runner's own pool) peaked
+# at 3580 MiB on 2026-10-12, against a 9216 MiB ceiling and this budget per fork.
+MIB_PER_VITEST_WORKER = 3072
 TSC_CANNOT_JUDGE = 2
+
+
+def _cores():
+    """Affinity-aware CPU count, mirroring the frontend's own pool rule."""
+    if hasattr(os, "process_cpu_count"):
+        return os.process_cpu_count() or 1
+    if hasattr(os, "sched_getaffinity"):
+        return len(os.sched_getaffinity(0)) or 1
+    return os.cpu_count() or 1
+
+
+def vitest_workers(memory_mib):
+    """How many Vitest forks a run with this memory ceiling may start.
+
+    The ceiling is what the caller says this machine can back, so the pool is
+    capped by it: cores minus one (leave a core for the runner), one worker per
+    MIB_PER_VITEST_WORKER, at most 16. The local default (3072 MiB) still
+    yields one worker, which is what the work machine's own session cap allows.
+    """
+    return max(1, min(16, _cores() - 1, memory_mib // MIB_PER_VITEST_WORKER))
+
+
+def vitest_flags(memory_mib):
+    """The Vitest arguments for a run given this memory ceiling.
+
+    A single worker keeps the file-in-process form the tier had while its pool
+    was pinned to one: that is the local default, the run under the work
+    machine's own 3 GiB cap. Several workers means the ceiling backs a pool, so
+    the serial-file pin goes and the pool size is what bounds memory.
+    """
+    workers = vitest_workers(memory_mib)
+    serial = ["--no-file-parallelism"] if workers == 1 else []
+    return [f"--maxWorkers={workers}", *serial, *VITEST_FLAGS]
 
 
 def _narrow_config(root, tmp, ts_files):
@@ -60,8 +106,9 @@ def _narrow_config(root, tmp, ts_files):
     return config
 
 
-def test_plan(root, changed, scope, tmp, conservative=False):
+def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
     plan, omissions = [], []
+    flags = vitest_flags(memory_mib)
     if scope.get("frontend"):
         frontend_paths = [p for p in changed if p.startswith("frontend/")]
         roots = [p.removeprefix("frontend/") for p in frontend_paths
@@ -80,7 +127,7 @@ def test_plan(root, changed, scope, tmp, conservative=False):
         output = tmp / "vitest.json"
         command = ["pnpm", "exec", "vitest"]
         command += ["run"] if full else ["related", "--run", *roots]
-        command += [*VITEST_FLAGS, "--reporter=json", "--outputFile", str(output)]
+        command += [*flags, "--reporter=json", "--outputFile", str(output)]
         evidence = {"kind": "vitest", "path": str(output), "mode": "full" if full else "related", "roots": roots}
         if full:
             # The full run must be shown to have executed the i18n guards, not
@@ -92,7 +139,7 @@ def test_plan(root, changed, scope, tmp, conservative=False):
             # the i18n guard specs explicitly instead of assuming related has them.
             i18n_output = tmp / "i18n.json"
             plan.append({"id": "frontend-i18n", "cwd": root / "frontend",
-                         "command": ["pnpm", "exec", "vitest", "run", *I18N_SPECS, *VITEST_FLAGS,
+                         "command": ["pnpm", "exec", "vitest", "run", *I18N_SPECS, *flags,
                                      "--reporter=json", "--outputFile", str(i18n_output)],
                          "evidence": {"kind": "vitest", "path": str(i18n_output), "required_files": list(I18N_SPECS)}})
         ts_files = [p for p in frontend_paths if p.endswith((".ts", ".tsx", ".vue")) and (root / p).is_file()]
