@@ -11,6 +11,9 @@
    重算会给同一团环换一套切边。实测在这个仓库上,C3 重算会丢掉 21 条「导入仍在」
    的冻结边、再加回 66 条别的——所以本文件既在真仓库上回归(那些边一条都不许掉),
    也在真子进程里验证 C3 的新边即使 `--freeze-new` 也不写。
+4. **两个脚本共用一棵种子树。** `check_boundaries.py` 的 `_seed_config` 会重写真声明
+   里的层表,好让种出来的树满足它。这一步同时依赖「门禁怎么读这一行」和「种子树里有
+   哪些包」,所以两样都在这里钉住。
 
 测试从 backend/ 目录跑(CI 就是这么跑的),子进程用的是同一个解释器,和 CI、和
 pre-commit 用的是同一套依赖。
@@ -700,3 +703,50 @@ def test_the_real_baseline_is_already_stable(monkeypatch):
     new = bb.measure(text, stale)
     for contract_id, entries in bb.read_entries(text).items():
         assert new[contract_id] == entries, contract_id
+
+
+# ---------------------------------------------------------------------------
+# The seed's own declaration. `_seed_config` rewrites the two layer tables in
+# the real declaration, which makes it the one place where a header line has to
+# be found twice — by the gate and by the fixture — and the one place where a
+# package added to `_SEED` can turn a satisfying tree into a violation.
+# ---------------------------------------------------------------------------
+
+_DOMAIN_LAYER_HEADER = "[importlinter:contract:domain-layers]"
+
+
+def _header_with_a_trailing_space(text: str) -> str:
+    return text.replace(_DOMAIN_LAYER_HEADER, f"{_DOMAIN_LAYER_HEADER} ", 1)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(_header_with_a_trailing_space, id="trailing-space"),
+        pytest.param(lambda text: text.replace("\n", "\r\n"), id="crlf"),
+    ],
+)
+def test_the_seed_finds_the_header_the_gate_reads(mutate):
+    """`declared_layers` reads the header off a line the gate would accept, so
+    the rewrite has to find that same line. A trailing space or a CR is not a
+    different section — not to configparser, not to import-linter — and it must
+    not be one to the fixture either."""
+    declared = cb.declared_layers(mutate(REAL_CONFIG.read_text()))
+    assert "    agent" in cb._seed_config(declared)
+
+
+@pytest.mark.parametrize(
+    "planted",
+    ["app/domain/gamma/__init__.py", "app/domain/gamma.py"],
+    ids=["package", "module"],
+)
+def test_a_child_added_to_the_seed_must_be_named_in_its_table(planted, monkeypatch):
+    """The seed holds none of the repository's packages, so its layer table is
+    its own — and a package planted under `app.domain` without a line in that
+    table comes back as C5 naming an unlisted module on a tree that is supposed
+    to satisfy it. That reads like the rule breaking rather than the fixture
+    going stale, so the mismatch is raised as a fixture failure instead."""
+    assert cb._seed_domain_children() == {"agent", "alpha", "bar"}
+    monkeypatch.setitem(cb._SEED, planted, "")
+    with pytest.raises(RuntimeError, match="gamma"):
+        cb._seed_config(cb.declared_layers(REAL_CONFIG.read_text()))

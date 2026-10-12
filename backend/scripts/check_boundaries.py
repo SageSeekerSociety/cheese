@@ -327,9 +327,9 @@ _BOUNDARY_FIXES = {
     "C5": (
         "C5 domain packages form seven layers, dependencies point down. Move the "
         "dependency into the lower layer (or call it through the declared seam); "
-        "a package nobody placed goes into the layer table in `.importlinter` "
-        "first — this contract is exhaustive, so every package under app.domain "
-        "must be named in it."
+        "an unplaced child of app.domain goes into the layer table in "
+        "`.importlinter` first — this contract is exhaustive, so every child of "
+        "app.domain, package or top-level module, must be named in it."
     ),
 }
 
@@ -806,38 +806,111 @@ def _record_problem(
 
 
 def _section_span(lines: list[str], contract_id: str) -> tuple[int, int]:
-    """The inclusive-exclusive span of one `[importlinter:contract:...]`."""
+    """The inclusive-exclusive span of one `[importlinter:contract:...]`.
+
+    The header is matched on its stripped text, because that is how the two
+    readers that count — `configparser` for `declared_layers`, and
+    import-linter itself — read it: a trailing space on the line, or a CR if the
+    file is ever checked out with CRLF, is the same section to them. Exact
+    equality here would make such a line a declaration the gate accepts and the
+    self-test cannot find, and the meta-test would fail as a traceback rather
+    than as the named failure it exists to print.
+    """
     header = f"[importlinter:contract:{contract_id}]"
-    start = lines.index(header)
-    for index in range(start + 1, len(lines)):
-        if lines[index].startswith("[importlinter"):
-            return start, index
+    start = next(
+        (index for index, line in enumerate(lines) if line.strip() == header), None
+    )
+    if start is None:
+        raise RuntimeError(
+            f".importlinter has no `{header}` line; the self-test cannot rewrite "
+            "a layer table it cannot find"
+        )
+    for index_after in range(start + 1, len(lines)):
+        if lines[index_after].lstrip().startswith("[importlinter"):
+            return start, index_after
     return start, len(lines)
+
+
+_SEED_DOMAIN_TABLE = ["layers =", "    agent", "    alpha : bar"]
+
+
+def _seed_domain_children() -> set[str]:
+    """The children of `app.domain` that `_SEED` plants.
+
+    A child is a directory under `app/domain/` or a module directly in it —
+    the same two shapes the contract's own layer table has to name.
+    """
+    children: set[str] = set()
+    for relative in _SEED:
+        parts = relative.split("/")
+        if parts[:2] != ["app", "domain"] or len(parts) < 3:
+            continue
+        if len(parts) == 3 and parts[2].endswith(".py"):
+            if parts[2] != "__init__.py":
+                children.add(parts[2][:-3])
+        else:
+            children.add(parts[2])
+    return children
+
+
+def _seed_domain_table() -> list[str]:
+    """The seed's domain table, checked against what `_SEED` plants.
+
+    The table cannot be derived from the tree — which layer each package goes
+    in is the thing the cases exercise — so the two are checked against each
+    other instead. A package added to `_SEED` and not named here would come
+    back as C5 reporting an unlisted module on a tree that is meant to satisfy
+    it: a red that reads like the rule breaking, on a fixture nobody edited.
+    """
+    named = {
+        name
+        for line in _SEED_DOMAIN_TABLE[1:]
+        for name in line.replace(":", " ").split()
+    }
+    planted = sorted(_seed_domain_children())
+    if named != set(planted):
+        raise RuntimeError(
+            f"the seed's domain table names {sorted(named)} but _SEED plants "
+            f"{planted} under app/domain; add the new one to _SEED_DOMAIN_TABLE "
+            "in the layer it belongs to, or drop it from the seed"
+        )
+    return list(_SEED_DOMAIN_TABLE)
 
 
 def _seed_config(declared: dict[str, str]) -> str:
     """The real declaration, rewritten so the planted trees satisfy it.
 
     The trees `_SEED` plants hold none of the repository's domain packages, so
-    the package table becomes the seed's own: `agent` on top, `alpha` and `bar`
-    in the layer below it — the smallest table with a downward edge to allow and
-    an upward edge to catch. The turn table is the repository's, which the seed
-    already builds the modules for. Everything else — the exemptions and the
-    plumbing around them — is untouched, so what a case exercises is the
-    contract and not the fixture.
+    the package table becomes the seed's own, cross-checked against the tree by
+    `_seed_domain_table`: `agent` on top, `alpha` and `bar` in the layer below
+    it — the smallest table with a downward edge to allow and an upward edge to
+    catch. The turn table is the repository's, which the seed already builds the
+    modules for. Everything else — the exemptions and the plumbing around them —
+    is untouched, so what a case exercises is the contract and not the fixture.
     """
     lines = DEFAULT_CONFIG.read_text().split("\n")
     turn_lines = [f"    {layer}" for layer in declared["turn-layers"]]
     for contract_id, replacement in (
-        ("domain-layers", ["layers =", "    agent", "    alpha : bar"]),
+        ("domain-layers", _seed_domain_table()),
         ("turn-layers", ["layers =", *turn_lines]),
     ):
-        start, end = _section_span(lines, contract_id)
+        try:
+            start, end = _section_span(lines, contract_id)
+        except RuntimeError as exc:
+            raise RuntimeError(f"the {contract_id} table: {exc}") from exc
         head = next(
-            index
-            for index in range(start + 1, end)
-            if re.match(r"^\s*layers\s*=", lines[index])
+            (
+                index
+                for index in range(start + 1, end)
+                if re.match(r"^\s*layers\s*=", lines[index])
+            ),
+            None,
         )
+        if head is None:
+            raise RuntimeError(
+                f"the {contract_id} table: the section has no `layers` option to "
+                "rewrite for the planted trees"
+            )
         stop = head + 1
         while stop < end and re.match(r"^\s+\S", lines[stop]):
             stop += 1
@@ -900,6 +973,17 @@ def self_test() -> int:
         print(f"  [FAIL] the default declaration: {exc}")
         return _self_test_verdict(failures)
 
+    # Seeding the trees is the other half of that bootstrap: it rewrites the
+    # tables in the declaration, so it fails for the same class of reason — a
+    # line the gate reads differently than this file does, or a fixture that
+    # drifted from the table it seeds. Same one-line treatment.
+    try:
+        seed_config = _seed_config(declared)
+    except RuntimeError as exc:
+        failures.append(f"the seed's declaration: {exc}")
+        print(f"  [FAIL] the seed's declaration: {exc}")
+        return _self_test_verdict(failures)
+
     def report(what: str, code: int, output: str, expected: int, needle: str | None):
         verdict = "ok"
         if code != expected:
@@ -916,7 +1000,7 @@ def self_test() -> int:
         for index, (what, files, expected, needle, _broken) in enumerate(_CASES):
             tmp = sandbox / f"case{index}"
             tmp.mkdir()
-            code, output = _run(_seed_config(declared), files, tmp)
+            code, output = _run(seed_config, files, tmp)
             report(what, code, output, expected, needle)
             if expected == BROKEN:
                 report(
@@ -1000,7 +1084,7 @@ def self_test() -> int:
         # is the shape a contract rename leaves behind.
         unlayered = sandbox / "unlayered"
         unlayered.mkdir()
-        _plant(_seed_config(declared), {}, unlayered)
+        _plant(seed_config, {}, unlayered)
         declaration = unlayered / DEFAULT_CONFIG.name
         declaration.write_text(
             declaration.read_text().replace(
@@ -1066,7 +1150,7 @@ def self_test() -> int:
         # tree the way every other case does.
         detached = sandbox / "detached"
         detached.mkdir()
-        _plant(_seed_config(declared), {}, detached)
+        _plant(seed_config, {}, detached)
         alternate = detached / "explicit.ini"
         (detached / DEFAULT_CONFIG.name).rename(alternate)
         copied = detached / "scripts" / HERE.name

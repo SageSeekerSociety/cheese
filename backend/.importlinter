@@ -548,12 +548,13 @@ ignore_imports =
 # siblings still have to be acyclic — that is C3, and this contract does not
 # repeat it.
 #
-# `exhaustive = true` is the point of writing the table down: every package
-# directly under `app.domain` is named here, so a new one is red until somebody
-# says which layer it belongs to. An unplaced package is not a small hole in
-# the rule — this contract reads the whole graph, so a package nobody placed
-# sits between the layers as a channel, hiding an upward import that goes
-# through it, or reporting a chain that exists only because the hole did.
+# `exhaustive = true` is the point of writing the table down: every child of
+# `app.domain` is named here, packages and top-level modules alike, so a new
+# one of either is red until somebody says which layer it belongs to. An
+# unplaced child is not a small hole in the rule — this contract reads the
+# whole graph, so a module nobody placed sits between the layers as a channel,
+# hiding an upward import that goes through it, or reporting a chain that
+# exists only because the hole did.
 #
 # The 64 upward package edges measured under `app.domain` on 2026-10-12 (140
 # import statements) are frozen below, one module pair per line, and paid down
