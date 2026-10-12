@@ -132,8 +132,10 @@ defineExpose({ reload: card.reload })
 <template>
   <!-- 卡出现 / 收走是房间里真发生的一件事，要看得出是这里多了一块（折叠）。
        打开房间时读到的那一张本来就在，不演：`animate` 只在第一次读完之后才打开。 -->
+  <!-- 导览「采纳」那一步要等「采纳 / 退回」真出现在卡上才算到：卡刚递来、合并态还在
+       「状态更新中」的那一拍不算。 -->
   <Transition name="accept-fold" :css="animate">
-    <div v-if="hasBox" v-guide-anchor="'accept-card'" class="accept-fold">
+    <div v-if="hasBox" v-guide-anchor="decisionOpen ? 'accept-card' : ''" class="accept-fold">
       <div class="accept-fold__inner">
         <div class="accept-dock">
           <!-- 历史卡（闸门那两张、交付中那张）点横条才在它上面展开当年那张卡。 -->

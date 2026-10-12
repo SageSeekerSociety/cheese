@@ -264,12 +264,9 @@
       :ring="!guideStep.area"
       :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
       :text="
-        t(
-          `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
-          {
-            agent: t('work.room.defaultAgentName'),
-          }
-        )
+        t(`welcome.guide.${guideStep.key}.${guideStep.text}`, {
+          agent: t('work.room.defaultAgentName'),
+        })
       "
       :step="guide.stop.value + 1"
       :total="guide.total"
@@ -724,9 +721,8 @@ const guideStep = computed(() => {
   return {
     key: step.key,
     target: at,
-    waiting: !target,
-    failed: !!hit && hit === step.failed,
-    area: !!step.area || !target,
+    text: hit ? step.texts?.[hit] ?? 'text' : 'textWaiting',
+    area: !hit || !!step.areas?.includes(hit),
     action: !!step.done,
   }
 })

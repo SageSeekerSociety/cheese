@@ -28,10 +28,10 @@ export interface GuideStep {
   anchors: string[]
   /** 该圈的还没出现时，浮窗指着这里等（不画圈）。 */
   waiting?: string[]
-  /** 圈到的是这一个时用 `textFailed`：该出现的东西出了错（芝士没回成）。 */
-  failed?: string
-  /** 目标是一大块区域（对话区、支线、任务页）：不画圈，只放浮窗。 */
-  area?: boolean
+  /** 圈到的是这几个时换一句文案（`控件名 → 文案键`）：芝士没回成、任务还没开始。 */
+  texts?: Record<string, string>
+  /** 这几个目标是一整块区域（任务页）：不画圈，只放浮窗。 */
+  areas?: string[]
   /** 有它就是动作步：做到了自己往下走，没有「下一步」。 */
   done?: (c: GuideContext) => boolean
 }
@@ -45,7 +45,7 @@ export const GUIDE_STEPS: GuideStep[] = [
   {
     key: 'reply',
     anchors: ['reply-thread', 'reply-failed'],
-    failed: 'reply-failed',
+    texts: { 'reply-failed': 'textFailed' },
     // 芝士还在回：指着那一行等，不说「回复了」。
     waiting: ['reply-coming', 'timeline'],
     // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。
@@ -59,7 +59,15 @@ export const GUIDE_STEPS: GuideStep[] = [
     waiting: ['timeline', 'thread-pane'],
     done: (c) => c.has('task-page'),
   },
-  { key: 'taskPage', anchors: ['task-start', 'task-page'], waiting: ['task-card', 'task-row'] },
+  // 芝士建的任务一般已经在跑，页上没有「开始」：那时不讲「开始」，也不只圈标题栏
+  // ——正文可能还是空的，浮窗就落在那里，说进度会出现在这一页。
+  {
+    key: 'taskPage',
+    anchors: ['task-start', 'task-page'],
+    texts: { 'task-start': 'textStart' },
+    areas: ['task-page'],
+    waiting: ['task-card', 'task-row'],
+  },
   {
     key: 'accept',
     anchors: ['accept-card'],
