@@ -19,7 +19,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.topics import DbSession, _actor_in_place
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
@@ -27,6 +27,7 @@ from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
 from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
+from app.domain.thread.schemas import ThreadOut
 from app.domain.thread.services import open_thread
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -41,18 +42,18 @@ class ThreadCreateIn(BaseModel):
     title: str = Field(min_length=1, max_length=300)
 
 
-def _thread_out(thread) -> dict:
-    return {
-        "id": str(thread.id),
-        "room_id": str(thread.room_id),
-        "root_block_id": str(thread.root_block_id),
-        "reply_count": thread.reply_count,
-        "last_reply_at": thread.last_reply_at.isoformat()
+def _thread_out(thread) -> ThreadOut:
+    return ThreadOut(
+        id=str(thread.id),
+        room_id=str(thread.room_id),
+        root_block_id=str(thread.root_block_id),
+        reply_count=thread.reply_count,
+        last_reply_at=thread.last_reply_at.isoformat()
         if thread.last_reply_at
         else None,
-        "created_by": thread.created_by,
-        "created_at": thread.created_at.isoformat(),
-    }
+        created_by=thread.created_by,
+        created_at=thread.created_at.isoformat(),
+    )
 
 
 @block_router.post("/{block_id}/thread")
@@ -70,13 +71,17 @@ async def open_block_thread(
     if not actor.authenticated or actor.via == "cheese":
         raise ForbiddenError(say("threadOpenedByPerson"))
     thread = await open_thread(db, block_id, by=actor.handle)
-    out = _thread_out(thread)
+    out = _thread_out(thread).model_dump(mode="json")
     await db.commit()
     await announce_stale(place.room_id, "threads")
     return ok(out)
 
 
-@router.post("/{topic_id}/threads", dependencies=[ROUTE_DECIDES])
+@router.post(
+    "/{topic_id}/threads",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(ThreadOut),
+)
 async def create_thread(
     topic_id: uuid.UUID,
     body: ThreadCreateIn,
@@ -99,7 +104,7 @@ async def create_thread(
     thread = await TopicService(db).open_thread_here(
         room_id=place.room_id, title=body.title, by=actor.handle
     )
-    out = _thread_out(thread)
+    out = _thread_out(thread).model_dump(mode="json")
     await db.commit()
     await announce_stale(place.room_id, "threads")
     return ok(out)

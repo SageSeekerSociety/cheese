@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.api.response import ok
+from app.api.response import Deleted, ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import ForbiddenError
@@ -95,7 +95,9 @@ async def unarchive_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
-@router.delete("/{topic_id}", dependencies=[ROUTE_DECIDES])
+@router.delete(
+    "/{topic_id}", dependencies=[ROUTE_DECIDES], **typed_response(Deleted)
+)
 async def delete_topic(
     topic_id: uuid.UUID,
     db: DbSession,
@@ -118,4 +120,4 @@ async def delete_topic(
     await TopicService(db).delete(topic_id, by=actor.handle)
     await db.commit()
     await tell_project(topic_id, TOPICS)
-    return ok({"id": str(topic_id), "deleted": True})
+    return ok({"deleted": True})
