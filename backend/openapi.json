@@ -51892,6 +51892,42 @@
               }
             ],
             "title": "Request Id"
+          },
+          "received_events": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Events"
+          },
+          "upstream_failure": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Failure"
+          },
+          "ended_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended By"
           }
         },
         "type": "object",
