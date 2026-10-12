@@ -54,7 +54,7 @@ def _join(client, room_id: str, handle: str) -> None:
 
 
 def _task_of(client, room_id: str, owner: str) -> str:
-    return open_task(client, room_id, "一件活", owner=owner, start=False)["id"]
+    return open_task(client, room_id, "一件活", owner=owner)["id"]
 
 
 def _say_in_task(client, room_id: str, task_id: str, who: str, text: str) -> None:

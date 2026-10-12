@@ -78,7 +78,7 @@ def _project_topic(client) -> tuple[str, str]:
         json={"project_id": p["id"], "title": "推荐系统"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
-    task = open_task(client, t["id"], start=False)["id"]
+    task = open_task(client, t["id"])["id"]
     _WORKED_BY[task] = (p["id"], room_agent_seat(client, t["id"]))
     return p["id"], task
 

@@ -16,8 +16,8 @@ def test_each_task_comes_with_the_last_thing_said_in_it(client):
         json={"project_id": p["id"], "title": "预览"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    talked = open_task(client, channel, "微信预览", start=False)["id"]
-    quiet = open_task(client, channel, "访问口令", start=False)["id"]
+    talked = open_task(client, channel, "微信预览")["id"]
+    quiet = open_task(client, channel, "访问口令")["id"]
     post_message(client, talked, "alice", {"content": "先看 iframe"})
     post_message(client, talked, "alice", {"content": "改成直接打开预览页"})
 

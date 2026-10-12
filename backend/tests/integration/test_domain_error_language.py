@@ -150,7 +150,7 @@ def test_a_document_write_with_the_service_down_says_so_in_english(client, monke
 
     monkeypatch.setattr(collab, "transport", httpx.MockTransport(down))
     _, room = _room(client)
-    task = open_task(client, room, owner="owner", start=False)["id"]
+    task = open_task(client, room, owner="owner")["id"]
 
     r = client.put(
         _doc(client, task),

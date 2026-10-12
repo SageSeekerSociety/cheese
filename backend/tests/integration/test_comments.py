@@ -44,7 +44,7 @@ def _topic(client) -> tuple[str, dict]:
     t = client.post("/topics", json={"project_id": p["id"], "title": "T"}).json()[
         "data"
     ]
-    return t["id"], open_task(client, t["id"], owner="owner", start=False)
+    return t["id"], open_task(client, t["id"], owner="owner")
 
 
 def _member_topic(client) -> str:
@@ -55,7 +55,7 @@ def _member_topic(client) -> str:
     room = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}
     ).json()["data"]["id"]
-    return open_task(client, room, owner="commenter", start=False)["id"]
+    return open_task(client, room, owner="commenter")["id"]
 
 
 def _threads(client, doc: str, **kw) -> list[dict]:
@@ -110,7 +110,7 @@ def test_human_comment_does_not_wake_ai_or_change_document(client, sessions):
     room = client.post(
         "/topics", json={"project_id": project["id"], "title": "T"}, headers=headers
     ).json()["data"]["id"]
-    tid = open_task(client, room, owner="commenter", start=False)["id"]
+    tid = open_task(client, room, owner="commenter")["id"]
     doc = document_of(client, tid, headers=headers)
     saved = client.put(
         f"/documents/{doc}",
