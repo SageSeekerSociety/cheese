@@ -255,3 +255,24 @@ export type SpaceMyPublishedTask = {
 export type SpaceMyPublishedTasks = {
   tasks: SpaceMyPublishedTask[]
 }
+
+// ---- 空间申请（`SpacesApi.reviews` 的形状）-------------------------------------
+//
+// 原来长在 `@/network/api/spaces/types` 里；挪到领域类型这儿，是因为「空间申请」
+// 拆出来的那半张画面（`views/admin/AdminSpacesPageView.vue`）只认 props、不连网络层，
+// 不能从 `@/network` 取类型。网络层再从这儿转出去，对外形状一个字没变。
+
+/** 一条开版申请：谁、申请了什么版、什么时候、说了什么，以及审到哪一步。 */
+export type SpaceApplication = {
+  id: number
+  avatarId?: number | null
+  name: string
+  intro: string
+  reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED'
+  description: string
+  owner: string | null
+  reviewReason: string | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  createdAt: string
+}

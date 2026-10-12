@@ -1176,5 +1176,124 @@
       "name": "Challenge-born project with a deadline",
       "note": "A project born from a task adds a deadline line above the document: if your own registration was approved it says 'Submission deadline', otherwise 'Task deadline'."
     }
+  },
+  "mineView": {
+    "about": "The my-teams page: projects under your own name are not here (a project is not a team); each team you have joined is one row that opens the team page.",
+    "s1": {
+      "name": "Two teams",
+      "note": "Default state: one row per team with avatar, name and a one-line intro; tapping one opens the team page."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: a spinner and a \"Loading…\" line, not the empty state."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read says so and offers a reload, rather than showing \"You haven't joined a team yet\"."
+    },
+    "s4": {
+      "name": "No teams at all",
+      "note": "Read, and there really are none: only now does it say \"You haven't joined a team yet\" and offer the next step."
+    }
+  },
+  "exploreView": {
+    "about": "The find-teams page: a search box on top; before searching it shows the \"Recruiting\" placeholder, and after searching it swaps in results, no-results or a search failure.",
+    "s1": {
+      "name": "Not searched yet",
+      "note": "Default state: the search box is empty and below it sits the recruiting placeholder (coming soon)."
+    },
+    "s2": {
+      "name": "Found teams",
+      "note": "After a keyword is submitted: a list of results, each with avatar, name and a one-line intro."
+    },
+    "s3": {
+      "name": "No results",
+      "note": "Searched, and nothing matched: it says \"No teams found\" in place, without a retry that cannot help."
+    },
+    "s4": {
+      "name": "Search failed",
+      "note": "This request failed, which is not the same as \"no results\": the failure is stated in place with a retry kept."
+    },
+    "s5": {
+      "name": "No permission",
+      "note": "401/403 means \"you may not see this\", not \"this read failed\": it says so and offers no retry."
+    }
+  },
+  "computeView": {
+    "about": "The team-compute page: register devices your members have connected to the team, and see at a glance which are online, who is using them and which screens they run.",
+    "s1": {
+      "name": "Two devices",
+      "note": "Default state: one card per device with online/offline, machine id and, when another project is using it, that project and the screens running on it."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: a spinner in the middle, not an empty \"No self-hosted devices yet\"."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read states the reason and offers a retry, rather than an empty device list."
+    },
+    "s4": {
+      "name": "No permission",
+      "note": "On 401/403 it says there is no access and offers no retry."
+    },
+    "s5": {
+      "name": "Not a single device",
+      "note": "Read, and there really are none: it shows the empty state and keeps the \"Add a self-hosted device\" button."
+    },
+    "s6": {
+      "name": "Add failed",
+      "note": "A failed register/remove is a dismissible error bar (not a read failure): the page stays, the device list stays."
+    }
+  },
+  "adminIntegrationsPageView": {
+    "about": "The admin \"Feishu app\" page: an admin fills in the platform App ID / Secret / domain once and members connect with one click. The Secret is write-only and never echoed.",
+    "s1": {
+      "name": "Already configured",
+      "note": "Default state: the status line reads \"Configured · App ID · domain\" and who last updated it; App ID and domain are filled in, the Secret is always empty."
+    },
+    "s2": {
+      "name": "Never configured",
+      "note": "Never set up: the status line reads \"Not configured\" and the three fields wait to be filled."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read shows only \"could not load\" with a retry — no status line and no form, because only a successful read knows whether it is configured."
+    },
+    "s4": {
+      "name": "App ID blank",
+      "note": "Saving with a blank App ID: it says \"Enter the App ID first\" and the request is never sent."
+    },
+    "s5": {
+      "name": "Save failed",
+      "note": "A rejected save shows the server's own words and leaves every field untouched."
+    }
+  },
+  "adminSpacesPageView": {
+    "about": "The admin \"space applications\" page: applications awaiting review, one per row, with approve/reject to the right of the row; rejecting asks for a reason.",
+    "s1": {
+      "name": "One of each status",
+      "note": "Default state: a pending row has approve and reject on its right; approved/rejected rows carry only a status chip and no actions."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: five fixed-height skeleton rows so nothing jumps when data arrives."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read stays in the list's place, states the reason and offers a retry, rather than showing \"No applications\"."
+    },
+    "s4": {
+      "name": "None at all",
+      "note": "Read, and this pile really is empty: only now does it say \"No applications.\"."
+    },
+    "s5": {
+      "name": "Reject dialog",
+      "note": "The dialog opened by \"Reject\": it names the application, asks for a reason, and keeps \"Reject\" disabled while the reason is blank."
+    },
+    "s6": {
+      "name": "Paging",
+      "note": "When there is a previous or next page, pager buttons appear at the bottom right; a single page leaves no row of grey buttons."
+    }
   }
 }
