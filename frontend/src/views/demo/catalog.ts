@@ -25,6 +25,7 @@ import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ADMIN_ENTRIES } from './catalogAdmin'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
+import { CHANNEL_DIALOG_ENTRIES } from './catalogChannelDialogs'
 import { CHANNEL_FILES_ENTRIES } from './catalogChannelFiles'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
@@ -891,6 +892,8 @@ export const CATALOG: CatalogEntry[] = [
   ...VIEW_ENTRIES,
   // 一个频道的文件那一页在自己的文件里：`catalogChannelFiles.ts`。
   ...CHANNEL_FILES_ENTRIES,
+  // 频道那两个弹窗（删频道前的确认、新建支线）在自己的文件里：`catalogChannelDialogs.ts`。
+  ...CHANNEL_DIALOG_ENTRIES,
   // 反馈详情那一组（从详情页右栏拆出来的处理人、评论条、评论楼、进展时间线，数据在
   // `catalogFeedbackFixtures.ts`）在自己的文件里：`catalogFeedback.ts`。
   ...FEEDBACK_ENTRIES,
