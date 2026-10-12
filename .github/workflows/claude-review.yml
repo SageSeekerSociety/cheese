@@ -176,7 +176,8 @@ jobs:
 
       - name: DEMO ONLY - show why Claude stopped
         if: always() && steps.claude.outcome != 'skipped'
-        run: jq -c '.[-1] | {subtype, is_error, num_turns, result: (.result // "" | .[0:600])}' "$RUNNER_TEMP/claude-execution-output.json" || true
+        run: |
+          jq -c '.[-1] | {subtype, is_error, num_turns, result: (.result // "" | .[0:600])}' "$RUNNER_TEMP/claude-execution-output.json" || true
 
       - name: Post the review
         env:
