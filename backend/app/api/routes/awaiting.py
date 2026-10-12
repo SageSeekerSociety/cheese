@@ -119,12 +119,17 @@ async def waiting_items(
     project_ids = list(names)
 
     # 归档的频道是只读的，里面没有人还能推进的事：它的任务和提问都不进清单。
-    topics = [
-        t
-        for t in await TopicRepository(db).list_for_projects(project_ids, viewer=handle)
-        if str(t.status) != "archived"
+    # 这一趟只要主键和状态：看得见的频道有哪几个，用来判断一条活所在的频道他看
+    # 不看得见、在不在归档里。整行只为真正会摆上这一屏的那几个再取一次（见下面的
+    # `render_rooms`）——一屏常常只点到一两个人，却要为全部频道付整行装配的钱。
+    topic_ids = [
+        room_id
+        for room_id, status in await TopicRepository(db).visible_ids_for_projects(
+            project_ids, viewer=handle
+        )
+        if str(status) != "archived"
     ]
-    rooms = {t.id: t for t in topics}
+    visible_rooms = set(topic_ids)
     # A task is seen where its channel is: none from a private channel I left.
     # 这一屏只收点到了 `handle` 的行，所以先按列投影把范围收到「可能点到他的活」，
     # 再对留下来的取整行实体（`brief_for_projects` 说了为什么：整行实体比列投影贵
@@ -132,9 +137,8 @@ async def waiting_items(
     briefs = [
         b
         for b in await TaskRepository(db).brief_for_projects(project_ids)
-        if b.room_id in rooms
+        if b.room_id in visible_rooms
     ]
-    topic_ids = [t.id for t in topics]
 
     blocks = BlockRepository(db)
     task_cards = await AcceptService(db).latest_cards_by_task([b.id for b in briefs])
@@ -187,6 +191,35 @@ async def waiting_items(
     running = await running_tasks(chat, db, tasks)
     # 一次，给整份清单用同一个「现在几点」——见 `list_project_tasks` 里同一行的理由。
     now = datetime.now(UTC)
+
+    # 每条通知自己说它关于哪条对话，它得能找回自己在哪个频道才作数 —— 那道映射要
+    # 认得出**他看得见**的每条活，不只是留到这一屏上的那些（上面按判据收窄过）。
+    room_of_conversation: dict[uuid.UUID, uuid.UUID] = {tid: tid for tid in topic_ids}
+    room_of_conversation.update({b.id: b.room_id for b in briefs})
+    room_of_conversation.update(thread_rooms)
+    # 真正会摆上这一屏的频道只有这么几个：留到最后的每条活所在的频道，两条判据可
+    # 能点到 `handle` 的频道，通知指到的频道。整行只为它们读一次 —— 看得见的频道
+    # 成百上千，而一屏常常只点到一两个人，别为全部频道付装配整行的钱。
+    render_rooms: set[uuid.UUID] = {task.room_id for task in tasks}
+    render_rooms.update(
+        tid
+        for tid in topic_ids
+        if asked.get(tid) == handle
+        or (
+            room_cards.get(tid) is not None
+            and room_cards[tid].reviewer_handle == handle
+        )
+    )
+    for alert in alerts:
+        if alert.conversation_id is None:
+            continue
+        at_room = room_of_conversation.get(alert.conversation_id)
+        if at_room is not None:
+            render_rooms.add(at_room)
+    rooms = {t.id: t for t in await TopicRepository(db).list_by_ids(render_rooms)}
+    # 频道这一格按原来的次序走（`topic_ids` 是查出来的顺序），只是现在只装得下真
+    # 会摆上来的那几个。
+    topics = [rooms[tid] for tid in topic_ids if tid in rooms]
 
     items: list[awaiting.WaitingItem] = []
     for task in tasks:
@@ -307,11 +340,6 @@ async def waiting_items(
     # 务、或一条支线），条目按那条对话记 —— 看不见的、归档了的频道里的不算；不指
     # 哪条对话的，记在项目上。
     task_by_id = {task.id: task for task in tasks}
-    # 每条通知自己说它关于哪条对话，它得能找回自己在哪个频道才作数 —— 那道映射要
-    # 认得出**他看得见**的每条活，不只是留到这一屏上的那些（上面按判据收窄过）。
-    room_of_conversation: dict[uuid.UUID, uuid.UUID] = {t.id: t.id for t in topics}
-    room_of_conversation.update({b.id: b.room_id for b in briefs})
-    room_of_conversation.update(thread_rooms)
     for alert in alerts:
         conversation = alert.conversation_id
         # 它得能找回自己所在的频道：找不回的（看不见的、归档了的频道里的）不算。
