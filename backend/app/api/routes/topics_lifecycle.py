@@ -91,9 +91,7 @@ async def unarchive_topic(
     return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
-@router.delete(
-    "/{topic_id}", dependencies=[ROUTE_DECIDES], **typed_response(Deleted)
-)
+@router.delete("/{topic_id}", dependencies=[ROUTE_DECIDES], **typed_response(Deleted))
 async def delete_topic(
     topic_id: uuid.UUID,
     db: DbSession,
