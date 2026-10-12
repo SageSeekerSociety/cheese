@@ -37,6 +37,32 @@ export function parseCatalogPath(path: string): CatalogRoute {
   }
 }
 
+/* --------------------------------------------------------- 站自己的那两页 */
+
+export interface StudioPage {
+  id: string
+  label: string
+  about: string
+}
+
+/**
+ * 组件站自己带的两页：动效台和 token 页。它们不是组件，但和组件共用
+ * `/demo/catalog/<id>` 这一段地址，所以这份名单**只能有一份** —— 顶栏、左栏、路由
+ * 判定都读它，免得加了页面漏掉其中一处。
+ *
+ * 代价是组件 id 不能和这儿撞名：`demoCatalogStudio.spec.ts` 有一条测试盯着这件事。
+ */
+export const STUDIO_PAGES: ReadonlyArray<StudioPage> = [
+  { id: 'motion', label: '动效台', about: '产品里每一种变化各摆一格，能单独重放，也能整体放慢看。' },
+  { id: 'tokens', label: '设计 token', about: '产品真在用的 token：浅色深色两个色块，加一句用在哪。' },
+]
+
+/** 地址上这一段是站自己的一页吗。不是组件，也不是「目录里没有」。 */
+export function reservedPage(id: string | null): StudioPage | null {
+  if (id === null) return null
+  return STUDIO_PAGES.find((page) => page.id === id) ?? null
+}
+
 /* ------------------------------------------------------------------ 设备 */
 
 export type DeviceId = 'fit' | 'desktop' | 'tablet' | 'phone'
