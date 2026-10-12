@@ -7,7 +7,8 @@
  * 在消息行里。各留一份就会有一天只改了其中一处。
  */
 
-import type { Block } from '@/cx_types'
+import type { Block, TodoItem } from '@/cx_types'
+import type { ThreadReply } from '@/types/threads'
 import type { RefNames } from './refChip'
 
 import { isAgentBlock } from './authorship'
@@ -29,14 +30,62 @@ export function isImageBlock(block: Block): boolean {
  * `**A / B / C**`、一对反引号和 `:::chart`。按文档的读法读成字（lib/docRead.ts）；读法第一次用到才加载，
  * 加载完之前先引原文，加载完自己换掉。人说的话原样显示，所以也原样引用。@ 人、提话题、
  * 指文件的 token 两边都一样读成名字，和正文里 chip 上写的字一致。
+ *
+ * 步骤清单另说一句：正文里一步一行，折成一行之后只剩一串记号，认不出说的是什么，
+ * 所以摘要不从正文取，取的是清单自己的结构（`checklistSnippet`）。
  */
 export function replySnippet(block: Block, maps: RefNames, max = 24): string {
   if (block.kind === 'attachment')
     return isImageBlock(block) ? t('work.room.attachments.imageSnippet') : t('work.room.attachments.fileSnippet')
+  const step = checklistSnippet(block)
+  if (step !== null) return clip(step, max)
   const read = isAgentBlock(block) ? docReadNow() : null
   const source = read ? read.plainText(block.content, 'chat') : block.content
-  const text = plainRefs(source, maps).replace(/\s+/g, ' ').trim()
+  return clip(plainRefs(source, maps).replace(/\s+/g, ' ').trim(), max)
+}
+
+function clip(text: string, max: number): string {
   return text.length > max ? text.slice(0, max) + '…' : text
+}
+
+/** 清单一步的记号，和清单消息正文里写的一样（后端的 `_CHECKLIST_MARK`）。 */
+const STEP_MARK: Record<TodoItem['status'], string> = {
+  completed: '✓',
+  in_progress: '✱',
+  pending: '○',
+}
+
+/**
+ * 清单消息在引用条、消息行里说的那一句：只念一步，连它的记号（`✱ 取一份主干代码`）。
+ * 不是清单就返回 null，走平常那句摘要。
+ *
+ * 结构来自块自己的 `meta.checklist`；支线摘要里那条回复只拿到文本，它那份结构是
+ * 后端随着回复一起带上的（`replyBlock`）。
+ */
+function checklistSnippet(block: Block): string | null {
+  const checklist = block.meta?.checklist
+  if (!checklist || typeof checklist !== 'object') return null
+  const first = checklist.items[0]
+  if (!first) return null
+  return `${STEP_MARK[first.status] ?? ''} ${first.subject}`.trim()
+}
+
+/**
+ * 支线摘要里那条最后回复（`ThreadReply`：只有谁、什么话、什么时候）拼成的块。
+ * 清单的结构由后端随它带上，这里装回块的 `meta` 里，好让 `replySnippet` 和房间里的
+ * 引用条读同一份东西。
+ */
+export function replyBlock(reply: ThreadReply): Block {
+  return {
+    id: '',
+    conversation_id: '',
+    kind: 'message',
+    author_type: 'participant',
+    author: reply.author,
+    content: reply.content,
+    created_at: reply.created_at,
+    meta: reply.checklist ? { checklist: reply.checklist } : null,
+  } as Block
 }
 
 /** 芝士摆出来那份东西的文件名（`cheese show` 写下的是完整路径）。 */

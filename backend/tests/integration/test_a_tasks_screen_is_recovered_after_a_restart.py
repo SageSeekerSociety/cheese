@@ -20,9 +20,7 @@ def test_a_tasks_screen_is_adopted_under_its_rooms_agent(client):
     data = post_project(client, {"name": "Recover"}, owner="alice").json()["data"]
     project, room = uuid.UUID(data["id"]), data["root_topic_id"]
     seat = room_agent_seat(client, room)
-    task = uuid.UUID(
-        open_task(client, room, "整理一下", owner="alice", start=False)["id"]
-    )
+    task = uuid.UUID(open_task(client, room, "整理一下", owner="alice")["id"])
     hub = DeviceHub()
     found = {
         "sid": "task-screen",
