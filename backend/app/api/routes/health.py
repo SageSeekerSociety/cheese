@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import text
 
-from app.api.routes.admin_common import PlatformAdminDep
+from app.api.admin_deps import PlatformAdminDep
 from app.core import alerting
 from app.core.config import settings
 from app.core.db import PROBE_TIMEOUT_S

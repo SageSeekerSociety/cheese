@@ -48,7 +48,7 @@ CYCLE = bb.CYCLE_CONTRACT
 
 # ---------------------------------------------------------------------------
 # Building trees and configs. The seed tree is check_boundaries.py's own — the
-# smallest tree that satisfies all seven declarations — so the script is judged
+# smallest tree that satisfies all eight declarations — so the script is judged
 # on the same tree the gate is, not on a fixture that agrees with it by luck.
 # ---------------------------------------------------------------------------
 

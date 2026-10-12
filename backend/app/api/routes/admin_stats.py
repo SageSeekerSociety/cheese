@@ -2,7 +2,7 @@
 
 管理台第三块。和 `admin_members.py` 一样，它管的不是反馈：这里出现的每一个字在反馈
 功能删掉之后仍然成立（用量、账号、设备、交付），所以门是共用的
-`admin_common.PlatformAdminDep`、服务是 `domain/platform_stats/`，两者都不从反馈
+`admin_deps.PlatformAdminDep`、服务是 `domain/platform_stats/`，两者都不从反馈
 那边借。
 
 **一个分类一条路由**，不是一条接口把所有东西一次吐出来：页面上的分类控件切到哪一类
@@ -28,9 +28,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.routing import APIRoute
 
+from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import PlatformAdminDep
 from app.domain.platform_stats.services import PlatformStatsService
 
 router = APIRouter(prefix="/admin/stats", tags=["admin"])

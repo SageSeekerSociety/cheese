@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
-from app.api.routes.admin_common import PlatformAdminDep
+from app.api.admin_deps import PlatformAdminDep
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings

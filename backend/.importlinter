@@ -469,23 +469,12 @@ unmatched_ignore_imports_alerting = warn
 # Refresh with `--update` (drops entries that no longer match; a recomputed cycle-breaker set is never added).
 ignore_imports =
     app.api.routes.addresses -> app.api.routes.topics
-    app.api.routes.admin_credits -> app.api.routes.admin_common
-    app.api.routes.admin_feature_stats -> app.api.routes.admin_common
-    app.api.routes.admin_integrations -> app.api.routes.admin_common
-    app.api.routes.admin_members -> app.api.routes.admin_common
-    app.api.routes.admin_memory -> app.api.routes.admin_common
-    app.api.routes.admin_models -> app.api.routes.admin_common
-    app.api.routes.admin_ratchet -> app.api.routes.admin_common
-    app.api.routes.admin_run_records -> app.api.routes.admin_common
-    app.api.routes.admin_spaces -> app.api.routes.admin_common
-    app.api.routes.admin_stats -> app.api.routes.admin_common
     app.api.routes.app_sign_in -> app.api.routes.users.auth
     app.api.routes.app_sign_in -> app.api.routes.users_common
     app.api.routes.chat -> app.api.room_snapshot
     app.api.routes.dashboard -> app.api.routes.spaces
     app.api.routes.document_agent -> app.api.routes.document_comments
     app.api.routes.forge_token -> app.api.routes.llm_tunnel
-    app.api.routes.health -> app.api.routes.admin_common
     app.api.routes.living_docs -> app.api.routes.topics
     app.api.routes.notifications_live -> app.api.routes.awaiting
     app.api.routes.preview_sessions -> app.api.preview_host
@@ -520,7 +509,6 @@ ignore_imports =
     app.api.routes.users._common -> app.api.routes.users_common
     app.api.routes.users.auth -> app.api.routes.users_common
     app.api.routes.users.connections -> app.api.routes.users_common
-    app.api.routes.users.invite_codes -> app.api.routes.admin_common
     app.api.routes.users.oauth -> app.api.routes.legal
     app.api.routes.users.oauth -> app.api.routes.users_common
     app.api.routes.users.registration -> app.api.routes.legal
@@ -535,5 +523,4 @@ ignore_imports =
     app.api.task_teaching -> app.api.routes.spaces
     app.domain.platform_stats.services -> app.api.routes.health
     app.main -> app.api.preview_host
-    app.main -> app.api.routes.admin_common
     app.main -> app.api.routes.connector
