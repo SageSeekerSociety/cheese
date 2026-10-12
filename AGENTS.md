@@ -51,7 +51,7 @@ A new kind of data does not go into an existing table as one more type value or 
 
 ## Assume other agents are working right now
 
-Concurrently, in this repo, on adjacent files. Before starting a fix, look for an open PR already making it. Before handing work off, review every path your change touches; a cache directory in that list is a stop sign. An independent review of a PR at a pinned commit is `.claude/scripts/claude-review.sh <PR> [<sha>]`, the same reviewer and method for every seat; do not assemble your own.
+Concurrently, in this repo, on adjacent files. Before starting a fix, look for an open PR already making it. Before handing work off, review every path your change touches; a cache directory in that list is a stop sign. An independent review of a PR starts with `.claude/scripts/pr-review.sh prepare <PR>` and follows the REVIEW.md it prints, one method for every seat; do not assemble your own.
 
 Never `git stash`. The stash is one stack shared by every worktree, and a pop in yours applies someone else's uncommitted work and drops it from under them, silently. Commit instead; `git reset --soft HEAD~1` gives the staged state back. With `autoStash` on, a plain `git pull` stashes too: `task setup` turns it off for this repository, and `task git:config` does it for a clone made before that.
 
