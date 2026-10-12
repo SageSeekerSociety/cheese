@@ -213,6 +213,29 @@ def _task_settled(client, topic_id: str, needle: str) -> str:
     return _room_settled(client, str(delivery_task_id(client, topic_id)), needle)
 
 
+def _room_event_count(client, topic_id: str, event_type: str) -> int:
+    """这个房间落了几块这种事件。同一件事每拍重说一遍，这个数就涨。
+
+    查库里那些块，不走 `/topics/{id}/blocks`：平台提示送到人那里，不占房间可见的
+    那条时间线。
+    """
+    from sqlalchemy import select
+
+    from app.domain.block.models import Block
+    from app.domain.conversation.services import of_room
+
+    async def go() -> int:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Block).where(of_room(Block.conversation_id, uuid.UUID(topic_id)))
+            )
+            return sum(
+                1 for r in rows if (r.meta or {}).get("event_type") == event_type
+            )
+
+    return asyncio.run(go())
+
+
 class FakeGitHubPrClient:
     """#718 的假 GitHub —— no real calls. State is plain dicts keyed by PR
     number / commit sha so a test can move it forward between polls.
@@ -2090,6 +2113,32 @@ def test_a_required_check_missing_too_long_goes_to_a_human(client, app_world):
     _poll(client)
     note = _cards(client, tid)[0]["note"]
     assert "迟迟没有报到" in _cards(client, tid)[0]["note"] or "test" in note
+
+
+def test_the_grace_page_is_rung_once_not_once_a_poll(client, app_world):
+    """宽限期那句「转人」只说一次，卡面上还压着别的理由也不行。
+
+    一张卡可能同时摊上两件事：必须跑的检查一直没报到（超时转人），PR 标题又和卡上
+    不一致（另一条待发）。卡面那一行要是每拍都被后者重写一遍，前者按整行文字做的
+    那次去重就永远认不出自己说过 —— 验收人每 60 秒被重新叫一次，一直叫到那张卡
+    不再等为止。
+    """
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, required_checks=[{"name": "test"}])
+    fake.check_runs_by_sha[head_sha] = []  # 必须跑的检查从未报到
+    fake.prs[number]["title"] = "a line the card did not write"  # 标题也和卡上分家
+
+    _poll(client)
+    _set_merge_since(client, cid, "2020-01-01T00:00:00+00:00")
+
+    said = []
+    for _ in range(3):
+        _poll(client)
+        wait_work_idle()
+        said.append(_room_event_count(client, tid, "merge_withheld"))
+
+    assert said == [1, 1, 1]
 
 
 def test_poll_reads_with_the_read_mint_not_the_write_one(client, app_world):
