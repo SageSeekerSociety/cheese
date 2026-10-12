@@ -128,7 +128,6 @@ async def test_leaving_the_merge_queue_wakes_cheese_and_says_what_to_do():
     # 这条路径的去重靠卡上的 note 文本，`_service_and_card` 的 scalar 桩返回的是
     # nudge ledger，所以这里改读 card.note。
     service._session.scalar = AsyncMock(side_effect=lambda *_: card.note)
-    runner = MagicMock()
     with patch(
         "app.domain.review.services.TaskService.get",
         new=AsyncMock(return_value=SimpleNamespace(status="open")),
@@ -149,4 +148,3 @@ async def test_leaving_the_merge_queue_wakes_cheese_and_says_what_to_do():
     assert "合并队列" in call["headline"]
     assert "cheese push-fix" in call["content"]
     assert "重新入队" in call["content"]
-    runner.submit.assert_not_called()
