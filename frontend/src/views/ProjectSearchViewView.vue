@@ -7,6 +7,8 @@ import type { ContentKind } from '@/views/workspace/search/projectSearch'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { useLoadMoreSentinel } from '@/composables/useLoadMoreSentinel'
+
 import { firstWord } from '@/commands/palette/results'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -74,17 +76,7 @@ function clearQuery() {
 }
 
 // ---- 滚到列表底下那一截露出来，让容器接着加载下一页 ---------------------------
-const sentinel = ref<HTMLElement | null>(null)
-let observer: IntersectionObserver | undefined
-watch(sentinel, (el) => {
-  observer?.disconnect()
-  if (!el || typeof IntersectionObserver === 'undefined') return
-  observer = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) emit('load-more')
-  })
-  observer.observe(el)
-})
-onBeforeUnmount(() => observer?.disconnect())
+const sentinel = useLoadMoreSentinel(() => emit('load-more'))
 
 function segments(item: PaletteItem): { text: string; hit: boolean }[] {
   const range = firstWord(item.title, props.query)
