@@ -718,19 +718,6 @@ PLATFORM_TOOLS = ToolTable(
             ["page"],
         ),
         _tool(
-            "cheese_lock",
-            "为当前任务占用频道的重资源锁，装依赖、跑大型测试或起服务前用；"
-            "占不到时说谁占着，不等待。",
-            {"kind": {"type": "string", "enum": ["heavy"]}},
-            [],
-        ),
-        _tool(
-            "cheese_unlock",
-            "释放当前任务持有的重资源锁；锁 30 分钟后自动到期。",
-            {"kind": {"type": "string", "enum": ["heavy"]}},
-            [],
-        ),
-        _tool(
             "cheese_members",
             "列出当前频道可点名的成员和 handle。点名前核对写法：对不上的提醒不会送出。",
         ),
@@ -1434,13 +1421,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
     if tool == "cheese_ready":
         return {"method": "POST", "path": here + "/ready"}
-    if tool in {"cheese_lock", "cheese_unlock"}:
-        verb = tool.removeprefix("cheese_")
-        return {
-            "method": "POST",
-            "path": f"{here}/{verb}",
-            "body": {"kind": args.get("kind") or "heavy"},
-        }
     if tool == "cheese_doc_list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
     if tool == "cheese_canvas_get":
@@ -2646,12 +2626,6 @@ def _say_task(args, data, env) -> str:
 
 
 
-def _say_lock(args, data, env) -> str:
-    if data.get("acquired"):
-        return f"占住了（{args.get('kind') or 'heavy'}）。"
-    raise PlatformToolError(f"没占到：{data.get('reason') or '别人占着'}")
-
-
 def _say_notify(args, data, env) -> str:
     # 一条通知落成几行、收件人是谁，由平台按名册算 —— 不填 to 不等于「所有人」：
     # 到的是这个房间名册上的人，不含芝士。把它当「所有人」转述，就是替平台许下
@@ -2919,10 +2893,6 @@ _SAY = {
         f"PR #{d.get('pr_number')} 已从 draft 翻成 ready：{d.get('pr_url') or ''}"
         if (d or {}).get("ready")
         else (d or {}).get("reason") or "没有可以翻的 PR。"
-    ),
-    "cheese_lock": _say_lock,
-    "cheese_unlock": lambda a, d, e: (
-        "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
     ),
     "cheese_title": lambda a, d, e: (
         f"标题已设为：{(d or {}).get('title') or a['text']}"

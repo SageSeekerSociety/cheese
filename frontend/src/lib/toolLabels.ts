@@ -82,8 +82,6 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_fetch: 'toolLabels.cheeseFetch',
   cheese_docs_search: 'toolLabels.cheeseDocsSearch',
   cheese_docs_read: 'toolLabels.cheeseDocsRead',
-  cheese_lock: 'toolLabels.cheeseLock',
-  cheese_unlock: 'toolLabels.cheeseUnlock',
   cheese_decision: 'toolLabels.cheeseDecision',
   cheese_title: 'toolLabels.cheeseTitle',
   cheese_notify: 'toolLabels.cheeseNotify',
