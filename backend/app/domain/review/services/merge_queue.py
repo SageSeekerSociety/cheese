@@ -193,6 +193,16 @@ async def _merge_pr_for_accept(
             card, topic, say("acceptStoppedPrClosed", pr=number)
         )
 
+    # GitHub 上那行标题还是不是这张卡要落的那一行 —— 这道闸在合之前，不在合之后。
+    # 平台给 merge API 传的是卡片主题（`merge_commit_title`），而仓库自己的检查
+    # 评判的是 PR 上那个标题；两行分家时合下去，落进历史的是一行没人检查过的字
+    # （2026-10-12 PR #3496：卡片主题是中文，人把 PR 标题改成英文过了检查，卡片
+    # 没跟着改，合进 main 的还是中文那行）。轮询那条路用的是同一个判据
+    # （`_poll_pr_card` 拦 `_notify_ready` 和自动合并），所以这里停下之后有人被
+    # 叫起来改卡片，不会两边各停一半。
+    if not pr_text.pr_title_matches_subject(card, topic, status.title):
+        await self._stop_accept_title_disagrees(card, topic, status.title)
+
     # 合的是人看到的那个 commit：浏览器渲染时卡面上的 head，一个字都不兜底。
     # GitHub 上的合并永远不用「现取的 head」——那种 commit 没有在任何界面上
     # 出现过（`_seen_head_or_refresh` 是这条规矩的入口闸）。
