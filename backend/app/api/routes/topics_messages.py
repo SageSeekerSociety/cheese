@@ -143,7 +143,7 @@ async def send_chat_message(
     if task is not None:
         if actor.via == "cheese":
             if resolver.credential_conversation() != task.id:
-                raise ForbiddenError(say("taskOwnerOnly"))
+                raise ForbiddenError(say("taskOwnSessionSpeaks"))
             return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
         if not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
