@@ -1,0 +1,617 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务归档入口 · 可点原型</title>
+<style>
+/* ---- token：照 frontend/src/style.css 的两套主题块抄下来 ---- */
+:root{
+  color-scheme:light;
+  --ink:#191a1c; --text:#36383c; --muted:#5a5e66; --faint:#747a82;
+  --line:#ecedef; --line-2:#e2e3e6; --fill:#f4f5f7; --fill-2:#eeeff1;
+  --canvas:#f7f8fa; --surface:#ffffff; --raised:#ffffff;
+  --accent:#f57f17; --accent-press:#d96e0a; --accent-ink:#9a5413; --accent-wash:#fdf1e2;
+  --ok:#1f9d55; --ok-ink:#12703a; --ok-wash:#e8f6ee;
+  --warn:#e8901c; --warn-ink:#8f5406; --warn-wash:#faf0dc;
+  --danger:#dc2626; --danger-ink:#b91c1c; --danger-wash:#fdecec;
+  --signal-yellow:#eab308;
+  --focus-ring:#c2570a; --overlay:rgba(25,26,28,.44);
+  --shadow-1:0 1px 2px rgba(25,26,28,.06), 0 2px 8px rgba(25,26,28,.06);
+  --shadow-2:0 4px 12px rgba(25,26,28,.1), 0 12px 32px rgba(25,26,28,.1);
+  --inverse-surface:#23242a; --inverse-ink:#fff; --inverse-fill:rgba(255,255,255,.14);
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'PingFang SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --ink:#f3f4f6; --text:#d3d6db; --muted:#aeb4bd; --faint:#888ea0;
+  --line:#2b2e33; --line-2:#3a3e45; --fill:#212429; --fill-2:#282c31;
+  --canvas:#141517; --surface:#1b1d20; --raised:#212429;
+  --accent:#ffa733; --accent-press:#ffbc5e; --accent-ink:#ffc670; --accent-wash:#2e2216;
+  --ok:#3fbf7f; --ok-ink:#6fd9a0; --ok-wash:#14261d;
+  --warn:#f0a94a; --warn-ink:#f7c078; --warn-wash:#2a2114;
+  --danger:#f0625c; --danger-ink:#f79490; --danger-wash:#2e1a1a;
+  --signal-yellow:#facc15;
+  --focus-ring:rgba(255,167,51,.65); --overlay:rgba(0,0,0,.6);
+  --shadow-1:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+  --shadow-2:0 4px 12px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
+  --inverse-surface:#3a3d44; --inverse-ink:#f3f4f6; --inverse-fill:rgba(255,255,255,.1);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{
+  margin:0;background:var(--canvas);color:var(--text);
+  font-family:var(--font-sans);font-size:14px;line-height:20px;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0;color:var(--ink);font-weight:600;text-wrap:balance}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px}
+.t-meta{font-size:12px;line-height:18px;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+.chrome{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:16px 24px;background:var(--surface);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;
+}
+.chrome__mark{
+  width:34px;height:34px;border-radius:var(--radius-md);flex:none;
+  background:linear-gradient(140deg,#f9b233,#e85d2c);color:#fff;
+  display:grid;place-items:center;font-weight:700;
+}
+.chrome__id{display:flex;align-items:center;gap:12px;min-width:0}
+.chrome__id h1{font-size:18px;line-height:26px}
+.chrome__tools{margin-left:auto;display:flex;align-items:center;gap:12px}
+.stage{padding:20px 24px 170px;display:flex;flex-direction:column;gap:12px;align-items:center}
+.hint{max-width:1180px;width:100%}
+.steps{display:flex;gap:6px;flex-wrap:wrap;max-width:1180px;width:100%}
+.steps button{
+  height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;
+  background:var(--surface);border:1px solid var(--line-2);color:var(--muted);
+}
+.steps button:hover{background:var(--fill)}
+.steps button.is-on{background:var(--inverse-surface);color:var(--inverse-ink);border-color:var(--inverse-surface);font-weight:600}
+
+.frame{
+  width:100%;max-width:1180px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-2);overflow:hidden;
+}
+.frame__bar{
+  display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;
+  background:var(--fill);border-bottom:1px solid var(--line);
+}
+.frame__dot{width:9px;height:9px;border-radius:var(--radius-pill);background:var(--line-2)}
+.frame__url{
+  margin-left:8px;flex:1;height:22px;border-radius:var(--radius-pill);
+  background:var(--surface);border:1px solid var(--line);
+  display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--muted);
+  font-family:var(--mono);
+}
+.frame__tag{
+  font-size:11px;font-weight:600;color:var(--accent-ink);background:var(--accent-wash);
+  border-radius:var(--radius-pill);padding:2px 8px;
+}
+.frame__scroll{overflow-x:auto}
+.app{position:relative;display:flex;min-width:1060px;height:640px;background:var(--canvas)}
+.rail{
+  width:56px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;
+}
+.rail__btn{
+  width:34px;height:34px;border-radius:var(--radius-md);display:grid;place-items:center;
+  font-weight:700;font-size:13px;color:var(--muted);background:var(--fill);
+}
+.rail__btn.is-on{background:var(--inverse-surface);color:var(--inverse-ink)}
+.side{
+  width:264px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;
+}
+.side__head{
+  display:flex;align-items:center;gap:4px;height:48px;padding:0 8px 0 16px;
+  border-bottom:1px solid var(--line);
+}
+.side__proj{font-weight:600;color:var(--ink);font-size:14px;flex:1;text-align:left}
+.side__label{
+  display:flex;align-items:center;gap:6px;padding:16px 8px 4px 16px;
+  font-size:12px;font-weight:600;color:var(--faint);
+}
+.side__label span{flex:1}
+.side__list{display:flex;flex-direction:column;padding:0 8px;gap:1px;overflow-y:auto}
+.row{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  min-height:32px;padding:4px 8px;border-radius:var(--radius-md);color:var(--text);
+  font-size:13px;
+}
+.row:hover{background:var(--fill)}
+.row.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
+.row__name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row__glyph{color:var(--faint);flex:none;font-size:12px}
+.row--sub{padding-left:26px;color:var(--muted);font-size:12.5px;min-height:28px}
+.row--gone{opacity:.55}
+.row-slot{width:8px;height:8px;flex:none;display:grid;place-items:center}
+.await-dot{width:8px;height:8px;border-radius:50%;background:var(--signal-yellow)}
+.unread{
+  flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:var(--radius-pill);
+  background:var(--accent);color:#fff;font-size:11px;font-weight:600;
+  display:grid;place-items:center;font-family:var(--mono);
+}
+.side__tail{margin-top:auto;border-top:1px solid var(--line);padding:8px}
+.side__nav{display:flex;gap:2px;padding:8px 8px 12px}
+.side__nav button{
+  flex:1;height:34px;border-radius:var(--radius-md);font-size:12px;color:var(--muted);
+  display:flex;align-items:center;justify-content:center;
+}
+.side__nav button.is-on{background:var(--fill-2);color:var(--ink);font-weight:600}
+
+.view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--canvas)}
+.scr{display:none;flex-direction:column;min-height:0;height:100%}
+.scr.is-on{display:flex}
+/* 任务页头 —— 照 components/task/TaskHeader.vue：房间 / 任务名、状态标、负责人、⋯ */
+.th{
+  display:flex;align-items:center;gap:8px;height:48px;padding:0 12px;flex:none;
+  background:var(--surface);border-bottom:1px solid var(--line);position:relative;
+}
+.th__text{display:flex;flex:1 1 auto;align-items:center;gap:8px;min-width:0}
+.th__room{color:var(--muted)}
+.th__sep{color:var(--faint)}
+.th__title{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th__state{
+  display:inline-flex;flex:none;align-items:center;padding:1px 8px;border-radius:var(--radius-sm);
+  background:var(--fill);color:var(--muted);font-size:12px;font-weight:600;white-space:nowrap;
+}
+.th__state--gone{background:var(--warn-wash);color:var(--warn-ink)}
+.th__owner{
+  display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 8px 0 4px;
+  border-radius:var(--radius-md);color:var(--text);font-size:13px;
+}
+.th__owner:hover{background:var(--fill)}
+.faces{display:flex;align-items:center;flex:none}
+.face{
+  width:20px;height:20px;border-radius:var(--radius-pill);flex:none;
+  display:grid;place-items:center;font-size:10px;font-weight:600;color:#fff;
+  background:var(--tone,#3d4a5c);
+}
+.face--sm{width:18px;height:18px;font-size:9px}
+.faces .face{margin-left:-5px;box-shadow:0 0 0 2px var(--surface)}
+.faces .face:first-child{margin-left:0}
+/* 页头 ⋯ 打开的那张菜单 */
+.menu{
+  position:absolute;top:42px;right:12px;z-index:15;width:196px;
+  background:var(--surface);border:1px solid var(--line-2);border-radius:var(--radius-md);
+  box-shadow:var(--shadow-2);padding:4px;
+}
+.menu__item{
+  display:flex;align-items:center;gap:8px;width:100%;height:32px;padding:0 10px;
+  border-radius:var(--radius-sm);color:var(--text);font-size:13px;text-align:left;
+}
+.menu__item:hover{background:var(--fill)}
+.menu__item--new{background:var(--accent-wash);color:var(--accent-ink);font-weight:600}
+.menu__item--new:hover{background:var(--accent-wash)}
+.menu__sep{height:1px;margin:4px 6px;background:var(--line)}
+.menu__note{padding:6px 10px 4px;font-size:11px;line-height:16px;color:var(--faint)}
+
+.chat{flex:1;min-height:0;overflow-y:auto;padding:16px 20px 8px}
+.msg{display:flex;gap:10px;margin-bottom:16px}
+.msg__body{flex:1;min-width:0}
+.msg__who{font-size:13px;font-weight:600;color:var(--ink);margin-bottom:2px}
+.msg__who .t-meta{margin-left:6px;font-weight:400}
+.msg__text{font-size:15px;line-height:24px;color:var(--text)}
+.notice{display:flex;gap:10px;margin-bottom:14px}
+.notice__body{flex:1;min-width:0;font-size:13px;line-height:20px}
+.notice__body b{color:var(--ink);font-weight:600}
+.notice__sub{color:var(--muted)}
+.plainline{text-align:center;color:var(--faint);font-size:12px;line-height:18px;margin:0 0 14px}
+.composer{flex:none;padding:8px 20px 16px;background:var(--canvas)}
+.composer__box{
+  display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;
+  border:1px solid var(--line-2);border-radius:var(--radius-md);
+  background:var(--surface);color:var(--faint);font-size:15px;
+}
+.composer__box.is-off{background:var(--fill);border-color:var(--line);color:var(--muted)}
+.composer__hint{margin-top:6px;font-size:12px;color:var(--faint)}
+
+/* 对照页 */
+.cmp{flex:1;min-height:0;overflow-y:auto;padding:20px}
+.cmp__lead{font-size:14px;line-height:22px;color:var(--text);margin-bottom:16px;max-width:780px}
+.cmpcols{display:flex;gap:16px;align-items:flex-start}
+.cmpcol{flex:1;min-width:0}
+.cmpcol__cap{font-size:12px;line-height:18px;color:var(--muted);margin-top:10px}
+.railbox{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);
+  padding:8px;min-height:150px;
+}
+.railbox .row{font-size:13px}
+.roles{display:grid;gap:8px;max-width:820px}
+.role{
+  display:flex;align-items:center;gap:10px;padding:10px 12px;
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-md);
+}
+.role__who{width:150px;flex:none;color:var(--ink);font-weight:600}
+.role__what{flex:1;min-width:0;color:var(--text);font-size:13px;line-height:20px}
+
+/* 积木 */
+.chip{
+  display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;flex:none;
+  border-radius:var(--radius-sm);font-size:12px;font-weight:600;
+  background:var(--fill);color:var(--muted);
+}
+.chip--ok{background:var(--ok-wash);color:var(--ok-ink)}
+.btn{
+  height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;font-weight:600;
+  display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;flex:none;
+}
+.btn--secondary{background:var(--surface);border-color:var(--line-2);color:var(--ink)}
+.btn--secondary:hover{background:var(--fill)}
+.btn--ghost{color:var(--muted)}
+.btn--ghost:hover{background:var(--fill)}
+.btn--sm{height:28px;padding:0 10px;font-size:12px}
+.iconbtn{
+  width:28px;height:28px;border-radius:var(--radius-md);display:grid;place-items:center;
+  color:var(--muted);font-size:16px;line-height:1;flex:none;
+}
+.iconbtn:hover{background:var(--fill)}
+.mk{
+  display:inline-grid;place-items:center;width:17px;height:17px;border-radius:var(--radius-pill);
+  background:var(--accent);color:#fff;font-size:11px;font-weight:700;font-style:normal;
+  margin-left:5px;vertical-align:2px;cursor:pointer;font-family:var(--mono);
+  box-shadow:0 0 0 2px var(--accent-wash);
+}
+.mk:hover{background:var(--accent-press)}
+.mk.is-seen{background:var(--muted);box-shadow:0 0 0 2px var(--fill)}
+.sheet{
+  position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
+  width:min(780px,calc(100vw - 32px));background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);
+  z-index:60;overflow:hidden;
+}
+.sheet[hidden]{display:none}
+.sheet__head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.sheet__no{
+  width:26px;height:26px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;
+  display:grid;place-items:center;font-size:12px;font-weight:700;flex:none;font-family:var(--mono);
+}
+.sheet__head h3{font-size:15px;line-height:21px;flex:1}
+.sheet__body{padding:12px 16px 16px;display:grid;gap:8px}
+.sheet__row{display:flex;gap:10px;font-size:13px;line-height:20px}
+.sheet__k{width:64px;flex:none;color:var(--faint)}
+.sheet__v{flex:1;color:var(--text)}
+.sheet__foot{display:flex;align-items:center;gap:8px;padding:0 12px 12px;font-size:12px;color:var(--faint)}
+@media (max-width:900px){
+  .stage{padding:12px 12px 170px}
+  .chrome{padding:12px 16px}
+  .cmpcols{flex-direction:column}
+  .role__who{width:96px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="chrome__id">
+    <span class="chrome__mark">知</span>
+    <div>
+      <h1>任务归档入口 · 可点原型</h1>
+      <p class="t-meta">任务页的 ⋯ 里加一条「归档任务」，负责人自己就能点 · 带数字的黄标点一下，看这一处改什么</p>
+    </div>
+  </div>
+  <div class="chrome__tools">
+    <span class="t-meta mono" id="seen">已看过 0 / 6</span>
+    <button class="btn btn--secondary btn--sm" id="themeBtn">深色</button>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="steps" id="steps">
+    <button data-step="1" class="is-on">① 今天：⋯ 里没有归档</button>
+    <button data-step="2">② 加一条「归档任务」</button>
+    <button data-step="3">③ 点下去：收起来，可撤销</button>
+    <button data-step="4">④ 侧栏前后对照</button>
+    <button data-step="5">⑤ 谁能点</button>
+  </div>
+
+  <div class="frame">
+    <div class="frame__bar">
+      <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+      <span class="frame__url">okcheese.com/workspace</span>
+      <span class="frame__tag">原型 · 不是线上</span>
+    </div>
+    <div class="frame__scroll">
+      <div class="app" id="app" data-scene="1">
+
+        <nav class="rail" aria-label="项目">
+          <button class="rail__btn is-on" title="知是平台">知</button>
+          <button class="rail__btn" title="另一个项目">课</button>
+        </nav>
+
+        <aside class="side">
+          <div class="side__head"><button class="side__proj">知是平台</button><button class="iconbtn" title="更多">⋯</button></div>
+          <div class="side__label"><span>频道</span><button class="iconbtn" title="新建频道">＋</button></div>
+          <div class="side__list">
+            <button class="row"><span class="row__glyph">#</span><span class="row__name">综合</span></button>
+            <button class="row is-on"><span class="row__glyph">#</span><span class="row__name">测试频道</span></button>
+
+            <!-- 归档的任务：从这一组离开，落到下面「已归档」 -->
+            <div data-here>
+              <button class="row row--sub is-on"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span><span class="unread">1</span></button>
+              <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">实现15条频道改动</span><span class="await-dot" title="等你拍板"></span></button>
+              <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">任务免选审阅人自动开始</span></button>
+              <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">选择题回答可撤回</span></button>
+            </div>
+
+            <button class="row"><span class="row__glyph">#</span><span class="row__name">前端</span></button>
+            <button class="row"><span class="row__glyph">#</span><span class="row__name">bug-fixing</span><span class="unread">3</span></button>
+          </div>
+          <div class="side__label" data-gone hidden><span>已归档</span></div>
+          <div class="side__list" data-gone hidden>
+            <button class="row row--gone"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span></button>
+          </div>
+          <div class="side__tail">
+            <nav class="side__nav">
+              <button>首页</button><button class="is-on">工作区</button><button>待办</button>
+            </nav>
+          </div>
+        </aside>
+
+        <div class="view">
+
+          <!-- ===== 场景 4：侧栏前后对照 ===== -->
+          <section class="scr" data-scr="4">
+            <div class="th"><div class="th__text"><span class="th__title">归档之后，侧栏里这一行长什么样</span></div></div>
+            <div class="cmp">
+              <p class="cmp__lead">任务行在频道下面那一组里。归档之后它离开那一组，落到最下面的「已归档」，颜色变浅、点开还是能看。频道那一组里从此不再有它。</p>
+              <div class="cmpcols">
+                <div class="cmpcol">
+                  <div class="railbox">
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">测试频道</span></button>
+                    <button class="row row--sub is-on"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span><span class="unread">1</span></button>
+                    <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">实现15条频道改动</span><span class="await-dot"></span></button>
+                    <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">任务免选审阅人自动开始</span></button>
+                    <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">选择题回答可撤回</span></button>
+                  </div>
+                  <p class="cmpcol__cap"><b>今天</b> —— 四个任务一直挂在这儿。任务只有「关闭」，关掉的任务也还在这组里，只是状态写成「已完成 / 已关闭」。没地方收走它。<em class="mk" data-item="4">4</em></p>
+                </div>
+                <div class="cmpcol">
+                  <div class="railbox">
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">测试频道</span></button>
+                    <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">实现15条频道改动</span><span class="await-dot"></span></button>
+                    <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">任务免选审阅人自动开始</span></button>
+                    <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">选择题回答可撤回</span></button>
+                    <button class="row row--gone" style="margin-top:6px"><span class="row__glyph">↳</span><span class="row__name">任务归档入口缺失</span><span class="chip">已归档</span></button>
+                  </div>
+                  <p class="cmpcol__cap"><b>归档之后</b> —— 那一行收进「已归档」，对话、文档、交付物一个不丢，点开都在，只是不能在这儿发言、也不能再开工。</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ===== 场景 5：谁能点 ===== -->
+          <section class="scr" data-scr="5">
+            <div class="th"><div class="th__text"><span class="th__title">谁能归档这条任务</span></div></div>
+            <div class="cmp">
+              <p class="cmp__lead">重点是「这条任务的负责人自己就能归档」——不必是频道管理员，也不必是项目管理员。归档一个频道要频道的管理权限（这是 15 条清单里在改的第 3 条），任务是另一回事：它是某个人的一件活，收不收由他。</p>
+              <div class="roles">
+                <div class="role">
+                  <span class="role__who">任务负责人</span>
+                  <span class="role__what">能。这是要解决的那个缺口：他自己点 ⋯ 就有「归档任务」。<em class="mk" data-item="2">2</em></span>
+                  <span class="chip chip--ok">可以</span>
+                </div>
+                <div class="role">
+                  <span class="role__who">频道管理员</span>
+                  <span class="role__what">也能。这条活在他的频道里，收得掉。两个人做的是同一件事，谁先点算谁的。</span>
+                  <span class="chip chip--ok">可以</span>
+                </div>
+                <div class="role">
+                  <span class="role__who">项目管理员</span>
+                  <span class="role__what">也能。和归档频道的口径一致，项目里的事他都管得着。</span>
+                  <span class="chip chip--ok">可以</span>
+                </div>
+                <div class="role">
+                  <span class="role__who">协作者 / 其他人</span>
+                  <span class="role__what">不能。⋯ 菜单里看不到这一条；已经在协作的人能改名，但不该由他决定这件活收不收。</span>
+                  <span class="chip">看不到</span>
+                </div>
+              </div>
+              <p class="cmp__lead" style="margin-top:16px"><b>和「关闭任务」怎么分工：</b>关闭＝这件活做完了，任务还挂在原来那一组里，状态写「已完成 / 已关闭」，谁都能看见它干过；归档＝连那一行也收走，默认不再出现在任何列表里，只在「已归档」找得到。两件事不互相要求：还没关闭的任务也能直接归档（就是「这条我不做了」），归档之后想接着做，先取消归档。<em class="mk" data-item="3">3</em></p>
+            </div>
+          </section>
+
+          <!-- ===== 场景 1-3：任务页 ===== -->
+          <section class="scr is-on" data-scr="1 2 3">
+            <div class="th">
+              <div class="th__text">
+                <span class="th__glyph">#</span><span class="th__room">测试频道</span><span class="th__sep">/</span>
+                <span class="th__title">任务归档入口缺失</span>
+                <span class="th__state" data-norm>已开始</span>
+                <span class="th__state th__state--gone" data-arch hidden>已归档</span>
+              </div>
+              <button class="th__owner" title="负责人">
+                <span class="face face--sm" style="--tone:#8a5a44">蔡</span>负责人：蔡松洋
+              </button>
+              <button class="iconbtn" title="更多操作" data-act="menu">⋯<em class="mk" data-item="1">1</em></button>
+
+              <div class="menu" data-menu hidden>
+                <button class="menu__item">重命名</button>
+                <div class="menu__sep"></div>
+                <button class="menu__item" data-norm>移交</button>
+                <button class="menu__item" data-norm>关闭任务</button>
+                <button class="menu__item menu__item--new" data-act="archive" data-new hidden>归档任务<em class="mk" data-item="2">2</em></button>
+                <p class="menu__note" data-norm>今天到这儿就完了：只有重命名 / 移交 / 关闭，没有归档。</p>
+              </div>
+            </div>
+
+            <div class="chat">
+              <div class="msg">
+                <span class="face" style="--tone:#8a5a44">蔡</span>
+                <div class="msg__body">
+                  <div class="msg__who">蔡松洋<span class="t-meta">14:02</span></div>
+                  <p class="msg__text">这个任务我想归档，但是看不到归档的按钮，这不对，需要修复这个问题</p>
+                </div>
+              </div>
+              <div class="notice">
+                <span class="face" style="--tone:#3f4a63">芝</span>
+                <div class="notice__body">
+                  <div><b>芝士</b><span class="t-meta"> 14:04</span></div>
+                  <div class="notice__sub">查清了：任务页上本来就没有「归档」这个动作，任务的收尾叫「关闭任务」，在页头右上那个 ⋯ 里，只有负责人看得见。归档只给频道用。这条原型就是把归档补到任务上。</div>
+                </div>
+              </div>
+
+              <!-- 归档那一刻的通知 -->
+              <div class="notice" data-show="3" hidden>
+                <span class="face" style="--tone:#4a4a52">平</span>
+                <div class="notice__body">
+                  <div><b>蔡松洋 把「任务归档入口缺失」归档了</b><span class="t-meta"> 刚刚</span><em class="mk" data-item="5">5</em></div>
+                  <div class="notice__sub">这件活从侧栏收走了，对话、实况文档和交付物都留着，谁都能翻。想接着做，点撤销。</div>
+                  <div style="margin-top:8px"><button class="btn btn--secondary btn--sm" data-act="undo">撤销</button></div>
+                </div>
+              </div>
+
+              <p class="plainline" data-norm>点右上角的 ⋯ 看看今天有什么 ↓</p>
+              <p class="plainline" data-show="3" hidden>归档之后，这个任务只能看，不能再开工 ↓</p>
+            </div>
+
+            <div class="composer">
+              <div class="composer__box" data-norm>说点什么，芝士接着做…</div>
+              <div class="composer__box is-off" data-arch hidden>任务已归档，不能发言</div>
+              <p class="composer__hint" data-arch hidden>想接着做，先点上面那条通知里的「撤销」，或者页头里的「取消归档」。</p>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint t-meta">五个场景就是这条改动的全部：① 今天什么样 ② 菜单里多一条 ③ 点下去什么样 ④ 侧栏前后 ⑤ 谁有权限。带数字的黄标点开，写的是「现状 / 这一版 / 要动哪里」。</p>
+</main>
+
+<aside class="sheet" id="sheet" hidden>
+  <div class="sheet__head">
+    <span class="sheet__no" id="sheetNo">1</span>
+    <div style="flex:1">
+      <h3 id="sheetTitle"></h3>
+      <p class="t-meta" id="sheetSrc"></p>
+    </div>
+    <button class="iconbtn" id="sheetClose">×</button>
+  </div>
+  <div class="sheet__body">
+    <div class="sheet__row"><span class="sheet__k">现状</span><span class="sheet__v" id="sheetNow"></span></div>
+    <div class="sheet__row"><span class="sheet__k">这一版</span><span class="sheet__v" id="sheetFix"></span></div>
+    <div class="sheet__row"><span class="sheet__k">要动哪里</span><span class="sheet__v" id="sheetWork"></span></div>
+  </div>
+  <div class="sheet__foot">
+    <button class="btn btn--ghost btn--sm" id="prevBtn">上一个</button>
+    <button class="btn btn--ghost btn--sm" id="nextBtn">下一个</button>
+    <span style="margin-left:auto">带数字的黄标点开是看某一处；上一个 / 下一个在六处之间走</span>
+  </div>
+</aside>
+
+<script>
+(function(){
+  var ITEMS = {
+    1:{t:'入口长在哪', s:'任务页页头右上那颗 ⋯ 里',
+       now:'那颗 ⋯ 里今天只有「重命名」「移交」「关闭任务」（后两条只对负责人显示），关掉的任务显示「重新打开任务」。任务页上没有「归档」，所以想收走一条任务，只能自己在侧栏里忍着看它挂着。',
+       fix:'⋯ 里加一条「归档任务」，和「关闭任务」并排。侧栏那条任务行的 ⋯ 里也给同一条，两处进同一个动作——归档频道已经就是这个路子。',
+       work:'前端 components/task/TaskHeader.vue 的菜单加一项；侧栏 TopicSidebar.vue 的任务行菜单加同一项。'},
+    2:{t:'谁能点', s:'这条任务的负责人自己就行',
+       now:'归档频道要频道的管理权限，入口又藏在侧栏那一行的 ⋯ 和频道详情里，所以除了那个管理员，别人多半找不到。这个毛病在 15 条清单的第 3 条里改，是频道的事。',
+       fix:'任务按另一套口径：负责人（还有频道管理员、项目管理员）都能归档。关键是负责人不必是任何管理员——这件活是他的，收不收由他。不是这些人，菜单里看不到这一条。',
+       work:'权限判断跟着「关闭任务」那一套走（负责人 / 频道管理员 / 项目管理员），前端按后端回的「我能不能」决定画不画这一项。'},
+    3:{t:'和关闭任务的分工', s:'关闭＝干完了；归档＝收走',
+       now:'任务只有 open / closed 两种状态，没有第三种。代码里写明这是刻意的：只有「在做」和「不做了」两件事是能观察到的。',
+       fix:'不新增状态值，另记一个「归档时刻」：归档＝这条不出现在任何列表里；关闭＝干完了但还挂在原来那一组。两件事不互相要求——没关闭的任务也能直接归档，归档了也能取消归档。',
+       work:'后端 tasks 表加一列（可空的时间戳）＋迁移；列表查询默认排除已归档；模型在 backend/app/domain/room_task/models.py，列表在 repositories.py。'},
+    4:{t:'关掉的任务现在去哪儿了', s:'还挂在原来那一组里',
+       now:'任务在最末一步被采纳后自己收工，或者负责人点「关闭任务」。关掉之后它没消失：侧栏里还在频道下面那一组，状态写成「已完成」「已关闭」「已采纳」。这就是你说「想归档但没地方点」的那件事——收工不等于收走。',
+       fix:'归档之后它才从那一组离开，落到最下面的「已归档」，颜色变浅。那边的列表也只列没归档的。',
+       work:'前端侧栏和任务列表加一处「已归档」分组；后端的任务列表多一个「含不含已归档」的开关。'},
+    5:{t:'撤销', s:'两条路都留着',
+       now:'归档频道现在是：点完弹一条带「撤销」的提示。',
+       fix:'任务照抄这一条：归档后当场弹一条可撤销的提示；页头也显示「已归档」标，负责人从那儿能点「取消归档」。对话、实况文档、产物一直都在，归档只是把它从列表里收走。',
+       work:'前端弹提示的组件（和归档频道同一个）；后端加一条取消归档的接口，和归档接口一对。'},
+    6:{t:'归档之后 AI 队友怎么办', s:'顺手停下来',
+       now:'没有归档，也就没有这一问。',
+       fix:'归档一条还开着的任务时，正在跑的那一轮不打断，但不会再派新活：下次有人在这儿说话，回一句「已归档」。想接着做先取消归档。',
+       work:'后端派活那条路加一道「已归档就别开工」的判断；前端不另外做。'}
+  };
+
+  var app = document.getElementById('app');
+  var scene = 1, seen = {}, current = 1;
+  var $ = function(s,r){return (r||document).querySelector(s);};
+  var $$ = function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s));};
+  function inScene(el){ return String(el.dataset.show).split(' ').indexOf(String(scene)) >= 0; }
+
+  function render(){
+    app.dataset.scene = String(scene);
+    var archived = (scene === 3);
+    $$('[data-here]').forEach(function(el){ el.hidden = archived; });
+    $$('[data-gone]').forEach(function(el){ el.hidden = !archived; });
+    $$('[data-arch]').forEach(function(el){ el.hidden = !archived; });
+    $$('[data-norm]').forEach(function(el){ el.hidden = archived; });
+    // 场景 1 的菜单按「今天」画：没有归档那一条；场景 2 起才有
+    $('[data-menu]').hidden = !(scene === 1 || scene === 2);
+    $$('[data-new]').forEach(function(el){ el.hidden = scene !== 2; });
+    $$('.scr').forEach(function(s){
+      s.classList.toggle('is-on', String(s.dataset.scr).split(' ').indexOf(String(scene)) >= 0);
+    });
+    $$('[data-show]').forEach(function(el){ el.hidden = !inScene(el); });
+    var c = $('.chat');
+    if(c) c.scrollTop = c.scrollHeight;
+  }
+
+  document.addEventListener('click', function(e){
+    var mk = e.target.closest('.mk');
+    if(mk){ e.stopPropagation(); openSheet(mk.dataset.item); return; }
+    var st = e.target.closest('#steps button');
+    if(st){ go(st.dataset.step); window.scrollTo({top:0,behavior:'auto'}); return; }
+    if(e.target.closest('[data-act="menu"]')){ var m = $('[data-menu]'); m.hidden = !m.hidden; return; }
+    if(e.target.closest('[data-act="archive"]')){ go(3); return; }
+    if(e.target.closest('[data-act="undo"]')){ go(2); return; }
+    var nonMenu = e.target.closest('.chat, .scr, .side');
+    if(nonMenu && !$('[data-menu]').hidden) $('[data-menu]').hidden = true;
+  });
+
+  function openSheet(n){
+    var it = ITEMS[n]; if(!it) return;
+    current = Number(n); seen[n] = 1;
+    $$('.mk').forEach(function(m){ if(m.dataset.item === String(n)) m.classList.add('is-seen'); });
+    $('#seen').textContent = '已看过 ' + Object.keys(seen).length + ' / 6';
+    $('#sheetNo').textContent = n;
+    $('#sheetTitle').textContent = it.t;
+    $('#sheetSrc').textContent = it.s;
+    $('#sheetNow').textContent = it.now;
+    $('#sheetFix').textContent = it.fix;
+    $('#sheetWork').textContent = it.work;
+    $('#sheet').hidden = false;
+  }
+
+  $('#sheetClose').addEventListener('click', function(){ $('#sheet').hidden = true; });
+  $('#prevBtn').addEventListener('click', function(){ openSheet(current > 1 ? current - 1 : 6); });
+  $('#nextBtn').addEventListener('click', function(){ openSheet(current < 6 ? current + 1 : 1); });
+  $('#themeBtn').addEventListener('click', function(){
+    var dark = document.documentElement.dataset.theme === 'dark';
+    document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+    this.textContent = dark ? '深色' : '浅色';
+  });
+
+  function go(n){
+    scene = Number(n);
+    $$('#steps button').forEach(function(b){ b.classList.toggle('is-on', b.dataset.step === String(scene)); });
+    render();
+  }
+
+  if(/^#[1-5]$/.test(location.hash)) go(location.hash.slice(1));
+  else render();
+
+  window.addEventListener('hashchange', function(){
+    if(/^#[1-5]$/.test(location.hash)) go(location.hash.slice(1));
+  });
+})();
+</script>
+</body>
+</html>
