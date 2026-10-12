@@ -3725,6 +3725,28 @@
         }
       }
     },
+    "/admin/stats/machines": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Machines Stats",
+        "description": "机器那一块：MicroCloud 上的每台宿主机、它上面的沙箱、温机池，和过去一天沙箱\n起得怎么样。口径写在 `app/domain/machine/admin.py` 的模块 docstring 上。",
+        "operationId": "machines_stats_admin_stats_machines_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MachinesOverviewOutEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/topics/{topic_id}/agent/control": {
       "get": {
         "tags": [
@@ -57409,6 +57431,632 @@
         ],
         "title": "LoginRequest"
       },
+      "MachineConfigOut": {
+        "properties": {
+          "slots_per_core": {
+            "type": "integer",
+            "title": "Slots Per Core"
+          },
+          "sandbox_memory_mb": {
+            "type": "integer",
+            "title": "Sandbox Memory Mb"
+          },
+          "sandbox_idle_s": {
+            "type": "integer",
+            "title": "Sandbox Idle S"
+          },
+          "host_idle_hold_s": {
+            "type": "integer",
+            "title": "Host Idle Hold S"
+          },
+          "vm_idle_s": {
+            "type": "integer",
+            "title": "Vm Idle S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slots_per_core",
+          "sandbox_memory_mb",
+          "sandbox_idle_s",
+          "host_idle_hold_s",
+          "vm_idle_s"
+        ],
+        "title": "MachineConfigOut"
+      },
+      "MachineHistoryOut": {
+        "properties": {
+          "since": {
+            "type": "string",
+            "title": "Since"
+          },
+          "prepared": {
+            "type": "integer",
+            "title": "Prepared"
+          },
+          "ready": {
+            "type": "integer",
+            "title": "Ready"
+          },
+          "abandoned": {
+            "type": "integer",
+            "title": "Abandoned"
+          },
+          "replaced": {
+            "type": "integer",
+            "title": "Replaced"
+          },
+          "released_idle": {
+            "type": "integer",
+            "title": "Released Idle"
+          },
+          "released_unpaid": {
+            "type": "integer",
+            "title": "Released Unpaid"
+          },
+          "wait_p50_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait P50 S"
+          },
+          "wait_p95_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait P95 S"
+          },
+          "wait_max_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Max S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "since",
+          "prepared",
+          "ready",
+          "abandoned",
+          "replaced",
+          "released_idle",
+          "released_unpaid",
+          "wait_p50_s",
+          "wait_p95_s",
+          "wait_max_s"
+        ],
+        "title": "MachineHistoryOut"
+      },
+      "MachineHostOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "machine_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Id"
+          },
+          "whole_machine": {
+            "type": "boolean",
+            "title": "Whole Machine"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          },
+          "cores": {
+            "type": "integer",
+            "title": "Cores"
+          },
+          "memory_mb": {
+            "type": "integer",
+            "title": "Memory Mb"
+          },
+          "disk_gb": {
+            "type": "integer",
+            "title": "Disk Gb"
+          },
+          "slots": {
+            "type": "integer",
+            "title": "Slots"
+          },
+          "used": {
+            "type": "integer",
+            "title": "Used"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "enrolled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrolled At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "idle_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Since"
+          },
+          "offline_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offline Since"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "enroll_attempts": {
+            "type": "integer",
+            "title": "Enroll Attempts"
+          },
+          "enroll_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enroll Error"
+          },
+          "sandboxes": {
+            "items": {
+              "$ref": "#/components/schemas/MachineSandboxOut"
+            },
+            "type": "array",
+            "title": "Sandboxes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "hostname",
+          "machine_id",
+          "whole_machine",
+          "project",
+          "phase",
+          "status",
+          "online",
+          "ip",
+          "cores",
+          "memory_mb",
+          "disk_gb",
+          "slots",
+          "used",
+          "created_at",
+          "enrolled_at",
+          "last_seen_at",
+          "idle_since",
+          "offline_since",
+          "failed_at",
+          "released_at",
+          "enroll_attempts",
+          "enroll_error",
+          "sandboxes"
+        ],
+        "title": "MachineHostOut"
+      },
+      "MachinePoolOut": {
+        "properties": {
+          "hosts": {
+            "type": "integer",
+            "title": "Hosts"
+          },
+          "vms": {
+            "type": "integer",
+            "title": "Vms"
+          },
+          "max_hosts": {
+            "type": "integer",
+            "title": "Max Hosts"
+          },
+          "at_cap": {
+            "type": "boolean",
+            "title": "At Cap"
+          },
+          "slots": {
+            "type": "integer",
+            "title": "Slots"
+          },
+          "used": {
+            "type": "integer",
+            "title": "Used"
+          },
+          "free": {
+            "type": "integer",
+            "title": "Free"
+          },
+          "min_free": {
+            "type": "integer",
+            "title": "Min Free"
+          },
+          "waiting": {
+            "type": "integer",
+            "title": "Waiting"
+          },
+          "oldest_wait_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Wait Since"
+          },
+          "provider_failures": {
+            "type": "integer",
+            "title": "Provider Failures"
+          },
+          "provider_failure_limit": {
+            "type": "integer",
+            "title": "Provider Failure Limit"
+          },
+          "provider_window_min": {
+            "type": "integer",
+            "title": "Provider Window Min"
+          },
+          "provider_probe_min": {
+            "type": "integer",
+            "title": "Provider Probe Min"
+          },
+          "last_provider_failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Provider Failure"
+          },
+          "refusing": {
+            "type": "boolean",
+            "title": "Refusing"
+          },
+          "warm_target": {
+            "type": "integer",
+            "title": "Warm Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hosts",
+          "vms",
+          "max_hosts",
+          "at_cap",
+          "slots",
+          "used",
+          "free",
+          "min_free",
+          "waiting",
+          "oldest_wait_since",
+          "provider_failures",
+          "provider_failure_limit",
+          "provider_window_min",
+          "provider_probe_min",
+          "last_provider_failure",
+          "refusing",
+          "warm_target"
+        ],
+        "title": "MachinePoolOut"
+      },
+      "MachineSandboxOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "spec": {
+            "type": "string",
+            "title": "Spec"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "placed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placed At"
+          },
+          "waiting_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Since"
+          },
+          "active_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active At"
+          },
+          "stopped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped At"
+          },
+          "idle_deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Deadline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "spec",
+          "state",
+          "project_id",
+          "project",
+          "room_id",
+          "room",
+          "placed_at",
+          "waiting_since",
+          "active_at",
+          "stopped_at",
+          "idle_deadline"
+        ],
+        "title": "MachineSandboxOut"
+      },
+      "MachinesOverviewOut": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "now": {
+            "type": "string",
+            "title": "Now"
+          },
+          "pool": {
+            "$ref": "#/components/schemas/MachinePoolOut"
+          },
+          "config": {
+            "$ref": "#/components/schemas/MachineConfigOut"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/MachineHostOut"
+            },
+            "type": "array",
+            "title": "Hosts"
+          },
+          "warm": {
+            "items": {
+              "$ref": "#/components/schemas/WarmMachineOut"
+            },
+            "type": "array",
+            "title": "Warm"
+          },
+          "history": {
+            "$ref": "#/components/schemas/MachineHistoryOut"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "now",
+          "pool",
+          "config",
+          "hosts",
+          "warm",
+          "history"
+        ],
+        "title": "MachinesOverviewOut"
+      },
+      "MachinesOverviewOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MachinesOverviewOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "MachinesOverviewOutEnvelope"
+      },
       "MailIn": {
         "properties": {
           "label": {
@@ -63169,6 +63817,94 @@
         "type": "object",
         "title": "VoidDecision",
         "description": "人工作废 (2026-08-11). No `decided_by`, unlike the other decisions here:\n作废 is an authorization action, so the actor comes from the session token\nonly — a caller must never be able to name someone else as the one who\ndid it. Same shape as 改验收人 (`reassign`)."
+      },
+      "WarmMachineOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "machine_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Id"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "enrolled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrolled At"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "machine_id",
+          "ip",
+          "online",
+          "created_at",
+          "enrolled_at",
+          "attempts",
+          "error"
+        ],
+        "title": "WarmMachineOut"
       },
       "WebElementQuoteIn": {
         "properties": {
