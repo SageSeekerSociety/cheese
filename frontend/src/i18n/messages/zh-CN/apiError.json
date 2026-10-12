@@ -850,6 +850,7 @@
   "sourceTopicInvalid": "source_topic_id 不是合法的频道 id",
   "attachmentOneSource": "要么上传一个文件，要么选资料库里的一份",
   "attachmentImageOnly": "只能读取图片附件",
+  "attachmentMediaOnly": "只能读取图片或视频附件",
   "commentEmpty": "评论内容不能为空",
   "workComputerPreparing": "环境仍在准备，对话和平台工具仍可用",
   "atMustBeIso": "at 要是一个 ISO-8601 时刻",
