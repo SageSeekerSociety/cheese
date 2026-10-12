@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from tenacity import AsyncRetrying, RetryCallState, retry_if_exception_type
 
 from app.domain.agent.device_contract import (
     EXEC_REPLY_SLACK_S,
@@ -345,32 +346,39 @@ class RemoteDeviceHub:
             + OWNER_CALL_TIMEOUT_SLACK_S,
             connect=OWNER_CONNECT_TIMEOUT_S,
         )
-        attempt = 0
-        while True:
-            if operation_deadline is not None:
-                remaining_budget = operation_deadline - time.monotonic()
-                if remaining_budget <= 0:
-                    raise TimeoutError("Device call deadline expired before dispatch")
-                payload = {**payload, "timeout": remaining_budget}
-                answer_timeout = httpx.Timeout(
-                    remaining_budget + OWNER_CALL_TIMEOUT_SLACK_S,
-                    connect=min(OWNER_CONNECT_TIMEOUT_S, remaining_budget),
-                )
-            try:
+
+        def wait(state: RetryCallState) -> float:
+            backoff = 2 ** (state.attempt_number - 1) * 0.5
+            remaining = deadline - time.monotonic()
+            return min(backoff, OWNER_CONNECT_RETRY_MAX_DELAY_S, remaining)
+
+        async for attempt in AsyncRetrying(
+            retry=retry_if_exception_type(
+                (httpx.ConnectError, httpx.ConnectTimeout, OwnerDraining)
+            ),
+            stop=lambda _: time.monotonic() >= deadline,
+            wait=wait,
+            reraise=True,
+        ):
+            with attempt:
+                if operation_deadline is not None:
+                    remaining_budget = operation_deadline - time.monotonic()
+                    if remaining_budget <= 0:
+                        raise TimeoutError(
+                            "Device call deadline expired before dispatch"
+                        )
+                    payload = {**payload, "timeout": remaining_budget}
+                    answer_timeout = httpx.Timeout(
+                        remaining_budget + OWNER_CALL_TIMEOUT_SLACK_S,
+                        connect=min(OWNER_CONNECT_TIMEOUT_S, remaining_budget),
+                    )
                 return await self._request(
                     "POST",
                     f"/internal/device-connection/call/{name}",
                     json=payload,
                     timeout=answer_timeout,
                 )
-            except (httpx.ConnectError, httpx.ConnectTimeout, OwnerDraining):
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise
-                await asyncio.sleep(
-                    min(2**attempt * 0.5, OWNER_CONNECT_RETRY_MAX_DELAY_S, remaining)
-                )
-                attempt += 1
+        raise AssertionError("unreachable: reraise=True ends every failed run")
 
     async def _call(self, name: str, payload: dict[str, Any]) -> Any:
         response = await self._call_owner(name, payload)
