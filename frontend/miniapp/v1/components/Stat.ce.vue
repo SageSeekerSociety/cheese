@@ -18,6 +18,8 @@ defineProps<{ label?: string; value?: string | number; delta?: string; tone?: 'g
   display: block;
   flex: 1 1 140px;
   min-width: 0;
+  /* Cards side by side are one height, whatever the row aligns its controls to. */
+  align-self: stretch;
 }
 .stat {
   height: 100%;
