@@ -91,7 +91,9 @@ class CodexDriver:
             '[model_providers.cheese]\nname = "Cheese"\n'
             f"base_url = {json.dumps(api + '/llm/v1')}\n"
             'wire_api = "responses"\nenv_key = "CHEESE_TOKEN"\n'
-            "requires_openai_auth = false\n[analytics]\nenabled = false\n"
+            "requires_openai_auth = false\n"
+            "project_doc_max_bytes = 32768\n"
+            "[analytics]\nenabled = false\n"
         )
         launch = {
             "state": ref.state,

@@ -18,6 +18,7 @@ async def serve(state: Path, config: dict) -> None:
         mirror=state / "project-skills",
         reply_file=reply_owed_path(state),
         shipped=state / "platform-skills",
+        project_docs=Path(config["cwd"]),
     )
     # What a session in this project gets besides the repository's skills,
     # as the Claude Code and pi launches carry them (`session_skill_files`).
