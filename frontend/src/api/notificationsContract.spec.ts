@@ -1,41 +1,26 @@
 // @vitest-environment jsdom
-// The notifications domain's payload contract. The pilot in
-// `migrationContract.spec.ts` only ever exercised the unread count; every other
-// method here (`list`, `del`, `updateStatus`, `markAllAsRead`, `liveToken`) now
-// gets a real old-versus-new comparison of the observable request and the
-// answer (the old envelope's `.data` versus the new payload). Notifications
-// ride the new origin, so both sides answer from `${newer}`.
+// The notifications domain's request contract: one case per method, each
+// spelling out the method, path, query and body the wire carries, plus the
+// payload the caller gets back. Notifications ride the new origin.
 import { http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-import {
-  compareRequests,
-  type ContractCase,
-  contractEnvironment,
-  envelope,
-  newer,
-  server,
-} from './migrationContract.spec.helper'
+import { type ContractCase, contractEnvironment, contractRequest, envelope, newer, server } from './requestContract.spec.helper'
 
 contractEnvironment()
 
-let oldNotifications: typeof import('@/network/api/notifications').NotificationsApi
-let newNotifications: typeof import('./notifications').NotificationsApi
+let notifications: typeof import('./notifications').NotificationsApi
 
 beforeAll(async () => {
-  ;({ NotificationsApi: oldNotifications } = await import('@/network/api/notifications'))
-  ;({ NotificationsApi: newNotifications } = await import('./notifications'))
+  ;({ NotificationsApi: notifications } = await import('./notifications'))
 })
 
-// Each new method paired with the old name it replaced, and the arguments that
-// reach the wire. `getUnreadNotificationCount` was the pilot name; the others
-// are 1:1.
-const cases: Record<string, { test: ContractCase; old: keyof typeof oldNotifications }> = {
-  list: {
+const cases: { name: string; test: ContractCase; call: () => Promise<unknown> }[] = [
+  {
+    name: 'list',
     test: {
       method: 'GET',
       path: '/notifications',
-      args: [{ type: 'MENTION', read: false, pageStart: 'cursor-1', pageSize: 20 }],
       query: [
         ['type', 'MENTION'],
         ['read', 'false'],
@@ -43,45 +28,40 @@ const cases: Record<string, { test: ContractCase; old: keyof typeof oldNotificat
         ['pageSize', '20'],
       ],
     },
-    old: 'list',
+    call: () => notifications.list({ type: 'MENTION', read: false, pageStart: 'cursor-1', pageSize: 20 }),
   },
-  del: { test: { method: 'DELETE', path: '/notifications/9', args: [9] }, old: 'del' },
-  updateStatus: {
-    test: { method: 'PATCH', path: '/notifications/9', args: [9, true], body: { read: true } },
-    old: 'updateStatus',
+  { name: 'del', test: { method: 'DELETE', path: '/notifications/9' }, call: () => notifications.del(9) },
+  {
+    name: 'updateStatus',
+    test: { method: 'PATCH', path: '/notifications/9', body: { read: true } },
+    call: () => notifications.updateStatus(9, true),
   },
-  markAllAsRead: {
-    test: { method: 'PUT', path: '/notifications/status', args: [], body: { read: true } },
-    old: 'markAllAsRead',
+  {
+    name: 'markAllAsRead',
+    test: { method: 'PUT', path: '/notifications/status', body: { read: true } },
+    call: () => notifications.markAllAsRead(),
   },
-  getUnreadNotificationCount: {
-    test: { method: 'GET', path: '/notifications/unread-count', args: [] },
-    old: 'getUnreadCount',
+  {
+    name: 'getUnreadNotificationCount',
+    test: { method: 'GET', path: '/notifications/unread-count' },
+    call: () => notifications.getUnreadNotificationCount(),
   },
-  liveToken: { test: { method: 'POST', path: '/notifications/live-token', args: [] }, old: 'liveToken' },
-}
+  { name: 'liveToken', test: { method: 'POST', path: '/notifications/live-token' }, call: () => notifications.liveToken() },
+]
 
-describe('notifications migration: every method keeps its request and payload', () => {
-  it.each(Object.entries(cases))('%s preserves the request and returns the payload', async (name, entry) => {
-    await compareRequests(
-      entry.test,
-      () => (oldNotifications[entry.old] as (...args: unknown[]) => Promise<unknown>)(...entry.test.args),
-      () =>
-        (newNotifications[name as keyof typeof newNotifications] as (...args: unknown[]) => Promise<unknown>)(
-          ...entry.test.args
-        )
-    )
+describe('notifications: every method keeps its request and payload', () => {
+  it.each(cases)('$name sends the recorded request and returns the payload', async (entry) => {
+    await contractRequest(entry.test, entry.call)
   })
 })
 
-describe('notifications migration: a command keeps its success bit', () => {
+describe('notifications: a command keeps its success bit', () => {
   it.each(['null', '204'])('delete resolves to true on a %s success, not a caught failure', async (kind) => {
     server.use(
       http.delete(`${newer}/notifications/9`, () =>
         kind === '204' ? new HttpResponse(null, { status: 204 }) : HttpResponse.json(envelope(null))
       )
     )
-    await expect(oldNotifications.del(9)).resolves.not.toBeUndefined()
-    await expect(newNotifications.del(9)).resolves.toBe(true)
+    await expect(notifications.del(9)).resolves.toBe(true)
   })
 })
