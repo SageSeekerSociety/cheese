@@ -31,6 +31,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     open_task,
@@ -39,7 +40,6 @@ from tests.integration.conftest import (
     session_auth_headers,
     teammate_task,
 )
-from tests.conftest import wait_work_idle
 
 pytestmark = pytest.mark.anyio
 
