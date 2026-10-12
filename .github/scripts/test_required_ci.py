@@ -485,11 +485,35 @@ def run_bodies(text):
         yield "\n".join(body)
 
 
-class WorkflowTextTest(unittest.TestCase):
-    """Static guards over required-ci.yml text, to back claims made here.
+def run_body_containing(text, needle):
+    """The single ``run:`` body whose shell contains ``needle``.
 
-    Invariants the workflow copy must keep, checked against the file itself so a
-    later edit cannot quietly undo them.
+    Steps are located by a token their command must contain, then their real
+    shell is executed by the behavioural tests below — nothing is asserted about
+    how the line is spelled, only about what it does when run.
+    """
+    bodies = [body for body in run_bodies(text) if needle in body]
+    if len(bodies) != 1:
+        raise AssertionError(f"expected exactly one run body with {needle!r}, got {len(bodies)}")
+    return bodies[0]
+
+
+def _stub(bindir, name, script):
+    """Write an executable stub command into ``bindir`` and return its path."""
+    path = bindir / name
+    path.write_text("#!/usr/bin/env bash\n" + script)
+    path.chmod(0o755)
+    return path
+
+
+class WorkflowTextTest(unittest.TestCase):
+    """Behavioural guards over required-ci.yml.
+
+    The step under test is read out of the workflow as its real ``run:`` shell
+    and executed against stub commands, so the guards hold on the shell the
+    runner would run. Nothing asserts a quoting spelling: ``"$title"`` and
+    ``"${title}"`` both pass; only a step that actually corrupts the title,
+    lets it reach the shell as code, or drops a dependency set fails.
     """
 
     def setUp(self):
@@ -507,21 +531,64 @@ class WorkflowTextTest(unittest.TestCase):
                 "${{", body,
                 f"expression spliced into a shell command: {body.strip()[:80]}",
             )
-        # The one place the title is consumed expands the shell variable.
-        self.assertIn('--title "$title"', self.text)
 
-    def test_the_draft_job_installs_both_dependency_sets_unconditionally(self):
+    def test_the_draft_job_passes_the_pr_title_as_one_argument(self):
+        # A PR title is untrusted data. Run the step's real shell against a `gh`
+        # stub that returns a hostile title and a `python3` stub that records the
+        # argv it received, and check the title arrived as ONE argument, intact.
+        body = run_body_containing(self.text, "ci-fast.py")
+        title = 'He said "hi"\n$(touch pwned)\nline three'
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            argv_log = tmp / "argv"
+            _stub(bindir, "gh", "printf '%s' \"$STUB_TITLE\"\n")
+            _stub(bindir, "python3",
+                  'for a in "$@"; do printf "%s\\0" "$a" >> "$ARGV_LOG"; done\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "STUB_TITLE": title, "ARGV_LOG": str(argv_log),
+                   "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1", "GH_TOKEN": "x"}
+            subprocess.run(["bash", "-c", body], env=env, cwd=tmp, check=True,
+                           capture_output=True, text=True)
+            argv = argv_log.read_text().split("\0")[:-1]
+            self.assertEqual(argv.count("--title"), 1, f"argv: {argv}")
+            at = argv.index("--title")
+            # Exactly one value follows --title, and it is the title verbatim: a
+            # quoting/spelling slip that word-split it would show up here.
+            self.assertEqual(argv[at + 1], title, f"title mangled: {argv[at + 1]!r}")
+            self.assertEqual(len(argv), at + 2, f"title split or extra args: {argv}")
+            self.assertFalse((tmp / "pwned").exists(), "title reached the shell as code")
+
+    def test_the_draft_job_installs_both_dependency_sets(self):
         # ci-fast widens its own scope beyond the raw select() flags (unknown
-        # paths → backend+frontend, i18n → backend), so a scope-gated install
-        # could omit a dependency ci-fast then needs, blocking the draft. The
-        # install must name both installers and gate neither on a scope output.
-        match = re.search(r"(?ms)^\s*- name: Install dependencies\n(.*?)(?=^\s*- name:)", self.text)
-        self.assertIsNotNone(match, "no 'Install dependencies' step in the workflow")
-        install = match.group(0)
-        self.assertIn("uv sync", install)
-        self.assertIn("pnpm install", install)
-        self.assertNotIn("needs.scope.outputs", install)
-        self.assertNotIn("if:", install)
+        # paths → backend+frontend, i18n → backend), so the draft's install must
+        # provision BOTH toolchains, unconditionally, or the widened run fails on
+        # a missing dependency. Run the step's shell and record what it invoked.
+        body = run_body_containing(self.text, "uv sync")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            (tmp / "backend").mkdir()
+            (tmp / "frontend").mkdir()
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            install_log = tmp / "install"
+            for name in ("uv", "pnpm"):
+                _stub(bindir, name,
+                      f'printf "%s\\t%s\\n" "$(pwd)" "$*" >> "$INSTALL_LOG"\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "INSTALL_LOG": str(install_log)}
+            subprocess.run(["bash", "-c", body], env=env, cwd=tmp, check=True,
+                           capture_output=True, text=True)
+            # Each line is "<cwd>\t<args>": the directory the installer ran in,
+            # then what it was asked to do.
+            calls = [line.split("\t", 1) for line in install_log.read_text().splitlines()]
+            backend = [args for cwd, args in calls if cwd.endswith("/backend")]
+            frontend = [args for cwd, args in calls if cwd.endswith("/frontend")]
+            self.assertTrue(any("sync" in args for args in backend),
+                            f"backend toolchain not installed: {calls}")
+            self.assertTrue(any("install" in args for args in frontend),
+                            f"frontend toolchain not installed: {calls}")
 
 
 class MainCliTest(unittest.TestCase):
@@ -588,6 +655,21 @@ class MainCliTest(unittest.TestCase):
             env=env, cwd=WORKFLOW.parent.parent.parent, capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("does not match the event", result.stderr)
+
+    def test_check_mode_fails_closed_when_needs_is_not_an_object(self):
+        # `toJSON(needs)` is always an object, so this is unreachable in a real
+        # run — but a malformed payload must still be a clear failure, not a
+        # traceback, and never a pass. (null and [] are the two honest shapes of
+        # "no needs object".)
+        script = WORKFLOW.parent.parent / "scripts" / "required-ci.py"
+        for payload in ("null", "[]"):
+            result = subprocess.run(
+                [sys.executable, str(script), "check"],
+                env={**os.environ, "GITHUB_EVENT_NAME": "merge_group", "CI_NEEDS": payload},
+                cwd=WORKFLOW.parent.parent.parent, capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0, f"CI_NEEDS={payload} should fail")
+            self.assertIn("needs is not an object", result.stderr, f"CI_NEEDS={payload}")
+            self.assertNotIn("Traceback", result.stderr, f"CI_NEEDS={payload}")
 
 
 if __name__ == "__main__":

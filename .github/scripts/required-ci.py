@@ -112,6 +112,8 @@ def failures(needs, expected_tier):
     Missing, cancelled, invalid and out-of-band results all fall out of the
     exact-match comparison below.
     """
+    if not isinstance(needs, dict):
+        return [f"needs is not an object: {needs!r}"]
     scope = needs.get("scope", {})
     if scope.get("result") != "success":
         return ["scope did not succeed"]

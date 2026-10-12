@@ -15,9 +15,13 @@ name: Required CI
 #   merge diff selects, aggregated under the required check name `CI required`.
 #
 # `ready_for_review` is listed explicitly so promoting a draft starts a fresh
-# FULL run; combined with the pull_request concurrency group below (keyed by
-# ref, cancel-in-progress), it also cancels the superseded draft-quick run, so
-# the full run is the one whose result stands.
+# FULL run. The concurrency group below (cancel-in-progress) stops a superseded
+# draft-quick run only while it is still in flight; a draft-quick run that
+# already completed is NOT revoked, and does not need to be — it carried the
+# distinct check name `CI required (draft quick)`, so it never satisfied the
+# `CI required` check that branch protection and the merge gate read. That
+# distinct name, not the cancellation, is what makes the full run's result the
+# one that stands.
 on:
   pull_request:
     branches: [main]
