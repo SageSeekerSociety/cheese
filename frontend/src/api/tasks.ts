@@ -111,11 +111,11 @@ export function createRoomTask(roomId: string, title?: string): Promise<RoomTask
   })
 }
 
-/** 开始：负责人确认讨论清楚了。项目没有默认审阅人时要指定一位。 */
-export function startTask(taskId: string, reviewerHandle?: string | null): Promise<RoomTask> {
+/** 开始：负责人确认讨论清楚了。审阅人由后端按档定，先是负责人自己。 */
+export function startTask(taskId: string): Promise<RoomTask> {
   return request<RoomTask>(`${taskPath(taskId)}/start`, {
     method: 'POST',
-    body: JSON.stringify(reviewerHandle ? { reviewer_handle: reviewerHandle } : {}),
+    body: JSON.stringify({}),
   })
 }
 

@@ -22,10 +22,10 @@ import { setLocale } from '@/i18n'
 
 const writeText = vi.fn().mockResolvedValue(undefined)
 
-function block(id: string): Block {
+function block(id: string, conversation = 'tp1'): Block {
   return {
     id,
-    conversation_id: 'tp1',
+    conversation_id: conversation,
     kind: 'message',
     author_type: 'participant',
     author: '张衡',
@@ -42,6 +42,29 @@ async function routerStoppedOnTopic() {
   await router.push('/p/pr1/t/tp1')
   await router.isReady()
   return router
+}
+
+/** 停在频道 tp1 的支线 th1 上：桌面上频道主线在左，支线在右，两边的消息都有悬停条。 */
+async function routerStoppedOnThread() {
+  const page = { template: '<div />' }
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { name: 'workspace-topic', path: '/p/:projectId/t/:topicId', component: page },
+      { name: 'workspace-thread', path: '/p/:projectId/t/:topicId/threads/:threadId', component: page },
+    ],
+  })
+  await router.push('/p/pr1/t/tp1/threads/th1')
+  await router.isReady()
+  return router
+}
+
+async function copiedFrom(b: Block, router: ReturnType<typeof createRouter>) {
+  const { container } = renderBar(b, router)
+  await fireEvent.click(linkButton(container)!)
+  await flush()
+  const url = new URL(writeText.mock.calls.at(-1)![0] as string)
+  return router.resolve(url.pathname + url.search)
 }
 
 function renderBar(b: Block, router?: ReturnType<typeof createRouter>, extra: Record<string, unknown> = {}) {
@@ -104,6 +127,25 @@ describe('消息的悬停条：复制链接', () => {
     await flush()
 
     expect(container.querySelector('button[title="已复制链接"]')).toBeTruthy()
+  })
+
+  it('支线里一条回复的链接打开那条支线，落在这条回复上', async () => {
+    const router = await routerStoppedOnThread()
+
+    const opened = await copiedFrom(block('r1', 'th1'), router)
+
+    expect(opened.name).toBe('workspace-thread')
+    expect(opened.params).toMatchObject({ topicId: 'tp1', threadId: 'th1' })
+    expect(opened.query.block).toBe('r1')
+  })
+
+  it('支线页上，频道主线里那一条的链接仍是频道的', async () => {
+    const router = await routerStoppedOnThread()
+
+    const opened = await copiedFrom(block('m1', 'tp1'), router)
+
+    expect(opened.name).toBe('workspace-topic')
+    expect(opened.query.block).toBe('m1')
   })
 
   it('宿主没有路由就不画这一颗，而不是画一颗点了没反应的', async () => {

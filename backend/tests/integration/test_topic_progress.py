@@ -63,7 +63,7 @@ def _progress(client, topic_id: str, **params) -> list[tuple[str, str]]:
 def _task(client, room_id: str) -> tuple[str, dict]:
     """One of the room's tasks, and the credentials its own session writes
     with."""
-    task = open_task(client, room_id, owner="user-1", start=False)
+    task = open_task(client, room_id, owner="user-1")
     token = mint_scoped_token(project_id=task["project_id"], topic_id=task["id"])
     return task["id"], {"X-Cheese-Token": token}
 

@@ -12,6 +12,8 @@ import type { RefNames } from '@/lib/refChip'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { refsVersion } from '@/lib/refDirectory'
+
 type Reader = typeof import('@/components/panels/doc/blocks/reader')
 let reader: Reader | null = null
 let readerLoading: Promise<Reader> | null = null
@@ -49,6 +51,8 @@ function draw() {
 
 onMounted(draw)
 watch([() => props.source, () => props.as, () => props.names, () => props.copyCode], draw, { deep: true })
+// 一个 `<#id>` 指着什么是后到的（lib/refDirectory）：到了，有这种引用的再画一遍。
+watch(refsVersion, () => props.source.includes('<#') && draw())
 onBeforeUnmount(() => {
   gone = true
   stop?.()

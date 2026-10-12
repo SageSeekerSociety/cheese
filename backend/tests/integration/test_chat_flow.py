@@ -156,7 +156,7 @@ def test_a_persons_doc_edit_is_told_to_the_tasks_agent(client):
     would displace the work instead of informing it."""
     # A task's document: channels and 支线 have none.
     _, room_id = _create_project_and_topic(client)
-    task_id = open_task(client, room_id, owner="user-1", reviewer="user-1")["id"]
+    task_id = open_task(client, room_id, owner="user-1")["id"]
 
     doc = "# 目标\n\n做推荐\n\n## 验收标准\n\nRecall@10 > 0.15\n"
     for version, content in ((0, doc), (1, doc.replace("0.15", "0.25"))):

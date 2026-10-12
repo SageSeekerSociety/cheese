@@ -36,7 +36,7 @@ def _room(client, project_id: str, title: str = "运维") -> str:
 
 
 def _card(client, room_id: str, title: str = "接口分页") -> dict:
-    return open_task(client, room_id, title, start=False)
+    return open_task(client, room_id, title)
 
 
 def test_a_tasks_id_addresses_its_conversation(client):

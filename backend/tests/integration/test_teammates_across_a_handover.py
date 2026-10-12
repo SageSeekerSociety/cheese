@@ -476,7 +476,7 @@ def _task_room_with_a_teammate(client) -> tuple[str, str]:
     data = project.json()["data"]
     room = data["root_topic_id"]
     _seat_teammate(client, data, room, "second", "Second")
-    return room, open_task(client, room, "整理一下", start=False)["id"]
+    return room, open_task(client, room, "整理一下")["id"]
 
 
 def test_a_tasks_message_naming_another_teammate_gets_its_turn(client):
