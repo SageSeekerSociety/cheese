@@ -29,8 +29,11 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.routing import APIRoute
 
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.routes.admin_common import PlatformAdminDep
+from app.domain.agent.device_hub import device_hub
+from app.domain.machine import admin as machine_admin
+from app.domain.machine.admin_schemas import MachinesOverviewOut
 from app.domain.platform_stats.services import PlatformStatsService
 
 router = APIRouter(prefix="/admin/stats", tags=["admin"])
@@ -199,3 +202,11 @@ async def integrations_stats(
     计量落账心跳都要先加埋点才查得到）。
     """
     return ok(await service.integrations())
+
+
+@router.get("/machines", **typed_response(MachinesOverviewOut))
+async def machines_stats(db: DbSession, handle: PlatformAdminDep) -> dict:
+    """机器那一块：MicroCloud 上的每台宿主机、它上面的沙箱、温机池，和过去一天沙箱
+    起得怎么样。口径写在 `app/domain/machine/admin.py` 的模块 docstring 上。"""
+    del handle
+    return ok(await machine_admin.overview(db, device_hub))
