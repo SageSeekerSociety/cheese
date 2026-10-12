@@ -21,7 +21,8 @@ per-contract reasoning: `docs/manual/dev/architecture.md`,
 ## Backend: the import graph is checked, not assumed
 
 The import graph and the contracts that describe it — `api -> domain -> core`,
-sibling domains acyclic, and the `turn` layering — are declared in
+sibling domains acyclic, route modules independent of one another, and the
+`turn` layering — are declared in
 `backend/.importlinter` (AST-based, so an import inside a function counts too).
 `check_boundaries.py` names the fix contract by contract and what the freeze
 permits (no wildcards; exit 2 is "could not judge", never a pass).
