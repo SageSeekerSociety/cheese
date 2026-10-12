@@ -119,7 +119,7 @@ export function desktopAppVersion(): string | null {
 
 /** Where the app's own update stands, as desktop/src-tauri/src/updates.rs reports it. */
 export type DesktopUpdateStatus =
-  | { state: 'idle' | 'checking' | 'latest' | 'failed' }
+  | { state: 'idle' | 'checking' | 'latest' | 'failed' | 'install-failed' }
   | { state: 'downloading' | 'ready'; version: string }
 
 /** Null in a browser and in an app that cannot say. */

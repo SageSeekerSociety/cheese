@@ -8,7 +8,7 @@ import type { PendingAttachment } from '../../lib/attachments'
 
 import { computed } from 'vue'
 
-import { fileIcon, hasPagePreview } from '../../lib/fileKind'
+import { fileIcon, hasPagePreview, videoMimeOf } from '../../lib/fileKind'
 import AttachmentDocThumb from '../AttachmentDocThumb.vue'
 import AttachmentImage from '../AttachmentImage.vue'
 
@@ -25,6 +25,9 @@ const emit = defineEmits<{ (e: 'remove'): void; (e: 'retry'): void }>()
 // 上传中那一格还没有工作区路径，名字只有它自己记着的那一份。
 const name = computed(() => props.attachment.name ?? props.attachment.path.split('/').pop() ?? '')
 const isImage = computed(() => props.attachment.mime.startsWith('image/'))
+const icon = computed(() =>
+  videoMimeOf(name.value, props.attachment.mime) ? 'mdi-video-outline' : fileIcon(name.value)
+)
 // 按后缀问，不按 mime：平台那个转换服务也是照后缀决定转不转的，两边用同一个判据。
 const isDocument = computed(() => hasPagePreview(name.value))
 // 上传失败：这一枚留在待发条里，记号换成警示、多一颗重试。File 还在手里（见
@@ -79,7 +82,7 @@ const percent = computed(() =>
             size="12"
             width="1.5"
           />
-          <v-icon v-else size="14">{{ fileIcon(name) }}</v-icon>
+          <v-icon v-else size="14">{{ icon }}</v-icon>
         </span>
       </Transition>
     </template>

@@ -63,6 +63,10 @@ class NoteCode(enum.StrEnum):
     accept_no_branch = "accept_no_branch"
     #: 卡上有 PR，但此刻推进不了。
     accept_pr_stalled = "accept_pr_stalled"
+    #: GitHub 上的 PR 标题和这张卡的主题不是同一行。平台按卡片主题写 PR 标题、
+    #: 按同一行落 squash 提交标题，而仓库自己的检查评判的是 PR 上那个标题 ——
+    #: 两者分家时合下去，落进历史的会是一行没人检查过的字，所以合并停下。
+    pr_title_disagrees = "pr_title_disagrees"
     #: 采纳时合并冲突，已派芝士解决。
     merge_conflict = "merge_conflict"
     #: pending_gate 孤儿卡：闸门没跑完，不是没通过。
@@ -100,6 +104,7 @@ _STUCK = frozenset(
         NoteCode.accept_pr_open_failed,
         NoteCode.accept_no_branch,
         NoteCode.accept_pr_stalled,
+        NoteCode.pr_title_disagrees,
         NoteCode.merge_conflict,
         NoteCode.gate_abandoned,
         NoteCode.pr_skipped,

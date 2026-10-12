@@ -402,20 +402,20 @@ def test_existing_frozen_debt_keeps_exact_b9_leaves():
     # are added: 706/730 until 2026-10-12, then 712/736 once this branch's four
     # leaves of `/admin/integrations/external-problem` and
     # `/tasks/{taskId}/external-problem*` landed above them, then 713/737 on
-    # merging main's `/admin/machines` page and 720/744 on merging its canvases.
-    # The pair itself is unchanged — tests/AGENTS.md ("Generated routes and
-    # database predicates") asks for the indices, the identities behind them and
-    # this assertion to move in one commit.
+    # merging main's `/admin/machines` page, 720/744 on its canvases and 721/745
+    # on its agent callers page. The pair itself is unchanged — tests/AGENTS.md
+    # ("Generated routes and database predicates") asks for the indices, the
+    # identities behind them and this assertion to move in one commit.
     (pair,) = FROZEN
     assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        720,
-        744,
+        721,
+        745,
         "http",
         "GET",
     )
     records = [
-        replace(record(720, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(744, pair.later_path), endpoint=pair.later_endpoint),
+        replace(record(721, pair.earlier_path), endpoint=pair.earlier_endpoint),
+        replace(record(745, pair.later_path), endpoint=pair.later_endpoint),
     ]
     assert checked_findings(records, FROZEN) == []
 

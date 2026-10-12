@@ -6254,7 +6254,9 @@ export interface paths {
          *
          *     `status` keeps only threads in that state. The sidebar polls for the open
          *     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
-         *     read.
+         *     read. `accepted` independently keeps tasks with an approved delivery
+         *     (`true`) or without one (`false`); omitted, it keeps both. This applies to
+         *     whole lists as well as pages, regardless of whether the task is open.
          *
          *     With `limit` (and a `status`) it is a page instead, of the threads that
          *     most recently moved: the closed ones only grow, and the all-tasks page
@@ -6262,7 +6264,8 @@ export interface paths {
          *     to one `channel` and to `whose` the threads are to the reader (`mine`: they
          *     own it; `helping`: they are among its contributors; `others`: neither).
          *     `next` is the cursor to pass as `before` for the page after; `counts` says
-         *     how many there are in all and by whose, for the same status and channel.
+         *     how many there are in all and by whose, for the same status, channel and
+         *     acceptance filter.
          *
          *     The rail draws rooms and the work inside them, so it needs both halves at
          *     once. Two round trips, not two per room and one per thread: a project here
@@ -6824,6 +6827,27 @@ export interface paths {
          *     off, no member's own agent is called in it; turned on again, they are.
          */
         put: operations["set_own_agents_projects__project_id__own_agents_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/own-agents/{handle}/callers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Own Agent Callers
+         * @description Who may call a member's own agent: its owner alone, or any person in the
+         *     project. Only its owner decides, since it is their account that pays.
+         */
+        put: operations["set_own_agent_callers_projects__project_id__own_agents__handle__callers_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -10392,8 +10416,7 @@ export interface paths {
         };
         /**
          * Attachment Raw
-         * @description Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
-         *     to images so this can never serve executable HTML from the worktree.
+         * @description Authorized raster images and video bytes, never executable HTML/SVG.
          */
         get: operations["attachment_raw_topics__topic_id__attachments_raw_get"];
         put?: never;
@@ -15515,6 +15538,20 @@ export interface components {
             wait_p95_s: number | null;
             /** Wait Max S */
             wait_max_s: number | null;
+            /** Refused Sessions */
+            refused_sessions: number;
+            /** Refused By Reason */
+            refused_by_reason: {
+                [key: string]: number;
+            };
+            /** Hosts Lost */
+            hosts_lost: number;
+            /** Hosts Lost By Reason */
+            hosts_lost_by_reason: {
+                [key: string]: number;
+            };
+            /** Sandboxes Lost */
+            sandboxes_lost: number;
         };
         /** MachineHostOut */
         MachineHostOut: {
@@ -16026,11 +16063,68 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
+        /** OwnAgentCallersUpdate */
+        OwnAgentCallersUpdate: {
+            callers: components["schemas"]["OwnCallers"];
+        };
+        /** OwnAgentMachineOut */
+        OwnAgentMachineOut: {
+            /** Name */
+            name: string;
+            /** Online */
+            online: boolean;
+        };
+        /** OwnAgentOut */
+        OwnAgentOut: {
+            /** Handle */
+            handle: string;
+            /** Name */
+            name: string | null;
+            callers: components["schemas"]["OwnCallers"];
+            /** Owner Handle */
+            owner_handle: string | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Machines */
+            machines: components["schemas"]["OwnAgentMachineOut"][];
+        };
+        /** OwnAgentsOut */
+        OwnAgentsOut: {
+            /** Allowed */
+            allowed: boolean;
+            /** Can Manage */
+            can_manage: boolean;
+            /** Agents */
+            agents: components["schemas"]["OwnAgentOut"][];
+        };
+        /** OwnAgentsOutEnvelope */
+        OwnAgentsOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["OwnAgentsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** OwnAgentsUpdate */
         OwnAgentsUpdate: {
             /** Allowed */
             allowed: boolean;
         };
+        /**
+         * OwnCallers
+         * @description Who may set a member's own agent to work. Its owner decides; the
+         *     platform does not look at what the agent signs in with.
+         * @enum {string}
+         */
+        OwnCallers: "owner" | "project";
         /** PageCheckIn */
         PageCheckIn: {
             /** Html */
@@ -30669,6 +30763,7 @@ export interface operations {
         parameters: {
             query?: {
                 status?: ("open" | "closed") | null;
+                accepted?: boolean | null;
                 channel?: string | null;
                 whose?: ("mine" | "helping" | "others") | null;
                 limit?: number | null;
@@ -31757,6 +31852,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_own_agent_callers_projects__project_id__own_agents__handle__callers_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnAgentCallersUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */

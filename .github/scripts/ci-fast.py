@@ -6,8 +6,16 @@ one, which is what Required CI's draft job does (see ci-fast.md).
 Direct Python invocation defaults to the legacy static tier (no tests/types).
 --tier extended gives the quick selection 900s without expanding its coverage.
 --types additionally runs the full Pyright/frontend-typecheck manual hooks.
-Use --title for a proposed PR title; otherwise read the actual PR title with gh.
-A missing title is unverified, never replaced by a possibly unrelated HEAD title.
+Use --title for a proposed PR title; otherwise read the actual PR title from
+--pull-request FILE (a `gh api repos/OWNER/REPO/pulls/N` payload, or the event
+JSON, which nests it under "pull_request"), falling back to `gh pr view`. A
+DRAFT pull request carries the platform's placeholder title, which says nothing
+about the change, so a draft's title is not checked at all — the same rule
+check-commit-title.py already applies to a draft — and is reported as not run;
+it is checked once the PR is marked ready for review.
+A missing title is unverified, never replaced by a possibly unrelated HEAD title,
+and a payload that cannot be read at all costs this run the title alone — the
+rest of the checks still run and can still fail it.
 
 Scope comes from Required CI's select()/path map, plus one local widening: a
 path the map does not name could be any kind of code, so it turns both product
@@ -144,6 +152,9 @@ def main(argv):
     parser.add_argument("--tier", choices=("quick", "static", "extended"), default="static")
     parser.add_argument("--types", action="store_true", help="also run full type hooks")
     parser.add_argument("--title", help="proposed PR title; otherwise fetch the actual PR title")
+    parser.add_argument("--pull-request", metavar="FILE",
+                        help="PR JSON to read the title (and draft flag) from"
+                             " (gh api repos/O/R/pulls/N, or the event JSON)")
     parser.add_argument("--report", default=str(Path(GIT_DIR, "ci-fast-report.json")))
     parser.add_argument("--timeout", type=float, default=900, help="per-check seconds")
     parser.add_argument("--budget", type=float, help="whole tier seconds (quick/static 180; extended 900)")
@@ -266,20 +277,89 @@ def run(args, report, finish, started):
     if args.tier != "static":
         title = args.title
         source = "proposed --title"
-        if title is None:
+        draft = False
+        # Why the PR payload could not be read, when it could not. An unread
+        # payload costs this run the title and nothing else: the checks below
+        # judge the change, and the verdict is fail-first, so a real failure
+        # still fails it. Returning here instead reported unknown having
+        # executed nothing — a green for a change nothing looked at.
+        unread = None
+        if title is None and args.pull_request:
             source = "actual PR title"
-            result = execute(["gh", "pr", "view", "--json", "title", "--jq", ".title"], REPO_ROOT,
-                             min(10, max(0, deadline - time.monotonic())), args.memory_mib)
+            # The event JSON nests the PR under "pull_request"; `gh api
+            # .../pulls/N` returns the PR object itself. Accept either, so the
+            # caller can pass whichever it already has.
+            try:
+                payload = json.loads(Path(args.pull_request).read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                unread = f"cannot read --pull-request {args.pull_request}: {type(exc).__name__}"
+            else:
+                nested = payload.get("pull_request") if isinstance(payload, dict) else None
+                pull = nested if isinstance(nested, dict) else payload
+                if not isinstance(pull, dict):
+                    # Valid JSON that is not a PR object (a scalar, a list, a
+                    # `pull_request` that is not an object, a truncated write
+                    # that still parses). `.get` on it raised, and an unhandled
+                    # exception exits 1 — which the caller reads as "this change
+                    # is red": a red for a payload nobody could read.
+                    unread = (f"cannot read --pull-request {args.pull_request}: "
+                              f"{type(payload).__name__}, not a PR object")
+                else:
+                    title, draft = pull.get("title"), bool(pull.get("draft"))
+                    if not isinstance(title, str):
+                        # Same again for the title itself: a non-string would
+                        # reach check-commit-title.py as an argv element and
+                        # raise TypeError out of the run. No readable title is
+                        # no title.
+                        title = None
+        elif title is None:
+            source = "actual PR title"
+            # The draft flag is read in the same call. Whether a title is judged
+            # is a property of the PR, not of which argv carried the title in:
+            # the local entry point (`task ci:fast`) passes no --pull-request,
+            # so on a branch whose PR is a draft this is the read that sees the
+            # platform's placeholder — and judging it would red the
+            # contributor's own run, before they pushed anything.
+            result = execute(["gh", "pr", "view", "--json", "title,draft",
+                              "--jq", "[(.draft | tostring), .title] | @tsv"],
+                             REPO_ROOT, min(10, max(0, deadline - time.monotonic())),
+                             args.memory_mib)
             # gh (and the platform's credential wrapper) can print a preamble
-            # notice before the title; a PR title is one line, so take the last
-            # non-empty line rather than the whole merged stdout+stderr blob.
+            # notice before the fields; they are one tab-separated line, so take
+            # the last non-empty line rather than the whole merged
+            # stdout+stderr blob. The first tab is the separator: @tsv escapes
+            # any tab inside the title.
             lines = [line.strip() for line in result["output"].splitlines() if line.strip()]
-            title = lines[-1] if result["result"] == "pass" and lines else None
-        report["title"] = {"source": source, "value": title}
-        if title is None:
-            report["ran"].append({"id": "commit-title", "result": "unknown", "reason": "no PR title; provide proposed --title", "seconds": 0})
+            title, draft = None, False
+            if result["result"] == "pass" and lines:
+                flag, _, rest = lines[-1].partition("\t")
+                draft = flag == "true"
+                # A PR with no title is no title, not the string "null".
+                title = rest or None
+        if unread:
+            # The payload said neither what the title is nor whether this is a
+            # draft. One check with no input is unknown — the row below is what
+            # the caller reads as unjudged — and the rest of the run is
+            # unaffected, which is what keeps a real failure a failure.
+            report["title"] = {"source": source, "value": None}
+            report["ran"].append({"id": "commit-title", "result": "unknown",
+                                  "reason": unread, "seconds": 0})
+            report["reasons"].append(f"commit-title: unknown {unread}")
+        elif draft:
+            # A draft's title is the platform's placeholder for work in progress
+            # ("WIP: <task title>"), which says nothing about the change: judging
+            # it here would fail a draft for text it does not own.
+            # check-commit-title.py skips a draft the same way, and pr-title.yml
+            # re-runs the title check when the PR is marked ready for review.
+            report["title"] = {"source": source, "value": None, "draft": True}
+            report["not_run"].append({"id": "commit-title",
+                                      "reason": "draft pull request: the placeholder title is not checked"})
         else:
-            invoke("commit-title", [sys.executable, str(Path(__file__).with_name("check-commit-title.py")), title])
+            report["title"] = {"source": source, "value": title}
+            if title is None:
+                report["ran"].append({"id": "commit-title", "result": "unknown", "reason": "no PR title; provide proposed --title", "seconds": 0})
+            else:
+                invoke("commit-title", [sys.executable, str(Path(__file__).with_name("check-commit-title.py")), title])
 
     precommit = shlex.split(os.environ.get("CI_FAST_PRECOMMIT", "uvx pre-commit"))
     ready = execute([*precommit, "--version"], REPO_ROOT,
