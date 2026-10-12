@@ -98,7 +98,7 @@ scenarios:
 
 ## PR 上的两个机器人 {#bots}
 
-- `claude-review.yml`：在 PR 里写 `@claude` 可以让它评审或回答问题。每个 PR 自动评审一次的触发器 2026-08-09 起停用了（它在所有 PR 上失败，而失败的检查会卡住采纳）；要恢复，把 `pull_request:` 加回 `on:`，`auto-review` job 原样可用。
+- `claude-review.yml`：AI 队友要独立审查一个 PR 时跑 `.claude/scripts/claude-review.sh <PR> [<sha>]`，它发一次 repository_dispatch，由 GitHub 托管机上的 Claude 按 `.github/claude-review/prompt.md` 审这个提交（钉 SHA、两路独立发现、逐条证伪、证据分级），结论贴回 PR 并打印出来。提示词总从主干读，被审的 PR 改不了。人在 PR 里写 `@claude` 可以让它评审或回答问题；bot 账号发的 `@claude` 会被拒。每个 PR 自动评审一次的触发器 2026-08-09 起停用了（它在所有 PR 上失败，而失败的检查会卡住采纳）；要恢复，把 `pull_request:` 加回 `on:`，`auto-review` job 原样可用。
 - `claude-md-review.yml`：改了 `AGENTS.md` 的 PR 需要人批准。`AGENTS.md` 每一轮都会整份加载，一行错的指令会被每个 agent 执行，所以这是全仓库唯一一个需要人批准的文件。
 
 ## 定时巡检 {#scheduled}

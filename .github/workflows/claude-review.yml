@@ -1,13 +1,29 @@
 name: Claude Code Review
+# A dispatched review is named after the PR and commit it reviews, so the
+# script that asked for it can find its run.
+run-name: >-
+  ${{ github.event_name == 'repository_dispatch'
+      && format('Claude review #{0} @ {1}', github.event.client_payload.pr, github.event.client_payload.sha)
+      || github.workflow }}
 
-# Two ways Claude engages with a PR:
+# Three ways Claude engages with a PR:
+#  - dispatched: an agent (or anyone with write access) asks for an independent
+#    review of one PR at one pinned commit, with
+#      .claude/scripts/claude-review.sh <PR> [<sha>]
+#    which sends a repository_dispatch, waits, and prints the result. The
+#    platform's GitHub App has contents:write (enough for repository_dispatch)
+#    but not actions:write (needed for workflow_dispatch), and an "@claude"
+#    comment from a bot account is refused by the action, so this is the path
+#    an agent can take. The method lives in .github/claude-review/prompt.md and
+#    is always read from the default branch: the PR under review cannot edit
+#    its own reviewer's instructions.
 #  - auto-review: on every PR open/update, Claude reviews the diff automatically.
 #    This needs a `prompt` — without one, claude-code-action on a pull_request
 #    event just waits for an "@claude" mention that never comes and exits doing
 #    nothing (a green check that never actually reviewed).
 #  - interactive: commenting "@claude ..." on a PR invokes Claude with that ask.
 #    This path must NOT carry a prompt, or it would ignore what the human wrote.
-# They're split into two jobs so each is unambiguous.
+# They're split into separate jobs so each is unambiguous.
 #
 # auto-review's `pull_request` trigger is disabled below (2026-08-09, authorized
 # by wangchangxin). Reason: the auto-review job fails on 100% of PRs regardless
@@ -27,6 +43,8 @@ name: Claude Code Review
 on:
   issue_comment:
     types: [created]
+  repository_dispatch:
+    types: [claude-review]
 
 jobs:
   auto-review:
@@ -74,3 +92,100 @@ jobs:
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           trigger_phrase: "@claude"
+
+  dispatched:
+    if: github.event_name == 'repository_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: claude-review-${{ github.event.client_payload.pr }}-${{ github.event.client_payload.sha }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR: ${{ github.event.client_payload.pr }}
+      SHA: ${{ github.event.client_payload.sha }}
+    steps:
+      - name: Check the PR and the pinned commit
+        id: pin
+        run: |
+          case "$PR" in '' | *[!0-9]*) echo "::error::client_payload.pr must be a PR number"; exit 1 ;; esac
+          echo "$SHA" | grep -qxE '[0-9a-f]{40}' || { echo "::error::client_payload.sha must be a full 40-character SHA"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" > "$RUNNER_TEMP/pr.json"
+          # Only branches of this repository: a fork's code would be read by a
+          # job holding the Claude token.
+          head_repo=$(jq -r '.head.repo.full_name' "$RUNNER_TEMP/pr.json")
+          [ "$head_repo" = "$GITHUB_REPOSITORY" ] || { echo "::error::#$PR comes from $head_repo, not this repository"; exit 1; }
+          # Any commit of the PR may be pinned, not only its current head.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR/commits" -q '.[].sha' | grep -qx "$SHA" \
+            || { echo "::error::$SHA is not a commit of #$PR"; exit 1; }
+          echo "base=$(jq -r '.base.ref' "$RUNNER_TEMP/pr.json")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+
+      # The method, the result schema and the renderer come from the default
+      # branch, never from the tree under review.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .review-trusted
+          sparse-checkout: .github/claude-review
+
+      - name: Build the prompt
+        id: prompt
+        env:
+          BASE: ${{ steps.pin.outputs.base }}
+        run: |
+          mv .review-trusted/.github/claude-review "$RUNNER_TEMP/claude-review"
+          rm -rf .review-trusted
+          mkdir -p .review-input
+          echo .review-input >> .git/info/exclude
+          jq -r '"# " + .title + "\n\n" + (.body // "")' "$RUNNER_TEMP/pr.json" > .review-input/pr.md
+          {
+            echo 'text<<CLAUDE_REVIEW_EOF'
+            cat "$RUNNER_TEMP/claude-review/prompt.md"
+            printf '\n## This review\n\n- PR: #%s\n- Pinned SHA: %s\n- Base: origin/%s\n' "$PR" "$SHA" "$BASE"
+            echo 'CLAUDE_REVIEW_EOF'
+          } >> "$GITHUB_OUTPUT"
+          schema=$(jq -c . "$RUNNER_TEMP/claude-review/schema.json")
+          # claude_args wraps the schema in single quotes.
+          case "$schema" in *"'"*) echo "::error::schema.json must not contain a single quote"; exit 1 ;; esac
+          echo "schema=$schema" >> "$GITHUB_OUTPUT"
+
+      - uses: anthropics/claude-code-action@5ef2e550a465a721f4f45e4a7d3c340c873e1dcc # v1
+        id: claude
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ github.token }}
+          # repository_dispatch from the platform's App runs as this bot.
+          allowed_bots: cheesex-app
+          prompt: ${{ steps.prompt.outputs.text }}
+          claude_args: >-
+            --model opus
+            --allowedTools "Read,Grep,Glob,Task,Bash(git rev-parse:*),Bash(git merge-base:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git blame:*),Bash(git grep:*),Bash(git ls-files:*)"
+            --json-schema '${{ steps.prompt.outputs.schema }}'
+
+      - name: Post the review
+        env:
+          REVIEW_JSON: ${{ steps.claude.outputs.structured_output }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python3 "$RUNNER_TEMP/claude-review/render.py" "$SHA" "$RUN_URL" > "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
+          cat "$RUNNER_TEMP/comment.md" >> "$GITHUB_STEP_SUMMARY"
+
+      # The script waiting on this run reads the marker and stops waiting.
+      - name: Say the review failed
+        if: failure() && steps.pin.outcome == 'success'
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          printf '<!-- claude-review sha=%s failed -->\nIndependent review of `%s` failed before it produced a result: %s\n' \
+            "$SHA" "${SHA:0:12}" "$RUN_URL" | gh pr comment "$PR" -R "$GITHUB_REPOSITORY" --body-file -
