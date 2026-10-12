@@ -3,8 +3,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "pnpm run build:miniapp && vite",
+    "build": "pnpm run build:miniapp && vite build",
+    "build:miniapp": "vite build --config vite.miniapp.config.mts --logLevel warn",
     "build:collab": "esbuild collab/main.ts --bundle --platform=node --target=node22 --format=esm --outfile=dist-collab/main.mjs --banner:js=\"import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);\"",
     "test:collab": "vitest run --config collab/vitest.config.ts",
     "typecheck:collab": "tsc -p collab/tsconfig.json",
