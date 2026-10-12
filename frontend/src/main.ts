@@ -38,6 +38,7 @@ import { registerPwa } from './pwa'
 import router from './router'
 
 import i18n from '@/i18n'
+import { armAfterFirstPaint } from '@/lib/afterFirstPaint'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
 import { installRefChipKeys } from '@/lib/refChip'
@@ -77,6 +78,10 @@ watch(
   },
   { immediate: true }
 )
+
+// 首帧之后才发的那一批（角标、装饰类）跟着这台 router 排。装插件会把 router 装上并
+// 开始第一次跳转，所以在这一行之前装（见 lib/afterFirstPaint.ts）。
+armAfterFirstPaint(router)
 
 registerPlugins(app)
 app.mount('#app')

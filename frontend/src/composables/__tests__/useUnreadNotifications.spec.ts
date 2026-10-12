@@ -26,6 +26,9 @@ const settle = async () => {
  *  重新 import 一次，不然上一个用例的数和「刚问过」的时刻会跟到下一个用例里。 */
 async function mountAt(path: string) {
   vi.resetModules()
+  // 首帧这道门在测试里没人推：小点读的数排在它后面，不推就一次都不问（`@/test/firstPaint`）。
+  const { openFirstPaint } = await import('@/test/firstPaint')
+  await openFirstPaint()
   const { useUnreadNotifications } = await import('../useUnreadNotifications')
   const Probe = {
     setup() {

@@ -348,6 +348,7 @@ import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { offerToConnect } from '@/lib/desktop'
 import {
   desktopBadge,
@@ -538,14 +539,21 @@ function skipToContent(): void {
 }
 
 // 内测版本徽标要画的那个构建。壳来问，徽标只画：取不到（接口不通、后端太旧）就不画。
+// 徽标是装饰，所以排到首帧之后（`lib/afterFirstPaint.ts`），别在开页那一瞬间跟页面
+// 自己要的数据抢。
 const appVersion = ref<AppVersion | null>(null)
-onMounted(async () => {
-  try {
-    appVersion.value = await getAppVersion()
-  } catch {
-    // Best-effort: no badge if the endpoint is unreachable or old.
-  }
-})
+watch(
+  firstPaintDone,
+  async (painted) => {
+    if (!painted || appVersion.value) return
+    try {
+      appVersion.value = await getAppVersion()
+    } catch {
+      // Best-effort: no badge if the endpoint is unreachable or old.
+    }
+  },
+  { immediate: true }
+)
 
 onMounted(async () => {
   await router.isReady().catch(() => {})

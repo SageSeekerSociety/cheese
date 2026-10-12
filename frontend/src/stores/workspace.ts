@@ -23,6 +23,7 @@ import { ApiError, isProjectArchivedError } from '@/api'
 import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { type ProjectRefusal, projectRefusal } from '@/lib/addresses'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { memberName } from '@/lib/agentNames'
 import { externalHandles } from '@/lib/externalMembers'
 import { identityChanges } from '@/lib/identity'
@@ -164,21 +165,24 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 每个频道和任务在等我的东西（`TopicUnread`：行上的数字、名字加不加粗、上次读后来了
   // 几条），和私聊未读——私聊按对方的 handle 编址（'cheese' = 和芝士那一间），因为私聊
   // 的行来自成员名单，没有话题 id。频道的数字已经按我设的通知档位算过了（后端）。
+  // 这三样只画角标（行上的数字、名字加不加粗、未读点、静音标），不挡内容，所以第一遍
+  // 排到首帧之后（`lib/afterFirstPaint.ts`）：开页那一瞬间先把页面自己要的数据发出去，
+  // 角标随后补上。`query/` 里的重读逻辑照旧，不动。
   const withMe = computed(() => reachable.value && !!me.value)
   const unreadRead = useQuery(
-    computed(() => ({ ...unreadQuery(pid.value, me.value), enabled: withMe.value })),
+    computed(() => ({ ...unreadQuery(pid.value, me.value), enabled: withMe.value && firstPaintDone.value })),
     queryClient
   )
   const unreadMap = computed<Record<string, TopicUnread>>(() => unreadRead.data.value ?? {})
   const privateUnreadRead = useQuery(
-    computed(() => ({ ...privateUnreadQuery(pid.value, me.value), enabled: withMe.value })),
+    computed(() => ({ ...privateUnreadQuery(pid.value, me.value), enabled: withMe.value && firstPaintDone.value })),
     queryClient
   )
   const privateUnreadMap = computed<Record<string, number>>(() => privateUnreadRead.data.value ?? {})
   // 我不在默认档位的频道（{topic_id: {level, muted_until}}）。过了期的静音后端不列；
   // 页面开着的时候静音到点，下一次轮询会把它拿掉。
   const levelsRead = useQuery(
-    computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: reachable.value })),
+    computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: reachable.value && firstPaintDone.value })),
     queryClient
   )
   const notifyLevels = computed<Record<string, TopicNotifySetting>>(() => levelsRead.data.value ?? {})

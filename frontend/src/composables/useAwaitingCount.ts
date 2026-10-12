@@ -3,6 +3,7 @@ import { useRoute } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
 import { listAwaitingMe } from '@/api'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 
 /** 两次读之间至少隔这么久：换路由很频繁，而这个数字晚几十秒变不要紧。 */
 const MIN_INTERVAL_MS = 30_000
@@ -52,14 +53,22 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
     }
   }
 
+  // 登录之后的第一遍排到首帧之后（`lib/afterFirstPaint.ts`）：这条角标几秒后才有人看，
+  // 别在开页那一瞬间跟页面自己要的数据抢。之后的刷新照旧——换页面、窗口重新拿到焦点，
+  // 都还是当场问（`asked` 挡住的是首帧那个门开了之后重复排的那几遍）。
+  let asked = false
   watch(
-    enabled,
-    (on) => {
-      if (on) void refresh(true)
-      else {
+    [enabled, firstPaintDone],
+    ([on, painted]) => {
+      if (!on) {
         count.value = 0
         byProject.value = {}
+        asked = false
+        return
       }
+      if (!painted || asked) return
+      asked = true
+      void refresh(true)
     },
     { immediate: true }
   )

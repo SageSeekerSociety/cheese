@@ -32,9 +32,13 @@ vi.mock('@/api', () => ({
 import { getTopicUnread, listBlocks } from '@/api'
 import { setCachedWindow } from '@/query/blocks'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { openFirstPaint } from '@/test/firstPaint'
 
 /** 打开项目（刷新页面后第一次进来），等第一次读完。 */
 async function opened() {
+  // 未读那几笔排在首帧之后（`lib/afterFirstPaint.ts`）：单测里没人画首帧，得先把那道门
+  // 推开，否则它们一次都不发。
+  await openFirstPaint()
   const store = useWorkspaceStore()
   store.openProject('p1')
   await flush()

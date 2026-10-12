@@ -6,6 +6,7 @@ import { useDesktopApp } from '@/composables/useDesktopApp'
 import { replayTour } from '@/composables/useProjectTour'
 
 import { PLATFORM_LANDING } from '@/lib/adminSections'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { inDesktopApp, openInBrowser } from '@/lib/desktopApp'
 import { docsUrl } from '@/lib/docsSite'
 import AccountService from '@/services/account'
@@ -91,7 +92,23 @@ function refresh() {
   void store.refreshCounts()
 }
 
-watch(loggedIn, refresh, { immediate: true })
+// 这两个回答只用来画一个未读点和一项「管理后台」，所以第一遍排到首帧之后
+//（`lib/afterFirstPaint.ts`），不跟页面自己要的数据抢。登录态变化照旧重问，
+// `asked` 挡住的只是首帧那个门开了之后重复排的那几遍。
+let asked = false
+watch(
+  [loggedIn, firstPaintDone],
+  ([yes, painted]) => {
+    if (!yes) {
+      asked = false
+      return
+    }
+    if (!painted || asked) return
+    asked = true
+    refresh()
+  },
+  { immediate: true }
+)
 </script>
 
 <template>

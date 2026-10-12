@@ -59,6 +59,7 @@ vi.mock('@/lib/roomLink', () => ({
 }))
 import ProjectShell from './ProjectShell.vue'
 
+import { openFirstPaint } from '@/test/firstPaint'
 import { seedProject } from '@/test/seedQueries'
 
 afterEach(() => {
@@ -68,9 +69,13 @@ afterEach(() => {
   for (const fn of Object.values(api)) fn.mockClear()
 })
 
-function mount() {
+async function mount() {
   // 进来时手上已经是刚读过的一份：这一刻不用问。
   seedProject('p', { topics: [], unread: {}, privateUnread: {}, notifyLevels: {} }, 'alice')
+  // 角标和推送订阅都排在首帧这道门后面（`@/test/firstPaint`），测试里没人推门：不推
+  // 就不会有那连接，下面拿 `feed.channels` 也就什么都找不到。假时钟的用例要在这之后
+  // 才装上，不然这一等就是真的等不到了。
+  await openFirstPaint()
   return render(ProjectShell, {
     props: { projectId: 'p' },
     global: { plugins: [createPinia()], stubs: { RouterView: true, VSnackbar: true } },
@@ -78,8 +83,8 @@ function mount() {
 }
 
 it('asks nothing while nothing in the project changes', async () => {
+  const view = await mount()
   vi.useFakeTimers()
-  const view = mount()
   await vi.advanceTimersByTimeAsync(5 * 60_000)
   expect(api.listTopics).not.toHaveBeenCalled()
   expect(api.getTopicUnread).not.toHaveBeenCalled()
@@ -87,7 +92,7 @@ it('asks nothing while nothing in the project changes', async () => {
 })
 
 it('reads the unread marks again the moment the project says they changed', async () => {
-  const view = mount()
+  const view = await mount()
   const channel = feed.channels.find((c) => c.topic === 'project:p')!
   channel.onmessage?.({ data: JSON.stringify({ type: 'state', resource: 'unread', id: 'r1' }) })
   await new Promise((r) => setTimeout(r, 0))
@@ -96,7 +101,7 @@ it('reads the unread marks again the moment the project says they changed', asyn
 })
 
 it('stops listening once the reader leaves the project', async () => {
-  const view = mount()
+  const view = await mount()
   const channel = feed.channels.find((c) => c.topic === 'project:p')!
   view.unmount()
   expect(channel.closed).toBe(true)

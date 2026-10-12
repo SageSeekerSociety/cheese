@@ -34,8 +34,11 @@ const settle = async () => {
 /** 每个用例都要一份干净的模块状态：默认头像 id 是进程内共享的一次性缓存。 */
 async function freshUserMenu() {
   vi.resetModules()
+  // 默认头像那一行的 id 排在首帧这道门后面（`@/test/firstPaint`），测试里没人推门就得推一下。
+  const { openFirstPaint } = await import('@/test/firstPaint')
   const { useUserMenu } = await import('../useUserMenu')
   const menu = useUserMenu()
+  await openFirstPaint()
   await settle()
   return menu
 }

@@ -39,6 +39,8 @@ import { useDesktopApp } from '@/composables/useDesktopApp'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import AccountService from '@/services/account'
+import { openFirstPaint } from '@/test/firstPaint'
 
 /** 挂一次，`meta` 与 `counts` 由调用方给的桩决定。 */
 async function mount(
@@ -65,6 +67,8 @@ async function mount(
   })
   await router.push('/')
   await router.isReady()
+  // 未读数和「管理后台」那一项都在首帧这道门后面（`@/test/firstPaint`），测试里没人推门。
+  await openFirstPaint()
   const vuetify = createVuetify({ components, directives })
   return render(HelpAndFeedbackMenu, { props, global: { plugins: [vuetify, router, createPinia(), i18n] } })
 }
@@ -91,6 +95,9 @@ beforeEach(() => {
   setLocale('zh-CN')
   getFeedbackMeta.mockReset()
   getFeedbackCounts.mockReset()
+  // 这一份只在登录之后的顶栏上出现，那两个接口也都要登录：登录态置真，否则它们
+  // 一次都不发（组件里那个 watch 要看登录态）。
+  AccountService._loggedIn.value = true
 })
 
 describe('帮助与反馈入口', () => {

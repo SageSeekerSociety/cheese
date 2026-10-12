@@ -27,6 +27,7 @@ import type { TopicNotifySetting, TopicUnread } from '@/api'
 
 import { getTopicNotifyLevels, getTopicUnread, markAllTopicsRead, setTopicNotifyLevel } from '@/api'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { openFirstPaint } from '@/test/firstPaint'
 
 async function flush() {
   for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0))
@@ -35,6 +36,9 @@ async function flush() {
 const n = (count: number): TopicUnread => ({ count, new: true, messages: count })
 
 async function opened() {
+  // 档位和未读那几笔排在首帧之后（`lib/afterFirstPaint.ts`）：单测里没人画首帧，得先把
+  // 那道门推开，否则它们一次都不发。
+  await openFirstPaint()
   const store = useWorkspaceStore()
   store.openProject('p1')
   await flush()

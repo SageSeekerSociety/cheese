@@ -3,6 +3,7 @@ import { useRoute } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
 import { getUnreadNotificationCount } from '@/api/notifications'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import AccountService from '@/services/account'
 
 // 未读通知数：全站一份。首页那一格用它画小点，待办页的「动态」读完、标已读之后
@@ -49,11 +50,21 @@ export function useUnreadNotifications() {
   const route = useRoute()
   if (!watching) {
     watching = true
+    // 小点是装饰：登录之后的第一遍排到首帧之后（`lib/afterFirstPaint.ts`），不跟页面
+    // 自己要的数据抢。`asked` 挡住的是首帧那个门开了之后重复排的那几遍；退出登录时
+    // 清掉，下次登录再问一遍。
+    let asked = false
     watch(
-      () => AccountService._loggedIn.value,
-      (loggedIn) => {
-        if (loggedIn) void refresh()
-        else count.value = 0
+      [() => AccountService._loggedIn.value, firstPaintDone],
+      ([loggedIn, painted]) => {
+        if (!loggedIn) {
+          count.value = 0
+          asked = false
+          return
+        }
+        if (!painted || asked) return
+        asked = true
+        void refresh()
       },
       { immediate: true }
     )
