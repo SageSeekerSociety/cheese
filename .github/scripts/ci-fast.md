@@ -102,12 +102,18 @@ everything is still allowed to answer unknown.
   only `roomNotice`/`apiError`/`global`. This tier widens backend scope locally
   for any such edit so those guards still run here; the shared map — and what
   Required CI runs — is left untouched.
-- Frontend Vitest uses `related` only when a changed source root seeds the
-  graph. A config edit, a deleted path, an unknown path, or no merge base falls
-  back to the full Vitest run, which must be shown to have executed both i18n
-  guard specs. The narrow type project extends the real `frontend/tsconfig.json`,
-  bridges `node_modules`, and checks only the changed files against the existing
-  tsc-ratchet baseline — it is not a full consumer-type check.
+- Frontend Vitest runs the whole suite only when the change cannot be narrowed:
+  a config edit, a `.github/` edit, a `frontend/src/test/` or `frontend/scripts/`
+  edit, an unknown path, or no merge base. The full run must be shown to have
+  executed both i18n guard specs. Everything else stays narrow: a deletion, a
+  catalog/asset edit or a prose change still seeds `related` from the surviving
+  source roots, and when nothing seeds it the tier runs only the i18n guards and
+  records `frontend-unit` as not-run with a reason — it does not expand to the
+  suite. The narrow type project extends the real `frontend/tsconfig.json`,
+  bridges `node_modules`, and checks only the surviving changed files against the
+  existing tsc-ratchet baseline; a deleted non-spec source file forces the full
+  typecheck instead, since only the whole project sees its dangling importers.
+  It is not a full consumer-type check.
 - **Not covered here**: contract / integration / build / e2e tests, remote
   checks, and full frontend consumer types. The summary lists every skipped
   item. Full Required CI + merge queue remains the only merge gate — **ci:fast

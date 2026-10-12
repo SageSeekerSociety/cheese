@@ -736,12 +736,17 @@ class SelectionEvidenceTest(unittest.TestCase):
         paths, _, _ = select_backend(self.root, ["backend/app/special.py"])
         self.assertIn("tests/unit/test_indirect.py", paths)
 
-    def test_frontend_delete_forces_full_and_temp_project_inherits(self):
+    def test_frontend_delete_keeps_related_when_a_root_survives(self):
+        # A deletion no longer expands to the suite: the surviving root still
+        # seeds the related graph. The deleted module does force the full
+        # typecheck, which is the only project that can see dangling importers.
         from ci_fast_checks import test_plan
         self.put("frontend/src/new.vue", "<template><p>Hello</p></template>")
         plan, _ = test_plan(self.root, ["frontend/src/old.vue", "frontend/src/new.vue"], {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
-        self.assertEqual(unit["evidence"]["mode"], "full")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        self.assertEqual(unit["evidence"]["roots"], ["src/new.vue"])
+        self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
         plan, _ = test_plan(self.root, ["frontend/src/new.vue"], {"frontend": True}, self.root)
         types = next(p for p in plan if p["id"] == "frontend-typecheck-changed")
@@ -887,18 +892,82 @@ class SelectionEvidenceTest(unittest.TestCase):
                                                     {"name": "/repo/frontend/src/i18n/english.spec.ts"}]}))
         self.assertEqual(validate_evidence(evidence)["result"], "pass")
 
-    def test_frontend_scope_widens_to_full_on_config_delete_or_unknown(self):
+    def test_frontend_scope_widens_to_full_only_when_unjudgeable(self):
+        # The full run is the fallback for a change nothing can narrow. A
+        # deletion is judged by the related graph (seeded by the surviving
+        # roots) and the surviving file list (for types), so it stays narrow.
         from ci_fast_checks import test_plan
         self.put("frontend/src/keep.ts", "export const x = 1\n")
         for changed, conservative in (
             (["frontend/src/keep.ts"], True),                                   # no merge base / unknown
-            (["frontend/src/gone.ts"], False),                                  # deleted root
+            (["frontend/src/test/harness.ts", "frontend/src/keep.ts"], False),   # test harness
             (["frontend/package.json", "frontend/src/keep.ts"], False),         # config edit
             ([".github/workflows/ci-fast.yml", "frontend/src/keep.ts"], False),  # .github edit
         ):
             plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root, conservative)
             unit = next(p for p in plan if p["id"] == "frontend-unit")
             self.assertEqual(unit["evidence"]["mode"], "full", changed)
+            self.assertFalse(any(p["id"] == "frontend-i18n" for p in plan), changed)
+        plan, _ = test_plan(self.root, ["frontend/src/gone.ts", "frontend/src/keep.ts"],
+                            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        # A deleted module is exactly what the full typecheck is for.
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+
+    def test_frontend_types_only_input_widens_types_not_the_test_run(self):
+        # A backend route change regenerates openapi.json and the types-only
+        # src/api/openapi.d.ts. Nothing in frontend/src reads the document at
+        # runtime, so the suite would be checking nothing new; the type check is
+        # what has to widen.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
+        self.put("frontend/src/use.ts", "export const x = 1\n")
+        plan, omissions = test_plan(
+            self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts", "frontend/src/use.ts"],
+            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        # A declaration file cannot seed the graph, so it is not a root.
+        self.assertEqual(unit["evidence"]["roots"], ["src/use.ts"])
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+        self.assertEqual(omissions, [])
+        # Alone, the regenerated declaration runs no test at all — that is a
+        # stated omission, not a suite-wide run and not an unknown.
+        plan, omissions = test_plan(self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts"],
+                                    {"frontend": True}, self.root)
+        self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
+        self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
+        self.assertEqual(omissions[0]["id"], "frontend-unit")
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+
+    def test_frontend_deleted_spec_is_not_a_dangling_import(self):
+        # A deleted spec leaves no importer behind, so the narrow project
+        # judges the change; the full typecheck is not called for.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/keep.ts", "export const x = 1\n")
+        plan, _ = test_plan(self.root, ["frontend/src/old.spec.ts", "frontend/src/keep.ts"],
+                            {"frontend": True}, self.root)
+        self.assertTrue(any(p["id"] == "frontend-typecheck-changed" for p in plan))
+        self.assertFalse(any(p["id"] == "frontend-typecheck-full" for p in plan))
+
+    def test_frontend_seedless_change_runs_guards_not_the_suite(self):
+        # A catalog-only locale edit seeds no source root. The honest form is
+        # the guard specs plus a stated omission — not the whole suite.
+        from ci_fast_checks import test_plan
+        plan, omissions = test_plan(self.root, ["frontend/src/i18n/zh-CN.json"], {"frontend": True}, self.root)
+        self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
+        self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
+        self.assertEqual([o["id"] for o in omissions], ["frontend-unit", "frontend-typecheck-changed"])
+        self.assertIn("related graph", omissions[0]["reason"])
+        self.assertIn("no changed TS/Vue files", omissions[1]["reason"])
+        self.assertFalse(any(p["id"].startswith("frontend-typecheck") for p in plan))
+        # A prose-only edit and a pure deletion with no surviving root land in
+        # the same place.
+        for changed in (["frontend/README.md"], ["frontend/src/gone.ts"]):
+            plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)
+            self.assertFalse(any(p["id"] == "frontend-unit" for p in plan), changed)
+            self.assertEqual(omissions[0]["id"], "frontend-unit", changed)
 
     def test_vitest_workers_follow_the_memory_ceiling(self):
         # The arithmetic bounds the black-box path below cannot reach: the core
