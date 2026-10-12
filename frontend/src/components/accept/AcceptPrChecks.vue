@@ -9,6 +9,8 @@
 // 一个类型收窄，`pr_url` 是 null 的时候那张 chip 就不画，而不是画成 `PR #null`。
 import type { AcceptCard, PrChecks } from '@/cx_types'
 
+import { isFailed, isNoVerdict } from './checkVerdict'
+
 import { t } from '@/i18n'
 
 defineProps<{
@@ -44,20 +46,20 @@ defineProps<{
       :key="chk.name"
       class="d-flex align-center ga-1 text-caption text-medium-emphasis mt-1"
     >
-      <v-icon
-        size="14"
-        :color="chk.conclusion === 'success' ? 'success' : chk.conclusion === 'failure' ? 'error' : undefined"
-      >
+      <v-icon size="14" :color="chk.conclusion === 'success' ? 'success' : isFailed(chk) ? 'error' : undefined">
         {{
           chk.conclusion === 'success'
             ? 'mdi-check-circle'
-            : chk.conclusion === 'failure'
+            : isFailed(chk)
               ? 'mdi-close-circle'
-              : 'mdi-progress-clock'
+              : isNoVerdict(chk)
+                ? 'mdi-cancel'
+                : 'mdi-progress-clock'
         }}
       </v-icon>
       {{ chk.name }}
       <span v-if="chk.status !== 'completed'">{{ t('work.room.accept.checkRunning') }}</span>
+      <span v-else-if="isNoVerdict(chk)">{{ t('work.room.accept.checkCancelled') }}</span>
     </div>
   </div>
 </template>
