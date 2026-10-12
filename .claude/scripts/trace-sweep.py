@@ -402,7 +402,9 @@ def update_doc(doc: str, token: str, result: dict, mark_deep_dive: bool = False)
     merge_ledger(ledger, result, seen)
     horizon = (datetime.fromisoformat(result["until"]) - timedelta(hours=SEEN_HOURS)).isoformat()
     meta["seen"] = {k: at for k, at in seen.items() if at >= horizon}
-    meta["lines_since"] = sorted(set(map(str, meta.get("lines_since", []))) | set(result["task_numbers"]), key=_task_order)
+    meta["lines_since"] = sorted(
+        set(map(str, meta.get("lines_since", []))) | set(result["task_numbers"]), key=_task_order
+    )
     if mark_deep_dive:
         meta["last_deep_dive"], meta["lines_since"] = result["until"], []
     written = render_ledger(ledger, result["until"], meta)
@@ -514,6 +516,9 @@ def main() -> int:
     now = datetime.now(UTC)
     since = args.since or (now - timedelta(hours=args.hours)).strftime("%Y-%m-%dT%H:%M:%S")
     until = now.strftime("%Y-%m-%dT%H:%M:%S")
+    if args.ledger_doc and since < (now - timedelta(hours=SEEN_HOURS)).strftime("%Y-%m-%dT%H:%M:%S"):
+        # Events older than this have left the seen map; folding them in again would double their count.
+        parser.error(f"--ledger-doc only takes windows within the last {SEEN_HOURS} hours")
     token = token_from_env()
     result = sweep(args.channel, token, since, until)
     print(summarize(result))
