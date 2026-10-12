@@ -2,7 +2,7 @@
 
 规矩在 `migration.py`（纯的），这里只做它做不了的三件事：
 
-1. **读三处来源**：旧表 `memory_entries` 的两个池、总览文档里那两节、以及新树现
+1. **读三处来源**：旧表 `memory_entries` 的两个池、项目目标文档里那两节、以及新树现
    在的样子（`memory_files`）。读到什么决定了报告上有什么。
 2. **问一次模型**：去处是模型判的（一条旧记忆该进 team 还是某个人的 private，靠
    读正文），分批问（`MIGRATION_CHUNK`），问完把报告和计划**存下来**——人复核的
@@ -15,7 +15,7 @@
 
 **人点头才算数。** `approve` 只认 `settings.memory_migration_reviewer` 这一个人，
 `apply` 只认已经 approved 的计划。`apply` 之前还会核一次旧记忆的指纹：复核这几分
-钟里总览文档被谁改过，这份报告描述的就不是现在的旧表了，得重跑 dry-run。
+钟里项目目标文档被谁改过，这份报告描述的就不是现在的旧表了，得重跑 dry-run。
 """
 
 import logging

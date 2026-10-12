@@ -61,7 +61,7 @@ const props = withDefaults(
     mentionPeople?: MentionPoolEntry[]
     /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
-    /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
+    /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
     /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
     untitled?: boolean

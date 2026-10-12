@@ -27,7 +27,7 @@ _projects = table("projects", column("overview_document_id", Uuid))
 
 def project_own(project_id: uuid.UUID) -> ColumnElement[bool]:
     """The project's own documents: not a task's living document and not the
-    project's overview. The library lists and searches these."""
+    project's goals. The library lists and searches these."""
     return and_(
         Document.project_id == project_id,
         Document.id.not_in(

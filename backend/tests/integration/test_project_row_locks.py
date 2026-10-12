@@ -1,6 +1,6 @@
-"""A project's first overview does not hold up the project's other writes.
+"""A project's first goals document does not hold up the project's other writes.
 
-A turn makes the project's overview the first time anyone needs it, inside the
+A turn makes the project's goals document the first time anyone needs it, inside the
 transaction that assembles the turn. Whatever it locks on the project row stays
 locked until that turn commits. Every block written in the project takes KEY
 SHARE on that row (its foreign key), so a full row lock there made those writes
@@ -59,7 +59,7 @@ def test_a_projects_first_overview_does_not_hold_up_its_rooms(client):
                     )
                     await room.commit()
                 except DBAPIError as exc:
-                    pytest.fail(f"the room's write waited on the overview: {exc}")
+                    pytest.fail(f"the room's write waited on the goals document: {exc}")
                 await turn.commit()
         finally:
             await engine.dispose()

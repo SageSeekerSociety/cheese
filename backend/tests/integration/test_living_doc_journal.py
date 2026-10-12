@@ -256,7 +256,7 @@ async def test_rollback_leaves_no_document_nodes_event_history_or_claim(
 async def test_platform_brief_seed_has_raw_history_without_contribution_event(
     business_db_factory,
 ):
-    """A new project's overview written from words it already had: the history
+    """A new project's goals written from words it already had: the history
     keeps them exactly, as the platform's, and no conversation is told
     somebody contributed."""
     factory = business_db_factory

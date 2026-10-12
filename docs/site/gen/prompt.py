@@ -263,9 +263,9 @@ ENVIRONMENT = [
 #: Sample texts for injected content are one-liners on purpose: the page splits
 #: blocks at ``## `` and an injected document has headings of its own.
 DOC = "目标：本周内跑通推荐流程。当前：数据已就位，模型还在调。"
-#: 项目总览那一份文档的 id：注入时写进「用 `cheese_doc_edit`（`document: …`）」。
+#: 项目目标那一份文档的 id：注入时写进「用 `cheese_doc_edit`（`document: …`）」。
 OVERVIEW_DOC_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
-OVERVIEW_DOC = "项目目标：把推荐算法做成一个能演示的原型。当前：三个人在做，接口这周联调。"
+OVERVIEW_DOC = "要做成：把推荐算法做成一个能演示的原型。时间：11 月 15 日中期答辩前。这阶段不做：线上部署。"
 THREAD = (
     "你在频道「#前端」的一条支线里。这里的人 @ 你，你才回答。"
     "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
@@ -342,7 +342,7 @@ TOGGLES = [
     {
         "id": "overview_doc",
         "kwargs": {"overview_doc": OVERVIEW_DOC, "overview_doc_id": OVERVIEW_DOC_ID},
-        "label": "`overview_doc` 非空：项目总览文档有正文",
+        "label": "`overview_doc` 非空：项目目标有正文",
         "params": ["overview_doc=…", "overview_doc_id=…"],
     },
     {
@@ -492,7 +492,7 @@ def samples_for(module, skills_text: str) -> list[dict]:
             for name in unknown
         ],
         {"name": "全部打开", "about": "上面每个开关都给值", "kwargs": full},
-        {"name": "总览文档超预算", "about": f"`overview_doc` 给了 {len(OVERSIZE)} 字符，超过 6000 字上限，看压缩后的样子", "kwargs": {"skills": "", "doc": None, "memory": None, "overview_doc": OVERSIZE}},
+        {"name": "项目目标超预算", "about": f"`overview_doc` 给了 {len(OVERSIZE)} 字符，超过 6000 字上限，看压缩后的样子", "kwargs": {"skills": "", "doc": None, "memory": None, "overview_doc": OVERSIZE}},
         {"name": "产物清单空着", "about": "`artifacts=[]`：清单空着时那一段是短指针", "kwargs": {"skills": "", "doc": None, "memory": None, "artifacts": []}},
     ]
     return samples, unknown

@@ -66,7 +66,7 @@ def _decision(source: str, destination: str, **fields) -> dict:
     }
 
 
-# --- 来源：总览文档 --------------------------------------------------------
+# --- 来源：项目目标文档 --------------------------------------------------------
 
 
 def test_only_the_two_named_sections_are_read():

@@ -36,7 +36,7 @@ export interface ChallengeDeadline {
 const props = defineProps<{
   projectId: string
   projectName: string
-  /** 项目总览那份文档现在写着什么；还没读到是 null。 */
+  /** 项目目标现在写着什么；还没读到是 null。 */
   overviewText: string | null
   /** 从一道题领出来的项目截到哪一刻：批准过的报名是它自己的截止（`mine`），否则是题目
    *  的截止；不是领题开的项目、或读不到，是 null（不写这一行）。 */
@@ -143,7 +143,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   <AppPage :title="projectName" width="wide">
     <div class="overview">
       <div class="overview__main">
-        <!-- 项目总览：人写的那一份。显示文档本身，不替它排成字段。 -->
+        <!-- 项目目标：人写的那一份。显示文档本身，不替它排成字段。 -->
         <section class="ov-section" data-testid="overview-document">
           <div class="ov-head">
             <h2 class="ov-title">{{ t('work.overview.document') }}</h2>

@@ -153,7 +153,7 @@ async function save() {
           data-testid="project-overview-edit"
           @click="emit('edit-overview', overview.id)"
         >
-          {{ t('work.channel.overview.edit') }}
+          {{ t('work.channel.overview.editProject') }}
         </button>
       </div>
       <p class="t-meta c-faint co-note">{{ t('work.channel.overview.projectNote', { name: agentName }) }}</p>

@@ -2170,12 +2170,13 @@
   },
   "channel": {
     "overview": {
-      "project": "项目总览",
+      "project": "项目目标",
       "projectNote": "{name}在每段对话里都会读这一份",
       "expand": "展开全文",
       "collapse": "收起",
-      "noProject": "还没有项目总览",
-      "writeProject": "写一份",
+      "noProject": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+      "writeProject": "写项目目标",
+      "editProject": "编辑项目目标",
       "description": "频道说明",
       "edit": "编辑",
       "save": "保存",
@@ -2257,12 +2258,12 @@
     "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有进行中的任务时不能归档"
   },
   "overview": {
-    "document": "项目总览",
-    "edit": "编辑",
+    "document": "项目目标",
+    "edit": "编辑项目目标",
     "expand": "展开全文",
     "collapse": "收起",
-    "noDocument": "暂无项目总览",
-    "write": "写一份",
+    "noDocument": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+    "write": "写项目目标",
     "progress": "最近进展",
     "progressFailed": "无法读取最近进展",
     "noProgress": "最近两周暂无进展",

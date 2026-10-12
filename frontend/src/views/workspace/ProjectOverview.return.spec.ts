@@ -80,7 +80,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('回到看过的总览，项目总览那份文档马上就在，不等重取', async () => {
+it('回到看过的总览，项目目标马上就在，不等重取', async () => {
   const first = open()
   await settle()
   expect(first.container.textContent).toContain('这是项目一要做的事')
