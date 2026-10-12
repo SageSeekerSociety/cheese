@@ -23,11 +23,11 @@ import { useRowMenu } from '@/composables/useRowMenu'
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 import { SpacesApi } from '@/api/spaces'
+import { TeamsApi } from '@/api/teams'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { TeamsApi } from '@/network/api/teams'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
@@ -65,7 +65,7 @@ function setTeamsHere(next: Team[]) {
 async function loadTeams() {
   const read = ++teamsRead
   try {
-    const mine = (await TeamsApi.getMyTeams()).data.teams
+    const mine = (await TeamsApi.getMyTeams()).teams
     if (read === teamsRead) teams.value = mine
   } catch {
     // 读不到就不列：这是一份目录，不是这一页的内容。

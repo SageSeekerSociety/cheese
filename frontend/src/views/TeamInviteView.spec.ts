@@ -15,7 +15,7 @@ vi.mock('@/api', async () => ({
   ...(await vi.importActual<typeof import('@/api')>('@/api')),
   authToken: () => token,
 }))
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: {
     detailByJoinLink: (...args: unknown[]) => detail(...args),
     joinByJoinLink: (...args: unknown[]) => join(...args),
@@ -28,8 +28,8 @@ vi.mock('vue-router', () => ({
 
 import TeamInviteView from './TeamInviteView.vue'
 
+import { ApiError } from '@/api'
 import i18n, { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 
 function team(overrides: Partial<Team> = {}): Team {
   return {
@@ -58,8 +58,8 @@ beforeEach(() => {
   setLocale('zh-CN')
   token = 'signed-in'
   push.mockReset()
-  detail.mockReset().mockResolvedValue({ data: { team: team() } })
-  join.mockReset().mockResolvedValue({ data: { team: team({ joinStatus: 'pending' }) } })
+  detail.mockReset().mockResolvedValue({ team: team() })
+  join.mockReset().mockResolvedValue({ team: team({ joinStatus: 'pending' }) })
 })
 afterEach(cleanup)
 
@@ -86,8 +86,8 @@ describe('opening a team link', () => {
   })
 
   it('joins directly when the team does not require approval', async () => {
-    detail.mockResolvedValue({ data: { team: team({ joinApproval: false }) } })
-    join.mockResolvedValue({ data: { team: team({ joinApproval: false, joinStatus: 'member' }) } })
+    detail.mockResolvedValue({ team: team({ joinApproval: false }) })
+    join.mockResolvedValue({ team: team({ joinApproval: false, joinStatus: 'member' }) })
     mount()
     await screen.findByText('确认后你将成为团队成员，可以使用团队的项目和设备')
     expect(screen.queryByLabelText('申请理由（选填）')).toBeNull()
@@ -98,21 +98,21 @@ describe('opening a team link', () => {
   })
 
   it('does not offer to apply again while a request is pending', async () => {
-    detail.mockResolvedValue({ data: { team: team({ joinStatus: 'pending' }) } })
+    detail.mockResolvedValue({ team: team({ joinStatus: 'pending' }) })
     mount()
     await screen.findByText('已提交申请，等待团队管理员审批')
     expect(screen.queryByRole('button', { name: '申请加入' })).toBeNull()
   })
 
   it('offers members a way in instead of a join button', async () => {
-    detail.mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
+    detail.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
     mount()
     await screen.findByText('你已经在这个团队里')
     expect(screen.queryByRole('button', { name: '申请加入' })).toBeNull()
   })
 
   it('says the link no longer works after it was reset', async () => {
-    detail.mockRejectedValue(new BusinessError('not found', 404))
+    detail.mockRejectedValue(new ApiError(404, 'not found'))
     mount()
     await screen.findByText('团队链接已失效，请向团队管理员索取新链接')
     expect(screen.queryByRole('button', { name: '重试' })).toBeNull()
@@ -127,7 +127,7 @@ describe('opening a team link', () => {
   })
 
   it('keeps the form when the request fails', async () => {
-    join.mockRejectedValue(new BusinessError('boom', 500))
+    join.mockRejectedValue(new ApiError(500, 'boom'))
     mount()
     await fireEvent.click(await screen.findByRole('button', { name: '申请加入' }))
     await screen.findByText('操作失败，请重试')

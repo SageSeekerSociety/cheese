@@ -15,7 +15,7 @@ const removeMember = vi.fn()
 const del = vi.fn()
 const getMembers = vi.fn()
 const transferOwner = vi.fn()
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: {
     getMyTeams: () => getMyTeams(),
     removeMember: (...args: unknown[]) => removeMember(...args),
@@ -124,9 +124,7 @@ beforeEach(() => {
   transferOwner.mockReset()
   confirm.mockReset()
   refreshProjects.mockReset()
-  getMyTeams
-    .mockReset()
-    .mockResolvedValue({ data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] } })
+  getMyTeams.mockReset().mockResolvedValue({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
 })
 afterEach(cleanup)
 
@@ -157,7 +155,7 @@ describe('首页目录', () => {
     ['MEMBER', ['退出团队']],
     ['OWNER', ['邀请成员', '编辑团队资料', '转让团队', '解散团队']],
   ] as const)('%s 在团队那一行的 ⋯ 里看到的操作', async (role, labels) => {
-    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', role)] } })
+    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', role)] })
     await mount('/inbox')
     await fireEvent.click(await screen.findByLabelText('团队操作'))
     await screen.findByText(labels[0])
@@ -180,7 +178,7 @@ describe('首页目录', () => {
   })
 
   it('所有者解散团队：要把团队名打一遍才按得下去，解散后这一行消失', async () => {
-    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
     del.mockResolvedValue({})
     await mount('/inbox')
     await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
@@ -201,7 +199,7 @@ describe('首页目录', () => {
   })
 
   it('解散被拒（还有没归档的项目）：理由留在弹窗里，团队还在', async () => {
-    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
     del.mockRejectedValue(new Error('团队里还有没归档的项目，把它们都归档后才能解散'))
     await mount('/inbox')
     await fireEvent.contextMenu(await screen.findByLabelText('展开 知是开发组'))
@@ -213,16 +211,14 @@ describe('首页目录', () => {
   })
 
   it('所有者把团队交给一位成员，之后自己就能退出了', async () => {
-    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'OWNER')] } })
+    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'OWNER')] })
     getMembers.mockResolvedValue({
-      data: {
-        members: [
-          { role: 'OWNER', user: { id: 42, username: 'me', nickname: '我', avatarId: 0 } },
-          { role: 'MEMBER', user: { id: 7, username: 'mate', nickname: '小王', avatarId: 0 } },
-        ],
-      },
+      members: [
+        { role: 'OWNER', user: { id: 42, username: 'me', nickname: '我', avatarId: 0 } },
+        { role: 'MEMBER', user: { id: 7, username: 'mate', nickname: '小王', avatarId: 0 } },
+      ],
     })
-    transferOwner.mockResolvedValue({ data: { team: team('crew', '知是开发组', 'OWNER') } })
+    transferOwner.mockResolvedValue({ team: team('crew', '知是开发组', 'OWNER') })
     await mount('/inbox')
     await fireEvent.click(await screen.findByLabelText('团队操作'))
     await fireEvent.click(await screen.findByText('转让团队'))
@@ -249,7 +245,7 @@ describe('首页目录', () => {
   // 展开后没有「成员」，也没有团队的 ⋯ 操作。
   it('自己名下在「团队」之上单独一行，没有成员页，也没有团队操作', async () => {
     const own = { ...team('andy', '林夏', 'OWNER'), personal: true }
-    getMyTeams.mockResolvedValue({ data: { teams: [own, team('crew', '知是开发组', 'OWNER')] } })
+    getMyTeams.mockResolvedValue({ teams: [own, team('crew', '知是开发组', 'OWNER')] })
     await mount('/teams/andy')
     await waitFor(() =>
       expect(hrefs()).toEqual(expect.arrayContaining(['/teams/andy', '/teams/andy/knowledge', '/teams/andy/compute']))
@@ -265,7 +261,7 @@ describe('首页目录', () => {
   })
 
   it('团队展开后有「额度」一页', async () => {
-    getMyTeams.mockResolvedValue({ data: { teams: [team('crew', '知是开发组', 'MEMBER')] } })
+    getMyTeams.mockResolvedValue({ teams: [team('crew', '知是开发组', 'MEMBER')] })
     await mount('/teams/crew')
     await waitFor(() => expect(hrefs()).toContain('/teams/crew/credits'))
   })
@@ -276,7 +272,7 @@ describe('首页目录', () => {
     await mount('/teams/explore')
     await screen.findByText('知是开发组')
     getMyTeams.mockResolvedValue({
-      data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('fresh', '刚建的团队', 'OWNER')] },
+      teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('fresh', '刚建的团队', 'OWNER')],
     })
     await mounted.router!.push('/teams/fresh')
     expect(await screen.findByText('刚建的团队')).toBeTruthy()
@@ -286,7 +282,7 @@ describe('首页目录', () => {
     await mount('/inbox')
     await screen.findByText('知是开发组')
     getMyTeams.mockResolvedValue({
-      data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('joined', '刚加入的团队')] },
+      teams: [team('crew', '知是开发组'), team('lab', '数据课第三组'), team('joined', '刚加入的团队')],
     })
     window.dispatchEvent(new Event('focus'))
     expect(await screen.findByText('刚加入的团队')).toBeTruthy()
@@ -305,7 +301,7 @@ describe('首页目录', () => {
     await fireEvent.click(await screen.findByText('退出团队'))
     await waitFor(() => expect(screen.queryByText('数据课第三组')).toBeNull())
 
-    answerOldRead({ data: { teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] } })
+    answerOldRead({ teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')] })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(screen.queryByText('数据课第三组')).toBeNull()
   })

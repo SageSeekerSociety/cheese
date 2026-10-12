@@ -70,8 +70,8 @@ describe('useSpaceMaterials', () => {
   })
 
   it('换了块板：先发的那次响应晚到，不许覆盖新板的清单', async () => {
-    const first = deferred<{ data: { materials: unknown[] } }>()
-    const second = deferred<{ data: { materials: unknown[] } }>()
+    const first = deferred<{ materials: unknown[] }>()
+    const second = deferred<{ materials: unknown[] }>()
     listMaterials.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
 
     const spaceId = ref<number | undefined>(7)

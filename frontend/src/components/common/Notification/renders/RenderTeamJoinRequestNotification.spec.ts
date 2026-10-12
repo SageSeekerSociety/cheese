@@ -12,10 +12,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import NotificationItem from '../NotificationItem.vue'
 
+import { TeamsApi } from '@/api/teams'
 import i18n, { setLocale } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
 
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: { approveJoinRequest: vi.fn(), rejectJoinRequest: vi.fn() },
 }))
 

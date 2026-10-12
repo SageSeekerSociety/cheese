@@ -14,7 +14,7 @@ import { onMounted, ref } from 'vue'
 
 import MineView from './MineView.vue'
 
-import { TeamsApi } from '@/network/api/teams'
+import { TeamsApi } from '@/api/teams'
 
 const myTeams = ref<Team[]>([])
 const isLoadingMyTeams = ref(false)
@@ -25,9 +25,7 @@ const fetchMyTeams = async () => {
   loadMyTeamsError.value = false
 
   try {
-    const {
-      data: { teams },
-    } = await TeamsApi.getMyTeams()
+    const { teams } = await TeamsApi.getMyTeams()
     // 自己名下的项目不是一个团队，在侧栏「团队」之上单独一行，不列在这里。
     myTeams.value = teams.filter((team) => !team.personal)
   } catch (error) {

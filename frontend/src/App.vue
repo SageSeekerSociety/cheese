@@ -306,6 +306,7 @@ import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { type AppVersion, createProject, getAppVersion } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
@@ -345,7 +346,6 @@ import {
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
 import { NotificationsApi } from '@/network/api/notifications'
-import { TeamsApi } from '@/network/api/teams'
 import { queryClient } from '@/query/client'
 import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
@@ -750,9 +750,7 @@ async function loadProjectTeams() {
   teamLoadError.value = null
   newProjectTeamId.value = null
   try {
-    const {
-      data: { teams },
-    } = await TeamsApi.getMyTeams()
+    const { teams } = await TeamsApi.getMyTeams()
     newProjectTeams.value = teams
     if (!teams.length) teamLoadError.value = t('work.newProject.teamsEmpty')
   } catch {

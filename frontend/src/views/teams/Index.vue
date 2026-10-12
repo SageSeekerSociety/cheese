@@ -80,14 +80,14 @@ import { defineAsyncComponent, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { ApiError } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AvatarUploader from '@/components/common/AvatarUploader.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { t } from '@/i18n'
 import { AvatarsApi } from '@/network/api/avatars'
-import { TeamsApi } from '@/network/api/teams'
-import { BusinessError } from '@/network/types/error'
 
 const TipTapEditor = defineAsyncComponent(() => import('@/components/common/Editor/TipTapEditor.vue'))
 
@@ -127,9 +127,7 @@ const createTeam = async () => {
       data: { avatarId },
     } = teamAvatar.value ? await AvatarsApi.createAvatar(teamAvatar.value) : { data: { avatarId: null } }
 
-    const {
-      data: { team },
-    } = await TeamsApi.create({
+    const { team } = await TeamsApi.create({
       name: teamName.value,
       description: JSON.stringify(teamDescription.value),
       intro,
@@ -140,13 +138,14 @@ const createTeam = async () => {
     toast.success(t('teams.index.createDone'))
     router.push({ name: 'TeamsDetailDefault', params: { handle: team.handle } })
   } catch (error) {
-    if (error instanceof BusinessError && error.error?.data?.field === 'handle') {
-      teamHandleError.value = error.code === 409 ? t('work.teamLink.handleTaken') : t('work.teamLink.handleInvalid')
+    const field = error instanceof ApiError ? (error.data as { field?: string } | undefined)?.field : undefined
+    if (error instanceof ApiError && field === 'handle') {
+      teamHandleError.value = error.status === 409 ? t('work.teamLink.handleTaken') : t('work.teamLink.handleInvalid')
       return
     }
     // 团队名全站唯一，撞名是 409 + data.field=name：用户换个名字就能解决，
     // 所以落到名字那一格，不能混进「稍后重试」—— 重试多少次都一样失败。
-    if (error instanceof BusinessError && error.code === 409 && error.error?.data?.field === 'name') {
+    if (error instanceof ApiError && error.status === 409 && field === 'name') {
       teamNameError.value = t('work.teamProfile.nameTaken')
       return
     }

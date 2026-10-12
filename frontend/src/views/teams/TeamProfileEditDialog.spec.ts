@@ -9,13 +9,13 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const update = vi.fn()
 const uploadAvatar = vi.fn()
-vi.mock('@/network/api/teams', () => ({ TeamsApi: { update: (...a: unknown[]) => update(...a) } }))
+vi.mock('@/api/teams', () => ({ TeamsApi: { update: (...a: unknown[]) => update(...a) } }))
 vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { createAvatar: (...a: unknown[]) => uploadAvatar(...a) } }))
 
 import TeamProfileEditDialog from './TeamProfileEditDialog.vue'
 
+import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 
 function team(overrides: Partial<Team> = {}): Team {
   return {
@@ -65,7 +65,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  update.mockReset().mockResolvedValue({ data: { team: team({ name: '芝士社', intro: '新的介绍' }) } })
+  update.mockReset().mockResolvedValue({ team: team({ name: '芝士社', intro: '新的介绍' }) })
   uploadAvatar.mockReset().mockResolvedValue({ data: { avatarId: 77 } })
   URL.createObjectURL = vi.fn(() => 'blob:avatar-preview')
 })
@@ -113,9 +113,7 @@ describe('editing what a team looks like', () => {
   it('points at the name when another team already holds it', async () => {
     // 后端对撞名给的是 409 + data.field=name。这是用户自己能修的错 —— 换一个名字
     // 就行 —— 所以要说在名字那一格上，不能掉进「保存失败，请稍后重试」。
-    update.mockRejectedValue(
-      new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: { field: 'name' } })
-    )
+    update.mockRejectedValue(new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'name' }))
     const view = mount()
     await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
 
@@ -125,7 +123,7 @@ describe('editing what a team looks like', () => {
   })
 
   it('clears the name complaint once the person edits the name', async () => {
-    update.mockRejectedValueOnce(new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: {} }))
+    update.mockRejectedValueOnce(new ApiError(409, 'taken', 'Conflict', undefined, undefined, {}))
     mount()
     await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
     await screen.findByText('这个名称已被占用，换一个试试')

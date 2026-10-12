@@ -15,14 +15,14 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const create = vi.fn()
 const toastError = vi.fn()
-vi.mock('@/network/api/teams', () => ({ TeamsApi: { create: (...a: unknown[]) => create(...a) } }))
+vi.mock('@/api/teams', () => ({ TeamsApi: { create: (...a: unknown[]) => create(...a) } }))
 vi.mock('@/network/api/avatars', () => ({ AvatarsApi: { createAvatar: vi.fn() } }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: (...a: unknown[]) => toastError(...a), success: vi.fn() } }))
 
 import TeamsIndex from './Index.vue'
 
+import { ApiError } from '@/api'
 import i18n, { setLocale, t } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 
 async function mountPage() {
   const router = createRouter({
@@ -84,10 +84,9 @@ afterEach(() => {
 describe('creating a team', () => {
   it('tells the user on the name field that the name is taken, instead of asking them to retry', async () => {
     create.mockRejectedValueOnce(
-      new BusinessError('Team name already exists', 409, {
-        name: 'ConflictError',
-        message: 'Team name already exists',
-        data: { field: 'name', value: '11111' },
+      new ApiError(409, 'Team name already exists', 'ConflictError', undefined, undefined, {
+        field: 'name',
+        value: '11111',
       })
     )
     const { router } = await mountPage()
@@ -99,7 +98,7 @@ describe('creating a team', () => {
   })
 
   it('opens the new team once it is created', async () => {
-    create.mockResolvedValueOnce({ data: { team: { id: 9, handle: 'team-9' } } })
+    create.mockResolvedValueOnce({ team: { id: 9, handle: 'team-9' } })
     const { router } = await mountPage()
     await submit('一个新名字')
 

@@ -13,7 +13,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const search = vi.hoisted(() => vi.fn())
 
-vi.mock('@/network/api/teams', () => ({ TeamsApi: { search } }))
+vi.mock('@/api/teams', () => ({ TeamsApi: { search } }))
 
 import Explore from './Explore.vue'
 
@@ -67,7 +67,7 @@ afterEach(cleanup)
 
 describe('搜索小队', () => {
   it('搜到了就列出来，不说「没有找到团队」', async () => {
-    search.mockResolvedValue({ data: { teams: [team(1, '芝士核心组')] } })
+    search.mockResolvedValue({ teams: [team(1, '芝士核心组')] })
     const view = await mount()
     await searchFor(view, '芝士')
 
@@ -76,7 +76,7 @@ describe('搜索小队', () => {
   })
 
   it('搜到了但一个都没有，才说「没有找到团队」', async () => {
-    search.mockResolvedValue({ data: { teams: [] } })
+    search.mockResolvedValue({ teams: [] })
     const view = await mount()
     await searchFor(view, '不存在的组')
 
@@ -94,7 +94,7 @@ describe('搜索小队', () => {
     expect(view.queryByText(NO_RESULTS)).toBeNull()
     expect(block.textContent).toContain(SEARCH_FAILED)
 
-    search.mockResolvedValue({ data: { teams: [team(1, '芝士核心组')] } })
+    search.mockResolvedValue({ teams: [team(1, '芝士核心组')] })
     await fireEvent.click(within(block).getByRole('button'))
     await waitFor(() => expect(search).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(view.getByText('芝士核心组')).toBeTruthy())

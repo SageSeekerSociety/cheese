@@ -225,13 +225,13 @@ import { toast } from 'vuetify-sonner'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
 
 const { locale } = i18n.global
 
@@ -289,7 +289,7 @@ const fetchMyJoinRequests = async () => {
   myRequestsError.value = null
   try {
     const response = await TeamsApi.listMyJoinRequests()
-    myRequests.value = response.data.requests
+    myRequests.value = response.requests
   } catch (error) {
     console.error('Failed to load join requests', error)
     failedMyRequests.value = true
@@ -306,7 +306,7 @@ const fetchMyInvitations = async () => {
   myInvitationsError.value = null
   try {
     const response = await TeamsApi.listMyInvitations()
-    myInvitations.value = response.data.invitations
+    myInvitations.value = response.invitations
   } catch (error) {
     console.error('Failed to load invitations', error)
     failedMyInvitations.value = true
