@@ -186,7 +186,8 @@ const handOverOpen = ref(false)
 const handingOver = ref(false)
 // 归档不弹确认框，收起来之后给一条能撤销的提示（和频道归档同一条路，`topicActions`）。
 // 撤销就是「取消归档」：收回去的活回来还是关着的，「重新打开任务」是另一件事。
-async function archive() {
+// 名字不能叫 `archive`——那和上面那一格 prop 撞了（vue/no-dupe-keys）。
+async function doArchive() {
   if (await props.archive()) {
     toast(t('work.room.archiveNotice.done'), {
       duration: 6000,
@@ -441,7 +442,7 @@ async function confirmHandOver() {
             role="menuitem"
             :title="isArchived ? t('work.task.unarchive') : t('work.task.archive')"
             :data-testid="isArchived ? 'task-unarchive' : 'task-archive'"
-            @click="isArchived ? unarchive() : archive()"
+            @click="isArchived ? unarchive() : doArchive()"
           />
         </v-list>
       </v-menu>

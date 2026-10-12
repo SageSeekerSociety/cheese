@@ -219,11 +219,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
     </div>
     <template v-else>
       <!-- 收尾的那两份不再分格：已关闭的都在「已完成」那一格，已归档的都在「已归档」那一格。 -->
-      <section
-        v-for="group in paged ? [doneGroup] : groups"
-        :key="group.column"
-        class="tasks__group"
-      >
+      <section v-for="group in paged ? [doneGroup] : groups" :key="group.column" class="tasks__group">
         <h2 class="tasks__group-head">
           {{ columnLabel(group.column as BoardColumn) }}
           <span class="tasks__count">{{ paged ? counts?.[whose] ?? '' : group.tasks.length }}</span>
