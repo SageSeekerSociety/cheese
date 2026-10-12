@@ -19,7 +19,7 @@ from app.core.sentences import say
 from app.domain.conversation.models import Conversation
 from app.domain.machine.models import CloudHost, MachineStatus
 from app.domain.run_record.models import RunRecord
-from app.domain.run_record.repository import RunRecordRepository
+from app.domain.run_record.service import keep
 
 REFUSED = "cloud_refused"
 HOST_LOST = "cloud_host_lost"
@@ -54,9 +54,9 @@ async def keep_refusal(
     project_id = await session.scalar(
         select(Conversation.project_id).where(Conversation.id == conversation_id)
     )
-    await RunRecordRepository(session).add(
+    await keep(
+        session,
         project_id=project_id,
-        conversation_id=None,
         content=said,
         meta={
             "event_type": REFUSED,
@@ -83,9 +83,9 @@ async def keep_host_lost(
     """Keep that the pool gave up on ``host``, with how many working sandboxes
     went with it (``lost``) and how many being prepared were placed again
     (``replaced``). Writes the caller's transaction."""
-    await RunRecordRepository(session).add(
+    await keep(
+        session,
         project_id=None,
-        conversation_id=None,
         content=say(
             "cloudHostGivenUp", host=host.hostname, lost=lost, replaced=replaced
         ),
