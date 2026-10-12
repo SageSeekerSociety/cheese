@@ -65,18 +65,52 @@ FIXES = {
 }
 
 
-def failure_text(new: dict[str, set[str]], expanded: dict[str, set[str]]) -> str:
-    """What to do about it. Printed on stdout, or on stderr under --json."""
+def baseline_line(baseline: str, kind: str, entry: str) -> int | None:
+    """The 1-based line of `entry` inside `kind`'s array, or None.
+
+    Read-only, and scoped to the one kind: a path that is both a route page and a
+    network importer appears in two arrays, so the search never crosses into a
+    sibling kind's list. It matches the exact quoted token json.dumps writes, so
+    it works for indented JSON (one line per entry) and one-line JSON (line 1)
+    alike. parse_baseline stays the only judge; this just points a BASELINE GREW
+    entry at the line to delete.
+    """
+    start = baseline.find(f'"{kind}":')
+    if start < 0:
+        return None
+    end = baseline.find("]", start)
+    region = baseline[start:] if end < 0 else baseline[start:end]
+    index = region.find(json.dumps(entry))
+    if index < 0:
+        return None
+    return baseline.count("\n", 0, start + index) + 1
+
+
+def failure_text(
+    new: dict[str, set[str]], expanded: dict[str, set[str]], baseline: str = ""
+) -> str:
+    """The per-kind entries and what to do about each.
+
+    Printed on stdout, or on stderr under --json. Each kind lists its NEW and
+    BASELINE GREW entries as the exact path/edge; a BASELINE GREW entry also
+    carries the line in the baseline JSON to put back by hand.
+    """
     lines = ["FAIL: new debt cannot be frozen."]
     for kind in KINDS:
         if new[kind]:
             lines.append(f"  {FIXES[kind]}")
+            for entry in sorted(new[kind]):
+                lines.append(f"    NEW: {entry}")
         if expanded[kind]:
             lines.append(
                 f"  {KINDS[kind]}: BASELINE GREW — the baseline may only shrink, and "
                 "--update refuses while this is present, so it cannot remove the line "
                 "for you: put the added baseline line back by hand."
             )
+            for entry in sorted(expanded[kind]):
+                where = baseline_line(baseline, kind, entry)
+                marker = f" (baseline line {where})" if where is not None else ""
+                lines.append(f"    BASELINE GREW: {entry}{marker}")
     lines.append(
         "The baseline only ever shrinks; the documented tighten command is "
         "'pnpm --dir frontend run lint:scene-debt:update' (run from the repo root)."
@@ -289,8 +323,10 @@ def main() -> int:
     root = args.root.resolve()
     path = args.baseline or root / BASELINE
     check_id = KINDS[args.kind] if args.kind else "scene-debt"
+    raw = ""
     try:
-        frozen = parse_baseline(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+        frozen = parse_baseline(raw)
         actual = collect(root)
         new = compare(actual, frozen)
         expanded = {kind: set() for kind in KINDS}
@@ -325,7 +361,7 @@ def main() -> int:
         # --json (what ci:fast and the snapshot collector call) keeps stdout the
         # one record line; on failure the fix report rides on stderr instead.
         if not ok:
-            print(failure_text(new, expanded), file=sys.stderr)
+            print(failure_text(new, expanded, raw), file=sys.stderr)
         selected = kinds[0] if len(kinds) == 1 else None
         emit(
             verdict(
@@ -358,17 +394,13 @@ def main() -> int:
             print(
                 f"{KINDS[kind]}: {len(actual[kind])} current / {len(frozen[kind])} frozen"
             )
-            for entries, label in (
-                (new[kind], "NEW"),
-                (expanded[kind], "BASELINE GREW"),
-            ):
-                for entry in sorted(entries):
-                    print(f"  {label}: {entry}")
             if args.list:
                 for entry in sorted(actual[kind]):
                     print(f"  {entry}")
         if not ok:
-            print(failure_text(new, expanded))
+            # failure_text carries the per-kind NEW / BASELINE GREW entries, so the
+            # count loop above stays counts-only (--list still lists every entry).
+            print(failure_text(new, expanded, raw))
         elif args.update:
             print(f"Updated {path}: only removed paid-down entries")
         else:

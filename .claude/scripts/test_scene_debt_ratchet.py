@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import resource
 import signal
 import subprocess
@@ -291,20 +292,46 @@ request()
         self.assertIn("scene-use-route —", routes.stdout)
         self.assertIn("lint:scene-debt:update", routes.stdout)
         self.assertNotIn("scene-non-a-children —", routes.stdout)
+        # The debt entry itself is the location, listed under the fix.
+        self.assertIn("NEW: src/views/P.vue", routes.stdout)
 
         # --json (what ci:fast calls) stays the one record line on stdout, with
-        # the same failing verdict, and carries the same fix on stderr.
+        # the same failing verdict, and carries the same fix and entries on stderr.
         result = self.run_gate("--kind", "routes", "--json", rc=1)
         lines = result.stdout.strip().splitlines()
         self.assertEqual(len(lines), 1, result.stdout)
         self.assertEqual(json.loads(lines[0])["status"], "fail")
         self.assertIn("scene-use-route —", result.stderr)
+        self.assertIn("NEW: src/views/P.vue", result.stderr)
 
         # A new legacy @/network import names the network fix instead.
         self.page("<Child/>", "import '@/network'")
         network = self.run_gate(rc=1)
         self.assertIn("legacy-network —", network.stdout)
         self.assertNotIn("scene-use-route —", network.stdout)
+
+    def test_baseline_line_points_within_the_kind_for_any_json_layout(self) -> None:
+        indented = (
+            "{\n"
+            '  "version": 1,\n'
+            '  "children": [],\n'
+            '  "routes": [\n'
+            '    "src/views/A.vue"\n'
+            "  ],\n"
+            '  "network": [\n'
+            '    "src/views/A.vue"\n'
+            "  ]\n"
+            "}\n"
+        )
+        # One path can sit in two arrays, so the line is scoped to its own kind.
+        self.assertEqual(debt.baseline_line(indented, "routes", "src/views/A.vue"), 5)
+        self.assertEqual(debt.baseline_line(indented, "network", "src/views/A.vue"), 8)
+        # One-line JSON still locates the entry (line 1) without crashing.
+        one_line = (
+            '{"version":1,"children":[],"routes":["src/views/A.vue"],"network":[]}'
+        )
+        self.assertEqual(debt.baseline_line(one_line, "routes", "src/views/A.vue"), 1)
+        self.assertIsNone(debt.baseline_line(indented, "routes", "src/views/B.vue"))
 
     def test_json_verdict_has_the_same_failure_and_no_human_output(self) -> None:
         self.page("<Child/>", "useRoute()")
@@ -361,7 +388,23 @@ request()
         # --update refuses while a mis-added line is present, so it cannot remove
         # it: the report must say to restore that line by hand.
         self.assertIn("put the added baseline line back by hand", result.stdout)
+        # The grew entry carries the real line in the baseline JSON, and that line
+        # really holds the entry to delete.
+        match = re.search(
+            r"BASELINE GREW: src/views/P\.vue \(baseline line (\d+)\)", result.stdout
+        )
+        self.assertIsNotNone(match, result.stdout)
+        file_lines = self.baseline.read_text(encoding="utf-8").splitlines()
+        self.assertIn("src/views/P.vue", file_lines[int(match.group(1)) - 1])
         self.assertEqual(before, self.baseline.read_bytes())
+
+        # The same entry list rides on stderr under --json, stdout staying one line.
+        as_json = self.run_gate("--base", approved, "--json", rc=1)
+        self.assertEqual(
+            len(as_json.stdout.strip().splitlines()), 1, as_json.stdout
+        )
+        self.assertIn("BASELINE GREW: src/views/P.vue", as_json.stderr)
+        self.assertIn("(baseline line", as_json.stderr)
 
 
 if __name__ == "__main__":
