@@ -77,7 +77,7 @@ describe('从样式表里读两档 token', () => {
   })
 
   it('不是自定义属性的、空的，都不收', () => {
-    const scopes = readTokenScopes([sheetOf(rule(':root', { color: 'red', '--ink': '', '--text': '  #333  ' }))])
+    const scopes = readTokenScopes([sheetOf(rule(':root', { color: 'var(--ink)', '--ink': '', '--text': '  #333  ' }))])
     expect([...scopes.light.keys()]).toEqual(['--text'])
     expect(scopes.light.get('--text')).toBe('#333')
   })
