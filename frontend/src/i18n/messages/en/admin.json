@@ -101,5 +101,90 @@
     },
     "noProject": "No project",
     "morePlaces": "{count} more"
+  },
+  "machines": {
+    "sub": "The platform's MicroCloud hosts, the sandboxes on each, and the warm pool; refreshed every 30 seconds",
+    "kpi": {
+      "hosts": "Hosts / cap",
+      "vms": "Plus {n} whole-machine VMs, which count toward the cap",
+      "slots": "Sandbox slots",
+      "slotsNote": "{free} free; the pool keeps at least {min} and adds a host below that",
+      "waiting": "Sessions waiting for a sandbox",
+      "waitingNote": "The longest has waited {for}",
+      "failures": "Provider failures",
+      "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes"
+    },
+    "alert": {
+      "notConfigured": "This deployment has no MicroCloud configured; cloud sandboxes are unavailable",
+      "refusing": "Refusing new sessions now: the provider broke {n} hosts recently (last at {at}), and the platform waits for a probe to succeed",
+      "atCap": "The pool is at its cap of {max} hosts: with no free slot, new sessions are refused"
+    },
+    "hosts": "Hosts",
+    "noHosts": "No hosts right now",
+    "vm": "Whole VM",
+    "col": {
+      "host": "Host",
+      "phase": "Phase",
+      "spec": "Spec",
+      "slots": "Sandboxes",
+      "age": "Age",
+      "note": "Note"
+    },
+    "phase": {
+      "creating": "Creating",
+      "enrolling": "Enrolling",
+      "enrollFailing": "Enroll failing",
+      "ready": "In use",
+      "idle": "Idle",
+      "offline": "Offline",
+      "error": "Provider error",
+      "releasing": "Releasing",
+      "failed": "Given up"
+    },
+    "state": {
+      "waiting": "Waiting for host",
+      "working": "Working",
+      "idle": "Idle",
+      "stopping": "Being destroyed"
+    },
+    "note": {
+      "failed": "Broken by the provider, given up at {at}; waiting for the provider to delete it",
+      "releasing": "Released at {at}; waiting for the provider to delete it",
+      "enrollFailing": "Enrollment attempt {n} failed: {error}",
+      "offline": "Connector away for {for}",
+      "idle": "Idle for {for}",
+      "vm": "Whole VM for {project}"
+    },
+    "when": {
+      "waiting": "Waiting for {for}",
+      "stopping": "Being destroyed for {for}",
+      "active": "Last tool call {ago} ago",
+      "reclaim": "reclaimed in {in} at the earliest"
+    },
+    "placed": "Placed {at}",
+    "taskRoom": "task",
+    "spec": "{cores} cores · {memory} GB · {disk} GB",
+    "dur": {
+      "s": "{n}s",
+      "m": "{n} min",
+      "h": "{n} h",
+      "d": "{n} d"
+    },
+    "history": "Last 24 hours",
+    "fact": {
+      "prepared": "Sandboxes started",
+      "ready": "Became ready",
+      "wait": "Wait p50 / p95 / max",
+      "waitValue": "{p50} / {p95} / {max}",
+      "abandoned": "Given up before ready",
+      "replaced": "Moved off a broken host",
+      "released": "Reclaimed (idle / out of credits)",
+      "releasedValue": "{idle} / {unpaid}"
+    },
+    "blind": "Two things are not counted here: sessions refused while the pool was full or the provider kept failing, and working sandboxes lost when their host went away. Neither leaves a record to count.",
+    "warm": "Warm pool (target {target})",
+    "noWarm": "No warm machines right now",
+    "warmAge": "Age {for} · {n} attempts",
+    "config": "{perCore} sandboxes per core, {memory} GB memory each; a sandbox is destroyed after {sandboxIdle} idle, a host released after {hostIdle} idle, a whole VM after {vmIdle} idle"
   }
 }

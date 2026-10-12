@@ -313,6 +313,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
             "provider_failures": failures,
             "provider_failure_limit": MAX_PROVIDER_ERRORS,
             "provider_window_min": int(PROVIDER_ERROR_WINDOW.total_seconds() // 60),
+            "provider_probe_min": int(PROVIDER_PROBE_INTERVAL.total_seconds() // 60),
             "last_provider_failure": _iso(last_failure),
             "refusing": refusing,
             "warm_target": settings.microcloud_warm_pool_size,

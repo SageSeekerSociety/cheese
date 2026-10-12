@@ -17,6 +17,7 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import {
   CRV_HISTORY,
   CRV_LEGAL,
+  CRV_MACHINES,
   CRV_PLANS,
   CRV_RATCHET,
   CRV_RUN_DETAIL,
@@ -28,6 +29,7 @@ import {
 
 import { t } from '@/i18n'
 import AdminCreditsPageView from '@/views/admin/AdminCreditsPageView.vue'
+import AdminMachinesPageView from '@/views/admin/AdminMachinesPageView.vue'
 import AdminRatchetPageView from '@/views/admin/AdminRatchetPageView.vue'
 import AdminRunRecordsPageView from '@/views/admin/AdminRunRecordsPageView.vue'
 import LegalDocumentView from '@/views/legal/LegalDocumentView.vue'
@@ -279,6 +281,61 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
         },
         props: { selected: 'backend_error:fp-site', detail: CRV_RUN_DETAIL },
         expect: 'GET /api/site 超时：上游 30 秒没有回应',
+      },
+    ],
+  },
+  {
+    id: 'admin-machines-page-view',
+    title: 'AdminMachinesPageView',
+    get about() {
+      return t('catalog.adminMachinesPageView.about')
+    },
+    file: 'src/views/admin/AdminMachinesPageView.vue',
+    component: AdminMachinesPageView,
+    needs: UI_T_R,
+    args: { overview: CRV_MACHINES },
+    states: [
+      {
+        get name() {
+          return t('catalog.adminMachinesPageView.s1.name')
+        },
+        get note() {
+          return t('catalog.adminMachinesPageView.s1.note')
+        },
+        props: {},
+        expect: 'cheese-pool-7f3a',
+      },
+      {
+        get name() {
+          return t('catalog.adminMachinesPageView.s2.name')
+        },
+        get note() {
+          return t('catalog.adminMachinesPageView.s2.note')
+        },
+        props: {
+          overview: { ...CRV_MACHINES, pool: { ...CRV_MACHINES.pool, provider_failures: 3, refusing: true } },
+        },
+        expect: '此刻在拒绝新会话',
+      },
+      {
+        get name() {
+          return t('catalog.adminMachinesPageView.s3.name')
+        },
+        get note() {
+          return t('catalog.adminMachinesPageView.s3.note')
+        },
+        props: { overview: null, failed: true },
+        expectSelector: '[role="alert"]',
+      },
+      {
+        get name() {
+          return t('catalog.adminMachinesPageView.s4.name')
+        },
+        get note() {
+          return t('catalog.adminMachinesPageView.s4.note')
+        },
+        props: { overview: { ...CRV_MACHINES, hosts: [], warm: [] } },
+        expect: '此刻一台宿主机都没有',
       },
     ],
   },
