@@ -25,7 +25,7 @@ type Mode = 'inline' | 'full' | 'shot'
 type Listener = (value: string) => void
 
 const CHANNEL = 'cheese-app'
-// i18n-data: read by 芝士 (the check's refusal) and shown as the error's text.
+// Read by 芝士 when the check refuses a version, and shown as the error's text.
 const RUNAWAY = '小程序的高度一直在变大，停止跟随。常见原因：内嵌时用了 vh 或 100% 高度。'
 const NOT_SANDBOXED = 'This page runs a mini-app only inside a sandboxed frame.'
 

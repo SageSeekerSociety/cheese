@@ -930,7 +930,7 @@
           "unavailable": "Mini-apps can't run here",
           "navigated": "The mini-app tried to open another page and was stopped",
           "showAll": "Show all in full screen",
-          "run": "Run",
+          "run": "Run the mini-app",
           "copy": "Copy",
           "forbidden": "You don't have access to this mini-app",
           "missing": "Version {n} of this mini-app can't be found",

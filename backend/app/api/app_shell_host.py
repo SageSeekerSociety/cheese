@@ -15,6 +15,7 @@ outside itself: no request leaves it, no form is sent, and it may only be
 framed by the platform.
 """
 
+import gzip
 import re
 import time
 from urllib.parse import urlsplit
@@ -35,9 +36,6 @@ _PATH = re.compile(r"^/v([1-9][0-9]?)/(?:index\.html)?$")
 #: How long a fetched shell is served before it is fetched again: a release
 #: replaces it in place (only compatible changes stay within a major).
 _KEEP_S = 300.0
-#: The shells fetched so far, by major, for the life of this process: a few
-#: megabytes at most, one entry per major ever served.
-_kept: dict[int, tuple[float, bytes]] = {}
 
 
 def shell_origin() -> str | None:
@@ -68,21 +66,25 @@ def _policy() -> str:
     )
 
 
-async def _shell(major: int) -> bytes | None:
+async def _shell(
+    kept_shells: dict[int, tuple[float, bytes, bytes]], major: int
+) -> tuple[bytes, bytes] | None:
+    """Shell ``major`` as served, and gzipped: the edge in front of the content
+    domain does not compress, and the file is almost two megabytes."""
     now = time.monotonic()
-    kept = _kept.get(major)
+    kept = kept_shells.get(major)
     if kept and now - kept[0] < _KEEP_S:
-        return kept[1]
+        return kept[1], kept[2]
     base = (settings.miniapp_shell_url or "").rstrip("/")
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             r = await client.get(f"{base}/v{major}/index.html")
     except httpx.HTTPError:
-        return kept[1] if kept else None
+        return (kept[1], kept[2]) if kept else None
     if r.status_code != 200:
         return None
-    _kept[major] = (now, r.content)
-    return r.content
+    kept_shells[major] = (now, r.content, gzip.compress(r.content, compresslevel=6))
+    return r.content, kept_shells[major][2]
 
 
 class AppShellHostMiddleware:
@@ -91,6 +93,9 @@ class AppShellHostMiddleware:
     def __init__(self, app: ASGIApp, platform: FastAPI) -> None:
         self.app = app
         self.platform = platform
+        #: The shells fetched so far, by major: a few megabytes at most, one
+        #: entry per major ever served, for as long as this app runs.
+        self.kept: dict[int, tuple[float, bytes, bytes]] = {}
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -106,16 +111,23 @@ class AppShellHostMiddleware:
             await send({"type": "websocket.close", "code": 1008})
             return
         match = _PATH.match(scope.get("path", ""))
-        body = None
+        shell = None
         if match and scope.get("method") in ("GET", "HEAD"):
-            body = await _shell(int(match.group(1)))
-        if body is None:
+            shell = await _shell(self.kept, int(match.group(1)))
+        if shell is None:
             response = Response(status_code=404)
         else:
+            accepts = headers.get(b"accept-encoding", b"").decode("latin1").lower()
+            zipped = "gzip" in accepts
+            body = shell[1] if zipped else shell[0]
             response = Response(
                 body if scope.get("method") == "GET" else b"",
                 media_type="text/html; charset=utf-8",
-                headers={"Cache-Control": f"public, max-age={int(_KEEP_S)}"},
+                headers={
+                    "Cache-Control": f"public, max-age={int(_KEEP_S)}",
+                    "Vary": "Accept-Encoding",
+                    **({"Content-Encoding": "gzip"} if zipped else {}),
+                },
             )
         response.headers["Content-Security-Policy"] = _policy()
         response.headers["Permissions-Policy"] = DEVICE_FEATURES_OFF

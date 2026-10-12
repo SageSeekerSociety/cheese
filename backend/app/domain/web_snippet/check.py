@@ -113,7 +113,12 @@ async def run(code: str, shell: int) -> Ran | None:
             errors = view.get("console_errors") or []
             if errors:
                 raise Refused(errors[0])
-            height = int(view.get("element_height") or 0)
+            if view.get("element_height") is None:
+                # A renderer older than the `element` option measured the page,
+                # not the app: it says nothing about whether the app drew.
+                _log.warning("miniapp_check_renderer_outdated")
+                return None
+            height = int(view["element_height"])
             if height <= 0:
                 raise Refused("运行后什么都没画出来：app 里没有放进任何内容。")
             ran.heights[view["width"]] = height
