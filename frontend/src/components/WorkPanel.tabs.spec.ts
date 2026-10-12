@@ -23,11 +23,12 @@ import i18n, { setLocale } from '@/i18n'
 beforeEach(() => setLocale('zh-CN'))
 
 const workSummary = vi.fn()
+const roomTasks = vi.fn()
 
 vi.mock('../api', () => ({
   getPreview: vi.fn(async () => null),
   getTopicWorkSummary: (...a: unknown[]) => workSummary(...a),
-  listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomTasks: (...a: unknown[]) => roomTasks(...a),
 }))
 
 // 这一格在下面被 stub 掉所以不渲染，但模块还是要被求值一次；不 mock 它的话，它会
@@ -72,6 +73,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   workSummary.mockResolvedValue({ has_run: false, changed_files: [] })
+  roomTasks.mockResolvedValue({ data: [], total: 0 })
 })
 
 function mount(props: Record<string, unknown> = {}) {
@@ -123,6 +125,31 @@ describe('tab 栏', () => {
   it('地址点名「定时与触发」：开在那一格', async () => {
     const { container } = mount({ tab: 'routines' })
     await waitFor(() => expect(selected(container)).toBe('定时与触发'))
+  })
+
+  // 「概览」上那个数是这个房间开着的活有几件。任务页的概览是这件任务自己的文档，
+  // 频道那个数不是它的事——而它偏偏会漏进来：那一格和频道概览共用同一份缓存，
+  // `enabled` 只挡取数、不挡缓存，从频道点进任务页时上一次那个数还在手上（点进去
+  // 只有一句「暂无」的角标就是这么来的）。这条钉的是那一刻：频道照挂，任务页不挂。
+  it('频道里开着的活数挂在频道上，不跟着走进任务页', async () => {
+    roomTasks.mockResolvedValue({
+      data: [
+        { id: 'task2', status: 'open' },
+        { id: 'task3', status: 'open' },
+      ],
+      total: 2,
+    })
+    // 先在频道里：数落进缓存。
+    const room = mount()
+    const inRoom = await room.findByRole('tab', { name: /概览/ })
+    await waitFor(() => expect(inRoom.querySelector('.tabbar__count')?.textContent).toBe('2'))
+    room.unmount()
+
+    // 再从那个频道走进里面的一件任务。
+    const { findByRole } = mount({ taskId: 'task1' })
+    const inTask = await findByRole('tab', { name: /概览/ })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(inTask.querySelector('.tabbar__count')).toBeNull()
   })
 
   it('没东西的那一格字是浅的，有东西的不是', async () => {
