@@ -154,7 +154,7 @@
           <!-- 上限是上传那一步真拦的那个数（`GET /attachments/limits`）；问不到就不写这一行，不猜一个数。 -->
           <v-list-item v-if="maxFileBytes" prepend-icon="mdi-file-upload-outline" class="ps-2">
             <v-list-item-title>{{
-              t('tasks.submit.guideFileSize', { size: formatFileSize(maxFileBytes) })
+              t('tasks.submit.guideFileSize', { size: fmtFileSize(maxFileBytes) })
             }}</v-list-item-title>
           </v-list-item>
           <v-list-item v-if="taskData?.resubmittable" prepend-icon="mdi-refresh" class="ps-2">
@@ -226,11 +226,10 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
-import { formatFileSize } from '@/utils/materials'
-
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { fmtFileSize } from '@/lib/usageFormat'
 import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
 import { useEvents } from '@/views/tasks/events'

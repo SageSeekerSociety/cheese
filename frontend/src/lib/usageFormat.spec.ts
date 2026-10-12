@@ -9,6 +9,7 @@ import {
   fmtCost,
   fmtDelta,
   fmtDuration,
+  fmtFileSize,
   fmtMs,
   fmtNum,
   fmtPercent,
@@ -102,6 +103,49 @@ describe('fmtSI', () => {
   it('reports an em-dash for unknown, never a fake zero', () => {
     expect(fmtSI(null)).toBe('\u2014')
     expect(fmtSI(undefined)).toBe('\u2014')
+  })
+})
+
+describe('fmtFileSize', () => {
+  // These pin the output of the four copies before they were merged: the two
+  // formatFileSize helpers shared the two-decimal form, the tree/artifact copies
+  // shared the one-decimal one.
+  it('steps B / KB / MB on base 1024, whole bytes below 1 KiB', () => {
+    expect(fmtFileSize(0)).toBe('0 B')
+    expect(fmtFileSize(512)).toBe('512 B')
+    expect(fmtFileSize(1023)).toBe('1023 B')
+    expect(fmtFileSize(1024)).toBe('1.00 KB')
+    expect(fmtFileSize(1536)).toBe('1.50 KB')
+    expect(fmtFileSize(1024 * 1024)).toBe('1.00 MB')
+    expect(fmtFileSize(1.5 * 1024 * 1024)).toBe('1.50 MB')
+    // One byte short of the GB tier still reads in MB, and the top of the MB
+    // range rounds up to a whole 1024 of them. Both predate the merge; the
+    // second is where a two-tier copy was most likely to disagree with the
+    // GB-tier one it replaced.
+    expect(fmtFileSize(1024 * 1024 * 1024 - 1)).toBe('1024.00 MB')
+    expect(fmtFileSize(1023.5 * 1024 * 1024)).toBe('1023.50 MB')
+  })
+
+  it('gives a size at or above 1 GiB a GB tier instead of 1024 MB', () => {
+    // The bug: the tree and artifact copies stopped at MB, so 5 GiB printed
+    // "5120.0 MB". This is the only user-visible change of the merge.
+    expect(fmtFileSize(1024 * 1024 * 1024)).toBe('1.00 GB')
+    expect(fmtFileSize(5 * 1024 * 1024 * 1024)).toBe('5.00 GB')
+  })
+
+  it('takes the decimal width the caller shows', () => {
+    // The tree and the artifact page printed one decimal and keep it.
+    expect(fmtFileSize(1024, 1)).toBe('1.0 KB')
+    expect(fmtFileSize(1536, 1)).toBe('1.5 KB')
+    expect(fmtFileSize(1.5 * 1024 * 1024, 1)).toBe('1.5 MB')
+    expect(fmtFileSize(5 * 1024 * 1024 * 1024, 1)).toBe('5.0 GB')
+  })
+
+  it('passes invalid input through rather than inventing a size', () => {
+    // A non-finite count falls to the top rung; a negative one reads as bytes.
+    expect(fmtFileSize(Number.NaN)).toBe('NaN GB')
+    expect(fmtFileSize(Number.POSITIVE_INFINITY)).toBe('Infinity GB')
+    expect(fmtFileSize(-5)).toBe('-5 B')
   })
 })
 

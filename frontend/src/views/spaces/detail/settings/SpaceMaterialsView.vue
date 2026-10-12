@@ -7,11 +7,10 @@ import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
-import { formatFileSize } from '@/utils/materials'
-
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import SettingsToolbar from '@/components/spaces/SettingsToolbar.vue'
+import { fmtFileSize } from '@/lib/usageFormat'
 
 defineProps<{
   materials: SpaceMaterial[]
@@ -156,7 +155,7 @@ function onVisibility(item: SpaceMaterial, picked: SpaceMaterialVisibility) {
 
           <div class="mat__meta">
             <span>{{ t(`spaces.materials.type.${item.type}`, item.type) }}</span>
-            <span v-if="item.size !== null">{{ formatFileSize(item.size) }}</span>
+            <span v-if="item.size !== null">{{ fmtFileSize(item.size) }}</span>
             <span>{{ t('spaces.materials.uploadedOn', { date: uploadedOn(item.createdAt) }) }}</span>
             <span>{{ t('spaces.materials.downloads', { n: item.downloadCount }) }}</span>
             <!-- 主判据是 `canManage`：成员那一侧不该出现「未被引用」这种话，那会
