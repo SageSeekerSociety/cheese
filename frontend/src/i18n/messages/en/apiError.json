@@ -582,6 +582,7 @@
   "githubRefusedCheckRuns": "GitHub refused to list check-runs (HTTP {status}): {reply}",
   "githubRefusedCommitOrder": "GitHub refused to compare the order of two commits (HTTP {status}): {reply}",
   "githubPrBodyUpdateFailed": "Updating the PR body failed (HTTP {status}): {reply}",
+  "githubPrCloseFailed": "Closing the PR failed (HTTP {status}): {reply}",
   "githubPrReadyFailed": "Marking the PR ready failed (HTTP {status}): {reply}",
   "githubPrReadyFailedErrors": "Marking the PR ready failed: {errors}",
   "deliverUrlInvalid": "deliver_url must be an address that opens (http:// or https://)",
