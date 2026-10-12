@@ -144,6 +144,16 @@ def test_needs_resolution_shrugs_off_a_malformed_entry():
     assert needs_resolution([None, "nope", _check_run("a", run=1)]) is False
 
 
+def test_a_red_check_that_names_no_actions_run_does_not_trigger_a_read():
+    """别的应用发的 check run（codecov 之流）不属于任何 workflow，没有谁能顶替
+    它 —— 只用这类检查的仓库不该为这条规矩多花一次调用。"""
+    run = _check_run("codecov/patch", run=1, conclusion="failure")
+    run["html_url"] = "https://app.codecov.io/gh/acme/widgets/pull/7"
+    run["details_url"] = run["html_url"]
+
+    assert needs_resolution([run]) is False
+
+
 # ---- 谁顶替了谁 -------------------------------------------------------------
 
 

@@ -75,13 +75,16 @@ def needs_resolution(runs: Sequence[dict]) -> bool:
     """要不要多读一次运行列表。
 
     只有「跑完了、结论不绿」的 check run 才可能是被顶替的旧运行留下的：被顶替的
-    那次会被取消，还在跑的不可能已经被顶替。全绿、还在跑的稳态因此不多花这一次
-    调用 —— PR 每 60 秒轮询一次，那条路必须还是一问一答。
+    那次会被取消，还在跑的不可能已经被顶替。而且它得**指得出一次 Actions 运行** ——
+    别的应用（codecov 之流）发的 check run 不属于任何 workflow，没有谁能顶替它。
+    全绿、还在跑、以及整份都是别家 check run 的稳态因此不多花这一次调用 —— PR 每
+    60 秒轮询一次，那条路必须还是一问一答。
     """
     return any(
         isinstance(run, dict)
         and run.get("status") == "completed"
         and run.get("conclusion") not in _FINE_CONCLUSIONS
+        and actions_run_id(run) is not None
         for run in runs
     )
 
