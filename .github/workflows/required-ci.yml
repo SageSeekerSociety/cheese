@@ -88,6 +88,25 @@ jobs:
   # full CI. Product suites are skipped on a draft (their `if` also requires
   # tier == 'full'), and the aggregating job's own name is what keeps a draft's
   # green from ever being read as `CI required`.
+  #
+  # What this tier does NOT have, it must not judge. Two things follow from
+  # that, and both are the difference between a draft that reports a verdict on
+  # its change and a draft that is red for the platform's own bookkeeping:
+  #
+  # - A draft's title is the platform's placeholder ("WIP: <task title>"), so
+  #   the title is not checked here (ci-fast reads the draft flag from the PR
+  #   JSON). The `required` job checks it, and pr-title.yml re-runs that job
+  #   when the PR is marked ready.
+  # - Redis is here (a service, like every full-tier job) and the pinned Claude
+  #   Code/Codex/pi builds are NOT: installing three binaries into every draft
+  #   run is the full CI's job, and a test that reaches for one fails rather
+  #   than skips. ci-fast names those tests not run instead of running them.
+  #
+  # Both were read off the runs they broke: the draft job's commit-title step
+  # failing on "WIP: <task title>", and backend-pure reporting 138 failed / 121
+  # errors whose text is "CHEESE_TEST_CLAUDE/CHEESE_TEST_PI must point to the
+  # pinned build". Symptoms a change's author cannot act on are symptoms that
+  # make the check worth less than it costs.
   fast:
     needs: scope
     if: needs.scope.outputs.tier == 'quick'
@@ -113,6 +132,21 @@ jobs:
     permissions:
       contents: read
       pull-requests: read
+    # The same valkey every full-tier job runs, on the same port, so a pure test
+    # that touches Redis judges the change instead of reporting a connection
+    # refused. Without it a draft's backend-pure was red on
+    # tests/unit/test_login_attempt_budget.py connecting to localhost:6379 — a
+    # service this job simply had not been given.
+    env:
+      REDIS_URL: redis://localhost:6389/0
+    services:
+      valkey:
+        image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
+        ports:
+          - 6389:6379
+        options: >-
+          --health-cmd "valkey-cli ping" --health-interval 1s
+          --health-timeout 5s --health-retries 60
     steps:
       # fetch-depth 0: ci-fast.py resolves the merge base with `git merge-base
       # origin/main HEAD`, and a shallow clone would put that base out of reach
@@ -154,22 +188,66 @@ jobs:
           (cd backend && uv sync --frozen --all-extras)
           (cd frontend && pnpm install --frozen-lockfile)
       # `--tier quick` picks the checks; the bounds are the runner's (see the
-      # job comment). A run that exhausts the budget exits unknown (2), which
-      # this step turns into a red check — the tier is never trimmed to green.
+      # job comment). The exit code decides, and its three outcomes are not the
+      # same thing:
+      #
+      #   0  every check the tier selected passed.
+      #   1  a check failed. The draft goes red — a real red, which is the whole
+      #      point of the tier.
+      #   2  unknown, 3 blocked: the tier could not judge — the budget ran out,
+      #      a check had no input, or this job was not given something a check
+      #      needs. A draft is work in progress, `CI required (draft quick)` is
+      #      not the check branch protection reads, and the merge queue runs the
+      #      full tier on the same commit: so this does not turn the draft red.
+      #      It does NOT pass either — every unjudged item is written into the
+      #      step summary and a warning annotation, so the green is never read as
+      #      "this was fully judged".
+      #
+      # GitHub has no third conclusion to report; the honest one is available
+      # only to a human reading the summary, which is why the summary is not
+      # optional here.
       - name: ci:fast quick tier
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           CI_FAST_PRECOMMIT: uvx pre-commit
         run: |
-          # Read the PR's live title from the API — NOT `gh pr view`, which needs
-          # a branch and is unreliable on this detached merge ref — and pass it
-          # as a quoted argument in THIS same shell. Keeping it a shell variable
-          # means a title containing quotes, `$(...)`, or a newline stays data:
-          # no untrusted text reaches the script through a workflow expression,
-          # and nothing multiline is written to $GITHUB_OUTPUT.
-          title="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)"
-          python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --title "$title"
+          # Read the PR live from the API — NOT `gh pr view`, which needs a
+          # branch and is unreliable on this detached merge ref, and not the
+          # event payload, whose title an edit since then would make stale. The
+          # JSON goes to a FILE, never into a workflow expression, a shell
+          # variable or $GITHUB_OUTPUT: a title containing quotes, `$(...)` or a
+          # newline stays data, and ci-fast.py reads both the title and the
+          # draft flag from it.
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
+          report="$RUNNER_TEMP/ci-fast-report.json"
+          status=0
+          python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216 \
+            --pull-request "$RUNNER_TEMP/pull.json" --report "$report" || status=$?
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if [ "$status" -eq 1 ]; then
+            echo "::error::ci:fast quick tier found a failure: this draft's change is red."
+            exit 1
+          fi
+          {
+            echo "### Draft quick tier: what it could not judge"
+            echo
+            echo "ci:fast exited $status (2 = unknown, 3 = blocked). This did not fail the"
+            echo "draft — but it did not pass these either. \`CI required (draft quick)\` is"
+            echo "not the check branch protection reads, and the merge queue runs the full"
+            echo "Required CI on this same commit; that run is the one to look at."
+            echo
+            if [ -f "$report" ]; then
+              jq -r '.ran[] | select(.result != "pass") | "- `\(.id)`: \(.result) \(.reason // "")"' "$report"
+              jq -r '.not_run[]? | "- not run `\(.id)`: \(.reason)"' "$report"
+            else
+              echo "ci:fast wrote no report at $report."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning::ci:fast quick tier could not judge everything (exit $status). See this run's step summary; this draft check is not the required gate."
+          exit 0
 
   backend:
     needs: scope

@@ -589,10 +589,10 @@ class WorkflowTextTest(unittest.TestCase):
                 f"expression spliced into a shell command: {body.strip()[:80]}",
             )
 
-    def test_the_draft_job_passes_the_pr_title_as_one_argument(self):
+    def test_the_draft_job_hands_ci_fast_the_pr_payload_verbatim(self):
         # A PR title is untrusted data. Run the step's real shell against a `gh`
         # stub that returns a hostile title and a `python3` stub that records the
-        # argv it received, and check the title arrived as ONE argument, intact.
+        # argv it received, and check the API payload reached the script intact.
         body = run_body_containing(self.text, "ci-fast.py")
         title = 'He said "hi"\n$(touch pwned)\nline three'
         with tempfile.TemporaryDirectory() as tmp:
@@ -604,17 +604,21 @@ class WorkflowTextTest(unittest.TestCase):
             _stub(bindir, "python3",
                   'for a in "$@"; do printf "%s\\0" "$a" >> "$ARGV_LOG"; done\n')
             env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
-                   "STUB_TITLE": title, "ARGV_LOG": str(argv_log),
+                   "STUB_TITLE": title, "ARGV_LOG": str(argv_log), "RUNNER_TEMP": str(tmp),
                    "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1", "GH_TOKEN": "x"}
             subprocess.run(["bash", "-c", body], env=env, cwd=tmp, check=True,
                            capture_output=True, text=True)
             argv = argv_log.read_text().split("\0")[:-1]
-            self.assertEqual(argv.count("--title"), 1, f"argv: {argv}")
-            at = argv.index("--title")
-            # Exactly one value follows --title, and it is the title verbatim: a
-            # quoting/spelling slip that word-split it would show up here.
-            self.assertEqual(argv[at + 1], title, f"title mangled: {argv[at + 1]!r}")
-            self.assertEqual(len(argv), at + 2, f"title split or extra args: {argv}")
+            # The title is not an argument at all: ci-fast reads the title and
+            # the draft flag out of the API payload, which the step writes to a
+            # file. Nothing a title contains can word-split an argument, and
+            # nothing multiline goes into argv.
+            self.assertNotIn(title, argv, f"the title was passed as an argument: {argv}")
+            self.assertNotIn("--title", argv, f"argv: {argv}")
+            self.assertEqual(argv.count("--pull-request"), 1, f"argv: {argv}")
+            at = argv.index("--pull-request")
+            self.assertEqual(Path(argv[at + 1]).read_text(), title,
+                             "the API payload did not reach ci-fast verbatim")
             self.assertFalse((tmp / "pwned").exists(), "title reached the shell as code")
 
     def test_the_draft_job_states_the_runner_bounds(self):
@@ -637,7 +641,7 @@ class WorkflowTextTest(unittest.TestCase):
             _stub(bindir, "python3",
                   'for a in "$@"; do printf "%s\\0" "$a" >> "$ARGV_LOG"; done\n')
             env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
-                   "STUB_TITLE": "feat: x", "ARGV_LOG": str(argv_log),
+                   "STUB_TITLE": "feat: x", "ARGV_LOG": str(argv_log), "RUNNER_TEMP": str(tmp),
                    "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1", "GH_TOKEN": "x"}
             subprocess.run(["bash", "-c", body], env=env, cwd=tmp, check=True,
                            capture_output=True, text=True)

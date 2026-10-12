@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -588,6 +589,41 @@ sys.exit(0)
         self.assertIn("pure", row["command"])
         self.assertIn("ci_fast_pytest_plugin", row["command"])
 
+    def test_quick_backend_does_not_judge_what_the_tier_cannot_run(self):
+        # The pinned Claude Code/Codex/pi builds come from the environment; a
+        # tier that does not install them gets FAILURES, not skips, from the
+        # tests that reach one. They are reported not run and left out of the
+        # pytest file list — while staying in required, so a green run still
+        # means the change's pinpointed consumers ran.
+        self.write_hooks()
+        no_harness = {"CHEESE_TEST_CLAUDE": "", "CHEESE_TEST_CODEX": "", "CHEESE_TEST_PI": ""}
+        self.commit_file("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
+        self.commit_file("backend/tests/unit/test_needs_pinned.py",
+                         "from tests.pinned_claude import claude_binary\nfrom app.wheel import spin\n")
+        self.commit_file("backend/tests/unit/test_spins.py", "from app.wheel import spin\n")
+        self.commit_file("backend/app/wheel.py", "spin = 0\n")
+        git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+        self.commit_file("backend/app/wheel.py", "spin = 1\n")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: skip the harness",
+                                env_extra={**self.backend_tools(covered="tests/unit/test_spins.py"),
+                                           **no_harness})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rep = self.report()
+        row = next(r for r in rep["ran"] if r["id"] == "backend-pure")
+        self.assertNotIn("tests/unit/test_needs_pinned.py", row["command"])
+        self.assertIn("tests/unit/test_spins.py", row["command"])
+        self.assertIn("tests/unit/test_needs_pinned.py", row["evidence"]["required"])
+        self.assertEqual([item["id"] for item in rep["not_run"] if item["id"].endswith("pinned-harness")],
+                         ["backend-pure:pinned-harness"])
+        # The builds being present is what decides it, not the tier: the same
+        # change runs that test again.
+        with_harness = {v: sys.executable for v in no_harness}
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: run the harness",
+                                env_extra={**self.backend_tools(covered="tests/unit/test_spins.py"),
+                                           **with_harness})
+        row = next(r for r in self.report()["ran"] if r["id"] == "backend-pure")
+        self.assertIn("tests/unit/test_needs_pinned.py", row["command"])
+
     def test_quick_backend_missing_target_is_unknown(self):
         # A green report that omits the file depending on the changed module
         # proves nothing about the change: the run must be unknown, not green.
@@ -635,6 +671,61 @@ sys.exit(0)
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.report()["title"]["value"], "feat: actual PR title")
 
+    def test_quick_draft_title_is_reported_not_run(self):
+        # A draft carries the platform's placeholder title ("WIP: <task title>"),
+        # which says nothing about the change: judging it fails a draft for text
+        # it does not own. check-commit-title.py skips a draft the same way, and
+        # the PR's title is checked once it is marked ready for review.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        payload = self.tmp / "pull.json"
+        payload.write_text(json.dumps({"number": 7, "title": "WIP: 修点什么", "draft": True}))
+        proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
+                                env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rep = self.report()
+        self.assertTrue(rep["title"]["draft"])
+        self.assertIsNone(rep["title"]["value"])
+        self.assertNotIn("commit-title", [row["id"] for row in rep["ran"]])
+        self.assertIn("commit-title", [item["id"] for item in rep["not_run"]])
+
+    def test_quick_pull_request_title_is_checked_when_ready(self):
+        # The same payload with the PR marked ready: the title is the change's
+        # own again, so a non-conforming one fails as before.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        payload = self.tmp / "pull.json"
+        payload.write_text(json.dumps({"number": 7, "title": "a bad title", "draft": False}))
+        proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
+                                env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertEqual(self.report()["title"]["value"], "a bad title")
+
+    def test_quick_reads_the_title_from_an_event_payload(self):
+        # A workflow can hand over the event JSON instead, which nests the PR.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        payload = self.tmp / "event.json"
+        payload.write_text(json.dumps({"number": 7, "pull_request": {
+            "title": "feat: from the event", "draft": False}}))
+        proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
+                                env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.report()["title"]["value"], "feat: from the event")
+
+    def test_quick_unreadable_pull_request_is_unknown(self):
+        # A payload that is not JSON (gh writing its error into the file, say)
+        # leaves both the title and the draft flag unread: unknown, never a
+        # pass, and never a judgement on a title nobody read.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        payload = self.tmp / "pull.json"
+        payload.write_text("gh: Not Found (HTTP 404)")
+        proc = self.run_ci_fast("--tier", "quick", "--pull-request", str(payload),
+                                env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+
     def test_quick_invalid_title_fails(self):
         self.write_hooks()
         self.make_base_and_head("frontend/src/probe.ts")
@@ -643,11 +734,22 @@ sys.exit(0)
         self.assertEqual(self.report()["title"]["value"], "a bad title")
 
     def test_global_budget_records_all_remaining_checks(self):
-        self.write_hooks()
+        # The budget also covers the setup before the first check and the
+        # readiness check (`pre-commit --version`) itself. On the shared
+        # self-hosted runners both cost seconds — several queue entries run on
+        # one machine, and `uvx pre-commit` resolves on a cold cache — so a
+        # budget of 0.5s, and of 3s, turned red here for exactly that reason:
+        # the run reported unknown having recorded no check at all, which is
+        # what this test exists to catch. Warm the readiness command first and
+        # give the budget room to reach the checks. It is then spent by a real
+        # (slow) stub hook, so nothing here is stubbed away.
+        self.write_hooks(slow={"file-size"})
         self.make_base_and_head("frontend/src/probe.ts")
-        proc = self.run_ci_fast("--budget", "0.5")
+        subprocess.run([*shlex.split(self.env.get("CI_FAST_PRECOMMIT", "pre-commit")), "--version"],
+                       cwd=self.repo, capture_output=True, env=self.env, timeout=120)
+        proc = self.run_ci_fast("--budget", "8", "--timeout", "30")
         self.assertEqual(proc.returncode, 2, proc.stdout)
-        self.assertLess(self.report()["seconds"], 3)
+        self.assertLess(self.report()["seconds"], 20)
         self.assertTrue(any(r["result"] in ("budget", "timeout") for r in self.report()["ran"]))
 
     def test_memory_limit_above_the_default_is_accepted(self):
@@ -703,7 +805,7 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.put("backend/app/adapter.py", "from .invoice import VALUE\n")
         self.put("backend/tests/unit/test_unrelated_name.py", "def test_it():\n    from app.adapter import VALUE\n")
         self.put("backend/tests/unit/test_invoice_named_but_unrelated.py", "def test_it(): pass\n")
-        paths, reason, targets = select_backend(self.root, ["backend/app/invoice.py"])
+        paths, reason, targets, _ = select_backend(self.root, ["backend/app/invoice.py"])
         self.assertIn("tests/unit/test_unrelated_name.py", paths)
         self.assertNotIn("tests/unit/test_invoice_named_but_unrelated.py", paths)
         self.assertIn("tests/unit/test_sentences.py", paths)
@@ -716,7 +818,7 @@ class SelectionEvidenceTest(unittest.TestCase):
     def test_backend_deleted_module_keeps_consumers(self):
         from ci_fast_backend import select_backend
         self.put("backend/tests/unit/test_any_name.py", "from app.gone import value\n")
-        paths, _, _ = select_backend(self.root, ["backend/app/gone.py"])
+        paths, _, _, _ = select_backend(self.root, ["backend/app/gone.py"])
         self.assertIn("tests/unit/test_any_name.py", paths)
 
     def test_backend_unknown_module_and_meta_widen(self):
@@ -724,7 +826,7 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.put("backend/tests/unit/test_a.py", "def test_it(): pass\n")
         self.put("backend/tests/unit/test_b.py", "def test_it(): pass\n")
         for changed in (["backend/app/new.py"], ["backend/tests/conftest.py"], ["backend/pyproject.toml"]):
-            paths, reason, targets = select_backend(self.root, changed)
+            paths, reason, targets, _ = select_backend(self.root, changed)
             self.assertIn("tests/unit/test_a.py", paths)
             self.assertIn("tests/unit/test_b.py", paths)
             self.assertIn("fallback", reason)
@@ -734,8 +836,85 @@ class SelectionEvidenceTest(unittest.TestCase):
         from ci_fast_backend import select_backend
         self.put("backend/app/special.py", "VALUE = 1\n")
         self.put("backend/tests/unit/test_indirect.py", 'import importlib\nx = importlib.import_module("app.special")\n')
-        paths, _, _ = select_backend(self.root, ["backend/app/special.py"])
+        paths, _, _, _ = select_backend(self.root, ["backend/app/special.py"])
         self.assertIn("tests/unit/test_indirect.py", paths)
+
+    def test_backend_pinned_harness_tests_are_named_not_run(self):
+        # The pinned Claude Code / Codex / pi builds come from the environment
+        # (CHEESE_TEST_*), installed by the full CI and by dev-db.sh; a test that
+        # reaches one FAILS where they are absent, it does not skip. A tier that
+        # does not have them must report such a test not run rather than let that
+        # failure judge the change — while still requiring it, because a change
+        # whose pinpointed consumers never executed was not judged.
+        from ci_fast_backend import select_backend
+        self.put("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
+        self.put("backend/app/wheel.py", "spin = 1\n")
+        self.put("backend/tests/unit/test_spins_the_wheel.py", "from app.wheel import spin\n")
+        self.put("backend/tests/unit/test_needs_the_build.py",
+                 "from app.wheel import spin\nfrom tests.pinned_claude import claude_binary\n")
+        self.put("backend/tests/unit/test_reads_the_variable.py",
+                 'import os\nfrom app.wheel import spin\nVAR = os.environ.get("CHEESE_TEST_PI")\n')
+        selected, reason, targets, omitted = select_backend(
+            self.root, ["backend/app/wheel.py"], harness_gap="missing: CHEESE_TEST_PI")
+        self.assertEqual(omitted, ["tests/unit/test_needs_the_build.py",
+                                   "tests/unit/test_reads_the_variable.py"])
+        for path in omitted:
+            self.assertNotIn(path, selected)
+            self.assertIn(path, targets, "a change nobody ran a test for is not judged")
+        self.assertIn("tests/unit/test_spins_the_wheel.py", selected)
+        self.assertIn("pinned-harness", reason)
+        # Nothing is dropped where the builds are: the same change runs them.
+        selected, _, _, omitted = select_backend(self.root, ["backend/app/wheel.py"])
+        self.assertEqual(omitted, [])
+        self.assertIn("tests/unit/test_needs_the_build.py", selected)
+
+    def test_backend_harness_omission_follows_imports_only(self):
+        # Naming a file is a selection dependency — the legacy-error ratchet
+        # names every file it counts — but it is not a reason a test needs the
+        # pinned build. Following it here would drop a test this tier can run.
+        from ci_fast_backend import select_backend
+        self.put("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
+        self.put("backend/tests/unit/test_runs_the_build.py",
+                 "from tests.pinned_claude import claude_binary\n")
+        self.put("backend/tests/unit/test_counts_a_file.py",
+                 'COUNTED = "backend/tests/unit/test_runs_the_build.py"\n')
+        selected, _, targets, omitted = select_backend(
+            self.root, ["backend/tests/unit/test_runs_the_build.py"], harness_gap="missing: x")
+        self.assertEqual(omitted, ["tests/unit/test_runs_the_build.py"])
+        self.assertIn("tests/unit/test_counts_a_file.py", selected)
+        self.assertIn("tests/unit/test_counts_a_file.py", targets)
+
+    def test_backend_harness_omission_ignores_the_dynamic_widening(self):
+        # A module whose import list is not fully known is a consumer of every
+        # module for selection: app.main loads its routes that way. That
+        # over-approximation must not answer "who needs the pinned harness" — it
+        # would make app.main a harness consumer and every test that builds the
+        # app through it a harness test, dropping most of the suite from a tier
+        # that can run it.
+        from ci_fast_backend import select_backend
+        self.put("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
+        self.put("backend/app/routes.py", "ROUTES = 1\n")
+        self.put("backend/app/main.py",
+                 'import importlib\napp = importlib.import_module("app.routes")\n')
+        self.put("backend/tests/unit/test_builds_the_app.py", "from app.main import app\n")
+        selected, _, _, omitted = select_backend(
+            self.root, ["backend/app/routes.py"], harness_gap="missing: x")
+        self.assertEqual(omitted, [])
+        self.assertIn("tests/unit/test_builds_the_app.py", selected)
+
+    def test_pinned_harness_gap_wants_files_not_names(self):
+        from ci_fast_backend import pinned_harness_gap
+        build = self.root / "bin" / "build"
+        build.parent.mkdir(parents=True, exist_ok=True)
+        build.write_text("#!/bin/sh\n")
+        installed = {v: str(build) for v in
+                     ("CHEESE_TEST_CLAUDE", "CHEESE_TEST_CODEX", "CHEESE_TEST_PI")}
+        self.assertEqual(pinned_harness_gap(installed), "")
+        self.assertEqual(pinned_harness_gap({}),
+                         "missing: CHEESE_TEST_CLAUDE, CHEESE_TEST_CODEX, CHEESE_TEST_PI")
+        # A variable pointing at a path nobody installed is not a build.
+        self.assertEqual(pinned_harness_gap({**installed, "CHEESE_TEST_CODEX": str(self.root / "gone")}),
+                         "missing: CHEESE_TEST_CODEX")
 
     def test_frontend_delete_keeps_related_when_a_root_survives(self):
         # A deletion no longer expands to the suite: the surviving root still
