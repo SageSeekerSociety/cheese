@@ -254,7 +254,8 @@ export const SCENES_MISC2_ENTRIES: CatalogEntry[] = [
           return t('catalog.adminMembersPageView.s5.note')
         },
         props: { loading: true },
-        expectSelector: '.agrid__bone',
+        expect: '林可',
+        expectSelector: '.agrid--busy',
       },
       {
         get name() {

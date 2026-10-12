@@ -363,7 +363,7 @@ const countLine = computed(() =>
                 :data-label="t('members.table.colAddedInfo')"
                 :title="t('members.row.addedBy', { by: row.addedBy, time: relTime(row.createdAt) })"
               >
-                <i18n-t keypath="members.row.addedBy" tag="span" class="am__dim">
+                <i18n-t keypath="members.row.addedBy" scope="global" tag="span" class="am__dim">
                   <template #by><UserRef :handle="row.addedBy" /></template>
                   <template #time>{{ relTime(row.createdAt) }}</template>
                 </i18n-t>
@@ -459,7 +459,7 @@ const countLine = computed(() =>
       <!-- The body echoes the handle in bold (the person pressing must see who is being
            removed), and English word order differs, so the i18n-t slot is the only
            compliant phrasing. -->
-      <i18n-t keypath="members.confirm.body" tag="span">
+      <i18n-t keypath="members.confirm.body" scope="global" tag="span">
         <template #handle>
           <strong>{{ confirmHandle }}</strong>
         </template>
