@@ -12,20 +12,32 @@ commands and turns each command's report into a verdict nobody can fake:
   * The report decides pass/fail for suites; the exit code only widens it to
     unknown (pytest 2/3/4/5, Vitest --noPassWithNoTests on an empty graph).
   * Frontend scope only falls back to the full Vitest run when the change
-    cannot be narrowed — a config/.github edit, a test-harness source or an
-    unknown scope. A deletion, a style edit, a prose change or a types-only
-    input keeps the related run seeded by the surviving roots. A change under
-    src/ that seeds no root — a locale catalog, a ratchet baseline, an asset —
-    widens: `related` is seeded from the changed source files, and a file the
-    suite reads off disk rather than imports (styles/docBlocks.spec.ts reads
-    its stylesheet with readFileSync) has no edge to the spec that reads it, so
-    the guards alone would pass the tier with the test that answers for the
-    edit never run — measured: 6px -> 8px on the padding-left of
-    .doc-status[data-status] left both i18n guards green and only
-    docBlocks.spec.ts red. A prose change seeds nothing and leaves the suite
-    nothing to judge, so it runs the guards alone and reports frontend-unit as
-    not run rather than expanding to it. A full run must show both i18n guard
+    cannot be narrowed — an edit to one of the frontend config files this
+    module watches (FRONTEND_META: the two package manifests, the vite and
+    tsconfig files, .pre-commit-config.yaml), a .github/ edit, a test-harness
+    source or an unknown scope. A config outside that list does not widen by
+    itself. A deletion, a style edit, a prose change or a types-only input
+    keeps the related run seeded by the surviving roots. A change under src/
+    that seeds no root — a locale catalog, a ratchet baseline, an asset —
+    widens: `related` is seeded from the changed source files, and a file a spec
+    reads off disk rather than imports creates no edge to that spec
+    (styles/docBlocks.spec.ts reads its stylesheet with readFileSync; main.ts and
+    the doc blocks import it, that spec does not), so the guards alone would
+    pass the tier with the test that answers for the edit never run — measured:
+    6px -> 8px on the padding-left of .doc-status[data-status] left both i18n
+    guards green and only docBlocks.spec.ts red. A seedless change that leaves
+    the suite nothing to judge — prose, a declaration file, a types-only input
+    like backend/openapi.json — runs the guards alone and reports frontend-unit
+    as not run rather than expanding to it. A full run must show both i18n guard
     specs actually executed.
+  * The read-off-disk spec gets the same treatment without widening: a narrowed
+    run is seeded with the changed roots *and* every spec that judges a
+    frontend file by reading it (OFF_DISK_SPECS), because those are the specs
+    the graph cannot reach. The report must show each of them ran, so a
+    selection that quietly drops one is unknown rather than green. That covers
+    the read that a surviving root used to hide: a component whose template a
+    spec reads, a stylesheet edited beside a changed component, a source file
+    deleted while another survives.
   * The frontend's parallelism is derived from the memory ceiling the caller
     passed (vitest_workers), not pinned: a run given a ceiling that backs
     several forks gets several, and the local default still gets one.
@@ -39,6 +51,31 @@ import xml.etree.ElementTree as ET
 from ci_fast_backend import select_backend
 
 I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
+# Specs that judge a frontend file by reading it with `node:fs` — a component's
+# markup, a stylesheet, a whole directory — instead of importing it. The import
+# graph has no edge for a read, so `vitest related` never selects one for the
+# file it answers for: measured, a broken rule in styles/docBlocks.css left both
+# i18n guards green and only styles/docBlocks.spec.ts red, and `related` on
+# components/settings/BranchProtectionSection.vue does not select the spec that
+# reads that component's template. They run on every frontend change that
+# reaches the suite, beside the related selection, and the report must show they
+# did. This is every spec under frontend/src importing `node:fs` at the time of
+# writing (catalog.spec.ts is already an i18n guard; collab/ has its own config);
+# a new spec that reads the tree this way belongs in this tuple.
+OFF_DISK_SPECS = (
+    "src/branchProtectionSection.spec.ts",
+    "src/components/ChatPanel.mentionMenu.spec.ts",
+    "src/components/CheeseAvatar.spec.ts",
+    "src/components/admin/AdminGrid.spec.ts",
+    "src/components/base/BaseButton.spec.ts",
+    "src/components/base/SettingsRow.spec.ts",
+    "src/githubSettingsSections.spec.ts",
+    "src/offScreenSkipping.spec.ts",
+    "src/styles/docBlocks.spec.ts",
+    "src/vShowDisplayUtilities.spec.ts",
+    "src/views/feedback/scroll.spec.ts",
+    "src/views/home/Landing.spec.ts",
+)
 # Config whose change invalidates the narrow type project and the related graph.
 FRONTEND_META = {
     "frontend/package.json", "frontend/pnpm-lock.yaml", "frontend/vite.config.ts",
@@ -145,11 +182,14 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
         # stylesheet the same way. The guards do not stand in for it either:
         # measured, a broken rule in docBlocks.css (padding-left 6px -> 8px on
         # .doc-status[data-status]) left both i18n guards green and only
-        # docBlocks.spec.ts red. Prose is judged by the doc checks and a
-        # declaration file compiles to no runtime, so both may leave the suite
-        # nothing to judge.
+        # docBlocks.spec.ts red. Prose is judged by the doc checks, and a
+        # declaration file or a types-only input compiles to no runtime, so those
+        # may leave the suite nothing to judge. Anything else is runtime content
+        # wherever it sits: a path outside frontend/ can still be routed into
+        # frontend scope (a site stylesheet, a ratchet script) and is still
+        # content the suite would have to read.
         carries_runtime = any(not p.endswith((".md", ".d.ts"))
-                              and not p.startswith("docs/") for p in frontend_paths)
+                              and p not in FRONTEND_TYPES_META for p in changed)
         # Config, ambient hooks, test-harness sources and unknown scopes cannot
         # be narrowed: nothing tells the related graph what they affect.
         unjudgeable = (conservative
@@ -176,13 +216,16 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
             # the graph: a changed src root still seeds the related run, and
             # whatever cannot seed it runs nothing (frontend-unit is reported as
             # an omission) instead of the whole suite. Filesystem scans are not
-            # edges in that graph, so the i18n guard specs run explicitly in
-            # both cases rather than being assumed into it.
+            # edges in that graph, so the specs that judge a file by reading it
+            # (OFF_DISK_SPECS) and the i18n guards run explicitly alongside the
+            # related selection rather than being assumed into it.
+            off_disk = [p for p in OFF_DISK_SPECS if (root / "frontend" / p).is_file()]
             if roots:
                 plan.append({"id": "frontend-unit", "cwd": root / "frontend",
-                             "command": ["pnpm", "exec", "vitest", "related", "--run", *roots, *flags,
+                             "command": ["pnpm", "exec", "vitest", "related", "--run", *roots, *off_disk, *flags,
                                          "--reporter=json", "--outputFile", str(output)],
                              "evidence": {"kind": "vitest", "path": str(output), "mode": "related",
+                                          "required_files": off_disk,
                                           "roots": roots}})
             else:
                 omissions.append({"id": "frontend-unit",

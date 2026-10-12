@@ -103,22 +103,40 @@ everything is still allowed to answer unknown.
   for any such edit so those guards still run here; the shared map — and what
   Required CI runs — is left untouched.
 - Frontend Vitest runs the whole suite only when the change cannot be narrowed:
-  a config edit, a `.github/` edit, a `frontend/src/test/` or `frontend/scripts/`
-  edit, an unknown path, no merge base, or a change that seeds no related root
-  while carrying runtime content — a catalog, a ratchet baseline, a stylesheet,
-  a deletion with no surviving root. The full run must be shown to have executed
-  both i18n guard specs. Everything else stays narrow: a deletion beside a
-  surviving source root, and a catalog or prose edit next to a changed source
-  file, still seed `related` from those roots. Only a change that seeds nothing
-  *and* is prose or a declaration file — judged by the doc checks and the type
-  check respectively — leaves the tier running the guards alone with
-  `frontend-unit` recorded not-run and a reason. A seedless change is never left
-  to the guards: `related` is seeded from the changed source files, and a file
-  read off disk — `src/styles/docBlocks.css` is read by `docBlocks.spec.ts` with
-  `readFileSync`, never imported — has no edge to the spec that reads it. A
-  broken rule there passes the narrow tier; measured, changing the
-  `padding-left` of `.doc-status[data-status]` from 6px to 8px left both i18n
-  guards green and only `docBlocks.spec.ts` red. The narrow type project
+  an edit to one of the six frontend config files this script watches
+  (`frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/vite.config.ts`
+  and the three `frontend/tsconfig*.json`) or to `.pre-commit-config.yaml`, a
+  `.github/` edit, a `frontend/src/test/` or `frontend/scripts/` edit, an
+  unknown path, no merge base, or a change that seeds no related root while
+  carrying runtime content — a catalog, a ratchet baseline, a stylesheet, a
+  deletion with no surviving root, a path outside `frontend/` that the scope map
+  still routes here (a site stylesheet, a ratchet script). A config outside that
+  list does not widen by itself: `frontend/collab/vitest.config.ts` beside a
+  changed source file still stays `related`. The full run must be shown to have
+  executed both i18n guard specs. Everything else stays narrow: a deletion
+  beside a surviving source root, and a catalog, stylesheet or prose edit next
+  to a changed source file, still seed `related` from those roots. Only a change
+  that seeds nothing *and* leaves the suite nothing to judge — prose (`.md`), a
+  declaration file, or a types-only input such as `backend/openapi.json` — leaves
+  the tier running the guards alone with `frontend-unit` recorded not-run and a
+  reason.
+
+  A narrowed run is seeded with the changed source roots **and** every spec that
+  judges a frontend file by reading it with `node:fs` rather than importing it
+  (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the twelve specs that assert a
+  component's markup, a stylesheet's rules, a page's scroll container or a whole
+  directory). A read is not an import edge, so `related` would never select one
+  of them for the file it answers for, whatever else the change contains:
+  `src/styles/docBlocks.css` is imported by `main.ts` and the doc blocks but not
+  by `docBlocks.spec.ts`, which reads it with `readFileSync`; measured, changing
+  the `padding-left` of `.doc-status[data-status]` from 6px to 8px leaves both
+  i18n guards green and turns only `docBlocks.spec.ts` red. The same read hides
+  behind a surviving root when that stylesheet is edited beside a changed
+  component, when the file a spec reads is itself the changed component, or when
+  it is deleted while another root survives. The report must show each of those
+  specs ran, so a selection that silently drops one is unknown, not green; a new
+  spec that reads the tree this way belongs in that tuple. The
+  narrow type project
   extends the real `frontend/tsconfig.json`,
   bridges `node_modules`, and checks only the surviving changed files against the
   existing tsc-ratchet baseline; a deleted non-spec source file forces the full

@@ -903,8 +903,11 @@ class SelectionEvidenceTest(unittest.TestCase):
             (["frontend/src/test/harness.ts", "frontend/src/keep.ts"], False),   # test harness
             (["frontend/package.json", "frontend/src/keep.ts"], False),         # config edit
             ([".github/workflows/ci-fast.yml", "frontend/src/keep.ts"], False),  # .github edit
-            (["frontend/vite.board-proto.config.mts"], False),                   # config outside FRONTEND_META
-            (["frontend/collab/vitest.config.ts"], False),                       # a second Vitest config
+            # Not because they are config — because they are the whole change
+            # and seed no root, so nothing can narrow them. Either file beside a
+            # surviving src root stays `related`.
+            (["frontend/vite.board-proto.config.mts"], False),                   # config outside FRONTEND_META, alone
+            (["frontend/collab/vitest.config.ts"], False),                       # a second Vitest config, alone
         ):
             plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root, conservative)
             unit = next(p for p in plan if p["id"] == "frontend-unit")
@@ -1000,6 +1003,32 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(unit["evidence"]["roots"], ["src/views/Index.vue"])
         self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
         self.assertNotIn("frontend-unit", [o["id"] for o in omissions])
+
+    def test_frontend_related_run_carries_the_read_off_disk_specs(self):
+        # `related` follows import edges, and a spec that judges a file by
+        # reading it with `node:fs` has no edge to it — the component whose
+        # template it asserts, the stylesheet whose rule it checks. Those specs
+        # are seeded into the narrowed run by name and required in its report,
+        # so a selection that silently drops one is unknown, not green.
+        from ci_fast_checks import OFF_DISK_SPECS, test_plan
+        self.put("frontend/src/keep.ts", "export const x = 1\n")
+        for p in OFF_DISK_SPECS:
+            self.put("frontend/" + p, "export {}\n")
+        plan, _ = test_plan(self.root, ["frontend/src/keep.ts"], {"frontend": True},
+                            Path(tempfile.mkdtemp()))
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "related")
+        self.assertEqual(unit["evidence"]["required_files"], list(OFF_DISK_SPECS))
+        for p in OFF_DISK_SPECS:
+            self.assertIn(p, unit["command"], p)
+        # Deleting one of them is a change to a spec the graph also cannot see:
+        # it is not required back from a run that no longer contains it.
+        os.remove(self.root / "frontend" / OFF_DISK_SPECS[0])
+        plan, _ = test_plan(self.root, ["frontend/" + OFF_DISK_SPECS[0], "frontend/src/keep.ts"],
+                            {"frontend": True}, Path(tempfile.mkdtemp()))
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["required_files"], list(OFF_DISK_SPECS[1:]))
+        self.assertNotIn(OFF_DISK_SPECS[0], unit["command"])
 
     def test_vitest_workers_follow_the_memory_ceiling(self):
         # The arithmetic bounds the black-box path below cannot reach: the core
