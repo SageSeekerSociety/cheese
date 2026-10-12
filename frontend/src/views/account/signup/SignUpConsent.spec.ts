@@ -17,15 +17,13 @@ vi.mock('@/network/api/users', () => ({
     sendEmailCode: vi.fn().mockResolvedValue({}),
   },
 }))
-vi.mock('@/network/api/legal', () => ({
+vi.mock('@/api/legal', () => ({
   LegalApi: {
     listDocuments: vi.fn().mockResolvedValue({
-      data: {
-        documents: [
-          { document: 'terms', version: '1.0' },
-          { document: 'privacy', version: '1.0' },
-        ],
-      },
+      documents: [
+        { document: 'terms', version: '1.0' },
+        { document: 'privacy', version: '1.0' },
+      ],
     }),
   },
 }))

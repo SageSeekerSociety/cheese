@@ -19,7 +19,12 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceLearningFilters, SpaceLearningOutline, SpaceLearningQuestion, SpaceLearningQueues } from '@/types'
+import type {
+  SpaceLearningFilters,
+  SpaceLearningOutline,
+  SpaceLearningQuestion,
+  SpaceLearningQueues,
+} from '@/types/apiSpaces'
 
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -30,7 +35,7 @@ import { dedupeBlockIds } from './helpers'
 import LearningView from './LearningView.vue'
 import { buildAnalyticsApiParams, buildLearningQueueParams } from './utils'
 
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 const { t } = useI18n()
 const { filters, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
@@ -66,7 +71,7 @@ watch([studentModel, knowledgePointModel], async () => {
 
 const loadFilters = async () => {
   try {
-    const { data } = await SpacesApi.getLearningFilters(spaceId.value)
+    const data = await SpacesApi.getLearningFilters(spaceId.value)
     learningFilters.value = data
   } catch (error) {
     console.error('load learning filters failed', error)
@@ -75,15 +80,12 @@ const loadFilters = async () => {
 }
 
 const loadQueues = async () => {
-  const { data } = await SpacesApi.getLearningQueues(spaceId.value, buildLearningQueueParams(filters.value))
+  const data = await SpacesApi.getLearningQueues(spaceId.value, buildLearningQueueParams(filters.value))
   queues.value = data
 }
 
 const loadQuestions = async () => {
-  const { data } = await SpacesApi.getLearningQuestions(
-    spaceId.value,
-    buildAnalyticsApiParams('learning', filters.value)
-  )
+  const data = await SpacesApi.getLearningQuestions(spaceId.value, buildAnalyticsApiParams('learning', filters.value))
   questions.value = data.questions
 }
 
@@ -140,7 +142,7 @@ const buildOutline = async () => {
 
   outlineLoading.value = true
   try {
-    const { data } = await SpacesApi.buildLearningOutline(spaceId.value, { blockIds })
+    const data = await SpacesApi.buildLearningOutline(spaceId.value, { blockIds })
     outline.value = data
   } catch (error) {
     console.error('build learning outline failed', error)

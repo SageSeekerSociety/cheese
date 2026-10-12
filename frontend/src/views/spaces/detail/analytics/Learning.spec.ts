@@ -9,7 +9,7 @@ const api = vi.hoisted(() => ({
   getLearningQuestions: vi.fn(),
   buildLearningOutline: vi.fn(),
 }))
-vi.mock('@/network/api/spaces', () => ({ SpacesApi: api }))
+vi.mock('@/api/spaces', () => ({ SpacesApi: api }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 import Learning from './Learning.vue'
@@ -65,10 +65,10 @@ async function render(query = '') {
 }
 beforeEach(() => {
   vi.resetAllMocks()
-  api.getLearningFilters.mockResolvedValue({ data: LEARNING_FILTERS })
-  api.getLearningQueues.mockResolvedValue({ data: LEARNING_QUEUES })
-  api.getLearningQuestions.mockResolvedValue({ data: { questions: LEARNING_QUESTIONS } })
-  api.buildLearningOutline.mockResolvedValue({ data: LEARNING_OUTLINE })
+  api.getLearningFilters.mockResolvedValue(LEARNING_FILTERS)
+  api.getLearningQueues.mockResolvedValue(LEARNING_QUEUES)
+  api.getLearningQuestions.mockResolvedValue({ questions: LEARNING_QUESTIONS })
+  api.buildLearningOutline.mockResolvedValue(LEARNING_OUTLINE)
 })
 afterEach(() => {
   cleanup()
@@ -77,18 +77,18 @@ afterEach(() => {
 
 describe('学习看板容器', () => {
   it('队列和发言并发读取，任一尚未返回时保持 loading', async () => {
-    const queues = deferred<{ data: typeof LEARNING_QUEUES }>()
-    const questions = deferred<{ data: { questions: typeof LEARNING_QUESTIONS } }>()
+    const queues = deferred<typeof LEARNING_QUEUES>()
+    const questions = deferred<{ questions: typeof LEARNING_QUESTIONS }>()
     api.getLearningQueues.mockReturnValueOnce(queues.promise)
     api.getLearningQuestions.mockReturnValueOnce(questions.promise)
     await render()
     expect(api.getLearningQueues).toHaveBeenCalledOnce()
     expect(api.getLearningQuestions).toHaveBeenCalledOnce()
     expect(state['loading']).toBe(true)
-    queues.resolve({ data: LEARNING_QUEUES })
+    queues.resolve(LEARNING_QUEUES)
     await flushPromises()
     expect(state['loading']).toBe(true)
-    questions.resolve({ data: { questions: LEARNING_QUESTIONS } })
+    questions.resolve({ questions: LEARNING_QUESTIONS })
     await flushPromises()
     expect(state['loading']).toBe(false)
   })
@@ -126,7 +126,7 @@ describe('学习看板容器', () => {
     send('setSelected', 'b-2', true)
     await flushPromises()
     expect(state['selected']).toEqual(['b-1', 'b-2'])
-    const refresh = deferred<{ data: typeof LEARNING_QUEUES }>()
+    const refresh = deferred<typeof LEARNING_QUEUES>()
     api.getLearningQueues.mockReturnValue(refresh.promise)
     await router.push({ query: { student: 'bob' } })
     await flushPromises()
@@ -134,15 +134,15 @@ describe('学习看板容器', () => {
     expect(state['queues']).toEqual(LEARNING_QUEUES)
     expect(state['selected']).toEqual(['b-1', 'b-2'])
     expect(state['outline']).toEqual(LEARNING_OUTLINE)
-    refresh.resolve({ data: LEARNING_QUEUES })
+    refresh.resolve(LEARNING_QUEUES)
     await flushPromises()
-    const outline = deferred<{ data: typeof LEARNING_OUTLINE }>()
+    const outline = deferred<typeof LEARNING_OUTLINE>()
     api.buildLearningOutline.mockReturnValueOnce(outline.promise)
     send('buildOutline')
     await flushPromises()
     expect(state['outlineLoading']).toBe(true)
     expect(state['outline']).toEqual(LEARNING_OUTLINE)
-    outline.resolve({ data: LEARNING_OUTLINE })
+    outline.resolve(LEARNING_OUTLINE)
     await flushPromises()
     expect(state['outlineLoading']).toBe(false)
     send('clearSelection')

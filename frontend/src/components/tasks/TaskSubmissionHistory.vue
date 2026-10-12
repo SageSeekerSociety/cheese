@@ -162,14 +162,12 @@ import type { TaskSubmissionReview } from '@/types'
 
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import dayjs from 'dayjs'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
-import { usePaging } from '@/utils/paging'
 
 import SubmissionContentCard from './SubmissionContentCard.vue'
 import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
@@ -178,7 +176,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
-import { TasksApi } from '@/network/api/tasks'
+import { useTaskSubmissionHistory } from '@/views/tasks/composables'
 
 const { t } = useI18n()
 
@@ -214,27 +212,22 @@ const props = withDefaults(defineProps<Props>(), {
   isDialog: false,
 })
 
+// 取数与写评审都在这个 composable 里：组件不许够到 API 层，只收 props、发 `changed`。
+// 切题/切领取者时外面会重读（`props.taskId` 变了），它每次现取一次。
 const {
-  data: submissions,
+  submissions,
+  latestSubmission,
   refresh,
   loadMore,
   hasMore,
   refreshing,
   loadingMore,
   total,
-} = usePaging(async (pageStart) => {
-  const { data } = await TasksApi.listSubmissions(props.taskId, props.participantId, {
-    allVersions: true,
-    sort_by: 'createdAt',
-    sort_order: 'desc',
-    pageStart: pageStart,
-    pageSize: 10,
-    queryReview: true,
-  })
-  return { data: data.submissions, page: data.page }
-})
-
-const latestSubmission = computed(() => submissions.value[0])
+  submitReview: saveReview,
+  cancelReview,
+} = useTaskSubmissionHistory({ taskId: () => props.taskId, participantId: () => props.participantId }, () =>
+  emit('changed')
+)
 
 const calcSubmissionReviewColor = (review: TaskSubmissionReview) => {
   if (!review) {
@@ -286,46 +279,8 @@ const scoreError = computed(() => errors.value.score)
 
 const submitReview = handleSubmit(async (form) => {
   // The review row keeps a score either way; a rejection's is never shown, so it is 0.
-  const values = { accepted: form.accepted, score: form.accepted ? form.score ?? 0 : 0, comment: form.comment }
-  if (latestSubmission.value.review && latestSubmission.value.review.reviewed) {
-    try {
-      await TasksApi.patchSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
-      toast.success(t('tasks.submissionHistory.reviewUpdated'))
-      emit('changed')
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewUpdateFailed'))
-      console.error(error)
-    } finally {
-      refresh()
-    }
-  } else {
-    try {
-      await TasksApi.postSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
-      toast.success(t('tasks.submissionHistory.reviewed'))
-      emit('changed')
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewFailed'))
-      console.error(error)
-    } finally {
-      refresh()
-    }
-  }
+  await saveReview({ accepted: form.accepted, score: form.accepted ? form.score ?? 0 : 0, comment: form.comment })
 })
-
-const cancelReview = async () => {
-  if (latestSubmission.value.review) {
-    try {
-      await TasksApi.deleteSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id)
-      toast.success(t('tasks.submissionHistory.reviewCanceled'))
-      emit('changed')
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewCancelFailed'))
-      console.error(error)
-    } finally {
-      refresh()
-    }
-  }
-}
 
 onMounted(refresh)
 

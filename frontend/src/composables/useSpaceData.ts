@@ -13,12 +13,12 @@ import type { SpaceAdminRoleType, SpaceTaskTemplate } from '@/types'
 
 import { toast } from 'vuetify-sonner'
 
+import { SpacesApi } from '@/api/spaces'
+import { TagsApi } from '@/api/tags'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
-import { SpacesApi } from '@/network/api/spaces'
-import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/network/api/spaces/types'
-import { TagsApi } from '@/network/api/tags'
-import { TasksApi } from '@/network/api/tasks'
 import { useSpaceStore } from '@/stores/space'
+import { PatchSpaceCategoryRequestData, PatchSpaceRequestData } from '@/types/apiSpaces'
 
 export function useSpaceData() {
   const space = useSpaceStore()
@@ -33,7 +33,7 @@ export function useSpaceData() {
     space.setCurrentSpaceId(spaceId)
 
     try {
-      const { data } = await SpacesApi.detail(spaceId, { queryClassificationTopics: true, queryMyRank: true })
+      const data = await SpacesApi.detail(spaceId, { queryClassificationTopics: true, queryMyRank: true })
       space.setSpace(data.space)
     } catch (error) {
       console.error('获取题目板信息失败:', error)
@@ -46,7 +46,7 @@ export function useSpaceData() {
     const spaceId = space.currentSpaceId
     if (!spaceId) return
     try {
-      const { data } = await TasksApi.list({
+      const data = await TaskBoardApi.list({
         space: spaceId,
         approved: 'NONE',
         pageSize: 1,
@@ -62,7 +62,7 @@ export function useSpaceData() {
   const updateSpace = async (spaceId: number, data: PatchSpaceRequestData, showToast = true) => {
     try {
       const response = await SpacesApi.update(spaceId, data)
-      space.setSpace(response.data.space)
+      space.setSpace(response.space)
       if (showToast) {
         toast.success(t('spaces.detail.data.updateSuccess'))
       }
@@ -124,7 +124,7 @@ export function useSpaceData() {
     const id = spaceId ?? space.currentSpaceId
     if (!id) return
     try {
-      const { data } = await SpacesApi.listDomainGroups(id)
+      const data = await SpacesApi.listDomainGroups(id)
       space.setDomainGroups(data.groups ?? [])
     } catch (error) {
       console.error('获取域名组失败:', error)
@@ -135,8 +135,8 @@ export function useSpaceData() {
   // one" behind the topic selector. They live here so a page container can hand
   // them to a props-only selector without importing the network layer itself
   // (scene rules, docs/manual/dev/scenes.md).
-  const searchTopics = async (query: string) => (await TagsApi.search(query)).data.topics
-  const createTopic = async (name: string) => (await TagsApi.create(name)).data.id
+  const searchTopics = async (query: string) => (await TagsApi.search(query)).topics
+  const createTopic = async (name: string) => (await TagsApi.create(name)).id
 
   // Categories related methods
   // 返回读失败的那个错（读成功为 null）：调用方要能在列表区用错误态替换掉「暂无
@@ -147,7 +147,7 @@ export function useSpaceData() {
 
     space.setLoadingCategories(true)
     try {
-      const { data } = await SpacesApi.listCategories(space.currentSpaceId, { includeArchived })
+      const data = await SpacesApi.listCategories(space.currentSpaceId, { includeArchived })
       space.setCategories(data.categories)
       return null
     } catch (error) {
@@ -247,7 +247,7 @@ export function useSpaceData() {
     if (!space.currentSpaceId) return
 
     try {
-      const { data } = await SpacesApi.addAdmin(space.currentSpaceId, { userId, role })
+      const data = await SpacesApi.addAdmin(space.currentSpaceId, { userId, role })
       space.setSpace(data.space)
       toast.success(t('spaces.detail.data.adminAddSuccess'))
     } catch (error) {
@@ -261,7 +261,7 @@ export function useSpaceData() {
     if (!space.currentSpaceId) return
 
     try {
-      const { data } = await SpacesApi.updateAdmin(space.currentSpaceId, userId, { role })
+      const data = await SpacesApi.updateAdmin(space.currentSpaceId, userId, { role })
       space.setSpace(data.space)
       toast.success(t('spaces.detail.data.adminRoleSuccess'))
     } catch (error) {

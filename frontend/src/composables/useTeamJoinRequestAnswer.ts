@@ -4,8 +4,8 @@
 import { reactive, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
+import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
 
 // 在这儿答过的申请。**记在模块里，不记在组件实例里**：答完这一行会换成带链接的那一种，
 // 渲染器跟着重建，而列表要到下次重拉才拿到新状态；记在实例里的话，重建之后按钮又回来了，

@@ -15,6 +15,7 @@ import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 
 import { useTaskData } from './composables'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
@@ -24,7 +25,6 @@ import TaskForm from '@/components/tasks/TaskForm.vue'
 import { closeOverlay } from '@/lib/backOut'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { isTeachingBlank } from '@/lib/teaching'
-import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
 
@@ -55,9 +55,9 @@ const { materials, state: materialsState } = useSpaceMaterials(spaceId)
 
 /** 附件直接传到这道题上、从这道题上摘：改题页上的增删当场生效，不等保存。 */
 const uploads = useAttachmentUploads({
-  upload: async (file) => (await TasksApi.uploadAttachment(taskId, file)).data.attachment.id,
+  upload: async (file) => (await TaskBoardApi.uploadAttachment(taskId, file)).attachment.id,
   remove: async (id) => {
-    await TasksApi.removeAttachment(taskId, id)
+    await TaskBoardApi.removeAttachment(taskId, id)
   },
 })
 
@@ -83,13 +83,13 @@ async function onSubmit(data: TaskFormSubmitData) {
   if (saving.value) return
   saving.value = true
   try {
-    await TasksApi.update(taskId, {
+    await TaskBoardApi.update(taskId, {
       ...data,
       // 整份替换：沿用默认就交一份空的，让空间（或项目集）那一层重新生效。
       teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
     })
     if (resubmit.value) {
-      await TasksApi.resubmitTask(taskId)
+      await TaskBoardApi.resubmitTask(taskId)
       toast.success(t('tasks.edit.resubmitted'))
     } else {
       toast.success(t('tasks.detail.updateSuccess'))
@@ -118,7 +118,7 @@ onMounted(async () => {
     await Promise.all([spaceData.fetchDomainGroups(), spaceData.fetchCategories()])
   }
   try {
-    const { data } = await TasksApi.listAttachments(taskId)
+    const data = await TaskBoardApi.listAttachments(taskId)
     uploads.reset(data.attachments.map(({ id, name, size }) => ({ id, name, size })))
   } catch {
     // 读不出来就当没有：增删仍然走得通，只是这一页不列已有的那几份。

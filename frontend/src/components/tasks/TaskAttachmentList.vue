@@ -24,7 +24,7 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskAttachmentData } from '@/network/api/tasks/types'
+import type { TaskAttachmentData } from '@/types/taskBoard'
 
 import { useI18n } from 'vue-i18n'
 

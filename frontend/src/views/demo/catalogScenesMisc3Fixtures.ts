@@ -1,12 +1,12 @@
 /** 第四批场景的数据叶子：申请与邀请、学习队列。复用目录里的成员、团队和发言。 */
 import type { ProjectInvitation } from '@/cx_types'
+import type { TeamMembershipApplication } from '@/types'
 import type {
   SpaceLearningFilters,
   SpaceLearningOutline,
   SpaceLearningQuestion,
   SpaceLearningQueues,
-  TeamMembershipApplication,
-} from '@/types'
+} from '@/types/apiSpaces'
 
 import { EXCERPTS } from './catalogFixtures'
 import { MY_TEAMS, user } from './catalogScenesMiscFixtures'

@@ -1,5 +1,5 @@
 import type { RouteLocationNamedRaw } from 'vue-router'
-import type { AnalyticsDistribution, AnalyticsDistributionItem, SpaceLearningExcerpt } from '@/network/api/spaces/types'
+import type { AnalyticsDistribution, AnalyticsDistributionItem, SpaceLearningExcerpt } from '@/types/apiSpaces'
 
 import dayjs from 'dayjs'
 

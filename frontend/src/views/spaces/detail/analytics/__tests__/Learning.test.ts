@@ -8,7 +8,7 @@ import type {
   SpaceLearningQuestion,
   SpaceLearningQueues,
   SpaceLearningStuckPoint,
-} from '@/network/api/spaces/types'
+} from '@/types/apiSpaces'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -21,7 +21,7 @@ const getLearningQueues = vi.fn()
 const getLearningQuestions = vi.fn()
 const buildLearningOutline = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     getLearningFilters: (...args: unknown[]) => getLearningFilters(...args),
     getLearningQueues: (...args: unknown[]) => getLearningQueues(...args),
@@ -128,10 +128,10 @@ beforeEach(() => {
   push.mockReset()
   replace.mockReset()
   route.query = {}
-  getLearningFilters.mockReset().mockResolvedValue({ data: filtersPayload })
-  getLearningQueues.mockReset().mockResolvedValue({ data: queuesPayload() })
-  getLearningQuestions.mockReset().mockResolvedValue({ data: { questions: [question()], total: 1 } })
-  buildLearningOutline.mockReset().mockResolvedValue({ data: outlinePayload })
+  getLearningFilters.mockReset().mockResolvedValue(filtersPayload)
+  getLearningQueues.mockReset().mockResolvedValue(queuesPayload())
+  getLearningQuestions.mockReset().mockResolvedValue({ questions: [question()], total: 1 })
+  buildLearningOutline.mockReset().mockResolvedValue(outlinePayload)
 })
 
 function mount() {
@@ -188,9 +188,7 @@ describe('待处理队列', () => {
   })
 
   it('提纲里读不到的发言照样说出来', async () => {
-    buildLearningOutline.mockResolvedValue({
-      data: { ...outlinePayload, sections: [], missing: ['block-gone'] },
-    })
+    buildLearningOutline.mockResolvedValue({ ...outlinePayload, sections: [], missing: ['block-gone'] })
 
     const { container, findAllByText, findByText } = mount()
 
@@ -222,11 +220,12 @@ describe('筛选', () => {
 
 describe('空态', () => {
   it('一个成员项目都读不到时，画的是空态而不是空列表', async () => {
-    getLearningFilters.mockResolvedValue({ data: { students: [], knowledgePoints: [], projectCount: 0 } })
+    getLearningFilters.mockResolvedValue({ students: [], knowledgePoints: [], projectCount: 0 })
     getLearningQueues.mockResolvedValue({
-      data: { reviewFlag: { available: false, reason: REVIEW_REASON, items: [] }, stuckPoints: [] },
+      reviewFlag: { available: false, reason: REVIEW_REASON, items: [] },
+      stuckPoints: [],
     })
-    getLearningQuestions.mockResolvedValue({ data: { questions: [], total: 0 } })
+    getLearningQuestions.mockResolvedValue({ questions: [], total: 0 })
 
     const { findByText } = mount()
 
@@ -234,7 +233,7 @@ describe('空态', () => {
   })
 
   it('筛掉全部发言时写「暂无成员发言」', async () => {
-    getLearningQuestions.mockResolvedValue({ data: { questions: [], total: 0 } })
+    getLearningQuestions.mockResolvedValue({ questions: [], total: 0 })
 
     const { findByText } = mount()
 

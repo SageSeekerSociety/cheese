@@ -19,8 +19,8 @@ vi.mock('@/network/api/users', () => ({
   },
 }))
 vi.mock('@/services/account', () => ({ default: { loggedIn: false } }))
-vi.mock('@/network/api/legal', () => ({
-  LegalApi: { listDocuments: vi.fn().mockResolvedValue({ data: { documents: [] } }) },
+vi.mock('@/api/legal', () => ({
+  LegalApi: { listDocuments: vi.fn().mockResolvedValue({ documents: [] }) },
 }))
 
 beforeEach(() => {

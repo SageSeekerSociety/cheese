@@ -209,8 +209,8 @@
 </template>
 
 <script lang="ts" setup>
-import type { PostSpaceRequestData, SpaceApplication } from '@/network/api/spaces/types'
 import type { Space } from '@/types'
+import type { PostSpaceRequestData, SpaceApplication } from '@/types/apiSpaces'
 
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -223,6 +223,8 @@ import { usePaging } from '@/utils/paging'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listProjects } from '@/api'
+import { createAvatar } from '@/api/avatars'
+import { SpacesApi } from '@/api/spaces'
 import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
@@ -235,8 +237,6 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { AvatarsApi } from '@/network/api/avatars'
-import { SpacesApi } from '@/network/api/spaces'
 import AccountService from '@/services/account'
 
 const { t } = useI18n()
@@ -250,7 +250,7 @@ const resubmittingId = ref<number | null>(null)
 async function loadApplications() {
   applicationsError.value = false
   try {
-    applications.value = (await SpacesApi.applications(applicationOffset.value)).data.items
+    applications.value = (await SpacesApi.applications(applicationOffset.value)).items
   } catch {
     applicationsError.value = true
   }
@@ -316,13 +316,13 @@ async function createSpace() {
   try {
     const payload: PostSpaceRequestData = { name: spaceName.value.trim(), intro: spaceIntro.value.trim() }
     if (selectedAvatar.value) {
-      const { data } = await AvatarsApi.createAvatar(selectedAvatar.value)
-      payload.avatarId = data.avatarId
+      const { avatarId } = await createAvatar(selectedAvatar.value)
+      payload.avatarId = avatarId
     }
     if (resubmittingId.value !== null) {
       await SpacesApi.resubmit(resubmittingId.value, payload)
     } else {
-      const { data } = await SpacesApi.create(payload)
+      const data = await SpacesApi.create(payload)
       createdInviteCode.value = data.inviteCode?.code ?? null
       createdSpace.value = data.space ?? null
       // 有码先把码给他（建版时就发好了），收起那张卡再进这门课；
@@ -357,7 +357,7 @@ const {
   loadingMore,
   total,
 } = usePaging(async (pageStart) => {
-  const { data } = await SpacesApi.list({
+  const data = await SpacesApi.list({
     sort_by: 'createdAt',
     sort_order: 'desc',
     pageStart: pageStart,

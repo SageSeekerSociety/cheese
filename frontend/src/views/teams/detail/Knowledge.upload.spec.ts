@@ -33,7 +33,7 @@ const uploadMock = vi.hoisted(() => vi.fn())
 const successMock = vi.hoisted(() => vi.fn())
 const errorMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@/network/api/knowledges', () => ({
+vi.mock('@/api/knowledges', () => ({
   KnowledgesApi: { create: createMock, list: listMock, deleteKnowledge: vi.fn() },
 }))
 vi.mock('@/api/materials', () => ({ uploadMaterial: uploadMock }))
@@ -101,10 +101,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   listMock.mockReset().mockResolvedValue({
-    data: {
-      knowledges: [existing()],
-      page: { pageStart: 0, pageSize: 20, hasMore: false, nextStart: null, total: 1 },
-    },
+    knowledges: [existing()],
+    page: { pageStart: 0, pageSize: 20, hasMore: false, nextStart: null, total: 1 },
   })
   createMock.mockReset()
   uploadMock.mockReset().mockResolvedValue({ id: 99 })
@@ -280,7 +278,7 @@ describe('四档各自的请求', () => {
 
 describe('落地', () => {
   it('成功：新条目插在最前面，对话框关掉，说一句成功', async () => {
-    createMock.mockResolvedValue({ data: { knowledge: { ...existing(), id: 42, name: '照片' } } })
+    createMock.mockResolvedValue({ knowledge: { ...existing(), id: 42, name: '照片' } })
     const view = mount()
     const panel = await openUpload(view)
     await fill(panel, '一段笔记')
@@ -295,7 +293,7 @@ describe('落地', () => {
 
   it('素材上传失败：不创建知识，草稿保留并可重试', async () => {
     uploadMock.mockRejectedValueOnce(new Error('denied')).mockResolvedValueOnce({ id: 99 })
-    createMock.mockResolvedValue({ data: { knowledge: { ...existing(), id: 42, name: '照片' } } })
+    createMock.mockResolvedValue({ knowledge: { ...existing(), id: 42, name: '照片' } })
     const view = mount()
     const panel = await openUpload(view)
     await fill(panel, '照片')

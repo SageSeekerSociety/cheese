@@ -1,4 +1,4 @@
-import type { EntityInfo, Notification } from '@/network/api/notifications/types'
+import type { EntityInfo, Notification } from '@/types/apiNotifications'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'

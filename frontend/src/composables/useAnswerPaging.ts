@@ -8,14 +8,12 @@ import { toValue } from 'vue'
 
 import { usePaging } from '@/utils/paging'
 
-import { AnswersApi } from '@/network/api/answers'
+import { AnswersApi } from '@/api/answers'
 
 /** @param questionId 取哪道题的答案。跟着它走的 watch 由调用方自己挂。 */
 export function useAnswerPaging(questionId: MaybeRefOrGetter<number>) {
   return usePaging<Answer>(async (pageStart) => {
-    const {
-      data: { answers, page },
-    } = await AnswersApi.getAnswers(toValue(questionId), pageStart)
+    const { answers, page } = await AnswersApi.getAnswers(toValue(questionId), pageStart)
     return { data: answers, page }
   })
 }

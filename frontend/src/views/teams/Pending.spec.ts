@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
   declineInvitation: vi.fn(),
   respondToInvitation: vi.fn(),
 }))
-vi.mock('@/network/api/teams', () => ({ TeamsApi: api }))
+vi.mock('@/api/teams', () => ({ TeamsApi: api }))
 vi.mock('@/api', () => ({ listMyInvitations: api.listProjects, respondToInvitation: api.respondToInvitation }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -56,8 +56,8 @@ function render() {
 }
 beforeEach(() => {
   vi.resetAllMocks()
-  api.listMyJoinRequests.mockResolvedValue({ data: { requests: PENDING_REQUESTS } })
-  api.listMyInvitations.mockResolvedValue({ data: { invitations: PENDING_INVITATIONS } })
+  api.listMyJoinRequests.mockResolvedValue({ requests: PENDING_REQUESTS })
+  api.listMyInvitations.mockResolvedValue({ invitations: PENDING_INVITATIONS })
   api.listProjects.mockResolvedValue({ data: PROJECT_INVITATIONS })
 })
 afterEach(() => {
@@ -67,8 +67,8 @@ afterEach(() => {
 
 describe('申请与邀请容器', () => {
   it('初次读取按申请、团队邀请、项目邀请的顺序进行', async () => {
-    const requests = deferred<{ data: { requests: typeof PENDING_REQUESTS } }>()
-    const invitations = deferred<{ data: { invitations: typeof PENDING_INVITATIONS } }>()
+    const requests = deferred<{ requests: typeof PENDING_REQUESTS }>()
+    const invitations = deferred<{ invitations: typeof PENDING_INVITATIONS }>()
     api.listMyJoinRequests.mockReturnValueOnce(requests.promise)
     api.listMyInvitations.mockReturnValueOnce(invitations.promise)
     render()
@@ -76,12 +76,12 @@ describe('申请与邀请容器', () => {
     expect(state['loadingMyRequests']).toBe(true)
     expect(api.listMyInvitations).not.toHaveBeenCalled()
     expect(api.listProjects).not.toHaveBeenCalled()
-    requests.resolve({ data: { requests: PENDING_REQUESTS } })
+    requests.resolve({ requests: PENDING_REQUESTS })
     await flushPromises()
     expect(state['myRequests']).toEqual(PENDING_REQUESTS)
     expect(state['loadingMyInvitations']).toBe(true)
     expect(api.listProjects).not.toHaveBeenCalled()
-    invitations.resolve({ data: { invitations: PENDING_INVITATIONS } })
+    invitations.resolve({ invitations: PENDING_INVITATIONS })
     await flushPromises()
     expect(api.listProjects).toHaveBeenCalledOnce()
   })

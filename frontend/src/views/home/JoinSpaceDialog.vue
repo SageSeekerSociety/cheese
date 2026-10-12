@@ -4,10 +4,10 @@
 import { ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { SpacesApi } from '@/api/spaces'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { SpacesApi } from '@/network/api/spaces'
 
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{ joined: [] }>()
@@ -30,7 +30,7 @@ async function submit() {
   joining.value = true
   error.value = ''
   try {
-    const { data } = await SpacesApi.join({ code: value })
+    const data = await SpacesApi.join({ code: value })
     open.value = false
     emit('joined')
     await router.push(spaceEntryRoute(data.space))

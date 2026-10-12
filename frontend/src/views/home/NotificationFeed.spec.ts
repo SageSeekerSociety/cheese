@@ -10,10 +10,10 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 const list = vi.fn()
 const refresh = vi.fn()
-vi.mock('@/network/api/notifications', () => ({
+vi.mock('@/api/notifications', () => ({
   NotificationsApi: {
     list: (...args: unknown[]) => list(...args),
-    getUnreadCount: async () => ({ data: { count: 0 } }),
+    getUnreadCount: async () => ({ count: 0 }),
     updateStatus: vi.fn(),
     markAllAsRead: vi.fn(),
     del: vi.fn(),
@@ -62,7 +62,7 @@ function deferred<T>(): Deferred<T> {
 }
 
 function emptyPage() {
-  return { data: { notifications: [], page: { hasMore: false, nextStart: undefined } } }
+  return { notifications: [], page: { hasMore: false, nextStart: undefined } }
 }
 
 async function mount() {
@@ -121,13 +121,11 @@ describe('待办页「动态」这一块', () => {
   // 错误只接在列表下面，重试接着翻，不把整块换掉（同搜索页 §3.10）。
   it('加载更多失败：到手的那几页留着，错误接在下面，重试接着翻', async () => {
     list.mockResolvedValueOnce({
-      data: {
-        notifications: [
-          { id: 1, read: false },
-          { id: 2, read: false },
-        ],
-        page: { hasMore: true, nextStart: 'c1' },
-      },
+      notifications: [
+        { id: 1, read: false },
+        { id: 2, read: false },
+      ],
+      page: { hasMore: true, nextStart: 'c1' },
     })
     const { container } = await mount()
     await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(2))
@@ -141,7 +139,8 @@ describe('待办页「动态」这一块', () => {
     expect(screen.getByRole('button', { name: t('global.loadError.retry') })).toBeTruthy()
 
     list.mockResolvedValueOnce({
-      data: { notifications: [{ id: 3, read: false }], page: { hasMore: false, nextStart: undefined } },
+      notifications: [{ id: 3, read: false }],
+      page: { hasMore: false, nextStart: undefined },
     })
     await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
 

@@ -33,8 +33,8 @@ import { toast } from 'vuetify-sonner'
 import PendingView from './PendingView.vue'
 
 import { listMyInvitations, respondToInvitation } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
 
 // 申请和邀请的状态
 const myRequests = ref<TeamMembershipApplication[]>([])
@@ -90,7 +90,7 @@ const fetchMyJoinRequests = async () => {
   myRequestsError.value = null
   try {
     const response = await TeamsApi.listMyJoinRequests()
-    myRequests.value = response.data.requests
+    myRequests.value = response.requests
   } catch (error) {
     console.error('Failed to load join requests', error)
     failedMyRequests.value = true
@@ -107,7 +107,7 @@ const fetchMyInvitations = async () => {
   myInvitationsError.value = null
   try {
     const response = await TeamsApi.listMyInvitations()
-    myInvitations.value = response.data.invitations
+    myInvitations.value = response.invitations
   } catch (error) {
     console.error('Failed to load invitations', error)
     failedMyInvitations.value = true

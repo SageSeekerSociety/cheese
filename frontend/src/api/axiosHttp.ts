@@ -94,6 +94,13 @@ export async function axiosRequest<T>(config: AxiosRequestConfig, newer = false)
   return response.data.data
 }
 
+/** Commands without a payload have an explicit success result, not the undefined
+ * failure sentinel returned by ErrorHandler.withErrorHandling. Payloads are unchanged. */
+export async function axiosMutation(config: AxiosRequestConfig, newer = false): Promise<unknown> {
+  const payload = await axiosRequest<unknown>(config, newer)
+  return payload == null ? true : payload
+}
+
 /** The old helper also displays ServerError (a BusinessError subclass).
  *  Raw network and unrefreshed 401 errors still use the caller's fallback. */
 export function axiosErrorMessage(error: unknown, fallback: string): string {

@@ -3,7 +3,7 @@
  *  取数在 `usePendingConsent`，组件只画 props——所以这里装的是一个和 App.vue 一样的
  *  宿主：调那个 composable，把结果接到弹窗上。最后一条用例反过来钉住这条界线：光给
  *  props，组件自己就能画、就会把选择 emit 出去。 */
-import type { LegalDocumentSummary } from '@/network/api/legal/types'
+import type { LegalDocumentSummary } from '@/types/apiLegal'
 
 import { defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -25,7 +25,7 @@ vi.mock('@/services/account', async () => {
   const id = ref<number | undefined>(undefined)
   return { default: { logout: accountLogout }, currentUserId: id }
 })
-vi.mock('@/network/api/legal', () => ({ LegalApi: { getPendingConsents, acceptDocuments } }))
+vi.mock('@/api/legal', () => ({ LegalApi: { getPendingConsents, acceptDocuments } }))
 vi.mock('@/network/api/users', () => ({ UserApi: { logout: apiLogout } }))
 
 import { usePendingConsent } from '@/composables/usePendingConsent'
@@ -89,8 +89,8 @@ beforeEach(() => {
   vi.stubGlobal('visualViewport', new EventTarget())
   vi.clearAllMocks()
   ;(currentUserId as unknown as { value: number | undefined }).value = undefined
-  getPendingConsents.mockResolvedValue({ data: { pending: [TERMS] } })
-  acceptDocuments.mockResolvedValue({ data: { pending: [] } })
+  getPendingConsents.mockResolvedValue({ pending: [TERMS] })
+  acceptDocuments.mockResolvedValue({ pending: [] })
   apiLogout.mockResolvedValue({})
 })
 
@@ -130,7 +130,7 @@ describe('ConsentGate', () => {
 
   it('each document name goes to its own page, not all to the same one', async () => {
     getPendingConsents.mockResolvedValue({
-      data: { pending: [TERMS, { ...TERMS, document: 'privacy', title: '隐私政策' }] },
+      pending: [TERMS, { ...TERMS, document: 'privacy', title: '隐私政策' }],
     })
     mount()
     await signIn(7)
@@ -145,7 +145,7 @@ describe('ConsentGate', () => {
   })
 
   it('shows nothing when nothing is pending', async () => {
-    getPendingConsents.mockResolvedValue({ data: { pending: [] } })
+    getPendingConsents.mockResolvedValue({ pending: [] })
     mount()
     await signIn(7)
     await waitFor(() => expect(getPendingConsents).toHaveBeenCalled())
