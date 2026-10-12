@@ -12,8 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db, release_read_session
+from app.core.db import release_read_session
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
@@ -55,8 +56,6 @@ from app.domain.topic.services import TopicService
 logger = logging.getLogger("cheesex.accept")
 
 router = APIRouter(prefix="", tags=["accept"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _card_actor(

@@ -27,8 +27,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.realtime.broker import get_broker
@@ -53,9 +53,6 @@ router = APIRouter(prefix="/topics", tags=["feedback"])
 
 class Dismissed(BaseModel):
     dismissed: bool
-
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_proposal_service(db: DbSession) -> proposal_rules.ProposalService:

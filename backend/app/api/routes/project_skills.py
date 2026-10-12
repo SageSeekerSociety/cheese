@@ -9,16 +9,15 @@ import binascii
 import re
 import uuid
 from datetime import datetime
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
 from app.domain.agent.announce import settle_proposal
@@ -50,8 +49,6 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["project-skills"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class SkillIn(BaseModel):

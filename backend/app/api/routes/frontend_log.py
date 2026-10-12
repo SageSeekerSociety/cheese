@@ -1,18 +1,13 @@
 """Frontend error reports → run records (see app.domain.frontend_log)."""
 
-from typing import Annotated
+from fastapi import APIRouter
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
-
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.domain import frontend_log  # module import: tests swap the intake singleton
 from app.domain.frontend_log import FrontendErrorBatchIn
 
 router = APIRouter(prefix="/frontend-errors", tags=["frontend-errors"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post("")

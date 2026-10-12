@@ -12,8 +12,8 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.staleness import announce_stale
 from app.domain.block.schemas import BlockOut

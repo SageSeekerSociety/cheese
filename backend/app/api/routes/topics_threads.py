@@ -16,8 +16,9 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.routes.topics import _actor_in_place
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale

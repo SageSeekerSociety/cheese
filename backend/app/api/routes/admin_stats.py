@@ -27,16 +27,13 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.routing import APIRoute
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.routes.admin_common import PlatformAdminDep
-from app.core.db import get_db
 from app.domain.platform_stats.services import PlatformStatsService
 
 router = APIRouter(prefix="/admin/stats", tags=["admin"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_platform_stats_service(db: DbSession) -> PlatformStatsService:
