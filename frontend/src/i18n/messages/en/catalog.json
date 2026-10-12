@@ -1454,5 +1454,24 @@
       "name": "Flagged questions",
       "note": "Available review signals show their questions instead of an unavailable reason."
     }
+  },
+  "adminMachinesPageView": {
+    "about": "The machines screen: where each MicroCloud host is in its life, which sandboxes are on it, whether the pool has room right now, and how fast sandboxes came up over the last day.",
+    "s1": {
+      "name": "One row per host",
+      "note": "The default: one host in use, one offline, one broken by the provider and given up; opening the one in use shows a working sandbox and one waiting for its host."
+    },
+    "s2": {
+      "name": "Refusing new sessions",
+      "note": "The provider broke three hosts within the hour: the page says new sessions are being refused, instead of leaving a number to interpret."
+    },
+    "s3": {
+      "name": "A failed read is not an empty pool",
+      "note": "The request failed: say so and offer a retry, rather than drawing an empty pool."
+    },
+    "s4": {
+      "name": "An empty pool",
+      "note": "Read, and there really is no host: only then does it say so."
+    }
   }
 }

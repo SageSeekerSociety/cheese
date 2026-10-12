@@ -19,6 +19,7 @@ import { common, createLowlight } from 'lowlight'
 
 import { App } from './app'
 import { docBlocks } from './blocks'
+import { Canvas } from './canvas'
 import { CommentAnchor } from './commentAnchors'
 import { docMarked } from './markdown'
 import { suggestionMarks } from './suggestions'
@@ -355,6 +356,8 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     DocHighlight,
     ...docBlocks,
     App,
+    // A form field holds text alone: a board belongs to a document.
+    ...(opts.standalone ? [] : [Canvas]),
     // Suggested changes belong to the shared document; a form field is written
     // by one person and has nobody to suggest to.
     ...(opts.standalone ? [] : suggestionMarks),

@@ -78,6 +78,12 @@ CALLS = {
         "/documents/fixture-id/apps",
     ),
     "cheese_app_get": ({"app": "q7m2kx4t"}, "GET", "/apps/q7m2kx4t"),
+    "cheese_canvas_get": ({"canvas": "c-1"}, "GET", "/canvases/c-1/text"),
+    "cheese_canvas_edit": (
+        {"canvas": "c-1", "changes": [{"op": "add", "content": "目标"}]},
+        "POST",
+        "/canvases/c-1/changes",
+    ),
     "cheese_task": (
         {"title": "数据清洗", "summary": "按新口径重算", "start": False},
         "POST",

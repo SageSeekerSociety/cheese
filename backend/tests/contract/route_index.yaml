@@ -80,6 +80,7 @@ auth_entries:
   workspace.access: "Decorator Depends(workspace.require_project_access): verify_scoped_token for project or auth.caller.may_access_project, then actual requested room/task containment + authorize_topic, with archive/task-ended PUT guards. Source: app/api/routes/workspace.py."
   document.reader: "api/doc_access.reach: a room's document resolves the actor in its room then authorize_topic (the topic-access setting applies); a document in no room resolves in its project then doc_access.authorize_in_project (a member, or 芝士 with its session credential in the project). Source: app/api/doc_access.py and the cited handler."
   document.member: "document_comments._member uses api/doc_access.reach(enforce=True) (room roster for a room's document, project membership for one in no room) and doc_identity.operation_actor; mutations also bind the comment to its document. Source: app/api/routes/document_comments.py; app/api/doc_access.py."
+  canvas.writer: "canvases._canvas(write=True) / create_canvas: api/doc_access.reach(enforce=True) on the canvas's document, an authenticated actor, then doc_access.require_writable: the same callers as a write to that document. copy_canvas also reads the source canvas's document and requires the two documents to be in one project. Source: app/api/routes/canvases.py; app/api/doc_access.py."
   delegated.self: "ActorResolver.resolve(); the caller must be authenticated with a user id: a person's login, or a delegated credential (sandbox_auth.DelegatedClaims, cxdg_ prefix) that api.auth.DELEGATED_ROUTES admits here and resolves to the person the 芝士 answers for. Lists only that person's own rows. Source: app/api/routes/tasks/participation.py; app/api/auth.py."
   document.human: "document_agent._asker uses api/doc_access.reach(enforce=True) and doc_identity.human_operation_actor (verified human, not agent identity); a box conversation is held in Valkey with its asker and document, and only that person on that document may go on with it, stop it, or put its answer into a thread they started. Source: app/api/routes/document_agent.py; app/domain/agent/document/box.py; app/api/doc_identity.py."
   collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
@@ -278,6 +279,7 @@ owners:
   documents: "Office/spreadsheet conversion, revisions and editor callbacks; domain/documents editor/convert/revisions/spreadsheet."
   web_snippet: "A document's mini-apps: domain/web_snippet keeps each version's code and the platform browser's check of it (heights, pictures); every read is checked against the owning document, not where the block was found."
   living_doc: "Documents: canonical journal, receipts, history, restoration and comment threads; domain/living_doc/DocumentJournal and living_doc/comments, with block/document persistence. Versions are recorded only by the collaboration service's store (api/doc_store.py); other writers go through living_doc/collab.replace."
+  canvas: "Canvases: a document's free board of cards and the lines between them, a block of exactly one document; domain/canvas (tables, changes, copying, the outline an AI teammate reads), with room_task/canvas_text naming the tasks cards point at."
   room.files: "Room retained files and shown-source composition; domain/project/room_files.py plus block/shown. The route owns composing file save and shown-block broadcast."
   project: "Project lifecycle, association, ownership and repository settings; domain/project/ProjectService and project forge/protection. Route retains request assembly."
   project.address: "Project slugs, former slugs and per-project numbers for tasks, documents and channels; domain/project/address.py."
@@ -454,6 +456,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/admin/stats/pipeline", auth: "platform.admin", owner: "platform_stats"}
   - {protocol: "http", method: "GET", path: "/admin/stats/product", auth: "platform.admin", owner: "platform_stats"}
   - {protocol: "http", method: "GET", path: "/admin/stats/integrations", auth: "platform.admin", owner: "platform_stats"}
+  - {protocol: "http", method: "GET", path: "/admin/stats/machines", auth: "platform.admin", owner: "machine"}
   # app.api.routes.agent_control
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/agent/control", auth: "controller.room", owner: "agent.execution"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/agent/control", auth: "controller.room", owner: "agent.execution"}
@@ -519,6 +522,14 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/blocks/{block_id}", auth: "actor.topic.enforced", owner: "block"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/reactions", auth: "actor.topic.enforced", owner: "block"}
   - {protocol: "http", method: "DELETE", path: "/blocks/{block_id}/answer", auth: "actor.topic.enforced", owner: "block"}
+  # app.api.routes.canvases
+  - {protocol: "http", method: "POST", path: "/documents/{document_id}/canvases", auth: "canvas.writer", owner: "canvas"}
+  - {protocol: "http", method: "GET", path: "/documents/{document_id}/canvases", auth: "document.reader", owner: "canvas"}
+  - {protocol: "http", method: "GET", path: "/canvases/{canvas_id}", auth: "document.reader", owner: "canvas"}
+  - {protocol: "http", method: "GET", path: "/canvases/{canvas_id}/text", auth: "document.reader", owner: "canvas"}
+  - {protocol: "http", method: "POST", path: "/canvases/{canvas_id}/changes", auth: "canvas.writer", owner: "canvas"}
+  - {protocol: "http", method: "PATCH", path: "/canvases/{canvas_id}", auth: "canvas.writer", owner: "canvas"}
+  - {protocol: "http", method: "POST", path: "/canvases/{canvas_id}/copy", auth: "canvas.writer", owner: "canvas"}
   # app.api.routes.chat
   - {protocol: "ws", method: "WS", path: "/rooms/live", auth: "chat.ws", owner: "topic.chat"}
   # app.api.routes.comments

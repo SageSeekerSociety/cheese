@@ -34,10 +34,32 @@ def environment(extra=None):
     return env
 
 
-def group_rss(pgid, timeout):
+class MissingPs(OSError):
+    """`ps` is not on this machine. The tier cannot bound memory here at all."""
+
+
+class Unmeasured(OSError):
+    """One sample was missed. Says nothing about the machine."""
+
+
+# The sampler's own window, deliberately not the check's remaining time. Tied to
+# a nearly spent budget it shrinks to milliseconds, and a machine with anything
+# else running on it then reports the sample as a miss — which used to read as
+# "this machine has no ps" and turned an expected exit 2 (unknown) into blocked's
+# 3, twice on #3476 on 2026-10-12.
+MEASURE_TIMEOUT = 1.0
+# Missed samples *in a row* to ride out before giving up on measuring a check.
+# Once given up, that check is judged by its exit code and the clock alone.
+MEASURE_ATTEMPTS = 3
+
+
+def group_rss(pgid, timeout=MEASURE_TIMEOUT):
     for argv in (["ps", "-eo", "pgid=,rss="], ["ps", "-o", "pgid=,rss="]):
         try:
             proc = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
+        except FileNotFoundError:
+            # ps itself is absent: a real "cannot measure on this machine".
+            raise MissingPs("ps is not installed")
         except (OSError, subprocess.SubprocessError):
             continue
         if proc.returncode == 0:
@@ -45,7 +67,7 @@ def group_rss(pgid, timeout):
                 int(fields[1]) for line in proc.stdout.splitlines()
                 if len(fields := line.split()) == 2 and fields[0] == str(pgid)
             ) / 1024
-    raise OSError("ps could not measure the check's process group")
+    raise Unmeasured("ps could not measure the check's process group")
 
 
 def stop_group(proc):
@@ -59,7 +81,8 @@ def stop_group(proc):
 
 def execute(command, cwd, timeout, memory_mib=3072, env=None):
     start = time.monotonic()
-    result = {"command": command, "result": "unknown", "seconds": 0, "peak_rss_mib": 0}
+    result = {"command": command, "result": "unknown", "seconds": 0,
+              "peak_rss_mib": 0, "unmeasured": False}
     if timeout <= 0:
         return {**result, "result": "budget", "output": "No time left in this tier."}
     if not hasattr(os, "killpg"):
@@ -73,16 +96,32 @@ def execute(command, cwd, timeout, memory_mib=3072, env=None):
         except OSError as exc:
             return {**result, "result": "blocked", "output": str(exc)}
         try:
+            misses = 0
             while True:
                 remaining = timeout - (time.monotonic() - start)
                 if remaining <= 0:
                     result["result"] = "timeout"
                     break
-                rss = group_rss(proc.pid, min(1, remaining))
-                result["peak_rss_mib"] = max(result["peak_rss_mib"], round(rss, 1))
-                if rss >= memory_mib:
-                    result["result"] = "memory"
-                    break
+                if misses < MEASURE_ATTEMPTS:
+                    try:
+                        rss = group_rss(proc.pid)
+                    except Unmeasured:
+                        # A missed sample is not a verdict. Ride a couple out,
+                        # then stop measuring and let the exit code and the clock
+                        # decide; the fix this replaces reported the miss as
+                        # blocked, i.e. "this machine lacks ps".
+                        misses += 1
+                        if misses >= MEASURE_ATTEMPTS:
+                            result["unmeasured"] = True
+                    else:
+                        # A sample that landed clears the misses, so the ceiling
+                        # goes on being enforced for the rest of the check: only
+                        # MEASURE_ATTEMPTS misses *in a row* stop the measuring.
+                        misses = 0
+                        result["peak_rss_mib"] = max(result["peak_rss_mib"], round(rss, 1))
+                        if rss >= memory_mib:
+                            result["result"] = "memory"
+                            break
                 if proc.poll() is not None:
                     result["returncode"] = proc.returncode
                     # Shell wrappers may translate SIGKILL/SIGTERM to 137/143.

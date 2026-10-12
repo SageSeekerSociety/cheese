@@ -10,7 +10,8 @@
 // The same connection carries what the backend says about the document that is
 // not its text (stateless messages from the service): a stored version moved on
 // (`stores` counts them), its comments changed, an agent is answering a thread
-// (both passed on through lib/docCommentSignals).
+// (both passed on through lib/docCommentSignals), one of its canvases changed
+// (lib/docCanvasSignals).
 //
 // Nothing here saves anything: the service stores the document a few seconds
 // after the typing stops.
@@ -31,6 +32,7 @@ import { avatarColor } from '@/utils/avatar'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { collabWsUrl, getDocTicket } from '../api/docCollab'
+import { announceCanvas } from '../lib/docCanvasSignals'
 import { announceComments } from '../lib/docCommentSignals'
 import { DOC_SCHEMA_MISMATCH } from '../lib/docSchema/version'
 import { myAccount } from '../me'
@@ -98,6 +100,8 @@ function heard(document: string, payload: string, on: Heard) {
   else if (frame.type === 'state' && frame.resource === 'title') on.renamed()
   else if (frame.type === 'state' && frame.resource === 'deleted') on.deleted()
   else if (frame.type === 'state' && frame.resource === 'comments') announceComments(document, { kind: 'changed' })
+  else if (frame.type === 'state' && frame.resource === 'canvas' && typeof frame.canvas === 'string')
+    announceCanvas(frame.canvas)
   else if (frame.type === 'comment_activity' && typeof frame.thread === 'string') {
     const state = frame.state === 'working' ? 'working' : 'queued'
     const tool = typeof frame.tool === 'string' ? frame.tool : undefined

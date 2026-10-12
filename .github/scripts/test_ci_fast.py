@@ -23,6 +23,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 SCRIPT = Path(__file__).with_name("ci-fast.py")
 
@@ -1241,6 +1242,98 @@ class BoundedProcessTest(unittest.TestCase):
         result = execute([sys.executable, "-c", "import time; x=bytearray(32*1024*1024); time.sleep(5)"], "/tmp", 2, memory_mib=24)
         self.assertEqual(result["result"], "memory")
         self.assertGreaterEqual(result["peak_rss_mib"], 24)
+
+    def test_a_missed_sample_is_not_blocked(self):
+        # The sampler missing its window is not "this machine lacks ps". A check
+        # that ran and exited 0 must read pass. Every sample is made to miss, so
+        # nothing here depends on the wall clock or on how busy the host is —
+        # this is the shape that turned an expected exit 2 (unknown) into
+        # blocked's 3 twice on #3476 on 2026-10-12.
+        import ci_fast_process
+        from ci_fast_process import Unmeasured
+
+        def miss(pgid, timeout=1.0):
+            raise Unmeasured("no sample")
+
+        original, ci_fast_process.group_rss = ci_fast_process.group_rss, miss
+        self.addCleanup(setattr, ci_fast_process, "group_rss", original)
+        result = ci_fast_process.execute([sys.executable, "-c", "pass"], "/tmp", 5)
+        self.assertEqual(result["result"], "pass", result)
+
+    def test_a_check_that_never_measures_is_recorded_unmeasured(self):
+        # The report has to say the sampling failed; a check read as bounded at
+        # 0 MiB is the lie that flag exists to prevent. The check here outlives
+        # the run of misses, so whether the flag is set is the whole test.
+        import ci_fast_process
+        from ci_fast_process import Unmeasured
+
+        def miss(pgid, timeout=1.0):
+            raise Unmeasured("no sample")
+
+        original, ci_fast_process.group_rss = ci_fast_process.group_rss, miss
+        self.addCleanup(setattr, ci_fast_process, "group_rss", original)
+        result = ci_fast_process.execute(
+            [sys.executable, "-c", "import time; time.sleep(2)"], "/tmp", 10
+        )
+        self.assertEqual(result["result"], "pass", result)
+        self.assertTrue(result["unmeasured"], result)
+        self.assertEqual(result["peak_rss_mib"], 0, result)
+
+    def test_a_sample_that_landed_clears_the_misses(self):
+        # Misses are ridden out per stretch, not counted over the check's whole
+        # life: two misses, one sample that lands, then two more still leaves the
+        # memory ceiling enforced. Counting them for the whole check would let a
+        # long, heavily loaded run quietly stop being bounded.
+        import ci_fast_process
+        from ci_fast_process import Unmeasured
+
+        samples = [Unmeasured("no sample"), Unmeasured("no sample"), 12.0,
+                   Unmeasured("no sample"), Unmeasured("no sample")]
+
+        def flaky(pgid, timeout=1.0):
+            # Past the scripted misses every sample lands, so what stops the
+            # measuring can only be the misses being counted in a run.
+            got = samples.pop(0) if samples else 12.0
+            if isinstance(got, Exception):
+                raise got
+            return got
+
+        original, ci_fast_process.group_rss = ci_fast_process.group_rss, flaky
+        self.addCleanup(setattr, ci_fast_process, "group_rss", original)
+        result = ci_fast_process.execute(
+            [sys.executable, "-c", "import time; time.sleep(1)"], "/tmp", 5
+        )
+        self.assertEqual(result["result"], "pass", result)
+        self.assertFalse(result["unmeasured"], result)
+        self.assertGreaterEqual(result["peak_rss_mib"], 12.0)
+
+    def test_a_machine_without_ps_is_blocked(self):
+        # The one case that is genuinely blocked: ps is not installed, so no
+        # memory ceiling can be enforced at all. This is execute()'s half of
+        # that; the sampler's half — that a missing ps raises this and not
+        # Unmeasured — is the test below.
+        import ci_fast_process
+        from ci_fast_process import MissingPs
+
+        def gone(pgid, timeout=1.0):
+            raise MissingPs("no ps")
+
+        original, ci_fast_process.group_rss = ci_fast_process.group_rss, gone
+        self.addCleanup(setattr, ci_fast_process, "group_rss", original)
+        result = ci_fast_process.execute([sys.executable, "-c", "pass"], "/tmp", 5)
+        self.assertEqual(result["result"], "blocked", result)
+
+    def test_ps_absent_is_told_apart_from_ps_that_did_not_answer(self):
+        # Without this mapping a machine with no ps reads as a check that
+        # passed with its ceiling skipped — the promise the exit-code table
+        # makes, and the one thing that must stay blocked.
+        import ci_fast_process
+
+        empty = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, empty, ignore_errors=True)
+        with mock.patch.dict(os.environ, {"PATH": empty}):
+            with self.assertRaises(ci_fast_process.MissingPs):
+                ci_fast_process.group_rss(1)
 
     def test_cleanup_reaps_children_of_a_finished_wrapper(self):
         # The wrapper exits 0 but leaves a long-lived child behind; the runner

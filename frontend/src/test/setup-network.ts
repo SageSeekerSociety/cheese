@@ -1,5 +1,7 @@
 import { afterEach, expect } from 'vitest'
 
+import { installNetworkTrap, takeUnexpectedRequests } from './networkTrap'
+
 import { queryClient } from '@/query/client'
 
 // 服务器数据的缓存（query/client.ts）是模块级的：每个用例结束清空，上一个用例读到
@@ -10,18 +12,14 @@ afterEach(async () => {
   forgetRoomSnapshots()
 })
 
-const unexpectedRequests: string[] = []
-
-globalThis.fetch = async (input) => {
-  const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
-  unexpectedRequests.push(url)
-  throw new Error(`Unexpected fetch in unit test: ${url}`)
-}
+// 测试里任何一次真请求都当场失败，并指出是哪个用例（四条出口的细则见 networkTrap.ts）。
+installNetworkTrap()
 
 afterEach(() => {
-  // Components may catch fetch failures; unexpected requests must still fail the test.
-  const requests = unexpectedRequests.splice(0)
-  expect(requests, 'Mock every HTTP request used by this test').toEqual([])
+  // 组件可能把请求的异常吞掉（一个 catch 就没了），那样当场抛出的那次不会让用例变红。
+  // 所以陷阱还把每一次尝试记在这里，用例结束时再核对一次。
+  const requests = takeUnexpectedRequests()
+  expect(requests, 'Mock every network request used by this test').toEqual([])
 })
 
 // 房间连接（lib/roomLink.ts）也是模块级的：上一个用例开的那条（连着它那个替身

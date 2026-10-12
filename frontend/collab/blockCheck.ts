@@ -19,6 +19,7 @@ const CONTAINERS: Record<string, string> = {
   column: '分栏',
   chart: '图表',
   app: '小程序',
+  canvas: '画布',
 }
 const APP_FORM =
   '小程序写成 :::app 短号@版本 标题，下一行一句话说明，最后单独一行 :::；短号和版本照 cheese_app_save 给的抄'
@@ -46,7 +47,7 @@ function strayProblem(raw: string, line: number): WriteProblem | null {
       if (!CONTAINERS[name]) {
         return {
           line: at,
-          message: `第 ${at} 行的「:::${name}」不是文档支持的块。支持的是 :::timeline（时间线）、:::stats（指标卡）、::::columns（分栏）、:::chart（图表）、:::app（小程序）。`,
+          message: `第 ${at} 行的「:::${name}」不是文档支持的块。支持的是 :::timeline（时间线）、:::stats（指标卡）、::::columns（分栏）、:::chart（图表）、:::canvas（画布）、:::app（小程序）。`,
         }
       }
       if (name === 'column') {
@@ -57,6 +58,12 @@ function strayProblem(raw: string, line: number): WriteProblem | null {
       }
       if (name === 'chart') return chartHeadProblem(text, at)
       if (name === 'app') return { line: at, message: `第 ${at} 行的小程序没有读成块。${APP_FORM}。` }
+      if (name === 'canvas') {
+        return {
+          line: at,
+          message: `第 ${at} 行的画布没有读成块：写成 :::canvas new 标题（已有的画布把 new 换成它的编号），下一行写一句说明，最后单独一行 :::。`,
+        }
+      }
       const columns = name === 'columns' ? '，里面是两到三个 :::column … :::' : ''
       return {
         line: at,
@@ -160,7 +167,8 @@ export function blockProblem(token: Token, line: number): WriteProblem | null {
   if (token.type === 'timeline' || token.type === 'stats') return fieldsProblem(token.raw, line, token.type)
   if (token.type === 'chart') return chartProblem(token, line)
   if (token.type === 'code') return mermaidProblem(token as Tokens.Code, line)
-  if (token.type === 'columns' || token.type === 'footnoteDef' || token.type === 'app') return null
+  if (token.type === 'columns' || token.type === 'footnoteDef' || token.type === 'canvas' || token.type === 'app')
+    return null
   return strayProblem(token.raw, line)
 }
 

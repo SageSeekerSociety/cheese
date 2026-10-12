@@ -69,6 +69,16 @@ describe('what the writing guide teaches', () => {
   })
 })
 
+describe('a canvas block', () => {
+  // The line names a board kept apart from the text: its id is not text a reader loses.
+  it.each([
+    ':::canvas new 项目地图\n各件事和它们之间的关系。\n:::\n',
+    ':::canvas 6f1c2e0a-3b7d-4e58-9a51-0c2d4b8e7f13 项目地图\n各件事和它们之间的关系。\n:::\n',
+  ])('is accepted as written: %s', (written) => {
+    expect(checkMarkdownWrite(written)).toBeNull()
+  })
+})
+
 describe('a block in the wrong shape', () => {
   it('refuses a container with no closing line, naming its line', () => {
     expect(checkMarkdownWrite('正文\n\n:::timeline\n- 周一 | 开始\n')?.line).toBe(3)
@@ -127,6 +137,12 @@ describe('a block in the wrong shape', () => {
 
   it('accepts the other mermaid diagrams', () => {
     expect(checkMarkdownWrite('```mermaid\n%% 注释\nerDiagram\n  A ||--o{ B : has\n```\n')).toBeNull()
+  })
+
+  it('refuses a canvas line that names no canvas, saying how it is written', () => {
+    const problem = checkMarkdownWrite('正文\n\n:::canvas 项目地图\n:::\n')
+    expect(problem?.line).toBe(3)
+    expect(problem?.message).toContain(':::canvas new')
   })
 
   it('refuses a footnote with no definition', () => {

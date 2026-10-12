@@ -512,6 +512,66 @@ PLATFORM_TOOLS = ToolTable(
             ["app"],
         ),
         _tool(
+            "cheese_canvas_get",
+            "读文档里的一块画布：每个格子的内容和关联的任务、格子之间的连线，按连线排成"
+            "缩进的大纲，格子用编号 [3] 指。人最近改过的格子会注明是谁、什么时候改的，"
+            "改不改它由你判断。画布编号写在文档原文 :::canvas 那一行里。",
+            {
+                "canvas": _text("画布编号"),
+                "positions": {
+                    "type": "boolean",
+                    "description": "也列出每个格子的位置和大小；要挪格子时用",
+                },
+            },
+            ["canvas"],
+        ),
+        _tool(
+            "cheese_canvas_edit",
+            "改一块画布，changes 按顺序生效，有一处做不成就一处都不改。每项一个 op："
+            "add 加格子（content 是一段 Markdown，可以缩进分层；task 关联一个任务；"
+            "ref 给新格子起个名字，同一次里后面的改动用它指这个格子；不给 x、y 就按连线"
+            "自动摆）；update 改格子的 content 或 task（task 给空字符串就取消关联）；"
+            "move 挪格子（x、y 是左上角，可带 width、height）；delete 删格子，连着它的"
+            "线一起删；connect 从 from 连到 to，label 是线上的一句话，可以不写，两个格子"
+            "已经连着就改这句话；disconnect 断开 from 到 to 的线。格子用编号（3）或同一"
+            "次里的 ref 指。格子里写什么、线上写什么由你定，没有固定的种类。",
+            {
+                "canvas": _text("画布编号"),
+                "changes": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {
+                                "type": "string",
+                                "enum": [
+                                    "add",
+                                    "update",
+                                    "move",
+                                    "delete",
+                                    "connect",
+                                    "disconnect",
+                                ],
+                            },
+                            "card": _text("要改、挪、删的格子：编号或 ref"),
+                            "ref": _text("add：新格子的名字"),
+                            "content": _text("add、update：格子里的 Markdown"),
+                            "task": _text("add、update：关联的任务编号；空字符串取消"),
+                            "x": {"type": "number", "description": "左上角横坐标"},
+                            "y": {"type": "number", "description": "左上角纵坐标"},
+                            "width": {"type": "number", "description": "宽，像素"},
+                            "height": {"type": "number", "description": "高，像素"},
+                            "from": _text("connect、disconnect：起点格子"),
+                            "to": _text("connect、disconnect：终点格子"),
+                            "label": _text("connect：线上的一句话"),
+                        },
+                        "required": ["op"],
+                    },
+                },
+            },
+            ["canvas", "changes"],
+        ),
+        _tool(
             "cheese_task",
             "在当前支线里创建一个任务，挂在支线所在的那条消息下面。任务有自己的对话和"
             "工作目录，由那里的 AI 队友去做。有人让你去做：start 填 true、owner 填"
@@ -1089,6 +1149,9 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     # 小程序跟着它的文档走。
     "cheese_app_save",
     "cheese_app_get",
+    # 画布有自己的编号，跟着它的文档走。
+    "cheese_canvas_get",
+    "cheese_canvas_edit",
 } | {"cheese_attachment_read"}
 _NEEDS_DOCUMENT = frozenset({"cheese_doc_get", "cheese_doc_edit"})
 _NEEDS_PROJECT = frozenset(
@@ -1239,6 +1302,38 @@ def _has_tz_database() -> bool:
     return True
 
 
+#: The fields each canvas change takes (`app/domain/canvas/schemas.py`); a
+#: model that fills in one more is not refused for it.
+_CANVAS_FIELDS = {
+    "add": ("ref", "content", "task", "x", "y", "width", "height"),
+    "update": ("card", "content", "task"),
+    "move": ("card", "x", "y", "width", "height"),
+    "delete": ("card",),
+    "connect": ("from", "to", "label"),
+    "disconnect": ("from", "to"),
+}
+
+
+def _canvas_change(change) -> dict:
+    """One change of `cheese_canvas_edit` the way the backend reads it."""
+    if not isinstance(change, dict) or change.get("op") not in _CANVAS_FIELDS:
+        raise ValueError(
+            "changes 的每一项要有 op：add、update、move、delete、connect、disconnect"
+        )
+    op = change["op"]
+    out: dict = {"op": op}
+    for key in _CANVAS_FIELDS[op]:
+        if key not in change:
+            continue
+        value = change[key]
+        if key == "task":
+            # 空字符串和 null 都是「不再关联」；后端要的是 null。
+            out[key] = (str(value).strip() or None) if value is not None else None
+        elif value is not None:
+            out[key] = value
+    return out
+
+
 def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
     """The one backend request a platform tool is, as data.
 
@@ -1378,6 +1473,17 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         }
     if tool == "cheese_doc_list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
+    if tool == "cheese_canvas_get":
+        canvas = urllib.parse.quote(str(args["canvas"]).strip(), safe="")
+        query = "?positions=true" if args.get("positions") is True else ""
+        return {"method": "GET", "path": f"/canvases/{canvas}/text{query}"}
+    if tool == "cheese_canvas_edit":
+        canvas = urllib.parse.quote(str(args["canvas"]).strip(), safe="")
+        return {
+            "method": "POST",
+            "path": f"/canvases/{canvas}/changes",
+            "body": {"changes": [_canvas_change(c) for c in args["changes"]]},
+        }
     if tool == "cheese_library_ls":
         return {"method": "GET", "path": f"/projects/{project}/library"}
     if tool == "cheese_title":
@@ -1857,6 +1963,8 @@ def _doc_get(args: dict, host) -> str:
                 f"- {item.get('author') or '?'}：「{item.get('old') or ''}」→"
                 f"「{item.get('new') or ''}」{why}"
             )
+    if ":::canvas " in doc["content"]:
+        lines += _doc_canvases(document["CHEESE_DOCUMENT"], host)
     # 文档里此刻指不到东西的引用：读的时候就说，下一次写正好改掉。
     warnings = answer.get("warnings") or []
     if warnings:
@@ -1909,8 +2017,79 @@ def _doc_edit(args: dict, host) -> str:
         done = f"已按 {who} 的要求改了 {len(edits)} 处"
     version = data.get("doc_version")
     lines = [f"{done}（第 {version} 版）。" if version else f"{done}。"]
+    lines += _made_canvases(answer)
     # 和 cheese_doc_set 一样：格式警告跟着这次写入回来，改的机会就是现在。
     lines += [f"⚠️ {warning}" for warning in answer.get("warnings") or []]
+    return "\n".join(lines)
+
+
+def _made_canvases(answer: dict) -> list[str]:
+    """What a write that held `:::canvas new` blocks made: one line each."""
+    return [
+        f"新建了画布《{canvas.get('title') or '未命名'}》，编号 {canvas['id']}："
+        f"用 cheese_canvas_edit(canvas={canvas['id']}) 往里加格子。"
+        for canvas in answer.get("canvases") or []
+    ]
+
+
+#: How much of one canvas `cheese_doc_get` shows after the document; the rest
+#: is a `cheese_canvas_get` away.
+_DOC_CANVAS_CHARS = 6000
+
+
+def _doc_canvases(document: str, host) -> list[str]:
+    """The document's canvases as text, to follow it: they are not in its
+    Markdown, which names each one in a line."""
+    found = host.request({"method": "GET", "path": f"/documents/{document}/canvases"})
+    rows = found.get("data") or []
+    if not rows:
+        return []
+    lines = [
+        "",
+        "--- 文档里的画布（文字版，不在正文里：改文档时别引用它；"
+        "改画布用 cheese_canvas_edit）",
+    ]
+    for row in rows:
+        text = row.get("text") or ""
+        if len(text) > _DOC_CANVAS_CHARS:
+            text = (
+                text[:_DOC_CANVAS_CHARS].rsplit("\n", 1)[0]
+                + f"\n……（没列完，用 cheese_canvas_get(canvas={row['id']}) 读全部）"
+            )
+        lines += ["", text]
+    return lines
+
+
+def _canvas_edit(args: dict, host) -> str:
+    plan = request_plan("cheese_canvas_edit", args, host.environ)
+    try:
+        answer = host.request(plan)
+    except Exception as exc:
+        if getattr(exc, "status", None) not in (404, 422):
+            raise
+        try:
+            why = json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+        except (ValueError, KeyError, TypeError):
+            raise exc from None
+        raise PlatformToolError(
+            f"一处都没改，画布没有变：{why.rstrip('。')}。"
+            "先 cheese_canvas_get 看看现在的样子，改好再试。"
+        ) from exc
+    data = answer.get("data") or {}
+    added = data.get("added") or []
+    named = {number: ref for ref, number in (data.get("refs") or {}).items()}
+    lines = [f"已改画布，{len(args['changes'])} 处改动都生效了。"]
+    if added:
+        lines.append(
+            "新格子："
+            + "、".join(
+                f"[{n}]（{named[n]}）" if n in named else f"[{n}]" for n in added
+            )
+            + "。"
+        )
+    canvas = urllib.parse.quote(str(args["canvas"]).strip(), safe="")
+    now = host.request({"method": "GET", "path": f"/canvases/{canvas}/text"})
+    lines += ["", (now.get("data") or {}).get("text") or ""]
     return "\n".join(lines)
 
 
@@ -1942,6 +2121,7 @@ def _doc_new(args: dict, host) -> str:
         f"已在资料库新建《{doc.get('title') or args['title']}》，编号 {doc['id']}"
         f"（第 {doc.get('doc_version', 0)} 版）。{shown}之后读写它都带上 document。"
     ]
+    lines += _made_canvases(answer)
     lines += [f"⚠️ {warning}" for warning in answer.get("warnings") or []]
     return "\n".join(lines)
 
@@ -2105,7 +2285,7 @@ def _doc_set(args: dict, host) -> str:
         ) from exc
     version = (result.get("data") or {}).get("doc_version", 0)
     host.doc_versions[document] = version
-    lines = [f"已更新实况文档（第 {version} 版）。"]
+    lines = [f"已更新实况文档（第 {version} 版）。", *_made_canvases(result)]
     # 格式警告（#1889 第 3 条）：写入照样成功，但「哪里不像状态」要当场改。
     # 它跟着这次写入回来，不另发一条通知——改的机会就是现在，而此刻在写字的人
     # 只看得见这次工具返回。
@@ -2584,6 +2764,7 @@ _STEPS = {
     "cheese_doc_new": _doc_new,
     "cheese_app_save": _app_save,
     "cheese_app_get": _app_get,
+    "cheese_canvas_edit": _canvas_edit,
     "cheese_accept_request": _accept_request,
     "platform_request": _platform_request,
     "cheese_feedback_list": _feedback_list,
@@ -2904,6 +3085,7 @@ _SAY = {
     "cheese_status": lambda a, d, e: _format_status(d or {}),
     "cheese_library_ls": _say_library,
     "cheese_doc_list": _say_documents,
+    "cheese_canvas_get": lambda a, d, e: (d or {}).get("text") or "",
     "cheese_ask": _say_ask,
     # 卡片由平台渲染，所以这里只说结果。
     "cheese_feedback_propose": lambda a, d, e: (

@@ -4,25 +4,30 @@ A mini-app (`:::app <key>@<version>` in a document) is code 芝士 wrote, run in
 the platform's shell. `web_snippets` names one and says which document it
 belongs to; `web_snippet_versions` holds each version's code, whether the
 platform's browser ran it, its heights and where its pictures are kept.
+Nothing existing changes.
 
 Revision ID: 70c713b50151
-Revises: 2a0ab4e3349a
+Revises: 44de818574e0
 """
 
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
 revision: str = "70c713b50151"
-down_revision: str | Sequence[str] | None = "2a0ab4e3349a"
+down_revision: str | Sequence[str] | None = "44de818574e0"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # The new foreign key points at `documents`, which the backend this deploy
+    # replaces is serving while this runs.
+    with_lock_retries("documents")
     op.create_table(
         "web_snippets",
         sa.Column("id", sa.Uuid(), primary_key=True),

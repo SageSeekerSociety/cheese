@@ -16,6 +16,7 @@ import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
+import type { CanvasData } from '../../types/canvas'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -101,6 +102,8 @@ const props = withDefaults(
     fetchDocNodes: () => Promise<Block[]>
     /** 文档里引用的一张图拿什么画。 */
     imageSrc: (src: string) => Promise<string>
+    /** 文档里的画布拿什么读写。 */
+    canvas?: CanvasData | null
     // ---- 动作 ----
     toggleEditable: () => void
     setError: (message: string | null) => void
@@ -149,6 +152,7 @@ const props = withDefaults(
     avatarOf: () => '',
     loadVersions: undefined,
     restoreVersion: undefined,
+    canvas: null,
   }
 )
 
@@ -513,6 +517,7 @@ defineExpose({
                 :active-thread="openId"
                 :fetch-doc-nodes="fetchDocNodes"
                 :image-src="imageSrc"
+                :canvas="canvas"
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
                 :agent-name="agentName"

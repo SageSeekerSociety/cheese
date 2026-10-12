@@ -48,6 +48,8 @@
   "cheeseDocList": "List library docs",
   "cheeseAppSave": "Save a mini-app",
   "cheeseAppGet": "Read a mini-app",
+  "cheeseCanvasGet": "Read the canvas",
+  "cheeseCanvasEdit": "Edit the canvas",
   "cheeseDocCommentReply": "Reply to a doc comment",
   "cheeseTask": "Create a task",
   "cheeseWorktree": "Prepare the working directory",

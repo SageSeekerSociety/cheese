@@ -1648,3 +1648,30 @@ html.doc-app-open body {
   line-height: var(--lh-13);
   background: var(--fill);
 }
+
+/* ---- Canvas ---------------------------------------------------------------
+   The editor draws the board (blocks/CanvasBlockView.vue). Where it is not
+   drawn — a message, an old version — the block reads as its title and the
+   sentence under it. */
+
+div[data-block='canvas']:not(.doc-canvas) {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--canvas);
+}
+
+div[data-block='canvas']:not(.doc-canvas) [data-field='title'] {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: var(--lh-15);
+  color: var(--ink);
+}
+
+div[data-block='canvas']:not(.doc-canvas) [data-field='about'] {
+  margin: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}

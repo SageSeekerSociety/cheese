@@ -2,6 +2,7 @@
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.topic.models import Topic, TopicProgress
@@ -23,3 +24,18 @@ async def conversation_progress(
 ) -> TopicProgress | None:
     """Read the caller's progress row; neither flush nor commit is added."""
     return await TopicProgressRepository(session).get(conversation_id)
+
+
+async def open_rooms(session: AsyncSession, room_ids: set[uuid.UUID]) -> set[uuid.UUID]:
+    """The rooms among these that anyone in their project may read: neither a
+    private chat nor a private channel."""
+    if not room_ids:
+        return set()
+    rows = await session.scalars(
+        select(Topic.id).where(
+            Topic.id.in_(list(room_ids)),
+            Topic.is_private.is_(False),
+            Topic.members_only.is_(False),
+        )
+    )
+    return set(rows)
