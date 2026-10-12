@@ -77,6 +77,8 @@ const props = defineProps<{
   allTasksChannelId?: string | null
   /** 正打开的任务。 */
   selectedTaskId?: string | null
+  /** 正打开的东西在哪个频道里（见 `useTopicRail` 的同名字段）。 */
+  hereChannelId?: string | null
   /** 「浏览频道」那一页正开着。 */
   browsingChannels?: boolean
 }>()
