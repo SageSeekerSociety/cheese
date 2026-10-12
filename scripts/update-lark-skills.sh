@@ -12,7 +12,8 @@ fi
 # collection; installing a skill nobody calls still puts its name and description
 # in front of every agent on every turn. This project reads the Feishu wiki, docs
 # and Drive through the CLI, so those five are enough. Add a name here to adopt
-# another one; the rest stay out of the checkout and the lock file.
+# another one. The installer only adds and updates: a skill dropped from this
+# list stays installed until its directories and lock entry are removed too.
 RETAINED_SKILLS=(
   lark-shared
   lark-wiki

@@ -58,16 +58,19 @@ lark-cli auth status --profile cheese    # 查 token 是否有效
 
 Lark skills live in `.agents/skills/`, with directory links in `.claude/skills/`
 for Claude Code. Codex reads `.agents/skills/` directly. This repository keeps five
-of them — `lark-shared`, `lark-wiki`, `lark-doc`, `lark-drive` and
-`lark-openapi-explorer`, which is what reading the team's wiki, documents and Drive
-needs. The feed serves the whole official collection, but an installed skill puts
+of them — `lark-shared`, `lark-wiki`, `lark-doc` and `lark-drive` cover reading the
+team's wiki, documents and Drive, and `lark-openapi-explorer` covers `lark-cli`
+auth and the raw-API fallback. The feed serves the whole official collection, but
+an installed skill puts
 its name and description in front of every agent on every turn, and the other
 twenty-three were never called. They stay out of this checkout; git history has
 them, and the feed still serves them.
 
 Commit any local skill changes, then run `bash scripts/update-lark-skills.sh` to
-refresh those five and `skills-lock.json`. Review and commit the resulting diff.
-Each Git worktree uses the skills in its own checkout.
+refresh those five and `skills-lock.json`. The script only adds and updates; it
+never removes, so a skill dropped from its list stays installed until you `git rm`
+its directories and remove its entry from `skills-lock.json`. Review and commit
+the resulting diff. Each Git worktree uses the skills in its own checkout.
 
 The retained skills are upstream content, replaced wholesale by the script, and
 they name sibling skills (`lark-sheets`, `lark-base`, `lark-meeting` and others) in
