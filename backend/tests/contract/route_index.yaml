@@ -105,7 +105,7 @@ auth_entries:
   app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
   notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
   topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService.require_manager admits the channel's creator and whoever manages the project. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
-  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.archive: "topics archive/unarchive/delete resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler, and delete refuses the project's own overview in the service. Source: app/api/routes/topics_lifecycle.py onward."
   topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
   topic.channel.manage: "topics_channel description goes through TopicMemberService.require_manager (creator or project manager) after authorize_topic. Source: app/api/routes/topics_channel.py."
   topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
@@ -1088,6 +1088,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
+  - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/check-result", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/lock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unlock", auth: "cheese.room.gate", owner: "room_task"}
@@ -1166,6 +1167,7 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_threads
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/thread", auth: "actor.topic", owner: "thread"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/thread", auth: "actor.topic", owner: "thread"}
   # app.api.routes.topics_title

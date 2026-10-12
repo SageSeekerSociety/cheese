@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
@@ -75,7 +76,7 @@ async def open_block_thread(
     return ok(out)
 
 
-@router.post("/{topic_id}/threads")
+@router.post("/{topic_id}/threads", dependencies=[ROUTE_DECIDES])
 async def create_thread(
     topic_id: uuid.UUID,
     body: ThreadCreateIn,
