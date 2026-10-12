@@ -2,14 +2,13 @@
 // 主线上一条消息下面的那一行：谁在支线里说过话（头像）、有几条回复、最后一句是谁说的
 // 什么（最多两行），以及 AI 队友此刻是不是正在里面回答。点它打开支线。从这条消息出来
 // 的任务列在它下面（ChatTimeline 的 TaskCard）。
-import type { Block } from '../../cx_types'
 import type { RefNames } from '../../lib/refChip'
 import type { ThreadSummary } from '../../types/threads'
 
 import { computed } from 'vue'
 
 import { isAgentHandle } from '../../lib/authorship'
-import { replySnippet } from '../../lib/blockDisplay'
+import { replyBlock, replySnippet } from '../../lib/blockDisplay'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import UserAvatar from '../common/UserAvatar.vue'
 
@@ -48,18 +47,9 @@ const failedText = computed(() =>
 const last = computed(() => {
   const reply = props.summary?.last_reply
   if (!reply) return null
-  const block = {
-    id: '',
-    conversation_id: '',
-    kind: 'message',
-    author_type: 'participant',
-    author: reply.author,
-    content: reply.content,
-    created_at: reply.created_at,
-  } as Block
   return t('work.room.thread.lastReply', {
     name: props.nameOf(reply.author),
-    text: replySnippet(block, props.refs, 200),
+    text: replySnippet(replyBlock(reply), props.refs, 200),
   })
 })
 </script>

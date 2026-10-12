@@ -58,6 +58,20 @@ def room_files_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
     return root.resolve()
 
 
+#: 一条消息的附件（贴进来的图、干活机器上摆出来的图）用的地址头。它们没有自己的名字，
+#: 房间里给它们的是一串随机目录名加原来的文件名。
+MESSAGE_ATTACHMENT_PREFIX = "uploads"
+
+
+def is_message_attachment(path: str) -> bool:
+    """这份东西是不是一条消息的附件 —— 认它的地址头，不看字节在哪。
+
+    附件和房间文件住在同一棵树里（那条消息读它，按地址读，读得到就行），但它不是
+    这个房间的文件：清单列的是房间里有哪些东西，而它属于那条消息。
+    """
+    return path.split("/", 1)[0] == MESSAGE_ATTACHMENT_PREFIX
+
+
 #: 一份文件落地时的字节上限。房间文件（:func:`write_room_file`）与资料库
 #: （:mod:`app.domain.library.records`）落的是同一批字节，用同一个数；路由那一层
 #: 的 ``MAX_ARTIFACT_BYTES`` / ``MAX_ATTACHMENT_BYTES`` /
@@ -122,7 +136,10 @@ def list_room_files(
 
     房间文件此前只有按路径取一份的读法（:func:`read_room_file`）：一个人想知道这个
     房间的文件区里有什么，得先知道那份文件叫什么。这份清单是那个目录本身——定时任务
-    放进来的结果、人贴进来的截图、芝士交付的文档都在里面。
+    放进来的结果、芝士交付的文档、有人放进来的文件都在里面。
+
+    一条消息的附件不在里面（:func:`is_message_attachment`）：它们和房间文件住在同一
+    棵树里，但属于那条消息，按地址读得到就够了，页面上不再占一格、也不再挤掉一格。
 
     交出 ``(清单, 找到的总数)``；总数超过上限时清单是最近改的那些，调用方据此报
     「只列出了一部分」。
@@ -134,6 +151,8 @@ def list_room_files(
         # 点开头的层是编辑器留下的临时文件和别的东西：它们没有消息引得到（
         # :func:`read_preview_file` 那一侧也拒绝这种地址），占一格只会让人多点一次。
         if any(part.startswith(".") for part in relative.parts):
+            continue
+        if is_message_attachment(relative.as_posix()):
             continue
         try:
             info = entry.stat()

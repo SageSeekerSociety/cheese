@@ -3,13 +3,13 @@
 import type { Block, ListPayload, PreviewInfo, RoomTask, TodoItem, TopicMemberRow, TopicProgress } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
 import type { TopicEnvironment } from '@/types/compute'
-import type { ThreadRow } from '@/types/threads'
+import type { Thread, ThreadRow } from '@/types/threads'
 
 import { queryOptions } from '@tanstack/vue-query'
 
 import { getPreview, getProgress, getTask, getTopicEnvironment, listRoomTasks, listTopicMembers } from '@/api'
 import { listPins } from '@/api/pins'
-import { listThreads } from '@/api/threads'
+import { getThread, listThreads } from '@/api/threads'
 import { queryClient, refreshQueries } from '@/query/client'
 import { keys } from '@/query/keys'
 import { fromSnapshot } from '@/query/snapshot'
@@ -49,6 +49,40 @@ export function threadsQuery(roomId: string) {
         return Array.isArray(rows) ? rows : []
       }),
   })
+}
+
+/**
+ * 一条支线：它自己，和它挂着的那条主线消息（支线页页头画的就是那条）。
+ *
+ * 页头那条消息不该等这一次读回来才出现：点开一条支线时，它挂着的那块消息往往已经在手上了
+ * （频道那段对话的窗口里，消息带着它自己的支线），先拿它画上（`placeholderData`），读回来
+ * 再换成完整的那一份。手上没有（整页打开一条老支线）就只能等，和以前一样。
+ */
+export function threadQuery(threadId: string) {
+  return queryOptions({
+    queryKey: keys.roomThread(threadId),
+    queryFn: (): Promise<Thread> => getThread(threadId),
+    placeholderData: () => listedThread(threadId),
+  })
+}
+
+/** 缓存里拼得出来的这一条支线：任何一份对话窗口里，那一块消息带着它的支线
+ *  （`GET /topics/{id}/blocks` 在一行上带着 `thread`）。没看过是 undefined。 */
+export function listedThread(threadId: string): Thread | undefined {
+  for (const [, data] of queryClient.getQueriesData<unknown>({ predicate: holdsBlocks })) {
+    const block = blocksIn(data).find((held) => held.thread?.id === threadId)
+    if (block?.thread) {
+      return {
+        id: block.thread.id,
+        room_id: block.thread.room_id,
+        root_block_id: block.id,
+        reply_count: block.thread.reply_count,
+        last_reply_at: block.thread.last_reply_at,
+        root: block,
+      }
+    }
+  }
+  return undefined
 }
 
 export function roomProgressQuery(roomId: string) {
@@ -141,6 +175,15 @@ export function listedTask(taskId: string): RoomTask | undefined {
 
 function holdsTasks(query: { queryKey: readonly unknown[] }): boolean {
   return query.queryKey.includes('tasks') || query.queryKey.includes('blocks')
+}
+
+function holdsBlocks(query: { queryKey: readonly unknown[] }): boolean {
+  return query.queryKey.includes('blocks')
+}
+
+function blocksIn(data: unknown): Block[] {
+  const blocks = (data as { blocks?: unknown } | null)?.blocks
+  return Array.isArray(blocks) ? (blocks as Block[]) : []
 }
 
 function tasksIn(data: unknown): RoomTask[] {

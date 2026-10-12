@@ -39,7 +39,7 @@ async function confirmRestore(row: RoomFileRevision) {
   if (await props.fileHistory.restore(row)) confirming.value = null
 }
 
-const SOURCES = new Set<string>(['baseline', 'upload', 'ai', 'editor', 'restore', 'scheduled'])
+const SOURCES = new Set<string>(['baseline', 'upload', 'template', 'ai', 'editor', 'restore', 'scheduled'])
 function sourceLabel(source: RoomFileRevision['source']): string {
   return SOURCES.has(source) ? t(`work.room.fileHistory.source.${source}`) : source
 }

@@ -62,8 +62,9 @@ const review = computed<ReviewBundle | null>(() => {
 
 const panel = ref<InstanceType<typeof PanelChanges> | null>(null)
 
-// 地址里的 chip 指到某个文件时，工作面板会拿着文件路径来开这一格。
-defineExpose({ openFile: (path: string) => panel.value?.openFile(path) })
+// 地址里的 chip 指到某个文件时，工作面板会拿着文件路径来开这一格。开没开成要回话：
+// 这一支里没有那份文件时，工作面板得换一格去开它。
+defineExpose({ openFile: (path: string) => panel.value?.openFile(path) ?? Promise.resolve(false) })
 </script>
 
 <template>
