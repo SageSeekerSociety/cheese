@@ -22,12 +22,28 @@ import { t } from '../i18n'
 import { AGENT_EYES, AGENT_TILE_PATH, agentTone } from '../utils/avatar'
 
 const props = withDefaults(
-  defineProps<{ size?: number | string; name?: string; handle?: string | null; state?: FaceState | null }>(),
+  defineProps<{
+    size?: number | string
+    name?: string
+    handle?: string | null
+    state?: FaceState | null
+    /**
+     * Hide from assistive tech. Same switch as `UserAvatar`: when the name is right
+     * there in plain text (IdentityView, rosters, message rows) the face is decor,
+     * so a shared caller passes this instead of letting the name be read twice.
+     * Left off, the avatar keeps announcing its name (role=img + aria-label).
+     */
+    decorative?: boolean
+    /** Screen-reader name when the face is the only identity in the cell; falls back to `name`. */
+    alt?: string
+  }>(),
   {
     size: 28,
     name: undefined,
     handle: null,
     state: null,
+    decorative: false,
+    alt: undefined,
   }
 )
 
@@ -44,8 +60,9 @@ const tone = computed(() => agentTone(props.handle || shownName.value))
     :width="px"
     :height="px"
     viewBox="0 0 100 100"
-    role="img"
-    :aria-label="shownName"
+    :aria-hidden="decorative ? 'true' : undefined"
+    :role="decorative ? undefined : 'img'"
+    :aria-label="decorative ? undefined : alt || shownName"
     :data-user-content="name || undefined"
     :data-tone="tone"
     :data-state="state ?? undefined"

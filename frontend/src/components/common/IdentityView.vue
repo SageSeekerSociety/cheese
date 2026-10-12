@@ -64,7 +64,18 @@ const isAgent = computed(() => props.agent ?? isAgentHandle(props.handle || ''))
 
 <template>
   <span class="identity-view">
-    <CheeseAvatar v-if="isAgent" class="identity-view__face" :size="size" :name="label" :handle="handle || undefined" />
+    <!-- Same switch as UserAvatar: the name is right there in the line below, so the
+         face stays decor (empty `alt`); only an explicit `alt` (the face is the cell's
+         only identity) lets the reader announce it, and then it announces `alt`. -->
+    <CheeseAvatar
+      v-if="isAgent"
+      class="identity-view__face"
+      :size="size"
+      :name="label"
+      :handle="handle || undefined"
+      :decorative="!alt"
+      :alt="alt || undefined"
+    />
     <UserAvatar
       v-else
       class="identity-view__face"
