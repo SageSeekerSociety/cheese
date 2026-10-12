@@ -256,7 +256,8 @@
     },
     "taskPage": {
       "title": "Task page",
-      "text": "Progress, changes and the delivery are all here. If the task has not started, click Start and choose a reviewer; when it is done {agent} hands the result to you to review.",
+      "text": "{agent}'s progress and changes on this task show up on this page as they happen; when it is done, it hands the result to you to review.",
+      "textStart": "This task has not started. Click Start and choose a reviewer, and {agent} gets to work; when it is done, it hands the result to you to review.",
       "textWaiting": "Open the task {agent} created; progress and the delivery are inside."
     },
     "accept": {
