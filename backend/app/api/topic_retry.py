@@ -4,7 +4,7 @@ import uuid
 
 from app.api.deps import get_broker
 from app.api.response import ok
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.agent.retry import take_failed_reply
 from app.domain.agent.runtime import addressed_to_agent
@@ -24,7 +24,7 @@ async def summon_in_place(*, place, actor, body, db, chat, runner):
         try:
             block_id = uuid.UUID(str(block_id))
         except ValueError as exc:
-            raise ValidationError("Invalid retry_block_id") from exc
+            raise UnprocessableEntityError(say("invalidRequestParameters")) from exc
     members = TopicMemberService(db)
     seats = await members.agent_handles(place.room_id)
     candidate, changed = await take_failed_reply(

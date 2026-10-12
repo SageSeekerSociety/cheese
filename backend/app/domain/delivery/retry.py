@@ -45,6 +45,7 @@ def release_for_explicit_retry(rows):
     owns any still-unconsumed blocks and releases them on successful completion.
     """
     if not can_retry_inputs(rows):
+        # i18n-exempt: internal invariant; the caller checks eligibility first.
         raise ValueError("Retry requires a confirmed failed input interval")
     for row in rows:
         row.released_block_ids = sorted(

@@ -126,14 +126,15 @@ beforeEach(() => {
 
 describe('失败提示上的重试', () => {
   it('最新一条可以重试的失败带一个按钮，点下去重新开一轮', async () => {
-    const { queryByRole, topic } = await mountRoom([message(), failure(true)])
+    const failedReply = failure(true)
+    const { queryByRole, topic } = await mountRoom([message(), failedReply])
 
     const retry = queryByRole('button', RETRY())
     expect(retry).not.toBeNull()
     await fireEvent.click(retry!)
     await flush()
 
-    expect(summonAgent).toHaveBeenCalledWith(topic.id)
+    expect(summonAgent).toHaveBeenCalledWith(topic.id, failedReply.id)
   })
 
   it('重试没有用的失败不给按钮', async () => {

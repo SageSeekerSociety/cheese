@@ -28,22 +28,37 @@ vi.mock('@/api', async () => ({
   summonAgent: vi.fn(),
 }))
 
-import { listBlocks, summonAgent } from '@/api'
 import ChatPanel from './ChatPanel.vue'
 
+import { listBlocks, summonAgent } from '@/api'
+
 const failure = {
-  id: 'failed-reply', conversation_id: 'retry-room', kind: 'event',
-  author_type: 'platform', author: 'system', content: '本轮未完成', turn_id: 'failed-turn',
+  id: 'failed-reply',
+  conversation_id: 'retry-room',
+  kind: 'event',
+  author_type: 'platform',
+  author: 'system',
+  content: '本轮未完成',
+  turn_id: 'failed-turn',
   created_at: '2026-10-12T09:16:00Z',
   meta: {
-    event_type: 'turn_failed', severity: 'error', who: 'human', retryable: true,
-    detail: 'API Error: Stream idle timeout - no chunks received (Unknown)', detail_label: '详情',
+    event_type: 'turn_failed',
+    severity: 'error',
+    who: 'human',
+    retryable: true,
+    detail: 'API Error: Stream idle timeout - no chunks received (Unknown)',
+    detail_label: '详情',
   },
 } as unknown as Block
 
 function topic(id = 'retry-room'): Topic {
   return {
-    id, project_id: 'p1', parent_id: null, title: '重试', kind: 'topic', status: 'active',
+    id,
+    project_id: 'p1',
+    parent_id: null,
+    title: '重试',
+    kind: 'topic',
+    status: 'active',
     created_at: '2026-10-12T00:00:00Z',
   } as Topic
 }
@@ -61,16 +76,19 @@ beforeEach(() => {
   vi.clearAllMocks()
   setLocale('zh-CN')
   vi.mocked(listBlocks).mockResolvedValue({ data: [failure], total: 1 })
-  vi.stubGlobal('WebSocket', class {
-    static OPEN = 1
-    readyState = 1
-    onopen = null
-    onclose = null
-    onerror = null
-    onmessage = null
-    close() {}
-    send() {}
-  })
+  vi.stubGlobal(
+    'WebSocket',
+    class {
+      static OPEN = 1
+      readyState = 1
+      onopen = null
+      onclose = null
+      onerror = null
+      onmessage = null
+      close() {}
+      send() {}
+    }
+  )
 })
 
 describe('失败回复的重试入口', () => {
@@ -95,8 +113,12 @@ describe('失败回复的重试入口', () => {
     vi.mocked(listBlocks).mockResolvedValue({
       data: [
         { ...failure, meta: { ...failure.meta, retryable: false } },
-        { ...failure, id: 'second-failure', turn_id: 'second-turn',
-          meta: { ...failure.meta, detail: 'second stream failure' } },
+        {
+          ...failure,
+          id: 'second-failure',
+          turn_id: 'second-turn',
+          meta: { ...failure.meta, detail: 'second stream failure' },
+        },
       ],
       total: 2,
     })
@@ -121,7 +143,11 @@ describe('失败回复的重试入口', () => {
 
   it('切换对话后，旧重试的结果不让新对话显示正在回复', async () => {
     let resolve!: (result: { started: boolean }) => void
-    vi.mocked(summonAgent).mockReturnValue(new Promise((done) => { resolve = done }))
+    vi.mocked(summonAgent).mockReturnValue(
+      new Promise((done) => {
+        resolve = done
+      })
+    )
     const view = await mount()
     await fireEvent.click(view.getByRole('button', { name: '重试' }))
     vi.mocked(listBlocks).mockResolvedValue({ data: [], total: 0 })
