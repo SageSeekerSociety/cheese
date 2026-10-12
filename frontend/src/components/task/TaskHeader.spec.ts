@@ -280,17 +280,35 @@ describe('任务页头', () => {
     expect(agentMenuOpen()).toBe(true)
   })
 
+  /** 挑人那格是一条 Vuetify 下拉（走头像 + 名字那条路），不是原生 select：
+   *  打开它、把它里面那一行拿出来。 */
+  async function openPicker(container: Element): Promise<HTMLElement[]> {
+    await openDetails(container)
+    const box = document.querySelector<HTMLElement>('[role="combobox"]')
+    expect(box, '挑人下拉没画出来').not.toBeNull()
+    await fireEvent.mouseDown(box!)
+    await waitFor(() => expect(document.querySelector('.v-overlay--active .v-list-item')).not.toBeNull())
+    return [...document.querySelectorAll<HTMLElement>('.v-overlay--active .v-list-item')]
+  }
+
   it('负责人把名册上的人加为协作者', async () => {
     const { container, setCollaborators } = mount({ contributor_handles: ['bob'] })
-    await openDetails(container)
-    const row = document.querySelector('[data-testid="task-collaborators"]')!
-    const pick = row.querySelector('select')!
+    const rows = await openPicker(container)
     // 能加的只有还不在任务里的人：负责人自己和已经在协作的不在里面。
-    expect([...pick.options].map((o) => o.value).filter(Boolean)).toEqual(['carol'])
-    await fireEvent.update(pick, 'carol')
-    const add = [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('添加协作者'))!
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain('carol')
+    await fireEvent.click(rows[0])
+    const holder = document.querySelector('[data-testid="task-collaborators"]')!
+    const add = [...holder.querySelectorAll('button')].find((b) => b.textContent?.includes('添加协作者'))!
     await fireEvent.click(add)
     expect(setCollaborators).toHaveBeenCalledWith(['bob', 'carol'])
+  })
+
+  it('挑人那格画的是头像 + 名字，不是一行纯文字', async () => {
+    const { container } = mount({ contributor_handles: ['bob'] }, PICKED)
+    const rows = await openPicker(container)
+    expect(rows[0].querySelector('.identity-view')).not.toBeNull()
+    expect(rows[0].textContent).toContain('carol')
   })
 
   it('协作者只能把自己去掉，不能加别人', async () => {

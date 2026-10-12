@@ -15,6 +15,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
@@ -89,6 +90,16 @@ const addable = computed(() =>
   )
 )
 const adding = ref('')
+/** 下拉里的每一行：身份字段跟着走，画头像 + 名字靠一处 IdentityView。 */
+const addableItems = computed(() =>
+  addable.value.map((m) => ({
+    title: nameOf(m.member_handle),
+    value: m.member_handle,
+    handle: m.member_handle,
+    name: nameOf(m.member_handle),
+    avatarId: m.avatar_id ?? null,
+  }))
+)
 async function addCollaborator() {
   if (!adding.value) return
   if (await props.setCollaborators([...collaborators.value, adding.value])) adding.value = ''
@@ -173,6 +184,16 @@ async function confirmRename() {
 const handOverOpen = ref(false)
 const handingOver = ref(false)
 const nextOwner = ref('')
+/** 转交下拉的每一行，同 `addableItems`：身份字段跟着走，画脸靠 IdentityView。 */
+const handOverItems = computed(() =>
+  otherPeople.value.map((m) => ({
+    title: nameOf(m.member_handle),
+    value: m.member_handle,
+    handle: m.member_handle,
+    name: nameOf(m.member_handle),
+    avatarId: m.avatar_id ?? null,
+  }))
+)
 async function confirmHandOver() {
   handingOver.value = true
   try {
@@ -248,16 +269,36 @@ async function confirmHandOver() {
                   </button>
                 </span>
                 <span v-if="isOwner && isOpen && addable.length" class="task-details__person">
-                  <select
+                  <v-select
                     v-model="adding"
-                    class="task-notice__select t-meta"
+                    class="task-details__picker"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
                     :aria-label="t('work.task.addCollaborator')"
+                    :placeholder="t('work.task.addCollaborator')"
+                    :items="addableItems"
                   >
-                    <option value="">{{ t('work.task.addCollaborator') }}</option>
-                    <option v-for="m in addable" :key="m.member_handle" :value="m.member_handle">
-                      {{ nameOf(m.member_handle) }}
-                    </option>
-                  </select>
+                    <template #item="{ item, props: itemAttrs }">
+                      <v-list-item v-bind="itemAttrs" :title="undefined">
+                        <IdentityView
+                          :handle="item.raw.handle"
+                          :name="item.raw.name"
+                          :avatar-id="item.raw.avatarId"
+                          :size="24"
+                          handle-line
+                        />
+                      </v-list-item>
+                    </template>
+                    <template #selection="{ item }">
+                      <IdentityView
+                        :handle="item.raw.handle"
+                        :name="item.raw.name"
+                        :avatar-id="item.raw.avatarId"
+                        :size="18"
+                      />
+                    </template>
+                  </v-select>
                   <button v-if="adding" type="button" class="task-details__retry" @click="addCollaborator">
                     {{ t('work.task.addCollaborator') }}
                   </button>
@@ -295,7 +336,16 @@ async function confirmHandOver() {
                       <v-icon size="18">{{
                         (task.agent_handle ?? null) === option.handle ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'
                       }}</v-icon>
-                      <span>{{ option.name }}</span>
+                      <!-- A teammate row is a face + name via the shared view; the
+                           "follows channel" row is not a person, so it stays text. -->
+                      <IdentityView
+                        v-if="option.handle"
+                        :handle="option.handle"
+                        :name="option.name"
+                        :agent="true"
+                        :size="20"
+                      />
+                      <span v-else>{{ option.name }}</span>
                     </button>
                   </v-card>
                 </v-menu>
@@ -463,12 +513,31 @@ async function confirmHandOver() {
     :disabled="!nextOwner"
     @confirm="confirmHandOver"
   >
-    <select v-model="nextOwner" class="task-dialog__input t-body" :aria-label="t('work.task.handOverTo')">
-      <option value="" disabled>{{ t('work.task.handOverTo') }}</option>
-      <option v-for="m in otherPeople" :key="m.member_handle" :value="m.member_handle">
-        {{ memberNames[m.member_handle] || m.member_handle }}
-      </option>
-    </select>
+    <v-select
+      v-model="nextOwner"
+      class="task-dialog__picker t-body"
+      density="compact"
+      variant="outlined"
+      hide-details
+      :aria-label="t('work.task.handOverTo')"
+      :placeholder="t('work.task.handOverTo')"
+      :items="handOverItems"
+    >
+      <template #item="{ item, props: itemAttrs }">
+        <v-list-item v-bind="itemAttrs" :title="undefined">
+          <IdentityView
+            :handle="item.raw.handle"
+            :name="item.raw.name"
+            :avatar-id="item.raw.avatarId"
+            :size="24"
+            handle-line
+          />
+        </v-list-item>
+      </template>
+      <template #selection="{ item }">
+        <IdentityView :handle="item.raw.handle" :name="item.raw.name" :avatar-id="item.raw.avatarId" :size="18" />
+      </template>
+    </v-select>
   </ConfirmDialog>
 </template>
 
@@ -692,12 +761,14 @@ async function confirmHandOver() {
   background: var(--warn-wash);
   color: var(--warn-ink);
 }
-.task-notice__select {
-  padding: 2px 8px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink);
+/* 选人那两处下拉：一个塞在任务信息那一列里，一个铺满转交对话框。 */
+.task-details__picker {
+  flex: 1 1 auto;
+  min-width: 160px;
+  max-width: 240px;
+}
+.task-dialog__picker {
+  width: 100%;
 }
 .task-dialog__input {
   width: 100%;
