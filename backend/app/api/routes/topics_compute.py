@@ -301,10 +301,10 @@ async def acquire_session_work_lease(
     )
     try:
         # body.timeout caps how long the caller waits for a machine being
-        # prepared (wait_s). It is not the time to answer: a session that will
-        # not wait asks with ~0, and bounding the whole call by that answered
-        # 504 even when its machine was ready.
-        async with asyncio.timeout(max(body.timeout, work_lease.PREPARING_WAIT_S)):
+        # prepared (wait_s), and the whole call is held to it. A session that
+        # will not wait asks with ~0, which still gets one attempt's time
+        # (ANSWER_S): bounded by ~0 itself, a ready machine answered 504.
+        async with asyncio.timeout(max(body.timeout, work_lease.ANSWER_S)):
             return ok(
                 await work_lease.ensure(
                     db,
