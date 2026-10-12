@@ -130,9 +130,6 @@ export function usePanelChanges(props: PanelChangesProps) {
   const errorMsg = ref<string | null>(null)
   // 见 checkRepo。
   const noRepo = ref(false)
-  // 一枚 chip 指来的文件，在当前这个来源里找不到。不是这块面板出了错，所以它不走
-  // `errorMsg`——那一句的样子是「这一格加载失败」。
-  const missing = ref<string | null>(null)
   async function downloadOpenFile() {
     if (!openRawUrl.value || !openPath.value) return
     try {
@@ -416,6 +413,10 @@ export function usePanelChanges(props: PanelChangesProps) {
   // the reader actually clicked.
   let pendingOpen: string | null = null
 
+  // 上一次指名要开的文件没在这份清单里。`openFile` 拿它给调用者回话：文件不在这一支
+  // 的工作副本里，该换个地方开它（工作面板退到「项目当前版本」那一格）。
+  let openMissed = false
+
   // Two callers can ask for the listing in the same tick — `openFile` asks
   // directly, and coming on screen makes the activation watcher ask too. Letting
   // both run raced: whichever finished second re-ran the "nothing is open, select
@@ -447,10 +448,11 @@ export function usePanelChanges(props: PanelChangesProps) {
       const want = pendingOpen
       if (want) {
         // 这个来源里没有这个文件时不要去读它：读回来的是一句后端的英文错误，它会把
-        // 整块面板顶掉，而读者只是点了一枚 chip。说清它不在这里，列表留在原地。
+        // 整块面板顶掉，而读者只是点了一枚 chip。记下这一笔，让调用者去别的地方开它
+        // （工作面板退到「项目当前版本」那一格），列表留在原地。
         if (!listed.some((f) => f.path === want)) {
           pendingOpen = null
-          missing.value = want
+          openMissed = true
           return
         }
         // Keep the directed path reserved while its read is in flight, so a
@@ -475,12 +477,10 @@ export function usePanelChanges(props: PanelChangesProps) {
     fileRequest += 1
     openPath.value = null
     fileConflict.value = false
-    missing.value = null
   }
 
   async function selectFile(path: string) {
     keepDraft()
-    missing.value = null
     const request = ++fileRequest
     const epoch = sourceEpoch
     const pid = props.projectId
@@ -709,12 +709,12 @@ export function usePanelChanges(props: PanelChangesProps) {
     fileRequest += 1
     filesInFlight = null
     pendingOpen = null
+    openMissed = false
     fileSaving.value = false
     inFlight = 0
     loading.value = false
     gitDiff.value = ''
     errorMsg.value = null
-    missing.value = null
     resetFilePanel()
   }
 
@@ -744,12 +744,17 @@ export function usePanelChanges(props: PanelChangesProps) {
   // A <&path> chip (chat or doc) opens that file here. WorkPanel switches to this
   // tab first, then calls in. The file may be one this task never touched; it opens
   // all the same (the tree keeps listing what this task changed).
-  async function openFile(path: string) {
+  //
+  // 这一支的工作副本里根本没有它时，这里开不出来：回一句「没开着」，让 WorkPanel 换
+  // 一格去开（项目当前版本）。一枚 chip 是读者指名要看的一份文件，不该因为没归到这件
+  // 任务就点不开。
+  async function openFile(path: string): Promise<boolean> {
     if (!tasksLoaded.value) await loadTasks()
     keepDraft()
     clearSource()
     pendingOpen = path
     await Promise.all([loadGit(), loadFiles()])
+    return !openMissed
   }
 
   return {
@@ -764,7 +769,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     refreshing,
     errorMsg,
     noRepo,
-    missing,
     fileDiffs,
     diffByPath,
     treeFiles,

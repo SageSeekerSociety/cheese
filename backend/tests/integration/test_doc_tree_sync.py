@@ -15,7 +15,7 @@ def _project_and_topic(client) -> str:
     tid = client.post("/topics", json={"project_id": pid, "title": "T"}).json()["data"][
         "id"
     ]
-    return open_task(client, tid, start=False)["id"]
+    return open_task(client, tid)["id"]
 
 
 DOC_V1 = "# 目标\n\n搭建原型。\n\n## 约束\n\n- 数据脱敏\n- Recall@10"

@@ -1358,6 +1358,13 @@ button:not(.v-btn) {
 .mention:is(.file-ref, .topic-ref):hover {
   background: var(--line-2);
 }
+/* 指不到任何频道、任务或支线的 `<#id>`：照实写「引用不存在」，淡一档、没有去处，
+   读的人一眼看得出它点不开，而不是被一个借来的名字带进不存在的频道。 */
+.mention.topic-ref.ref-missing {
+  color: var(--muted);
+  background: var(--fill);
+  cursor: default;
+}
 /* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
 .mention--static {
   cursor: default;

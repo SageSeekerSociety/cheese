@@ -522,7 +522,6 @@
       "sourceUnavailable": "Couldn't open this task. View another source",
       "noRepo": "No code repository",
       "switchToCommitted": "Switch to the committed version",
-      "missingInTask": "{path} is not in this task",
       "conflict": "This file changed while you were editing. Saving now overwrites those changes",
       "reloadLatest": "Load the latest version",
       "saveAnyway": "Save anyway",
@@ -692,6 +691,7 @@
       "source": {
         "baseline": "Original",
         "upload": "Upload",
+        "template": "New from a template",
         "ai": "Edited by an AI teammate",
         "editor": "Saved from the online editor",
         "restore": "Restore",
@@ -986,7 +986,9 @@
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",
-      "topicFallback": "Channel",
+      "refThread": "Thread: {title}",
+      "refMissing": "missing reference",
+      "refMissingHint": "The channel, task or thread referenced here doesn't exist, or you can't see it",
       "timelineLabel": "Conversation",
       "liveNew": "{name}: {text}",
       "messageLabel": "{name}, {time}: {text}",
@@ -2078,7 +2080,10 @@
   },
   "image": {
     "alt": "Image",
-    "failed": "Couldn't load the image"
+    "close": "Close",
+    "failed": "Couldn't load the image",
+    "open": "View full size: {name}",
+    "zoomHint": "Scroll or pinch to zoom, drag to move"
   },
   "agentAvatar": {
     "defaultName": "Cheese",
@@ -2122,8 +2127,6 @@
     "leaveCollaboration": "Leave",
     "start": "Start",
     "startFailed": "Couldn't start. Try again later",
-    "reviewer": "Reviewer",
-    "reviewerNone": "Choose a reviewer",
     "startedLine": "{who} started {when}",
     "compare": "Compare with the start",
     "compareBack": "Back to the document",

@@ -29,7 +29,12 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.indexed_rows import FAILED_TURN_ROWS
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import (
+    CHECKLIST_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_handle_column, names_a_person
 from app.domain.thread.models import Thread
@@ -125,7 +130,24 @@ def _reply(block: Block | None) -> dict | None:
         "author": block.author,
         "content": block.content[:LAST_REPLY_CHARS],
         "created_at": block.created_at.isoformat(),
+        "checklist": _checklist(block),
     }
+
+
+def _checklist(block: Block) -> dict | None:
+    """The step checklist this message carries, or None when it carries none.
+
+    The line under a message in the main line shows one step of the last
+    reply, and its text cannot say which parts are steps: the line breaks that
+    tell one step from the next are folded away on the way here, and the text
+    is cut at ``LAST_REPLY_CHARS``. So the structure rides along with it — the
+    same ``{"items", "result"}`` a block's ``meta.checklist`` holds. Messages
+    written before that structure existed carry a bare ``true``: they are
+    drawn as ordinary messages, and get no checklist here either."""
+    checklist = (block.meta or {}).get(CHECKLIST_META_KEY)
+    if not isinstance(checklist, dict) or not isinstance(checklist.get("items"), list):
+        return None
+    return checklist
 
 
 async def _failed(

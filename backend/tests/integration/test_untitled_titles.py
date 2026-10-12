@@ -182,15 +182,11 @@ def test_the_migration_marks_tasks_that_were_never_named(client):
 
 
 def test_the_task_line_names_an_unnamed_task_started_before_it_was_named(client):
+    """建出来即已开始（#718），所以「开始的时候还没有名字」这件事就发生在
+    建它的那一下 —— 那句里写的是当时那个占位符，不是后来的名字。那句说在任务
+    自己的对话里，不在频道主线上（主线上那件任务只占「创建了任务」一行）。"""
     _, room_id = _room(client)
     task = _unnamed_task(client, room_id)
 
-    started = client.post(
-        f"/topics/{task['id']}/start",
-        json={"reviewer_handle": "alice"},
-        headers=session_auth_headers("alice"),
-    )
-
-    assert started.status_code == 200, started.text
     sentence = _room_line(client, task["id"], task["id"], "task_started")
     assert "“New task”" in render(sentence, "en")

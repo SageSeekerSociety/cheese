@@ -522,7 +522,6 @@
       "sourceUnavailable": "无法打开这个任务，换一个来源查看",
       "noRepo": "暂无代码仓库",
       "switchToCommitted": "切换到已提交版本",
-      "missingInTask": "{path} 不在这个任务里",
       "conflict": "你编辑期间，这个文件已被修改，直接保存会覆盖这些修改",
       "reloadLatest": "载入最新版本",
       "saveAnyway": "仍要保存",
@@ -692,6 +691,7 @@
       "source": {
         "baseline": "最初的样子",
         "upload": "上传",
+        "template": "从模板新建",
         "ai": "AI 队友修改",
         "editor": "在线编辑保存",
         "restore": "恢复",
@@ -986,7 +986,9 @@
       "waitingConnection": "等待连接",
       "today": "今天",
       "yesterday": "昨天",
-      "topicFallback": "频道",
+      "refThread": "支线：{title}",
+      "refMissing": "引用不存在",
+      "refMissingHint": "这里引用的频道、任务或支线不存在，或者你看不到它",
       "timelineLabel": "对话记录",
       "liveNew": "{name}：{text}",
       "messageLabel": "{name}，{time}：{text}",
@@ -2078,7 +2080,10 @@
   },
   "image": {
     "alt": "图片",
-    "failed": "图片加载失败"
+    "close": "关闭",
+    "failed": "图片加载失败",
+    "open": "查看大图：{name}",
+    "zoomHint": "滚轮或双指缩放，按住拖动"
   },
   "agentAvatar": {
     "defaultName": "芝士",
@@ -2122,8 +2127,6 @@
     "leaveCollaboration": "退出协作",
     "start": "开始",
     "startFailed": "未能开始，稍后重试",
-    "reviewer": "审阅人",
-    "reviewerNone": "选择审阅人",
     "startedLine": "{who} {when}开始",
     "compare": "与开始时相比",
     "compareBack": "返回文档",

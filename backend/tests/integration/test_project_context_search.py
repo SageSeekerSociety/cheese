@@ -288,7 +288,7 @@ def test_a_busy_conversation_does_not_crowd_out_the_documents(client):
         client,
         _say(project, room, long + "上线日期定在 10 月 8 日", kind=BlockKind.weekly),
     )
-    task = open_task(client, room, owner=OWNER, start=False)["id"]
+    task = open_task(client, room, owner=OWNER)["id"]
     _seed(client, _paragraph(project, task, long + "上线日期以周报为准"))
 
     r = client.get(
@@ -339,7 +339,7 @@ def test_paging_through_one_kind_gives_every_hit_once(client):
 def test_one_page_can_hold_several_kinds(client):
     project = _project(client)
     room = _room(client, project, "文档")
-    task = open_task(client, room, owner=OWNER, start=False)["id"]
+    task = open_task(client, room, owner=OWNER)["id"]
     _seed(client, _paragraph(project, task, "接口约定写在这里"))
     owner = session_auth_headers(OWNER)
     commented = client.post(
@@ -518,7 +518,7 @@ def test_a_hit_names_a_person_by_the_nickname_they_have_now(client):
     room = _room(client, project, "限流")
     _seed(client, _nickname(OWNER, "Ada"))
     _seed(client, _say(project, room, "限流阈值定为每秒五十"))
-    task = open_task(client, room, owner=OWNER, start=False)["id"]
+    task = open_task(client, room, owner=OWNER)["id"]
     _seed(client, _paragraph(project, task, "限流阈值写进文档"))
     _seed(client, _say(project, room, "限流先观察一周", author="no-such-person"))
 

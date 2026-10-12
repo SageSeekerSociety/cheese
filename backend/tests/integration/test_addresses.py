@@ -100,9 +100,9 @@ def test_only_the_projects_managers_rename_it(client):
 def test_each_kind_is_numbered_on_its_own_from_one(client):
     project = new_project(client)
     general = _channel(client, project["id"], "前端")
-    first = open_task(client, general["id"], owner="owner", start=False)
+    first = open_task(client, general["id"], owner="owner")
     doc = _document(client, project["id"], "竞品对比")
-    second = open_task(client, general["id"], owner="owner", start=False)
+    second = open_task(client, general["id"], owner="owner")
     assert (first["number"], second["number"]) == (1, 2)
     assert doc["number"] == 1
     # The project's own general channel was its first.
@@ -110,14 +110,14 @@ def test_each_kind_is_numbered_on_its_own_from_one(client):
 
     elsewhere = new_project(client)
     other = _channel(client, elsewhere["id"], "x")
-    assert open_task(client, other["id"], owner="owner", start=False)["number"] == 1
+    assert open_task(client, other["id"], owner="owner")["number"] == 1
 
 
 def test_a_number_leads_to_the_thing_and_the_thing_to_its_number(client):
     project = new_project(client)
     _rename(client, project["id"], "helper")
     room = _channel(client, project["id"], "前端")
-    task = open_task(client, room["id"], owner="owner", start=False)
+    task = open_task(client, room["id"], owner="owner")
     doc = _document(client, project["id"], "竞品对比")
 
     found = client.get(
@@ -150,7 +150,7 @@ def test_an_address_tells_nothing_to_someone_who_may_not_see_it(client):
     join_project_team(client, project["id"], "member")
     _rename(client, project["id"], "secret-plans")
     hidden = _channel(client, project["id"], "私密", members_only=True)
-    task = open_task(client, hidden["id"], owner="owner", start=False)
+    task = open_task(client, hidden["id"], owner="owner")
 
     assert _resolve(client, "secret-plans", headers=OUTSIDER).status_code == 404
     assert _resolve(client, "no-such-project").status_code == 404
