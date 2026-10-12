@@ -109,10 +109,11 @@
       "vms": "Plus {n} whole-machine VMs, which count toward the cap",
       "slots": "Sandbox slots",
       "slotsNote": "{free} free; the pool keeps at least {min} and adds a host below that",
-      "waiting": "Sessions waiting for a sandbox",
+      "waiting": "Waiting for a sandbox",
       "waitingNote": "The longest has waited {for}",
       "failures": "Provider failures",
-      "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes"
+      "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes",
+      "hostsNote": "Counts hosts still in the pool; given-up and releasing ones are not counted."
     },
     "alert": {
       "notConfigured": "This deployment has no MicroCloud configured; cloud sandboxes are unavailable",
@@ -184,7 +185,8 @@
     "blind": "Two things are not counted here: sessions refused while the pool was full or the provider kept failing, and working sandboxes lost when their host went away. Neither leaves a record to count.",
     "warm": "Warm pool (target {target})",
     "noWarm": "No warm machines right now",
-    "warmAge": "Age {for} · {n} attempts",
-    "config": "{perCore} sandboxes per core, {memory} GB memory each; a sandbox is destroyed after {sandboxIdle} idle, a host released after {hostIdle} idle, a whole VM after {vmIdle} idle"
+    "warmAge": "Age {for}",
+    "config": "{perCore} sandboxes per core, {memory} GB memory each; a sandbox is destroyed after {sandboxIdle} idle, a host released after {hostIdle} idle, a whole VM after {vmIdle} idle",
+    "attempts": "1 attempt | {n} attempts"
   }
 }

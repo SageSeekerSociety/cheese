@@ -334,7 +334,14 @@ export const VIEW_ADMIN_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.adminMachinesPageView.s4.note')
         },
-        props: { overview: { ...CRV_MACHINES, hosts: [], warm: [] } },
+        props: {
+          overview: {
+            ...CRV_MACHINES,
+            pool: { ...CRV_MACHINES.pool, hosts: 0, slots: 0, used: 0, free: 0, waiting: 0, oldest_wait_since: null },
+            hosts: [],
+            warm: [],
+          },
+        },
         expect: '此刻一台宿主机都没有',
       },
     ],

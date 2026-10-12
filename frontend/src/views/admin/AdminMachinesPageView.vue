@@ -126,6 +126,14 @@ const hosts = computed(() => props.overview?.hosts ?? [])
 const history = computed(() => props.overview?.history ?? null)
 const first = computed(() => props.loading && !props.overview)
 
+const hostsNote = computed(() =>
+  pool.value
+    ? [t('admin.machines.kpi.hostsNote'), pool.value.vms ? t('admin.machines.kpi.vms', { n: pool.value.vms }) : '']
+        .filter(Boolean)
+        .join(' ')
+    : ''
+)
+
 const failureNote = computed(() =>
   pool.value
     ? t('admin.machines.kpi.failuresNote', {
@@ -145,7 +153,7 @@ const failureNote = computed(() =>
           :label="t('admin.machines.kpi.hosts')"
           :value="pool ? `${n(pool.hosts)} / ${n(pool.max_hosts)}` : ''"
           :loading="first"
-          :note="pool && pool.vms ? t('admin.machines.kpi.vms', { n: pool.vms }) : undefined"
+          :note="pool ? hostsNote : undefined"
         />
         <AdminKpiCard
           :label="t('admin.machines.kpi.slots')"
@@ -228,7 +236,7 @@ const failureNote = computed(() =>
                 <span class="status-dot" :class="phaseDot(h.phase)" />
                 {{ t(PHASE_LABEL[h.phase]) }}
               </span>
-              <span class="mc-dim">{{ spec(h) }}</span>
+              <span class="mc-dim mc-spec">{{ spec(h) }}</span>
               <span class="mc-slots">
                 <template v-if="!h.whole_machine">
                   <span class="mc-meter" aria-hidden="true">
@@ -238,20 +246,22 @@ const failureNote = computed(() =>
                 </template>
                 <span v-else class="mc-num">{{ n(h.used) }}</span>
               </span>
-              <span class="mc-dim mc-num" :title="stamp(h.created_at)">{{ since(h.created_at) }}</span>
+              <span class="mc-dim mc-num mc-age" :title="stamp(h.created_at)">{{ since(h.created_at) }}</span>
               <span class="mc-note" :title="hostNote(h)">{{ hostNote(h) }}</span>
             </button>
             <div v-if="open.has(h.id)" class="mc-sandboxes" role="rowgroup">
-              <div v-for="s in h.sandboxes" :key="s.id" class="mc-sandbox" role="row">
+              <!-- 和宿主机那一行同一套列：房间落在「宿主机」列下，状态落在「阶段」列下。 -->
+              <div v-for="s in h.sandboxes" :key="s.id" class="mc-row mc-row--sandbox" role="row">
+                <span class="mc-caret" />
+                <a class="mc-place" :href="`/projects/${s.project_id}/topics/${s.room_id}`">
+                  {{ s.project ?? '—' }} / {{ s.room ?? t('admin.machines.taskRoom') }}
+                </a>
                 <span class="mc-phase">
                   <span class="status-dot" :class="stateDot(s.state)" />
                   {{ t(STATE_LABEL[s.state]) }}
                 </span>
-                <a class="mc-place" :href="`/projects/${s.project_id}/topics/${s.room_id}`">
-                  {{ s.project ?? '—' }} / {{ s.room ?? t('admin.machines.taskRoom') }}
-                </a>
-                <span class="mc-dim">{{ sandboxWhen(s) }}</span>
-                <span class="t-meta">{{ t('admin.machines.placed', { at: stamp(s.placed_at) }) }}</span>
+                <span class="mc-dim mc-when">{{ sandboxWhen(s) }}</span>
+                <span class="mc-dim mc-placed">{{ t('admin.machines.placed', { at: stamp(s.placed_at) }) }}</span>
               </div>
             </div>
           </template>
@@ -300,7 +310,7 @@ const failureNote = computed(() =>
             </dd>
           </div>
         </dl>
-        <p class="t-meta mc-blind">{{ t('admin.machines.blind') }}</p>
+        <p class="mc-foot mc-blind">{{ t('admin.machines.blind') }}</p>
       </section>
 
       <section class="mc-section">
@@ -316,13 +326,16 @@ const failureNote = computed(() =>
               <span class="mc-mono">{{ w.state }}</span>
             </span>
             <span v-if="w.machine_id !== null" class="t-meta">#{{ w.machine_id }}</span>
-            <span class="mc-dim">{{ t('admin.machines.warmAge', { for: since(w.created_at), n: w.attempts }) }}</span>
+            <span class="mc-dim"
+              >{{ t('admin.machines.warmAge', { for: since(w.created_at) }) }} ·
+              {{ t('admin.machines.attempts', { n: w.attempts }, w.attempts) }}</span
+            >
             <span v-if="w.error" class="mc-note" :title="w.error">{{ w.error }}</span>
           </li>
         </ul>
       </section>
 
-      <p class="t-meta mc-config">
+      <p class="mc-foot">
         {{
           t('admin.machines.config', {
             perCore: overview.config.slots_per_core,
@@ -348,14 +361,19 @@ const failureNote = computed(() =>
 }
 .mc-alert {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   margin: 12px 0 0;
   font-size: 14px;
   color: var(--ink);
 }
+/* 一句话折成几行时，圆点跟着第一行。 */
+.mc-alert .status-dot {
+  flex: none;
+  margin-top: 0.55em;
+}
 .mc-section {
-  margin-bottom: 28px;
+  margin-top: 28px;
 }
 .mc-section > .t-title {
   margin: 0 0 8px;
@@ -363,13 +381,15 @@ const failureNote = computed(() =>
 .mc-table {
   overflow-x: auto;
 }
+/* 宿主机那一行、它展开的沙箱行、表头共用这一套列：沙箱的房间和状态落在「宿主机」
+   「阶段」两列下面。 */
 .mc-row {
   display: grid;
-  grid-template-columns: 16px minmax(160px, 1.2fr) 112px 112px 112px 72px minmax(160px, 1.6fr);
+  grid-template-columns: 16px minmax(160px, 1.2fr) 112px 140px 104px 56px minmax(160px, 1.6fr);
   align-items: center;
   gap: 12px;
   width: 100%;
-  min-width: 860px;
+  min-width: 840px;
   padding: 8px 12px;
   border: 0;
   border-bottom: 1px solid var(--line);
@@ -393,6 +413,15 @@ const failureNote = computed(() =>
 }
 .mc-row--gone {
   color: var(--muted);
+}
+.mc-row--sandbox {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  border-bottom: 0;
+  cursor: default;
+}
+.mc-when {
+  grid-column: 4 / 7;
 }
 .mc-caret {
   color: var(--faint);
@@ -444,24 +473,13 @@ const failureNote = computed(() =>
   background: var(--muted);
 }
 .mc-note {
-  overflow: hidden;
   color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .mc-sandboxes {
-  min-width: 860px;
-  padding: 4px 12px 8px 40px;
+  padding: 2px 0 6px;
   border-bottom: 1px solid var(--line);
   background: var(--canvas);
-}
-.mc-sandbox {
-  display: grid;
-  grid-template-columns: 112px minmax(160px, 1.4fr) minmax(160px, 1.4fr) 120px;
-  align-items: center;
-  gap: 12px;
-  padding: 6px 0;
-  font-size: 13px;
 }
 .mc-place {
   overflow: hidden;
@@ -488,8 +506,12 @@ const failureNote = computed(() =>
   font-size: 14px;
   color: var(--ink);
 }
-.mc-blind {
+/* 口径说明是一句话，不是时间戳或计数：用正文字体，只降一档颜色和字号。 */
+.mc-foot {
   margin: 12px 0 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--faint);
 }
 .mc-warm {
   margin: 0;
@@ -498,13 +520,55 @@ const failureNote = computed(() =>
 }
 .mc-warm__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 4px 12px;
   padding: 6px 0;
   border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
-.mc-config {
-  margin: 0;
+/* 窄屏放不下七列：一行折成三行（名字和阶段 / 规格和沙箱 / 说明），表头不画，不靠
+   横向滚动把一半的列藏到屏幕外。沙箱行同理：房间和状态 / 什么时候 / 放上来的时刻。 */
+@media (max-width: 760px) {
+  .mc-row {
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    grid-template-areas:
+      'caret host phase'
+      '. spec slots'
+      '. note note';
+    row-gap: 4px;
+    min-width: 0;
+  }
+  .mc-row--head,
+  .mc-age {
+    display: none;
+  }
+  .mc-caret {
+    grid-area: caret;
+  }
+  .mc-host,
+  .mc-place {
+    grid-area: host;
+  }
+  .mc-phase {
+    grid-area: phase;
+  }
+  .mc-spec,
+  .mc-when {
+    grid-area: spec;
+  }
+  .mc-slots {
+    grid-area: slots;
+  }
+  .mc-note,
+  .mc-placed {
+    grid-area: note;
+  }
+  .mc-row--sandbox {
+    grid-template-areas:
+      'caret host phase'
+      '. spec spec'
+      '. note note';
+  }
 }
 </style>

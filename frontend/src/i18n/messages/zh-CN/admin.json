@@ -109,10 +109,11 @@
       "vms": "另有 {n} 台整机虚拟机，也算在上限里",
       "slots": "沙箱槽位",
       "slotsNote": "空闲 {free} 格，池子至少留 {min} 格，不够就加一台",
-      "waiting": "在等沙箱的会话",
+      "waiting": "等沙箱的会话",
       "waitingNote": "等得最久的已经 {for}",
       "failures": "provider 失败",
-      "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台"
+      "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
+      "hostsNote": "数的是还在池里的；已放弃、释放中的不算"
     },
     "alert": {
       "notConfigured": "这个部署没有配置 MicroCloud，云端沙箱不可用",
@@ -184,7 +185,8 @@
     "blind": "这里数不到两件事：池满或 provider 连续失败时被拒的会话，以及宿主机失联时丢掉的工作中沙箱。两者都没有留下可查的记录。",
     "warm": "温机池（目标 {target} 台）",
     "noWarm": "此刻没有温机",
-    "warmAge": "已存在 {for} · 尝试 {n} 次",
-    "config": "每核 {perCore} 个沙箱，每个沙箱 {memory} GB 内存；沙箱空闲 {sandboxIdle}后销毁，宿主机空闲 {hostIdle}后释放，整机虚拟机空闲 {vmIdle}后释放"
+    "warmAge": "已存在 {for}",
+    "config": "每核 {perCore} 个沙箱，每个沙箱 {memory} GB 内存；沙箱空闲 {sandboxIdle}后销毁，宿主机空闲 {hostIdle}后释放，整机虚拟机空闲 {vmIdle}后释放",
+    "attempts": "尝试 {n} 次"
   }
 }
