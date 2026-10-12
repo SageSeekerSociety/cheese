@@ -553,6 +553,47 @@ class WorkflowTextTest(unittest.TestCase):
             self.assertEqual(len(argv), at + 2, f"title split or extra args: {argv}")
             self.assertFalse((tmp / "pwned").exists(), "title reached the shell as code")
 
+    def test_the_draft_job_states_the_runner_bounds(self):
+        # ci-fast's defaults (180s, a 3072 MiB sampled ceiling) are the WORK
+        # MACHINE's own limits — 3072 MiB is its session cap. A draft runs on a
+        # CI runner instead, and with those defaults nothing behind the
+        # frontend suite was ever reached: every completed draft run in the
+        # 10-12 03:56–06:30 window died in frontend-unit at 2771–3079 MiB
+        # sampled, leaving every later check at 0s. So the job states bounds
+        # sized for the runner: above the local defaults, still quick tier (a
+        # draft must not be trimmed to the static hooks), and within what
+        # ci-fast will accept.
+        body = run_body_containing(self.text, "ci-fast.py")
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            bindir = tmp / "bin"
+            bindir.mkdir()
+            argv_log = tmp / "argv"
+            _stub(bindir, "gh", "printf '%s' \"$STUB_TITLE\"\n")
+            _stub(bindir, "python3",
+                  'for a in "$@"; do printf "%s\\0" "$a" >> "$ARGV_LOG"; done\n')
+            env = {**os.environ, "PATH": f"{bindir}:{os.environ['PATH']}",
+                   "STUB_TITLE": "feat: x", "ARGV_LOG": str(argv_log),
+                   "GITHUB_REPOSITORY": "owner/repo", "PR_NUMBER": "1", "GH_TOKEN": "x"}
+            subprocess.run(["bash", "-c", body], env=env, cwd=tmp, check=True,
+                           capture_output=True, text=True)
+            argv = argv_log.read_text().split("\0")[:-1]
+        flags = {flag: argv[i + 1] for i, flag in enumerate(argv) if flag.startswith("--")}
+        self.assertEqual(flags.get("--tier"), "quick", f"argv: {argv}")
+        for flag, default, prompt in (
+            ("--budget", 180, "the work machine's budget"),
+            ("--memory-mib", 3072, "the work machine's ceiling"),
+        ):
+            self.assertIn(flag, flags, f"draft job falls back to {prompt}: {argv}")
+            self.assertGreater(float(flags[flag]), default, f"{flag} is not sized for a runner")
+        help_text = subprocess.run(
+            [sys.executable, str(WORKFLOW.parent.parent / "scripts" / "ci-fast.py"), "--help"],
+            check=True, capture_output=True, text=True).stdout
+        cap = int(re.search(r"ceiling, 1\.\.(\d+)", help_text).group(1))
+        # A workflow asking for more than ci-fast accepts is a red draft run for
+        # every PR, which is the failure this tier just came back from.
+        self.assertLessEqual(int(flags["--memory-mib"]), cap, "ceiling ci-fast refuses")
+
     def test_the_draft_job_installs_both_dependency_sets(self):
         # ci-fast widens its own scope beyond the raw select() flags (unknown
         # paths → backend+frontend, i18n → backend), so the draft's install must

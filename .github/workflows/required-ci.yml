@@ -79,10 +79,24 @@ jobs:
     needs: scope
     if: needs.scope.outputs.tier == 'quick'
     runs-on: ubuntu-latest
-    # 180s is the quick tier's own budget, enforced inside ci-fast.py. This job
-    # timeout is only the outer backstop; dependency prep happens before the
-    # budget starts ticking and is bounded separately by the timeout.
-    timeout-minutes: 20
+    # The draft tier keeps the quick tier's SELECTION but not the work machine's
+    # bounds: ci-fast's 180s / 3072 MiB defaults describe the developer's box
+    # (3072 MiB is literally its session cap). A runner that inherits them can
+    # never judge a frontend change: of the 12 completed draft runs in the
+    # 10-12 03:56–06:30 window, all 12 died in frontend-unit — peaks 2771–3079
+    # MiB against that 3072 cap — with every later check left at 0s. This box is
+    # the public-repo standard runner (4 vCPU / 16 GiB), which is the machine
+    # frontend/vite.config.ts sizes its own pool for: it gets a ceiling that
+    # backs that pool (9216 MiB) and a budget from the full-CI step times.
+    # Measured on the first real draft run of this tier (2026-10-12, the widest
+    # plan — unknown paths widen scope to the full suite plus the full type
+    # check): the unit suite passed in 584s on 3 forks at a 3580 MiB peak, the
+    # type check in 123s, and backend-pure then hit the 1200s budget. So 1200s
+    # covers the targeted plan (change-related tests, changed-file types) with
+    # room, and a draft that widens to everything may still report unknown.
+    # This job timeout is only the outer backstop; install + pre-commit env prep
+    # happen around the budget and are bounded separately.
+    timeout-minutes: 30
     permissions:
       contents: read
       pull-requests: read
@@ -120,15 +134,15 @@ jobs:
       # dependency ci-fast needs absent and report the draft blocked (a false
       # red on a change that touched nothing). Installing both removes the
       # coupling instead of re-deriving ci-fast's rules here and drifting.
-      # This prep runs before ci-fast's 180s quick budget starts: it is outside
-      # that budget, bounded only by this job's timeout.
+      # This prep runs before ci-fast's budget starts: it is outside that
+      # budget, bounded only by this job's timeout.
       - name: Install dependencies
         run: |
           (cd backend && uv sync --frozen --all-extras)
           (cd frontend && pnpm install --frozen-lockfile)
-      # `--tier quick` (180s) is the draft tier's whole point; a run that
-      # exhausts the budget exits unknown (2), which this step turns into a red
-      # check — the quick tier is never trimmed to green.
+      # `--tier quick` picks the checks; the bounds are the runner's (see the
+      # job comment). A run that exhausts the budget exits unknown (2), which
+      # this step turns into a red check — the tier is never trimmed to green.
       - name: ci:fast quick tier
         env:
           GH_TOKEN: ${{ github.token }}
@@ -142,7 +156,7 @@ jobs:
           # no untrusted text reaches the script through a workflow expression,
           # and nothing multiline is written to $GITHUB_OUTPUT.
           title="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq .title)"
-          python3 .github/scripts/ci-fast.py --tier quick --title "$title"
+          python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --title "$title"
 
   backend:
     needs: scope

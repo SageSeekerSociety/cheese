@@ -176,7 +176,7 @@ python3 .github/scripts/ci-fast.py --tier quick --types        # ≡ task ci:fas
 
 Required CI（`.github/workflows/required-ci.yml`）按事件分两档，档位由 `.github/scripts/required-ci.py` 从事件读取（`tier_for`）：
 
-- **草稿 PR**（`pull_request` 且 payload 里 `pull_request.draft` 为 `true`）：只跑快检档——一个内联 job 跑 `python3 .github/scripts/ci-fast.py --tier quick`，所有产品 suite 一律跳过。聚合 job 的名字是 **`CI required (draft quick)`**，与正式名字不同。
+- **草稿 PR**（`pull_request` 且 payload 里 `pull_request.draft` 为 `true`）：只跑快检档——一个内联 job 跑 `python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216`，所有产品 suite 一律跳过。聚合 job 的名字是 **`CI required (draft quick)`**，与正式名字不同。档位给的是**选中范围**与本地 quick 档相同，**边界不是**：本地默认的 180s / 3072 MiB 是开发机自己的限制（3072 MiB 就是它的会话上限），跑在 4 vCPU / 16 GiB runner 上会让前端套件在到达上限时被杀——10-12 03:56–06:30 窗口里 12 个跑完的草稿 run 全红，12 个都死在 `frontend-unit`（超时 8、撞上限 3、测不出 1，峰值 2771–3079 MiB），后面的检查一律记 0 秒。所以草稿 job 给 runner 自己能兜住的采样上限（9216 MiB，前端 vitest 并行度按同一个数推：每 3072 MiB 一个 fork，公开仓库的标准 runner 是 4 vCPU / 16 GiB，算出 3 个，和 `frontend/vite.config.ts` 给同一台机器算的一致）和按完整 CI 各步耗时定的预算（1200s）。首次实跑（2026-10-12，恰好是最宽的那一档：未知路径把范围放大成全量套件 + 全量类型）校准了这两个数：全量前端单测 3 个 fork 584s 通过、组峰值 3580 MiB（远低于 9216 MiB 的上限），全量类型 123s 通过，随后的 `backend-pure` 撞上 1200s 预算。也就是说定向的那一档（改动相关测试 + 改动文件类型检查）在预算内有富余，回退到全量的那一半仍可能报 unknown。预算耗尽仍然是 unknown，不会为了变绿裁掉检查。
 - **正式 PR / 合并队列**（`merge_group`，或任意 `draft` 为 `false` 的 `pull_request`，含把草稿转正的 `ready_for_review`）：跑完整门禁——merge diff 选中的每个 suite 都跑，聚合 job 名字是 **`CI required`**。
 
 关键点：

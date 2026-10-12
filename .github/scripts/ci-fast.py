@@ -1,6 +1,8 @@
 """Scoped, bounded local evidence before push; never a substitute for full CI.
 
-task ci:fast: quick tier, 180s, serial checks and sampled 3072 MiB group RSS.
+task ci:fast: quick tier, 180s, and a sampled 3072 MiB group RSS ceiling — both
+are this machine's own limits; --budget/--memory-mib override them for a bigger
+one, which is what Required CI's draft job does (see ci-fast.md).
 Direct Python invocation defaults to the legacy static tier (no tests/types).
 --tier extended gives the quick selection 900s without expanding its coverage.
 --types additionally runs the full Pyright/frontend-typecheck manual hooks.
@@ -46,7 +48,27 @@ FAST_HOOKS = {
     "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"],
 }
 TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
+# pre-commit hooks that spawn the JS toolchain (node/eslint/stylelint) rather
+# than python, and are run after tests/types. On a small machine one started
+# with too little budget left can be killed by the kernel before the sampled
+# RSS sees it coming, which would otherwise turn into a hard "blocked" for a
+# tier whose whole job is to report unknown when it cannot judge. The ratchets
+# next to them are python scripts and cost seconds, so they are not guarded:
+# their own per-check timeout reports them unknown if the budget really is gone.
+JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
 MERGE_BASE_HOOKS = {"file-size", "migration-fork"}
+# Group RSS the sampled ceiling may be set to. The default (3072 MiB) is the
+# work machine's own session cap — what a local run can actually be backed by —
+# so a local run keeps it. A CI runner has its own memory and no session cap:
+# 9216 MiB is what the frontend's own rule (frontend/vite.config.ts: one fork
+# per 3 GiB) gives that box — a third of the 4 vCPU / 16 GiB runner's RAM.
+# Anything above is refused rather than clamped: past it the sampled ceiling
+# stops describing what the machine can back.
+MAX_MEMORY_MIB = 9216
+# Floor for starting a JS-runtime hook after tests/types. These three take tens
+# of seconds each (eslint ~67s in full CI), so below it the start is not worth
+# the kill it would earn a second or two later.
+JS_HOOK_MIN_SECONDS = 15
 
 
 def sh(args):
@@ -113,12 +135,13 @@ def main(argv):
     parser.add_argument("--report", default=str(Path(GIT_DIR, "ci-fast-report.json")))
     parser.add_argument("--timeout", type=float, default=900, help="per-check seconds")
     parser.add_argument("--budget", type=float, help="whole tier seconds (quick/static 180; extended 900)")
-    parser.add_argument("--memory-mib", type=int, default=3072, help="sampled process-group RSS ceiling")
+    parser.add_argument("--memory-mib", type=int, default=3072,
+                        help=f"sampled process-group RSS ceiling, 1..{MAX_MEMORY_MIB}")
     args = parser.parse_args(argv)
     if args.budget is None:
         args.budget = 900 if args.tier == "extended" else 180
-    if args.timeout <= 0 or args.budget <= 0 or not 0 < args.memory_mib <= 3072:
-        parser.error("positive time limits and 1..3072 MiB are required")
+    if args.timeout <= 0 or args.budget <= 0 or not 0 < args.memory_mib <= MAX_MEMORY_MIB:
+        parser.error(f"positive time limits and 1..{MAX_MEMORY_MIB} MiB are required")
     started = time.monotonic()
     report_path = Path(args.report)
     report = {"version": 2, "status": "unknown", "exit": UNKNOWN, "tier": args.tier,
@@ -262,13 +285,24 @@ def run(args, report, finish, started):
     hook("file-size")
     if args.tier != "static":
         with tempfile.TemporaryDirectory(prefix="ci-fast-") as tmp:
-            plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp), bool(unknown) or not base_sha)
+            plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp),
+                                        bool(unknown) or not base_sha, args.memory_mib)
             report["not_run"].extend(omissions)
             for check in plan:
                 invoke(check["id"], check["command"], check["cwd"], check.get("evidence"), check.get("env"))
     for identifier in hooks:
-        if identifier != "file-size":
-            hook(identifier)
+        if identifier == "file-size":
+            continue
+        if identifier in JS_RUNTIME_HOOKS and deadline - time.monotonic() < JS_HOOK_MIN_SECONDS:
+            # Tests/types already took what the tier had; a node hook started
+            # now would spend its whole life being killed. Report it unknown —
+            # this tier is allowed to say it could not check, and must never
+            # report a red it did not actually observe.
+            report["ran"].append({"id": identifier, "result": "unknown", "seconds": 0,
+                                  "reason": "no budget left after tests/types"})
+            report["not_run"].append({"id": identifier, "reason": "超时/预算耗尽"})
+            continue
+        hook(identifier)
     if args.tier == "static":
         report["not_run"].extend([
             {"id": "pytest", "reason": "static tier only; run task ci:fast for selected pure tests"},

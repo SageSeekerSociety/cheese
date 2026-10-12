@@ -38,7 +38,7 @@ covers:
 
 最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。
 
-**草稿 PR 只跑快检档**：`pull_request` 的 payload 里 `draft` 为 `true` 时，只跑一个内联 job（`ci-fast.py --tier quick`），所有套件跳过，聚合 job 名叫 `CI required (draft quick)`——和分支保护要求的 `CI required` 不同名，所以草稿的绿不可能是正式门禁的绿。草稿转正式（`ready_for_review`）会重跑一次**完整** run，`merge_group` 永远是完整档；事件读不出、`draft` 缺失一律按完整档处理（fail closed）。档位判定在 `required-ci.py` 的 `tier_for`。让草稿进入验收不需要手动先转正式：平台递卡本身就会把还开着的 draft PR 转正式（`pr_publish.py` 递卡时调 `mark_ready_for_review`），从而触发完整的 `CI required`；采纳要等同一 head 上完整的 `CI required` 变绿，草稿快检的绿不算。
+**草稿 PR 只跑快检档**：`pull_request` 的 payload 里 `draft` 为 `true` 时，只跑一个内联 job（`ci-fast.py --tier quick --budget 1200 --memory-mib 9216`），所有套件跳过，聚合 job 名叫 `CI required (draft quick)`——和分支保护要求的 `CI required` 不同名，所以草稿的绿不可能是正式门禁的绿。选中范围与本地 quick 档一致，边界按 runner 给（本地默认 180s / 3072 MiB 是开发机自己的限制，用它会让带前端改动的草稿全红；详见 `.github/scripts/ci-fast.md`）。草稿转正式（`ready_for_review`）会重跑一次**完整** run，`merge_group` 永远是完整档；事件读不出、`draft` 缺失一律按完整档处理（fail closed）。档位判定在 `required-ci.py` 的 `tier_for`。让草稿进入验收不需要手动先转正式：平台递卡本身就会把还开着的 draft PR 转正式（`pr_publish.py` 递卡时调 `mark_ready_for_review`），从而触发完整的 `CI required`；采纳要等同一 head 上完整的 `CI required` 变绿，草稿快检的绿不算。
 
 这样做的好处：分支保护里只有一个名字，加减套件不用改仓库设置；只改文档不会触发后端测试，改了后端也不可能漏跑。
 
