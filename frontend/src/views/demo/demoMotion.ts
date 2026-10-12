@@ -13,7 +13,8 @@ export type MotionMode = 'normal' | 'slow' | 'off'
 export const MOTION_FACTOR: Record<MotionMode, number> = { normal: 1, slow: 4, off: 0 }
 
 // 档位上的倍数从 `MOTION_FACTOR` 拼出来，不在这里再写一遍数：倍数改了，按钮上的字
-// 和那句说明一起改，不会出现「按钮写着 ×4、实际乘了 2」。
+// 和那句说明一起改，不会出现「按钮写着 ×4、实际乘了 2」。改倍数时另有两处跟着改——
+// `demoMotion.spec.ts` 和 `CatalogDetailPage.spec.ts` 里按 label 找按钮的那两行。
 export const MOTION_MODES: ReadonlyArray<{ id: MotionMode; label: string }> = [
   { id: 'normal', label: '正常' },
   { id: 'slow', label: `慢放 ×${MOTION_FACTOR.slow}` },
