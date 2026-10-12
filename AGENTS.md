@@ -36,7 +36,7 @@ A new kind of data does not go into an existing table as one more type value or 
 
 ## Assume other agents are working right now
 
-Concurrently, in this repo, on adjacent files. Look for an open PR already making your fix before you start, and review every path your change touches before handing it off; a cache directory in that list is a stop sign. Never `git stash` — the stack is shared by every worktree, and a pop in yours applies someone else's uncommitted work and drops it from under them, silently; commit instead, and `git reset --soft HEAD~1` gives the staged state back. `task setup` turns `autoStash` off for this repository, so a plain `git pull` does not stash behind your back (`task git:config` does it for an older clone).
+Concurrently, in this repo, on adjacent files. Look for an open PR already making your fix before you start, and review every path your change touches before handing it off; a cache directory in that list is a stop sign. An independent review of a PR starts with `.claude/scripts/pr-review.sh prepare <PR>` and follows the REVIEW.md it prints, one method for every seat; do not assemble your own. Never `git stash` — the stack is shared by every worktree, and a pop in yours applies someone else's uncommitted work and drops it from under them, silently; commit instead, and `git reset --soft HEAD~1` gives the staged state back. `task setup` turns `autoStash` off for this repository, so a plain `git pull` does not stash behind your back (`task git:config` does it for an older clone).
 
 ## Test behaviour, never the implementation
 
