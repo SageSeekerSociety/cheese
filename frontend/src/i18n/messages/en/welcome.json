@@ -241,7 +241,8 @@
     "reply": {
       "title": "{agent}'s reply",
       "text": "{agent} has replied, in a thread under your message. Open it.",
-      "textWaiting": "{agent} is working on it. The reply appears in a thread under your message; you can leave and will be notified."
+      "textWaiting": "{agent} is working on it. The reply appears in a thread under your message; you can leave and will be notified.",
+      "textFailed": "{agent} could not reply this time; the thread says why. Open it, and once that is sorted, press Retry."
     },
     "confirm": {
       "title": "Confirm in the thread",

@@ -59,6 +59,17 @@ describe('新手引导的后半程', () => {
     expect(guide.current.value?.key).toBe('taskPage')
   })
 
+  it('stays on the reply while 芝士 could not reply, even with the thread open', () => {
+    const guide = useProjectTour()
+    const facts = { ...none, asked: true }
+    noteFacts(facts)
+    guide.stop.value = at('reply')
+    guide.settle({ facts, has: onPage('reply-failed', 'thread-pane') })
+    expect(guide.current.value?.key).toBe('reply')
+    guide.settle({ facts, has: onPage('reply-thread', 'thread-pane') })
+    expect(guide.current.value?.key).toBe('confirm')
+  })
+
   it('is done once a delivery is accepted', () => {
     const guide = useProjectTour()
     noteFacts(none)

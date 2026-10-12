@@ -264,9 +264,12 @@
       :ring="!guideStep.area"
       :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
       :text="
-        t(`welcome.guide.${guideStep.key}.${guideStep.waiting ? 'textWaiting' : 'text'}`, {
-          agent: t('work.room.defaultAgentName'),
-        })
+        t(
+          `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
+          {
+            agent: t('work.room.defaultAgentName'),
+          }
+        )
       "
       :step="guide.stop.value + 1"
       :total="guide.total"
@@ -713,11 +716,19 @@ const guideStep = computed(() => {
   void guideRevision.value
   const step = guide.current.value
   if (!guide.active.value || !step) return null
-  const target = step.anchors.map(guideAnchor).find(Boolean)
+  const hit = step.anchors.find((name) => guideAnchor(name))
+  const target = hit ? guideAnchor(hit) : null
   const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
   const at = target ?? waitingAt
   if (!at) return null
-  return { key: step.key, target: at, waiting: !target, area: !!step.area || !target, action: !!step.done }
+  return {
+    key: step.key,
+    target: at,
+    waiting: !target,
+    failed: !!hit && hit === step.failed,
+    area: !!step.area || !target,
+    action: !!step.done,
+  }
 })
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm

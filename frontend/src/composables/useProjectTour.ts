@@ -28,6 +28,8 @@ export interface GuideStep {
   anchors: string[]
   /** 该圈的还没出现时，浮窗指着这里等（不画圈）。 */
   waiting?: string[]
+  /** 圈到的是这一个时用 `textFailed`：该出现的东西出了错（芝士没回成）。 */
+  failed?: string
   /** 目标是一大块区域（对话区、支线、任务页）：不画圈，只放浮窗。 */
   area?: boolean
   /** 有它就是动作步：做到了自己往下走，没有「下一步」。 */
@@ -42,9 +44,11 @@ export const GUIDE_STEPS: GuideStep[] = [
   { key: 'send', anchors: ['composer-send'], done: (c) => c.facts.asked },
   {
     key: 'reply',
-    anchors: ['reply-thread'],
+    anchors: ['reply-thread', 'reply-failed'],
+    failed: 'reply-failed',
     waiting: ['timeline'],
-    done: (c) => c.has('thread-pane'),
+    // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。
+    done: (c) => c.has('thread-pane') && !c.has('reply-failed'),
   },
   { key: 'confirm', anchors: ['thread-pane'], waiting: ['reply-thread'], area: true },
   {
