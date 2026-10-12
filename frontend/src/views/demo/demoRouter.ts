@@ -62,6 +62,8 @@ export function demoRouter() {
     history: createMemoryHistory(),
     routes: [
       { path: '/projects/:projectId/overview', name: 'workspace-overview', component: blank },
+      { path: '/projects/:projectId/topics/:topicId?/tasks/:taskId', name: 'workspace-task', component: blank },
+      { path: '/projects/:projectId/library', name: 'project-library', component: blank },
       ...analytics,
       ...catalogTargets,
       { path: '/:any(.*)*', component: blank },
