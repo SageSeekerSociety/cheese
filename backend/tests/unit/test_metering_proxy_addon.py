@@ -3205,3 +3205,36 @@ def test_the_model_list_is_not_held_back_by_a_spent_account(monkeypatch, tmp_pat
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None
+
+
+async def test_a_line_the_metering_tolerates_does_not_break_the_observer(
+    monkeypatch, tmp_path
+):
+    """The subscription tee hands every line to the observer on its way past, on
+    the normal path, with the cap off. A byte sequence the metering skips must
+    not be a new failure here: the observer runs inside the tee, so an exception
+    it raises leaves the tee and kills a response the caller is still reading.
+
+    Found in review of the change that added the observer: the override caught
+    only JSONDecodeError, while the metering's own `_consume` also catches
+    UnicodeDecodeError — a non-UTF-8 `data:` line was a drop of the whole turn.
+    """
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata.update(cheese_attr=("project", "topic"))
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    watch = flow.metadata["cheese_sub_stream"]
+    _drive_tee(
+        flow,
+        b'data: {"type":"message_start"}\n\n',
+        # An incomplete UTF-8 sequence inside the JSON string: not an event
+        # then, not an event now, and never worth an exception.
+        b'data: {"type":"content_block_delta","delta":{"text":"\xe4\xb8"}}\n\n',
+        b'data: {"type":"message_stop"}\n\n',
+    )
+    assert watch.events == 2
+    assert watch.complete is True
+    await asyncio.gather(*mod._failure_reports)
+    assert _recorded(posted) == []

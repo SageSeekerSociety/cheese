@@ -1527,7 +1527,10 @@ class StreamWatch(StreamingUsageExtractor):
             return
         try:
             event = json.loads(raw[5:])
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # The same bytes the metering tolerates. Its own `_consume` catches
+            # this pair; this one runs per line on the way past, so anything
+            # that escapes it escapes the tee and takes the response with it.
             return
         if not isinstance(event, dict):
             return
@@ -2074,6 +2077,7 @@ def _report_subscription_refusal(flow: http.HTTPFlow) -> None:
         message = "The subscription upstream returned a server error"
     else:
         return
+    flow.metadata["cheese_turn_reported"] = True
     logger.warning(
         "%s: %s (status=%s flow=%s)",
         exc_type,
