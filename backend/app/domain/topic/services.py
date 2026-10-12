@@ -404,6 +404,9 @@ class TopicService:
             meta={"platform": True},
         )
 
+    async def get_many(self, topic_ids: set[uuid.UUID]) -> list[Topic]:
+        return await self._repo.get_many(topic_ids)
+
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)
         if topic is None:

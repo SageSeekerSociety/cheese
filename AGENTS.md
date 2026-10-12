@@ -66,4 +66,4 @@ The work here is code. Do not read or edit the terms or privacy policy (`backend
 
 ## Follow a pull request you enqueue until it is deployed
 
-Watch a pull request you put into the merge queue until the dev deploy that contains it has finished: `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>`, run from the session that owns the work, not a subagent that may end first — a loop that dies with its agent leaves a green PR unenqueued for hours.
+Watch a pull request you put into the merge queue until the dev deploy that contains it has finished: `.claude/scripts/pr-watch.sh --enqueue --deploy <PR>`, run under a monitor from the session that owns the work, not a subagent that may end first — a loop that dies with its agent leaves a green PR unenqueued for hours, and output sent to a file or a background shell reaches the session only when the script exits, so a PR stuck short of the queue goes unheard.

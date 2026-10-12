@@ -326,8 +326,13 @@ class TaskService:
         """「开始」：written once, with who reviews its changes and what its
         document said at that moment.
 
-        The reviewer is the one named here, else the project's default. It is
-        written now rather than read back from the setting when changes are
+        谁审这件事，按档取第一个：这里点名的人 > 派活时定的人 > 任务的负责人 >
+        项目默认审阅人。负责人这一档是提出这件事的人 —— 他提的，改了什么本来就
+        该他看一眼；他也审不了时（协作模式下的 AI 队友）才退到项目默认，不把审
+        阅人定成一个谁也采纳不了的人。任务建出来即开始（`api.task_instructions
+        .start_task_at_once`），所以这一档平时就是建任务的人在审。
+
+        It is written now rather than read back from the setting when changes are
         submitted: the setting can change, and who a task was handed to for
         review is a fact about the moment it started.
         """
@@ -335,9 +340,11 @@ class TaskService:
         if task.started_at is not None:
             raise UnprocessableEntityError(say("taskStartedAlready"))
         project = await self._session.get(Project, task.project_id)
+        owner_handle = (task.owner_handle or "").strip()
         reviewer = (
             (reviewer_handle or "").strip()
-            or task.reviewer_handle
+            or (task.reviewer_handle or "").strip()
+            or (owner_handle if can_take_review(project, owner_handle) else "")
             or branch_protection_of(project).default_reviewer
         )
         if not reviewer:

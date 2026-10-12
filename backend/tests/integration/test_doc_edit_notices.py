@@ -28,7 +28,7 @@ from tests.integration.test_message_edit import _room, _say_in_task
 def _task(client) -> str:
     """A task of alice's, in a room bob is also in."""
     room, _ = _room(client)
-    return open_task(client, room, start=False)["id"]
+    return open_task(client, room)["id"]
 
 
 def _store(client, task: str, content: str, *actors: str) -> None:
@@ -62,7 +62,7 @@ def test_an_ai_teammate_is_named_by_its_handle_like_a_person(client):
     """The line carries the teammate's own <@handle>, the token the client draws
     with the name the roster gives it; never one fixed name for every teammate."""
     room, _ = _room(client)
-    task = open_task(client, room, start=False)["id"]
+    task = open_task(client, room)["id"]
     seat = room_agent_seat(client, room)
     _store(client, task, "第一段", seat)
     _store(client, task, "第一段\n\n第二段", "alice")

@@ -2,11 +2,10 @@
 // 频道概览里「支线」那一格：这个频道里有人回过话的支线，最近有回复的在前。每一行写
 // 它挂着的那条消息、最后一句回复（最多两行）、几条回复和谁说过话；转成了任务的，
 // 写那个任务和它的状态。只画，取数在拿着这个频道的那一层。
-import type { Block } from '../../cx_types'
 import type { RefNames } from '../../lib/refChip'
 import type { ThreadReply, ThreadRow } from '../../types/threads'
 
-import { replySnippet } from '../../lib/blockDisplay'
+import { replyBlock, replySnippet } from '../../lib/blockDisplay'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -34,18 +33,9 @@ const emit = defineEmits<{
 
 function said(reply: ThreadReply | null, max: number): string {
   if (!reply) return ''
-  const block = {
-    id: '',
-    conversation_id: '',
-    kind: 'message',
-    author_type: 'participant',
-    author: reply.author,
-    content: reply.content,
-    created_at: reply.created_at,
-  } as Block
   return t('work.room.thread.lastReply', {
     name: props.nameOf(reply.author),
-    text: replySnippet(block, props.refs, max),
+    text: replySnippet(replyBlock(reply), props.refs, max),
   })
 }
 

@@ -259,7 +259,7 @@ def test_a_channel_with_open_tasks_is_not_archived(client):
         headers=session_auth_headers("u"),
     )
     parent = t.json()["data"]["id"]
-    task = open_task(client, parent, "子1", owner="u", reviewer="u")["id"]
+    task = open_task(client, parent, "子1", owner="u")["id"]
     wait_work_idle()
 
     r = client.post(

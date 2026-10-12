@@ -230,6 +230,13 @@ class TopicRepository:
     async def get(self, topic_id: uuid.UUID) -> Topic | None:
         return await self._session.get(Topic, topic_id)
 
+    async def get_many(self, topic_ids: set[uuid.UUID]) -> list[Topic]:
+        if not topic_ids:
+            return []
+        return list(
+            await self._session.scalars(select(Topic).where(Topic.id.in_(topic_ids)))
+        )
+
     async def lock(self, topic_id: uuid.UUID) -> Topic | None:
         return (
             await self._session.scalars(

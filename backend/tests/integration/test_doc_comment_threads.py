@@ -35,7 +35,7 @@ def setup(client):
     room = client.post(
         "/topics", json={"project_id": project["id"], "title": "Doc"}
     ).json()["data"]["id"]
-    task = open_task(client, room, owner="thread-owner", start=False)["id"]
+    task = open_task(client, room, owner="thread-owner")["id"]
     _PLACES[task] = (project["id"], room)
     doc = document_of(client, task)
     raw = "# 标题\r\n\r\n😀同句\r\n\r\n😀同句\r\n"
@@ -191,9 +191,7 @@ def test_concurrent_http_claim_and_revision_have_one_reply(client, mode):
 @pytest.mark.parametrize("action", ["thread", "replies", "resolve", "reopen"])
 def test_cross_document_comment_and_non_comment_are_not_thread_parents(client, action):
     task, doc, root, _ = setup(client)
-    other = open_task(
-        client, _PLACES[task][1], "另一个任务", owner="thread-owner", start=False
-    )
+    other = open_task(client, _PLACES[task][1], "另一个任务", owner="thread-owner")
     other_doc = document_of(client, other["id"])
     # Another document's thread, and the document itself (not a comment).
     for target, parent in [(other_doc, root["id"]), (doc, doc)]:

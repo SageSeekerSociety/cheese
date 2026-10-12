@@ -34,6 +34,7 @@ import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { dayStamp } from '@/lib/dateText'
+import { refRoute } from '@/lib/refDirectory'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
@@ -330,7 +331,7 @@ const resolving = computed(
 
 function openTopic(topicId: string) {
   if (topicId === props.topicId) return
-  void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
+  void router.push(refRoute(props.projectId, topicId))
 }
 
 // ---- 左右两栏：分隔、专注模式、对话收起时的窄边（见 useTopicPanes）----

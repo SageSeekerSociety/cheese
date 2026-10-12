@@ -283,7 +283,7 @@ def test_a_tasks_own_checklist_is_reminded_the_same_way(
     兜底不是在房间消息上做的。
     """
     room, _ = _room(client)
-    task = open_task(client, room, owner="user-1", start=False)
+    task = open_task(client, room, owner="user-1")
     task_id = str(task["id"])
     token = mint_scoped_token(project_id=task["project_id"], topic_id=task_id)
     headers = {"X-Cheese-Token": token}

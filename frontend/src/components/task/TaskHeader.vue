@@ -39,7 +39,7 @@ const props = defineProps<{
   startError: string | null
   actionError: string | null
   connected?: boolean
-  start: (reviewer: string | null) => Promise<void>
+  start: () => Promise<void>
   close: (conclusion: string) => Promise<boolean>
   reopen: () => Promise<boolean>
   handOver: (owner: string) => Promise<boolean>
@@ -142,13 +142,6 @@ const detailsOpen = ref(false)
 watch(detailsOpen, (open) => {
   if (open) void props.loadMachine()
 })
-
-const reviewer = ref('')
-// 「开始」被拦下来说要指定审阅人时，在这条提示里挑一位就是开始：挑人只为了开始，
-// 再让人回去点一次「开始」是多出来的一步。
-function startWithReviewer() {
-  if (reviewer.value) void props.start(reviewer.value)
-}
 
 const closeOpen = ref(false)
 const closing = ref(false)
@@ -380,7 +373,7 @@ async function confirmHandOver() {
         size="sm"
         :loading="starting"
         data-testid="task-start"
-        @click="start(reviewer || null)"
+        @click="start()"
         >{{ t('work.task.start') }}</BaseButton
       >
       <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
@@ -425,18 +418,7 @@ async function confirmHandOver() {
   </Teleport>
 
   <p v-if="actionError" class="task-notice t-meta" role="alert">{{ actionError }}</p>
-  <div v-if="startError" class="task-notice t-meta" role="alert">
-    <span>{{ startError }}</span>
-    <label class="task-notice__pick">
-      <span>{{ t('work.task.reviewer') }}</span>
-      <select v-model="reviewer" class="task-notice__select t-meta" @change="startWithReviewer">
-        <option value="">{{ t('work.task.reviewerNone') }}</option>
-        <option v-for="m in people" :key="m.member_handle" :value="m.member_handle">
-          {{ memberNames[m.member_handle] || m.member_handle }}
-        </option>
-      </select>
-    </label>
-  </div>
+  <p v-if="startError" class="task-notice t-meta" role="alert">{{ startError }}</p>
 
   <ConfirmDialog
     v-model="closeOpen"
@@ -709,11 +691,6 @@ async function confirmHandOver() {
   border-bottom: 1px solid var(--line);
   background: var(--warn-wash);
   color: var(--warn-ink);
-}
-.task-notice__pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }
 .task-notice__select {
   padding: 2px 8px;

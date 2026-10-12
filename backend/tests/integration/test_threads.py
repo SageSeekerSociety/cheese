@@ -84,6 +84,37 @@ def test_the_main_line_shows_how_a_thread_grew(client):
     assert under["thread"]["id"] == thread["id"]
     assert under["thread"]["reply_count"] == 1
     assert under["thread"]["last_reply"]["content"] == "改到四点"
+    # An ordinary message carries no step list.
+    assert under["thread"]["last_reply"]["checklist"] is None
+
+
+def test_the_line_under_a_message_gets_the_step_list_of_the_last_reply(client):
+    """The line says one step of the last reply. A step list's text folds to a
+    row of marks by the time it gets there — the breaks that tell one step from
+    the next are gone — so the list itself rides along with the reply."""
+    _project, room = _channel(client)
+    said = post_message(client, room, "alice", {"content": "首页要改哪些地方？"})
+    thread = _open(client, said["id"])
+    written = client.put(
+        f"/topics/{thread['id']}/progress",
+        json={
+            "todos": [
+                {"content": "读代码", "status": "completed"},
+                {"content": "改摘要行", "status": "in_progress"},
+            ]
+        },
+        headers=session_auth_headers("alice"),
+    )
+    assert written.status_code == 200, written.text
+
+    under = next(b for b in _blocks(client, room) if b["id"] == said["id"])
+    assert under["thread"]["last_reply"]["checklist"] == {
+        "items": [
+            {"id": "1", "subject": "读代码", "status": "completed"},
+            {"id": "2", "subject": "改摘要行", "status": "in_progress"},
+        ],
+        "result": None,
+    }
 
 
 def test_a_message_has_one_thread_however_often_it_is_opened(client):

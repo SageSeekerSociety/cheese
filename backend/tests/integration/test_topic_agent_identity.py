@@ -100,7 +100,7 @@ def test_a_sandbox_token_acts_as_the_agent_it_names(client):
     holds it — previously every such write said plain ``cheese``."""
     pid, tid = _project_topic(client)
     seat = _seat(client, tid)
-    task = open_task(client, tid, start=False)["id"]
+    task = open_task(client, tid)["id"]
     # As the agent's own tools do in a task's turn: find the task's document,
     # then write it.
     doc = document_of(client, task, headers=_sandbox(pid, task, seat))
@@ -130,7 +130,7 @@ def test_two_agents_writing_in_one_room_are_told_apart(client):
         if m["member_handle"] != ops["seat_handle"]
     )
 
-    task = open_task(client, tid, start=False)["id"]
+    task = open_task(client, tid)["id"]
 
     authors = []
     for version, seat in enumerate((default_seat, ops["seat_handle"])):
@@ -149,7 +149,7 @@ def test_a_forged_author_in_the_body_is_still_ignored(client):
     """The identity comes from the signed token, never the payload."""
     pid, tid = _project_topic(client)
     seat = _seat(client, tid)
-    task = open_task(client, tid, start=False)["id"]
+    task = open_task(client, tid)["id"]
     doc = document_of(client, task, headers=_sandbox(pid, task, seat))
     r = client.put(
         f"/documents/{doc}",

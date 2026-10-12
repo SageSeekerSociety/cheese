@@ -706,7 +706,6 @@ const CHANGES_BASE = {
   refreshing: false,
   errorMsg: null,
   noRepo: false,
-  missing: null,
   fileDiffs: CHANGES_FILE_DIFFS,
   diffByPath: CHANGES_BY_PATH,
   treeFiles: CHANGES_TREE,
