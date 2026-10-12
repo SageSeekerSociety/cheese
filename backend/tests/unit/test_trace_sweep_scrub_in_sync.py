@@ -7,18 +7,12 @@ to hide must not stay visible there. When this fails, copy the change across.
 """
 
 import importlib.util
+import re
 from pathlib import Path
 
 from app.core import obs
 
 SCRIPT = Path(__file__).resolve().parents[3] / ".claude" / "scripts" / "trace-sweep.py"
-PATTERNS = (
-    "_OAUTH_CODE_RE",
-    "_SECRET_KV_RE",
-    "_URL_CRED_RE",
-    "_AUTH_SCHEME_RE",
-    "_SECRET_VALUE_RE",
-)
 SAMPLES = (
     "Authorization: Bearer abcdefghijklmnop",
     "Authorization: Basic dXNlcjpwdw==",
@@ -41,7 +35,15 @@ def _sweep():
 def test_the_sweep_uses_the_backends_patterns():
     sweep = _sweep()
     assert sweep._SECRET_KEY_TAILS == obs._SECRET_KEY_TAILS
-    for name in PATTERNS:
+    # Every pattern the backend's scrubber reads, so a new one cannot be missed.
+    used = [
+        n
+        for n in obs.scrub_secrets.__code__.co_names
+        if isinstance(getattr(obs, n, None), re.Pattern)
+    ]
+    assert used
+    for name in used:
+        assert hasattr(sweep, name), f"trace-sweep.py lacks {name}"
         ours, theirs = getattr(sweep, name), getattr(obs, name)
         assert (ours.pattern, ours.flags) == (theirs.pattern, theirs.flags), name
 

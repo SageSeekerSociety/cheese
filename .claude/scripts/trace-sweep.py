@@ -32,6 +32,7 @@ job, not this script's.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -49,7 +50,7 @@ META_OPEN = "<!-- trace-sweep-meta"
 META_CLOSE = "trace-sweep-meta -->"
 DEEP_DIVE_LINES = 25  # about half a day at ~50 task lines a day
 DEEP_DIVE_MAX_DAYS = 7
-MAX_IDS = 300  # per signature; enough to dedupe overlapping windows
+SEEN_HOURS = 48  # event ids kept for de-duplication; longer than any sweep window
 NEW = "新"
 
 # (kind, who should fix it, pattern). First match wins; the order matters.
@@ -177,7 +178,7 @@ def token_from_env() -> str:
 
 
 def _tasks(channel: str, token: str, since: str) -> list[dict]:
-    data = _request("GET", f"/topics/{channel}/tasks?limit=200", token)
+    data = _request("GET", f"/topics/{channel}/tasks?limit=0", token)  # 0 = roster, no blocks
     tasks = data["data"] if isinstance(data, dict) else data
     return [t for t in tasks if (t.get("updated_at") or "") >= since]
 
@@ -202,6 +203,20 @@ def _errors(task: dict, token: str, since: str, until: str):
             return
 
 
+def _label(task: dict) -> str:
+    """A task's number as text; a task without one is told apart by its id."""
+    number = task.get("number")
+    return str(number) if number is not None else "?" + str(task.get("id", ""))[:6]
+
+
+def _task_order(label: str) -> tuple:
+    return (0, int(label), "") if label.isdigit() else (1, 0, label)
+
+
+def _event_key(block_id: str) -> str:
+    return hashlib.sha1(block_id.encode()).hexdigest()[:12]
+
+
 def sweep(channel: str, token: str, since: str, until: str) -> dict:
     found: dict[str, dict] = {}
     tasks = _tasks(channel, token, since)
@@ -223,18 +238,18 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
                     "first": at,
                     "last": at,
                     "sample": clean[:200],
-                    "ids": set(),
+                    "ids": {},
                 },
             )
             row["count"] += 1
-            row["ids"].add(block_id)
-            row["tasks"].add(task.get("number") or 0)
+            row["ids"][block_id] = at
+            row["tasks"].add(_label(task))
             row["first"], row["last"] = min(row["first"], at), max(row["last"], at)
     return {
         "since": since,
         "until": until,
         "tasks": len(tasks),
-        "task_numbers": sorted(t.get("number") or 0 for t in tasks),
+        "task_numbers": sorted((_label(t) for t in tasks), key=_task_order),
         "errors": calls,
         "rows": found,
     }
@@ -265,14 +280,18 @@ def summarize(result: dict) -> str:
     ]
     for sig, r in sorted(shared, key=lambda kv: (-len(kv[1]["tasks"]), -kv[1]["count"]))[:30]:
         sample = r["sample"].replace("|", "/").replace("\n", " ")[:120]
-        tasks = ", ".join(f"#{n}" for n in sorted(r["tasks"]))
+        tasks = ", ".join(f"#{n}" for n in sorted(map(str, r["tasks"]), key=_task_order))
         lines.append(
             f"| {len(r['tasks'])} | {r['count']} | {r['owner']} | {r['kind']} | {sample} | {tasks} |"
         )
     return "\n".join(lines)
 
 
-def merge_ledger(ledger: dict, result: dict) -> dict:
+def merge_ledger(ledger: dict, result: dict, seen: dict | None = None) -> dict:
+    """Fold a sweep into the ledger. ``seen`` maps an event key to its time and is
+    shared across signatures, so an event already counted is never counted again
+    however many times its window is swept."""
+    seen = {} if seen is None else seen
     for sig, r in result["rows"].items():
         entry = ledger.setdefault(
             sig,
@@ -287,13 +306,11 @@ def merge_ledger(ledger: dict, result: dict) -> dict:
                 "status": NEW,
             },
         )
-        seen = set(entry.get("ids", []))
-        fresh = r["ids"] - seen
-        entry["tasks"] = sorted(set(entry["tasks"]) | r["tasks"])
+        fresh = {_event_key(i): at for i, at in r["ids"].items() if _event_key(i) not in seen}
+        seen.update(fresh)
+        entry["tasks"] = sorted(set(map(str, entry["tasks"])) | set(map(str, r["tasks"])), key=_task_order)
         entry["first"], entry["last"] = min(entry["first"], r["first"]), max(entry["last"], r["last"])
-        # Counted by event id, so sweeping the same window twice adds nothing.
         entry["count"] += len(fresh)
-        entry["ids"] = sorted(seen | fresh)[-MAX_IDS:]
         if entry["status"] == NEW and len(entry["tasks"]) >= 2:
             entry["status"] = DEEP_DIVE
             entry["flagged"] = result["until"]
@@ -381,8 +398,11 @@ def update_doc(doc: str, token: str, result: dict, mark_deep_dive: bool = False)
     ledger = parse_ledger(content)
     meta = parse_meta(content)
     _apply_hand_statuses(ledger, content)
-    merge_ledger(ledger, result)
-    meta["lines_since"] = sorted(set(meta.get("lines_since", [])) | set(result["task_numbers"]))
+    seen = meta.get("seen", {})
+    merge_ledger(ledger, result, seen)
+    horizon = (datetime.fromisoformat(result["until"]) - timedelta(hours=SEEN_HOURS)).isoformat()
+    meta["seen"] = {k: at for k, at in seen.items() if at >= horizon}
+    meta["lines_since"] = sorted(set(map(str, meta.get("lines_since", []))) | set(result["task_numbers"]), key=_task_order)
     if mark_deep_dive:
         meta["last_deep_dive"], meta["lines_since"] = result["until"], []
     written = render_ledger(ledger, result["until"], meta)
@@ -432,20 +452,25 @@ def self_test() -> int:
                 "kind": "k",
                 "owner": "o",
                 "sample": "x",
-                "tasks": {1, 2},
+                "tasks": {"2", "10"},
                 "first": "a",
                 "last": "b",
                 "count": 3,
-                "ids": {"b1", "b2", "b3"},
+                "ids": {"b1": "a", "b2": "a", "b3": "b"},
             }
         },
         "until": "z",
     }
     ledger = merge_ledger({}, result)
+    check("tasks sort by number", ledger["s"]["tasks"], ["2", "10"])
+    check("a task without a number keeps its id", _label({"number": None, "id": "abcdef12"}), "?abcdef")
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)
     check("counts each event once", ledger["s"]["count"], 3)
-    merge_ledger(ledger, result)
-    check("re-sweeping the same window adds nothing", ledger["s"]["count"], 3)
+    seen: dict = {}
+    big = {"rows": {"w": dict(result["rows"]["s"], ids={f"e{i}": "a" for i in range(400)})}, "until": "z"}
+    wide = merge_ledger({}, big, seen)
+    merge_ledger(wide, big, seen)
+    check("re-sweeping a window of 400 events adds nothing", wide["w"]["count"], 400)
     check(
         "signature of a redacted error hides the token",
         "ghp_" in signature(redact("bad ghp_abcdefgh123")),
