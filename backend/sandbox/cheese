@@ -907,9 +907,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_draft",
-            "为当前频道起草一条定时与触发规则（到点让这个频道的队友开工一轮）。"
+            "为当前频道起草一条例行事务（到点让这个频道的队友开工一轮）。"
             "起草出来的是**草稿，不会执行**：只有频道里的人点「确认启用」它才开始跑。"
-            "所以起草完要把配置用一两句话说给用户听，请他在「定时与触发」里确认，"
+            "所以起草完要把配置用一两句话说给用户听，请他在「例行事务」里确认，"
             "不要说得像已经设好了。",
             {
                 "title": _text("规则名字，一句话"),
@@ -930,7 +930,7 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_routine_list",
-            "列出这个频道的定时与触发规则：名字、id、状态（草稿/启用中/已暂停）、"
+            "列出这个频道的例行事务：名字、id、状态（草稿/启用中/已暂停）、"
             "什么时候跑、下次什么时候跑。",
         ),
         _tool(
@@ -2843,7 +2843,7 @@ def _say_routine_draft(args, data, env) -> str:
         f"已为这个频道起草「{data.get('title')}」(id={data.get('id')})，"
         "它现在是**草稿，不会执行**。\n"
         f"什么时候跑：{data.get('trigger_text') or args.get('trigger') or 'schedule'}\n"
-        "把配置用一两句话说给用户听，请他在这个频道右侧的「定时与触发」里点"
+        "把配置用一两句话说给用户听，请他在这个频道右侧的「例行事务」里点"
         "「确认启用」。确认之前一个字都不会跑，所以别告诉他规则已经设好了。"
     )
 
@@ -2851,7 +2851,7 @@ def _say_routine_draft(args, data, env) -> str:
 def _say_routine_list(args, data, env) -> str:
     rows = (data or {}).get("data") or []
     if not rows:
-        return "这个频道还没有定时与触发规则。"
+        return "这个频道还没有例行事务。"
     state = {"draft": "草稿（等人确认）", "active": "启用中", "paused": "已暂停"}
     lines = []
     for row in rows:

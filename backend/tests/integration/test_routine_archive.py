@@ -86,10 +86,10 @@ def test_archiving_a_room_says_so_in_the_room_and_tells_each_owner(client):
 
     lines = _stopped_lines(client, room)
     assert len(lines) == 1, lines
-    assert lines[0].content == "1 条规则已随归档停止"
+    assert lines[0].content == "1 条例行事务已随归档停止"
     assert lines[0].meta["routine_ids"] == [rule["id"]]
 
-    notices = [n for n in _notices_for(client, OWNER) if "周期任务" in n.title]
+    notices = [n for n in _notices_for(client, OWNER) if "例行事务" in n.title]
     assert len(notices) == 1, notices
     assert rule["title"] in notices[0].title
     # 归属那一列是一个会话 id，房间自己就是一条会话，所以存的就是房间。

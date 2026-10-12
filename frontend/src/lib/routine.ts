@@ -1,4 +1,4 @@
-// 一条定时与触发规则长什么样：**类型**和**措辞**，没有一处请求。
+// 一条例行事务长什么样：**类型**和**措辞**，没有一处请求。
 //
 // 类型放在这里而不是 `api/routines.ts`，是因为要画它的组件（`components/routine/*`）不
 // 许 import API 层 —— `scripts/import-boundary-ratchet-core.mjs` 按 import 判，纯类型

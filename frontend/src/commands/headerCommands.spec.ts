@@ -57,7 +57,7 @@ function pageWith(onNew: () => void, onRefresh: () => void, name = 'routines') {
         { id: `${name}.refresh`, title: '刷新', icon: 'mdi-refresh', header: {}, run: onRefresh },
         { id: `${name}.new`, title: '新建', icon: 'mdi-plus', header: { primary: true, accent: true }, run: onNew },
       ])
-      return () => h(AppPage, { title: '定时与触发' }, () => h('p', '正文'))
+      return () => h(AppPage, { title: '例行事务' }, () => h('p', '正文'))
     },
   })
 }
@@ -81,7 +81,7 @@ async function mount(width: number, { keepAlive = false } = {}) {
   })
   const router = createRouter({
     history: createWebHistory(),
-    routes: [{ path: '/:p(.*)*', component: { template: '<div />' }, meta: { title: '定时与触发', backTo: 'x' } }],
+    routes: [{ path: '/:p(.*)*', component: { template: '<div />' }, meta: { title: '例行事务', backTo: 'x' } }],
   })
   await router.push('/routines')
   await router.isReady()

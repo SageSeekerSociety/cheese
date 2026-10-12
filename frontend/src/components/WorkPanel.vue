@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 工作面板: the right-hand half of a topic — 平级 tabs, 概览 / 现场 / 改动 / 预览 /
-// 定时与触发. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
+// 例行事务. It replaces the old 「文档 + 五个按需滑出的抽屉」 (预览/Git/现场/文件/资源):
 // the drawers' float/pinned duality, their own width slider and the scrim are
 // gone, and 资源 is no longer a panel at all — its numbers live in the topic
 // header's usage popover.
@@ -19,7 +19,7 @@
 // free zone when it is a room file the preview can draw, a read-only tab of the
 // project's code when no task worktree holds it, the 改动 tab otherwise.
 //
-// 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 定时与触发）不能关，位置记忆来自这里。自由区是
+// 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 例行事务）不能关，位置记忆来自这里。自由区是
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
@@ -41,7 +41,7 @@ import { whenIdle } from '../lib/idle'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
-// 这一屏有哪几格（共用表 + 只有产品有的「定时与触发」）。这个文件里 `panelTabs` 已经
+// 这一屏有哪几格（共用表 + 只有产品有的「例行事务」）。这个文件里 `panelTabs` 已经
 // 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
 import { workPanelTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
@@ -63,7 +63,7 @@ const props = withDefaults(
   defineProps<{
     topic: Topic | null
     // 画的是这个房间里的一个任务：现场、改动、预览都是这个任务的，总览由 `overview`
-    // 插槽填（任务的实况文档），没有「定时与触发」。
+    // 插槽填（任务的实况文档），没有「例行事务」。
     taskId?: string | null
     // 任务页上，改动只读（不是负责人，或任务已关）。
     taskReadOnly?: boolean
@@ -497,7 +497,7 @@ function pollThreads() {
 
 function hasContent(key: TabKey): boolean {
   if (key === 'chat' || key === 'overview' || key === 'threads') return true
-  // 「定时与触发」也是永远有得看的一格：没有规则时它写的是「还没有规则，点新建」——
+  // 「例行事务」也是永远有得看的一格：没有例行事务时它写的是「还没有例行事务，点新建」——
   // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
   // 关着的时候不该为此多打一个请求。
   if (key === 'routines') return true
@@ -510,7 +510,7 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、定时与触发。任务没有
+// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、例行事务。任务没有
 // 支线和定时，其余几格都有。
 const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'routines'])
 const tabs = computed(() =>

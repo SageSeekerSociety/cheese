@@ -301,7 +301,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-routines',
     title: 'PanelRoutines',
-    about: '话题页右侧「定时与触发」那一格：这个房间的规则，新建、确认、暂停、看执行记录都从这里抛出去。',
+    about: '话题页右侧「例行事务」那一格：这个房间的规则，新建、确认、暂停、看执行记录都从这里抛出去。',
     file: 'src/components/panels/PanelRoutines.vue',
     component: PanelRoutines,
     needs: ['vuetify', 'i18n'],
@@ -329,7 +329,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         name: '还没有规则',
         note: '空的时候告诉人两条路：点「新建」，或者在频道里让芝士起草。',
         props: { routines: [] },
-        expect: '还没有定时或触发规则',
+        expect: '还没有例行事务',
       },
     ],
   },

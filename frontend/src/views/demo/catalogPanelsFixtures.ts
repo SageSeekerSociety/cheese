@@ -526,7 +526,7 @@ export function threadTime(iso: string): string {
     : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
 }
 
-// ---- 定时与触发 -------------------------------------------------------------------
+// ---- 例行事务 -------------------------------------------------------------------
 
 function routine(over: Partial<Routine>): Routine {
   return {

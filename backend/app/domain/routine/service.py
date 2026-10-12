@@ -457,14 +457,14 @@ class RoutineService:
                     author="system",
                     author_type=AuthorType.platform,
                     kind=BlockKind.event,
-                    content=f"{len(rules)} 条规则已随归档停止",
+                    content=f"{len(rules)} 条例行事务已随归档停止",
                     meta={
                         **notice(
                             EVENT_ROUTINE_STOPPED,
                             severity=SEVERITY_INFO,
                             who=WHO_PLATFORM,
                             detail="\n".join(f"「{r.title}」" for r in rules),
-                            detail_label="规则",
+                            detail_label="例行事务",
                         ),
                         "routine_ids": [str(r.id) for r in rules],
                         "archived_at": stamp,
@@ -476,9 +476,9 @@ class RoutineService:
                     project_id=rule.project_id,
                     level=NotificationLevel.light,
                     kind=NotificationType.CHANGE_ALERT,
-                    title=f"周期任务「{rule.title}」已随话题归档停止",
+                    title=f"例行事务「{rule.title}」已随话题归档停止",
                     body=(
-                        f"房间「{room.title}」归档了，这条规则随之停下。"
+                        f"房间「{room.title}」归档了，这条例行事务随之停下。"
                         "取消归档后它会从下一个时刻继续，不用重新设置。"
                     ),
                     target_handle=rule.owner_handle,
@@ -541,13 +541,13 @@ def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
     folder = routine.output_dir or "房间根目录"
     lines = [
         f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)]}工作】{routine.title}",
-        f"这是规则「{routine.title}」的一次执行（执行 id {run.id}）。"
+        f"这是例行事务「{routine.title}」的一次执行（执行 id {run.id}）。"
         f"{run.trigger_detail}",
         "",
         f"工作内容：{routine.instructions}",
-        "资料范围："
+        "参考资料："
         + (routine.context_scope or "按工作内容需要，只用你有权访问的项目内容"),
-        f"结果保存到：{folder}（用 cheese show 放进房间，文件名带上日期）",
+        f"存储位置：{folder}（用 cheese show 放进房间，文件名带上日期）",
         "",
         "做完后必须交回结果，成功失败都要交：",
         f'cheese_routine_report(run="{run.id}", status="succeeded" 或 "failed", '
@@ -988,7 +988,7 @@ async def _announce_finished(session: AsyncSession) -> list[Block]:
             project_id=routine.project_id,
             level=NotificationLevel.light,
             kind=NotificationType.CHANGE_ALERT,
-            title=f"周期任务「{routine.title}」{verdict}",
+            title=f"例行事务「{routine.title}」{verdict}",
             body=body,
             target_handle=routine.owner_handle,
             conversation_id=routine.topic_id,

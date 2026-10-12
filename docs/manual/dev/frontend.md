@@ -145,7 +145,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 `WorkPanel.vue` 只负责两件事：**哪一页签在屏幕上、到底有哪几页签**；以及那些「必须一直对、不随页签切走」的信号。一页签渲染和取的东西都属于它自己那个 SFC。唯一的跨页签线是 `open-file`：文档里（或聊天里）一个 `<&path>` chip 打开那个文件 —— 房间文件里能画的走自己的页签；在频道里，其余的开一格只读的文件页签（`ProjectFileTab` → `useProjectFile` → `panels/ProjectFileView`），读项目当前版本，带行号就滚到那几行；在任务里走「改动」，读这件任务的版本。「改动」只看这一件任务：别的任务在它们自己的页面上，不在改动里的文件从「打开其他文件」按名字找。
 
-固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（定时与触发）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
+固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（例行事务）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
 
 总览两边各是一个组件：频道是 `components/channel/ChannelOverview.vue`（频道说明，「综合」换成项目目标的 `PanelDoc`；置顶 `ChannelOverviewPins`；进行中；最近完成），任务是 `components/task/TaskOverview.vue`（开始信息、任务文档的 `PanelDoc`、这一轮的清单、`TaskOutputs` 产出、`TaskRelatedList` 相关）。其余页签的内容在 `components/panels/` 下：`PanelSite`（现场，`SiteStepOutput`；顶上那一行是和输入框上方同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelCard`（共用外壳）。
 

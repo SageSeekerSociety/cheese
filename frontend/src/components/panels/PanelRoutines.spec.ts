@@ -1,4 +1,4 @@
-// 房间面板「定时与触发」那一格（纯展示）：数据从 props 进，动作从事件出。
+// 房间面板「例行事务」那一格（纯展示）：数据从 props 进，动作从事件出。
 //
 // 它是场景棘轮里的「场景」——panels/ 下的 SFC 新加的第一天就必须能脱离后端单独渲染。
 // 这一份钉的就是这句话：给一组 props 出画面（别人的规则只读、说清归谁管），点「新建」
@@ -74,7 +74,7 @@ function button(label: string, scope: ParentNode = document.body): HTMLElement |
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
 }
 
-describe('房间面板的「定时与触发」（纯展示）', () => {
+describe('房间面板的「例行事务」（纯展示）', () => {
   it('给一组 props 出画面：别人的规则只读，并且说清归谁管', () => {
     const { container } = mount({ routines: [{ ...live, can_manage: false, owner_handle: 'u-other' }] })
     const row = container.querySelector('[data-routine="live-1"]')!

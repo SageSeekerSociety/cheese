@@ -1,11 +1,11 @@
 // 工作面板的 tab 栏：那几格永远都在，打开任务时挑哪一格由任务所处的阶段说，但只挑
-// 有东西可看的那一格。频道是人说话的地方，只有概览、支线、定时与触发。
+// 有东西可看的那一格。频道是人说话的地方，只有概览、支线、例行事务。
 //
 // 这一份钉的是两件以前出过错的事：一格时有时无，同一个房间两次打开 tab 栏不一样
 // 长；和待验收的房间没有改动文件时（项目还没接仓库），一进来就落在「改动」那一格
 // 的报错上。
 //
-// 第五格「定时与触发」和另外四格的来路不同（它由 `workPanelTabs` 接在共用表后面，
+// 第五格「例行事务」和另外四格的来路不同（它由 `workPanelTabs` 接在共用表后面，
 // 不在那条栏和文档演示共用的表里），所以它是不是真在这条栏上、地址点名它时能不能
 // 打开，也在这里钉一次。
 import type { Component } from 'vue'
@@ -96,10 +96,10 @@ function selected(container: Element): string {
 }
 
 describe('tab 栏', () => {
-  it('频道只有概览、支线、定时与触发：没有电脑在它名下干活', async () => {
+  it('频道只有概览、支线、例行事务：没有电脑在它名下干活', async () => {
     const { findAllByRole } = mount()
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['概览', '支线', '定时与触发'])
+    expect(labels).toEqual(['概览', '支线', '例行事务'])
   })
 
   it('一个还没跑过的任务也是这几格，顺序不变', async () => {
@@ -114,17 +114,17 @@ describe('tab 栏', () => {
     expect(labels).not.toContain('支线')
   })
 
-  // 「定时与触发」永远有得看：没有规则时那一格是「还没有规则，点新建」，不是一个
+  // 「例行事务」永远有得看：没有规则时那一格是「还没有例行事务，点新建」，不是一个
   // 「暂无」。所以它不跟着 summary 变浅。
-  it('「定时与触发」不是一格空的', async () => {
+  it('「例行事务」不是一格空的', async () => {
     const { findByRole } = mount()
-    const routines = await findByRole('tab', { name: /定时与触发/ })
+    const routines = await findByRole('tab', { name: /例行事务/ })
     expect(routines.classList.contains('tabbar__tab--empty')).toBe(false)
   })
 
-  it('地址点名「定时与触发」：开在那一格', async () => {
+  it('地址点名「例行事务」：开在那一格', async () => {
     const { container } = mount({ tab: 'routines' })
-    await waitFor(() => expect(selected(container)).toBe('定时与触发'))
+    await waitFor(() => expect(selected(container)).toBe('例行事务'))
   })
 
   // 「概览」上那个数是这个房间开着的活有几件。任务页的概览是这件任务自己的文档，

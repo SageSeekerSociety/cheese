@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 话题页右侧「定时与触发」那一格 —— 纯展示：数据从 props 进，动作从事件出。
+// 话题页右侧「例行事务」那一格 —— 纯展示：数据从 props 进，动作从事件出。
 //
 // 取数在 `components/routine/RoutinePanelHost.vue`（`useRoutineList` + 名册 + 路由都接在
 // 那里）。为什么这一格自己必须一滴取数都不沾：`components/panels/` 下的每个 SFC 都是

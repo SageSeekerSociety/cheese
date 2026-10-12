@@ -171,10 +171,10 @@ EVENT_MAIL_DRAFTED: Final = "mail_drafted"
 #: 那封草稿的下落：邮箱主人发出了、发送失败了，或者放弃了。房间里的确认卡片据此
 #: 改成终态。
 EVENT_MAIL_RESULT: Final = "mail_result"
-#: 一条周期任务或事件触发规则开始了一次执行；结果或失败原因随后另起一条。
+#: 一条例行事务开始了一次执行；结果或失败原因随后另起一条。
 EVENT_ROUTINE_RUN: Final = "routine_run"
 EVENT_ROUTINE_RESULT: Final = "routine_result"
-#: 芝士起草了一条周期任务/触发规则，等人确认后才会执行。
+#: 芝士起草了一条例行事务，等人确认后才会执行。
 EVENT_ROUTINE_PROPOSED: Final = "routine_proposed"
 #: 房间归档了，它里面还在执行的规则随之停下。规则自己的状态不变（取消归档后从下一
 #: 个时刻继续），所以这一行说的是房间带走了什么，不是规则被改成了什么。
