@@ -3384,7 +3384,7 @@
           "admin"
         ],
         "summary": "Usage Stats",
-        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。\n\n`claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里\n唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，\n理由见那个模块的 docstring）。",
+        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。\n\n`cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、\n谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。\n\n`claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里\n唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，\n理由见那个模块的 docstring）。",
         "operationId": "usage_stats_admin_stats_usage_get",
         "parameters": [
           {
