@@ -121,15 +121,10 @@ def email_link(payload: dict[str, Any]) -> str:
     """按钮把人送到哪儿：**那条消息在的那条会话** —— 一个任务、一条支线，或频道自己
     那条线；指不到就是收件箱。
 
-    和推送是同一条规则（`push.push_link`），这里就是它，加上邮件要的两样：能点开的绝
-    对地址；芝士的提问带上 `?block=`，落下去就是那条提问，而不是房间最新那几条（房间
-    页认这个参数，站内通知的链接也这么带）。落点是频道而消息在任务或支线里时，那个
-    `?block=` 在频道主线上找不到 —— 人点开只看到「这条消息已不存在」。
+    会话和消息目标都由 `push.push_link` 提供，邮件只加能点开的绝对地址。
     """
     base = settings.frontend_url.rstrip("/")
-    link = f"{base}{push_link(payload)}"
-    block_id = payload.get("blockId")
-    return f"{link}?block={block_id}" if block_id else link
+    return f"{base}{push_link(payload)}"
 
 
 def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Letter:

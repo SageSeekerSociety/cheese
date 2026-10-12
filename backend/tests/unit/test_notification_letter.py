@@ -67,6 +67,29 @@ def test_room_notice_carries_the_sentence_said_in_the_room():
     assert "验收卡等你确认" in render_html(letter)
 
 
+@pytest.mark.parametrize(
+    ("where", "path"),
+    [
+        ({}, "/projects/p-1/topics/t-1"),
+        ({"taskId": "k-2"}, "/projects/p-1/topics/t-1/tasks/k-2"),
+        ({"threadId": "th-1"}, "/projects/p-1/topics/t-1/threads/th-1"),
+    ],
+)
+def test_a_room_notice_email_lands_on_the_message_once(where, path):
+    letter = letter_for(
+        {
+            "type": "ROOM_NOTICE",
+            "payload": {**ROOM, **where, "content": "验收卡等你确认", "blockId": "b-7"},
+        }
+    )
+    assert letter.link == f"{settings.frontend_url.rstrip('/')}{path}?block=b-7"
+
+
+def test_a_message_without_a_conversation_falls_back_to_the_inbox():
+    letter = letter_for({"type": "ROOM_NOTICE", "payload": {"blockId": "b-7"}})
+    assert letter.link == f"{settings.frontend_url.rstrip('/')}/inbox"
+
+
 def test_device_in_use_says_who_works_on_which_machine():
     body = render_html(
         letter_for(
