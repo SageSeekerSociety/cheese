@@ -88,6 +88,24 @@ def _doc(client, task: str) -> dict:
     ).json()["data"]
 
 
+def _suggested_by(client, task: str, who: str) -> None:
+    """Leave a suggestion the way the backend can actually see who left it.
+
+    The backend judges a suggestion's author from the document journal, and the
+    service is the only thing that writes it there. Putting the suggestion in
+    the service's list alone leaves the journal empty, so every suggestion then
+    reads as a person's and a test of the refusal passes against code that
+    refused every suggestion alike — which is what this one used to do.
+    """
+    name = collab.document_name(uuid.UUID(document_of(client, task)))
+    client.collab.pending[name] = [
+        {"id": f"{who}:1", "author": who, "old": "讲范围", "new": "讲边界"}
+    ]
+    client.portal.call(
+        client.collab.type_in, uuid.UUID(task), _doc(client, task)["content"], who
+    )
+
+
 def _doc_lines(client, task: str) -> list[dict]:
     blocks = client.get(
         f"/topics/{task}/blocks", headers=session_auth_headers("alice")
@@ -257,15 +275,13 @@ def test_an_agent_edit_over_a_persons_pending_suggestion_is_refused(client):
     """A person's suggestion waits for their decision: an agent's change to
     that passage is refused, and the suggestion stays."""
     task, seat, agent = _document(client)
+    _suggested_by(client, task, "alice")
     before = _doc(client, task)
-    name = collab.document_name(uuid.UUID(document_of(client, task)))
-    client.collab.pending[name] = [
-        {"id": "alice:1", "author": "alice", "old": "讲范围", "new": "讲边界"}
-    ]
     _turn_started_by(client, task, seat, "alice")
 
     response = _edit(client, task, agent, ("讲范围", "讲边界和不做的事"))
 
+    name = collab.document_name(uuid.UUID(document_of(client, task)))
     assert response.status_code == 409, response.text
     assert response.json()["error"]["data"]["reason"] == "suggested"
     assert _doc(client, task)["content"] == before["content"]
@@ -299,11 +315,8 @@ def test_a_whole_document_write_is_refused_while_a_persons_suggestion_pends(clie
     """cheese_doc_set would drop a suggestion a person is still deciding on:
     it is refused, and the document is left alone."""
     task, _, _ = _document(client)
+    _suggested_by(client, task, "alice")
     before = _doc(client, task)
-    name = collab.document_name(uuid.UUID(document_of(client, task)))
-    client.collab.pending[name] = [
-        {"id": "alice:1", "author": "alice", "old": "讲范围", "new": "讲边界"}
-    ]
 
     refused = client.put(
         _path(client, task),
