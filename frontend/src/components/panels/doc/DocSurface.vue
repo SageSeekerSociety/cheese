@@ -45,6 +45,7 @@ import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
+import { identitiesFrom } from '../../../lib/personIdentity'
 import { refsVersion } from '../../../lib/refDirectory'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 import MentionMenu from '../../room/MentionMenu.vue'
@@ -359,6 +360,9 @@ function buildEditor(session: DocSession): DocEditor {
       createTokenChips({
         names: () => ({
           mentionNames: props.mentionNames,
+          // 正文里 `<@handle>` chip 前那张脸：从同一份 @ 候选（props.mentionPeople）
+          // 上取头像和「是不是队友」，和名册、对话栏里的是同一张。
+          mentionIdentities: identitiesFrom(props.mentionPeople),
           topicTitles: Object.fromEntries(props.topicList.map((t) => [t.id, t.title])),
         }),
       }),

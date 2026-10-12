@@ -3,6 +3,7 @@
 // 也能接着说；撤销了能恢复；答了就是回答本身，能转成评论。改了什么不在卡上，在正文
 // 里标着。
 import type { AgentPhase } from '../../../composables/useDocAgent'
+import type { MentionIdentity } from '../../../lib/personIdentity'
 
 import { computed, ref } from 'vue'
 
@@ -27,6 +28,8 @@ const props = defineProps<{
   /** 能转成评论。 */
   commentable: boolean
   mentionNames: Record<string, string>
+  /** handle → 头像与「是不是队友」：回答正文里 `<@handle>` chip 前那张脸用它。 */
+  mentionIdentities?: Record<string, MentionIdentity>
 }>()
 const emit = defineEmits<{
   (e: 'stop'): void
@@ -45,7 +48,11 @@ function onKey(e: KeyboardEvent) {
   more.value = ''
 }
 /** 回答按 Markdown 读：列表、加粗、代码照样排出来，点名读成名字。 */
-const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
+const names = computed(() => ({
+  mentionNames: props.mentionNames,
+  topicTitles: {},
+  mentionIdentities: props.mentionIdentities,
+}))
 </script>
 
 <template>

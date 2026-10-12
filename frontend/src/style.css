@@ -1375,6 +1375,58 @@ button:not(.v-btn) {
   font-size: 0.92em;
 }
 
+/* 「这是谁」在正文里那张小脸：`@handle` chip 前面，和 Vue 那边的 IdentityView 是同一套
+   规矩（人是圆的、AI 队友是超椭圆；有头像地址用图，没有就画按 handle 取色的首字母）。
+   和 `.mention` 放在这里的理由一样：这段 markup 由 lib/identityFace 一处产出，落地的
+   地方却够不着 Vue 组件 —— 消息正文、文档这些是 DOM 拼出来的。UserAvatar / CheeseAvatar
+   的样式是 scoped 的，到不了这里，所以这张脸的样子得在这份全局样式里各写一份。
+   首字母走 `::before` 的 `content: attr(data-initial)`，**不进 textContent**：chip 的文字
+   仍然是干净的「@名字」，复制出来的正文和以前的断言都不多一个字母。 */
+.identity-face {
+  display: inline-block;
+  flex: 0 0 auto;
+  vertical-align: -0.2em;
+  margin-right: 4px;
+  overflow: hidden;
+}
+.identity-face--person {
+  border-radius: 50%;
+  line-height: 1;
+  text-align: center;
+  /* 和 UserAvatar 里那个写死的 #fff 同理：底色是 avatarColor() 两套主题下同一个值，
+     压在上面的字也就不该随主题变。 */
+  color: #fff;
+  font-weight: 600;
+}
+.identity-face--person[data-initial]::before {
+  content: attr(data-initial);
+}
+.identity-face__img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.identity-face--agent[data-tone='0'] {
+  fill: var(--agent-tone-0);
+}
+
+.identity-face--agent[data-tone='1'] {
+  fill: var(--agent-tone-1);
+}
+
+.identity-face--agent[data-tone='2'] {
+  fill: var(--agent-tone-2);
+}
+
+.identity-face--agent[data-tone='3'] {
+  fill: var(--agent-tone-3);
+}
+
+.identity-face--agent[data-tone='4'] {
+  fill: var(--agent-tone-4);
+}
+
 /* 藏起来但仍然存在：读屏读得到，脚本也点得动。
    给文件选择框用的时候这不是洁癖而是硬要求——iOS Safari 拒绝用脚本打开一个
    display:none / visibility:hidden 的 <input type=file>，按钮点下去毫无反应。

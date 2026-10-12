@@ -41,6 +41,15 @@ describe('filterCandidates', () => {
     expect(filterCandidates(LIST, 'zzz')).toEqual([])
   })
 
+  it('still finds someone the roster has no name for, by @handle', () => {
+    // 身份里的 `name` 可以是 null（名册上还没起名字）。不给名字不该让搜索崩掉，
+    // 也不该把这一位从结果里划掉 —— handle 还在，认识 @handle 的人照样找得到。
+    const nameless: MemberCandidate[] = [{ handle: 'dave', name: null, avatarId: null, agent: false }]
+    expect(filterCandidates(nameless, 'dave')).toEqual(nameless)
+    expect(filterCandidates(nameless, 'DAVE')).toEqual(nameless)
+    expect(filterCandidates(nameless, 'zzz')).toEqual([])
+  })
+
   it('does not mutate the list it was given', () => {
     const before = LIST.slice()
     filterCandidates(LIST, 'ali')

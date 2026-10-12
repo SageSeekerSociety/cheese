@@ -15,3 +15,24 @@ export interface PersonIdentity {
   /** 是不是 AI 队友，照名册上说。 */
   agent: boolean
 }
+
+/**
+ * 正文 chip 前那张脸要的两件事（`lib/refChip` 的 `RefNames.mentionIdentities` 就是
+ * handle → 这个）。名字在上面那张表里，这里只管头像和「是不是队友」。
+ */
+export interface MentionIdentity {
+  /** 头像地址；没挑过、或名册上没这一位时 null（画彩色首字母）。 */
+  avatar: string | null
+  /** 是不是 AI 队友（决定那张脸画圆的还是超椭圆）。 */
+  agent: boolean
+}
+
+/**
+ * 名册（或 `@` 候选那串人）→ `mentionIdentities` 那张表。名册在手的地方都从这一处
+ * 建表，免得「正文里的人是哪张脸」在各层各写一遍、写着写着就不一样了。
+ */
+export function identitiesFrom(
+  rows: { handle: string; avatar?: string | null; agent?: boolean }[]
+): Record<string, MentionIdentity> {
+  return Object.fromEntries(rows.map((r) => [r.handle, { avatar: r.avatar ?? null, agent: !!r.agent }]))
+}

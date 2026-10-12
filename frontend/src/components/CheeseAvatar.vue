@@ -19,7 +19,7 @@ import type { FaceState } from '../lib/agentFace'
 import { computed } from 'vue'
 
 import { t } from '../i18n'
-import { agentTone } from '../utils/avatar'
+import { AGENT_TILE_PATH, agentTone } from '../utils/avatar'
 
 const props = withDefaults(
   defineProps<{ size?: number | string; name?: string; handle?: string | null; state?: FaceState | null }>(),
@@ -51,7 +51,7 @@ const tone = computed(() => agentTone(props.handle || shownName.value))
     :data-state="state ?? undefined"
   >
     <g class="cheese-avatar__body">
-      <path class="cheese-avatar__tile" d="M50 0C88 0 100 12 100 50S88 100 50 100S0 88 0 50S12 0 50 0Z" />
+      <path class="cheese-avatar__tile" :d="AGENT_TILE_PATH" />
       <g class="cheese-avatar__eyes">
         <rect class="cheese-avatar__eye" x="42.5" y="44.5" width="13" height="21" rx="6.5" />
         <rect class="cheese-avatar__eye cheese-avatar__eye--far" x="66" y="46" width="10" height="16" rx="5" />

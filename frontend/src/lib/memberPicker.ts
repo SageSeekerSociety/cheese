@@ -14,11 +14,15 @@ export interface MemberCandidate extends PersonIdentity {
   sub?: string
 }
 
-/** 搜索：名字或 handle 命中即可（大小写不敏感）；空词就是全部，顺序不动。 */
+/**
+ * 搜索：名字或 handle 命中即可（大小写不敏感）；空词就是全部，顺序不动。
+ * 名册上可能还没起名字（身份里的 `name` 是 null），那就只剩 handle 能对上——
+ * 不给名字的那一位不该因此从搜索结果里被划掉，也不该让 `.toLowerCase()` 报空。
+ */
 export function filterCandidates(list: MemberCandidate[], query: string): MemberCandidate[] {
   const q = query.trim().toLowerCase()
   if (!q) return list
-  return list.filter((c) => c.name.toLowerCase().includes(q) || c.handle.toLowerCase().includes(q))
+  return list.filter((c) => (c.name ?? '').toLowerCase().includes(q) || c.handle.toLowerCase().includes(q))
 }
 
 /** 勾上 / 取消一个人：已在选中里就去掉，不在就加到末尾（顺序按勾的先后）。 */

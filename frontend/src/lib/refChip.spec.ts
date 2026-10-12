@@ -5,6 +5,7 @@
 // A `<#id>` names a channel, a task or a 支线. One that names none of them says
 // so: it never shows a borrowed name and never opens a channel that is not there.
 import type { ConversationRef } from '../types/conversationRef'
+import type { RefNames } from './refChip'
 
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -101,5 +102,50 @@ describe('a reference to a 支线', () => {
       name: 'workspace-thread',
       params: { projectId: 'p1', topicId: ROOM, threadId: THREAD },
     })
+  })
+})
+
+describe('a `@` chip in a message body', () => {
+  // 「谁是谁」不从 @ 文本里猜：handle→脸的那份表由上游（名册）填好传进来，见 RefNames。
+  const withFaces: RefNames = {
+    mentionNames: { alice: 'Alice', 'cheese-t1': '芝士' },
+    topicTitles: {},
+    mentionIdentities: {
+      alice: { avatar: null, agent: false },
+      'cheese-t1': { avatar: null, agent: true },
+    },
+  }
+
+  it('draws a person the same way the roster does, and keeps the text to just @name', () => {
+    const chip = refChip('@', 'alice', withFaces)
+    expect(chip.querySelector('.identity-face--person')).not.toBeNull()
+    // 脸是装饰：chip 的文字仍然只是「@Alice」，复制正文、读屏都干净。
+    expect(chip.textContent).toBe('@Alice')
+    expect(chip.dataset.handle).toBe('alice')
+  })
+
+  it('draws a teammate as the superellipse', () => {
+    const chip = refChip('@', 'cheese-t1', withFaces)
+    expect(chip.querySelector('.identity-face--agent')).not.toBeNull()
+    expect(chip.textContent).toBe('@芝士')
+  })
+
+  it('still draws a face when the roster has none for them — the chip is never bare text', () => {
+    const chip = refChip('@', 'alice', names)
+    expect(chip.querySelector('.identity-face--person')).not.toBeNull()
+    expect(chip.textContent).toBe('@Alice')
+  })
+
+  it('falls back to the handle naming rule for a teammate the roster did not name', () => {
+    const chip = refChip('@', 'cheese-t9', names)
+    expect(chip.querySelector('.identity-face--agent')).not.toBeNull()
+    expect(chip.textContent).toBe('@cheese-t9')
+  })
+
+  it('leaves the broadcast handles without a face — they are not a person', () => {
+    const broadcast: RefNames = { mentionNames: { all: '所有人', here: '在线成员' }, topicTitles: {} }
+    const chip = refChip('@', 'all', broadcast)
+    expect(chip.querySelector('.identity-face')).toBeNull()
+    expect(chip.textContent).toBe('@所有人')
   })
 })

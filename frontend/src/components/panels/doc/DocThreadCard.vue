@@ -2,6 +2,7 @@
 // 一条评论串一张卡：上面是评的那几个字，下面是来回的每一句；AI 队友在答时说它到了哪一步。
 // 点卡片就是在看它（正文滚到那几个字）；在看的那张才给回复框和解决。
 import type { DocThread, DocThreadActivity, ThreadPlace } from '../../../lib/docThreadTypes'
+import type { MentionIdentity } from '../../../lib/personIdentity'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -28,6 +29,8 @@ const props = defineProps<{
   error?: string
   agentName: string
   mentionNames: Record<string, string>
+  /** handle → 头像与「是不是队友」：评论正文里 `<@handle>` chip 前那张脸用它。 */
+  mentionIdentities?: Record<string, MentionIdentity>
   /** handle 读成名字。 */
   nameOf: (handle: string) => string
   /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
@@ -59,7 +62,11 @@ const shown = computed(() =>
 )
 const resolved = computed(() => props.thread.state === 'resolved')
 
-const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
+const names = computed(() => ({
+  mentionNames: props.mentionNames,
+  topicTitles: {},
+  mentionIdentities: props.mentionIdentities,
+}))
 
 // 芝士正在用的工具，说成它在做的事；没列出的就说在回答
 const TOOL_STEPS: Record<string, string> = {

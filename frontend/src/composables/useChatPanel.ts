@@ -19,6 +19,7 @@ import type { Block, ChatAttachment, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
+import type { MentionIdentity } from '../lib/refChip'
 import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -92,8 +93,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // ../lib/renderMessage and happens in the row components; here we only fill the
   // handle→name and id→title maps they render with, from the roster / topics props.
   const mentionNames = reactive<Record<string, string>>({})
+  const mentionIdentities = reactive<Record<string, MentionIdentity>>({})
   const topicTitles = reactive<Record<string, string>>({})
-  const refMaps = { mentionNames, topicTitles }
+  const refMaps = { mentionNames, topicTitles, mentionIdentities }
 
   const AUTHOR = myHandle()
 
@@ -128,6 +130,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pool: mentionPool,
     nameOf: agentNameOf,
     names: mentionNames,
+    identities: mentionIdentities,
     taskAgentHandle: opts.taskAgentHandle,
     alwaysSummon,
   })

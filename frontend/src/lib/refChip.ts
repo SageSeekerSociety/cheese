@@ -11,7 +11,11 @@
 // focusability is written as attributes because chat serialises chips to HTML.
 import { t } from '../i18n'
 
+import { identityFace } from './identityFace'
+import { type MentionIdentity } from './personIdentity'
 import { lookupRef } from './refDirectory'
+
+export type { MentionIdentity }
 
 export interface RefNames {
   /** handle → display name. */
@@ -19,7 +23,18 @@ export interface RefNames {
   /** Titles the page already holds (its channels and tasks), by id. Any other
    *  `<#id>` is looked up (lib/refDirectory). */
   topicTitles: Record<string, string>
+  /**
+   * handle → 头像与「是不是队友」，名册在手的地方（对话栏）填。填了，`@` chip 前面就
+   * 多一张小脸（lib/identityFace），和名册、消息行、`@` 菜单里的那一位长得一样；不填、
+   * 或名册上没这一位时，chip 还是原来那行字。可选，所以文档、动作卡这些拿不到名册的
+   * 地方照旧能用。
+   */
+  mentionIdentities?: Record<string, MentionIdentity>
 }
+
+// 群播不是一个人，不该有脸：@all / @here 是固定字面量（见 lib/expandMentions），画个
+// 头像等于把「所有人」说成某一个人。它们照旧只画文字。
+const BROADCAST_HANDLES = new Set(['all', 'here'])
 
 type TopicRefShown = { text: string; missing: boolean }
 
@@ -65,7 +80,23 @@ export function refChip(
     el.dataset.topic = id
   } else if (kind === '@') {
     el.dataset.handle = id
-    el.textContent = `@${names.mentionNames[id] || id}`
+    const shown = names.mentionNames[id] || id
+    // chip 前那张小脸：正文、文档、动作卡里的一个人，和名册、消息行里的长得一样。
+    // 有身份就照身份画（真实头像、是不是队友）；名册还没到、或名册上没这一位，也画
+    // 一张稳定的脸 —— handle 加显示名首字母、颜色按 handle 取，和名册那一位同一套。
+    // 所以这一枚 @ 从来不是一行光字，缺谁都不会塌成纯文本。
+    if (!BROADCAST_HANDLES.has(id)) {
+      const identity = names.mentionIdentities?.[id]
+      el.append(
+        identityFace({
+          handle: id,
+          name: shown,
+          avatar: identity?.avatar ?? null,
+          agent: identity?.agent ?? null,
+        })
+      )
+    }
+    el.append(document.createTextNode(`@${shown}`))
   } else {
     // 一枚文件图标 + 文件名，点开文件。图标走 @mdi/font 的字体类而不是 emoji：
     // emoji 在各系统上是彩色位图，字号、基线、颜色都不跟着正文走。

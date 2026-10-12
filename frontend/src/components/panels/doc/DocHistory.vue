@@ -6,6 +6,7 @@
 // 一个人连着打字，几秒就存一版；同一个人相隔不到十分钟连着存的几版在列表里算一条，
 // 看的、恢复的都是其中最后那一版。
 import type { DocVersion, DocVersionPage } from '../../../lib/docHistory'
+import type { MentionIdentity } from '../../../lib/personIdentity'
 
 import { computed, ref, watch } from 'vue'
 
@@ -29,6 +30,8 @@ const props = defineProps<{
   /** handle → 读得懂的名字。 */
   nameOf: (handle: string) => string
   mentionNames: Record<string, string>
+  /** handle → 头像与「是不是队友」：旧版本正文里 `<@handle>` chip 前那张脸用它。 */
+  mentionIdentities?: Record<string, MentionIdentity>
 }>()
 const emit = defineEmits<{
   (e: 'update:open', open: boolean): void
@@ -123,7 +126,11 @@ const diff = computed(() =>
     : null
 )
 const latest = computed(() => versions.value[0] ?? null)
-const names = computed(() => ({ mentionNames: props.mentionNames, topicTitles: {} }))
+const names = computed(() => ({
+  mentionNames: props.mentionNames,
+  topicTitles: {},
+  mentionIdentities: props.mentionIdentities,
+}))
 
 function who(version: DocVersion): string {
   const name = props.nameOf(version.actor)

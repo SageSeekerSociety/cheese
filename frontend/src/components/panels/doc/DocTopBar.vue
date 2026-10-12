@@ -7,6 +7,7 @@
 import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocConnection, DocPeer } from '../../../composables/useDocCollab'
 import type { OutlineHeading } from '../../../lib/docOutline'
+import type { MentionIdentity } from '../../../lib/personIdentity'
 
 import { ref, watch } from 'vue'
 
@@ -39,6 +40,8 @@ const props = defineProps<{
   /** 对整篇找 AI 队友；认不出它时是 undefined，不给这个按钮。 */
   agent?: DocAgentController
   mentionNames: Record<string, string>
+  /** handle → 头像与「是不是队友」：切到的回答里 `<@handle>` chip 前那张脸用它。 */
+  mentionIdentities?: Record<string, MentionIdentity>
   /** 大纲：正文里的标题（h1–h3）；还没有标题时是空数组。 */
   headings: OutlineHeading[]
   /** 查找条开着没有，按钮据此发亮。 */
@@ -194,6 +197,7 @@ function pickHeading(pos: number) {
             :busy="agent.busy.value"
             commentable
             :mention-names="mentionNames"
+            :mention-identities="mentionIdentities"
             @stop="agent.stop"
             @undo="agent.undo"
             @redo="agent.redo"

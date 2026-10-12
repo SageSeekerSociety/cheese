@@ -130,6 +130,32 @@ describe('renderPlain (human messages)', () => {
   })
 })
 
+describe('who a `@` points at', () => {
+  // handle→脸那份表由上游名册填（RefNames.mentionIdentities）；这里证明它会跟着
+  // 序列化出来的正文一起走，且不碰 chip 的文字。
+  const MAPS_FACES: RefNames = {
+    ...MAPS,
+    mentionIdentities: { andyl: { avatar: null, agent: false } },
+  }
+
+  it('carries the roster face into a markdown chip, text unchanged', () => {
+    const html = renderMarkdown('<@andyl> 都办好了', MAPS_FACES)
+    expect(html).toContain('identity-face--person')
+    expect(html).toContain('data-initial="A"')
+    const box = document.createElement('div')
+    box.innerHTML = html
+    expect(box.querySelector('.mention')?.textContent).toBe('@Andy Liu')
+  })
+
+  it('carries it into a human message too, and still draws a face when the roster has none', () => {
+    expect(renderPlain('问 <@andyl>', MAPS_FACES)).toContain('identity-face--person')
+    // 名册没给这一位时也画：handle 加显示名首字母，@ 从来不是一行光字。
+    const bare = renderPlain('问 <@andyl>', MAPS)
+    expect(bare).toContain('identity-face--person')
+    expect(bare).toContain('@Andy Liu')
+  })
+})
+
 describe.each([
   ['Markdown', renderMarkdown],
   ['plain text', renderPlain],

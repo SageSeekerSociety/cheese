@@ -4,21 +4,28 @@
 // 和任务单独指定的那一位——负责人能在任务信息卡那一行把这件事交给另一位队友。两个
 // 来源都由调用方传进来，这里只负责算出一个座位、给它的名字、输入框那行提示语，并把
 // `<@handle>` 渲染用的 handle→名字那张表和名册对齐。
+import type { MentionIdentity } from '@/lib/refChip'
+
 import { computed, type ComputedRef, watch } from 'vue'
 
 import { t } from '@/i18n'
 
 type Seat = { handle: string; label: string }
 
+/** 名册上能 @ 到的一位。头像、是不是队友跟着名字一起带上，`@` chip 前那张脸要用。 */
+type PoolEntry = { handle: string; label: string; avatar?: string | null; agent?: boolean }
+
 export function useAgentNaming(opts: {
   /** 房间的座位：名册上那位，名册上没有就用项目默认那位。名册还没到时为空。 */
   roomSeat: ComputedRef<Seat | null>
   /** 名册上能 @ 到的人：任务指定那位要看它在不在册。 */
-  pool: ComputedRef<{ handle: string; label: string }[]>
+  pool: ComputedRef<PoolEntry[]>
   /** handle 翻成界面上的名字；不在册上时给 null。 */
   nameOf: (handle: string) => string | null
   /** `<@handle>` 渲染用的表；本模块负责把它和名册对齐。 */
   names: Record<string, string>
+  /** handle → 头像与「是不是队友」，和 `names` 一起对齐；`@` chip 前面那张脸用它。 */
+  identities?: Record<string, MentionIdentity>
   /** 读的是一个任务、而这件事单独指定了队友时，那位的 handle；空＝跟着房间那位。 */
   taskAgentHandle?: () => string | null
   alwaysSummon: () => boolean
@@ -55,6 +62,12 @@ export function useAgentNaming(opts: {
       // not the raw literal — they are reserved handles, not roster members.
       opts.names.all = t('work.room.mention.all')
       opts.names.here = t('work.room.mention.here')
+      // 头像那张小脸跟着名字对齐，一份名册两个表：正文里的 @ 和名册上那位长得一样。
+      // all/here 是群播、不是人，不给脸。
+      if (opts.identities) {
+        for (const k of Object.keys(opts.identities)) delete opts.identities[k]
+        for (const row of pool) opts.identities[row.handle] = { avatar: row.avatar ?? null, agent: !!row.agent }
+      }
     },
     { immediate: true, deep: true }
   )

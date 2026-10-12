@@ -17,6 +17,7 @@ import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -83,7 +84,7 @@ const props = defineProps<{
   showStarters: boolean
   starterPrompts: { label: string; hint: string; text: string }[]
   agentName: string
-  refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  refs: RefNames
   outbox: Outgoing[]
   /** 队友正在写、还没发出的那几条（useTypingPreview），接在发件箱后面。 */
   typing: { block: Block; edge: RunEdge }[]
