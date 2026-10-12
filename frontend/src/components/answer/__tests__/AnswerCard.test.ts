@@ -17,14 +17,14 @@ const mocks = vi.hoisted(() => ({
   acceptAnswer: vi.fn(),
 }))
 
-vi.mock('@/network/api/answers', () => ({
+vi.mock('@/api/answers', () => ({
   AnswersApi: {
     postAttitude: (...args: unknown[]) => mocks.postAttitude(...args),
     favorite: (...args: unknown[]) => mocks.favorite(...args),
     unfavorite: (...args: unknown[]) => mocks.unfavorite(...args),
   },
 }))
-vi.mock('@/network/api/questions', () => ({
+vi.mock('@/api/questions', () => ({
   QuestionApi: { acceptAnswer: (...args: unknown[]) => mocks.acceptAnswer(...args) },
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -111,11 +111,11 @@ const byText = (where: Element, text: string) =>
 
 beforeEach(() => {
   mocks.postAttitude.mockReset().mockResolvedValue({
-    data: { attitudes: { positive_count: 3, negative_count: 0, difference: 3 } },
+    attitudes: { positive_count: 3, negative_count: 0, difference: 3 },
   })
-  mocks.favorite.mockReset().mockResolvedValue({ data: null })
-  mocks.unfavorite.mockReset().mockResolvedValue({ data: null })
-  mocks.acceptAnswer.mockReset().mockResolvedValue({ data: null })
+  mocks.favorite.mockReset().mockResolvedValue(null)
+  mocks.unfavorite.mockReset().mockResolvedValue(null)
+  mocks.acceptAnswer.mockReset().mockResolvedValue(null)
   AccountService.user = null
 })
 

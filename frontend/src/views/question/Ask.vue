@@ -79,10 +79,10 @@ import { z } from 'zod'
 import { defaultEditorConfig } from '@/utils/editor'
 import { vuetifyConfig } from '@/utils/form'
 
+import { QuestionApi } from '@/api/questions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
 import TopicSelector from '@/components/common/TopicSelector.vue'
-import { QuestionApi } from '@/network/api/questions'
 
 let editor: EditorJS
 const { t } = useI18n()
@@ -154,7 +154,7 @@ const submit = handleSubmit(async (values) => {
     bounty: bounty.value ?? 0,
   })
   toast.success(t('questions.ask.success'))
-  router.push({ name: 'QuestionAnswerList', params: { questionId: res.data.id } })
+  router.push({ name: 'QuestionAnswerList', params: { questionId: res.id } })
 })
 </script>
 

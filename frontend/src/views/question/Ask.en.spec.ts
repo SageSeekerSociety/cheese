@@ -13,7 +13,7 @@ vi.mock('@/components/common/Editor/Editor.vue', () => ({
 vi.mock('@/components/common/TopicSelector.vue', () => ({
   default: defineComponent({ setup: () => () => h('div') }),
 }))
-vi.mock('@/network/api/questions', () => ({ QuestionApi: { ask: vi.fn() } }))
+vi.mock('@/api/questions', () => ({ QuestionApi: { ask: vi.fn() } }))
 
 import Ask from './Ask.vue'
 
