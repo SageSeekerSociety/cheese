@@ -6804,6 +6804,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/own-agents/{handle}/callers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Own Agent Callers
+         * @description Who may call a member's own agent: its owner alone, or any person in the
+         *     project. Only its owner decides, since it is their account that pays.
+         */
+        put: operations["set_own_agent_callers_projects__project_id__own_agents__handle__callers_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/default-model": {
         parameters: {
             query?: never;
@@ -15882,11 +15903,68 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
+        /** OwnAgentCallersUpdate */
+        OwnAgentCallersUpdate: {
+            callers: components["schemas"]["OwnCallers"];
+        };
+        /** OwnAgentMachineOut */
+        OwnAgentMachineOut: {
+            /** Name */
+            name: string;
+            /** Online */
+            online: boolean;
+        };
+        /** OwnAgentOut */
+        OwnAgentOut: {
+            /** Handle */
+            handle: string;
+            /** Name */
+            name: string | null;
+            callers: components["schemas"]["OwnCallers"];
+            /** Owner Handle */
+            owner_handle: string | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Machines */
+            machines: components["schemas"]["OwnAgentMachineOut"][];
+        };
+        /** OwnAgentsOut */
+        OwnAgentsOut: {
+            /** Allowed */
+            allowed: boolean;
+            /** Can Manage */
+            can_manage: boolean;
+            /** Agents */
+            agents: components["schemas"]["OwnAgentOut"][];
+        };
+        /** OwnAgentsOutEnvelope */
+        OwnAgentsOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["OwnAgentsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** OwnAgentsUpdate */
         OwnAgentsUpdate: {
             /** Allowed */
             allowed: boolean;
         };
+        /**
+         * OwnCallers
+         * @description Who may set a member's own agent to work. Its owner decides; the
+         *     platform does not look at what the agent signs in with.
+         * @enum {string}
+         */
+        OwnCallers: "owner" | "project";
         /** PageCheckIn */
         PageCheckIn: {
             /** Html */
@@ -31523,6 +31601,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_own_agent_callers_projects__project_id__own_agents__handle__callers_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnAgentCallersUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */

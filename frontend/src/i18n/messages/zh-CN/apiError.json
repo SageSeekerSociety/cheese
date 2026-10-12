@@ -353,6 +353,8 @@
   "ownerMachineOffline": "无法启动：你接入的电脑都不在线，或都没有登录 Claude Code",
   "ownAgentOtherOwnersTask": "这是别人的 Claude Code，只能做它主人负责的任务",
   "ownAgentOwnerOnlyChat": "只有主人能和自己的 Claude Code 私聊",
+  "ownAgentNotFound": "项目里没有这个成员自己的 Claude Code",
+  "ownAgentCallersOwnerOnly": "只有主人能决定谁可以叫自己的 Claude Code",
   "ownAgentNotDefault": "成员自己的 Claude Code 不能设为项目默认的队友",
   "roomBusyFinishBeforeEnvironment": "频道正在工作，请结束当前工作后再应用环境配置",
   "roomBusyRetryLater": "频道正在工作，请稍后重试",
