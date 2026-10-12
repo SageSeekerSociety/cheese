@@ -21,6 +21,15 @@ export const MOTION_MODES: ReadonlyArray<{ id: MotionMode; label: string }> = [
 const DURATION_NAME = /^--dur-/
 
 /**
+ * 产品自己那四条时长 token 的名字，照 `src/style.css` 的 `:root` 抄。
+ *
+ * 慢放改的就是它们（这是这个文件存在的理由）；动效台给每一格标「用的哪条 token」时
+ * 也要拿它来核对 —— 两边都从这一份读，不各写一份名字。token 改名时这份要跟着改，
+ * 忘了 `demoTransitions.spec.ts` 会把名字和 `style.css` 对一遍，对不上就红。
+ */
+export const DURATION_TOKENS = ['--dur-press', '--dur-quick', '--dur-base', '--dur-slow']
+
+/**
  * 每条 token 的原值，见过一次就记下来。
  *
  * 必须记：第二次从文档上读到的是自己写上去的放大值，拿来再乘一遍会越乘越大。名字倒是
