@@ -48,7 +48,7 @@ CYCLE = bb.CYCLE_CONTRACT
 
 # ---------------------------------------------------------------------------
 # Building trees and configs. The seed tree is check_boundaries.py's own — the
-# smallest tree that satisfies all seven declarations — so the script is judged
+# smallest tree that satisfies all eight declarations — so the script is judged
 # on the same tree the gate is, not on a fixture that agrees with it by luck.
 # ---------------------------------------------------------------------------
 
@@ -310,15 +310,38 @@ def test_dry_run_without_update_reports_the_dry_run_first(tmp_path):
     assert config.read_text() == before
 
 
-def test_out_of_order_entries_are_refused():
-    text = REAL_CONFIG.read_text()
-    lines = text.split("\n")
-    first = next(
-        i for i, line in enumerate(lines) if line.startswith("    app.domain.")
+def _first_populated_block(text: str) -> str:
+    """A block-carrying contract whose frozen block still holds entries.
+
+    The two tests below perturb a *real* frozen block, and C1's is empty now
+    that its three upward imports were paid down. Naming a contract instead
+    would make them stop testing anything the day that contract's debt is paid
+    too, so they take whichever block still carries entries — and refuse to run
+    rather than silently perturb nothing.
+    """
+    entries = bb.read_entries(text)
+    populated = [c for c in bb.BLOCK_CONTRACTS if entries.get(c)]
+    assert populated, (
+        "no frozen block carries entries any more, so these tests would be "
+        "perturbing an empty file; give them another subject"
     )
-    lines[first], lines[first + 1] = lines[first + 1], lines[first]
+    return populated[0]
+
+
+def test_out_of_order_entries_are_refused():
+    def swap_first_two(lines: list[str]) -> list[str]:
+        first = next(
+            i
+            for i, line in enumerate(lines)
+            if line.startswith("    ") and " -> " in line
+        )
+        return [*lines[:first], lines[first + 1], lines[first], *lines[first + 2 :]]
+
+    text = REAL_CONFIG.read_text()
+    contract_id = _first_populated_block(text)
+    text = _edit_section(text, contract_id, swap_first_two)
     with pytest.raises(bb.ConfigShapeError, match="out of order"):
-        bb.parse("\n".join(lines))
+        bb.parse(text)
 
 
 def test_a_duplicated_entry_is_refused():
@@ -330,7 +353,9 @@ def test_a_duplicated_entry_is_refused():
         )
         return [*lines[:first], lines[first], *lines[first:]]
 
-    text = _edit_section(REAL_CONFIG.read_text(), "api-domain-core", duplicate_first)
+    text = REAL_CONFIG.read_text()
+    contract_id = _first_populated_block(text)
+    text = _edit_section(text, contract_id, duplicate_first)
     with pytest.raises(bb.ConfigShapeError, match="repeated"):
         bb.parse(text)
 

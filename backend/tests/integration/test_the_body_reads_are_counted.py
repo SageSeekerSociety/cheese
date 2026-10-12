@@ -91,7 +91,7 @@ async def test_only_reads_of_body_files_are_counted(business_db_factory):
                 # 不算：别的文件。
                 _call(project, detail="/home/cheese/work/wt-dream/CLAUDE.md"),
                 # 不算：`meta.arg` 是给人看的预览（长路径被剪成 `…/team/x.md`），
-                # 拿它判目录是不准的 —— 判据必须是未剪裁的 `detail`。
+                # 拿它判目录是不准的 —— 判据必须是未截断的 `detail`。
                 _call(project, arg="…/team/x.md"),
                 # 不算：只有事件块才进这个数。
                 _call(

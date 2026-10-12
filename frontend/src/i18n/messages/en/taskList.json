@@ -1,0 +1,12 @@
+{
+  "whose": "Ownership",
+  "status": "Task status",
+  "delivery": "Delivery",
+  "allStatuses": "All statuses",
+  "open": "Open",
+  "anyDelivery": "Any delivery",
+  "acceptedDelivery": "Has accepted delivery",
+  "deliveryAccepted": "Delivery accepted",
+  "catalogAllNote": "Open and closed groups appear together; delivery acceptance stays separate.",
+  "catalogAcceptedNote": "Tasks with earlier accepted deliveries remain open."
+}

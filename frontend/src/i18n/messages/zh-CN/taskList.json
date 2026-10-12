@@ -1,0 +1,12 @@
+{
+  "whose": "归属",
+  "status": "任务状态",
+  "delivery": "交付",
+  "allStatuses": "全部状态",
+  "open": "进行中",
+  "anyDelivery": "交付不限",
+  "acceptedDelivery": "有已采纳交付",
+  "deliveryAccepted": "交付已采纳",
+  "catalogAllNote": "进行中和已关闭分组同屏，采纳记录单独显示。",
+  "catalogAcceptedNote": "已采纳前几步的任务仍在进行中。"
+}

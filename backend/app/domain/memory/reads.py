@@ -15,8 +15,9 @@ agent 自己去读一个文件。整件事成立的前提就是**它会去读**�
 
 1. 工具是 `Read`（`meta.tool`，见 `agent/tool_preview.py` 与
    `turn.intake.events._persist_tool_event`）；
-2. 参数里那个路径在 `.cheese/memory/` 下面（`meta.detail`，**未经剪裁的原文**——
-   `meta.arg` 是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录是不准的）；
+2. 参数里那个路径在 `.cheese/memory/` 下面（`meta.detail`，**未截断的原文**，
+   只去掉了密钥——`meta.arg` 是给人看的预览，长路径会被剪成 `…/team/x.md`，
+   拿它判目录是不准的）；
 3. 那个文件不是 `MEMORY.md`：索引每轮注入，读它不算「翻正文」。
 
 **这是工具调用，不是「记住了什么」。** agent 读了正文又没读懂，这里照样 +1：这个数
@@ -48,7 +49,7 @@ INDEX_NAME = "MEMORY.md"
 
 #: 这一条事件说的是哪个工具。
 TOOL_META_KEY = "tool"
-#: 这个工具的参数原文（未剪裁）。
+#: 这个工具的参数原文（未截断，密钥已打码）。
 DETAIL_META_KEY = "detail"
 
 READ_TOOL = "Read"

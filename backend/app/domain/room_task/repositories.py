@@ -179,7 +179,9 @@ class TaskRepository:
             )
         return list((await self._session.scalars(stmt)).all())
 
-    async def list_for_project(self, project_id: uuid.UUID) -> list[Task]:
+    async def list_for_project(
+        self, project_id: uuid.UUID, *, accepted: bool | None = None
+    ) -> list[Task]:
         """Every thread in the project, oldest first — the whole tree at once.
 
         The rail draws rooms AND the work in them, and a project here already
@@ -192,7 +194,17 @@ class TaskRepository:
             .where(Task.project_id == project_id)
             .order_by(Task.created_at, Task.id)
         )
+        stmt = self._accepted(stmt, accepted)
         return list((await self._session.scalars(stmt)).all())
+
+    @staticmethod
+    def _accepted(stmt, accepted: bool | None):
+        """Delivery approval is independent of whether a task remains open."""
+        if accepted is None:
+            return stmt
+        return stmt.where(
+            Task.accepted_at.is_not(None) if accepted else Task.accepted_at.is_(None)
+        )
 
     @staticmethod
     def _moved():
@@ -222,7 +234,9 @@ class TaskRepository:
         rooms: Collection[uuid.UUID],
         status: str,
         channel: uuid.UUID | None,
+        accepted: bool | None,
     ):
+        stmt = self._accepted(stmt, accepted)
         stmt = stmt.where(
             Task.project_id == project_id,
             Task.room_id.in_(list(rooms)),
@@ -241,6 +255,7 @@ class TaskRepository:
         me: str,
         limit: int,
         before: tuple[datetime, uuid.UUID] | None,
+        accepted: bool | None = None,
     ) -> tuple[list[tuple[Task, datetime]], bool]:
         """One page of the project's tasks in ``status``, the most recently moved
         first, each with when it last moved; and whether more follow.
@@ -253,7 +268,12 @@ class TaskRepository:
         """
         moved = self._moved()
         stmt = self._in_view(
-            select(Task, moved), project_id, rooms=rooms, status=status, channel=channel
+            select(Task, moved),
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            accepted=accepted,
         )
         if whose is not None:
             stmt = stmt.where(self._whose(whose, me))
@@ -271,6 +291,7 @@ class TaskRepository:
         status: str,
         channel: uuid.UUID | None,
         me: str,
+        accepted: bool | None = None,
     ) -> dict[str, int]:
         """How many of the project's tasks in ``status`` there are, in all and
         by whose they are to ``me``, narrowed as `page_for_project` is."""
@@ -282,7 +303,12 @@ class TaskRepository:
             ),
         ]
         stmt = self._in_view(
-            select(*counted), project_id, rooms=rooms, status=status, channel=channel
+            select(*counted),
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            accepted=accepted,
         )
         row = (await self._session.execute(stmt)).one()
         return dict(zip(("all", "mine", "helping", "others"), row, strict=True))

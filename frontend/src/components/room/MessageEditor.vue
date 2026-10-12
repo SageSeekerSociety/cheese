@@ -13,7 +13,7 @@
 import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { Topic } from '../../cx_types'
 
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
@@ -39,8 +39,9 @@ const emit = defineEmits<{
 
 const draft = ref(props.text)
 const input = ref<HTMLTextAreaElement | null>(null)
-const MAX_ROWS = 12
-const rows = computed(() => Math.min(MAX_ROWS, draft.value.split('\n').length))
+// 框长到 12 行封顶，再长就在框里滚，不把这一条撑满整屏。`rows` 只数硬换行，一段长的
+// 正文折了行它也不长，所以高度得量：12 × 24px 行高 + 上下各 6px 留白 + 上下各 1px 边。
+const MAX_HEIGHT = 302
 
 const mentionMenu = ref<InstanceType<typeof MentionMenu> | null>(null)
 const picker = useRoomMentionPicker({
@@ -63,13 +64,28 @@ function isImeKey(e: KeyboardEvent) {
   return e.isComposing || e.keyCode === 229
 }
 
+function grow() {
+  const box = input.value
+  if (!box) return
+  // 先归零再量：不归零，`scrollHeight` 不会小于当前高度，删字时框缩不回去。
+  box.style.height = 'auto'
+  // `scrollHeight` 是内容加留白、不含边框，而高度是 border-box：差的这 2px 不加回来，
+  // 量出的框永远比内容矮一点，里面会挂一条用不着的滚条。
+  const border = box.offsetHeight - box.clientHeight
+  box.style.height = `${Math.min(box.scrollHeight + border, MAX_HEIGHT)}px`
+}
+
 onMounted(async () => {
   await nextTick()
   const box = input.value
   if (!box) return
+  grow()
   box.focus()
   box.setSelectionRange(box.value.length, box.value.length)
 })
+
+// 打字、粘贴、删行都会改正文，长度跟着变。
+watch(draft, () => void nextTick(grow))
 
 function onKey(e: KeyboardEvent) {
   if (isImeKey(e)) return
@@ -105,7 +121,7 @@ function onKey(e: KeyboardEvent) {
       v-model="draft"
       class="msg-edit__input"
       autocomplete="off"
-      :rows="rows"
+      rows="1"
       :aria-label="t('work.room.message.edit')"
       @keydown="onKey"
     />
@@ -148,8 +164,9 @@ function onKey(e: KeyboardEvent) {
   border-radius: var(--radius-md);
   background: var(--surface);
   font: inherit;
-  font-size: 14px;
-  line-height: var(--lh-14-loose);
+  /* 和消息正文、发消息的输入区同一档：改的时候看到的行宽和发出去的样子一样。 */
+  font-size: 15px;
+  line-height: var(--lh-15-reading);
   color: var(--text);
   resize: none;
   transition: border-color var(--dur-quick) var(--ease-standard);

@@ -225,7 +225,7 @@ async def test_health_and_metrics_are_never_limited(limits) -> None:
 @pytest.fixture
 def _ready(monkeypatch):
     """`/readyz` answers without touching a dependency: only the limit is under test."""
-    from app.api.routes import health
+    from app.core import health
 
     async def _up():
         return {"status": "up"}

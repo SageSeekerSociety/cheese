@@ -10,7 +10,7 @@ Additive: the previous image neither reads nor writes the column, and NULL —
 every row it writes — is exactly 「不是删除」.
 
 Revision ID: c40c2f001814
-Revises: 44de818574e0
+Revises: e81c4b7a2f05
 """
 
 import sqlalchemy as sa
@@ -19,7 +19,7 @@ from migration_helpers import with_lock_retries
 from alembic import op
 
 revision = "c40c2f001814"
-down_revision = "44de818574e0"
+down_revision = "e81c4b7a2f05"
 branch_labels = None
 depends_on = None
 

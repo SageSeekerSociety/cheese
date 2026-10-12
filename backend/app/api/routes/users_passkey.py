@@ -16,11 +16,11 @@ as seven routes:
 and the one shape only they use, `PasskeyPromptDismissal`.
 
 Shared contracts. `challenge_from_credential` reads WebAuthn clientDataJSON
-for both these verification routes and sudo, so it lives in users_common
+for both these verification routes and sudo, so it lives in users_deps
 beside SudoTicketRequest. `_passkey_enrollment` (what a finished sign-in
 hands back when the account is due the offer) stays in users.py:
 every sign-in route calls it. `_spend_sudo_ticket` is the shared helper and
-lives in `users_common.py`, and `issue_session` joined it there: every way
+lives in `users_deps.py`, and `issue_session` joined it there: every way
 of signing in ends in it, so the mint sits beside the ticket these modules
 already share, imported here the way `app_sign_in.py` imports it.
 `get_passkey_service` and `get_user_auth_service` are FastAPI dependencies
@@ -53,7 +53,7 @@ from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_passkey_service, get_user_auth_service
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     SudoTicketRequest,
     _spend_sudo_ticket,
     challenge_from_credential,

@@ -155,7 +155,9 @@ class TaskService:
         if task is None or task.room_id != room_id or task.branch_name is None:
             raise NotFoundError("Task not found")
 
-    async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
+    async def list_in_project(
+        self, project_id: uuid.UUID, *, accepted: bool | None = None
+    ) -> list[Task]:
         """这个项目里的活，最老的在前。
 
         交出去的是 ORM 行，**暂留**：room_task 这一期还没有自己的窄读出口，项目
@@ -166,7 +168,7 @@ class TaskService:
         Callers authorize and own this session and its transaction. This read
         does not explicitly begin, commit or roll back.
         """
-        return await self._repo.list_for_project(project_id)
+        return await self._repo.list_for_project(project_id, accepted=accepted)
 
     async def list_open(self) -> list[Task]:
         """全平台还开着的任务，交出 ORM 行（同 `list_in_project`，**暂留**）。"""
@@ -199,6 +201,7 @@ class TaskService:
         me: str,
         limit: int,
         before: tuple[datetime, uuid.UUID] | None,
+        accepted: bool | None = None,
     ) -> tuple[list[tuple[Task, datetime]], bool]:
         """One page of the project's tasks, as `TaskRepository.page_for_project`
         reads it."""
@@ -211,6 +214,7 @@ class TaskService:
             me=me,
             limit=limit,
             before=before,
+            accepted=accepted,
         )
 
     async def counts_in_project(
@@ -221,11 +225,17 @@ class TaskService:
         status: str,
         channel: uuid.UUID | None,
         me: str,
+        accepted: bool | None = None,
     ) -> dict[str, int]:
         """The project's tasks counted by whose they are, as
         `TaskRepository.counts_for_project` counts them."""
         return await self._repo.counts_for_project(
-            project_id, rooms=rooms, status=status, channel=channel, me=me
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            me=me,
+            accepted=accepted,
         )
 
     async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:

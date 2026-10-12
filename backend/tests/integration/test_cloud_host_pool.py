@@ -844,3 +844,24 @@ def test_with_every_host_away_nothing_is_given_up_until_one_answers(pool, monkey
 
     assert pool.host(lost).released_at is not None
     assert pool.host(other).released_at is None
+
+
+def test_the_admin_page_counts_a_host_given_up_and_the_sandbox_lost_with_it(
+    pool, monkeypatch
+):
+    """The host's row goes once the provider has deleted it; what the admin
+    machines page counts for the last day must not go with it."""
+    alice, lost, _, device, _ = _two_hosts_at_work(pool)
+    pool.online.discard(device)
+    pool.pool("maintain")
+    _later(monkeypatch, timedelta(minutes=11))
+    pool.pool("maintain")
+    monkeypatch.setattr(settings, "platform_admin_handles", ["ops"])
+
+    history = pool.client.get(
+        "/admin/stats/machines", headers=session_auth_headers("ops")
+    ).json()["data"]["history"]
+
+    assert history["hosts_lost"] == 1
+    assert history["hosts_lost_by_reason"] == {"connector_away": 1}
+    assert history["sandboxes_lost"] == 1
