@@ -429,6 +429,7 @@
     },
     "message": {
       "copy": "Copy",
+      "copySelection": "Copy selected text",
       "copied": "Copied",
       "copyLink": "Copy link",
       "linkCopied": "Link copied",
