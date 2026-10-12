@@ -217,7 +217,11 @@ describe('knowledges: authentication edge cases', () => {
     expect(refresh).toHaveBeenCalledOnce()
   })
 
-  it('redirects to sign-in when the refresh is rejected, without a retry', async () => {
+  // A renewal the server turns down is not retried, and this layer does not take
+  // the person to a sign-in itself: `lib/session.ts` announces it and
+  // `services/account.ts` drops the session and navigates, for both stacks
+  // (`account.sessionOver.spec.ts`).
+  it('does not retry a rejected renewal, and does not navigate to a sign-in itself', async () => {
     server.resetHandlers()
     let requests = 0
     server.use(
@@ -230,7 +234,7 @@ describe('knowledges: authentication edge cases', () => {
     replace.mockReset()
     await expect(modules.knowledges!.getDetail!(9)).rejects.toBeInstanceOf(Error)
     expect(requests).toBe(1)
-    expect(replace).toHaveBeenCalledWith('/account/signin')
+    expect(replace).not.toHaveBeenCalled()
   })
 
   it('stops after a refreshed request is still unauthorized', async () => {

@@ -15,6 +15,12 @@ vi.mock('@/api/users', () => ({
   },
 }))
 
+// `account.ts` says something on screen when the server ends a sign-in. Nothing
+// here takes that path, but importing the module pulls vuetify-sonner in with
+// it, and that cold start is enough to run `freshPage`'s import past the 5s test
+// timeout. Stubbed, the way `ErrorHandler.spec.ts` stubs it.
+vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
+
 class LoneTab {
   addEventListener() {}
   postMessage() {}
