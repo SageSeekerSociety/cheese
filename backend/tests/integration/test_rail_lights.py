@@ -320,7 +320,9 @@ def test_a_running_turn_breathes_and_the_room_says_nothing_about_its_clock(clien
     )
 
     row = _room_row(client, project, room, "alice")
-    assert row["presentation"]["phrase"] == Building.running
+    # 看板那一格只说房间**自己那条线**（另一条测试钉着：名下的活在跑时它不变）；
+    # 「名下的活在跑」只进那盏呼吸绿。
+    assert row["presentation"]["phrase"] == Building.idle
     assert row["moving"] is True
     assert row["last_output_at"] is None
     task = _task_row(row, ids["running"])

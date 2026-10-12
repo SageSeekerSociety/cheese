@@ -196,7 +196,7 @@ def _topic_out(
     working_in_threads: set[str] | None = None,
     silent: Mapping[uuid.UUID, float] | None = None,
     unseen: Collection[uuid.UUID] | None = None,
-    delivering: Collection[uuid.UUID] | None = None,
+    moving: Collection[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
@@ -257,12 +257,11 @@ def _topic_out(
     )
     shown = presentation.room_presentation(facts, now=now or datetime.now(UTC))
     data["presentation"] = shown.as_dict()
-    # 侧栏那盏呼吸绿问的那件事：这间房有没有活在往前走 —— 判据在
-    # `presentation.work_moving`，这里补上「名下的活在交付链路上」那一半
-    # （`_delivering_rooms`）。
-    data["moving"] = presentation.work_moving(
-        shown, also=topic.id in (delivering or ())
-    )
+    # 侧栏那盏呼吸绿问的那件事：这一行有没有活在往前走 —— 判据在
+    # `presentation.work_moving`，这里补上「名下的活」那一半（房间名下的活 / 支线
+    # 在跑，或走在交付链路上）。`shown` 只管这一行自己：看板那一格是房间自己的格子，
+    # 就算它名下有一轮在跑，那一格也只说房间自己那条线。
+    data["moving"] = presentation.work_moving(shown, also=topic.id in (moving or ()))
     return data
 
 
@@ -307,13 +306,15 @@ async def list_topics(
         order=order,
         active_since=active_since,
     )
-    # 这一页里哪几个话题此刻在往前走。`running_topic_ids` 只问得到这个进程（连同它
-    # 的 broker）正在跑的那些；一个进程按不住另一个进程手里的轮次，所以还要读一遍
-    # 「哪一行还开着」（`agent.liveness.moving_topics`）——一个房间名下任何一段对话
-    # 上跑的轮次（它的活、它的支线）都归回这个房间。
-    running_ids = await moving_topics(
-        db, [t.id for t in topics], running=runner.running_topic_ids()
-    )
+    # 这一页里哪几个话题**自己那条线**上有一轮在跑 —— `presentation` 那一格读的
+    # 是它：看板一格是房间自己的格子，它名下的活有它们自己的格子
+    # （`test_a_rooms_board_cell_does_not_follow_a_task_running_under_it`）。
+    running_ids = runner.running_topic_ids()
+    # 侧栏那盏呼吸绿问的是**连着名下的活**：一个房间名下任何一段对话上跑的轮次
+    # （它的活、它的支线）都归回这个房间。`running_topic_ids` 只问得到这个进程（连同
+    # 它的 broker）正在跑的那些；一个进程按不住另一个进程手里的轮次，所以还要读一遍
+    # 「哪一行还开着」（`agent.liveness.moving_topics`）。
+    moving_ids = await moving_topics(db, [t.id for t in topics], running=running_ids)
     relevance = await service.relevance_for_topics(topics, _viewer(actor))
     live = await topics_signals.live_cards(db, [t.id for t in topics])
     cards = topics_signals.own_cards(live)
@@ -338,7 +339,7 @@ async def list_topics(
         db, broker, [t.id for t in topics]
     )
     # 在跑的那几个各自「多久没有新输出了」——侧栏的红灯靠它（`silent_of`）。
-    silent = silent_gaps(runner, [t.id for t in topics if t.id in running_ids])
+    silent = silent_gaps(runner, [t.id for t in topics if t.id in moving_ids])
     # 哪几间房里有「交付完了、而这个人还没点开看过」的活——侧栏的长绿靠它。一次
     # 查一整页（`room_task/repositories.unseen_deliveries`），频道行和它下面的活行
     # 都从这一份里查表。
@@ -350,6 +351,9 @@ async def list_topics(
     )
     # 哪几间房名下的活在交付链路上（侧栏呼吸绿的另一半）——同一批卡里读，不再查库。
     delivering = topics_signals.delivering_rooms(live)
+    # 侧栏呼吸绿要看的那一份：这一行自己、它名下的活、它名下的支线，哪一处有活在
+    # 往前走。
+    moving = moving_ids | delivering
     rails = await rail_tasks(
         db,
         chat,
@@ -375,7 +379,7 @@ async def list_topics(
                 working_in_threads=threads_working.get(t.id),
                 silent=silent,
                 unseen=unseen,
-                delivering=delivering,
+                moving=moving,
             ),
             "my_tasks": rails[t.id],
         }
@@ -475,10 +479,11 @@ async def get_topic(
         stuck_rooms=topics_signals.stuck_on_checks(live),
     )
     threads_working = await topics_signals.working_in_threads(db, broker, [topic.id])
-    running_ids = await moving_topics(
-        db, [topic.id], running=runner.running_topic_ids()
-    )
-    silent = silent_gaps(runner, [topic.id]) if topic.id in running_ids else {}
+    # 同 `list_topics`：这一行自己那条线上在跑的是 `running_ids`（`presentation`
+    # 读它），连着名下的活和支线的那一份是 `moving_ids`（侧栏那盏呼吸绿读它）。
+    running_ids = runner.running_topic_ids()
+    moving_ids = await moving_topics(db, [topic.id], running=running_ids)
+    silent = silent_gaps(runner, [topic.id]) if topic.id in moving_ids else {}
     viewer = _viewer(actor)
     unseen = (
         await TaskService(db).unseen_deliveries([topic.id], viewer) if viewer else set()
@@ -509,7 +514,7 @@ async def get_topic(
                 working_in_threads=threads_working.get(topic.id),
                 silent=silent,
                 unseen=unseen,
-                delivering=delivering,
+                moving=moving_ids | delivering,
             ),
             "my_tasks": rails[topic.id],
         }
