@@ -197,7 +197,7 @@ on the central session host, so a room's raw `.claude/projects/**/*.jsonl` files
 subagent files included, are in its home there. Removing that home first
 compresses them into `~/.cheese/transcripts/<project>/<room>/<resource>.tar.gz` on
 the same host. The same cleanup operation deletes the archive 30 days later, for
-the reason given beside `TRANSCRIPT_RETENTION` in `topic/retire.py`: they are kept
+the reason given beside `TRANSCRIPT_RETENTION` in `room_cleanup/retire.py`: they are kept
 for debugging after the fact, and handing the work on needs only the room's chat,
 living doc and action timeline.
 
