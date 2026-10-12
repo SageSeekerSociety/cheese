@@ -1,0 +1,19 @@
+/* The page an app is drawn on: plain elements already in the document's look. */
+*, *::before, *::after { box-sizing: border-box; }
+html { overflow: hidden; background: var(--surface); color: var(--text); font: 14px / var(--lh-14) var(--font-sans); -webkit-text-size-adjust: 100%; }
+html[data-mode='full'] { overflow: auto; }
+body { margin: 0; }
+#cheese-app { display: flow-root; padding: 12px 14px 14px; }
+h1, h2, h3, h4 { margin: 12px 0 8px; color: var(--ink); font-size: 15px; line-height: var(--lh-15); }
+p { margin: 8px 0; }
+small, .muted { color: var(--muted); font-size: 13px; }
+table { width: 100%; margin: 8px 0; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; }
+th { color: var(--muted); font-size: 13px; font-weight: 500; }
+tr.active td { background: var(--fill); color: var(--ink); font-weight: 600; }
+td.num, th.num { text-align: right; }
+button { min-height: 32px; padding: 4px 14px; border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+button:hover { background: var(--fill); }
+button.primary { border-color: var(--ink); background: var(--ink); color: var(--surface); }
+button:disabled { opacity: 0.5; cursor: default; }
+code { font-family: var(--font-mono); font-size: 13px; }

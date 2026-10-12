@@ -487,13 +487,13 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_app_save",
             "存一个文档里的小程序：读者要动手才看得懂的内容（拖滑块看结果怎么变、"
-            "填数试算）。能用表格、图表块、时间线说清楚的不用它。code 是在平台外壳里"
-            "运行的一段 HTML 和脚本，写法见 cheese-docs 技能的 references/apps.md。"
+            "填数试算）。能用表格、图表块、时间线说清楚的不用它。code 是一个 Vue 单文件"
+            "组件，用平台的 c- 组件写，写法见 cheese-docs 技能的 references/apps.md。"
             "平台先在浏览器里跑一遍：报错、什么都没画出来，就不存，告诉你原因。"
             "不给 app 是新建，返回整个块的写法，由你放进文档；给了 app 是改它，存成"
             "新一版，并把文档里的版本号一起改掉。",
             {
-                "code": _text("小程序的 HTML 和脚本，只写内容，不写页面骨架"),
+                "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
                 "title": _text("新建时：小程序的标题，十个字左右"),
                 "app": _text("改已有的小程序时：它的短号（文档里 :::app 后面那串）"),
                 "note": _text("这一版改了什么，一句话"),

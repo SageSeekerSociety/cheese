@@ -59,7 +59,9 @@ def _policy() -> str:
     platform = f"{parts.scheme}://{parts.netloc}"
     return (
         "sandbox allow-scripts; default-src 'none'; "
-        "script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        # 'unsafe-eval': the shell compiles the app's code in the frame and
+        # runs it; what may run is bounded by the sandbox, not by this.
+        "script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; "
         "img-src data: blob:; font-src data:; media-src data: blob:; "
         "connect-src 'none'; form-action 'none'; base-uri 'none'; "
         f"frame-ancestors {platform}"

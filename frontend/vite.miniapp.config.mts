@@ -11,15 +11,21 @@
 //
 // The tokens are src/style.css's, read here at build time
 // (`virtual:doc-tokens.css`), so the shell is in the document's colours without
-// a second copy of the palette to keep in step.
+// a second copy of the palette to keep in step. The platform's elements are Vue
+// files built into custom elements (`*.ce.vue`).
 import { readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { dirname } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 
 import type { Plugin } from 'vite'
 
+import vue from '@vitejs/plugin-vue'
 import { defineConfig } from 'vite'
 
 const SHELL = process.env.MINIAPP_SHELL ?? '1'
+// The template compiler's browser build: an app is compiled in its frame.
+const sfcBrowser = `${dirname(createRequire(import.meta.url).resolve('@vue/compiler-sfc/package.json'))}/dist/compiler-sfc.esm-browser.js`
 const here = (path: string) => fileURLToPath(new URL(path, import.meta.url))
 
 /** The light `:root { … }` block and the dark one, out of src/style.css. */
@@ -83,7 +89,10 @@ export default defineConfig({
   root: here(`./miniapp/v${SHELL}`),
   base: './',
   publicDir: false,
-  plugins: [docTokens(), singleFile()],
+  resolve: { alias: { '@vue/compiler-sfc/dist/compiler-sfc.esm-browser.js': sfcBrowser } },
+  // The components are Vue files built into custom elements (`*.ce.vue`).
+  plugins: [vue({ customElement: /\.ce\.vue$/ }), docTokens(), singleFile()],
+  define: { 'process.env.NODE_ENV': '"production"' },
   build: {
     outDir: here(`./public/miniapp/v${SHELL}`),
     emptyOutDir: true,

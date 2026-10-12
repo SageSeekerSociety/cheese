@@ -34,14 +34,18 @@ attributes are preserved; application Bearer authentication is forwarded unchang
 
 ## Document mini-apps
 
-A document's mini-app (`:::app <key>@<version>`) runs in a frame of
+A document's mini-app (`:::app <key>@<version>`) is a Vue single-file
+component 芝士 writes against the platform's elements (`c-slider`, `c-chart`
+and the rest, `frontend/miniapp/v1/components/`). It runs in a frame of
 `apps.<SITES_DOMAIN>`, which serves one thing: the shell the frontend builds
 (`frontend/miniapp/v<n>/`, fetched from `MINIAPP_SHELL_URL` and served at
-`/v<n>/`). The shell holds nothing private, so the host has no session and no
+`/v<n>/`), which compiles the component in the frame and mounts it. The
+elements' attributes and events are the contract of shell `v<n>`: within one
+major they only grow; a change that would break an app goes into the next. The shell holds nothing private, so the host has no session and no
 cookie. The app's code never passes through it: the document's page reads the
 code with the reader's own permission on the document the app belongs to
 (`/apps/<key>/versions/<n>`) and hands it to the frame, which is sandboxed with
-scripts only — no storage, no network, no forms, framed by the platform alone.
+scripts only — no storage, no network, no forms, framed by the platform alone. Scripts may be evaluated (`'unsafe-eval'`): the shell compiles the component there.
 Without `SITES_DOMAIN` or `MINIAPP_SHELL_URL` no mini-app runs; its title and
 sentence still show.
 

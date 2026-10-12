@@ -6,81 +6,87 @@ description: 文档里小程序的代码怎么写。随 cheese-docs 技能发出
 
 # 小程序的写法
 
-读者要自己动手才看得懂时才用小程序：拖动一个参数看结果怎么变、切换几种方案对比、一步一步播放一个过程、填数试算。能用表格、图表块、时间线说清楚的，不用它。一份文档里一般不超过两个。
+读者要自己动手才看得懂时才用小程序：拖动一个参数看结果怎么变、一步一步播放一个过程、在几种方案之间切换对比、填数试算。能用表格、图表块、时间线说清楚的，不用它。一份文档里一般不超过两个。
 
 ## 怎么交
 
 1. 用 `cheese_app_save` 交代码（`code`）和标题（`title`）。平台先在浏览器里运行一遍，手机宽和桌面宽、浅色和深色各一次：报错、什么都没画出来、高度一直在长，就不存，返回原因。
-2. 新建时返回一个块。把它放进文档里合适的位置，第二行换成一句话：它展示什么、最重要的结论是什么。读文档的人在运行不了的地方只看到这一句，你以后读文档时也只读这一句。
+2. 新建时返回一个块。把它放进文档里合适的位置，第二行换成一句话：它展示什么、最重要的结论是什么。读者在运行不了的地方只看到这一句，你以后读文档时也只读这一句。
 3. 改已有的小程序：先 `cheese_app_get` 读代码，改好后 `cheese_app_save` 带上 `app`（块里 `:::app` 后面那串短号）。文档里块的版本号会一起改掉。
 
-## 代码里写什么
+## 代码是一个 Vue 组件
 
-`code` 是一段 HTML：标签加 `<script>`。只写内容，不写 `<html>`、`<head>`、`<body>`，不写页面的配色、字体和背景，这些外壳都有。标签先放好，脚本再按顺序运行，脚本里可以直接用：
+`code` 是一个 Vue 单文件组件：`<script setup>` 加 `<template>`。
 
-- `kit`：组件，见下表；
-- `echarts`：完整的 ECharts，一般用 `kit.chart` 就够；
-- `katex`：公式，一般用 `kit.math` 就够。
+- 只能 `import { ref, computed, watch, onMounted, onUnmounted } from 'vue'` 这类 Vue 自己的东西，别的库都没有，也不能联网、不能用 `localStorage`、`alert` 和表单提交。
+- 页面骨架、配色、字体、深浅色都由平台负责。不写 `<style>` 改字体、背景和颜色，不做大标题、色块这类装饰；排版用 `<c-row>`。确实要写样式时只写间距和排版，颜色只用下面这些变量：`var(--text)` `var(--muted)` `var(--line)` `var(--fill)` `var(--ok-ink)` `var(--danger-ink)` `var(--chart-1)` 到 `var(--chart-8)`。
+- 宽度跟着文档那一栏：手机上三百多像素，桌面上六七百像素。按窄的写，并排的东西放进 `<c-row>`，窄了会自动换行。
+- 高度由内容撑开。不要用 `vh`、`height: 100%` 或固定的整屏高度：平台按内容的高度调整外框，内容又跟着外框变高，高度会一直长，交稿会被拒。
 
-不能联网，不能加载别的文件或库，也不能用 `localStorage`、弹窗和表单提交。图片只能用 `data:` 地址。
+## 组件
 
-## kit
+平台提供下面这些组件，标签名以 `c-` 开头，直接写在 `<template>` 里。
 
-| 写法 | 得到什么 |
-| --- | --- |
-| `kit.h(标签, 属性, ...子元素)` | 一个元素；属性里 `onclick` 这类函数是事件，`style` 可以是对象 |
-| `kit.row(...子元素)` | 横排一行，窄了自动换行 |
-| `kit.slider({ label, min, max, step, value, format, onInput })` | 带名称和当前值的滑块；`format` 把数变成显示的文字 |
-| `kit.select([[值, 文字], …], 当前值, onChange)` | 下拉框 |
-| `kit.segmented([[值, 文字], …], 当前值, onChange)` | 分段按钮，两到四个选项时用 |
-| `kit.input({ value, type, label, onInput })` | 输入框，`type` 是 `number` 或 `text` |
-| `kit.field(名称, 控件)` | 给下拉框、输入框配上名称 |
-| `kit.button(文字, onClick, { primary })` | 按钮 |
-| `kit.stat(名称, 数值, 变化)` | 指标卡，几张放进一个 `kit.row` |
-| `kit.chip(种类, 文字)` | 状态标签，种类是 `ok`（✓）、`no`（✗）、`warn`（!） |
-| `kit.table(表头, 行, { numeric })` | 表格；`numeric` 是要右对齐的列号 |
-| `kit.chart(ECharts 配置, { height })` | 图表，配色跟着文档；返回的元素用 `update(新配置)` 重画 |
-| `kit.math(LaTeX, { display })` | 公式 |
-| `kit.color(名称)` | 文档配色里的颜色，如 `text`、`muted`、`line`、`ok`、`danger`、`chart-1` 到 `chart-8` |
-| `kit.mode()`、`kit.on('mode', fn)` | 现在是内嵌（`inline`）还是全屏（`full`） |
-| `kit.on('theme', fn)` | 读者换了浅色或深色；kit 的组件和图表自己会跟着变，自己画的颜色在这里重画 |
+输入控件和原生输入框一样用：直接 `v-model`；也可以 `:value` 加 `@input`，新值在 `$event.target.value`。滑块和数字框的值是数字。数字、数组和对象都用绑定传：`:min="0"`、`:options="…"`、`:option="…"`。
 
-颜色只用 `kit.color` 取，不写死：同一个小程序要在浅色和深色下都看得清。
+| 标签 | 属性 | 什么时候用 |
+| --- | --- | --- |
+| `<c-slider>` 滑块 | `label` `min` `max` `step` `unit`（数值后的单位，如 `"%"`）`:format`（函数，自己决定数值怎么显示）`disabled` | 拖一个参数 |
+| `<c-number>` 数字输入框 | `label` `min` `max` `step` `unit` `disabled` | 填一个数；离开输入框时超出范围的值会被拉回 |
+| `<c-select>` 下拉框 | `label` `:options` `disabled` | 五个以上选项里选一个 |
+| `<c-segmented>` 分段按钮 | `label` `:options` `disabled` | 两到四个选项里选一个 |
+| `<c-switch>` 开关 | `label` `disabled`；值是 `true` / `false` | 开或关一样东西 |
+| `<c-player>` 分步播放 | `:count`（一共几步）`:labels`（每一步的名字，如 `["第 1 秒", …]`）`:interval`（自动播放每步停几毫秒，默认 1000）`loop`；值是当前第几步，**从 0 开始** | 一步一步播放一个过程：上一步、下一步、播放和暂停都由它管，不要自己写定时器 |
+| `<c-stat>` 指标卡 | `label` `value` `delta`（下面一行小字）`tone`（`good` 绿、`bad` 红） | 突出几个关键数字，几张放进一个 `<c-row>` |
+| `<c-chip>` 状态标签，文字写在标签中间 | `kind`：`ok`（✓）、`no`（✗）、`warn`（!） | 点出结论 |
+| `<c-chart>` 图表 | `:option`（一份 ECharts 配置对象）`:height`（像素，200 到 320） | 画图 |
+| `<c-math>` 公式 | `tex`（LaTeX）`display`（单独成行） | 写计算方法 |
+| `<c-row>` 横排一行 | `:gap`（像素）`align`（`start` `center` `end` `stretch`，默认 `end`） | 并排放几样东西 |
 
-## 尺寸
+`options` 可以是 `["甲", "乙"]`，也可以是 `[["a", "方案 A"], ["b", "方案 B"]]`（值, 显示的文字）。
 
-宽度跟着文档那一栏，手机上三百多像素，桌面上六七百像素。按窄的写，并排的东西放进 `kit.row`。
+普通的 `<table>`、`<button>`、`<p>`、`<small>` 已经是文档的样子，直接用：`<tr class="active">` 高亮一行，`<td class="num">` 数字右对齐，`<button class="primary">` 主要按钮。
 
-高度由内容撑开。内嵌时不要用 `vh`、`height: 100%` 或整屏的固定高度：外壳按内容的高度调整外框，内容又跟着外框变高，高度会一直长，交稿会被拒。图表给一个固定的 `height`，200 到 320 之间。
+图表的配色、字体、坐标轴颜色由平台给，配置里不写颜色。图例默认放在图上方，标线的文字默认放在图里面。用 `markPoint` 标出当前选中的点；两条线的当前点挨得很近时，只标最重要的那一条，标签才不会互相遮挡。
+
+## 写好的标准
+
+- 先放要动的控件，再放结果，最重要的结论用指标卡或状态标签点出来。
+- 控件一动，图表和数字都跟着变；图表上标出当前选中的点或那一项。
+- 数值照文档给的数据算，不另外假设文档没给的条件；算出来的数保留合适的小数位。
+- 不写解释性的大段文字，文档正文已经说了；小程序里只放必要的标题和单位。
 
 ## 例子
 
-```html
-<div id="controls"></div>
-<div id="result"></div>
-<script>
-  const jobs = 160
-  let workers = 4
-  const chart = kit.chart(
+```vue
+<script setup>
+import { ref, computed } from 'vue'
+
+const counts = [1, 2, 4, 8, 16]
+const jobs = 160
+const workers = ref(4)
+const wait = computed(() => Math.round(jobs / workers.value))
+const option = computed(() => ({
+  xAxis: { type: 'category', name: '并发数', data: counts.map(String) },
+  yAxis: { type: 'value', name: '排队（秒）' },
+  series: [
     {
-      xAxis: { type: 'category', data: [1, 2, 4, 8, 16] },
-      yAxis: { type: 'value', name: '排队（秒）' },
-      series: [{ type: 'line', data: [1, 2, 4, 8, 16].map((n) => Math.round(jobs / n)) }],
+      type: 'line',
+      data: counts.map((n) => Math.round(jobs / n)),
+      markPoint: { data: [{ coord: [String(workers.value), wait.value] }] },
     },
-    { height: 220 }
-  )
-  function draw() {
-    const wait = Math.round(jobs / workers)
-    const cost = (0.3 * workers).toFixed(1)
-    document.getElementById('result').replaceChildren(
-      kit.row(kit.stat('平均排队', `${wait} 秒`), kit.stat('每小时花费', `$${cost}`)),
-      workers > 8 ? kit.chip('warn', '再加并发，排队几乎不再缩短') : kit.chip('ok', '还有缩短的空间')
-    )
-  }
-  document.getElementById('controls').append(
-    kit.slider({ label: '并发数', min: 1, max: 16, value: workers, onInput: (v) => { workers = v; draw() } }),
-    chart
-  )
-  draw()
+  ],
+}))
 </script>
+
+<template>
+  <c-segmented label="并发数" :options="counts" v-model="workers" />
+  <c-row>
+    <c-stat label="平均排队" :value="`${wait} 秒`" />
+    <c-stat label="每小时花费" :value="`$${(0.3 * workers).toFixed(1)}`" />
+  </c-row>
+  <c-chip v-if="workers > 8" kind="warn">再加并发，排队几乎不再缩短</c-chip>
+  <c-chip v-else kind="ok">还有缩短的空间</c-chip>
+  <c-chart :option="option" :height="220" />
+</template>
 ```
