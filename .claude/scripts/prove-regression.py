@@ -580,6 +580,7 @@ def self_test() -> int:
             keep: bool = False,
             where: Path | None = None,
             path: str | None = None,
+            env_extra: dict[str, str] | None = None,
         ) -> subprocess.CompletedProcess:
             argv = [
                 sys.executable,
@@ -594,10 +595,15 @@ def self_test() -> int:
                 argv += ["--copy", copy]
             if keep:
                 argv.append("--keep")
+            child_env = dict(env)
+            if path:
+                child_env["PATH"] = path
+            if env_extra:
+                child_env.update(env_extra)
             return subprocess.run(
                 argv,
                 cwd=str(where or repo),
-                env={**env, "PATH": path} if path else env,
+                env=child_env,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -846,13 +852,37 @@ def self_test() -> int:
             locate("tests/test_app.py", repo)[1] == "backend/tests/test_app.py",
         )
 
+        # The child is run from a directory outside the fixture. Where that
+        # directory sits is TMPDIR's business, and if TMPDIR is somewhere inside
+        # a git work tree — /work/.tmp under the checkouts this repo's own agent
+        # harness makes, say — then `git rev-parse --show-toplevel` climbs out of
+        # the fixture and into that enclosing repository, the tool is not refused,
+        # and this case fails on a machine configured that way rather than on the
+        # change. GIT_CEILING_DIRECTORIES stops the climb above the fixture's
+        # parent, so the case means the same thing wherever TMPDIR points.
         outside = prove(
-            "HEAD", runs, node="test_app.py", where=Path(scratch)
+            "HEAD",
+            runs,
+            node="test_app.py",
+            where=Path(scratch),
+            env_extra={"GIT_CEILING_DIRECTORIES": str(Path(scratch).parent)},
         )
         tally.case(
             "run outside the repository: refused, not judged",
             outside.returncode == 2
             and "run this from inside the repository" in outside.stderr,
+        )
+        # And the case has to bite: from inside the fixture the same run judges,
+        # so "refused" is the outside directory talking and not a tool that
+        # refuses everything. HEAD is the fix commit, so both halves are green
+        # and the verdict is NOT PROVEN (exit 1) — a verdict, where the outside
+        # run gave none.
+        inside = prove("HEAD", runs)
+        tally.case(
+            "run outside the repository: the same run inside it does judge",
+            inside.returncode == 1
+            and "NOT PROVEN" in inside.stdout
+            and "run this from inside the repository" not in inside.stderr,
         )
 
     if tally.bad:
