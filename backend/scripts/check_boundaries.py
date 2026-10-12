@@ -346,7 +346,13 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
         )
         from importlinter.application.user_options import UserOptions
     except Exception as exc:  # pragma: no cover - depends on the installed version
-        return CANNOT_JUDGE, f"import-linter is not usable here: {exc!r}", None
+        return (
+            CANNOT_JUDGE,
+            f"import-linter is not usable here: {exc!r}. A system python3 "
+            "does not have the project's dependencies; run `cd backend && uv run "
+            "python scripts/check_boundaries.py`",
+            None,
+        )
 
     try:
         parsed = read_configuration(str(config_path))
