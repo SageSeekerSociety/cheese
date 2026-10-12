@@ -36,6 +36,7 @@ import json
 import os
 import re
 import sys
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
@@ -48,6 +49,7 @@ META_OPEN = "<!-- trace-sweep-meta"
 META_CLOSE = "trace-sweep-meta -->"
 DEEP_DIVE_LINES = 25  # about half a day at ~50 task lines a day
 DEEP_DIVE_MAX_DAYS = 7
+MAX_IDS = 300  # per signature; enough to dedupe overlapping windows
 NEW = "新"
 
 # (kind, who should fix it, pattern). First match wins; the order matters.
@@ -73,33 +75,55 @@ KINDS = [
     ("命令非零退出（未细分）", "未分", r"^Exit code \d+"),
 ]
 
-_REDACT = [
-    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{12,}"), r"\1[REDACTED]"),
-    (
-        re.compile(
-            r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9\-_]{16,}"
-            r"|eyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}"
-        ),
-        "[REDACTED]",
-    ),
-    (
-        re.compile(
-            r"(?i)(\"?(?:password|passwd|secret|token|api[_-]?key|accesstoken)\"?\s*[:=]\s*\"?)[^\s\",}]{4,}"
-        ),
-        r"\1[REDACTED]",
-    ),
-]
+# Copied from backend/app/core/obs.py (scrub_secrets) because this script must run
+# with the standard library alone. backend/tests/unit/test_trace_sweep_scrub_in_sync.py
+# fails if the two copies drift apart, so change both together.
+_SECRET_KEY_TAILS = (
+    "token",
+    "secret",
+    "password",
+    "passwd",
+    "api_key",
+    "apikey",
+    "credential",
+)
+_SECRET_KEY = r"(?:[A-Za-z0-9]+_)*(?:" + "|".join(_SECRET_KEY_TAILS) + r")"
+_OAUTH_CODE_RE = re.compile(r"([?&]code=)[^\s&#]+", re.IGNORECASE)
+_SECRET_KV_RE = re.compile(
+    r"\b(" + _SECRET_KEY + r")([\"']?\s*[=:]\s*)([\"']?)[^\"'\s,;&}\])>]+\3?",
+    re.IGNORECASE,
+)
+_URL_CRED_RE = re.compile(r"(://[^\s:/@]+:)[^\s@/]+(@)")
+_AUTH_SCHEME_RE = re.compile(r"\b(bearer|basic)(\s+)[A-Za-z0-9._~+/=-]{4,}", re.IGNORECASE)
+_SECRET_VALUE_RE = re.compile(
+    r"\b(?:"
+    r"sk-[A-Za-z0-9_-]{8,}"
+    r"|gh[pousr]_[A-Za-z0-9]{8,}"
+    r"|github_pat_[A-Za-z0-9_]{8,}"
+    r"|xox[abprs]-[A-Za-z0-9-]{8,}"
+    r"|AKIA[0-9A-Z]{12,}"
+    r"|eyJ[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]+){2}"
+    r")"
+)
+
+
+def scrub_secrets(value: str) -> str:
+    """Same passes, same order as backend/app/core/obs.py:scrub_secrets."""
+    out = _AUTH_SCHEME_RE.sub(r"\1\2***", value)
+    out = _SECRET_KV_RE.sub(r"\1\2\3***\3", out)
+    out = _OAUTH_CODE_RE.sub(r"\1***", out)
+    out = _URL_CRED_RE.sub(r"\1***\2", out)
+    return _SECRET_VALUE_RE.sub("***", out)
 
 
 def redact(text: str) -> str:
-    for pattern, repl in _REDACT:
-        text = pattern.sub(repl, text)
+    text = scrub_secrets(text)
     # The credentials this script was given may appear verbatim in a recorded
     # command line, with no key name in front of them for the patterns to catch.
     for name in ("OKCHEESE_PASSWORD", "OKCHEESE_TOKEN"):
         secret = os.environ.get(name)
         if secret and len(secret) >= 6:
-            text = text.replace(secret, "[REDACTED]")
+            text = text.replace(secret, "***")
     return text
 
 
@@ -125,8 +149,16 @@ def _request(method: str, path: str, token: str | None, body: dict | None = None
     req.add_header("Content-Type", "application/json")
     if token:
         req.add_header("Authorization", "Bearer " + token)
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        return json.load(resp)["data"]
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return json.load(resp)["data"]
+    except urllib.error.HTTPError as err:
+        if err.code in (401, 403):
+            sys.exit(
+                f"{method} {path}: HTTP {err.code}. The credentials were refused or lack access; "
+                "set OKCHEESE_TOKEN to a fresh token, or OKCHEESE_USERNAME/OKCHEESE_PASSWORD."
+            )
+        raise
 
 
 def token_from_env() -> str:
@@ -135,7 +167,12 @@ def token_from_env() -> str:
     user, password = os.environ.get("OKCHEESE_USERNAME"), os.environ.get("OKCHEESE_PASSWORD")
     if not (user and password):
         sys.exit("set OKCHEESE_TOKEN, or OKCHEESE_USERNAME and OKCHEESE_PASSWORD")
-    data = _request("POST", "/users/auth/login", None, {"username": user, "password": password})
+    data = _request("POST", "/users/auth/login", None, {"username": user, "password": password}) or {}
+    if not data.get("accessToken"):
+        sys.exit(
+            "login returned no access token (the account may require a second factor); "
+            "log in in a browser and set OKCHEESE_TOKEN instead"
+        )
     return data["accessToken"]
 
 
@@ -146,7 +183,7 @@ def _tasks(channel: str, token: str, since: str) -> list[dict]:
 
 
 def _errors(task: dict, token: str, since: str, until: str):
-    """Yield (at, tool, error) for every errored tool call inside the window."""
+    """Yield (block id, at, tool, error) for every errored tool call inside the window."""
     before = None
     for _ in range(100):
         query = f"/topics/{task['id']}/transcript?limit=200" + (f"&before={before}" if before else "")
@@ -159,7 +196,7 @@ def _errors(task: dict, token: str, since: str, until: str):
             oldest = at if oldest is None or at < oldest else oldest
             error = meta.get("error")
             if isinstance(error, str) and error and since <= at <= until:
-                yield at, meta.get("tool") or "?", error
+                yield block.get("id") or f"{task['id']}:{at}", at, meta.get("tool") or "?", error
         before = page.get("oldest_id")
         if not page.get("has_more") or not before or (oldest and oldest < since):
             return
@@ -170,10 +207,11 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
     tasks = _tasks(channel, token, since)
     calls = 0
     for task in tasks:
-        for at, tool, error in _errors(task, token, since, until):
+        for block_id, at, tool, error in _errors(task, token, since, until):
             calls += 1
-            sig = signature(error)
-            kind, owner = classify(error)
+            clean = redact(error)
+            sig = signature(clean)
+            kind, owner = classify(clean)
             row = found.setdefault(
                 sig,
                 {
@@ -184,17 +222,19 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
                     "tasks": set(),
                     "first": at,
                     "last": at,
-                    "sample": redact(error)[:200],
+                    "sample": clean[:200],
+                    "ids": set(),
                 },
             )
             row["count"] += 1
-            row["tasks"].add(task["number"])
+            row["ids"].add(block_id)
+            row["tasks"].add(task.get("number") or 0)
             row["first"], row["last"] = min(row["first"], at), max(row["last"], at)
     return {
         "since": since,
         "until": until,
         "tasks": len(tasks),
-        "task_numbers": sorted(t["number"] for t in tasks),
+        "task_numbers": sorted(t.get("number") or 0 for t in tasks),
         "errors": calls,
         "rows": found,
     }
@@ -247,9 +287,13 @@ def merge_ledger(ledger: dict, result: dict) -> dict:
                 "status": NEW,
             },
         )
+        seen = set(entry.get("ids", []))
+        fresh = r["ids"] - seen
         entry["tasks"] = sorted(set(entry["tasks"]) | r["tasks"])
         entry["first"], entry["last"] = min(entry["first"], r["first"]), max(entry["last"], r["last"])
-        entry["count"] += r["count"]
+        # Counted by event id, so sweeping the same window twice adds nothing.
+        entry["count"] += len(fresh)
+        entry["ids"] = sorted(seen | fresh)[-MAX_IDS:]
         if entry["status"] == NEW and len(entry["tasks"]) >= 2:
             entry["status"] = DEEP_DIVE
             entry["flagged"] = result["until"]
@@ -332,20 +376,27 @@ def _apply_hand_statuses(ledger: dict, content: str) -> None:
 
 def update_doc(doc: str, token: str, result: dict, mark_deep_dive: bool = False) -> str | None:
     """Merge into the ledger document; return why a deep dive is due, if it is."""
-    current = _request("GET", f"/documents/{doc}", token)
-    ledger = parse_ledger(current["content"])
-    meta = parse_meta(current["content"])
-    _apply_hand_statuses(ledger, current["content"])
+    current = _request("GET", f"/documents/{doc}", token) or {}
+    content = current.get("content") or ""
+    ledger = parse_ledger(content)
+    meta = parse_meta(content)
+    _apply_hand_statuses(ledger, content)
     merge_ledger(ledger, result)
     meta["lines_since"] = sorted(set(meta.get("lines_since", [])) | set(result["task_numbers"]))
     if mark_deep_dive:
         meta["last_deep_dive"], meta["lines_since"] = result["until"], []
+    written = render_ledger(ledger, result["until"], meta)
     _request(
         "PUT",
         f"/documents/{doc}",
         token,
-        {"content": render_ledger(ledger, result["until"], meta), "expected_version": current["doc_version"]},
+        {"content": written, "expected_version": current.get("doc_version", 0)},
     )
+    # The document store may normalise markdown; the ledger lives in an HTML
+    # comment so it should come back byte for byte. Check rather than assume.
+    stored = (_request("GET", f"/documents/{doc}", token) or {}).get("content") or ""
+    if parse_ledger(stored) != parse_ledger(written) or parse_meta(stored) != meta:
+        sys.exit(f"document {doc} did not keep the ledger intact after writing; not trusting it")
     return deep_dive_due(meta, ledger, result["until"])
 
 
@@ -356,15 +407,18 @@ def self_test() -> int:
         if got != want:
             failures.append(f"{name}: got {got!r}, want {want!r}")
 
-    check(
-        "redacts bearer", redact("Authorization: Bearer abcdefghijklmnop"), "Authorization: Bearer [REDACTED]"
-    )
-    check("redacts password", redact('{"password":"hunter22"}'), '{"password":"[REDACTED]"}')
+    check("redacts bearer", redact("Authorization: Bearer abcdefghijklmnop"), "Authorization: Bearer ***")
+    check("redacts basic", redact("Authorization: Basic dXNlcjpwdw=="), "Authorization: Basic ***")
+    check("redacts password", redact('{"password":"hunter22"}'), '{"password":"***"}')
+    check("redacts dsn", redact("postgresql://app:pw123@db:5432/x"), "postgresql://app:***@db:5432/x")
+    check("redacts short ghp", redact("token ghp_abcdefgh1"), "token ***")
+    check("redacts oauth code", redact("/cb?code=abc123&state=1"), "/cb?code=***&state=1")
+    check("keeps status_code", redact("status_code=500"), "status_code=500")
     os.environ["OKCHEESE_PASSWORD"] = "s3cret-value!"
     check(
         "redacts a known secret anywhere",
         redact("login with s3cret-value! here"),
-        "login with [REDACTED] here",
+        "login with *** here",
     )
     del os.environ["OKCHEESE_PASSWORD"]
     check("folds ids", signature("Topic 3f2b1c4d-1111-2222-3333-444455556666 gone"), "Topic <id> gone")
@@ -382,12 +436,21 @@ def self_test() -> int:
                 "first": "a",
                 "last": "b",
                 "count": 3,
+                "ids": {"b1", "b2", "b3"},
             }
         },
         "until": "z",
     }
     ledger = merge_ledger({}, result)
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)
+    check("counts each event once", ledger["s"]["count"], 3)
+    merge_ledger(ledger, result)
+    check("re-sweeping the same window adds nothing", ledger["s"]["count"], 3)
+    check(
+        "signature of a redacted error hides the token",
+        "ghp_" in signature(redact("bad ghp_abcdefgh123")),
+        False,
+    )
     ledger["s"]["status"] = "已开 #1"
     merge_ledger(ledger, result)
     check("hand status kept", ledger["s"]["status"], "已开 #1")
