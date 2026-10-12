@@ -26,9 +26,12 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0')
 }
 
-/** 给不出时间的（NaN、空值）一律给空串，不把 `NaN-NaN` 摆到界面上。 */
+/**
+ * 给不出时间的（NaN、空值、大到 `Date` 认不出的数）一律给空串，不把
+ * `NaN-NaN` 摆到界面上。
+ */
 function usable(at: number): boolean {
-  return Number.isFinite(at)
+  return Number.isFinite(new Date(at).getTime())
 }
 
 /**
@@ -87,17 +90,19 @@ export function relativeDayWord(days: number, locale: string = i18n.global.local
 export function dayTimeText(at: number, now: number = Date.now()): string {
   if (!usable(at)) return ''
   const days = calendarDaysAgo(at, now)
-  if (days >= 2 && days < 7 && !hasDayBeforeYesterday(i18n.global.locale.value)) {
+  if (days >= 2 && days < 7 && !isEnglishLike(i18n.global.locale.value)) {
     return `${relativeDayWord(days)} ${clockTime(at)}`
   }
   return absDateTime(at, now)
 }
 
 /**
- * 这个语言有没有「前天」这个词。英文（含 en-GB、en-US）到 2 天前就只说
- * 「2 days ago」，中文、日文这些有自己的一天前、两天前的说法。以后加第三种语言时
- * 要在这里补一句——`Intl.RelativeTimeFormat` 本身问不出这件事。
+ * 这个语言到两天前还只说「N days ago」吗。中文说「前天」、日文说「一昨日」，英文
+ * （含 en-GB、en-US）只说 `2 days ago`，所以英文从两天起就给绝对日期。
+ *
+ * 判据是「英文族」而不是「有前天的词」：`Intl.RelativeTimeFormat` 问不出后者，
+ * 而前者在加第三种语言时只需要在这里补一句。
  */
-function hasDayBeforeYesterday(locale: string): boolean {
+function isEnglishLike(locale: string): boolean {
   return locale.toLowerCase().startsWith('en')
 }
