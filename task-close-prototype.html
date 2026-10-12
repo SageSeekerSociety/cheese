@@ -1,0 +1,649 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>任务改人工关闭 · 可点原型</title>
+<style>
+/* ---- token：照 frontend/src/style.css 的两套主题块抄下来 ---- */
+:root{
+  color-scheme:light;
+  --ink:#191a1c; --text:#36383c; --muted:#5a5e66; --faint:#747a82;
+  --line:#ecedef; --line-2:#e2e3e6; --fill:#f4f5f7; --fill-2:#eeeff1;
+  --canvas:#f7f8fa; --surface:#ffffff; --raised:#ffffff;
+  --accent:#f57f17; --accent-press:#d96e0a; --accent-ink:#9a5413; --accent-wash:#fdf1e2;
+  --ok:#1f9d55; --ok-ink:#12703a; --ok-wash:#e8f6ee;
+  --warn:#e8901c; --warn-ink:#8f5406; --warn-wash:#faf0dc;
+  --danger:#dc2626; --danger-ink:#b91c1c; --danger-wash:#fdecec;
+  --focus-ring:#c2570a; --overlay:rgba(25,26,28,.44);
+  --shadow-1:0 1px 2px rgba(25,26,28,.06), 0 2px 8px rgba(25,26,28,.06);
+  --shadow-2:0 4px 12px rgba(25,26,28,.1), 0 12px 32px rgba(25,26,28,.1);
+  --inverse-surface:#23242a; --inverse-ink:#fff; --inverse-fill:rgba(255,255,255,.14);
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'PingFang SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --ink:#f3f4f6; --text:#d3d6db; --muted:#aeb4bd; --faint:#888ea0;
+  --line:#2b2e33; --line-2:#3a3e45; --fill:#212429; --fill-2:#282c31;
+  --canvas:#141517; --surface:#1b1d20; --raised:#212429;
+  --accent:#ffa733; --accent-press:#ffbc5e; --accent-ink:#ffc670; --accent-wash:#2e2216;
+  --ok:#3fbf7f; --ok-ink:#6fd9a0; --ok-wash:#14261d;
+  --warn:#f0a94a; --warn-ink:#f7c078; --warn-wash:#2a2114;
+  --danger:#f0625c; --danger-ink:#f79490; --danger-wash:#2e1a1a;
+  --focus-ring:rgba(255,167,51,.65); --overlay:rgba(0,0,0,.6);
+  --shadow-1:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+  --shadow-2:0 4px 12px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
+  --inverse-surface:#3a3d44; --inverse-ink:#f3f4f6; --inverse-fill:rgba(255,255,255,.1);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{
+  margin:0;background:var(--canvas);color:var(--text);
+  font-family:var(--font-sans);font-size:14px;line-height:20px;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0;color:var(--ink);font-weight:600;text-wrap:balance}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px}
+.t-meta{font-size:12px;line-height:18px;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---- 页面本身的外壳（不是产品的一部分） ---- */
+.chrome{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:16px 24px;background:var(--surface);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;
+}
+.chrome__mark{
+  width:34px;height:34px;border-radius:var(--radius-md);flex:none;
+  background:linear-gradient(140deg,#f9b233,#e85d2c);color:#fff;
+  display:grid;place-items:center;font-weight:700;
+}
+.chrome__id{display:flex;align-items:center;gap:12px;min-width:0}
+.chrome__id h1{font-size:18px;line-height:26px}
+.chrome__tools{margin-left:auto;display:flex;align-items:center;gap:12px}
+.stage{padding:20px 24px 150px;display:flex;flex-direction:column;gap:12px;align-items:center}
+.hint{max-width:1180px;width:100%}
+.steps{display:flex;gap:6px;flex-wrap:wrap;max-width:1180px;width:100%}
+.steps button{
+  height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;
+  background:var(--surface);border:1px solid var(--line-2);color:var(--muted);
+}
+.steps button:hover{background:var(--fill)}
+.steps button.is-on{background:var(--inverse-surface);color:var(--inverse-ink);border-color:var(--inverse-surface);font-weight:600}
+
+/* ---- 浏览器框 + 假界面 ---- */
+.frame{
+  width:100%;max-width:1180px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-2);overflow:hidden;
+}
+.frame__bar{
+  display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;
+  background:var(--fill);border-bottom:1px solid var(--line);
+}
+.frame__dot{width:9px;height:9px;border-radius:var(--radius-pill);background:var(--line-2)}
+.frame__url{
+  margin-left:8px;flex:1;height:22px;border-radius:var(--radius-pill);
+  background:var(--surface);border:1px solid var(--line);
+  display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--muted);
+  font-family:var(--mono);
+}
+.frame__tag{
+  font-size:11px;font-weight:600;color:var(--accent-ink);background:var(--accent-wash);
+  border-radius:var(--radius-pill);padding:2px 8px;
+}
+.frame__scroll{overflow-x:auto}
+.app{position:relative;display:flex;min-width:1060px;height:660px;background:var(--canvas)}
+/* ---- 项目轨 ---- */
+.rail{
+  width:56px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;
+}
+.rail__btn{
+  width:34px;height:34px;border-radius:var(--radius-md);display:grid;place-items:center;
+  font-weight:700;font-size:13px;color:var(--muted);background:var(--fill);
+}
+.rail__btn.is-on{background:var(--inverse-surface);color:var(--inverse-ink)}
+/* ---- 频道侧栏 ---- */
+.side{
+  width:248px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;
+}
+.side__head{
+  display:flex;align-items:center;gap:4px;height:48px;padding:0 8px 0 16px;
+  border-bottom:1px solid var(--line);
+}
+.side__proj{font-weight:600;color:var(--ink);font-size:14px;flex:1;text-align:left}
+.side__label{
+  display:flex;align-items:center;gap:6px;padding:16px 8px 4px 16px;
+  font-size:12px;font-weight:600;color:var(--faint);
+}
+.side__label span{flex:1}
+.side__list{display:flex;flex-direction:column;padding:0 8px;gap:1px;overflow-y:auto}
+.row{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  min-height:32px;padding:4px 8px;border-radius:var(--radius-md);color:var(--text);
+  font-size:13px;
+}
+.row:hover{background:var(--fill)}
+.row.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
+.row__name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side__tail{margin-top:auto;border-top:1px solid var(--line);padding:8px}
+.side__nav{display:flex;gap:2px;padding:8px 8px 12px}
+.side__nav button{
+  flex:1;height:34px;border-radius:var(--radius-md);font-size:12px;color:var(--muted);
+  display:flex;align-items:center;justify-content:center;
+}
+.side__nav button.is-on{background:var(--fill-2);color:var(--ink);font-weight:600}
+
+/* ---- 主区 ---- */
+.view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--canvas)}
+.scr{display:none;flex-direction:column;min-height:0;height:100%}
+.scr.is-on{display:flex}
+/* 任务页头 —— 照 TaskHeader.vue */
+.th{
+  display:flex;align-items:center;gap:8px;height:48px;padding:0 12px;flex:none;
+  background:var(--surface);border-bottom:1px solid var(--line);position:relative;
+}
+.th__text{display:flex;flex:1 1 auto;align-items:center;gap:8px;min-width:0}
+.th__room{color:var(--muted);white-space:nowrap}
+.th__sep{color:var(--faint)}
+.th__title{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th__state{
+  display:inline-flex;flex:none;align-items:center;padding:1px 8px;border-radius:var(--radius-sm);
+  background:var(--fill);color:var(--muted);font-size:12px;font-weight:600;white-space:nowrap;
+}
+.th__owner{
+  display:inline-flex;flex:none;align-items:center;gap:6px;height:28px;padding:0 8px 0 4px;
+  border-radius:var(--radius-md);color:var(--text);font-size:13px;white-space:nowrap;
+}
+.th__owner:hover{background:var(--fill)}
+.face{
+  width:20px;height:20px;border-radius:var(--radius-pill);flex:none;
+  display:grid;place-items:center;font-size:10px;font-weight:600;color:#fff;
+  background:var(--tone,#3d4a5c);
+}
+.face--sm{width:18px;height:18px;font-size:9px}
+/* ---- 对话 ---- */
+.chat{flex:1;min-height:0;overflow-y:auto;padding:16px 20px 8px}
+.msg{display:flex;gap:10px;margin-bottom:16px}
+.msg__body{flex:1;min-width:0}
+.msg__who{font-size:13px;font-weight:600;color:var(--ink);margin-bottom:2px}
+.msg__who .t-meta{margin-left:6px;font-weight:400}
+.msg__text{font-size:15px;line-height:24px;color:var(--text)}
+.notice{display:flex;gap:10px;margin-bottom:14px}
+.notice__body{flex:1;min-width:0;font-size:13px;line-height:20px}
+.notice__body b{color:var(--ink);font-weight:600}
+.notice__link{color:var(--muted);font-family:var(--mono);font-size:12px;word-break:break-all}
+.notice__sub{color:var(--muted)}
+.plainline{text-align:center;color:var(--faint);font-size:12px;line-height:18px;margin:0 0 14px}
+.dayline{display:flex;align-items:center;gap:10px;margin:4px 0 16px;color:var(--faint);font-size:12px}
+.dayline::before,.dayline::after{content:'';flex:1;height:1px;background:var(--line)}
+/* ---- 验收卡 ---- */
+.acc{
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);background:var(--surface);
+  box-shadow:var(--shadow-1);padding:14px 16px;margin-bottom:16px;
+}
+.acc__top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.acc__top h4{font-size:14px;line-height:20px;flex:1}
+.acc__body{font-size:13px;line-height:20px;color:var(--muted);margin-bottom:10px}
+.acc__url{font-family:var(--mono);font-size:12px;color:var(--faint);word-break:break-all;margin-bottom:12px}
+.acc__foot{display:flex;gap:10px;align-items:center}
+.acc__done{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)}
+.tick{
+  width:18px;height:18px;border-radius:var(--radius-pill);background:var(--ok-wash);color:var(--ok-ink);
+  display:grid;place-items:center;font-size:11px;font-weight:700;flex:none;
+}
+/* ---- 输入框 ---- */
+.composer{flex:none;padding:8px 20px 16px;background:var(--canvas)}
+.composer__box{
+  display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;
+  border:1px solid var(--line-2);border-radius:var(--radius-md);
+  background:var(--surface);color:var(--faint);font-size:15px;
+}
+.composer__box.is-off{background:var(--fill);border-color:var(--line);color:var(--muted)}
+.composer__hint{margin-top:6px;font-size:12px;color:var(--faint)}
+/* ---- 看板 ---- */
+.board{flex:1;min-height:0;overflow-y:auto;padding:16px 20px}
+.board__head{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.board__head h3{font-size:15px;line-height:21px;flex:1}
+.brow{
+  display:flex;align-items:center;gap:12px;width:100%;text-align:left;
+  padding:12px;background:var(--surface);border:1px solid var(--line);
+  border-radius:var(--radius-md);margin-bottom:8px;
+}
+.brow__body{flex:1;min-width:0}
+.brow__t{font-size:14px;color:var(--ink);font-weight:600;margin-bottom:2px}
+.brow__s{font-size:12px;color:var(--muted)}
+.segs{display:inline-flex;background:var(--fill);border-radius:var(--radius-md);padding:2px;gap:2px;flex:none}
+.segs button{padding:4px 10px;border-radius:var(--radius-sm);font-size:12px;color:var(--muted)}
+.segs button.is-on{background:var(--surface);color:var(--ink);font-weight:600;box-shadow:var(--shadow-1)}
+/* ---- 积木 ---- */
+.chip{
+  display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;flex:none;
+  border-radius:var(--radius-sm);font-size:12px;font-weight:600;
+  background:var(--fill);color:var(--muted);
+}
+.chip--warn{background:var(--warn-wash);color:var(--warn-ink)}
+.chip--ok{background:var(--ok-wash);color:var(--ok-ink)}
+.btn{
+  height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;font-weight:600;
+  display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;flex:none;
+}
+.btn--primary{background:var(--accent);color:#fff}
+.btn--primary:hover{background:var(--accent-press)}
+.btn--secondary{background:var(--surface);border-color:var(--line-2);color:var(--ink)}
+.btn--secondary:hover{background:var(--fill)}
+.btn--ghost{color:var(--muted)}
+.btn--ghost:hover{background:var(--fill)}
+.btn--sm{height:28px;padding:0 10px;font-size:12px}
+.iconbtn{
+  width:28px;height:28px;border-radius:var(--radius-md);display:grid;place-items:center;
+  color:var(--muted);font-size:16px;line-height:1;flex:none;
+}
+.iconbtn:hover{background:var(--fill)}
+/* ---- 浮层：弹窗 ---- */
+.layer{position:absolute;inset:0;z-index:40}
+.layer[hidden]{display:none}
+.scrim{position:absolute;inset:0;background:var(--overlay)}
+.dlg{
+  position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:var(--surface);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);
+  display:flex;flex-direction:column;width:470px;max-height:88%;
+}
+.dlg__head{padding:20px 20px 0}
+.dlg__head h3{font-size:18px;line-height:26px}
+.dlg__body{padding:12px 20px 0;overflow-y:auto;font-size:14px;line-height:22px;color:var(--text)}
+.dlg__body p+p{margin-top:10px}
+.dlg__list{margin:10px 0 0;padding:0 0 0 18px;font-size:13px;line-height:22px;color:var(--muted)}
+.dlg__field{
+  width:100%;margin-top:12px;min-height:64px;padding:8px 12px;resize:vertical;
+  border:1px solid var(--line-2);border-radius:var(--radius-md);
+  background:var(--surface);color:var(--ink);font:inherit;font-size:14px;
+}
+.dlg__field::placeholder{color:var(--faint)}
+.dlg__foot{display:flex;justify-content:flex-end;gap:8px;padding:20px}
+/* ---- 改动标记 ---- */
+.mk{
+  display:inline-grid;place-items:center;width:17px;height:17px;border-radius:var(--radius-pill);
+  background:var(--accent);color:#fff;font-size:11px;font-weight:700;font-style:normal;
+  margin-left:5px;vertical-align:2px;cursor:pointer;font-family:var(--mono);
+  box-shadow:0 0 0 2px var(--accent-wash);
+}
+.mk:hover{background:var(--accent-press)}
+.mk.is-seen{background:var(--muted);box-shadow:0 0 0 2px var(--fill)}
+/* ---- 说明卡（底部） ---- */
+.sheet{
+  position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
+  width:min(760px,calc(100vw - 32px));background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);
+  z-index:60;overflow:hidden;
+}
+.sheet[hidden]{display:none}
+.sheet__head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.sheet__no{
+  width:26px;height:26px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;
+  display:grid;place-items:center;font-size:12px;font-weight:700;flex:none;font-family:var(--mono);
+}
+.sheet__head h3{font-size:15px;line-height:21px;flex:1}
+.sheet__body{padding:12px 16px 16px;display:grid;gap:8px}
+.sheet__row{display:flex;gap:10px;font-size:13px;line-height:20px}
+.sheet__k{width:64px;flex:none;color:var(--faint)}
+.sheet__v{flex:1;color:var(--text)}
+.sheet__foot{display:flex;align-items:center;gap:8px;padding:0 12px 12px;font-size:12px;color:var(--faint)}
+@media (max-width:900px){
+  .stage{padding:12px 12px 150px}
+  .chrome{padding:12px 16px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="chrome__id">
+    <span class="chrome__mark">知</span>
+    <div>
+      <h1>任务改人工关闭 · 可点原型</h1>
+      <p class="t-meta">采纳之后任务不再自己关，等你说「收工」· 界面上带数字的黄标点一下，看这一处改什么</p>
+    </div>
+  </div>
+  <div class="chrome__tools">
+    <span class="t-meta mono" id="seen">已看过 0 / 6</span>
+    <button class="btn btn--secondary btn--sm" id="themeBtn">深色</button>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="steps" id="steps">
+    <button data-step="1" class="is-on">① 现在这样：采纳即关</button>
+    <button data-step="2">② 改后：刚交付</button>
+    <button data-step="3">③ 满一天：提醒</button>
+    <button data-step="4">④ 点「关闭任务」</button>
+    <button data-step="5">⑤ 看板上</button>
+  </div>
+
+  <div class="frame">
+    <div class="frame__bar">
+      <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+      <span class="frame__url">okcheese.com/workspace</span>
+      <span class="frame__tag">原型 · 不是线上</span>
+    </div>
+    <div class="frame__scroll">
+      <div class="app" id="app" data-scene="1">
+
+        <nav class="rail" aria-label="项目">
+          <button class="rail__btn is-on" title="知是平台">知</button>
+          <button class="rail__btn" title="另一个项目">课</button>
+        </nav>
+
+        <aside class="side">
+          <div class="side__head"><button class="side__proj">知是平台</button><button class="iconbtn" title="更多">⋯</button></div>
+          <div class="side__label"><span>频道</span><button class="iconbtn" title="新建频道">＋</button></div>
+          <div class="side__list">
+            <button class="row"><span class="row__name">综合</span></button>
+            <button class="row is-on"><span class="row__name">测试频道</span></button>
+            <button class="row"><span class="row__name">前端</span></button>
+            <button class="row"><span class="row__name">bug-fixing</span></button>
+          </div>
+          <div class="side__label"><span>任务</span></div>
+          <div class="side__list">
+            <button class="row is-on"><span class="row__name">题库搜索框</span>
+              <span class="chip" data-show="1">已采纳</span>
+              <span class="chip" data-show="2 3 4" data-open-only>已交付</span>
+              <span class="chip chip--ok" data-closed hidden>已完成</span>
+            </button>
+            <button class="row"><span class="row__name">修一下侧栏滚动</span><span class="chip chip--warn">进行中</span></button>
+            <button class="row"><span class="row__name">深色主题开关</span><span class="chip">已关闭</span></button>
+          </div>
+          <div class="side__tail">
+            <nav class="side__nav">
+              <button>首页</button><button class="is-on">工作区</button><button>待办</button>
+            </nav>
+          </div>
+        </aside>
+
+        <div class="view">
+
+          <!-- ========== 场景 5：看板 ========== -->
+          <section class="scr" data-scr="5">
+            <div class="th">
+              <div class="th__text"><span class="th__title">全部任务</span></div>
+              <div class="segs"><button class="is-on">全部</button><button>我负责的</button><button>其他人的</button></div>
+            </div>
+            <div class="board">
+              <div class="board__head"><h3>最近的任务</h3><span class="t-meta">3 件</span></div>
+              <button class="brow">
+                <div class="brow__body">
+                  <div class="brow__t">题库搜索框</div>
+                  <div class="brow__s">测试频道 · 蔡松洋 负责 · 昨天交付</div>
+                </div>
+                <span class="chip">已交付</span><em class="mk" data-item="6">6</em>
+              </button>
+              <button class="brow">
+                <div class="brow__body">
+                  <div class="brow__t">深色主题开关</div>
+                  <div class="brow__s">前端 · 蔡松洋 负责</div>
+                </div>
+                <span class="chip chip--ok">已完成</span>
+              </button>
+              <button class="brow">
+                <div class="brow__body">
+                  <div class="brow__t">修一下侧栏滚动</div>
+                  <div class="brow__s">前端 · 王长鑫 负责</div>
+                </div>
+                <span class="chip chip--warn">进行中</span>
+              </button>
+            </div>
+          </section>
+
+          <!-- ========== 任务页（场景 1-4 共用一份） ========== -->
+          <section class="scr is-on" data-scr="1 2 3 4">
+            <div class="th">
+              <div class="th__text">
+                <span class="th__room"># 测试频道</span><span class="th__sep">/</span>
+                <span class="th__title">题库搜索框</span>
+                <span class="th__state" data-show="1">已采纳<em class="mk" data-item="1">1</em></span>
+                <span class="th__state" data-show="2 3 4" data-open-only>已交付<em class="mk" data-item="1">1</em></span>
+                <span class="th__state" data-closed hidden>已完成</span>
+              </div>
+              <button class="th__owner"><span class="face" style="--tone:#8a5a44">蔡</span>蔡松洋 负责</button>
+              <button class="btn btn--secondary btn--sm" data-show="2 3 4" data-open-only>关闭任务<em class="mk" data-item="2">2</em></button>
+              <button class="btn btn--ghost btn--sm">概览</button>
+              <button class="iconbtn" title="更多操作">⋯</button>
+            </div>
+
+            <div class="chat">
+              <p class="plainline">昨天</p>
+
+              <div class="msg">
+                <span class="face" style="--tone:#8a5a44">蔡</span>
+                <div class="msg__body">
+                  <div class="msg__who">蔡松洋<span class="t-meta">昨天 15:02</span></div>
+                  <p class="msg__text">题库里题多了以后翻着太费劲，加个搜索框吧，能按题干搜。</p>
+                </div>
+              </div>
+
+              <div class="msg">
+                <span class="face" style="--tone:#3f4a63">芝</span>
+                <div class="msg__body">
+                  <div class="msg__who">芝士<span class="t-meta">昨天 15:31</span></div>
+                  <p class="msg__text">加好了：题库页顶部一个搜索框，按题干和知识点过滤，搜不到的时候给一行提示。PR #3401 递上来了。</p>
+                </div>
+              </div>
+
+              <div class="acc">
+                <div class="acc__top">
+                  <span class="face face--sm" style="--tone:#3f4a63">芝</span>
+                  <h4>PR #3401 可以合并了，等蔡松洋采纳</h4>
+                </div>
+                <p class="acc__body">这个 PR 满足项目的合并规则，采纳即当场合并。</p>
+                <p class="acc__url">https://github.com/zhishi/okcheese/pull/3401</p>
+                <div class="acc__foot">
+                  <span class="acc__done"><span class="tick">✓</span>已采纳（昨天 15:40）</span>
+                  <button class="btn btn--secondary btn--sm">看改动</button>
+                </div>
+              </div>
+
+              <div class="notice">
+                <span class="face" style="--tone:#3f4a63">芝</span>
+                <div class="notice__body">
+                  <div><b>蔡松洋 采纳了这次改动，PR #3401 已合并</b><span class="t-meta"> 昨天 15:40</span></div>
+                  <div class="notice__link">https://github.com/zhishi/okcheese/pull/3401</div>
+                  <div class="notice__sub" data-show="1">频道保持活跃，归档由人决定。要再交付一份改动，新建一个任务。<em class="mk" data-item="3">3</em></div>
+                  <div class="notice__sub" data-show="2 3 4" data-open-only>任务保持活跃，交付完可以接着用。想收工，点页头的「关闭任务」。<em class="mk" data-item="3">3</em></div>
+                  <div class="notice__sub" data-shut hidden>任务「题库搜索框」已关闭</div>
+                </div>
+              </div>
+
+              <div class="msg">
+                <span class="face" style="--tone:#3f4a63">芝</span>
+                <div class="msg__body">
+                  <div class="msg__who">芝士<span class="t-meta">昨天 15:44</span></div>
+                  <p class="msg__text">这个任务做到这儿：搜索框在题库页顶部，按题干和知识点过滤，空结果有一行提示；测试补了两个用例。想接着改就说一句，我还在这个任务里。</p>
+                </div>
+              </div>
+
+              <p class="plainline" data-show="1">问题出在这儿：上面这一轮一结束，任务自己就关了 ↓</p>
+
+              <div class="dayline" data-show="3">第二天 09:00</div>
+              <div class="notice" data-show="3">
+                <span class="face" style="--tone:#4a4a52">平</span>
+                <div class="notice__body">
+                  <div><b>这个任务交付满一天了，还开着</b><span class="t-meta"> 今天 09:00</span><em class="mk" data-item="4">4</em></div>
+                  <div class="notice__sub">接着用就直接在下面说一句；收工点页头的「关闭任务」。</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer">
+              <div class="composer__box" data-open-only>说点什么，芝士接着做…</div>
+              <div class="composer__box is-off" data-shut hidden>任务已关闭</div>
+              <p class="composer__hint" data-shut hidden>想接着用，在页头 ⋯ 里点「重新打开任务」。</p>
+            </div>
+
+            <div class="layer" id="closeLayer" hidden>
+              <div class="scrim" data-cancel></div>
+              <div class="dlg">
+                <div class="dlg__head"><h3>关掉这个任务？<em class="mk" data-item="5">5</em></h3></div>
+                <div class="dlg__body">
+                  <p>这个任务已经交付过了。关掉算收工，页头的状态从「已交付」变成「已完成」。</p>
+                  <p>关掉的时候平台会照旧做这几件事：</p>
+                  <ul class="dlg__list">
+                    <li>停掉这个任务里还在跑的会话</li>
+                    <li>退掉工作电脑</li>
+                    <li>清掉任务目录</li>
+                    <li>把实况文档定格（之后改不动了）</li>
+                  </ul>
+                  <textarea class="dlg__field" placeholder="结论（选填）：这个任务的最后一句，会留在任务上"></textarea>
+                </div>
+                <div class="dlg__foot">
+                  <button class="btn btn--ghost" data-cancel>取消</button>
+                  <button class="btn btn--primary" id="confirmClose">关闭任务</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint t-meta">五个场景就是这条改动的全部：① 今天什么样 ② 改后刚交付 ③ 满一天提醒 ④ 点关闭那一刻 ⑤ 看板上。带数字的黄标点开，写的是「现状 / 这一版 / 要动哪里」。</p>
+</main>
+
+<aside class="sheet" id="sheet" hidden>
+  <div class="sheet__head">
+    <span class="sheet__no" id="sheetNo">1</span>
+    <div style="flex:1">
+      <h3 id="sheetTitle"></h3>
+      <p class="t-meta" id="sheetSrc"></p>
+    </div>
+    <button class="iconbtn" id="sheetClose">×</button>
+  </div>
+  <div class="sheet__body">
+    <div class="sheet__row"><span class="sheet__k">现状</span><span class="sheet__v" id="sheetNow"></span></div>
+    <div class="sheet__row"><span class="sheet__k">这一版</span><span class="sheet__v" id="sheetFix"></span></div>
+    <div class="sheet__row"><span class="sheet__k">要动哪里</span><span class="sheet__v" id="sheetWork"></span></div>
+  </div>
+  <div class="sheet__foot">
+    <button class="btn btn--ghost btn--sm" id="prevBtn">上一个</button>
+    <button class="btn btn--ghost btn--sm" id="nextBtn">下一个</button>
+    <span style="margin-left:auto">带数字的黄标点开是看某一处；上一个 / 下一个是这一条改动里的下一处</span>
+  </div>
+</aside>
+
+<script>
+(function(){
+  var ITEMS = {
+    1:{t:'采纳之后不再自己关', s:'这次要改的那一件事',
+       now:'最后一步被采纳后，平台先让芝士写一轮总结，这一轮一结束（最迟 45 分钟）任务就自己关了。关了之后往里面说话不会有回复，实况文档定住，没合并的 PR 也会被关掉。你说的「还想接着用」卡的就是这一下——被结束的是任务，频道一直是活跃的。',
+       fix:'采纳之后任务一直开着，芝士照常把那轮总结写完，但不再自己关。状态标写「已交付」：活干完了，这件事还没收工。想收工点页头那颗「关闭任务」。',
+       work:'后端那处「最后一步采纳后设 closing_since、派一轮收尾」改成不再触发关闭；关闭只由人点。'},
+    2:{t:'「关闭任务」挪到页头', s:'入口放哪',
+       now:'「关闭任务」藏在页头右边那颗 ⋯ 里，只有负责人、任务还开着的时候才出现；不点开菜单就不知道有这个动作。',
+       fix:'页头常驻一颗「关闭任务」，就在「概览」右边（你圈的位置）。⋯ 菜单里那一项保留，习惯从那儿点的人还点得到。',
+       work:'前端页头加一颗按钮，接现有的关闭那条路；菜单项不删。'},
+    3:{t:'采纳之后那句提示', s:'得说清楚它还开着',
+       now:'平台在采纳完写的是「频道保持活跃，归档由人决定。要再交付一份改动，新建一个任务。」——后半句在劝你新建任务，正好和「任务还开着」拧着，你说「子话题不能用了」多半就是被这句带跑的。',
+       fix:'改成「任务保持活跃，交付完可以接着用。想收工，点页头的「关闭任务」。」',
+       work:'改一条文案（acceptDoneDetail）。'},
+    4:{t:'满一天提醒一次', s:'别让交付完的任务一直挂着',
+       now:'今天没有这种提醒：任务一采纳就关了，不存在「交付完没人管」这件事。改成人工关之后，看板上会攒出一批交付了还开着的任务，没人提醒就会一直挂着。',
+       fix:'交付满一天还没人关，平台在任务里提醒负责人一次，只提醒这一次。提醒里给两句：接着说就发言，收工就点关闭。',
+       work:'加一个到点扫描（平台已有定时任务的架子）+ 一条提醒文案。'},
+    5:{t:'关闭那一刻照旧', s:'收尾动作一个不改',
+       now:'关闭时做四件事：停掉这个任务里还在跑的会话、退掉工作电脑、清掉任务目录、把实况文档定格。关了就写「已完成」（交付过的），没交付就关的写「已关闭」。',
+       fix:'这四件事照旧，动作本身不改。变的只是「谁来触发」：以前是总结轮自己结束触发，以后是人点。确认框里把这四件事列出来，让人知道按下这一下会发生什么。',
+       work:'这段代码不动，只改调用它那处判断 + 确认框里加一段说明。'},
+    6:{t:'看板上怎么显示', s:'新词也要落到看板',
+       now:'看板上这类任务的状态词写「已采纳」——交付完了和收工了看不出差别。',
+       fix:'还开着的写「已交付」，关掉之后写「已完成」；看板行上不另加关闭按钮，照你说的，关闭只在页头。',
+       work:'后端那处状态词映射 + 前端文案表。'}
+  };
+
+  var app = document.getElementById('app');
+  var scene = 1, closed = false, seen = {}, current = 1;
+  var $ = function(s,r){return (r||document).querySelector(s);};
+  var $$ = function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s));};
+  function inScene(el){ return String(el.dataset.show).split(' ').indexOf(String(scene)) >= 0; }
+
+  function render(){
+    app.dataset.scene = String(scene);
+    app.classList.toggle('is-closed', closed);
+    $$('.scr').forEach(function(s){
+      s.classList.toggle('is-on', String(s.dataset.scr).split(' ').indexOf(String(scene)) >= 0);
+    });
+    $$('[data-show]').forEach(function(el){ el.hidden = !inScene(el); });
+    $$('[data-open-only]').forEach(function(el){
+      el.hidden = closed || (el.hasAttribute('data-show') && !inScene(el));
+    });
+    // 「已经结束」：场景 ① 是今天的自动关闭，点了关闭任务之后是新版的关闭
+    $$('[data-shut]').forEach(function(el){ el.hidden = !(closed || scene === 1); });
+    $$('[data-closed]').forEach(function(el){ el.hidden = !closed; });
+    $('#closeLayer').hidden = !(scene === 4 && !closed);
+    // 聊天区像真实窗口一样停在最新一条
+    var c = $('.chat');
+    if(c) c.scrollTop = c.scrollHeight;
+  }
+
+  document.addEventListener('click', function(e){
+    var mk = e.target.closest('.mk');
+    if(mk){ e.stopPropagation(); openSheet(mk.dataset.item); return; }
+    var st = e.target.closest('#steps button');
+    if(st){ scene = Number(st.dataset.step); closed = false;
+            $$('#steps button').forEach(function(b){ b.classList.toggle('is-on', b === st); });
+            render(); window.scrollTo({top:0,behavior:'auto'}); return; }
+    if(e.target.closest('#confirmClose')){ closed = true; render(); return; }
+    if(e.target.closest('[data-cancel]')){
+      scene = 2;
+      $$('#steps button').forEach(function(b){ b.classList.toggle('is-on', b.dataset.step === '2'); });
+      render(); return;
+    }
+  });
+
+  function openSheet(n){
+    var it = ITEMS[n]; if(!it) return;
+    current = Number(n); seen[n] = 1;
+    $$('.mk').forEach(function(m){ if(m.dataset.item === String(n)) m.classList.add('is-seen'); });
+    $('#seen').textContent = '已看过 ' + Object.keys(seen).length + ' / 6';
+    $('#sheetNo').textContent = n;
+    $('#sheetTitle').textContent = it.t;
+    $('#sheetSrc').textContent = it.s;
+    $('#sheetNow').textContent = it.now;
+    $('#sheetFix').textContent = it.fix;
+    $('#sheetWork').textContent = it.work;
+    $('#sheet').hidden = false;
+  }
+
+  $('#sheetClose').addEventListener('click', function(){ $('#sheet').hidden = true; });
+  $('#prevBtn').addEventListener('click', function(){ openSheet(current > 1 ? current - 1 : 6); });
+  $('#nextBtn').addEventListener('click', function(){ openSheet(current < 6 ? current + 1 : 1); });
+  $('#themeBtn').addEventListener('click', function(){
+    var dark = document.documentElement.dataset.theme === 'dark';
+    document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+    this.textContent = dark ? '深色' : '浅色';
+  });
+
+  function go(n){
+    scene = Number(n); closed = false;
+    $$('#steps button').forEach(function(b){ b.classList.toggle('is-on', b.dataset.step === String(scene)); });
+    render();
+  }
+
+  // 地址栏带 #2 / #3 / #4 / #5 可以直接进某个场景，方便单独发给别人看
+  if(/^#[1-5]$/.test(location.hash)) go(location.hash.slice(1));
+  else render();
+
+  window.addEventListener('hashchange', function(){
+    if(/^#[1-5]$/.test(location.hash)) go(location.hash.slice(1));
+  });
+})();
+</script>
+</body>
+</html>
