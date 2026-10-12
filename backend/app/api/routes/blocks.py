@@ -5,13 +5,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.message_effects import announce_edited_message
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
@@ -23,8 +22,6 @@ from app.domain.block.schemas import ReactionToggleIn
 from app.domain.conversation.services import room_of
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class MessageEditIn(BaseModel):

@@ -12,8 +12,8 @@ from typing import Literal
 from fastapi import APIRouter, Query
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.feedback.claims import is_platform_project

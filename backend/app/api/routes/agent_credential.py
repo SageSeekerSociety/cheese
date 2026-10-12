@@ -14,15 +14,13 @@ other credential this project has ever handed out).
 """
 
 import uuid
-from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent_credential.services import ProjectAgentCredentialService
@@ -31,7 +29,6 @@ from app.domain.project.repositories import ProjectRepository
 
 router = APIRouter(prefix="/projects", tags=["agent-credential"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 # Who may decide that this project hands a credential to an off-platform agent.
 # Deliberately narrower than "member": a member acts for themselves, these two

@@ -7,13 +7,12 @@ from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Request, Response
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep, require_seated_in_its_room
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
-from app.core.db import get_db
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
@@ -28,8 +27,6 @@ from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def require_place_access(

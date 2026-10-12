@@ -7,17 +7,16 @@ hands the task over again, not through these routes.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.place import task_conversation
+from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
@@ -27,7 +26,6 @@ from app.domain.review.schemas import ReviewCommentEdit, ReviewCommentIn
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="", tags=["review-comments"], dependencies=[ROUTE_DECIDES])
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class ReviewCommentOut(BaseModel):

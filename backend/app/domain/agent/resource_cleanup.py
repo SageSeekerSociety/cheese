@@ -54,7 +54,7 @@ SANDBOXES = "sandboxes"
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
 
 # Where an archived room's session transcripts wait under FOOTPRINT_ROOT until
-# the cleanup that retained them deletes them (topic/retire.py sets how long).
+# the cleanup that retained them deletes them (room_cleanup/retire.py sets how long).
 TRANSCRIPTS_ROOT = "transcripts"
 
 # Where the seats of a room keep the files that belong to one teammate's session

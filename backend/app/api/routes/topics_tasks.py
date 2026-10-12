@@ -26,14 +26,10 @@ from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.room_task_rows import named_task, task_rows
-from app.api.routes.topics import (
-    BlockRepository,
-    DbSession,
-    ProjectRepository,
-    UsageRepository,
-)
+from app.api.routes.topics import BlockRepository, ProjectRepository, UsageRepository
 from app.api.task_instructions import dispatch, teammate_source_text, tell_task
 from app.api.task_origin import (
     asked_in,

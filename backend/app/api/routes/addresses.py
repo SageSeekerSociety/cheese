@@ -13,17 +13,16 @@ anyone else as if it did not exist. The rules are in
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.doc_access import reach
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.routes.topics import _actor_in_place
-from app.core.db import get_db
 from app.core.errors import (
     ConflictError,
     ForbiddenError,
@@ -47,7 +46,6 @@ from app.domain.topic.services import TopicService
 router = APIRouter(prefix="/addresses", tags=["addresses"])
 projects = APIRouter(prefix="/projects", tags=["addresses"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 _NOT_FOUND = "Not found"
 

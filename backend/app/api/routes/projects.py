@@ -21,11 +21,11 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
+from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     ConflictError,
@@ -89,7 +89,7 @@ logger = logging.getLogger("cheesex.projects")
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 

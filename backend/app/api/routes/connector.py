@@ -39,11 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.write_access import ROUTE_DECIDES
 from app.common.auth import AccessClaims, verify_access_token
 from app.core import background
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -77,8 +77,6 @@ from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_device_service(db: DbSession) -> DeviceService:
@@ -185,8 +183,8 @@ async def _recover_business_state(device_id: str) -> None:
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
 
-    # deferred-import: tests patch this name on app.domain.topic.retire
-    from app.domain.topic.retire import sweep_retired_storage
+    # deferred-import: tests patch this name on app.domain.room_cleanup.retire
+    from app.domain.room_cleanup.retire import sweep_retired_storage
 
     background.spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
