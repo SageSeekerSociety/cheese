@@ -13,7 +13,7 @@ export { auth, refresh, replace }
 vi.mock('@/services/account', () => ({ default: auth }))
 vi.mock('@/lib/session', () => ({ refreshSession: refresh }))
 vi.mock('@/router', () => ({ default: { replace } }))
-vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
+vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn(), warning: vi.fn() } }))
 
 export const primary = 'https://primary.example.test/api'
 export const newer = 'https://newer.example.test/api'

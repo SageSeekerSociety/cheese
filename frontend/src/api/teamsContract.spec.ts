@@ -1,0 +1,419 @@
+// @vitest-environment jsdom
+// The teams domain's payload contract: every method gets a REAL old-versus-new
+// comparison — the observable request (method, URL, query, auth, body) and the
+// answer (the old envelope's `.data` versus the new payload) must agree. Teams
+// has always ridden the new origin (`NewApiInstance` before, `axiosNewApi`
+// now), so both sides answer from `${newer}`. The failure and edge evidence —
+// a structured refusal, a locked team reaching its handler, the auth flow and
+// the empty-command success bit — lives in the second half, driven through the
+// real consumers rather than by asserting an exception type alone. The
+// per-method happy path for the five shared domains is in
+// `payloadDomainsContract.spec.ts`; spaces and the task board have their own.
+import { http, HttpResponse } from 'msw'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
+
+import {
+  auth,
+  compareRequests,
+  type ContractCase,
+  contractEnvironment,
+  envelope,
+  newer,
+  refresh,
+  replace,
+  server,
+} from './migrationContract.spec.helper'
+
+// The reporter is a side effect (a queued fetch to the run records), not a
+// method under test: silence it so a refusal we deliberately send does not
+// leave the suite with an unhandled request.
+vi.mock('@/errorReporter', () => ({ reportError: vi.fn() }))
+
+contractEnvironment()
+
+let oldTeams: typeof import('@/network/api/teams').TeamsApi
+let newTeams: typeof import('./teams').TeamsApi
+let handler: typeof import('@/services/ErrorHandler').default
+let legacyErrorMessage: (error: unknown, fallback: string) => string
+let newErrorMessage: (error: unknown, fallback: string) => string
+let toast: typeof import('vuetify-sonner').toast
+
+beforeAll(async () => {
+  ;({ TeamsApi: oldTeams } = await import('@/network/api/teams'))
+  ;({ TeamsApi: newTeams } = await import('./teams'))
+  ;({ default: handler } = await import('@/services/ErrorHandler'))
+  ;({ requestErrorMessage: legacyErrorMessage } = await import('@/network/utils/requestErrorMessage'))
+  ;({ axiosErrorMessage: newErrorMessage } = await import('./axiosHttp'))
+  ;({ toast } = await import('vuetify-sonner'))
+})
+
+// A join-link token and a handle go on the path URL-encoded, so pick values
+// with characters that change under encoding.
+const token = 'tok en&x'
+const handle = 'my team'
+const encodedToken = encodeURIComponent(token)
+const encodedHandle = encodeURIComponent(handle)
+
+// Every method of `TeamsApi`, with the arguments that reach the wire. URL and
+// body are the contract; a param moves into `query`, a JSON body into `body`.
+const cases: Record<string, ContractCase> = {
+  search: {
+    method: 'GET',
+    path: '/teams',
+    args: [{ query: '名字 & +', pageStart: 2, pageSize: 20 }],
+    query: [
+      ['query', '名字 & +'],
+      ['pageStart', '2'],
+      ['pageSize', '20'],
+    ],
+  },
+  create: {
+    method: 'POST',
+    path: '/teams',
+    args: [{ name: '小队', handle: 'squad', description: 'd', intro: 'i', avatarId: 3 }],
+    body: { name: '小队', handle: 'squad', description: 'd', intro: 'i', avatarId: 3 },
+  },
+  update: {
+    method: 'PATCH',
+    path: '/teams/7',
+    args: [7, { name: '小队', intro: 'i', avatarId: 3, visibility: 'PUBLIC', handle: 'squad' }],
+    body: { name: '小队', intro: 'i', avatarId: 3, visibility: 'PUBLIC', handle: 'squad' },
+  },
+  del: { method: 'DELETE', path: '/teams/7', args: [7] },
+  detail: { method: 'GET', path: '/teams/7', args: [7] },
+  getJoinLink: { method: 'GET', path: '/teams/7/join-link', args: [7] },
+  updateJoinLink: {
+    method: 'PATCH',
+    path: '/teams/7/join-link',
+    args: [7, { approval: true }],
+    body: { approval: true },
+  },
+  resetJoinLink: { method: 'POST', path: '/teams/7/join-link/reset', args: [7] },
+  detailByJoinLink: { method: 'GET', path: `/team-invites/${encodedToken}`, args: [token] },
+  joinByJoinLink: {
+    method: 'POST',
+    path: `/team-invites/${encodedToken}/join`,
+    args: [token, { message: 'want in' }],
+    body: { message: 'want in' },
+  },
+  join: { method: 'POST', path: '/teams/7/join', args: [7, { message: 'want in' }], body: { message: 'want in' } },
+  detailByHandle: { method: 'GET', path: `/teams/by-handle/${encodedHandle}`, args: [handle] },
+  getMyTeams: { method: 'GET', path: '/teams/my-teams', args: [] },
+  list: {
+    method: 'GET',
+    path: '/teams',
+    args: [{ pageSize: 20, pageStart: 2, sortBy: 'name', sortOrder: 'asc' }],
+    query: [
+      ['pageSize', '20'],
+      ['pageStart', '2'],
+      ['sortBy', 'name'],
+      ['sortOrder', 'asc'],
+    ],
+  },
+  addMember: {
+    method: 'POST',
+    path: '/teams/7/members',
+    args: [7, { user_id: 9, role: 'MEMBER' }],
+    body: { user_id: 9, role: 'MEMBER' },
+  },
+  updateMember: {
+    method: 'PATCH',
+    path: '/teams/7/members/9',
+    args: [7, 9, { role: 'ADMIN' }],
+    body: { role: 'ADMIN' },
+  },
+  removeMember: { method: 'DELETE', path: '/teams/7/members/9', args: [7, 9] },
+  transferOwner: { method: 'PUT', path: '/teams/7/owner', args: [7, 9], body: { userId: 9 } },
+  getMembers: { method: 'GET', path: '/teams/7/members', args: [7] },
+  listTeamJoinRequests: {
+    method: 'GET',
+    path: '/teams/7/requests',
+    args: [7, { status: 'PENDING', pageStart: 0, pageSize: 10 }],
+    query: [
+      ['status', 'PENDING'],
+      ['pageStart', '0'],
+      ['pageSize', '10'],
+    ],
+  },
+  approveJoinRequest: { method: 'POST', path: '/teams/7/requests/9/approve', args: [7, 9] },
+  rejectJoinRequest: { method: 'POST', path: '/teams/7/requests/9/reject', args: [7, 9] },
+  createInvitation: {
+    method: 'POST',
+    path: '/teams/7/invitations',
+    args: [7, { userId: 9, role: 'MEMBER', message: 'hi' }],
+    body: { userId: 9, role: 'MEMBER', message: 'hi' },
+  },
+  listTeamInvitations: {
+    method: 'GET',
+    path: '/teams/7/invitations',
+    args: [7, { status: 'PENDING', pageStart: 0, pageSize: 10 }],
+    query: [
+      ['status', 'PENDING'],
+      ['pageStart', '0'],
+      ['pageSize', '10'],
+    ],
+  },
+  cancelInvitation: { method: 'DELETE', path: '/teams/7/invitations/9', args: [7, 9] },
+  listMyJoinRequests: {
+    method: 'GET',
+    path: '/users/me/team-requests',
+    args: [{ status: 'PENDING', pageStart: 0, pageSize: 10 }],
+    query: [
+      ['status', 'PENDING'],
+      ['pageStart', '0'],
+      ['pageSize', '10'],
+    ],
+  },
+  cancelMyJoinRequest: { method: 'DELETE', path: '/users/me/team-requests/9', args: [9] },
+  listMyInvitations: {
+    method: 'GET',
+    path: '/users/me/team-invitations',
+    args: [{ status: 'PENDING', pageStart: 0, pageSize: 10 }],
+    query: [
+      ['status', 'PENDING'],
+      ['pageStart', '0'],
+      ['pageSize', '10'],
+    ],
+  },
+  acceptInvitation: { method: 'POST', path: '/users/me/team-invitations/9/accept', args: [9] },
+  declineInvitation: { method: 'POST', path: '/users/me/team-invitations/9/decline', args: [9] },
+}
+
+const lockedTasks = '任务甲, 任务乙'
+
+const structuredRefusal = (status: number, name = 'AccessDeniedError') =>
+  HttpResponse.json(
+    {
+      code: status,
+      message: 'refused',
+      data: null,
+      error: { name, message: 'You cannot change this team', data: { teamId: 7, lockingTasks: lockedTasks } },
+    },
+    { status }
+  )
+
+describe('teams migration: every method keeps its request and payload', () => {
+  it.each(Object.entries(cases))('%s preserves the request and returns the payload', async (name, test) => {
+    await compareRequests(
+      test,
+      () => (oldTeams[name as keyof typeof oldTeams] as (...args: unknown[]) => Promise<unknown>)(...test.args),
+      () => (newTeams[name as keyof typeof newTeams] as (...args: unknown[]) => Promise<unknown>)(...test.args)
+    )
+  })
+})
+
+describe('teams migration: structured refusals keep their meaning', () => {
+  it.each([400, 403, 404, 422, 500, 503])('%s keeps the condition name, sentence and data', async (status) => {
+    server.use(http.get(`${newer}/teams/7`, () => structuredRefusal(status)))
+    const old = await oldTeams.detail(7).catch((error) => error)
+    const next = await newTeams.detail(7).catch((error) => error)
+    expect(old).toMatchObject({
+      message: 'You cannot change this team',
+      code: status,
+      error: { name: 'AccessDeniedError', data: { teamId: 7, lockingTasks: lockedTasks } },
+    })
+    expect(next).toMatchObject({
+      message: 'You cannot change this team',
+      status,
+      code: 'AccessDeniedError',
+      data: { teamId: 7, lockingTasks: lockedTasks },
+    })
+    expect(legacyErrorMessage(old, 'fallback')).toBe('You cannot change this team')
+    expect(newErrorMessage(next, 'fallback')).toBe('You cannot change this team')
+  })
+
+  // The real consumer: `ErrorHandler` names a refusal off the new `ApiError`
+  // `.code` / the old `BusinessError` `.name`, reads the locking tasks off
+  // `.data` / `.error.data`, and warns. Both stacks must reach the same handler
+  // with the same sentence.
+  it('routes a locked team to its handler on both stacks and warns with the locking tasks', async () => {
+    server.use(http.delete(`${newer}/teams/7`, () => structuredRefusal(403, 'TeamLockedError')))
+    const oldError = await oldTeams.del(7).catch((error) => error)
+    const newError = await newTeams.del(7).catch((error) => error)
+    expect(oldError).toMatchObject({
+      name: 'TeamLockedError',
+      code: 403,
+      error: { data: { lockingTasks: lockedTasks } },
+    })
+    expect(newError).toMatchObject({ code: 'TeamLockedError', status: 403, data: { lockingTasks: lockedTasks } })
+
+    toast.warning.mockClear()
+    // A registered refusal is swallowed: the caller sees `undefined`, not a
+    // half-typed throw, and the user sees the warning.
+    expect(await handler.withErrorHandling(() => oldTeams.del(7))).toBeUndefined()
+    expect(await handler.withErrorHandling(() => newTeams.del(7))).toBeUndefined()
+    expect(toast.warning).toHaveBeenCalledTimes(2)
+    const [oldSentence] = toast.warning.mock.calls[0]
+    const [newSentence] = toast.warning.mock.calls[1]
+    expect(oldSentence).toContain(lockedTasks)
+    expect(newSentence).toBe(oldSentence)
+  })
+
+  it('keeps an unnamed 403 sentence rather than replacing it with a generic one', async () => {
+    server.use(
+      http.get(`${newer}/teams/7`, () =>
+        HttpResponse.json({ code: 403, message: 'Server sentence', data: null }, { status: 403 })
+      )
+    )
+    const old = await oldTeams.detail(7).catch((error) => error)
+    const next = await newTeams.detail(7).catch((error) => error)
+    expect(legacyErrorMessage(old, 'fallback')).toBe('Server sentence')
+    expect(newErrorMessage(next, 'fallback')).toBe('Server sentence')
+  })
+
+  it('reads an edge page as a transport failure, including a 200 one', async () => {
+    for (const status of [200, 502]) {
+      server.use(http.get(`${newer}/teams/7`, () => new HttpResponse('<html>offline</html>', { status })))
+      const old = await oldTeams.detail(7).catch((error) => error)
+      const next = await newTeams.detail(7).catch((error) => error)
+      expect(old).toBeInstanceOf(Error)
+      expect(next).toBeInstanceOf(Error)
+      expect(next.message).toBe(old.message)
+      expect(legacyErrorMessage(old, 'fallback')).toBe(old.message)
+      expect(newErrorMessage(next, 'fallback')).toBe(old.message)
+    }
+  })
+
+  it('uses the caller fallback for a lost network without retrying', async () => {
+    let requests = 0
+    server.use(
+      http.get(`${newer}/teams/7`, () => {
+        requests++
+        return HttpResponse.error()
+      })
+    )
+    const old = await oldTeams.detail(7).catch((error) => error)
+    const next = await newTeams.detail(7).catch((error) => error)
+    expect(old).toBeInstanceOf(Error)
+    expect(next).toBeInstanceOf(Error)
+    expect(legacyErrorMessage(old, 'fallback')).toBe('fallback')
+    expect(newErrorMessage(next, 'fallback')).toBe('fallback')
+    expect(requests).toBe(2)
+  })
+})
+
+describe('teams migration: a read never invents a command success', () => {
+  it.each([null, false, 0, ''])('a payload read returns falsy %j unchanged', async (value) => {
+    server.use(http.get(`${newer}/teams/7`, () => HttpResponse.json(envelope(value))))
+    const old = await oldTeams.detail(7)
+    const next = await newTeams.detail(7)
+    expect(old).toEqual({ code: 200, message: 'ok', data: value })
+    expect(next).toEqual(value)
+  })
+
+  it.each(['null', 'omitted', '204'])('keeps %s command success distinct from a caught failure', async (kind) => {
+    server.use(
+      http.delete(`${newer}/teams/7/members/9`, () =>
+        kind === '204'
+          ? new HttpResponse(null, { status: 204 })
+          : HttpResponse.json(kind === 'null' ? envelope(null) : { code: 200, message: 'ok' })
+      )
+    )
+    await expect(oldTeams.removeMember(7, 9)).resolves.not.toBeUndefined()
+    await expect(newTeams.removeMember(7, 9)).resolves.toBe(true)
+  })
+
+  it('routes an empty command through the handler as a success, not a false failure', async () => {
+    server.use(http.delete(`${newer}/teams/7/members/9`, () => HttpResponse.json(envelope(null))))
+    const success = vi.fn()
+    const sentinel = await handler.withErrorHandling(() => newTeams.removeMember(7, 9), { showToast: false })
+    if (sentinel !== undefined) success()
+    expect(sentinel).toBe(true)
+    expect(success).toHaveBeenCalledOnce()
+
+    server.use(
+      http.delete(`${newer}/teams/7/members/9`, () =>
+        HttpResponse.json({ code: 500, message: 'boom', data: null }, { status: 500 })
+      )
+    )
+    const failure = vi.fn()
+    const caught = await handler.withErrorHandling(() => newTeams.removeMember(7, 9), { showToast: false })
+    if (caught !== undefined) failure()
+    expect(caught).toBeUndefined()
+    expect(failure).not.toHaveBeenCalled()
+  })
+})
+
+describe('teams migration: authentication edge cases', () => {
+  // The old `NewApiInstance` and the new `axiosNewApi` share the new origin, so
+  // both carry the same bearer; the 401 refresh/redirect flow is exercised on
+  // the migrated (new) path, which is where the contract changed.
+  const unauthorized = () => {
+    let requests = 0
+    server.use(
+      http.get(`${newer}/teams/7`, ({ request }) => {
+        requests++
+        expect(request.url.startsWith(`${newer}/teams/7`)).toBe(true)
+        return new HttpResponse(null, { status: 401 })
+      })
+    )
+    return () => requests
+  }
+
+  it('sends no bearer for a logged-out or empty-token caller on either stack', async () => {
+    for (const state of [
+      { loggedIn: false, accessToken: 'contract-token' },
+      { loggedIn: true, accessToken: '' },
+    ]) {
+      auth.loggedIn = state.loggedIn
+      auth.accessToken = state.accessToken
+      server.use(
+        http.get(`${newer}/teams/7`, ({ request }) => {
+          expect(request.headers.get('authorization')).toBeNull()
+          return HttpResponse.json(envelope({ team: { id: 7 } }))
+        })
+      )
+      expect(await newTeams.detail(7)).toEqual({ team: { id: 7 } })
+      expect((await oldTeams.detail(7)).data).toEqual({ team: { id: 7 } })
+    }
+  })
+
+  it('refreshes once and retries with the returned token', async () => {
+    refresh.mockReset().mockImplementation(async () => {
+      auth.accessToken = 'refreshed-token'
+      return { kind: 'ok', token: 'refreshed-token' }
+    })
+    const authorization: (string | null)[] = []
+    server.use(
+      http.get(`${newer}/teams/7`, ({ request }) => {
+        expect(request.url.startsWith(`${newer}/teams/7`)).toBe(true)
+        authorization.push(request.headers.get('authorization'))
+        if (authorization.length === 1) return new HttpResponse(null, { status: 401 })
+        return HttpResponse.json(envelope({ team: { id: 7 } }))
+      })
+    )
+    expect(await newTeams.detail(7)).toEqual({ team: { id: 7 } })
+    expect(authorization).toEqual(['Bearer contract-token', 'Bearer refreshed-token'])
+    expect(refresh).toHaveBeenCalledOnce()
+  })
+
+  it('redirects to sign-in when the refresh is rejected, without a retry', async () => {
+    const count = unauthorized()
+    refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
+    replace.mockReset()
+    await expect(newTeams.detail(7)).rejects.toBeInstanceOf(Error)
+    expect(count()).toBe(1)
+    expect(replace).toHaveBeenCalledWith('/account/signin')
+  })
+
+  it('does not redirect when the refresh is unreachable', async () => {
+    const count = unauthorized()
+    refresh.mockReset().mockResolvedValue({ kind: 'unreachable' })
+    replace.mockReset()
+    await expect(newTeams.detail(7)).rejects.toBeInstanceOf(Error)
+    expect(count()).toBe(1)
+    expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('stops after a refreshed request is still unauthorized', async () => {
+    const count = unauthorized()
+    refresh.mockReset().mockImplementation(async () => {
+      auth.accessToken = 'refreshed-token'
+      return { kind: 'ok', token: 'refreshed-token' }
+    })
+    const error = await newTeams.detail(7).catch((failure) => failure)
+    expect(error).toBeInstanceOf(Error)
+    expect(count()).toBe(2)
+    expect(refresh).toHaveBeenCalledOnce()
+  })
+})
