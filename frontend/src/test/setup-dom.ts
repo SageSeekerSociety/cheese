@@ -7,3 +7,10 @@
 if (typeof document.elementsFromPoint !== 'function') {
   document.elementsFromPoint = () => []
 }
+
+// `getBBox`（SVG 元素）：画布（Vue Flow）量连线上那几个字有多大，好在字后面垫一块
+// 底色。happy-dom 不排版，补一个「量出来是零」的版本，和它别处一样什么都没有大小。
+const svg = (globalThis as { SVGElement?: { prototype: { getBBox?: unknown } } }).SVGElement
+if (svg && typeof svg.prototype.getBBox !== 'function') {
+  svg.prototype.getBBox = () => ({ x: 0, y: 0, width: 0, height: 0 })
+}

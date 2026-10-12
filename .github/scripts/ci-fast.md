@@ -178,7 +178,15 @@ everything is still allowed to answer unknown.
 | 0 | every selected check actually ran and passed. Not full CI. |
 | 1 | a selected check really failed. |
 | 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty or skipped test report, a selected file that produced no executed case, an unavailable merge base, a hook/config drift, a worktree that changed during the run, or an unreadable report. |
-| 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit), or the platform is not Linux. |
+| 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit, a machine without `ps`), or the platform is not Linux. |
+
+A single missed memory sample is not blocked. The sampler rides a few misses
+out, then stops measuring that check and leaves its verdict to the exit code
+and the clock; only `ps` itself being absent is blocked, because then no ceiling
+can be enforced at all. (Tying the sample's window to the check's remaining
+budget used to make a miss out of a nearly spent check, and that read as a
+missing tool — it turned an expected unknown into blocked twice on #3476,
+2026-10-12.)
 
 Unknown (2) and blocked (3) are never green: when the tier runs out of budget
 the remaining checks are recorded as not-run with a reason, and the run stops
@@ -195,7 +203,11 @@ head, base and dirty-tree fingerprint.
   session cap; up to 9216 MiB, refused above). This is not address-space
   enforcement: a very short peak can be missed, and a child that opens its own
   session is outside the group. Whatever cap the machine itself imposes stays
-  the hard limit.
+  the hard limit. A check whose sampling could not be read at all is recorded
+  `unmeasured: true` in the report rather than given a ceiling of 0; the
+  wall-clock bound still applies to it, though on a machine where `ps` answers
+  slowly the kill follows the deadline by up to one sampling window (about a
+  second). No verdict turns on that.
 - The frontend's Vitest parallelism is derived from that same cap
   (`vitest_workers`): one fork per 3072 MiB, also bounded by cores − 1 and 16 —
   the rule `frontend/vite.config.ts` already applies to the same box (a fork

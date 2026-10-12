@@ -17,6 +17,7 @@ from app.domain.assistant import models as assistant  # noqa: F401
 from app.domain.attachment import models as attachment  # noqa: F401
 from app.domain.avatars import models as avatars  # noqa: F401
 from app.domain.block import models as block  # noqa: F401
+from app.domain.canvas import models as canvas  # noqa: F401
 from app.domain.comments import models as comments  # noqa: F401
 from app.domain.conversation import models as conversation  # noqa: F401
 from app.domain.delivery import models as delivery  # noqa: F401

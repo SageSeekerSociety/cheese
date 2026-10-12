@@ -10,6 +10,7 @@ database directly: the service's store is the one place a version is recorded.
 
 import base64
 import uuid
+from collections import Counter
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, Query
@@ -27,6 +28,7 @@ from app.api.routes.topics import _actor_in_place
 from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,
+    BaseError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
@@ -35,6 +37,8 @@ from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.block.documents import whose_document
+from app.domain.canvas.block import canvas_ids
+from app.domain.canvas.services import Settled, settle
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc import collab, work_edits
 from app.domain.living_doc.schemas import (
@@ -104,6 +108,48 @@ async def _with_ref_warnings(db, doc, answer: dict) -> dict:
     return {**answer, "warnings": warnings}
 
 
+async def _settled(
+    db,
+    resolver: ActorResolver,
+    doc,
+    text: str,
+    *,
+    actor: str,
+    keep: Counter[uuid.UUID],
+) -> Settled:
+    """``text`` written into ``doc`` from outside an editor, its canvas blocks
+    naming canvases of ``doc`` (`app.domain.canvas.services.settle`): a canvas
+    of another document is copied for whoever may read that document."""
+
+    async def readable(document_id: uuid.UUID) -> bool:
+        try:
+            await reach(db, resolver, document_id)
+        except BaseError:
+            return False
+        return True
+
+    return await settle(
+        db,
+        text,
+        document_id=doc.id,
+        project_id=doc.project_id,
+        actor=actor,
+        keep=keep,
+        readable=readable,
+    )
+
+
+def _with_canvases(answer: dict, settled: list[Settled]) -> dict:
+    """``answer`` naming the canvases made for ``new`` blocks, so the writer
+    can fill them in."""
+    made = [
+        {"id": str(canvas_id), "title": title}
+        for one in settled
+        for canvas_id, title in one.made
+    ]
+    return {**answer, "canvases": made} if made else answer
+
+
 def _origin(resolver: ActorResolver, reached_actor) -> uuid.UUID | None:
     """The conversation an agent writing a document of the project's own works
     in: a room, or one of its tasks."""
@@ -166,6 +212,10 @@ async def create_document(
         author=actor.handle,
         number=await take_number(db, project_id, Numbered.document),
     )
+    settled = await _settled(
+        db, resolver, doc, content or "", actor=actor.handle, keep=Counter()
+    )
+    content = settled.text
     await db.commit()
     if content and content.strip():
         try:
@@ -189,7 +239,9 @@ async def create_document(
     await tell_origin_room(
         db, _origin(resolver, actor), doc, actor.handle, created=True
     )
-    return await _with_ref_warnings(db, doc, ok(document_row(doc)))
+    return await _with_ref_warnings(
+        db, doc, _with_canvases(ok(document_row(doc)), [settled])
+    )
 
 
 @router.get("/{document_id}/about")
@@ -343,6 +395,15 @@ async def replace_document(
             return receipt
     content = await canonicalize_refs(db, doc.project_id, body.content)
     base = await _base(db, doc, body.expected_version)
+    settled = await _settled(
+        db,
+        resolver,
+        doc,
+        content,
+        actor=actor.handle,
+        keep=Counter(canvas_ids(doc.content or "")),
+    )
+    content = settled.text
     # Nothing of this request may stay open across the call: the service's
     # store takes the document's lock in a transaction of its own.
     await db.commit()
@@ -358,7 +419,7 @@ async def replace_document(
     )
     await db.refresh(doc)
     await tell_origin_room(db, _origin(resolver, actor), doc, actor.handle)
-    return await _with_ref_warnings(db, doc, stored)
+    return await _with_ref_warnings(db, doc, _with_canvases(stored, [settled]))
 
 
 @router.post("/{document_id}/edits")
@@ -382,6 +443,18 @@ async def edit_doc_passages(
     if doc.version == 0:
         raise NotFoundError(say("docIsEmpty"))
     edits = [edit.model_dump() for edit in body.edits]
+    settled: list[Settled] = []
+    for edit in edits:
+        one = await _settled(
+            db,
+            resolver,
+            doc,
+            edit["new"],
+            actor=actor.handle,
+            keep=Counter(canvas_ids(edit["old"])),
+        )
+        edit["new"] = one.text
+        settled.append(one)
     # A 芝士 answering someone's question edits as itself, for that person,
     # directly: the person asked for exactly this change.
     delegation = resolver.delegation()
@@ -430,14 +503,17 @@ async def edit_doc_passages(
     return await _with_ref_warnings(
         db,
         doc,
-        ok(
-            {
-                "mode": decision.mode,
-                "requested_by": decision.requested_by,
-                "edits": result.get("edits") or [],
-                "doc_version": (stored.get("data") or {}).get("doc_version"),
-            },
-            warnings=stored.get("warnings"),
+        _with_canvases(
+            ok(
+                {
+                    "mode": decision.mode,
+                    "requested_by": decision.requested_by,
+                    "edits": result.get("edits") or [],
+                    "doc_version": (stored.get("data") or {}).get("doc_version"),
+                },
+                warnings=stored.get("warnings"),
+            ),
+            settled,
         ),
     )
 

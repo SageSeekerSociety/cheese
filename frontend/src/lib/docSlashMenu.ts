@@ -19,6 +19,7 @@ import { NodeSelection, PluginKey, TextSelection } from '@tiptap/pm/state'
 import { Suggestion } from '@tiptap/suggestion'
 
 import { emptyItem, FIELD_NODES } from './docSchema/blocks'
+import { promiseCanvas } from './docSchema/canvas'
 
 import { t } from '@/i18n'
 
@@ -290,6 +291,21 @@ export const SLASH_ITEMS: SlashItem[] = [
     keywords: ['mermaid', 'diagram', 'flowchart', 'flow', 'sequence', 'lct', 'liuchengtu'],
     insert: true,
     run: insertBlock((schema) => schema.nodes.codeBlock.create({ language: 'mermaid' }), 1),
+  },
+  {
+    key: 'canvas',
+    get label() {
+      return t('work.room.doc.slash.canvas')
+    },
+    icon: 'mdi-vector-polyline',
+    hint: 'canvas',
+    keywords: ['canvas', 'board', 'whiteboard', 'map', 'hb', 'huabu', 'ditu'],
+    insert: true,
+    // The board is made once the block is in place (CanvasBlockView); the caret goes after it.
+    run: insertBlock(
+      (schema) => schema.nodes.canvas.create({ pending: promiseCanvas('make') }),
+      (node) => node.nodeSize
+    ),
   },
   {
     key: 'status',

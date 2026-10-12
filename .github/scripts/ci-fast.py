@@ -216,7 +216,8 @@ def run(args, report, finish, started):
             report["not_run"].append({"id": row["id"], "reason": "无相关文件" if row["result"] == "not_applicable" else "超时/预算耗尽"})
         if row["result"] != "not_applicable":
             report["ran"].append(row)
-        print(f"  {row['id']}: {row['result']} ({row['seconds']}s; sampled RSS {row['peak_rss_mib']} MiB)", flush=True)
+        rss_note = "sampled RSS未采到" if row.get("unmeasured") else f"sampled RSS {row['peak_rss_mib']} MiB"
+        print(f"  {row['id']}: {row['result']} ({row['seconds']}s; {rss_note})", flush=True)
         if row["result"] not in ("pass", "not_applicable"):
             print("\n".join(out.strip().splitlines()[-15:]))
             label = {"timeout": "超时", "skipped": "被跳过"}.get(row["result"], row["result"])

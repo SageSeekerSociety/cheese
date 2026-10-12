@@ -25,6 +25,7 @@ import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ADMIN_ENTRIES } from './catalogAdmin'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
+import { CANVAS_ENTRIES } from './catalogCanvas'
 import { CHANNEL_DIALOG_ENTRIES } from './catalogChannelDialogs'
 import { CHANNEL_FILES_ENTRIES } from './catalogChannelFiles'
 import { CHAT_ENTRIES } from './catalogChat'
@@ -883,6 +884,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   // 文档里的块、基础组件各在自己的文件里：`catalogDoc.ts`、`catalogBase.ts`。
   ...DOC_BLOCK_ENTRIES,
+  ...CANVAS_ENTRIES,
   ...BASE_ENTRIES,
   ...PANEL_ENTRIES,
   // 跨目录的共用件那一组（表壳与它的表头格、富文本编辑器与附件图、页头、句子里的人）在
