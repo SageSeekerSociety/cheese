@@ -2,6 +2,8 @@
  *  通知」分不出来。这里锁住它的四种状态各自说自己的话——行还在路上时先画骨架、
  *  读失败时**就地**换成错误 + 重试、本来就没有时说「暂无通知」、重试真的再问一遍。
  */
+import type { NotificationType } from '@/types/apiNotifications'
+
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -9,12 +11,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const list = vi.fn()
-const countByTypes = vi.fn(async () => [0, 0, 0])
+const countByTypes = vi.fn<(groups: NotificationType[][]) => Promise<number[]>>(async () => [0, 0, 0])
 const refresh = vi.fn()
 vi.mock('@/api/notifications', () => ({
   NotificationsApi: {
     list: (...args: unknown[]) => list(...args),
-    countByTypes: (...args: unknown[]) => countByTypes(...args),
+    countByTypes: (groups: NotificationType[][]) => countByTypes(groups),
     getUnreadCount: async () => ({ count: 0 }),
     updateStatus: vi.fn(),
     markAllAsRead: vi.fn(),

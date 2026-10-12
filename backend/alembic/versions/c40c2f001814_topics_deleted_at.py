@@ -14,9 +14,9 @@ Revises: f175b976a14a
 """
 
 import sqlalchemy as sa
+from migration_helpers import with_lock_retries
 
 from alembic import op
-from migration_helpers import with_lock_retries
 
 revision = "c40c2f001814"
 down_revision = "f175b976a14a"

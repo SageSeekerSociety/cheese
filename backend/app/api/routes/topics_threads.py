@@ -142,7 +142,8 @@ async def get_thread(
     root = await reads.root_of(db, place.thread)
     return ok(
         {
-            **_thread_out(place.thread),
+            # `_thread_out` 定型之后是模型，不是 dict：展开之前先 dump，别直接 `**`。
+            **_thread_out(place.thread).model_dump(mode="json"),
             "root": BlockOut.model_validate(root).model_dump(mode="json")
             if root is not None
             else None,

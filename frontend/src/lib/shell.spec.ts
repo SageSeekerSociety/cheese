@@ -115,7 +115,9 @@ describe('projectPageLayout: 项目名下那一行只有资料库，其余（含
   it('default 壳：那一行是资料库，菜单里是总览和其余几页', () => {
     const { bar, menu } = projectPageLayout(DEFAULT_SHELL, KNOWN)
     expect(bar).toEqual(['project-library'])
-    expect(menu).toEqual(['workspace-overview', 'project-members', 'project-routines'])
+    // 总览落在最后，不是因为它不重要，是因为座次由壳的 `nav.project` 说（下一条），
+    // 而 default 壳的那一行里没有它 —— 没被点名的接在后面。要它排第一，把壳改了。
+    expect(menu).toEqual(['project-members', 'project-routines', 'workspace-overview'])
   })
 
   it('壳不摆资料库，资料库就在菜单里', () => {

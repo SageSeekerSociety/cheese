@@ -738,6 +738,8 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       progress: PROJECT_PROGRESS,
       progressFailed: false,
       tasks: PROJECT_TASKS,
+      // 「进行中的任务」那个数（清单第 14 条）和下面这几件对得上：四件都还没做完。
+      underway: 4,
       names: TASK_NAMES,
       avatars: {},
       me: 'wangxiaoming',
@@ -796,7 +798,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.projectOverviewView.s5.note')
         },
-        props: { tasks: [] },
+        props: { tasks: [], underway: 0 },
         expect: '暂无进行中的任务',
         expectSelector: '[data-testid="overview-people"] p.ov-empty',
       },

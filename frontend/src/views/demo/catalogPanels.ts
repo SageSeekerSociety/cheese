@@ -379,7 +379,8 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     about: '频道概览里「支线」那一格：有人回过话的支线，最近有回复的在前，转成任务的写那件任务。',
     file: 'src/components/panels/PanelThreads.vue',
     component: PanelThreads,
-    needs: [],
+    // 顶上那颗「新建支线」（清单第 4 条）是 Vuetify 的按钮，得把 vuetify 装进来。
+    needs: UI,
     args: {
       rows: THREAD_ROWS,
       loading: false,

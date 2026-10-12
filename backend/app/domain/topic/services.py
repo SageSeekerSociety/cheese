@@ -18,7 +18,12 @@ from typing import overload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.agent import clone
 from app.domain.agent.harness import harness_for
@@ -752,7 +757,7 @@ class TopicService:
         if topic is None:
             raise NotFoundError("Topic not found")
         if topic.deleted_at is not None:
-            raise ValidationError(say("channelDeletedCannotUnarchive"))
+            raise UnprocessableEntityError(say("channelDeletedCannotUnarchive"))
         if topic.status != TopicStatus.archived:
             return topic
         operation = (
@@ -808,9 +813,9 @@ class TopicService:
         """
         topic = await self._repo.lock(topic_id)
         if topic is None:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         if topic.kind == TopicKind.root:
-            raise ValidationError(say("projectRootCannotDelete"))
+            raise UnprocessableEntityError(say("projectRootCannotDelete"))
         if topic.deleted_at is not None:
             return
         if topic.status != TopicStatus.archived:
@@ -818,7 +823,7 @@ class TopicService:
                 task.status == TaskStatus.open
                 for task in await TaskService(self._session).list_in_room(topic.id)
             ):
-                raise ValidationError(say("channelArchiveOpenTasks"))
+                raise UnprocessableEntityError(say("channelArchiveOpenTasks"))
             await self._archive_one(topic, by=by)
             await self._archive_children(topic, by=by)
         deleted_at = datetime.now(UTC)
@@ -929,12 +934,12 @@ class TopicService:
             raise NotFoundError(say("topicNotFound"))
         room = place.room
         if room.status == TopicStatus.archived:
-            raise ValidationError(say("topicArchivedFrozen"))
+            raise UnprocessableEntityError(say("topicArchivedFrozen"))
         if room.is_private:
-            raise ValidationError(say("privateChatHasNoThreads"))
+            raise UnprocessableEntityError(say("privateChatHasNoThreads"))
         named = title.strip()[:300]
         if not named:
-            raise ValidationError(say("threadTitleRequired"))
+            raise UnprocessableEntityError(say("threadTitleRequired"))
         landed = landing(EventAbout.room, project_id=room.project_id, room_id=room.id)
         block = await self._blocks.add(
             project_id=landed.project_id,

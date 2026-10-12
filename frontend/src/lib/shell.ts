@@ -94,7 +94,8 @@ export const PROJECT_BAR_PAGES: readonly string[] = ['project-library']
  * 那一行是 `PROJECT_BAR_PAGES` 里壳摆出来了的那几页；壳不摆资料库（老师的课程壳），
  * 资料库就进菜单。**菜单装的是「这一行之外的全部」**，首页也在里面：壳写错了 key、
  * 前端多了一个壳没听说过的页面，都落进菜单，不会凭空消失。菜单里先按壳的顺序，壳没
- * 提到的接在后面。
+ * 提到的接在后面——首页（`home`，也就是总览）**没有**专门的座次，壳的 `nav.project`
+ * 没点名它，它就落在菜单末尾（要它排前面，改壳的那一行，别改这里）。
  */
 export function projectPageLayout(shell: Shell, known: readonly string[]): { bar: string[]; menu: string[] } {
   const shown = orderedNav(shell, 'project', known)

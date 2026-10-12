@@ -101,7 +101,7 @@ const emit = defineEmits<{
   (e: 'hover-topic', id: string): void
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
-  // 同上，按下去就先下代码：总览/资料库那一行和任务行（见 TopicRailPinnedRows、
+  // 同上，按下去就先下代码：资料库那一行和任务行（见 TopicRailPinnedRows、
   // TopicRailTaskRow 各自的 `press`）。
   (e: 'press-page', key: string): void
   (e: 'press-task', task: { roomId: string; taskId: string }): void
@@ -179,8 +179,9 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
   { rename: (topic) => (renamingTopicId.value = topic.id) }
 )
 
-// 项目级页面：总览和资料库摆在项目名下那一行，其余几页（全部任务在内）、项目文档、
-// 项目设置、转让或退出都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
+// 项目级页面：只有资料库摆在项目名下那一行，其余几页（总览、全部任务、项目文档、
+// 项目设置、转让或退出）都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，
+// 只换内容区。
 //
 // 「转让项目」两处都有（菜单里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
 // 或这个项目的团队管理员」，项目行自己就带着这个答案。
@@ -437,7 +438,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
-      <!-- 手机上的项目菜单。项目名下那一行（总览、资料库）在手机上也收进这里：列表只留
+      <!-- 手机上的项目菜单。项目名下那一行（资料库）在手机上也收进这里：列表只留
            频道。换项目也只能在这里——一个项目
            一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
       <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
