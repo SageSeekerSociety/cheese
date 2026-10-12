@@ -72,3 +72,18 @@ def test_work_that_waits_for_every_commit_runs_for_each_one(db_session, _portal)
         return list(fired)
 
     assert _portal.call(scenario) == ["committed", "committed"]
+
+
+def test_a_rollback_runs_nothing_and_the_next_commit_answers(db_session, _portal):
+    # a close that is rolled back and tried again must still do its work, so the
+    # hook waits out the rollback rather than being spent on it
+    fired: list[str] = []
+
+    async def scenario() -> list[str]:
+        after_own_commit(db_session, lambda: fired.append("committed"))
+        await db_session.rollback()
+        assert fired == []
+        await db_session.commit()
+        return list(fired)
+
+    assert _portal.call(scenario) == ["committed"]
