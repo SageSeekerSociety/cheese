@@ -49,6 +49,12 @@ const activeAllTasks = computed(() =>
   route.name === 'project-tasks' && typeof route.query.channel === 'string' ? route.query.channel : null
 )
 
+// 正打开的东西在哪个频道里：频道页是它自己，任务页是任务所在的那个，「全部任务」
+// 按频道筛时是那个频道。没加入的频道靠它留在侧栏上。
+const hereChannelId = computed(
+  () => activeTopicId.value ?? activeAllTasks.value ?? (activeTaskId.value ? ids.value.topicId ?? null : null)
+)
+
 // 每个频道里和我有关的几条任务，挂在频道那一行下面：频道清单的每一行自己带着
 // （`my_tasks`：最多几件和我有关的，加这个频道进行中的总数），侧栏不读整个项目的任务。
 // 任务变了，房间推来的帧会把那一行重读一次（query/changes）。
@@ -168,6 +174,7 @@ useCommands(() => [
       :room-task-totals="roomTaskTotals"
       :all-tasks-channel-id="activeAllTasks"
       :selected-task-id="activeTaskId"
+      :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"

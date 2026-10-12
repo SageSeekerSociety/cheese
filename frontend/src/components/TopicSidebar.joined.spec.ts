@@ -126,6 +126,11 @@ describe('侧栏只列我加入了的频道', () => {
     expect(visibleTitles(container)).toContain('theirs')
   })
 
+  it('打开没加入的频道里的一件任务，那个频道还在侧栏里', () => {
+    const { container } = mount({ selectedTopicId: null, selectedTaskId: 'task-1', hereChannelId: 'theirs' })
+    expect(visibleTitles(container)).toContain('theirs')
+  })
+
   it('没带 joined 的载荷当作加入了：宁可多列，不把频道静默藏起来', () => {
     const { container } = mount({ topics: [topic('root', null), topic('plain', 'root')] })
     expect(visibleTitles(container)).toContain('plain')

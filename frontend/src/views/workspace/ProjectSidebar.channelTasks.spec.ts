@@ -40,6 +40,7 @@ vi.mock('@/components/TopicSidebar.vue', async () => {
             'data-testid': 'topic-list',
             'data-tasks': JSON.stringify(attrs['room-tasks'] ?? {}),
             'data-totals': JSON.stringify(attrs['room-task-totals'] ?? {}),
+            'data-here': String(attrs['here-channel-id'] ?? ''),
           }),
     }),
   }
@@ -66,6 +67,7 @@ vi.mock('@/api', async (importOriginal) => ({
   getTopic: api.getTopic,
 }))
 
+import { rememberNumbered, rememberProject } from '@/lib/addresses'
 import { roomChanged } from '@/query/changes'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -126,6 +128,18 @@ describe('侧栏挂在频道下面的任务', () => {
 
     expect(JSON.parse(list().tasks!)).toEqual({ 'topic-a': [task('k1'), task('k2')] })
     expect(JSON.parse(list().totals!)).toEqual({ 'topic-a': 5 })
+  })
+
+  it('打开一件任务时，侧栏知道自己在它所在的那个频道里', async () => {
+    const K9 = '5c2d1e0f-1f22-4a33-9c44-000000000009'
+    const router = await openProject([channel('topic-a', [], 0), channel('topic-b', [], 0)])
+    // 任务清单读回来时记下的地址：任务页的地址里只有任务，频道靠它补上。
+    rememberProject('p', 'p')
+    rememberNumbered('tasks', [{ id: K9, project_id: 'p', room_id: 'topic-b', number: 9 }])
+    await router.push(`/projects/p/tasks/${K9}`)
+    await settle()
+
+    expect(list().here).toBe('topic-b')
   })
 
   it('不为这几行读整个项目的任务，换频道也不读', async () => {
