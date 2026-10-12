@@ -1,4 +1,5 @@
-"""Block routes — editing a message, and emoji reactions (Slack semantics)."""
+"""Block routes — editing a message, emoji reactions (Slack semantics), and
+taking back an answer to a question asked with quick replies."""
 
 import uuid
 from typing import Annotated
@@ -11,16 +12,20 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.message_effects import announce_edited_message
 from app.api.response import ok
+from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, NotFoundError
+from app.core.sentences import say
+from app.domain.agent.ask import withdraw
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.block.editing import edit_message
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import ReactionToggleIn
+from app.domain.block.schemas import BlockOut, ReactionToggleIn
 from app.domain.conversation.services import room_of
+from app.domain.delivery.agent import dispatch_pending
 
 router = APIRouter(prefix="/blocks", tags=["blocks"])
 
@@ -119,3 +124,63 @@ async def toggle_reaction(
         {"type": "reaction", "block_id": str(block_id), "reactions": reactions},
     )
     return ok({"toggled": "added" if added else "removed", "reactions": reactions})
+
+
+@router.delete("/{block_id}/answer", dependencies=[ROUTE_DECIDES])
+async def withdraw_answer(
+    block_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
+    runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
+) -> dict:
+    """Take back your own answer to a question asked with quick replies, so the
+    question is unanswered again and its options come back for everyone.
+
+    ``block_id`` is the question, not the answer: an answer is an ordinary
+    message, and what is withdrawn is the line it left on the question
+    (`domain/block/questions`). Only whoever answered it can — anyone else gets
+    a refusal, not a way to erase somebody's answer. The message the answerer
+    sent stays in the room; its words are not what this changes.
+
+    Whoever was watching gets the question as a `block_updated` frame, and the
+    agent that asked it runs another turn, because the turn it had been going
+    on was decided on an answer that no longer counts."""
+    repo = BlockRepository(db)
+    question = await repo.get(block_id)
+    if question is None:
+        raise NotFoundError(say("cursorMessageNotFound"))
+    actor = await resolver.resolve(
+        topic_id=question.conversation_id, project_id=question.project_id
+    )
+    room_id = await room_of(db, question.conversation_id)
+    await resolver.authorize_topic(
+        actor,
+        project_id=question.project_id,
+        topic_id=room_id,
+        enforce=True,
+    )
+    # A credential that names nobody (the gate-only sandbox token) has no answer
+    # to take back: refuse it as what it is rather than as the wrong person.
+    if not actor.authenticated:
+        raise AuthenticationRequiredError(say("signInRequired"))
+    await withdraw(
+        db,
+        block=question,
+        project_id=question.project_id,
+        room_id=room_id,
+        handle=actor.handle,
+    )
+    payload = BlockOut.model_validate(question).model_dump(mode="json")
+    payload["reactions"] = await repo.reactions_for_block(block_id)
+    # Commit before broadcasting, as reactions do: a client that refetches on
+    # the frame must not read stale state.
+    await db.commit()
+    await broker.publish(
+        str(question.conversation_id), {"type": "block_updated", "block": payload}
+    )
+    # The asking agent's turn is recorded with the withdrawal (`agent.ask`);
+    # this is what runs it.
+    await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
+    return ok(payload)
