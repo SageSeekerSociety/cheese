@@ -19,7 +19,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.services import ProjectService
-from app.domain.topic import retire
+from app.domain.room_cleanup import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered

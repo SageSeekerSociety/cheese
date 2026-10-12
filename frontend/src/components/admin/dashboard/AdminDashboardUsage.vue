@@ -12,9 +12,10 @@ import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
+import AdminDashboardUsageWho from '@/components/admin/dashboard/AdminDashboardUsageWho.vue'
 import { poolView } from '@/lib/adminPool'
-import { dayLabel, deltaOf, num } from '@/lib/adminStats'
-import { fmtCost, fmtNum } from '@/lib/usageFormat'
+import { dayLabel, deltaOf, num, usageRouteLabel } from '@/lib/adminStats'
+import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 
 // 用量那一屏：窗口内的 token 与调用次数、每天一条线、最花 token 的几个项目、成本那一
 // 行，外加额度燃尽那三个互斥名单。
@@ -76,6 +77,17 @@ const usageKpis = computed<KpiRow[]>(() => {
       loading: props.loading,
       note: costNote,
     },
+    // 缓存命中率只算记了缓存的行（后端 `usage_detail.py` 的口径），没算进去的输入量
+    // 写在 tip 里 —— 少了那句，一个只覆盖一半输入的比例读起来像全量。
+    {
+      key: 'cache',
+      label: t('feedback.dashboard.usage.cacheKpi'),
+      value: u?.cache ? fmtPercent(u.cache.hit_ratio) : '',
+      loading: props.loading,
+      note: u?.cache
+        ? t('feedback.dashboard.usage.cacheNote', { tokens: fmtNum(u.cache.uncounted_input_tokens) })
+        : undefined,
+    },
   ]
 })
 
@@ -110,27 +122,37 @@ const byModel = computed(() =>
     value: row.tokens,
     cost: fmtCost(row.cost_usd),
     unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
+    cache:
+      row.cache_hit === undefined
+        ? undefined
+        : t('feedback.dashboard.usage.cacheCell', { pct: fmtPercent(row.cache_hit) }),
   }))
+)
+
+/** 每小时的 token，北京时间。只在短窗口有（后端长窗口给 `null`）；标签是「月-日 时点」，
+ *  直接从带 +08:00 的串里取，不经浏览器时区再换一次。 */
+const hourly = computed(() => usage.value?.hourly ?? null)
+const hourlySeries = computed<ChartSeries[]>(() => [
+  {
+    name: t('feedback.dashboard.usage.tokens'),
+    values: hourly.value?.map((row) => row.tokens) ?? [],
+    style: 'solid',
+  },
+])
+const hourlyLabels = computed(() =>
+  (hourly.value ?? []).map((row) => `${row.hour.slice(5, 10)} ${row.hour.slice(11, 13)}:00`)
 )
 
 /** 按供给通路拆（gateway / subscription / native）。`subscription` 那一行的
  *  `unpriced_tokens` 就是 KPI 里「未定价 token」的来源 —— 这一张表是那张卡的注脚。 */
 const byRoute = computed(() =>
   (usage.value?.by_route ?? []).map((row) => ({
-    label: routeLabel(row.route),
+    label: usageRouteLabel(t, row.route),
     value: row.tokens,
     cost: fmtCost(row.cost_usd),
     unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
   }))
 )
-
-/** 通路代号 → 人话。`''` 是打在补上这一列之前的那些行。 */
-function routeLabel(route: string): string {
-  if (route === 'gateway') return t('feedback.dashboard.usage.route.gateway')
-  if (route === 'subscription') return t('feedback.dashboard.usage.route.subscription')
-  if (route === 'native') return t('feedback.dashboard.usage.route.native')
-  return t('feedback.dashboard.usage.route.unknown')
-}
 
 const credits = computed(() => usage.value?.credits ?? null)
 
@@ -209,6 +231,15 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
     <AdminBarChart :title="t('feedback.dashboard.usage.top')" :rows="topProjects" :loading="loading" />
   </div>
 
+  <div v-if="hourly" class="ad__row ad__row--single">
+    <AdminLineChart
+      :title="t('feedback.dashboard.usage.hourly')"
+      :x-labels="hourlyLabels"
+      :series="hourlySeries"
+      :loading="loading"
+    />
+  </div>
+
   <!-- 成本与「未定价 token」这两件事是上面那两张 KPI 卡，它们之间的关系那句
              （金额里没有「算不出价钱」的部分）收在两卡各自的口径 tip 里。 -->
 
@@ -228,6 +259,8 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
       :loading="loading"
     />
   </div>
+
+  <AdminDashboardUsageWho :data="usage" :loading="loading" />
 
   <!-- 额度燃尽：三个互斥名单（已耗尽 / 快烧完 / 不限量）。少了它，三个项目同时
              停摆时 token 曲线只是「今天用量下降」，看起来像好消息。 -->
@@ -342,6 +375,9 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
   }
   .ad__row--equal {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .ad__row--single {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 

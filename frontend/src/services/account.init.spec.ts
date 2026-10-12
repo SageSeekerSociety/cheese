@@ -13,10 +13,10 @@ const getCurrentUser = vi.fn()
 // The refresh endpoint, answered the way the server would.
 const refresh = vi.fn()
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
-    setTimezone: () => Promise.resolve({ data: {} }),
+    setTimezone: () => Promise.resolve({}),
   },
 }))
 
@@ -68,7 +68,7 @@ beforeEach(() => {
   localStorage.clear()
   refresh.mockReset()
   getCurrentUser.mockReset()
-  getCurrentUser.mockResolvedValue({ data: { user: USER } })
+  getCurrentUser.mockResolvedValue({ user: USER })
   tabs = new Set()
   vi.stubGlobal('BroadcastChannel', FakeChannel)
   vi.stubGlobal('fetch', async (url: string) => {

@@ -13,15 +13,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SignIn from './SignIn.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
+import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
-    getOAuthProviders: vi.fn().mockResolvedValue({ data: { providers: [] } }),
-    login: vi.fn(),
     getPasskeyRegistrationOptions: vi.fn(),
     verifyPasskeyRegistration: vi.fn(),
+  },
+}))
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
+    getOAuthProviders: vi.fn().mockResolvedValue({ providers: [] }),
+    login: vi.fn(),
   },
 }))
 vi.mock('@/services/account', () => ({ default: { loggedIn: false, login: vi.fn() } }))
@@ -45,12 +50,10 @@ function browserCanCreateQuietly(can: boolean) {
 }
 
 async function signInWithPassword() {
-  vi.mocked(UserApi.login).mockResolvedValue({
-    data: {
-      accessToken: 'token',
-      user,
-      passkeyEnrollment: { ticket: 'enrollment-ticket', offer: false, canStopAsking: false },
-    },
+  vi.mocked(UserAuthApi.login).mockResolvedValue({
+    accessToken: 'token',
+    user,
+    passkeyEnrollment: { ticket: 'enrollment-ticket', offer: false, canStopAsking: false },
   } as never)
   const router = createRouter({
     history: createMemoryHistory(),
@@ -77,8 +80,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
-  vi.mocked(UserApi.getPasskeyRegistrationOptions).mockResolvedValue({ data: { options } } as never)
-  vi.mocked(UserApi.verifyPasskeyRegistration).mockResolvedValue({ data: {} } as never)
+  vi.mocked(UserApi.getPasskeyRegistrationOptions).mockResolvedValue({ options } as never)
+  vi.mocked(UserApi.verifyPasskeyRegistration).mockResolvedValue({} as never)
 })
 afterEach(() => {
   cleanup()

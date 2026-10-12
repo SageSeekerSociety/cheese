@@ -19,8 +19,8 @@ import { useRoute } from 'vue-router'
 import OAuthErrorView from './OAuthErrorView.vue'
 import { oauthProviderName } from './oauthProvider'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
 const route = useRoute()
 
@@ -78,6 +78,6 @@ const errorDescription = computed(() => {
 })
 
 const retryOAuth = () => {
-  UserApi.redirectToOAuthLogin(providerId.value)
+  UserAuthApi.redirectToOAuthLogin(providerId.value)
 }
 </script>

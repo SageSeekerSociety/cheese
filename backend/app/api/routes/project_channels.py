@@ -12,8 +12,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.projects import DbSession
 from app.core.errors import AuthenticationRequiredError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale

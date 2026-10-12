@@ -27,6 +27,7 @@ import re
 import uuid
 from dataclasses import dataclass
 
+from app.core import raster_images
 from app.domain.agent.skills import load_skills
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
@@ -845,7 +846,7 @@ def is_inline_image(mime: str | None) -> bool:
     Unknown types and SVG stay files, readable on demand rather than encoded
     into every turn. Keep initial, live and textual routing on this rule.
     """
-    return mime in {"image/png", "image/jpeg", "image/gif", "image/webp"}
+    return raster_images.is_raster(mime)
 
 
 def attachment_prompt_line(

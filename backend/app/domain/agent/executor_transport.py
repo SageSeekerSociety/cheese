@@ -168,7 +168,8 @@ DEFERRED_WORKSPACE = "/unavailable-project"
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
-    """Sleep before the next attempt, or say the window is over.
+    """Sleep before the next attempt, or say the window is over. Hand-written,
+    not tenacity: this file runs on machines with the standard library only.
 
     ONLY for a connection that was refused: `http.client` raises that before it
     writes anything, which is what makes the replay safe. A failure any later —

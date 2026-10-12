@@ -44,8 +44,9 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import BlockRepository, DbSession
+from app.api.routes.topics import BlockRepository
 from app.api.task_instructions import (
     dispatch,
     source_text,

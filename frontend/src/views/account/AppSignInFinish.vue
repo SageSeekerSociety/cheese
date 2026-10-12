@@ -13,8 +13,8 @@ import { useRoute, useRouter } from 'vue-router'
 
 import AppSignInFinishView from './AppSignInFinishView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { takeSignInVerifier } from '@/lib/desktopApp'
-import { UserApi } from '@/network/api/users'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -32,7 +32,7 @@ onMounted(async () => {
     return
   }
   try {
-    await UserApi.finishAppSignIn(code, kept.verifier)
+    await UserAuthApi.finishAppSignIn(code, kept.verifier)
   } catch {
     failed.value = true
     return

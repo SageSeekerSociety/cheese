@@ -29,14 +29,14 @@ only id ever accepted from outside is one of the caller's own machines.
 """
 
 import uuid
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.core.db import get_db
+from app.api.request_deps import DbSession
 from app.core.errors import (
     NotFoundError,
     UnauthorizedError,
@@ -57,8 +57,6 @@ from app.domain.local_fs.service import GrantRefused, LocalDirectoryService
 from app.domain.local_fs.wiring import sql_local_directory_service
 
 router = APIRouter(prefix="/connector", tags=["local-directories"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class GrantDirectoryRequest(BaseModel):

@@ -77,9 +77,14 @@ ReasonKind = Literal[
 
 #: check run conclusion 里算「红」的那些词（GitHub 的原词）。``skipped`` 不在
 #: 此列也不算过：一个**必跑**的检查报 skipped 等于它对这次改动没跑过，按
-#: 缺席处理（#465 的教训：看见的都绿不等于测试跑过）。
-_RED_CONCLUSIONS = frozenset(
-    {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
+#: 缺席处理（#465 的教训：看见的都绿不等于测试跑过）。``cancelled`` 同样不算红，
+#: 但含义不一样：被顶替、被人工取消、作业被取消都不是「没通过」，是「没有结论」
+#: —— 它落到 skipped 那一档（按缺席处理，不诬告谁没通过），卡面那句「已取消」
+#: 由 `superseded_runs` 加上卡面的检查列表标出来（2026-10-12 的 PR #3463）。
+#: 平台里判「红」的几处读法（这里、`github_pr` 的检查状态、轮询的红检查提醒、
+#: 卡面的计数）共用这一份词表。
+RED_CONCLUSIONS = frozenset(
+    {"failure", "timed_out", "action_required", "startup_failure"}
 )
 _PASS_CONCLUSIONS = frozenset({"success", "neutral"})
 
@@ -175,7 +180,7 @@ def _outcome(name: str, check_runs: Sequence[CheckRun]) -> _CheckOutcome:
     同名可能出现多次（re-run 后新旧都在列表里）：任何一次过了就算过——
     GitHub 自己也是拿最新一次算的，而重跑绿掉一个红检查正是重跑的意义；
     没过的里面只要还有在跑的就是在跑；跑完的全红才是红；全 skipped 视同
-    没跑过（见 ``_RED_CONCLUSIONS`` 的注释）。"""
+    没跑过（见 ``RED_CONCLUSIONS`` 的注释）。"""
     runs = [r for r in check_runs if r.name == name]
     if not runs:
         return "absent"
@@ -184,7 +189,7 @@ def _outcome(name: str, check_runs: Sequence[CheckRun]) -> _CheckOutcome:
         return "pass"
     if any(r.status != "completed" for r in runs):
         return "running"
-    if conclusions & _RED_CONCLUSIONS:
+    if conclusions & RED_CONCLUSIONS:
         return "red"
     return "skipped"
 

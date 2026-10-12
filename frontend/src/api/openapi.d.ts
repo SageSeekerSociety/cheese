@@ -1255,6 +1255,9 @@ export interface paths {
          *     `credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者
          *     不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。
          *
+         *     `cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、
+         *     谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。
+         *
          *     `claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里
          *     唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，
          *     理由见那个模块的 docstring）。
@@ -12950,6 +12953,12 @@ export interface components {
             where?: string | null;
             /** Request Id */
             request_id?: string | null;
+            /** Received Events */
+            received_events?: number | null;
+            /** Upstream Failure */
+            upstream_failure?: string | null;
+            /** Ended By */
+            ended_by?: string | null;
         };
         /** BindTeamRequest */
         BindTeamRequest: {

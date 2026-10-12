@@ -15,8 +15,8 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession
 from app.api.routes.topics_tasks import _task_out
 from app.core.errors import (
     ForbiddenError,

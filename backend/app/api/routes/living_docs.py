@@ -21,8 +21,9 @@ from app.api.doc_access import authorize_in_project, frozen, reach, require_writ
 from app.api.doc_edits import Decision, decide
 from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store, tell_origin_room
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.routes.topics import _actor_in_place
 from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,

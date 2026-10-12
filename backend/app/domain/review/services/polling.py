@@ -18,6 +18,7 @@ from app.domain.review import (
     notes,
     pr_signals,
 )
+from app.domain.review.merge_state import RED_CONCLUSIONS
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
@@ -683,12 +684,20 @@ async def _poll_pr_card(
     # 红检查按 runs 本身判，不按 verdict 的 reasons：一个和 main 冲突的 PR
     # 的 verdict 是 dirty（冲突最优先），但它上面的红检查照样是芝士要修的
     # 事 —— 三件事互不蕴含，谁都不许把别人吞掉（pr_signals 的规矩）。
+    # 词表用 `merge_state.RED_CONCLUSIONS`：`cancelled` 不算红（它没有结论），
+    # 一个只剩「已取消」的 PR 不该把人叫起来说「CI 未通过」——卡面照旧标出来。
     has_red_check = any(
-        r.conclusion in ("failure", "timed_out", "cancelled", "action_required")
-        for r in runs
-        if r.status == "completed"
+        r.conclusion in RED_CONCLUSIONS for r in runs if r.status == "completed"
     )
-    if has_red_check or kinds & {"required_check_failed", "check_failed"}:
+    checks_red = has_red_check or bool(
+        kinds & {"required_check_failed", "check_failed"}
+    )
+    if not checks_red and card.note_code is notes.NoteCode.checks_failed:
+        # 同一个 head 上的红已经不在了（重跑转绿、被顶替的取消运行收掉了）：
+        # 「检查未通过」那句说的是过去。不清它，看板一直摆在「修复检查」、验收
+        # 人的黄灯不亮 —— head 没动，上面换 head 时那次清理永远轮不到它。
+        notes.clear(card)
+    if checks_red:
         # 检查红了 → 事件到做活的 agent，带哪个检查红、日志怎么取。
         # `check_state` 是取失败详情（job 链接 + 日志片段）的那条路。
         try:

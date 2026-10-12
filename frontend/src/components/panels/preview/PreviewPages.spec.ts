@@ -138,7 +138,10 @@ function pins(ui: ReturnType<typeof mount>): unknown[] {
   return (ui.emitted('pin')?.[0] ?? []) as unknown[]
 }
 
-/** 组件交出去的那几样不挂在 props 上，只有实例上拿得到——测试里就这么拿。 */
+/** 组件交出去的那几样不挂在 props 上，只有实例上拿得到——测试里就这么拿。
+ *
+ *  `container.firstElementChild` 的 `__vueParentComponent` 未必是宿主本身：stub 渲染
+ *  根元素时它是那个替身，拿到的 `exposed` 就不是这里的组件。确认实例属于被测宿主。 */
 function exposed(ui: ReturnType<typeof mount>) {
   const host = ui.container.firstElementChild as Element & {
     __vueParentComponent?: {

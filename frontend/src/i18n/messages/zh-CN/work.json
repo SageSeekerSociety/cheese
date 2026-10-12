@@ -369,7 +369,8 @@
       "voidHint": "作废会结束这次审阅：不合并，也不退回修改。之后可以重新提交审阅",
       "voidReason": "作废理由（可选）",
       "conflictsWithMain": "与主分支冲突",
-      "checkRunning": "进行中"
+      "checkRunning": "进行中",
+      "checkCancelled": "已取消"
     },
     "retry": {
       "action": "重试",
@@ -1215,6 +1216,7 @@
       "openLink": "打开",
       "checksFailed": "{n} 项检查未通过",
       "checksRunning": "{n} 项检查进行中",
+      "checksCancelled": "{n} 项检查已取消",
       "checksPassed": "{n} 项检查通过",
       "noApprovals": "暂无批准",
       "voidTitle": "作废这次审阅？",

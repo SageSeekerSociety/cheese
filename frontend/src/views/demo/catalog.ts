@@ -71,6 +71,7 @@ import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
 import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
+import { SCENES_MISC3_ENTRIES } from './catalogScenesMisc3'
 import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
@@ -597,6 +598,7 @@ export const CATALOG: CatalogEntry[] = [
   // `catalogScenesMisc2.ts`，数据在 `catalogScenesMisc2Fixtures.ts`（知识库那几条复用
   // `catalogKnowledgeFixtures.ts`）。
   ...SCENES_MISC2_ENTRIES,
+  ...SCENES_MISC3_ENTRIES,
   ...SCENES_SPACES_ENTRIES,
   ...SCENES_SPACES_DETAIL_ENTRIES,
   ...SCENES_WORKSPACE_ENTRIES,

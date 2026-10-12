@@ -109,4 +109,21 @@ describe('交给预览帧的键', () => {
     for (const id of ['library.upload', 'rail.9', '']) expect(runFrameKey(id)).toBe(false)
     expect(run).toHaveBeenCalledTimes(1)
   })
+
+  it('别处已经 preventDefault 的按键不再触发命令', async () => {
+    const run = vi.fn()
+    await setup()
+    cleanups.push(defineCommands(() => [{ id: 'rail.1', title: '首页', shortcut: 'mod+1', run }]))
+
+    const event = new KeyboardEvent('keydown', {
+      code: 'Digit1',
+      key: '1',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    event.preventDefault()
+    window.dispatchEvent(event)
+    expect(run).not.toHaveBeenCalled()
+  })
 })

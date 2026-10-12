@@ -17,7 +17,16 @@ export interface StatsUsage {
   /** 柱状图的每一根都带 id 和名字。**今天柱子不点得开**（看板上那一张只报数），
    *  `project_id` 是给以后的钻取和「同名项目」留的**身份** —— 名字在平台上不唯一，
    *  只按名字连线，两个同名项目会合成一根柱子。 */
-  top_projects: { project_id: string; name: string; tokens: number; cost_usd: number }[]
+  top_projects: {
+    project_id: string
+    name: string
+    tokens: number
+    cost_usd: number
+    /** 缓存命中率（缓存读 / 输入），口径同 `cache`；`null` = 账本说不出。 */
+    cache_hit?: number | null
+    /** 这个项目用了哪些模型，token 多的在前。 */
+    models?: { model: string; tokens: number; cost_usd: number }[]
+  }[]
   /** 按模型拆。和 `by_route` 是两个正交的切口：「贵的是模型还是计费方式」要两个一起看。 */
   by_model: {
     model: string
@@ -26,6 +35,7 @@ export interface StatsUsage {
     cost_usd: number
     /** 同一行上的「算不出价钱」的那部分。0 是「没有价」不是「免费」。 */
     unpriced_tokens: number
+    cache_hit?: number | null
   }[]
   /** 按供给通路拆：gateway（网关）/ subscription（订阅）/ native（自带凭据）/ ''（旧数据）。 */
   by_route: {
@@ -66,6 +76,44 @@ export interface StatsUsage {
    *  常态（开发环境根本不跑订阅版代理），不是故障。行与 `reason` 的判据在
    *  `backend/app/domain/platform_stats/claude_pool.py`。 */
   claude_accounts: StatsClaudePool
+  /** 缓存命中率：缓存读 / 输入，只算记了缓存的行（一类行从窗口里第一次记下缓存读
+   *  起算，之前那几行的 0 可能只是没记）。没算进去的输入在 `uncounted_input_tokens`。
+   *  口径在 `backend/app/domain/platform_stats/usage_detail.py`。后面几项可选：旧后端
+   *  还没有它们。 */
+  cache?: {
+    hit_ratio: number | null
+    input_tokens: number
+    cache_read_tokens: number
+    uncounted_input_tokens: number
+  }
+  /** 触发消耗最多的几个人（发起那一轮的人，或项目外记在行上的人）。是触发，不是贡献。 */
+  top_users?: {
+    handle: string
+    name: string | null
+    tokens: number
+    calls: number
+    cost_usd: number
+    cache_hit: number | null
+  }[]
+  /** 没有触发者的那部分（平台自己发起的轮次）。 */
+  unattributed?: { tokens: number; calls: number; cost_usd: number }
+  /** 每个整点一行，北京时间（`hour` 带 +08:00），补到当前这个小时；窗口长于 7 天时是
+   *  `null`。 */
+  hourly?: { hour: string; tokens: number; calls: number; cost_usd: number }[] | null
+  /** 窗口里最近的几行账本，最新的在前。`cache_read_tokens` 为 `null` = 这一行没记缓存。 */
+  recent?: {
+    at: string
+    project_id: string | null
+    project: string | null
+    handle: string | null
+    model: string
+    route: string
+    kind: string
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number | null
+    cost_usd: number
+  }[]
   /** 上一等长窗口的同口径合计（环比用），形状与 token / 调用 / 成本三张卡一一对应。
    *  可选：旧后端还没有它，前端按「键在才画 delta」接线。 */
   prev?: { tokens: number; calls: number; cost_usd: number }

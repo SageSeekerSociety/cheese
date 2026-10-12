@@ -36,7 +36,7 @@ CREDITS_PER_TURN = (10 * 5e-6 + 5 * 25e-6) / CREDIT_USD
 @pytest.fixture(autouse=True)
 def _priced(monkeypatch):
     """The gateway's price table and the deployment's price per credit."""
-    from app.domain.feature_stats import pricing
+    from app.domain.usage import pricing
 
     async def rates(transport=None):
         return _RATES
