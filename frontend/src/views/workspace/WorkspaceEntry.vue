@@ -116,12 +116,7 @@ watch(
         </BaseButton>
       </BaseEmptyState>
     </div>
-    <NewChannelDialog
-      v-if="creatingOpen"
-      v-model="creatingOpen"
-      :busy="creating"
-      @create="createChannel"
-    />
+    <NewChannelDialog v-if="creatingOpen" v-model="creatingOpen" :busy="creating" @create="createChannel" />
   </template>
 </template>
 

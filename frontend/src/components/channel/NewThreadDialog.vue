@@ -44,6 +44,9 @@ function submit() {
     @primary="submit"
   >
     <form class="new-thread" data-testid="new-thread" @submit.prevent="submit">
+      <!-- 和 NewChannelDialog 同例：这个弹窗就是为打一个标题而开，打开它本身就是用户的
+           动作，焦点直接落在那一格上。 -->
+      <!-- eslint-disable vuejs-accessibility/no-autofocus -- 见上一句 -->
       <v-text-field
         v-model="title"
         :label="t('work.room.thread.titleLabel')"
@@ -55,6 +58,7 @@ function submit() {
         autocomplete="off"
         autofocus
       />
+      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
     </form>
   </AdaptiveDialog>
 </template>

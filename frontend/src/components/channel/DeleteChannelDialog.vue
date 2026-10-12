@@ -45,6 +45,9 @@ function confirm() {
     @primary="confirm"
   >
     <p class="t-body delete-channel__body">{{ t('work.channel.delete.body') }}</p>
+    <!-- 这个弹窗只为一件事而开：把名字打一遍。打开它本身就是用户的动作（不是页面自己
+         弹出来的），焦点落在唯一那一格上，正是这个规则要挡的那种「没打招呼就抢焦点」。 -->
+    <!-- eslint-disable vuejs-accessibility/no-autofocus -- 见上一句 -->
     <v-text-field
       v-model="typed"
       class="delete-channel__field"
@@ -55,6 +58,7 @@ function confirm() {
       autofocus
       @keyup.enter="confirm"
     />
+    <!-- eslint-enable vuejs-accessibility/no-autofocus -->
   </AdaptiveDialog>
 </template>
 
