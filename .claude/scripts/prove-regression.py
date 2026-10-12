@@ -52,6 +52,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 #: Directories symlinked into the "without the fix" worktree, so a run there uses
@@ -75,6 +76,13 @@ TEST_SUFFIXES = (
     ".mjs",
     ".vue",
 )
+
+#: A leftover worktree this old is reclaimed even when the pid in its name looks
+#: alive. Pids are recycled: once a dead run's number is handed to any unrelated
+#: process, liveness alone reads that leftover as "still going" and holds it in
+#: `git worktree list` for as long as the number stays taken. No run of this tool
+#: lasts a day, so age is the safe second signal — a concurrent run is current.
+STALE_AFTER = 24 * 60 * 60
 
 #: What a shell exits when the command it was handed does not exist. It is not a
 #: test result: nothing ran. Reading it as a red test would turn "your runner is
@@ -226,23 +234,37 @@ def _alive(pid: int) -> bool:
 def reclaim_stale(root: Path) -> None:
     """Clear worktrees earlier runs left behind.
 
-    A run killed by Ctrl-C, an OOM kill or a reboot cannot clean up after
-    itself, and nothing else ever will: without this, `git worktree list`
+    A run killed outright — SIGKILL, an OOM kill, a reboot — cannot clean up
+    after itself, and nothing else ever will: without this, `git worktree list`
     accumulates dead checkouts. The path carries the pid that made it, so a
-    later run can tell whether the process that owns it is still going — a
-    concurrent run's worktree is left alone, and so is this one, whose pid is
+    later run can usually tell whether the process that owns it is still going —
+    a concurrent run's worktree is left alone, and so is this one, whose pid is
     the caller's. `prune` drops the registrations whose directory is already
     gone, which is the state a reboot out of /tmp leaves.
+
+    The pid alone is not enough, because it is recycled: once a dead run's
+    number belongs to some unrelated process, liveness reads the leftover as
+    live and holds it. Nothing here lasts a day, so anything older than
+    STALE_AFTER is taken as dead whatever its number says.
     """
     git("worktree", "prune", cwd=root)
+    now = time.time()
     for here in _worktrees(root):
         path = Path(here)
         if not path.name.startswith(WORKTREE_PREFIX):
             continue
         pid = path.name.rsplit("-", 1)[-1]
-        if not pid.isdigit() or _alive(int(pid)):
+        if pid.isdigit() and _alive(int(pid)) and not _older_than(path, now):
             continue
         remove_worktree(root, path)
+
+
+def _older_than(path: Path, now: float) -> bool:
+    try:
+        return now - path.stat().st_mtime > STALE_AFTER
+    except OSError:
+        # Gone already, which is the other reason to drop it.
+        return True
 
 
 def destination_for(relative: str, tree: Path) -> Path:
@@ -721,7 +743,11 @@ def self_test() -> int:
         # A run killed mid-flight cannot clean up after itself; the next run has
         # to, or `git worktree list` only grows. A concurrent run's worktree has
         # a live pid in its name and is not litter.
-        def plant(pid: int) -> Path:
+        #
+        # `plant` makes a worktree, proves it is really registered — so a case
+        # cannot pass off a git that never made one — and ages it by hand rather
+        # than by sleeping.
+        def plant(pid: int, age: float = 0.0) -> Path:
             path = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}0deada0deada-{pid}"
             # Whatever a previous run of this case left, so the case cannot pass
             # or fail on /tmp's history rather than on reclaim_stale.
@@ -734,17 +760,47 @@ def self_test() -> int:
                 check=True,
                 capture_output=True,
             )
+            assert path in [Path(p) for p in _worktrees(repo)], f"{path} is not a worktree"
+            if age:
+                when = time.time() - age
+                os.utime(path, (when, when))
             return path
 
-        dead = plant(999_999)
+        def gone(path: Path) -> bool:
+            return not path.exists() and str(path) not in _worktrees(repo)
+
+        # A pid that could exist and does not, found rather than assumed: the
+        # self-test must not rest on 999999 being free on this machine. Nothing
+        # is forked between the probe and the use, so it stays free.
+        free = 999_999
+        while _alive(free):
+            free += 1
+        dead = plant(free)
         live = plant(os.getpid())
-        with _Muffle():
-            reclaim_stale(repo)
-        tally.case(
-            "a worktree whose run is gone is reclaimed; a live one is left alone",
-            not dead.exists() and live.exists(),
+        # A pid that is alive and belongs to something else entirely — what a
+        # dead run's number looks like after the kernel hands it out again. Only
+        # the name's pid matters to reclaim_stale, so this is indistinguishable
+        # from a surviving owner; only the age gives it away.
+        other = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"]
         )
-        remove_worktree(repo, live)
+        try:
+            recycled = plant(other.pid, age=STALE_AFTER + 60)
+            with _Muffle():
+                reclaim_stale(repo)
+            tally.case(
+                "a worktree whose run is gone is reclaimed; a live one is left alone",
+                gone(dead) and live.exists(),
+            )
+            # The pid is recycled, so liveness alone would hold this one forever.
+            tally.case(
+                "a worktree whose pid was recycled is reclaimed, not held forever",
+                gone(recycled),
+            )
+            remove_worktree(repo, live)
+        finally:
+            other.kill()
+            other.wait()
 
         tally.case(
             "a node id that is not repo-relative is found under backend/",
