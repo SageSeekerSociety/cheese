@@ -82,3 +82,23 @@ def test_a_card_without_a_subject_falls_back_to_the_topic_title_as_is():
 def test_the_fallback_stays_within_a_pr_title():
     """A topic title may run to 300 characters; a GitHub PR title to 256."""
     assert len(pr_text.change_subject(None, _topic("长" * 300))) <= 255
+
+
+def test_the_pr_title_matches_the_card_only_when_it_is_the_same_string():
+    """一个字符串，三个读者。仓库的检查评判 PR 标题，平台落下的也是它 ——
+    两者必须逐字相同；差一个字符就是「仓库没评判过这一行」。"""
+    topic = _topic("话题")
+    line = "fix(review): land the title the checks judged"
+    card = AcceptCard(change_subject=line)
+    assert pr_text.pr_title_matches_subject(card, topic, line)
+    # 首尾空白不算差别 —— GitHub 会 trim，读者也该按同一个字符串比。
+    assert pr_text.pr_title_matches_subject(card, topic, f"  {line}\n")
+    assert not pr_text.pr_title_matches_subject(card, topic, "fix(review): another")
+
+
+def test_an_unreadable_pr_title_is_not_a_match():
+    """读不出来的标题是「无法确认」，不是「一致」—— 确认正是这道闸的全部意义。
+    假的、旧的、或空 payload 都读不出标题，那就不能合。"""
+    card = AcceptCard(change_subject="fix: something")
+    for absent in (None, "", "   "):
+        assert not pr_text.pr_title_matches_subject(card, _topic("话题"), absent)

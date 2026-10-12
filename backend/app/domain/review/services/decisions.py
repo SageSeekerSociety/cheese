@@ -446,6 +446,12 @@ async def _override_github_checks(
         dependency = await self._dependency_block_reason(card, status)
         if dependency:
             raise ValidationError(dependency)
+    # 放行是「明知检查没全绿也合」，不是「合一行检查从没评判过的字」：平台给 merge
+    # API 传的标题是卡片主题，而仓库自己的检查评判的是 PR 上那个标题，两者分家时
+    # 放行合下去的仍然是一行没人检查过的历史。这里只拒，不做提醒那一套 —— 轮询那
+    # 条路每 60 秒看到同一个分家，会把执行者叫起来改卡片（`_title_nudge`）。
+    if not pr_text.pr_title_matches_subject(card, topic, status.title):
+        raise ValidationError(say("overrideTitleDisagrees", pr=card.pr_number))
     # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
     state: str | None = None
     try:

@@ -8,7 +8,7 @@
 这道测试不连数据库，只钉住三件事：
 
 1. 门面该导出的名字都导得出来（包括带下划线的内部名字——它们也是公开面的一部分）。
-2. ``AcceptService`` 上的 90 个方法一个不少，而且是**真方法**（类自己的 ``__dict__``
+2. ``AcceptService`` 上的 92 个方法一个不少，而且是**真方法**（类自己的 ``__dict__``
    里就有），不是 ``__getattr__`` 之类动态转发的。
 3. ``AcceptService.__init__`` 还在，并且仍然给 ``self._session/_repo/_topics/
    _projects`` 四个属性赋值——这是拆包时明确**没有**动的那部分。
@@ -33,7 +33,7 @@ from app.domain.review.services import (
     GATE_ABANDONED_PREFIX as GATE_ABANDONED_PREFIX,
 )
 
-# 90 个方法，照搬运之前那份 services.py 里 AcceptService 的类体抄的。
+# 92 个方法，照搬运之前那份 services.py 里 AcceptService 的类体抄的。
 # 顺序按定义先后；__init__ 也在内。
 ACCEPT_SERVICE_METHODS = [
     "__init__",
@@ -112,10 +112,12 @@ ACCEPT_SERVICE_METHODS = [
     "_ci_nudge",
     "_review_nudge",
     "_conflict_nudge",
+    "_title_nudge",
     "_dispatch_nudges",
     "_finish_pr_accept",
     "_resolve_forge",
     "_stop_accept_pr_unavailable",
+    "_stop_accept_title_disagrees",
     "_stop_accept_no_branch",
     "_publish_pr_for_accept",
     "_note_outside_accept_txn",
@@ -142,9 +144,9 @@ def test_facade_reexports_the_public_names() -> None:
     assert TaskService is not None
 
 
-def test_accept_service_keeps_all_90_methods() -> None:
-    """90 个方法一个不少，而且都是类自己定义的。"""
-    assert len(ACCEPT_SERVICE_METHODS) == 90
+def test_accept_service_keeps_all_92_methods() -> None:
+    """92 个方法一个不少，而且都是类自己定义的。"""
+    assert len(ACCEPT_SERVICE_METHODS) == 92
     found = {name for name, _ in inspect.getmembers(AcceptService)}
     missing = [name for name in ACCEPT_SERVICE_METHODS if name not in found]
     assert missing == []

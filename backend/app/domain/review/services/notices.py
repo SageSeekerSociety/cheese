@@ -26,6 +26,9 @@ from app.domain.review.nudges import (
 from app.domain.review.nudges import (
     _review_nudge as _review_nudge_from_nudges,
 )
+from app.domain.review.nudges import (
+    _title_nudge as _title_nudge_from_nudges,
+)
 from app.domain.review.room_notices import (
     _announce_filed as _announce_filed_from_room,
 )
@@ -357,6 +360,12 @@ def _conflict_nudge(
     self: pkg.AcceptService, *, card: AcceptCard, status
 ) -> pr_signals.PendingNudge | None:
     return _conflict_nudge_from_nudges(card=card, status=status)
+
+
+def _title_nudge(
+    self: pkg.AcceptService, *, card: AcceptCard, topic: Topic, status
+) -> pr_signals.PendingNudge | None:
+    return _title_nudge_from_nudges(card=card, topic=topic, status=status)
 
 
 async def _dispatch_nudges(

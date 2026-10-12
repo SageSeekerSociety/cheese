@@ -60,6 +60,15 @@ class PullRequestStatus:
     #: verdict must be draft-blocked when EITHER says so
     #: (`merge_state.compute_merge_state` takes both).
     draft: bool = False
+    #: The PR's CURRENT title, raw. The platform writes it from the card's
+    #: subject and the repository's own checks judge it (a `pull_request` edit
+    #: re-runs them), while the squash commit lands that same subject
+    #: (`pr_text.merge_commit_title`) — so both merge paths compare this
+    #: against the card and stop when they differ
+    #: (`pr_text.pr_title_matches_subject`). Empty only for a fake/older
+    #: payload; that reads as "cannot confirm" and stops the merge, which is
+    #: the safe side of a title nobody can check.
+    title: str = ""
 
 
 def _parse_github_time(raw: object) -> datetime | None:
@@ -106,6 +115,7 @@ def parse_pull_request_status(data: dict) -> PullRequestStatus:
             review_comments if isinstance(review_comments, int) else 0
         ),
         draft=bool(data.get("draft")),
+        title=str(data.get("title") or ""),
         # Gated on `merged` on purpose — see PullRequestStatus's docstring
         # for what this field holds on an unmerged PR.
         merge_commit_sha=(data.get("merge_commit_sha") or None) if merged else None,

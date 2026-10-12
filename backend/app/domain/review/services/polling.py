@@ -727,6 +727,12 @@ async def _poll_pr_card(
         conflict = self._conflict_nudge(card=card, status=status)
         if conflict is not None:
             pending.append(conflict)
+    # GitHub 上那行标题还是不是这张卡要落的那一行。不是就停机叫人，而且**绿了
+    # 也不算绿**：`_notify_ready` 说「可以合了」、自动合布防真的去合，两条都得
+    # 拦住 —— 合下去落进历史的是仓库检查没评判过的字（`pr_text` 的那条注释）。
+    title = self._title_nudge(card=card, topic=topic, status=status)
+    if title is not None:
+        pending.append(title)
     await self._dispatch_nudges(
         card=card,
         topic=topic,
@@ -738,8 +744,9 @@ async def _poll_pr_card(
         await self._session.flush()  # the mirror and dispatched ledger keep
         raise deferred
 
-    if verdict.state == "clean":
-        # CLEAN → 通知验收人（按 head 去重）。
+    if verdict.state == "clean" and title is None:
+        # CLEAN → 通知验收人（按 head 去重）。标题分家时不报「可以合了」：
+        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。
         await self._notify_ready(card, topic)
     elif verdict.state == "blocked" and "required_check_missing" in kinds:
         # BLOCKED 必跑检查没报到 → 等 CI，不发；超过宽限期转人 ——
@@ -779,7 +786,11 @@ async def _poll_pr_card(
         )
         return
 
-    if card.auto_merge_armed_by and verdict.state in ("clean", "unstable"):
+    if (
+        card.auto_merge_armed_by
+        and verdict.state in ("clean", "unstable")
+        and title is None
+    ):
         await self._merge_armed_card(
             card=card,
             topic=topic,
