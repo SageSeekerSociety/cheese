@@ -228,10 +228,10 @@ import { throttle } from 'lodash-es'
 
 import { formatFileSize } from '@/utils/materials'
 
+import { AttachmentsApi } from '@/api/attachments'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
 import { useEvents } from '@/views/tasks/events'
 
@@ -350,8 +350,8 @@ const updateProgress = throttle((progressEvent: any) => {
 // 「提交须知」里那句上限：问不到就少说一句，上传照旧，不弹错。
 onMounted(async () => {
   try {
-    const { data } = await AttachmentsApi.limits()
-    maxFileBytes.value = data.maxFileBytes
+    const { maxFileBytes: bytes } = await AttachmentsApi.limits()
+    maxFileBytes.value = bytes
   } catch {
     maxFileBytes.value = null
   }
@@ -454,7 +454,7 @@ const submitTask = async () => {
           uploadSpeed.value = '0 KB/s'
           timeRemaining.value = t('tasks.submit.calculating')
 
-          const { data } = await AttachmentsApi.upload(
+          const data = await AttachmentsApi.upload(
             {
               type: 'file',
               file: entry.contentAttachment,

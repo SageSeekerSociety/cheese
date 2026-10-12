@@ -58,7 +58,7 @@ vi.mock('@/api/spaces', () => ({
 
 // 附件卡片选中即传（`POST /attachments`），发题请求带的是它回来的那串 id；卡片上那句
 // 「单个文件不超过…」问的是 `GET /attachments/limits`（与上传同一道门）。
-vi.mock('@/network/api/attachments', () => ({
+vi.mock('@/api/attachments', () => ({
   AttachmentsApi: {
     upload: (...a: unknown[]) => uploadAttachment(...a),
     limits: (...a: unknown[]) => attachmentLimits(...a),
@@ -286,9 +286,9 @@ beforeEach(() => {
     data: { tasks: [{ id: 101, name: '用 gdb 定位一次段错误' }], count: 1 },
   }))
   createTask.mockImplementation(async () => ({ data: { task: { id: 501, approved: false } } }))
-  uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ data: { id: 41, file } }))
+  uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
-  attachmentLimits.mockImplementation(async () => ({ data: { maxFileBytes: LIMIT_BYTES } }))
+  attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
 })
 
 afterEach(() => {

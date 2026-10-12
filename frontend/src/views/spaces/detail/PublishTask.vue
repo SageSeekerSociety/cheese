@@ -26,9 +26,9 @@ import { toDraftPayload, toDrafts } from './publishDrafts'
 import { MAX_DRAFTS, MAX_PDF_BYTES, TASK_SUBMISSION_SCHEMA } from './publishLimits'
 import PublishTaskView from './PublishTaskView.vue'
 
+import { AttachmentsApi } from '@/api/attachments'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { isTeachingBlank } from '@/lib/teaching'
-import { AttachmentsApi } from '@/network/api/attachments'
 import { TasksApi } from '@/network/api/tasks'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
@@ -183,7 +183,7 @@ function discardImport() {
 
 /** 发题时先传成游离的附件，建题那条请求带着它们的 id。 */
 const uploads = useAttachmentUploads({
-  upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).data.id,
+  upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
 })
 
 /** 这道题自己的「给 AI 队友的指导」覆盖（#944）。不单独写就沿用空间（或项目集）的默认。 */

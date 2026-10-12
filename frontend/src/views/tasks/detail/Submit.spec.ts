@@ -12,7 +12,7 @@ const mocks = vi.hoisted(() => ({
   limits: vi.fn(),
 }))
 vi.mock('@/network/api/tasks', () => ({ TasksApi: mocks }))
-vi.mock('@/network/api/attachments', () => ({ AttachmentsApi: { upload: vi.fn(), limits: mocks.limits } }))
+vi.mock('@/api/attachments', () => ({ AttachmentsApi: { upload: vi.fn(), limits: mocks.limits } }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -23,7 +23,7 @@ import i18n, { setLocale } from '@/i18n'
 beforeEach(() => {
   setLocale('zh-CN')
   mocks.limits.mockReset()
-  mocks.limits.mockResolvedValue({ data: { maxFileBytes: 100 * 1024 * 1024 } })
+  mocks.limits.mockResolvedValue({ maxFileBytes: 100 * 1024 * 1024 })
 })
 
 function mountForm() {
@@ -47,7 +47,7 @@ function mountForm() {
 
 describe('提交须知 on file size', () => {
   it('states the limit the upload is refused at, as the server reports it', async () => {
-    mocks.limits.mockResolvedValue({ data: { maxFileBytes: 200 * 1024 * 1024 } })
+    mocks.limits.mockResolvedValue({ maxFileBytes: 200 * 1024 * 1024 })
     const view = mountForm()
 
     await waitFor(() => expect(view.container.textContent).toContain('200'))

@@ -56,8 +56,8 @@ vi.mock('@/composables/usePageTitle', () => ({
 }))
 
 // 交作业表单开场问一次单个文件的上限，写进「提交须知」。
-vi.mock('@/network/api/attachments', () => ({
-  AttachmentsApi: { upload: vi.fn(), limits: vi.fn(async () => ({ data: { maxFileBytes: 100 * 1024 * 1024 } })) },
+vi.mock('@/api/attachments', () => ({
+  AttachmentsApi: { upload: vi.fn(), limits: vi.fn(async () => ({ maxFileBytes: 100 * 1024 * 1024 })) },
 }))
 
 // 领取/退队/实名/对话那几张对话框挂在老机器上（事件总线 + `TaskDialogs`），这里只留空壳。
