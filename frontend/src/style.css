@@ -1376,7 +1376,7 @@ button:not(.v-btn) {
 }
 
 /* 「这是谁」在正文里那张小脸：`@handle` chip 前面，和 Vue 那边的 IdentityView 是同一套
-   规矩（人是圆的、AI 队友是超椭圆；有头像地址用图，没有就画按 handle 取色的首字母）。
+   规矩（人是圆的、AI 队友是超椭圆；首字母永远先画好，头像有就压在上面，见 .identity-face__img）。
    和 `.mention` 放在这里的理由一样：这段 markup 由 lib/identityFace 一处产出，落地的
    地方却够不着 Vue 组件 —— 消息正文、文档这些是 DOM 拼出来的。UserAvatar / CheeseAvatar
    的样式是 scoped 的，到不了这里，所以这张脸的样子得在这份全局样式里各写一份。
@@ -1390,6 +1390,13 @@ button:not(.v-btn) {
   overflow: hidden;
 }
 .identity-face--person {
+  /* 相对定位只为了让下面那张头像（绝对定位那层）有个落点；`flex` 居中则让那枚
+     首字母在整张脸里居中 —— 只给 line-height:1 的话，它按行盒顶在脸上方（16px
+     的脸、约 9px 的字，肉眼可见偏上）。和 UserAvatar 的 .user-avatar-char 同一套。 */
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
   line-height: 1;
   text-align: center;
@@ -1401,11 +1408,17 @@ button:not(.v-btn) {
 .identity-face--person[data-initial]::before {
   content: attr(data-initial);
 }
+/* 头像是压在首字母上的一层**背景图**，不是一个 <img>：坏图只是「什么都不画」，露出来
+   的是底下那层首字母；<img> 则会画破图图标。这一条在序列化之后也成立（见 lib/identityFace）。 */
 .identity-face__img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+}
+/* 眼睛压过根上的 tone 色：底色是根那一层给的，眼睛按 CheeseAvatar 用 --agent-ink。 */
+.identity-face--agent .identity-face__eye {
+  fill: var(--agent-ink);
 }
 .identity-face--agent[data-tone='0'] {
   fill: var(--agent-tone-0);
