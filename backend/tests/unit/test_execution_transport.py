@@ -1175,6 +1175,10 @@ def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
 ):
     _, work, state = executor
     (work / "CLAUDE.md").write_text("Always preserve the protected file.")
+    (work / "AGENTS.md").write_text("Root project instructions.")
+    nested = work / "pkg"
+    nested.mkdir()
+    (nested / "AGENTS.override.md").write_text("Nested project instructions.")
     local = tmp_path / "session-machine"
     local.mkdir()
     (local / "protected").write_text("session only")
@@ -1238,10 +1242,10 @@ def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
             client.call("invoke", request)
         assert "invoke" not in seen
         assert not (work / "output.txt").exists()
-        assert (
-            "CLAUDE.md"
-            in json.loads((local / "context-tree.json").read_text())["entries"]
-        )
+        entries = json.loads((local / "context-tree.json").read_text())["entries"]
+        assert "CLAUDE.md" in entries
+        assert "AGENTS.md" in entries
+        assert "pkg/AGENTS.override.md" in entries
         result = client.call("invoke", request)
         assert "error" not in result, result
         assert (work / "output.txt").read_text() == "remote"

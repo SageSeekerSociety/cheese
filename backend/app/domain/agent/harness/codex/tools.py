@@ -47,6 +47,9 @@ PLATFORM = "platform"
 #: config layer (`codex-rs/ext/skills/src/host_roots.rs` at rust-v0.154.0).
 SKILL_ROOTS = (".agents/skills", ".codex/skills")
 
+#: The native project instruction files Codex discovers from its cwd.
+PROJECT_DOC_NAMES = ("AGENTS.override.md", "AGENTS.md")
+
 #: The arguments of an executor tool that name a path or run a command.
 PATH_ARGUMENTS = ("file_path", "path", "notebook_path", "command")
 
@@ -76,6 +79,7 @@ class RemoteTools:
         mirror: Path | None = None,
         reply_file: Path | None = None,
         shipped: Path | None = None,
+        project_docs: Path | None = None,
     ):
         self.client = RemoteClient(target)
         self.routes: dict[str, tuple[str, str]] = {}
@@ -92,6 +96,10 @@ class RemoteTools:
         # directory, asked of the executor once.
         self.shipped = shipped
         self.executor_config: str | None = None
+        # Codex's cwd is a project root, so mirror project instructions there
+        # at their original relative paths for native instruction discovery.
+        self.project_docs = project_docs
+        self.docs_mirrored: dict[str, tuple[str, int, int]] | None = None
         # What the mirror holds: its path -> the (size, mtime) it was read at.
         self.mirrored: dict[str, tuple[int, int]] | None = None
         # Where the runner says a person is waiting on an answer
@@ -140,6 +148,104 @@ class RemoteTools:
             status = await asyncio.to_thread(self.client.call, "ping")
             self.executor_config = status.get("config_dir")
 
+    def sync_project_docs(self, entries: dict[str, dict]) -> bool:
+        """Mirror AGENTS.md files into Codex's cwd without interpreting them.
+
+        Codex owns discovery and its 32 KiB combined instruction limit. The
+        executor supplies the same relative paths and bytes, so root and nested files
+        retain Codex's normal precedence and scope.
+        """
+        if self.project_docs is None:
+            return False
+        self.project_docs.mkdir(parents=True, exist_ok=True)
+        if self.docs_mirrored is None:
+            # A runner restart gets a fresh in-memory index. Clear only the
+            # native document names so a previous checkout cannot leak rules.
+            for path in self.project_docs.rglob("*"):
+                if path.is_file() and path.name in PROJECT_DOC_NAMES:
+                    path.unlink()
+            self.docs_mirrored = {}
+
+        def source_file(name: str) -> tuple[str, dict] | None:
+            source = name
+            seen = set()
+            while source not in seen:
+                seen.add(source)
+                parts = source.split("/")
+                for index in range(1, len(parts) + 1):
+                    prefix = "/".join(parts[:index])
+                    link = entries.get(prefix, {})
+                    if link.get("kind") != "symlink":
+                        continue
+                    target = link.get("target")
+                    if not isinstance(target, str) or target.startswith("/"):
+                        return None
+                    source = posixpath.normpath(
+                        posixpath.join(
+                            posixpath.dirname(prefix), target, *parts[index:]
+                        )
+                    )
+                    if source == ".." or source.startswith(("../", "/")):
+                        return None
+                    break
+                else:
+                    entry = entries.get(source, {})
+                    return (source, entry) if entry.get("kind") == "file" else None
+            return None
+
+        wanted: dict[str, tuple[str, int, int]] = {}
+        for name, entry in entries.items():
+            if (
+                entry.get("kind") not in {"file", "symlink"}
+                or posixpath.basename(name) not in PROJECT_DOC_NAMES
+                or name.startswith("/")
+                or posixpath.normpath(name) != name
+                or name == ".."
+                or name.startswith("../")
+            ):
+                continue
+            resolved = source_file(name)
+            if resolved is not None:
+                source, source_entry = resolved
+                wanted[name] = (
+                    source,
+                    source_entry["size"],
+                    source_entry["mtime_ns"],
+                )
+
+        changed = False
+        for name in [name for name in self.docs_mirrored if name not in wanted]:
+            (self.project_docs / name).unlink(missing_ok=True)
+            del self.docs_mirrored[name]
+            changed = True
+
+        for name, stamp in wanted.items():
+            if self.docs_mirrored.get(name) == stamp:
+                continue
+            data = b""
+            while len(data) < stamp[1]:
+                piece = base64.b64decode(
+                    self.client.call(
+                        "context_fs",
+                        {
+                            "operation": "read",
+                            "path": stamp[0],
+                            "offset": len(data),
+                            "size": min(SKILL_READ_BYTES, stamp[1] - len(data)),
+                        },
+                    )["data"]
+                )
+                if not piece:
+                    break
+                data += piece
+
+            path = self.project_docs / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+            self.docs_mirrored[name] = stamp
+            changed = True
+        return changed
+
     def sync_skills(self) -> bool:
         """The mirror holds the project's skills as the machine has them now.
 
@@ -157,6 +263,7 @@ class RemoteTools:
         entries = self.client.call("context_fs", {"operation": "tree"}).get(
             "entries", {}
         )
+        changed = self.sync_project_docs(entries)
         wanted: dict[str, str] = {}
 
         def collect(held: str, source: str, depth: int = 0) -> None:
@@ -178,7 +285,6 @@ class RemoteTools:
 
         for root in SKILL_ROOTS:
             collect(root, root)
-        changed = False
         for place in [place for place in self.mirrored if place not in wanted]:
             (self.mirror / place).unlink(missing_ok=True)
             del self.mirrored[place]

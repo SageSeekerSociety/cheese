@@ -65,7 +65,9 @@ describe('手机顶栏的汉堡', () => {
     const { container, pinia } = await mountAt('/spaces/s1')
     const button = hamburger(container)
     expect(button).toBeTruthy()
-    expect(container.querySelector('a[aria-label="返回上一级"]')).toBeTruthy()
+    // 这一页是应用内跳进来的，左侧那颗 ← 因此是浏览器语义那一颗（按钮「返回」），
+    // 不是声明层级的链接「返回上一级」——只问它在不在，两种形态都算。
+    expect(container.querySelector('[aria-label^="返回"]')).toBeTruthy()
 
     await fireEvent.click(button!)
     expect(useNavigationStore(pinia).isSecondaryDrawerOpen).toBe(true)

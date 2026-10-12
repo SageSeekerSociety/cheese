@@ -32,7 +32,7 @@ it('reads in English, photo button included', () => {
     global: { plugins: [createVuetify({ components, directives })] },
   })
   getByTitle('Upload files (up to 10 MB each)')
-  getByTitle('Send photos')
+  getByTitle('Send photos or videos')
   getByTitle('Send')
   const attrs = Array.from(baseElement.querySelectorAll('[title],[aria-label]')).flatMap((el) => [
     el.getAttribute('title') ?? '',
