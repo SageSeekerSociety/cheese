@@ -3,8 +3,10 @@
 //! exits the process itself, so this intent must be saved before installation.
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const FILE: &str = "start-hidden";
+const MAX_AGE_SECS: u64 = 10 * 60;
 
 pub struct RestartMarker {
     path: PathBuf,
@@ -15,7 +17,8 @@ impl RestartMarker {
     pub fn prepare(dir: &Path, hidden: bool) -> io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         let path = dir.join(FILE);
-        std::fs::write(&path, if hidden { "hidden" } else { "visible" })?;
+        let intent = if hidden { "hidden" } else { "visible" };
+        std::fs::write(&path, format!("{intent}\n{}", now_secs()))?;
         Ok(Self { path, committed: false })
     }
 
@@ -33,15 +36,42 @@ impl Drop for RestartMarker {
     }
 }
 
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn intent(content: &str, now: u64) -> Option<bool> {
+    let mut lines = content.lines();
+    let hidden = match lines.next()? {
+        "hidden" => true,
+        "visible" => false,
+        _ => return None,
+    };
+    let written = lines.next()?.parse::<u64>().ok()?;
+    if now < written || now - written > MAX_AGE_SECS {
+        return None;
+    }
+    Some(hidden)
+}
+
 pub fn start_hidden(dir: &Path, at_login: bool) -> bool {
     let path = dir.join(FILE);
-    match std::fs::read_to_string(&path) {
-        Ok(intent) if std::fs::remove_file(path).is_ok() => {
-            // Older installed apps wrote an empty file for unattended updates.
-            intent != "visible"
+    let hidden = std::fs::read_to_string(&path).ok().and_then(|content| {
+        if content.is_empty() {
+            // The first fixed release may be installed by an older app. Its
+            // empty marker is valid only while that restart is still recent.
+            let written = std::fs::metadata(&path).ok()?.modified().ok()?
+                .duration_since(UNIX_EPOCH).ok()?.as_secs();
+            intent(&format!("hidden\n{written}"), now_secs())
+        } else {
+            intent(&content, now_secs())
         }
-        _ => at_login,
-    }
+    });
+    let _ = std::fs::remove_file(path);
+    hidden.unwrap_or(at_login)
 }
 
 #[cfg(test)]
@@ -54,7 +84,9 @@ mod tests {
         fn new() -> Self {
             static NEXT: AtomicUsize = AtomicUsize::new(0);
             let path = std::env::temp_dir().join(format!(
-                "cheese-update-launch-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)
+                "cheese-update-launch-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
             ));
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
@@ -93,19 +125,21 @@ mod tests {
     }
 
     #[test]
-    fn requested_update_replaces_a_previous_hidden_intent() {
-        let dir = Dir::new();
-        std::fs::write(dir.0.join(FILE), "").unwrap();
-        RestartMarker::prepare(&dir.0, false).unwrap().commit();
-        assert!(!start_hidden(&dir.0, true));
+    fn old_or_expired_markers_fall_back_to_the_launch_mode() {
+        assert_eq!(intent("", 100), None);
+        assert_eq!(intent("hidden\n1", 1 + MAX_AGE_SECS + 1), None);
+        assert_eq!(intent("visible\n101", 100), None);
+        assert_eq!(intent("hidden\n100", 100 + MAX_AGE_SECS), Some(true));
     }
 
     #[test]
-    fn restart_from_an_older_app_stays_hidden() {
+    fn abandoned_restart_does_not_change_a_later_launch() {
         let dir = Dir::new();
-        std::fs::write(dir.0.join(FILE), "").unwrap();
-        assert!(start_hidden(&dir.0, false));
+        let expired = now_secs() - MAX_AGE_SECS - 1;
+        std::fs::write(dir.0.join(FILE), format!("hidden\n{expired}")).unwrap();
         assert!(!start_hidden(&dir.0, false));
+        std::fs::write(dir.0.join(FILE), format!("visible\n{expired}")).unwrap();
+        assert!(start_hidden(&dir.0, true));
     }
 
     #[test]

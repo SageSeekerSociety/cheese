@@ -152,7 +152,7 @@
     "checking": "Checking for updates…",
     "downloading": "Downloading version {version}…",
     "latest": "You're up to date",
-    "failed": "Update failed. Check for updates and try again.",
+    "failed": "Couldn't check for updates. Try again later.",
     "ready": "Version {version} is ready",
     "readyHint": "Or close the window and it installs in the background",
     "restart": "Restart to update",

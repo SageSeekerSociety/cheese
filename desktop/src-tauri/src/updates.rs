@@ -37,6 +37,8 @@ pub enum Status {
     /// Downloaded; it takes a restart to finish.
     Ready { version: String },
     Failed,
+    #[serde(rename = "install-failed")]
+    InstallFailed,
 }
 
 #[derive(Default)]
@@ -110,13 +112,16 @@ async fn install_when_away(app: AppHandle) {
         let in_sight = app
             .get_webview_window("main")
             .is_some_and(|w| w.is_visible().unwrap_or(false));
+        if !matches!(status(&app), Status::Ready { .. }) {
+            return;
+        }
         if may_install_unattended(connecting(&app), in_sight) {
-            break;
+            if install_and_restart(app.clone(), true).await.is_ok() {
+                return;
+            }
         }
         tokio::time::sleep(Duration::from_secs(30)).await;
     }
-    // The restarted app stays out of sight, as the window was.
-    let _ = install_and_restart(app, true).await;
 }
 
 /// Installation may wait for the main thread (macOS authorization); never block
@@ -124,26 +129,30 @@ async fn install_when_away(app: AppHandle) {
 async fn install_and_restart(app: AppHandle, hidden: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let updates = app.state::<Updates>();
-        let mut pending = updates.pending.lock().unwrap();
-        let Some((update, bytes)) = pending.as_ref() else {
+        let Some((update, bytes)) = updates.pending.lock().unwrap().take() else {
             return Err("no-update".into());
         };
-        let marker = app.path().app_config_dir()
-            .map_err(|e| e.to_string())
-            .and_then(|dir| update_launch::RestartMarker::prepare(&dir, hidden).map_err(|e| e.to_string()))
-            .map_err(|e| {
-                eprintln!("cheese: preparing the update restart failed: {e}");
-                "restart-failed".to_string()
-            })?;
+        let marker = match app.path().app_config_dir() {
+            Ok(dir) => match update_launch::RestartMarker::prepare(&dir, hidden) {
+                Ok(marker) => Some(marker),
+                Err(e) => {
+                    eprintln!("cheese: could not save the update restart intent: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("cheese: could not find the update restart directory: {e}");
+                None
+            }
+        };
         if let Err(e) = update.install(bytes) {
             eprintln!("cheese: installing the update failed: {e}");
-            pending.take();
-            set(&app, Status::Failed);
+            set(&app, Status::InstallFailed);
             return Err("install-failed".into());
         }
-        marker.commit();
-        pending.take();
-        drop(pending);
+        if let Some(marker) = marker {
+            marker.commit();
+        }
         // Use the event loop's exit path: single-instance releases its lock on
         // RunEvent::Exit before Tauri starts the replacement process. restart()
         // called on the main thread skips those events and can kill both apps.
@@ -208,5 +217,6 @@ mod tests {
             serde_json::json!({ "state": "ready", "version": "0.1.9" })
         );
         assert_eq!(json(Status::Failed), serde_json::json!({ "state": "failed" }));
+        assert_eq!(json(Status::InstallFailed), serde_json::json!({ "state": "install-failed" }));
     }
 }

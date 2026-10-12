@@ -152,7 +152,7 @@
     "checking": "正在检查更新…",
     "downloading": "正在下载新版本 {version}…",
     "latest": "已是最新版本",
-    "failed": "更新失败，重新检查更新后再试",
+    "failed": "没能检查更新，稍后再试",
     "ready": "新版本 {version} 已下载",
     "readyHint": "也可以关上窗口，它会在后台装好",
     "restart": "重启以完成更新",

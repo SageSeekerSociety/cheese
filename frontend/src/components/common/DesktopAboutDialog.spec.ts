@@ -129,33 +129,34 @@ describe('关于 in the desktop app', () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith('这台电脑正在接入，接入完成后再重启'))
   })
 
-  it.each(['install-failed', 'failed'])('explains an installation failure (%s) and permits retry', async (error) => {
-    const install = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
-    desktopApp(NEW_APP, {
-      status: { state: 'ready', version: '0.1.43' },
-      restart: install,
-    })
-    const { toast } = await import('vuetify-sonner')
-    const { restart, restarting } = await mount()
-    await restart()
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('安装更新失败'))
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('重新检查更新'))
-    expect(restarting.value).toBe(false)
-    await restart()
-    expect(install).toHaveBeenCalledTimes(2)
-  })
+  it.each(['install-failed', 'failed', 'restart-failed'])(
+    'reports a failed request (%s) and permits retry',
+    async (error) => {
+      const install = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined)
+      desktopApp(NEW_APP, {
+        status: { state: 'ready', version: '0.1.43' },
+        restart: install,
+      })
+      const { toast } = await import('vuetify-sonner')
+      vi.mocked(toast.error).mockClear()
+      await mount()
+      const button = await screen.findByRole('button', { name: '重启以完成更新' })
+      await fireEvent.click(button)
+      await waitFor(() => expect(toast.error).toHaveBeenCalledTimes(1))
+      await fireEvent.click(button)
+      await waitFor(() => expect(install).toHaveBeenCalledTimes(2))
+    }
+  )
 
-  it('explains a restart failure without saying the update was installed', async () => {
-    desktopApp(NEW_APP, {
-      status: { state: 'ready', version: '0.1.43' },
-      restart: () => Promise.reject('restart-failed'),
-    })
-    const { toast } = await import('vuetify-sonner')
-    const { restart, restarting } = await mount()
-    await restart()
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('无法重启应用'))
-    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('手动打开'))
-    expect(restarting.value).toBe(false)
+  it('allows checking again after a background installation fails', async () => {
+    const app = desktopApp(NEW_APP)
+    await mount()
+    await waitFor(() => expect(app.handlers.has('show-about')).toBe(true))
+    app.send('show-about')
+    app.send('update-status', { state: 'install-failed' })
+    await fireEvent.click(await screen.findByRole('button', { name: '检查更新' }))
+    expect(app.invoke).toHaveBeenCalledWith('check_for_updates')
+    expect(app.invoke).not.toHaveBeenCalledWith('restart_to_update')
   })
 
   it('does not request another install while a restart is pending or already accepted', async () => {
@@ -170,15 +171,14 @@ describe('关于 in the desktop app', () => {
       status: { state: 'ready', version: '0.1.43' },
       restart: install,
     })
-    const { restart, restarting } = await mount()
-    const pending = restart()
-    await restart()
+    await mount()
+    const button = await screen.findByRole('button', { name: '重启以完成更新' })
+    await fireEvent.click(button)
+    await fireEvent.click(button)
     expect(install).toHaveBeenCalledTimes(1)
     accept()
-    await pending
-    await restart()
+    await fireEvent.click(button)
     expect(install).toHaveBeenCalledTimes(1)
-    expect(restarting.value).toBe(true)
   })
 
   it('asks an app from before updates could be checked for nothing', async () => {
