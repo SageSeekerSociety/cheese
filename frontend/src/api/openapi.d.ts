@@ -6224,7 +6224,9 @@ export interface paths {
          *
          *     `status` keeps only threads in that state. The sidebar polls for the open
          *     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
-         *     read.
+         *     read. `accepted` independently keeps tasks with an approved delivery
+         *     (`true`) or without one (`false`); omitted, it keeps both. This applies to
+         *     whole lists as well as pages, regardless of whether the task is open.
          *
          *     With `limit` (and a `status`) it is a page instead, of the threads that
          *     most recently moved: the closed ones only grow, and the all-tasks page
@@ -6232,7 +6234,8 @@ export interface paths {
          *     to one `channel` and to `whose` the threads are to the reader (`mine`: they
          *     own it; `helping`: they are among its contributors; `others`: neither).
          *     `next` is the cursor to pass as `before` for the page after; `counts` says
-         *     how many there are in all and by whose, for the same status and channel.
+         *     how many there are in all and by whose, for the same status, channel and
+         *     acceptance filter.
          *
          *     The rail draws rooms and the work inside them, so it needs both halves at
          *     once. Two round trips, not two per room and one per thread: a project here
@@ -30431,6 +30434,7 @@ export interface operations {
         parameters: {
             query?: {
                 status?: ("open" | "closed") | null;
+                accepted?: boolean | null;
                 channel?: string | null;
                 whose?: ("mine" | "helping" | "others") | null;
                 limit?: number | null;

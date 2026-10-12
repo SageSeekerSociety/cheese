@@ -22115,7 +22115,7 @@
           "projects"
         ],
         "summary": "List Project Tasks",
-        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state. The sidebar polls for the open\nones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per\nread.\n\nWith `limit` (and a `status`) it is a page instead, of the threads that\nmost recently moved: the closed ones only grow, and the all-tasks page\nscrolls through them rather than reading them whole. A page can be narrowed\nto one `channel` and to `whose` the threads are to the reader (`mine`: they\nown it; `helping`: they are among its contributors; `others`: neither).\n`next` is the cursor to pass as `before` for the page after; `counts` says\nhow many there are in all and by whose, for the same status and channel.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
+        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state. The sidebar polls for the open\nones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per\nread. `accepted` independently keeps tasks with an approved delivery\n(`true`) or without one (`false`); omitted, it keeps both. This applies to\nwhole lists as well as pages, regardless of whether the task is open.\n\nWith `limit` (and a `status`) it is a page instead, of the threads that\nmost recently moved: the closed ones only grow, and the all-tasks page\nscrolls through them rather than reading them whole. A page can be narrowed\nto one `channel` and to `whose` the threads are to the reader (`mine`: they\nown it; `helping`: they are among its contributors; `others`: neither).\n`next` is the cursor to pass as `before` for the page after; `counts` says\nhow many there are in all and by whose, for the same status, channel and\nacceptance filter.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
         "operationId": "list_project_tasks_projects__project_id__tasks_get",
         "parameters": [
           {
@@ -22146,6 +22146,22 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "name": "accepted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accepted"
             }
           },
           {
