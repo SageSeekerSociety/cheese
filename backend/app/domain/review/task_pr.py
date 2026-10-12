@@ -18,10 +18,10 @@ import logging
 import uuid
 
 import httpx
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import background
+from app.core.db import after_own_commit
 from app.core.errors import UpstreamUnavailableError
 from app.domain.project import forge
 from app.domain.review.github_pr import GitHubPRError
@@ -41,13 +41,13 @@ def close_pr_after_commit(db: AsyncSession, task: Task) -> None:
     # The committing session's own database, as a request's or a test's.
     factory = async_sessionmaker(db.bind, expire_on_commit=False)
 
-    def committed(_session) -> None:
+    def committed() -> None:
         background.spawn(
             close_task_pr(factory, project_id, task_id, number),
             name="close a closed task's PR",
         )
 
-    event.listen(db.sync_session, "after_commit", committed, once=True)
+    after_own_commit(db, committed)
 
 
 async def close_task_pr(
