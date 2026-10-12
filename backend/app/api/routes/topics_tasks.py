@@ -36,6 +36,7 @@ from app.api.routes.topics import (
 )
 from app.api.task_instructions import (
     dispatch,
+    say_task_started,
     start_task_at_once,
     teammate_source_text,
     tell_task,
@@ -485,13 +486,7 @@ async def start_task(
     task = await TaskService(db).start(
         task, by=actor.handle, reviewer_handle=body.reviewer_handle
     )
-    await announce(
-        db,
-        place_id=place.room_id,
-        task_id=task.id,
-        content=say("taskStarted", actor=f"<@{actor.handle}>", title=said_title(task)),
-        meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
-    )
+    await say_task_started(db, task, actor=actor.handle)
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
     out = await _task_out(db, chat, task)
     await db.commit()
