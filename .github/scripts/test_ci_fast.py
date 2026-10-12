@@ -452,15 +452,19 @@ class CiFastTest(unittest.TestCase):
         rep = json.loads((Path(gitdir) / "ci-fast-report.json").read_text())
         self.assertEqual(rep["status"], "pass")
 
-    def quick_tools(self, passed=2, skipped=0, missing_title=False, preamble=""):
+    def quick_tools(self, passed=2, skipped=0, missing_title=False, preamble="",
+                    draft=False, gh_title="feat: actual PR title"):
         tools = self.tmp / "tools"
         tools.mkdir()
+        # What `gh pr view --json title,draft --jq ...` prints: the draft flag
+        # and the title, on one line, tab-separated.
+        gh_line = ("true" if draft else "false") + "\t" + gh_title
         body = f'''#!{sys.executable}
 import json, pathlib, sys
 args = sys.argv[1:]
 if pathlib.Path(sys.argv[0]).name == "gh":
-    print({preamble!r})  # a platform/credential notice before the title
-    print("feat: actual PR title")
+    print({preamble!r})  # a platform/credential notice before the fields
+    print({gh_line!r})
     sys.exit({1 if missing_title else 0})
 if "--outputFile" in args:
     target = args[args.index("--outputFile") + 1]
@@ -543,6 +547,33 @@ if "--project" in args:
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertEqual(self.report()["title"]["source"], "actual PR title")
         self.assertEqual(self.report()["title"]["value"], "feat: actual PR title")
+
+    def test_quick_local_read_does_not_judge_a_draft_title(self):
+        # `task ci:fast` passes no --pull-request, so the title and the draft
+        # flag come from `gh pr view`. The rule is about the PR, not about
+        # which argv carried the title in: a draft's placeholder is the
+        # platform's, and judging it here reds the contributor's own run for
+        # text they never wrote.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick",
+                                env_extra=self.quick_tools(draft=True, gh_title="WIP: 修点什么"))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rep = self.report()
+        self.assertTrue(rep["title"]["draft"])
+        self.assertIsNone(rep["title"]["value"])
+        self.assertNotIn("commit-title", [row["id"] for row in rep["ran"]])
+        self.assertIn("commit-title", [item["id"] for item in rep["not_run"]])
+
+    def test_quick_local_read_judges_a_ready_title(self):
+        # The same read with the PR marked ready: the title is the change's own
+        # again, so a non-conforming one still fails.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick",
+                                env_extra=self.quick_tools(gh_title="a bad title"))
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertEqual(self.report()["title"]["value"], "a bad title")
 
     def backend_tools(self, covered="tests/unit/test_probe.py", folder=None):
         # A stub `uv` that stands in for pytest. It writes both the JUnit report
@@ -974,6 +1005,14 @@ class SelectionEvidenceTest(unittest.TestCase):
         # A variable pointing at a path nobody installed is not a build.
         self.assertEqual(pinned_harness_gap({**installed, "CHEESE_TEST_CODEX": str(self.root / "gone")}),
                          "missing: CHEESE_TEST_CODEX")
+        # Nor is a path that exists but is not a file — a directory, say. The
+        # build is what the tests execute, and a directory at that path would
+        # only reach them as a spawn failure: `exists` would count it, and this
+        # tier would then run the harness tests it cannot run.
+        where = self.root / "bin" / "not-a-build"
+        where.mkdir(parents=True, exist_ok=True)
+        self.assertEqual(pinned_harness_gap({**installed, "CHEESE_TEST_PI": str(where)}),
+                         "missing: CHEESE_TEST_PI")
 
     def test_frontend_delete_keeps_related_when_a_root_survives(self):
         # A deletion no longer expands to the suite: the surviving root still

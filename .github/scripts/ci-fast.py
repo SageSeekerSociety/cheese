@@ -314,13 +314,28 @@ def run(args, report, finish, started):
                         title = None
         elif title is None:
             source = "actual PR title"
-            result = execute(["gh", "pr", "view", "--json", "title", "--jq", ".title"], REPO_ROOT,
-                             min(10, max(0, deadline - time.monotonic())), args.memory_mib)
+            # The draft flag is read in the same call. Whether a title is judged
+            # is a property of the PR, not of which argv carried the title in:
+            # the local entry point (`task ci:fast`) passes no --pull-request,
+            # so on a branch whose PR is a draft this is the read that sees the
+            # platform's placeholder — and judging it would red the
+            # contributor's own run, before they pushed anything.
+            result = execute(["gh", "pr", "view", "--json", "title,draft",
+                              "--jq", "[(.draft | tostring), .title] | @tsv"],
+                             REPO_ROOT, min(10, max(0, deadline - time.monotonic())),
+                             args.memory_mib)
             # gh (and the platform's credential wrapper) can print a preamble
-            # notice before the title; a PR title is one line, so take the last
-            # non-empty line rather than the whole merged stdout+stderr blob.
+            # notice before the fields; they are one tab-separated line, so take
+            # the last non-empty line rather than the whole merged
+            # stdout+stderr blob. The first tab is the separator: @tsv escapes
+            # any tab inside the title.
             lines = [line.strip() for line in result["output"].splitlines() if line.strip()]
-            title = lines[-1] if result["result"] == "pass" and lines else None
+            title, draft = None, False
+            if result["result"] == "pass" and lines:
+                flag, _, rest = lines[-1].partition("\t")
+                draft = flag == "true"
+                # A PR with no title is no title, not the string "null".
+                title = rest or None
         if unread:
             # The payload said neither what the title is nor whether this is a
             # draft. One check with no input is unknown — the row below is what

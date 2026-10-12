@@ -67,8 +67,10 @@ in the run's `not_run`):
 
 - **A draft's title.** It is the platform's placeholder for the task ("WIP:
   <task title>"), it says nothing about the change, and the author did not write
-  it. `--pull-request` carries the draft flag, so ci-fast does not check it;
-  `check-commit-title.py` skips a draft for the same reason. The `required`
+  it. Both reads of the PR carry the draft flag — the `--pull-request` payload
+  the draft job passes, and the `gh pr view` lookup the local entry point uses —
+  so ci-fast does not check it either way; `check-commit-title.py` skips a
+  draft for the same reason. The `required`
   job checks the title, and `pr-title.yml` re-runs that job when the PR is
   marked ready.
 - **Tests that need the pinned Claude Code / Codex / pi builds.** These come
