@@ -112,11 +112,26 @@ ignore_imports =
 # be two places to keep in step, and one of them would go stale. What is new here
 # is the `models` half (56 edges, previously unguarded) and `app.api.deps`, which
 # is in neither of that guard's scanned trees.
+#
+# The route-shared dependency modules under `app/api/` are sources for the same
+# reason as `app.api.deps`: they belong to no domain, so every model they import
+# is cross-domain by construction. Until the 2026-10 move they sat under
+# `app.api.routes` and C2 covered them by accident; naming them keeps that
+# coverage after the move — 搬出路由不等于掉出管辖. Named one by one rather than
+# sweeping in `app.api`: the rest of that package has direct model imports of its
+# own, and pulling them in would quote a frozen block of unrelated history. Keep
+# this list in step with `test_domain_import_guard.py`'s `_SCANNED_MODULES`, which
+# covers the repositories half of the same set.
 name = C2 routes do not import a domain's models directly
 type = forbidden
 source_modules =
     app.api.routes
     app.api.deps
+    app.api.admin_deps
+    app.api.users_deps
+    app.api.space_deps
+    app.api.space_payloads
+    app.api.task_deps
 forbidden_modules =
     app.domain.*.models
 allow_indirect_imports = true
