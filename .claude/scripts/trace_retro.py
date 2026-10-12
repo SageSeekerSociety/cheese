@@ -298,6 +298,7 @@ def ci_rounds(checks: list[dict]) -> list[dict]:
                 "outcome": outcome,
                 "tier": tier,
                 "started_at": b[0]["started_at"],
+                "completed_at": max((c.get("completed_at") or "" for c in b), default=""),
                 "jobs": [{"name": c["name"], "conclusion": c["conclusion"]} for c in b],
             }
         )
@@ -668,24 +669,29 @@ def green_of(report: dict) -> str | None:
     last = next((p for p in reversed(pushes) if p["rounds"]), None)
     if not last:
         return None
-    greens = [r["started_at"] for r in last["rounds"] if r["outcome"] == "green"]
+    # When the required check reported green, not when its round started.
+    greens = [r.get("completed_at") or r["started_at"] for r in last["rounds"] if r["outcome"] == "green"]
     return min(greens) if greens else None
 
 
 def join_cards(cards: list[dict], reports: list[dict]) -> list[dict]:
     """Attach each accepted card's two waits.
 
-    「等 CI 绿」 = green − filed; 「CI 绿后等总调度」 = decided − green. Either is
-    None when the missing end is unknown (no head, no green, still pending) —
-    None, never 0, so an average never quietly swallows a hole."""
+    「等 CI 绿」 = green − filed, or 0 when the head was already green at filing;
+    「CI 绿后等总调度」 = decided − the later of filed and green. The two add up
+    to filed → decided. Either is None when an end is unknown (no head, no
+    green, still pending): None, never 0, so an average never swallows a hole."""
     by_pr = {r["number"]: r for r in reports}
     out = []
     for card in cards:
         row = dict(card)
         green = green_of(by_pr.get(card.get("pr_number"), {}))
         row["green_at"] = green
-        row["wait_ci_minutes"] = _minutes(card.get("filed_at"), green)
-        row["wait_scheduler_minutes"] = _minutes(green, card.get("decided_at"))
+        filed = card.get("filed_at")
+        to_green = _minutes(filed, green)
+        row["wait_ci_minutes"] = None if to_green is None else max(0.0, to_green)
+        ready = green if to_green is not None and to_green > 0 else (filed if green else None)
+        row["wait_scheduler_minutes"] = _minutes(ready, card.get("decided_at"))
         out.append(row)
     return out
 
@@ -815,7 +821,9 @@ def _stats(values: list[float | None]) -> dict:
     }
 
 
-def summarize(reports: list[dict], window_cards: list[dict] | None = None) -> dict:
+def summarize(
+    reports: list[dict], window_cards: list[dict] | None = None, since: str = "", until: str = "~"
+) -> dict:
     """The numbers on the headline table. `window_cards` is the platform half's
     accepted cards, or None when that half did not run."""
     n = len(reports)
@@ -834,7 +842,12 @@ def summarize(reports: list[dict], window_cards: list[dict] | None = None) -> di
         ),
     }
     if window_cards is not None:
-        acc = [c for c in window_cards if c.get("status") == "accepted"]
+        # Cards accepted inside the window, like the merged PRs.
+        acc = [
+            c
+            for c in window_cards
+            if c.get("status") == "accepted" and since <= (c.get("decided_at") or "") <= until
+        ]
         out["accept_dwell"] = {
             "n": len(acc),
             "total": _stats([_minutes(c.get("filed_at"), c.get("decided_at")) for c in acc]),
@@ -876,8 +889,9 @@ def render_markdown(report: dict) -> str:
         ),
         "  事件本身 REST 里**没有** `reason` 字段（已核实），原因从运行的失败 check 读。",
         (
-            "- **递卡→采纳**：卡 `created_at` → `decided_at`，在「该 PR 最终 head 首次绿」处切开："
-            "前半「等 CI 绿」、后半「CI 绿后等总调度」。缺任一端记 None，不记 0。"
+            "- **递卡→采纳**：窗口内采纳的卡，卡 `created_at`（第一次递）→ `decided_at`。拆成「等 CI 绿」"
+            "（递卡到该 PR 最终 head 的必需检查报绿，递时已绿记 0）和「CI 绿后等总调度」，两段相加等于全程。"
+            "退回后再递的卡仍从第一次递算起，所以比按最后一次递卡时间算的长。"
         ),
         (
             "- **本轮未完成**：任务会话里 `meta.event_type ∈ {turn_failed, platform_error, turn_timeout, "
@@ -1026,7 +1040,9 @@ def build(repo: str, since: datetime, until: datetime, room: str | None) -> dict
         "until": until.strftime("%Y-%m-%dT%H:%M:%S"),
         "prs": reports,
         "platform": platform,
-        "summary": summarize(reports, cards),
+        "summary": summarize(
+            reports, cards, since.strftime("%Y-%m-%dT%H:%M:%S"), until.strftime("%Y-%m-%dT%H:%M:%S")
+        ),
     }
 
 
