@@ -45,6 +45,11 @@ SLUG_OK = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 # 前面那个 `!` 是分界：`[文字](/x)` 是链到一页，`![说明](/x.png)` 是一张图。
 # 两者要分开查 —— 把图片当页面查，加一张图就会被这个守卫拦住（它拦过一次）。
 INTERNAL_LINK = re.compile(r"(!?)\[[^\]]*\]\((/[^)\s]*)\)")
+FIX_HINT = (
+    "修法：在报出的文件和行号按规则补显式小写 slug、节首摘要、有效站内链接或图片路径；"
+    "规则见 docs/manual/README.md#stable-links，复查命令是 "
+    "python3 .claude/scripts/check-manual-anchors.py。"
+)
 
 
 def _first_sentence(lines: list[str]) -> str:
@@ -110,11 +115,24 @@ def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
     problems: list[str] = []
     links: list[str] = []
     assets: list[str] = []
+    locations: dict[str, list[str]] = {}
+    references: dict[str, list[str]] = {}
     pages = sorted(p for p in manual_dir.glob("*.md") if p.name != "README.md")
     if not pages:
         return {}, [f"{manual_dir} 下没有任何手册页面 — 什么都没检查，这本身就是失败"]
     for path in pages:
         _, page_anchors, raw = parse_page(path)
+        body = path.read_text(encoding="utf-8")
+        # Locations enrich diagnostics only; the anchor payload and verdict stay
+        # exactly as parse_page() produced them.
+        for number, source in enumerate(body.splitlines(), 1):
+            heading = HEADING.match(source)
+            if heading and heading.group(3):
+                url = f"{SITE_BASE}/{path.stem}#{heading.group(3)}"
+                locations.setdefault(url, []).append(f"{path.name}:{number}")
+        for match in INTERNAL_LINK.finditer(body):
+            line = body[: match.start()].count("\n") + 1
+            references.setdefault(match.group(2), []).append(f"{path.name}:{line}")
         anchors.extend(page_anchors)
         for item in raw:
             if item.startswith("__assets__"):
@@ -127,27 +145,44 @@ def build(manual_dir: Path) -> tuple[dict[str, object], list[str]]:
     seen: dict[str, str] = {}
     for a in anchors:
         if a["url"] in seen:
-            problems.append(f"重复的锚点 {a['url']}（`{seen[a['url']]}` 和 `{a['title']}`）")
+            problems.append(
+                f"{', '.join(locations[a['url']])}: 重复的锚点 {a['url']}"
+                f"（`{seen[a['url']]}` 和 `{a['title']}`）；给后一个标题换一个全页唯一 slug，"
+                "并同步指向该标题的链接"
+            )
         seen[a["url"]] = a["title"]
         if not a["summary"]:
-            problems.append(f"{a['url']}: 这一节没有开头的说明句 — 芝士引用它时没有摘要可给")
+            problems.append(
+                f"{', '.join(locations[a['url']])}: {a['url']}: "
+                "这一节没有开头的说明句 — 芝士引用它时没有摘要可给；"
+                "在标题下面先写一句能独立概括本节的正文，再写列表、步骤或表格"
+            )
 
     known = set(seen)
     for link in links:
         page = link.split("#")[0].rstrip("/")
         if "#" not in link:  # a link to a whole page, not to one section
             if page.lstrip("/") not in {a["page"] for a in anchors}:
-                problems.append(f"文档里链到了不存在的页面：{link}")
+                problems.append(
+                    f"{', '.join(references[link])}: 文档里链到了不存在的页面：{link}；"
+                    "把链接改为已存在的页面，或先创建目标页面再挂链接"
+                )
             continue
         if link not in known:
-            problems.append(f"文档里链到了不存在的锚点：{link}")
+            problems.append(
+                f"{', '.join(references[link])}: 文档里链到了不存在的锚点：{link}；"
+                "把链接中的 slug 改成目标标题的显式 slug"
+            )
 
     # 图片走 VitePress 的 public/：`/images/x.png` 对应 `public/images/x.png`。
     # 路径写错了页面照常构建、照常发布，只是那张图不显示 —— 又一个「坏掉的样子
     # 和没坏一模一样」，所以在这里查。
     for asset in assets:
         if not (manual_dir / "public" / asset.lstrip("/")).is_file():
-            problems.append(f"图片文件不存在：{asset}（应放在 docs/manual/public{asset}）")
+            problems.append(
+                f"{', '.join(references[asset])}: 图片文件不存在：{asset}"
+                f"（应放在 docs/manual/public{asset}，或把链接改为已存在的图片路径）"
+            )
 
     return {"base": SITE_BASE, "anchors": anchors}, problems
 
@@ -158,6 +193,7 @@ def run(manual_dir: Path) -> int:
         print("FAIL: 用户手册的锚点有问题：")
         for p in problems:
             print(f"  {p}")
+        print(f"  {FIX_HINT}")
         print("::error::manual anchors are not stable/real (see above)")
         return 1
     print(f"PASS: {len(payload['anchors'])} 个锚点都是显式的、唯一的、有摘要的、链得到的")  # type: ignore[arg-type]
@@ -198,6 +234,20 @@ def self_test() -> int:
             if should_pass and not problems:
                 if quiet_run(d) != 0:
                     fails.append(f"{name}: build() 说合格，run() 却判失败")
+            if not should_pass and problems:
+                captured = io.StringIO()
+                with contextlib.redirect_stdout(captured):
+                    code = run(d)
+                report = captured.getvalue()
+                if code != 1:
+                    fails.append(f"{name}: run() 没有保持失败退出码 1")
+                for needle in ("修法：", "docs/manual/README.md#stable-links", "python3 .claude/scripts/check-manual-anchors.py"):
+                    if needle not in report:
+                        fails.append(f"{name}: 失败提示缺 {needle!r}")
+                if name.startswith("小节"):
+                    for needle in ("a.md:1", "在标题下面先写一句", "再写列表、步骤或表格"):
+                        if needle not in report:
+                            fails.append(f"{name}: 摘要修法缺 {needle!r}")
 
     good = "# 标题 {#top}\n\n开头一句话。\n\n## 小节 {#sec}\n\n这一节讲什么。\n"
     case("显式 slug + 摘要", {"quickstart.md": good}, True)

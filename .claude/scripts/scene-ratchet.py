@@ -693,6 +693,19 @@ def write_baseline(path: Path, baseline: Baseline) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+#: The repair, once, for the two branches that name a scene but not how to fix
+#: it (a regression, and an --update refusal). Short on purpose: the page keeps
+#: the read and the view takes the result, which is the one thing a reader has to
+#: know before the fuller recipe.
+FIX_SLICE = (
+    "  Keep the API/route/store read where it belongs — the page (or a composable)\n"
+    "  — and render through a sibling <PageName>View.vue that takes the values as\n"
+    "  props and emits the intent up; a panel's read goes to the caller that renders\n"
+    "  it. Recipe: docs/manual/dev/scenes.md#make-standalone; scaffold the View half\n"
+    "  with `pnpm run scene:split -- src/views/<Page>.vue`."
+)
+
+
 def format_report(verdict: Verdict, baseline: Baseline) -> str:
     """The human half: what is wrong, why, and the one command that fixes it."""
     lines: list[str] = []
@@ -715,8 +728,9 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
             lines.extend(f"    - {reason}" for reason in reasons)
         lines.append("")
         lines.append("These are frozen in frontend/scene-baseline.json because they ran")
-        lines.append("standalone once. Putting the reach-through back is not an option the")
-        lines.append("check has: fix the scene, or ask for the rule to be changed in review.")
+        lines.append("standalone once, so putting the reach-through back is not an option.")
+        lines.append("Fix:")
+        lines.append(FIX_SLICE)
         lines.append("")
     if verdict.improvements:
         lines.append("Better than the baseline says — tighten it:")
@@ -786,7 +800,7 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
             for key, why in refusals:
                 print(f"  {key}: {why}", file=sys.stderr)
             print(
-                "\nFix the scene (docs/manual/dev/scenes.md), or leave the baseline alone.",
+                "\nFix the scene, or leave the baseline alone:\n" + FIX_SLICE,
                 file=sys.stderr,
             )
             return 1
@@ -799,6 +813,10 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
 
     verdict = judge(baseline, grades, views)
     if as_json():
+        # --json keeps stdout the one record line; on failure the same human
+        # report (with the recipe) rides on stderr so a JSON caller still sees it.
+        if not verdict.ok:
+            print(format_report(verdict, baseline), file=sys.stderr)
         # The unit here is a scene, and a scene costs at most one: `frozen` is
         # 1 for an allowance the baseline carries and `actual` is 0 once the
         # scene no longer needs it. A scene that got better without ever being
@@ -987,6 +1005,16 @@ def self_test() -> int:
         check("a baselined scene that regresses fails", result.returncode, 1)
         check("and is named with its old grade", "src/views/Home.vue: A -> C" in result.stdout, True)
         check("and says why", "imports the API layer" in result.stdout, True)
+        # The regression branch names a fix and its landing spot, not only the
+        # reason — the reach-through has to come out of the scene.
+        check("and gives the fix", "<PageName>View.vue" in result.stdout, True)
+        check("and points at the recipe", "scenes.md#make-standalone" in result.stdout, True)
+
+        # --json (what ci:fast calls) stays the one record line on stdout, and
+        # carries the same fix on stderr.
+        result = run_cli(root, baseline_path, "--json")
+        check("--json regressing scene stays one line", len(result.stdout.strip().splitlines()), 1)
+        check("--json keeps the fix on stderr", "<PageName>View.vue" in result.stderr, True)
 
         # -- 2. a new page that is not standalone-ready ----------------------
         brand = "  { name: 'brand', path: '/brand', component: () => import('@/views/Brand.vue') },\n"

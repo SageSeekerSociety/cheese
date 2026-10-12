@@ -191,6 +191,128 @@ def _contract_rows(report, options) -> list[dict[str, Any]]:
     return rows
 
 
+def _module_file(module: str) -> Path | None:
+    """Find the source file for an import-linter module name."""
+    stem = Path.cwd() / module.replace(".", "/")
+    for candidate in (stem.with_suffix(".py"), stem / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _source_location(importer: str, imported: str, line_numbers=()) -> str:
+    """Turn import-linter's module/line pair into a clickable repo location."""
+    path = _module_file(importer)
+    lines = [int(line) for line in line_numbers if isinstance(line, int)]
+    line = str(lines[0]) if lines else "?"
+    if path is None:
+        shown = importer.replace(".", "/") + ".py"
+    else:
+        relative = path.relative_to(Path.cwd()).as_posix()
+        shown = f"backend/{relative}" if Path.cwd().name == "backend" else relative
+    return f"{shown}:{line} ({importer} -> {imported})"
+
+
+def _failure_locations(report) -> list[str]:
+    """Extract file:line locations from import-linter's failed metadata."""
+    locations: list[str] = []
+    seen: set[str] = set()
+
+    def add(importer: str, imported: str, line_numbers=()) -> None:
+        location = _source_location(importer, imported, line_numbers)
+        if location not in seen:
+            seen.add(location)
+            locations.append(location)
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("line_numbers") and isinstance(value.get("importer"), str):
+                add(value["importer"], value["imported"], value["line_numbers"])
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, (list, tuple, set)):
+            # C3 exposes cycle-breaker pairs as a set of (importer, imported).
+            if (
+                isinstance(value, tuple)
+                and len(value) == 2
+                and all(isinstance(item, str) for item in value)
+            ):
+                for detail in report.graph.get_import_details(
+                    importer=value[0], imported=value[1]
+                ):
+                    add(value[0], value[1], (detail["line_number"],))
+            else:
+                for child in value:
+                    walk(child)
+
+    for _contract, check in report.get_contracts_and_checks():
+        if not check.kept:
+            metadata = getattr(check, "metadata", {})
+            walk(metadata)
+            for module in sorted(metadata.get("undeclared_modules", ())):
+                add(module, "undeclared turn layer", (1,))
+    return locations
+
+
+_BOUNDARY_FIXES = {
+    "C1": (
+        "C1 layers: api -> domain -> core, no imports upward. Move the dependency "
+        "down into the owning domain/core module, or call the lower layer through "
+        "the declared service seam; do not add a reverse import."
+    ),
+    "C2": (
+        "C2 routes do not import a domain's models directly. Replace the model import "
+        "with that domain's service call; the service owns model access and writes."
+    ),
+    "C3": (
+        "C3 sibling domains are acyclic. Remove one edge from the reported cycle, "
+        "or expose a declared seam instead of importing the sibling directly."
+    ),
+    "T1": (
+        "T1 turn layers are intake -> steps -> store -> state. Put the module in its "
+        "declared layer and import only downward."
+    ),
+    "T2": (
+        "T2 turn code must not import chat/runtime/API directly. Pass composed facts "
+        "through the service seam."
+    ),
+    "T3": (
+        "T3 realtime must not reach turn execution or composition. Keep broker "
+        "plumbing separate from turn orchestration."
+    ),
+    "T4": (
+        "T4 turn storage/state must not reach upper layers or realtime. Move "
+        "orchestration up and keep storage focused on persistence."
+    ),
+}
+
+
+def _boundary_failure_message(config_path: Path, report, frozen: int) -> str:
+    failed = []
+    for contract, check in report.get_contracts_and_checks():
+        if not check.kept:
+            failed.append(
+                _BOUNDARY_FIXES.get(contract.name.split(" ", 1)[0], contract.name)
+            )
+    locations = _failure_locations(report)
+    location_text = "\n".join(f"  {location}" for location in locations)
+    return (
+        "a boundary broke. The exceptions already known are frozen in "
+        f"{config_path.name} ({frozen} entries).\n"
+        + "\n".join(f"{fix}" for fix in failed)
+        + (
+            f"\nViolations (fix the import at this file:line):\n{location_text}"
+            if location_text
+            else ""
+        )
+        + "\nRun `cd backend && uv run python scripts/check_boundaries.py` to recheck. "
+        "After removing a stale frozen edge, run `cd backend && uv run python "
+        "scripts/boundary_baseline.py --update`; never use --update to freeze a new "
+        "violation. Rule: `.claude/rules/architecture.md`, `Backend: the import "
+        "graph is checked, not assumed`."
+    )
+
+
 def _baseline_entries(options) -> list[tuple[str, str]]:
     """(contract id, raw expression) for every frozen exception."""
     entries = []
@@ -252,7 +374,12 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
 
     wildcards = [entry for entry in _baseline_entries(options) if "*" in entry[1]]
     if wildcards:
-        listing = "\n".join(f"  [{cid}] {expr}" for cid, expr in wildcards)
+        source_lines = config_path.read_text(encoding="utf-8").splitlines()
+        line_of = {line.strip(): i for i, line in enumerate(source_lines, 1)}
+        listing = "\n".join(
+            f"  {config_path}:{line_of.get(expr, '?')} [{cid}] {expr}"
+            for cid, expr in wildcards
+        )
         return (
             BROKEN,
             (
@@ -261,7 +388,12 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
                 "Name the module and its target exactly. A wildcard exemption\n"
                 "silences every future violation of that contract while looking\n"
                 "like one considered exception — the ratchet has to be able to\n"
-                "say which pair it is holding open."
+                "say which pair it is holding open.\n"
+                "Restore the exact frozen importer -> imported pair in "
+                f"{config_path.name}; do not widen ignore_imports. Recheck with "
+                "`cd backend && uv run python scripts/check_boundaries.py`. "
+                "Rule: .claude/rules/architecture.md, "
+                "Backend: the import graph is checked, not assumed."
             ),
             None,
         )
@@ -281,14 +413,7 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
         frozen = len(_baseline_entries(options))
         return (
             BROKEN,
-            (
-                "a boundary broke. The exceptions already known are frozen in "
-                f"{config_path.name} ({frozen} entries); one of them is now unused "
-                "if you removed an offending import, and the report above names "
-                "whatever is left over.\n"
-                "For the contract that broke: every module named there must be "
-                "reported, not read."
-            ),
+            _boundary_failure_message(config_path, report, frozen),
             rows,
         )
     return OK, "", rows
@@ -333,12 +458,12 @@ def main() -> int:
     if code == CANNOT_JUDGE:
         print(f"cannot judge: {message}", file=sys.stderr)
         _cannot_judge(message)
+    if code == BROKEN:
+        print(f"broken: {message}", file=sys.stderr)
     if _as_json():
         _emit(_record(code, rows, message))
     elif code == OK:
         print(f"PASS: module boundaries held ({config_path.name})")
-    else:
-        print(f"broken: {message}", file=sys.stderr)
     return code
 
 
@@ -567,6 +692,13 @@ def _record_problem(
     if len(lines) != 1:
         return f"expected one line on stdout, got {len(lines)}: {lines!r}", None
     record = json.loads(lines[0])
+    if expected == BROKEN:
+        for needle in (
+            "scripts/check_boundaries.py",
+            "Backend: the import graph is checked, not assumed",
+        ):
+            if needle not in _err:
+                return f"missing repair guidance on stderr: {needle!r}", record
     if record.get("id") != CHECK_ID:
         return f"record names {record.get('id')!r}", record
     want = _STATUS_OF_EXIT[expected]
@@ -607,7 +739,50 @@ def self_test() -> int:
         for index, (what, files, expected, needle, _broken) in enumerate(_CASES):
             tmp = sandbox / f"case{index}"
             tmp.mkdir()
-            report(what, *_run(None, files, tmp), expected, needle)
+            code, output = _run(None, files, tmp)
+            report(what, code, output, expected, needle)
+            if expected == BROKEN:
+                report(
+                    f"{what}: repair command and rule chapter",
+                    code,
+                    output,
+                    expected,
+                    "scripts/check_boundaries.py` to recheck",
+                )
+                for contract_id in _broken:
+                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4")[
+                        CONTRACT_IDS.index(contract_id)
+                    ]
+                    report(
+                        f"{what}: specific fix",
+                        code,
+                        output,
+                        expected,
+                        _BOUNDARY_FIXES[prefix],
+                    )
+                report(
+                    f"{what}: rule chapter",
+                    code,
+                    output,
+                    expected,
+                    "Backend: the import graph is checked, not assumed",
+                )
+                if index == 0:
+                    report(
+                        f"{what}: file and line",
+                        code,
+                        output,
+                        expected,
+                        "app/api/routes/demo.py:1",
+                    )
+                if index == 6:
+                    report(
+                        f"{what}: undeclared source",
+                        code,
+                        output,
+                        expected,
+                        "app/domain/agent/turn/extra.py:1",
+                    )
 
         # A config with its declarations trimmed. This is the shape a silent
         # narrowing takes: valid INI, valid contracts, fewer of them.

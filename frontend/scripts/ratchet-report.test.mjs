@@ -169,6 +169,11 @@ describe('--json on the real checkers', () => {
       assert.equal(plain.status, 1, `${plain.stdout}${plain.stderr}`)
       assert.equal(json.status, plain.status, `${json.stdout}${json.stderr}`)
       assert.equal(JSON.parse(json.stdout).status, 'fail')
+      // --json is what ci:fast calls: stdout stays the one record line, and the
+      // human report with the line and the fix rides on stderr instead.
+      assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
+      assert.match(json.stderr, /__ratchetReportProbe\.vue: 0 -> 1/)
+      assert.match(json.stderr, /architecture\.md/)
     } finally {
       rmSync(probe, { force: true })
     }
@@ -200,5 +205,20 @@ describe('--json on the real checkers', () => {
     const args = ['--project', join(project, 'tsconfig.json'), '--baseline', emptyBaseline]
 
     assert.equal(agreedRecord('tsc-ratchet.mjs', 'vue-tsc', ...args).status, 'fail')
+
+    // The human report keeps the raw vue-tsc line, not only the count: a bare
+    // "1 error(s)" would send the reader to grep for which one. Same planted
+    // fixture the --json run above used, judged in the default mode.
+    const plain = runChecker('tsc-ratchet.mjs', ...args)
+    assert.equal(plain.status, 1, `${plain.stdout}${plain.stderr}`)
+    assert.match(plain.stdout, /planted\.ts\(1,\d+\): error TS2322:/)
+    assert.match(plain.stdout, /docs\/manual\/dev\/frontend\.md/)
+
+    // Under --json (what ci:fast calls) stdout stays the one record line; the
+    // same raw diagnostic and the fix ride on stderr.
+    const json = runChecker('tsc-ratchet.mjs', '--json', ...args)
+    assert.equal(json.stdout.trim().split('\n').length, 1, json.stdout)
+    assert.match(json.stderr, /planted\.ts\(1,\d+\): error TS2322:/)
+    assert.match(json.stderr, /docs\/manual\/dev\/frontend\.md/)
   })
 })
