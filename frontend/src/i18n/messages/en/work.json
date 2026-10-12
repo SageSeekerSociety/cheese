@@ -317,7 +317,8 @@
       "muted": "Muted",
       "markAllRead": "Mark all as read",
       "markAllReadFailed": "Couldn't mark everything as read",
-      "notifyFailed": "Couldn't save the notification setting"
+      "notifyFailed": "Couldn't save the notification setting",
+      "allTasks": "All tasks"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -1395,7 +1396,11 @@
     "moreMembers": "+{count}",
     "taskNeedsYou": "Needs you",
     "taskRunning": "Running",
-    "allTasks": "All tasks"
+    "allTasks": "All tasks",
+    "moreTasks": "Show 1 more | Show {count} more",
+    "fewerTasks": "Show fewer",
+    "tasksLoading": "Loading…",
+    "tasksFailed": "Couldn't load them. Click to retry"
   },
   "members": {
     "leave": "Leave project",
