@@ -65,6 +65,7 @@ from app.domain.room_task import binding, presentation
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -618,6 +619,14 @@ async def create_teammate_task(
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
     TopicService.refuse_tasks_in_private(place.room)
+    # A title nobody can read is not a title. Refused here, with the limit in
+    # the words, so the teammate writes a shorter one and calls again — cutting
+    # it instead would leave half a phrase in the sidebar and no one the wiser.
+    # Checked before the idempotency claim: a refused call leaves no record.
+    if not title_fits(body.title):
+        raise UnprocessableEntityError(
+            say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(body.title))
+        )
     # A turn sent again creates the same task again: one task, not two.
     continuation = get_work_runner().continuation_for(topic_id)
     key = (
