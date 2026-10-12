@@ -4,6 +4,9 @@
     "recommended": "推荐",
     "answered": "{name}：{text}",
     "noneOfThese": "以上都不是",
+    "other": "其他",
+    "otherPlaceholder": "自己写一个答案",
+    "otherSend": "发送",
     "closed": "已结束，不再等回答"
   }
 }

@@ -4,6 +4,9 @@
     "recommended": "Recommended",
     "answered": "{name}: {text}",
     "noneOfThese": "None of these",
+    "other": "Other",
+    "otherPlaceholder": "Write your own answer",
+    "otherSend": "Send",
     "closed": "Closed — no longer waiting for an answer"
   }
 }

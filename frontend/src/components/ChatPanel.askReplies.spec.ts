@@ -151,4 +151,37 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
     expect(container.querySelector('.ask-replies__answers')?.textContent).toContain('按部门')
     expect(container.querySelector('.composer')).toBeTruthy()
   })
+
+  it('点「其他」一个字都不发，只在原地长出输入框', async () => {
+    history = [question('t-other-open')]
+    const { getByRole } = await open('t-other-open')
+    await fireEvent.click(getByRole('button', { name: '其他' }))
+    await settle()
+    // 「其他」是个入口，不是第四个答案：点它不该把「其他」当成他的答复发出去。
+    expect(sent).toHaveLength(0)
+    expect(getByRole('textbox', { name: '自己写一个答案' })).toBeTruthy()
+  })
+
+  it('在「其他」里打的字，就是他对这道题的答案', async () => {
+    history = [question('t-other-send')]
+    const { getByRole } = await open('t-other-send')
+    await fireEvent.click(getByRole('button', { name: '其他' }))
+    const field = getByRole('textbox', { name: '自己写一个答案' })
+    await fireEvent.update(field, '按季度汇总')
+    await fireEvent.keyDown(field, { key: 'Enter' })
+    await until(() => sent.length > 0)
+    expect(sent).toHaveLength(1)
+    expect(sent[0].url).toContain('/topics/t-other-send/messages')
+    expect(sent[0].body.content).toBe('按季度汇总')
+    expect(sent[0].body.reply_to).toBe('q-t-other-send')
+  })
+
+  it('空着不发：没有字就没有答案', async () => {
+    history = [question('t-other-empty')]
+    const { getByRole } = await open('t-other-empty')
+    await fireEvent.click(getByRole('button', { name: '其他' }))
+    await fireEvent.keyDown(getByRole('textbox', { name: '自己写一个答案' }), { key: 'Enter' })
+    await settle()
+    expect(sent).toHaveLength(0)
+  })
 })
