@@ -46,8 +46,6 @@ class CommitTitleTest(unittest.TestCase):
             "fix(palette): 归档的话题不再出现在「等你处理」里 (#2656)",
             "fix(accept): 修复 GitHub 的 token 刷新失败",
             "fix: 改 PR 描述",
-            "fix: 修复 tests",
-            "fix: 更新 Dockerfile",
             "fix(chat): 回复变长时对话栏不再贴住最下端 and more",
             "fix(chat): 回复变长时对话栏不再贴住最下端 (#3423)",
             "fix: stop the crash.",

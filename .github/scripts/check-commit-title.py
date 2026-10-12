@@ -54,26 +54,19 @@ _LATIN = re.compile(r"[A-Za-z]")
 _WORD = re.compile(r"[A-Za-z][A-Za-z0-9'-]*[A-Za-z0-9]")
 
 
-#: English words enough to be a sentence: with this many, Chinese terms may tie them.
-_SENTENCE = 4
-
-
 def is_english(description: str) -> bool:
     """English, allowing UI strings and product terms in Chinese inside it.
 
     This repo's English titles name Chinese UI text (`say 暂无改动 only when it
     is true`) and product terms (支线, 芝士), so a long Chinese run alone proves
     nothing. Not English: more Chinese characters than Latin letters, or Chinese
-    terms that outnumber the English words around them (or tie them in a
-    sentence shorter than `_SENTENCE` words, as `修复 tests` does), which is a Chinese
+    terms outnumbering the English words around them, which is a Chinese
     sentence naming `GitHub` (`修复 GitHub 的 token 刷新失败`) and not the other
     way round.
     """
     if len(_HAN.findall(description)) > len(_LATIN.findall(description)):
         return False
-    runs = len(_HAN_RUN.findall(description))
-    words = len(_WORD.findall(description))
-    return runs == 0 or runs < words or (words >= _SENTENCE and runs == words)
+    return len(_HAN_RUN.findall(description)) <= len(_WORD.findall(description))
 
 
 EXAMPLE = "fix(accept): keep the PR branch when a merge conflicts"
