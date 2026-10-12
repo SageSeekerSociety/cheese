@@ -115,6 +115,12 @@ export async function contractRequest(test: ContractCase, newCall: () => Promise
         ])
       } else {
         const text = await request.text()
+        // A body that goes out with the wrong Content-Type still parses here, so
+        // the header is asserted wherever a body is sent at all. Reads carry no
+        // Content-Type and are left alone.
+        if (test.body !== undefined) {
+          expect(request.headers.get('content-type')).toContain('application/json')
+        }
         expect(text ? JSON.parse(text) : undefined).toEqual(test.body)
       }
       return test.blob
