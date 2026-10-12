@@ -17,19 +17,24 @@ import PasskeyOffer from './PasskeyOffer.vue'
 import SignIn from './SignIn.vue'
 import Verify2FA from './Verify2FA.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
+import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
-    getOAuthProviders: vi.fn().mockResolvedValue({ data: { providers: [] } }),
+    getPasskeyRegistrationOptions: vi.fn(),
+    verifyPasskeyRegistration: vi.fn(),
+    dismissPasskeyPrompt: vi.fn(),
+  },
+}))
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
+    getOAuthProviders: vi.fn().mockResolvedValue({ providers: [] }),
     login: vi.fn(),
     verify2FA: vi.fn(),
     getPasskeyAuthenticationOptions: vi.fn(),
     verifyPasskeyAuthentication: vi.fn(),
-    getPasskeyRegistrationOptions: vi.fn(),
-    verifyPasskeyRegistration: vi.fn(),
-    dismissPasskeyPrompt: vi.fn(),
     // The sign-in is past its sudo window in these tests, so confirming is asked for.
     requestSudoTicket: vi
       .fn()
@@ -61,7 +66,7 @@ const blank = { template: '<div />' }
 const TICKET = 'enrollment-ticket'
 const CONFIRMED = 'ticket-from-confirming'
 
-function enrollment(overrides: Partial<UserApi.PasskeyEnrollment> = {}): UserApi.PasskeyEnrollment {
+function enrollment(overrides: Partial<UserAuthApi.PasskeyEnrollment> = {}): UserAuthApi.PasskeyEnrollment {
   return { ticket: TICKET, offer: true, canStopAsking: false, ...overrides }
 }
 
@@ -100,8 +105,11 @@ async function open(path: string) {
   return { view, router }
 }
 
-async function signInWithPassword(passkeyEnrollment: UserApi.PasskeyEnrollment | undefined, path = '/account/signin') {
-  vi.mocked(UserApi.login).mockResolvedValue({ data: { accessToken: 'token', user, passkeyEnrollment } } as never)
+async function signInWithPassword(
+  passkeyEnrollment: UserAuthApi.PasskeyEnrollment | undefined,
+  path = '/account/signin'
+) {
+  vi.mocked(UserAuthApi.login).mockResolvedValue({ accessToken: 'token', user, passkeyEnrollment } as never)
   return submitPassword(path)
 }
 
@@ -135,10 +143,10 @@ beforeEach(() => {
   vi.mocked(platformAuthenticatorIsAvailable).mockResolvedValue(true)
   vi.mocked(UserApi.getPasskeyRegistrationOptions).mockImplementation(async (_userId, ticket) => {
     if (ticket !== TICKET && ticket !== CONFIRMED) throw new Error('no such ticket')
-    return { data: { options } } as never
+    return { options } as never
   })
-  vi.mocked(UserApi.verifyPasskeyRegistration).mockResolvedValue({ data: {} } as never)
-  vi.mocked(UserApi.dismissPasskeyPrompt).mockResolvedValue({ data: {} } as never)
+  vi.mocked(UserApi.verifyPasskeyRegistration).mockResolvedValue({} as never)
+  vi.mocked(UserApi.dismissPasskeyPrompt).mockResolvedValue({} as never)
   passwordManager('declines')
 })
 afterEach(() => {
@@ -187,10 +195,12 @@ describe('who is offered a passkey after signing in', () => {
   })
 
   it('not someone who signed in with a passkey', async () => {
-    vi.mocked(UserApi.getPasskeyAuthenticationOptions).mockResolvedValue({ data: { options: {} } } as never)
+    vi.mocked(UserAuthApi.getPasskeyAuthenticationOptions).mockResolvedValue({ options: {} } as never)
     vi.mocked(startAuthentication).mockResolvedValue({ id: 'assertion' } as never)
-    vi.mocked(UserApi.verifyPasskeyAuthentication).mockResolvedValue({
-      data: { accessToken: 'token', user, passkeyEnrollment: enrollment() },
+    vi.mocked(UserAuthApi.verifyPasskeyAuthentication).mockResolvedValue({
+      accessToken: 'token',
+      user,
+      passkeyEnrollment: enrollment(),
     } as never)
     const { view, router } = await open('/account/signin')
 
@@ -200,9 +210,12 @@ describe('who is offered a passkey after signing in', () => {
   })
 
   it('someone who finished a second step after the password', async () => {
-    vi.mocked(UserApi.login).mockResolvedValue({ data: { requires2FA: true, tempToken: 'temp' } } as never)
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({
-      data: { accessToken: 'token', user, usedBackupCode: false, passkeyEnrollment: enrollment() },
+    vi.mocked(UserAuthApi.login).mockResolvedValue({ requires2FA: true, tempToken: 'temp' } as never)
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({
+      accessToken: 'token',
+      user,
+      usedBackupCode: false,
+      passkeyEnrollment: enrollment(),
     } as never)
     const { view, router } = await submitPassword()
     await landsOn(router, '/account/verify-2fa')
@@ -213,9 +226,12 @@ describe('who is offered a passkey after signing in', () => {
   })
 
   it('not someone who left a password sign-in halfway and came back through another provider', async () => {
-    vi.mocked(UserApi.login).mockResolvedValue({ data: { requires2FA: true, tempToken: 'temp' } } as never)
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({
-      data: { accessToken: 'token', user, usedBackupCode: false, passkeyEnrollment: enrollment() },
+    vi.mocked(UserAuthApi.login).mockResolvedValue({ requires2FA: true, tempToken: 'temp' } as never)
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({
+      accessToken: 'token',
+      user,
+      usedBackupCode: false,
+      passkeyEnrollment: enrollment(),
     } as never)
     const abandoned = await submitPassword()
     await landsOn(abandoned.router, '/account/verify-2fa')
@@ -231,8 +247,11 @@ describe('who is offered a passkey after signing in', () => {
   })
 
   it('not someone who reached the second step from another provider', async () => {
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({
-      data: { accessToken: 'token', user, usedBackupCode: false, passkeyEnrollment: enrollment() },
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({
+      accessToken: 'token',
+      user,
+      usedBackupCode: false,
+      passkeyEnrollment: enrollment(),
     } as never)
     const { view, router } = await open('/account/verify-2fa?token=temp')
 
@@ -243,7 +262,7 @@ describe('who is offered a passkey after signing in', () => {
 })
 
 describe('the offer', () => {
-  async function offered(overrides: Partial<UserApi.PasskeyEnrollment> = {}) {
+  async function offered(overrides: Partial<UserAuthApi.PasskeyEnrollment> = {}) {
     const opened = await signInWithPassword(enrollment(overrides))
     await landsOn(opened.router, '/account/passkey')
     await opened.view.findByText('Add a passkey')

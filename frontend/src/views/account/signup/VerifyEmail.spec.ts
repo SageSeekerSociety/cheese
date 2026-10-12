@@ -8,14 +8,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import VerifyEmail from './VerifyEmail.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { BusinessError } from '@/network/types/error'
 import AccountService from '@/services/account'
 import { useSignupStore } from '@/stores/signup'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: { register: vi.fn(), sendEmailCode: vi.fn() },
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: { register: vi.fn(), sendEmailCode: vi.fn() },
 }))
 vi.mock('@/api/legal', () => ({
   LegalApi: {
@@ -76,7 +76,7 @@ async function typeCode(container: Element, code = '123456') {
 /** Fill in the sign-up form's step one the way Start.vue does, in a fresh session. */
 async function startSignup() {
   setActivePinia(createPinia())
-  vi.mocked(UserApi.sendEmailCode).mockResolvedValue({} as never)
+  vi.mocked(UserAuthApi.sendEmailCode).mockResolvedValue({} as never)
   await useSignupStore().startSignup({
     username: 'login-handle',
     nickname: 'DisplayName',
@@ -93,7 +93,7 @@ describe('verifying the email', () => {
     await startSignup()
     const store = useSignupStore()
     const user = { id: 9, username: 'login-handle' }
-    vi.mocked(UserApi.register).mockResolvedValue({ data: { user, accessToken: 'fresh-token' } } as never)
+    vi.mocked(UserAuthApi.register).mockResolvedValue({ user, accessToken: 'fresh-token' } as never)
     const pinia = createPinia()
     setActivePinia(pinia)
     // Same tab, no refresh: the password is still in memory.
@@ -115,7 +115,7 @@ describe('verifying the email', () => {
     await typeCode(container)
 
     await waitFor(() => expect(AccountService.login).toHaveBeenCalledWith('fresh-token', user))
-    expect(UserApi.register).toHaveBeenCalledWith(
+    expect(UserAuthApi.register).toHaveBeenCalledWith(
       expect.objectContaining({
         username: 'login-handle',
         emailCode: '123456',
@@ -129,7 +129,7 @@ describe('verifying the email', () => {
   it('survives a refresh without keeping the password, and asks for it again', async () => {
     await startSignup()
     expect(sessionStorage.getItem('cheese:signup')).not.toContain('Secret#123')
-    vi.mocked(UserApi.register).mockResolvedValue({ data: { user: {}, accessToken: 't' } } as never)
+    vi.mocked(UserAuthApi.register).mockResolvedValue({ user: {}, accessToken: 't' } as never)
 
     const { view } = await open() // a new pinia: what a reload would build
     expect(view.getByText('We sent a code to user@example.com')).toBeTruthy()
@@ -138,7 +138,7 @@ describe('verifying the email', () => {
     await typeCode(view.container)
 
     await waitFor(() =>
-      expect(UserApi.register).toHaveBeenCalledWith(
+      expect(UserAuthApi.register).toHaveBeenCalledWith(
         expect.objectContaining({
           username: 'login-handle',
           email: 'user@example.com',
@@ -153,7 +153,7 @@ describe('verifying the email', () => {
     await startSignup()
     const saved = JSON.parse(sessionStorage.getItem('cheese:signup')!)
     sessionStorage.setItem('cheese:signup', JSON.stringify({ ...saved, consent: null }))
-    vi.mocked(UserApi.register).mockResolvedValue({ data: { user: {}, accessToken: 't' } } as never)
+    vi.mocked(UserAuthApi.register).mockResolvedValue({ user: {}, accessToken: 't' } as never)
 
     const { view } = await open()
     await fireEvent.update(view.getByLabelText('Password'), 'Secret#123')
@@ -161,13 +161,13 @@ describe('verifying the email', () => {
 
     // Submitting without the tick opens the prompt; nothing is sent until it is answered.
     const agree = await view.findByRole('button', { name: 'Agree and sign up' })
-    expect(UserApi.register).not.toHaveBeenCalled()
+    expect(UserAuthApi.register).not.toHaveBeenCalled()
     const finish = view.getByRole('button', { name: 'Finish' })
     expect(finish.classList.contains('v-btn--loading')).toBe(false)
     await fireEvent.click(agree)
 
     await waitFor(() =>
-      expect(UserApi.register).toHaveBeenCalledWith(
+      expect(UserAuthApi.register).toHaveBeenCalledWith(
         expect.objectContaining({ consent: { documents: { terms: '1.0', privacy: '1.0' }, method: 'dialog' } })
       )
     )
@@ -176,7 +176,7 @@ describe('verifying the email', () => {
   it('states the wait after too many wrong codes, and holds the form back until it has passed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     await startSignup()
-    vi.mocked(UserApi.register).mockRejectedValue(
+    vi.mocked(UserAuthApi.register).mockRejectedValue(
       new BusinessError('Too many failed attempts from this network', 403, {
         name: 'ForbiddenError',
         message: '',
@@ -198,7 +198,7 @@ describe('verifying the email', () => {
 
   it('says a wrong code is wrong in the interface language', async () => {
     await startSignup()
-    vi.mocked(UserApi.register).mockRejectedValue(
+    vi.mocked(UserAuthApi.register).mockRejectedValue(
       new BusinessError('Invalid or expired verification code', 422, {
         name: 'UnprocessableEntityError',
         message: 'Invalid or expired verification code',
@@ -219,7 +219,7 @@ describe('verifying the email', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     await startSignup()
     const { view } = await open()
-    vi.mocked(UserApi.sendEmailCode).mockRejectedValue(
+    vi.mocked(UserAuthApi.sendEmailCode).mockRejectedValue(
       new BusinessError('Please wait before requesting a new code', 400, {
         name: 'BadRequestError',
         message: 'Please wait before requesting a new code',
@@ -250,8 +250,8 @@ describe('verifying the email', () => {
     vi.advanceTimersByTime(61_000)
     await fireEvent.click(await view.findByRole('button', { name: 'Resend' }))
 
-    await waitFor(() => expect(UserApi.sendEmailCode).toHaveBeenLastCalledWith('user@example.com', undefined))
-    expect(UserApi.sendEmailCode).toHaveBeenCalledTimes(2)
+    await waitFor(() => expect(UserAuthApi.sendEmailCode).toHaveBeenLastCalledWith('user@example.com', undefined))
+    expect(UserAuthApi.sendEmailCode).toHaveBeenCalledTimes(2)
     expect(await view.findByText('Resend in 60s')).toBeTruthy()
   })
 })

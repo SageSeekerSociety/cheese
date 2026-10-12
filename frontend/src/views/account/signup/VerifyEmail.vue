@@ -74,7 +74,7 @@ const submit = async (value: { otp: string; password?: string }) => {
   if (needsPassword && value.password) signupStore.password = value.password
   submitting.value = true
   try {
-    const { data } = await signupStore.signup(value.otp)
+    const data = await signupStore.signup(value.otp)
     // Registration answers with a session, the same as signing in: the person
     // has just chosen the password, so asking for it again would be busywork.
     await AccountService.login(data.accessToken, data.user)

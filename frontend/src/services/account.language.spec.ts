@@ -7,11 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const setLanguage = vi.fn()
 const getCurrentUser = vi.fn()
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
     setLanguage: (...args: unknown[]) => setLanguage(...args),
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
-    setTimezone: () => Promise.resolve({ data: {} }),
+    setTimezone: () => Promise.resolve({}),
   },
 }))
 
@@ -49,7 +49,7 @@ async function freshPage() {
 beforeEach(() => {
   localStorage.clear()
   setLanguage.mockReset()
-  setLanguage.mockResolvedValue({ data: { language: 'en' } })
+  setLanguage.mockResolvedValue({ language: 'en' })
   getCurrentUser.mockReset()
   vi.stubGlobal('BroadcastChannel', LoneTab)
 })
@@ -89,7 +89,7 @@ describe('the UI language follows the account', () => {
     localStorage.setItem('cheese:locale', 'zh-CN')
     localStorage.setItem('accessToken', LIVE_TOKEN)
     localStorage.setItem('user', JSON.stringify({ ...ALICE, language: 'zh-CN' }))
-    getCurrentUser.mockResolvedValue({ data: { user: { ...ALICE, language: 'en' } } })
+    getCurrentUser.mockResolvedValue({ user: { ...ALICE, language: 'en' } })
     const { account, locale } = await freshPage()
     await account.init()
     expect(locale()).toBe('en')

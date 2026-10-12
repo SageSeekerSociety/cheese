@@ -31,8 +31,8 @@ import { firstStepAccepted, landingAfterSignIn, upgradeAfterEmailCodeSignIn } fr
 import { forgetPendingCode, pendingCode, rememberCodeSent } from './pendingCode'
 import VerifyView from './VerifyView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
@@ -58,7 +58,7 @@ async function submit() {
   error.value = ''
   submitting.value = true
   try {
-    const { data } = await UserApi.signInWithEmailCode({ email: pending.value.email, code: code.value })
+    const data = await UserAuthApi.signInWithEmailCode({ email: pending.value.email, code: code.value })
     rememberSignIn('email_code')
     forgetPendingCode()
     if (data.requires2FA) {
@@ -91,7 +91,7 @@ async function resend() {
   error.value = ''
   resending.value = true
   try {
-    await UserApi.requestSignInCode(pending.value.email)
+    await UserAuthApi.requestSignInCode(pending.value.email)
     rememberCodeSent(pending.value.email)
     pending.value = pendingCode()
     now.value = Date.now()

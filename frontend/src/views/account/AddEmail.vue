@@ -32,8 +32,9 @@ import { toast } from 'vuetify-sonner'
 import AddEmailView from './AddEmailView.vue'
 import { emailCodeMessage } from './attemptWait'
 
+import { UserAuthApi } from '@/api/userAuth'
+import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -77,7 +78,7 @@ async function submitEmail() {
 
 async function verify(code: string) {
   try {
-    const { data } = await UserApi.addEmail({ email: email.value.trim(), code })
+    const data = await UserApi.addEmail({ email: email.value.trim(), code })
     AccountService.user = data.user
     localStorage.setItem('user', JSON.stringify(data.user))
     toast.success(t('account.addEmail.added'))
@@ -94,7 +95,7 @@ async function signOut(redirect?: string) {
   // The same order as the account menu: the server drops the refresh token
   // first, or the next visit would restore the session.
   try {
-    await UserApi.logout()
+    await UserAuthApi.logout()
   } catch (e) {
     console.warn('Logout request failed; clearing local session anyway:', e)
   } finally {

@@ -11,11 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { keepAppChallenge, pendingAppChallenge } from './appSignIn'
 import BackToApp from './BackToApp.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: { startAppSignIn: vi.fn(async () => ({ data: { code: 'the-code' } })) },
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: { startAppSignIn: vi.fn(async () => ({ code: 'the-code' })) },
 }))
 vi.mock('@/services/account', () => ({
   default: { user: { id: 7, username: 'andylizf', nickname: 'Andy' }, logout: vi.fn(async () => {}) },
@@ -60,10 +60,10 @@ describe('handing a browser sign-in to the app', () => {
     const { view } = await arrive()
 
     await waitFor(() => expect(view.getByText(/as Andy \(andylizf\)/)).toBeTruthy())
-    expect(UserApi.startAppSignIn).not.toHaveBeenCalled()
+    expect(UserAuthApi.startAppSignIn).not.toHaveBeenCalled()
 
     await fireEvent.click(view.getByRole('button', { name: 'Continue' }))
-    await waitFor(() => expect(UserApi.startAppSignIn).toHaveBeenCalledWith(CHALLENGE))
+    await waitFor(() => expect(UserAuthApi.startAppSignIn).toHaveBeenCalledWith(CHALLENGE))
     await waitFor(() =>
       expect(view.getByRole('link', { name: 'Open Cheese' }).getAttribute('href')).toContain('cheese://open')
     )
@@ -77,13 +77,13 @@ describe('handing a browser sign-in to the app', () => {
     await fireEvent.click(await view.findByRole('button', { name: 'Cancel' }))
 
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/'))
-    expect(UserApi.startAppSignIn).not.toHaveBeenCalled()
+    expect(UserAuthApi.startAppSignIn).not.toHaveBeenCalled()
     expect(pendingAppChallenge()).toBeNull()
   })
 
   it('goes nowhere near the app for a sign-in the app did not ask for in this tab', async () => {
     const { router } = await arrive()
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/'))
-    expect(UserApi.startAppSignIn).not.toHaveBeenCalled()
+    expect(UserAuthApi.startAppSignIn).not.toHaveBeenCalled()
   })
 })

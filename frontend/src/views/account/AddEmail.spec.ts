@@ -10,13 +10,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AddEmail from './AddEmail.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
+import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requireEmail } from '@/router/emailRequired'
 import AccountService from '@/services/account'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: { sendAddEmailCode: vi.fn(), addEmail: vi.fn(), logout: vi.fn() },
+vi.mock('@/api/users', () => ({
+  UserApi: { sendAddEmailCode: vi.fn(), addEmail: vi.fn() },
+}))
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: { logout: vi.fn() },
 }))
 vi.mock('@/services/account', async () => {
   const { reactive } = await import('vue')
@@ -84,7 +88,7 @@ async function enterCode(view: ReturnType<typeof render>, code = '123456') {
 
 describe('adding the email an account is missing', () => {
   it('stops the account on its way, verifies the address, then goes on to where it was going', async () => {
-    vi.mocked(UserApi.addEmail).mockResolvedValue({ data: { user: { id: 1, emailMissing: false } } } as never)
+    vi.mocked(UserApi.addEmail).mockResolvedValue({ user: { id: 1, emailMissing: false } } as never)
     const { view, router } = await signedInAt('/projects/7')
     expect(router.currentRoute.value.name).toBe('AccountAddEmail')
     view.getByText('Your email is used to recover your account and to sign in')
@@ -136,7 +140,7 @@ describe('adding the email an account is missing', () => {
     await fireEvent.click(view.getByRole('button', { name: 'Sign out' }))
 
     await waitFor(() => expect(router.currentRoute.value.name).toBe('SignIn'))
-    expect(UserApi.logout).toHaveBeenCalled()
+    expect(UserAuthApi.logout).toHaveBeenCalled()
     expect(AccountService.logout).toHaveBeenCalled()
   })
 })

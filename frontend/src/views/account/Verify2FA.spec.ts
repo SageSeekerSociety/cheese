@@ -10,11 +10,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Verify2FA from './Verify2FA.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { forgetOAuthRedirect, stashOAuthRedirect } from '@/router/loginRedirect'
 
-vi.mock('@/network/api/users', () => ({ UserApi: { verify2FA: vi.fn() } }))
+vi.mock('@/api/userAuth', () => ({ UserAuthApi: { verify2FA: vi.fn() } }))
 vi.mock('@/services/account', () => ({ default: { login: vi.fn() } }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -27,7 +27,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
-  vi.mocked(UserApi.verify2FA).mockReset()
+  vi.mocked(UserAuthApi.verify2FA).mockReset()
 })
 
 async function open(query: Record<string, string>) {
@@ -65,7 +65,7 @@ async function settle(router: ReturnType<typeof createRouter>, path: string) {
 
 describe('过完 2FA 落在哪', () => {
   it('密码登录带来的来路', async () => {
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({ accessToken: 't', user: {} } as never)
     const { view, router } = await open({ token: 'ticket', redirect: '/projects/7' })
 
     await submitCode(view)
@@ -75,7 +75,7 @@ describe('过完 2FA 落在哪', () => {
 
   it('OAuth 登录开了 2FA 由后端直接跳来，URL 上没有来路，用出站前存下的', async () => {
     stashOAuthRedirect('/projects/9')
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({ accessToken: 't', user: {} } as never)
     const { view, router } = await open({ token: 'ticket' })
 
     await submitCode(view)
@@ -86,7 +86,7 @@ describe('过完 2FA 落在哪', () => {
   it('再次打开登录页后，上一次没走完的 OAuth 来路作废', async () => {
     stashOAuthRedirect('/projects/9')
     forgetOAuthRedirect()
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({ accessToken: 't', user: {} } as never)
     const { view, router } = await open({ token: 'ticket' })
 
     await submitCode(view)
@@ -96,22 +96,22 @@ describe('过完 2FA 落在哪', () => {
 
   it('填满六位后再按回车，同一张票只交一次', async () => {
     let finish: (v: unknown) => void = () => {}
-    vi.mocked(UserApi.verify2FA).mockReturnValue(new Promise((r) => (finish = r)) as never)
+    vi.mocked(UserAuthApi.verify2FA).mockReturnValue(new Promise((r) => (finish = r)) as never)
     const { view } = await open({ token: 'ticket', redirect: '/projects/7' })
 
     await submitCode(view)
     await fireEvent.submit(view.container.querySelector('form')!)
-    finish({ data: { accessToken: 't', user: {} } })
+    finish({ accessToken: 't', user: {} })
 
-    expect(UserApi.verify2FA).toHaveBeenCalledTimes(1)
+    expect(UserAuthApi.verify2FA).toHaveBeenCalledTimes(1)
   })
 
   it('验证码输错换票之后，来路还在', async () => {
-    vi.mocked(UserApi.verify2FA)
+    vi.mocked(UserAuthApi.verify2FA)
       .mockRejectedValueOnce({
         error: { data: { reason: 'invalid_code', tempToken: 'ticket-2', attemptsRemaining: 4 } },
       })
-      .mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+      .mockResolvedValue({ accessToken: 't', user: {} } as never)
     const { view, router } = await open({ token: 'ticket', redirect: '/projects/7' })
 
     await submitCode(view)
@@ -125,7 +125,7 @@ describe('过完 2FA 落在哪', () => {
 describe('尝试次数过多', () => {
   it('按后端给的等待时间说明要等多久，并回到登录页', async () => {
     setLocale('zh-CN')
-    vi.mocked(UserApi.verify2FA).mockRejectedValue({
+    vi.mocked(UserAuthApi.verify2FA).mockRejectedValue({
       error: { data: { reason: 'too_many_attempts', retryAfterSeconds: 42 } },
     })
     const { view, router } = await open({ token: 'ticket' })
@@ -143,27 +143,27 @@ describe('在这台设备上不再询问', () => {
 
   it('默认不勾，提交时不信任这台设备', async () => {
     setLocale('zh-CN')
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({ accessToken: 't', user: {} } as never)
     const { view } = await open({ token: 'ticket', redirect: '/projects/7' })
 
     expect(trustBox(view).checked).toBe(false)
     await submitCode(view)
 
     await vi.waitFor(() =>
-      expect(UserApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: false })
+      expect(UserAuthApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: false })
     )
   })
 
   it('勾上后，提交时请后端信任这台设备', async () => {
     setLocale('zh-CN')
-    vi.mocked(UserApi.verify2FA).mockResolvedValue({ data: { accessToken: 't', user: {} } } as never)
+    vi.mocked(UserAuthApi.verify2FA).mockResolvedValue({ accessToken: 't', user: {} } as never)
     const { view } = await open({ token: 'ticket', redirect: '/projects/7' })
 
     await fireEvent.input(trustBox(view), { target: { checked: true } })
     await submitCode(view)
 
     await vi.waitFor(() =>
-      expect(UserApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: true })
+      expect(UserAuthApi.verify2FA).toHaveBeenCalledWith({ temp_token: 'ticket', code: '123456', trust_device: true })
     )
   })
 })

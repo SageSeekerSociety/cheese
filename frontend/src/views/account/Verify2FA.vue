@@ -34,8 +34,8 @@ import { attemptMessage } from './attemptWait'
 import { landingAfterSignIn, takeFirstStep, upgradeAfterSecondStep } from './passkeyEnrollment'
 import Verify2FAView from './Verify2FAView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { postLoginTarget, takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -83,7 +83,7 @@ const handleVerify = async () => {
   errorMessage.value = ''
 
   try {
-    const { data } = await UserApi.verify2FA({
+    const data = await UserAuthApi.verify2FA({
       temp_token: token,
       code: code,
       trust_device: trustDevice.value,

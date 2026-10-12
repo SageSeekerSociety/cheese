@@ -26,8 +26,8 @@
 </template>
 
 <script setup lang="ts">
-import type { OAuthCreateUserRequest, OAuthState } from '@/network/api/users/types'
 import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
+import type { OAuthCreateUserRequest, OAuthState } from '@/types/apiUsers'
 import type { OAuthBindValues, OAuthCreateValues } from './OAuthCompleteView.vue'
 
 import { computed, onMounted, ref } from 'vue'
@@ -40,8 +40,8 @@ import { emailCodeMessage } from './attemptWait'
 import OAuthCompleteView from './OAuthCompleteView.vue'
 import { oauthProviderName } from './oauthProvider'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const route = useRoute()
@@ -102,11 +102,11 @@ const handleCreateAccount = async (values: OAuthCreateValues) => {
 }
 
 const sendCode = () =>
-  UserApi.sendOAuthEmailCode({ stateToken: stateToken.value, email: createValues?.email.trim() ?? '' })
+  UserAuthApi.sendOAuthEmailCode({ stateToken: stateToken.value, email: createValues?.email.trim() ?? '' })
 
 const verifyEmail = async (code: string) => {
   const email = createValues?.email.trim() ?? ''
-  const { data } = await UserApi.verifyOAuthEmail({ stateToken: stateToken.value, email, code })
+  const data = await UserAuthApi.verifyOAuthEmail({ stateToken: stateToken.value, email, code })
   if (data.ownership) {
     // The address belongs to an account already: that account is proven and
     // linked on the verify page, never merged on the address alone.
@@ -139,7 +139,7 @@ const submitCreate = () => {
   if (createValues.setPassword) {
     requestData.password = createValues.password
   }
-  UserApi.createUserFromOAuth(requestData)
+  UserAuthApi.createUserFromOAuth(requestData)
 }
 
 const handleBindAccount = async (values: OAuthBindValues) => {
@@ -147,7 +147,7 @@ const handleBindAccount = async (values: OAuthBindValues) => {
   error.value = ''
 
   try {
-    UserApi.bindOAuthToUser({
+    UserAuthApi.bindOAuthToUser({
       stateToken: stateToken.value,
       username: values.username,
       password: values.password,
@@ -166,8 +166,8 @@ const loadOAuthState = async () => {
   }
 
   try {
-    const response = await UserApi.getOAuthState(stateToken.value)
-    oauthState.value = response.data
+    const response = await UserAuthApi.getOAuthState(stateToken.value)
+    oauthState.value = response
   } catch (err) {
     error.value = requestErrorMessage(err, t('account.oauth.error.sessionExpired'))
   } finally {
@@ -177,7 +177,7 @@ const loadOAuthState = async () => {
 
 const loadRegistrationConfig = async () => {
   try {
-    const { data } = await UserApi.getRegistrationConfig()
+    const data = await UserAuthApi.getRegistrationConfig()
     requireInviteCode.value = data.requireInviteCode
     registrationConfigReady.value = true
   } catch (e) {

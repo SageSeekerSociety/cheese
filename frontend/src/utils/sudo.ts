@@ -1,6 +1,6 @@
 import { shallowRef } from 'vue'
 
-import { UserApi } from '@/network/api/users'
+import { UserAuthApi } from '@/api/userAuth'
 
 /**
  * The person closed the confirmation instead of completing it. Nothing ran,
@@ -14,7 +14,7 @@ export class SudoCancelledError extends Error {
 }
 
 export type SudoRequest = {
-  purpose: UserApi.SudoPurpose
+  purpose: UserAuthApi.SudoPurpose
   /** A ticket completes the request; `null` cancels it. Only the first call counts. */
   settle: (ticket: string | null) => void
 }
@@ -22,7 +22,7 @@ export type SudoRequest = {
 /** The confirmation the identity dialog is showing, if any. */
 export const pendingSudo = shallowRef<SudoRequest | null>(null)
 
-function confirmIdentity(purpose: UserApi.SudoPurpose): Promise<string> {
+function confirmIdentity(purpose: UserAuthApi.SudoPurpose): Promise<string> {
   // One dialog at a time. A newer request takes its place, and the older one
   // ends as cancelled rather than waiting on a dialog nobody can see.
   pendingSudo.value?.settle(null)
@@ -45,9 +45,9 @@ function confirmIdentity(purpose: UserApi.SudoPurpose): Promise<string> {
  * inside the few minutes after it last proved who is at it; null when the
  * server says the person has to confirm again.
  */
-async function ticketWithoutAsking(purpose: UserApi.SudoPurpose): Promise<string | null> {
+async function ticketWithoutAsking(purpose: UserAuthApi.SudoPurpose): Promise<string | null> {
   try {
-    const { data } = await UserApi.requestSudoTicket(purpose)
+    const data = await UserAuthApi.requestSudoTicket(purpose)
     return data.sudoTicket ?? null
   } catch (error) {
     if ((error as { name?: unknown } | null)?.name === 'SudoRequiredError') return null
@@ -64,7 +64,7 @@ async function ticketWithoutAsking(purpose: UserApi.SudoPurpose): Promise<string
  * without running it, when they back out.
  */
 export async function withSudo<T>(
-  purpose: UserApi.SudoPurpose,
+  purpose: UserAuthApi.SudoPurpose,
   operation: (sudoTicket: string) => Promise<T>
 ): Promise<T> {
   return operation((await ticketWithoutAsking(purpose)) ?? (await confirmIdentity(purpose)))

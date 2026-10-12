@@ -27,8 +27,8 @@ import { attemptMessage } from '../attemptWait'
 
 import StartView, { type SignUpValues } from './StartView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useSignupStore } from '@/stores/signup'
 
@@ -49,7 +49,7 @@ const router = useRouter()
 
 onMounted(async () => {
   try {
-    const { data } = await UserApi.getRegistrationConfig()
+    const data = await UserAuthApi.getRegistrationConfig()
     requireInviteCode.value = data.requireInviteCode
     registrationConfigReady.value = true
   } catch (e) {

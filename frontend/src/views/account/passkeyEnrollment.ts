@@ -3,7 +3,8 @@ import type { RouteLocationRaw } from 'vue-router'
 
 import { platformAuthenticatorIsAvailable, startRegistration } from '@simplewebauthn/browser'
 
-import { UserApi } from '@/network/api/users'
+import { UserAuthApi } from '@/api/userAuth'
+import { UserApi } from '@/api/users'
 
 // The server's registration challenge and the sign-in ticket both last five
 // minutes from sign-in; past this, a registration started with them would be
@@ -42,7 +43,7 @@ export class Enrollment {
    *  password manager that just filled the password do it, with no dialog. */
   async register(quietly = false): Promise<void> {
     this.options ??= UserApi.getPasskeyRegistrationOptions(this.userId, this.ticket).then(
-      ({ data }) => {
+      (data) => {
         this.rpId = data.options.rp?.id
         return data.options
       },
@@ -127,7 +128,7 @@ export interface SignInUpgrade {
 /** Start the quiet attempt the moment a password sign-in finishes. */
 export function upgradeAfterPasswordSignIn(
   userId: number,
-  passkeyEnrollment: UserApi.PasskeyEnrollment | undefined
+  passkeyEnrollment: UserAuthApi.PasskeyEnrollment | undefined
 ): SignInUpgrade | null {
   if (!passkeyEnrollment) return null
   const enrollment = new Enrollment(userId, passkeyEnrollment.ticket)
@@ -145,7 +146,7 @@ export function upgradeAfterPasswordSignIn(
  */
 export function upgradeAfterEmailCodeSignIn(
   userId: number,
-  passkeyEnrollment: UserApi.PasskeyEnrollment | undefined
+  passkeyEnrollment: UserAuthApi.PasskeyEnrollment | undefined
 ): SignInUpgrade | null {
   if (!passkeyEnrollment) return null
   return {
@@ -160,7 +161,7 @@ export function upgradeAfterEmailCodeSignIn(
 export function upgradeAfterSecondStep(
   step: FirstStep | null,
   userId: number,
-  passkeyEnrollment: UserApi.PasskeyEnrollment | undefined
+  passkeyEnrollment: UserAuthApi.PasskeyEnrollment | undefined
 ): SignInUpgrade | null {
   if (step === 'password') return upgradeAfterPasswordSignIn(userId, passkeyEnrollment)
   if (step === 'email_code') return upgradeAfterEmailCodeSignIn(userId, passkeyEnrollment)

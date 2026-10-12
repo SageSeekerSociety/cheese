@@ -23,8 +23,8 @@ import { attemptMessage, useAttemptWait } from '../attemptWait'
 import { pendingCode, rememberCodeSent } from './pendingCode'
 import RequestView from './RequestView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const router = useRouter()
@@ -45,7 +45,7 @@ const submit = async (email: string) => {
   const address = email.trim()
   submitting.value = true
   try {
-    await UserApi.requestSignInCode(address)
+    await UserAuthApi.requestSignInCode(address)
     rememberCodeSent(address)
     router.push({ name: 'SignInEmailCodeVerify', query: { redirect: route.query.redirect } })
   } catch (e) {

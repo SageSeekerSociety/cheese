@@ -8,16 +8,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SignIn from './SignIn.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { BusinessError } from '@/network/types/error'
 import AccountService from '@/services/account'
 
 // Only what signing in with a password may touch: anything else it called
 // would be undefined here and fail the sign-in.
-vi.mock('@/network/api/users', () => ({
-  UserApi: {
-    getOAuthProviders: vi.fn().mockResolvedValue({ data: { providers: [] } }),
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
+    getOAuthProviders: vi.fn().mockResolvedValue({ providers: [] }),
     login: vi.fn(),
   },
 }))
@@ -37,7 +37,7 @@ afterEach(() => {
 describe('password sign-in', () => {
   it('sends the username and password to the login endpoint and signs in', async () => {
     const user = { id: 7, username: 'existing-user' }
-    vi.mocked(UserApi.login).mockResolvedValue({ data: { accessToken: 'token', user } } as never)
+    vi.mocked(UserAuthApi.login).mockResolvedValue({ accessToken: 'token', user } as never)
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [
@@ -59,7 +59,7 @@ describe('password sign-in', () => {
     await fireEvent.submit(view.container.querySelector('form')!)
 
     await waitFor(() => expect(AccountService.login).toHaveBeenCalledWith('token', user))
-    expect(UserApi.login).toHaveBeenCalledWith(
+    expect(UserAuthApi.login).toHaveBeenCalledWith(
       expect.objectContaining({ username: 'existing-user', password: 'correct horse!1' })
     )
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/'))
@@ -97,7 +97,7 @@ describe('a wrong password', () => {
   afterEach(() => vi.useRealTimers())
 
   it('says so in the interface language', async () => {
-    vi.mocked(UserApi.login).mockRejectedValue(wrong({ reason: 'invalid_credentials' }))
+    vi.mocked(UserAuthApi.login).mockRejectedValue(wrong({ reason: 'invalid_credentials' }))
     const view = await openSignIn()
 
     await signIn(view)
@@ -109,7 +109,7 @@ describe('a wrong password', () => {
   it('states the wait it starts, and holds the form back until it has passed', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     setLocale('zh-CN')
-    vi.mocked(UserApi.login).mockRejectedValue(wrong({ reason: 'invalid_credentials', retryAfterSeconds: 30 }))
+    vi.mocked(UserAuthApi.login).mockRejectedValue(wrong({ reason: 'invalid_credentials', retryAfterSeconds: 30 }))
     const view = await openSignIn()
 
     await signIn(view, { username: '用户名', password: '密码' })
@@ -119,14 +119,14 @@ describe('a wrong password', () => {
     expect(submit.hasAttribute('disabled')).toBe(true)
     await fireEvent.submit(view.container.querySelector('form')!)
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(UserApi.login).toHaveBeenCalledTimes(1)
+    expect(UserAuthApi.login).toHaveBeenCalledTimes(1)
 
     vi.advanceTimersByTime(30_000)
     await waitFor(() => expect(submit.hasAttribute('disabled')).toBe(false))
   })
 
   it('states the wait when too many attempts have been refused', async () => {
-    vi.mocked(UserApi.login).mockRejectedValue(
+    vi.mocked(UserAuthApi.login).mockRejectedValue(
       new BusinessError('Too many failed attempts from this network', 403, {
         name: 'ForbiddenError',
         message: '',
