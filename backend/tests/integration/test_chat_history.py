@@ -197,7 +197,10 @@ def test_room_history_and_task_history_have_separate_scopes(client):
         ],
     )
     assert ids[1] not in [b["id"] for b in _history(client, room)["data"]]
-    assert [b["id"] for b in _history(client, task, q="Task")["data"]] == ids[1:]
+    # kind=message: the task was made already started, so its conversation also
+    # holds the platform's own line about that.
+    found = _history(client, task, q="Task", kind="message")
+    assert [b["id"] for b in found["data"]] == ids[1:]
     assert ids[0] not in [b["id"] for b in _history(client, task)["data"]]
     replies = _history(client, task, reply_to=str(parent))
     assert replies["data"][0]["id"] == str(child)
