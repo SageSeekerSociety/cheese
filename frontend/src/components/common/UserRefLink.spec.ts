@@ -120,7 +120,9 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-const chipOf = (container: HTMLElement) => container.querySelector<HTMLElement>('.mention')!
+// `@testing-library/vue` 把 `render(...).container` 标成 `Element`（不是 `HTMLElement`），
+// 所以这里的入参按 `Element` 收，只取其中那一颗 chip，返回的仍是 `HTMLElement`。
+const chipOf = (container: Element) => container.querySelector<HTMLElement>('.mention')!
 
 /** 外壳在 App.vue 注入真名册；这里在树根上做同一件事。 */
 function withDirectory(child: () => ReturnType<typeof h>) {
