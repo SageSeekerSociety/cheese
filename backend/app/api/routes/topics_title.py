@@ -18,7 +18,11 @@ from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.api.routes.topics import DbSession
 from app.api.routes.topics_tasks import _task_out
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import (
+    ForbiddenError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.staleness import announce_stale
@@ -68,7 +72,7 @@ async def set_title(
         # task is left to `title[:80]` — the width rule is about what an AI
         # teammate writes, and a person can be trusted to know what they meant.
         if own_session and not title_fits(title):
-            raise ValidationError(
+            raise UnprocessableEntityError(
                 say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(title))
             )
         TaskService(db).rename(

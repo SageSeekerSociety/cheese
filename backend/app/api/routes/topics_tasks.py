@@ -41,7 +41,6 @@ from app.core.errors import (
     ConflictError,
     ForbiddenError,
     UnprocessableEntityError,
-    ValidationError,
 )
 from app.core.sentences import say
 from app.domain.agent.announce import announce
@@ -623,7 +622,7 @@ async def create_teammate_task(
     # it instead would leave half a phrase in the sidebar and no one the wiser.
     # Checked before the idempotency claim: a refused call leaves no record.
     if not title_fits(body.title):
-        raise ValidationError(
+        raise UnprocessableEntityError(
             say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(body.title))
         )
     # A turn sent again creates the same task again: one task, not two.
