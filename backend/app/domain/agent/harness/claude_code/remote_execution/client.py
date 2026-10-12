@@ -480,7 +480,11 @@ def prepare(
     settings.update(
         skipDangerousModePermissionPrompt=True,
         enableArtifact=False,
-        attribution={"sessionUrl": False},
+        # Merged, not replaced: the platform's settings already empty `commit`
+        # and `pr`, and a bare {"sessionUrl": False} put the CLI's own
+        # "Co-Authored-By: Claude" trailer and "Generated with Claude Code"
+        # footer back on every commit and PR a teammate made from here.
+        attribution={**settings.get("attribution", {}), "sessionUrl": False},
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
