@@ -550,8 +550,10 @@ def build_session_opening(
             "频道，含 archived 的名字和 id）：\n"
             '`platform_request(method="GET", '
             'path="/topics?project_id=<本项目 id>")`\n'
-            "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。\n"
-            + lines
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。"
+            "任务和支线也这样引用：`<#任务的 id>`、`<#支线的 id>`，读的人看到的是"
+            "能点开的「#任务名」「#支线：开头那句」。别的 id 写进去，读的人只看到"
+            "一个打不开的引用。\n" + lines
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
