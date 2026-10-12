@@ -78,7 +78,7 @@ function replaysOf(id: string): number {
     <h1 class="motion-name t-page-title">动效台</h1>
     <p class="motion-lede">
       产品里每一次变化各摆一格，标明它用的 token。产品里的动效是 100–320ms，正常速度下看不清「它是怎么变的」——
-      慢放把产品自己的时长 token 乘 4，不另写一套时长；改 token 之前先在这里看一眼会变成什么样。
+      慢放把产品自己的时长 token 乘 {{ MOTION_FACTOR.slow }}，不另写一套时长；改 token 之前先在这里看一眼会变成什么样。
     </p>
 
     <div class="motion-bar">

@@ -12,9 +12,11 @@ export type MotionMode = 'normal' | 'slow' | 'off'
 /** 倍数。关掉不是删过渡——过渡还在，只是不花时间，终态和正常档一模一样。 */
 export const MOTION_FACTOR: Record<MotionMode, number> = { normal: 1, slow: 4, off: 0 }
 
+// 档位上的倍数从 `MOTION_FACTOR` 拼出来，不在这里再写一遍数：倍数改了，按钮上的字
+// 和那句说明一起改，不会出现「按钮写着 ×4、实际乘了 2」。
 export const MOTION_MODES: ReadonlyArray<{ id: MotionMode; label: string }> = [
   { id: 'normal', label: '正常' },
-  { id: 'slow', label: '慢放 ×4' },
+  { id: 'slow', label: `慢放 ×${MOTION_FACTOR.slow}` },
   { id: 'off', label: '关' },
 ]
 
