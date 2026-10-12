@@ -211,14 +211,13 @@ def pr_timeline(repo: str, number: int) -> list[dict]:
 
 
 def heads_of(timeline: list[dict]) -> list[str]:
-    """The commit ids that were ever the PR's head, in push order.
+    """Every commit id that appears as this PR's head, in timeline order.
 
     `committed` fires for every commit in a push, not only the tip, so a push of
-    three commits shows three. That is on purpose: the head history the retro
-    wants is "how many times did this branch move", and a force-push moves it
-    with no new commit at all (`head_ref_force_pushed` carries the id). A commit
-    that never became a head ran no CI — `required_checks` returns nothing for
-    it, which is exactly what keeps it out of the CI-round count.
+    three commits shows three ids; `head_ref_force_pushed` carries the id a
+    force-push moved the branch to. Which ids were really pushed-to heads is
+    settled by CI in `pr_report` (only the tip of a push gets check-runs), not
+    here — this function only collects the candidates.
     """
     heads: list[str] = []
     seen: set[str] = set()
@@ -447,22 +446,22 @@ def merge_queue_exits(
     return out
 
 
-def first_judged_head(pushes: list[dict]) -> dict | None:
-    """The first head CI actually ran on, or None when it never ran.
-
-    `heads_of` also lists a multi-commit push's non-tip commits, which ran no CI
-    at all; reading `pushes[0]` blindly takes one of those as "the first push had
-    no rounds" and fails both 严格 and 宽松 for a PR whose real first head passed."""
-    return next((p for p in pushes if p["rounds"]), None)
-
-
-def pr_report(pr: dict, pushes: list[dict], exits: list[dict]) -> dict:
+def pr_report(pr: dict, heads: list[dict], exits: list[dict]) -> dict:
     """One merged PR's row, assembled from what `pr_reports` fetched.
 
     Kept apart from the fetching so the 首推 wiring can be asserted without a
-    network: `pushes` is one entry per head in push order, each carrying its
-    `rounds`."""
-    first = first_judged_head(pushes)
+    network: `heads` is one entry per id `heads_of` found, in timeline order,
+    each carrying its `rounds`.
+
+    Only the heads CI ran on are pushes, one per push: `required-ci.yml`
+    triggers on `pull_request: synchronize` with no path filter, so every push
+    to the PR branch ran it once, on the pushed-to commit. A multi-commit push
+    is therefore one round, and its non-tip commits (which ran no CI at all)
+    are dropped here rather than counted — which is also why 首推 judges
+    `pushes[0]`, not `heads[0]`.
+    """
+    pushes = [h for h in heads if h["rounds"]]
+    first = pushes[0] if pushes else None
     return {
         "number": pr["number"],
         "title": pr.get("title"),
@@ -473,7 +472,7 @@ def pr_report(pr: dict, pushes: list[dict], exits: list[dict]) -> dict:
         "push_detail": pushes,
         "first_head": first["sha"] if first else None,
         "strict_first_pass": strict_pass(first) if first else False,
-        "lenient_first_pass": _lenient(first["rounds"] if first else [], pushes),
+        "lenient_first_pass": _lenient(first["rounds"] if first else []),
         "exits": exits,
     }
 
@@ -486,16 +485,16 @@ def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
     for pr in prs:
         number = pr["number"]
         timeline = pr_timeline(repo, number)
-        pushes = [
+        heads = [
             {"sha": sha, "rounds": ci_rounds(required_checks(repo, sha))} for sha in heads_of(timeline)
         ]
         reports.append(
-            pr_report(pr, pushes, merge_queue_exits(timeline, mg.get(number, []), repo, since, until))
+            pr_report(pr, heads, merge_queue_exits(timeline, mg.get(number, []), repo, since, until))
         )
     return reports
 
 
-def _lenient(first_push: list[dict], pushes: list[dict]) -> bool:
+def _lenient(first_push: list[dict]) -> bool:
     """The 宽松 reading of 首推一次过 CI, and why it is these two exclusions.
 
     「严格」= the first head's FIRST round is green. That counts two things
@@ -515,8 +514,10 @@ def _lenient(first_push: list[dict], pushes: list[dict]) -> bool:
     head only ever cancelled) do not.
 
     On the 10-12 window this reads 8/12 = 67%, one more than the orchestration
-    review's 7/12: the review takes the first commit of the push list as the
-    first head, and for #3493 that commit is one CI never ran.
+    review's 7/12: the review took the first commit of each PR's push list as the
+    first head, and for #3493 that commit is one CI never ran, so the head the
+    required check actually judged was never read. The first head CI ran on is
+    the one that counts.
     """
     if not first_push:
         return False
@@ -694,9 +695,7 @@ def green_of(report: dict) -> str | None:
     pushes = report.get("push_detail") or []
     if not pushes:
         return None
-    last = next((p for p in reversed(pushes) if p["rounds"]), None)
-    if not last:
-        return None
+    last = pushes[-1]  # push_detail holds heads CI ran on, so the last is the merged head
     # When the required check reported green, not when its round started.
     greens = [
         r.get("completed_at") or r["started_at"]
@@ -911,7 +910,11 @@ def render_markdown(report: dict) -> str:
             "是 `success` 才算过。第一个 head 的 full 检查被跳过（还在草稿）或只被 cancel 掉，就不算过——"
             "换个 head 才绿不计入，否则它就变成「最后过没过」了。"
         ),
-        "- **轮数（按推送）**：不同 head SHA 数（`committed` + `head_ref_force_pushed`）。",
+        (
+            "- **轮数（按推送）**：跑过必需 CI 的不同 head 数。`required-ci.yml` 在 `pull_request: synchronize` "
+            "上跑、没有路径过滤，所以每次推送到 PR 分支都恰好跑一次、跑在被推上去的那个提交上；一次推多个提交时"
+            "只有尖端提交拿到检查（`committed` 也给非尖端提交各发一条，那些不算），一次推送记一轮。"
+        ),
         (
             "- **轮数（含重跑）**：所有 head 上跑过的必需 CI 工作流次数，同一 head 上的重跑"
             "（draft 轮 / `ready_for_review` 后的 full 轮）各算一次。"
@@ -1031,7 +1034,11 @@ def render_markdown(report: dict) -> str:
         "## 对照（与《总调度复盘 10-12》§1）",
         "",
         f"- 合并 PR：{s['merged_prs']}（复盘 12）",
-        f"- 每 PR 轮数：按推送 {s['pushes_per_pr']}（复盘 2.33）、含重跑 {s['ci_runs_per_pr']}（复盘 2.50）",
+        (
+            f"- 每 PR 轮数：按推送 {s['pushes_per_pr']}、含重跑 {s['ci_runs_per_pr']}（复盘报 2.33 / 2.50）"
+            "——差在「按推送」这一栏：把多提交推送按提交数算就是 28/12 = 2.33，按推送算（本窗口 #3487、"
+            "#3493、#3498 各有一处多提交推送）是 25/12 = 2.08，以按推送为准。"
+        ),
         f"- 掉出合并队列（失败）：{s['merge_queue_failed_exits']}（复盘 3，全是 #3496）",
         f"- 首推严格：{s['strict_first_pass']['pct']}（复盘 4/12 = 33%）",
         (
@@ -1180,17 +1187,17 @@ def self_test() -> int:
     check("strict: cancelled first push fails", strict_pass(rnd("a", "cancelled", "green")), False)
     check(
         "lenient: cancelled then green on the same head passes",
-        _lenient(rnd("a", "cancelled", "green")["rounds"], [rnd("a", "cancelled", "green")]),
+        _lenient(rnd("a", "cancelled", "green")["rounds"]),
         True,
     )
     check(
-        "lenient: only-cancelled first head stays a miss even if a later head is green",
-        _lenient(rnd("a", "cancelled")["rounds"], [rnd("a", "cancelled"), rnd("b", "green")]),
+        "lenient: an only-cancelled first head stays a miss",
+        _lenient(rnd("a", "cancelled")["rounds"]),
         False,
     )
     check(
         "lenient: a full-tier red first verdict still fails",
-        _lenient(rnd("a", "red", "green")["rounds"], [rnd("a", "red", "green")]),
+        _lenient(rnd("a", "red", "green")["rounds"]),
         False,
     )
     draft_red_then_full_green = [
@@ -1199,43 +1206,35 @@ def self_test() -> int:
     ]
     check(
         "lenient: a draft-tier red before the full green passes (#3496 shape)",
-        _lenient(draft_red_then_full_green, []),
+        _lenient(draft_red_then_full_green),
         True,
     )
-    # first_judged_head: a non-tip commit of a multi-commit push ran no CI, and
-    # it must not stand in for the first push (#3493 / #3487 shape).
-    check("a head that ran no CI is not the first push", first_judged_head([rnd("a")]) is None, True)
-    check(
-        "首推 judges the first head that ran CI",
-        strict_pass(first_judged_head([rnd("a"), rnd("b", "green")])),
-        True,
-    )
-    check(
-        "lenient follows the same head",
-        _lenient(
-            first_judged_head([rnd("a"), rnd("b", "cancelled", "green")])["rounds"],
-            [rnd("a"), rnd("b", "cancelled", "green")],
-        ),
-        True,
-    )
-    # pr_report: the three 首推 fields go through the same head, not `pushes[0]`.
-    rep = pr_report(
-        {"number": 1, "title": "t", "mergedAt": "x", "mergeCommit": {"oid": "m"}},
-        [rnd("a"), rnd("b", "cancelled", "green")],
-        [],
-    )
+    # pr_report: only the heads CI ran on are pushes. `committed` lists a
+    # multi-commit push once per commit and the non-tip ones ran no CI (#3493 /
+    # #3487 shape), so one push of two commits is one round, and 首推 judges the
+    # head the required check actually saw — not `heads[0]`.
+    def pr_row(number: int) -> dict:
+        return {"number": number, "title": "t", "mergedAt": "x", "mergeCommit": {"oid": "m"}}
+
+    rep = pr_report(pr_row(1), [rnd("a"), rnd("b", "cancelled", "green")], [])
     check("首推 names the head CI ran on", rep["first_head"], "b")
+    check("a non-tip commit is not a push", rep["pushes"], 1)
     check("首推 宽松 reads that head", rep["lenient_first_pass"], True)
-    check("and every head still counts as a push", rep["pushes"], 2)
-    # 严格 on its own: judged against `pushes[0]` — the commit CI never ran —
+    check(
+        "a later head's green does not rescue the first head",
+        pr_report(pr_row(2), [rnd("a", "cancelled"), rnd("b", "green")], [])["lenient_first_pass"],
+        False,
+    )
+    check(
+        "a PR whose heads all ran no CI has no first head",
+        pr_report(pr_row(3), [rnd("a"), rnd("b")], [])["first_head"],
+        None,
+    )
+    # 严格 on its own: judged against `heads[0]` — the commit CI never ran —
     # this comes out False, so the True here pins the head it read.
     check(
         "首推 严格 reads that head too",
-        pr_report(
-            {"number": 2, "title": "t", "mergedAt": "x", "mergeCommit": {"oid": "m"}},
-            [rnd("a"), rnd("b", "green")],
-            [],
-        )["strict_first_pass"],
+        pr_report(pr_row(4), [rnd("a"), rnd("b", "green")], [])["strict_first_pass"],
         True,
     )
     check(
