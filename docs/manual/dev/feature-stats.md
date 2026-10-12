@@ -48,7 +48,7 @@ covers:
 
 ## 数字从哪来 {#numbers}
 
-这一片只读功能**已经在写**的表，不为页面新增任何跟踪。问芝士那份报告读的是 `docs_questions`（一次提问一行：结果、两个方向的 token、耗时、提问时所在页）和 `docs_visits`（[访问记录](#visits)）；按天的分桶用 `platform_stats/windows.py` 的 `utc_day_window`、`utc_day` 和 `dense_series`——按 UTC 天切，没人用的那天补 0，曲线才不断。
+这一片只读功能**已经在写**的表，不为页面新增任何跟踪。问芝士那份报告读的是 `docs_questions`（一次提问一行：结果、两个方向的 token、耗时、提问时所在页）和 `docs_visits`（[访问记录](#visits)）；按天的分桶用 `day_windows.py` 的 `utc_day_window`、`utc_day` 和 `dense_series`——按 UTC 天切，没人用的那天补 0，曲线才不断。
 
 两条规矩每页都要守：
 
@@ -59,7 +59,7 @@ covers:
 
 ## 花费是估算，页面上写着 {#spend}
 
-花费按网关的价目表乘这一页记的 token 算出来（`pricing.py`），**不是账单数字**，页面上标着「估算」。
+花费按网关的价目表乘这一页记的 token 算出来（`usage/pricing.py`），**不是账单数字**，页面上标着「估算」。
 
 为什么不用真花费：网关确实存着真数，但按窗口取只能靠 `/spend/logs`——那是全表扫描，实测一次 24–102 秒；`/key/info` 很便宜，却答的是另一个问题（一辈子累计，没有窗口可除）。所以用估算：缓存折扣上会偏，量级上是对的，而且是瞬时的。
 

@@ -27,8 +27,8 @@ from app.core.config import settings
 from app.domain.docs_site import access, assistant, retrieval, site
 from app.domain.docs_site.limits import AskLimits
 from app.domain.docs_site.models import DocsQuestion, ServiceCredential
-from app.domain.feature_stats import pricing
 from app.domain.team.models import Team
+from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from tests.integration.conftest import (
