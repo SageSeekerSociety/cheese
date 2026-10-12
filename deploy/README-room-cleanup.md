@@ -27,7 +27,7 @@ readable only by the host user. A link in the tree is stored as a link and
 never followed. Other devices keep no transcripts.
 
 The operation then waits in the `retained` state. Thirty days after the home was
-removed (`TRANSCRIPT_RETENTION` in `backend/app/domain/topic/retire.py`), the same
+removed (`TRANSCRIPT_RETENTION` in `backend/app/domain/room_cleanup/retire.py`), the same
 timer deletes the archive and the operation becomes `complete`. The copy exists for
 debugging what an agent did after the fact; nothing reads it. Handing the work on
 does not need it: the room's chat and its action timeline stay with the room.

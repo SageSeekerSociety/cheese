@@ -9,11 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import OAuthComplete from './OAuthComplete.vue'
 
+import { ApiError } from '@/api/http'
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: {
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
     getOAuthState: vi.fn(),
     getRegistrationConfig: vi.fn(),
     sendOAuthEmailCode: vi.fn(),
@@ -22,15 +23,13 @@ vi.mock('@/network/api/users', () => ({
     bindOAuthToUser: vi.fn(),
   },
 }))
-vi.mock('@/network/api/legal', () => ({
+vi.mock('@/api/legal', () => ({
   LegalApi: {
     listDocuments: vi.fn().mockResolvedValue({
-      data: {
-        documents: [
-          { document: 'terms', version: '1.0' },
-          { document: 'privacy', version: '1.0' },
-        ],
-      },
+      documents: [
+        { document: 'terms', version: '1.0' },
+        { document: 'privacy', version: '1.0' },
+      ],
     }),
   },
 }))
@@ -40,12 +39,10 @@ const blank = { template: '<div />' }
 
 function state(userInfo: Record<string, string | null>) {
   return {
-    data: {
-      providerId: 'github',
-      userInfo: { id: 'gh-1', name: 'Ada', preferredUsername: 'ada', email: null, ...userInfo },
-      suggestedUsername: 'ada_lovelace',
-      suggestedNickname: 'Ada',
-    },
+    providerId: 'github',
+    userInfo: { id: 'gh-1', name: 'Ada', preferredUsername: 'ada', email: null, ...userInfo },
+    suggestedUsername: 'ada_lovelace',
+    suggestedNickname: 'Ada',
   }
 }
 
@@ -53,8 +50,8 @@ beforeEach(() => {
   vi.clearAllMocks()
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
-  vi.mocked(UserApi.getRegistrationConfig).mockResolvedValue({ data: { requireInviteCode: false } } as never)
-  vi.mocked(UserApi.sendOAuthEmailCode).mockResolvedValue({} as never)
+  vi.mocked(UserAuthApi.getRegistrationConfig).mockResolvedValue({ requireInviteCode: false } as never)
+  vi.mocked(UserAuthApi.sendOAuthEmailCode).mockResolvedValue({} as never)
 })
 afterEach(() => {
   cleanup()
@@ -62,7 +59,7 @@ afterEach(() => {
 })
 
 async function open(userInfo: Record<string, string | null> = {}) {
-  vi.mocked(UserApi.getOAuthState).mockResolvedValue(state(userInfo) as never)
+  vi.mocked(UserAuthApi.getOAuthState).mockResolvedValue(state(userInfo) as never)
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -103,26 +100,26 @@ const emailField = (view: ReturnType<typeof render>) => view.getByLabelText('Ema
 
 describe('the email of a new third-party account', () => {
   it('starts from the provider address and is proven with a code before the account is created', async () => {
-    vi.mocked(UserApi.verifyOAuthEmail).mockResolvedValue({ data: { stateToken: 'token-2' } } as never)
+    vi.mocked(UserAuthApi.verifyOAuthEmail).mockResolvedValue({ stateToken: 'token-2' } as never)
     const { view, router } = await open({ email: 'ada@school.edu' })
     expect(emailField(view).value).toBe('ada@school.edu')
 
     await createAccount(view)
 
     await waitFor(() =>
-      expect(UserApi.sendOAuthEmailCode).toHaveBeenCalledWith({ stateToken: 'token-1', email: 'ada@school.edu' })
+      expect(UserAuthApi.sendOAuthEmailCode).toHaveBeenCalledWith({ stateToken: 'token-1', email: 'ada@school.edu' })
     )
     await view.findByText('We sent a code to ada@school.edu')
-    expect(UserApi.createUserFromOAuth).not.toHaveBeenCalled()
+    expect(UserAuthApi.createUserFromOAuth).not.toHaveBeenCalled()
 
     await enterCode(view)
 
     await waitFor(() =>
-      expect(UserApi.createUserFromOAuth).toHaveBeenCalledWith(
+      expect(UserAuthApi.createUserFromOAuth).toHaveBeenCalledWith(
         expect.objectContaining({ stateToken: 'token-2', username: 'ada_lovelace', nickname: 'Ada' })
       )
     )
-    expect(UserApi.verifyOAuthEmail).toHaveBeenCalledWith({
+    expect(UserAuthApi.verifyOAuthEmail).toHaveBeenCalledWith({
       stateToken: 'token-1',
       email: 'ada@school.edu',
       code: '123456',
@@ -137,25 +134,27 @@ describe('the email of a new third-party account', () => {
 
     await submitForm(view)
     await view.findByText('Invalid email address')
-    expect(UserApi.sendOAuthEmailCode).not.toHaveBeenCalled()
+    expect(UserAuthApi.sendOAuthEmailCode).not.toHaveBeenCalled()
 
     await fireEvent.update(emailField(view), 'ada@example.com')
     await createAccount(view)
 
     await waitFor(() =>
-      expect(UserApi.sendOAuthEmailCode).toHaveBeenCalledWith({ stateToken: 'token-1', email: 'ada@example.com' })
+      expect(UserAuthApi.sendOAuthEmailCode).toHaveBeenCalledWith({ stateToken: 'token-1', email: 'ada@example.com' })
     )
   })
 
   it('stays on the code step after a wrong code, and creates nothing', async () => {
-    vi.mocked(UserApi.verifyOAuthEmail).mockRejectedValue({ error: { data: { reason: 'invalid_email_code' } } })
+    vi.mocked(UserAuthApi.verifyOAuthEmail).mockRejectedValue(
+      new ApiError(422, 'Invalid or expired code', undefined, undefined, undefined, { reason: 'invalid_email_code' })
+    )
     const { view } = await open({ email: 'ada@school.edu' })
     await createAccount(view)
 
     await enterCode(view)
 
     await view.findByText('The code is wrong or has expired.')
-    expect(UserApi.createUserFromOAuth).not.toHaveBeenCalled()
+    expect(UserAuthApi.createUserFromOAuth).not.toHaveBeenCalled()
   })
 
   it('can be changed from the code step', async () => {
@@ -171,7 +170,7 @@ describe('the email of a new third-party account', () => {
 
   it('belonging to an existing account leads to proving that account instead', async () => {
     const ownership = { type: 'password', email: 'ada_old', sessionId: 'pending-1' }
-    vi.mocked(UserApi.verifyOAuthEmail).mockResolvedValue({ data: { ownership } } as never)
+    vi.mocked(UserAuthApi.verifyOAuthEmail).mockResolvedValue({ ownership } as never)
     const { view, router } = await open({ email: 'ada@school.edu' })
     await createAccount(view)
 
@@ -179,7 +178,7 @@ describe('the email of a new third-party account', () => {
 
     await waitFor(() => expect(router.currentRoute.value.name).toBe('OAuthVerify'))
     expect(router.currentRoute.value.query).toEqual(ownership)
-    expect(UserApi.createUserFromOAuth).not.toHaveBeenCalled()
+    expect(UserAuthApi.createUserFromOAuth).not.toHaveBeenCalled()
   })
 
   it('once proven, is not asked for again after a reload', async () => {
@@ -188,8 +187,8 @@ describe('the email of a new third-party account', () => {
     await createAccount(view)
 
     await waitFor(() =>
-      expect(UserApi.createUserFromOAuth).toHaveBeenCalledWith(expect.objectContaining({ stateToken: 'token-1' }))
+      expect(UserAuthApi.createUserFromOAuth).toHaveBeenCalledWith(expect.objectContaining({ stateToken: 'token-1' }))
     )
-    expect(UserApi.sendOAuthEmailCode).not.toHaveBeenCalled()
+    expect(UserAuthApi.sendOAuthEmailCode).not.toHaveBeenCalled()
   })
 })

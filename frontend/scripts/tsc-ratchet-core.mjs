@@ -11,6 +11,30 @@
 const ERROR_LINE = /^(\S[^(]*)\((\d+),(\d+)\): error (TS\d+):/
 
 /**
+ * The anchor line of every diagnostic, kept whole (`{ file, line, column, code,
+ * message }`), so a failure can print the `file(line,col): error TSxxxx:` line
+ * vue-tsc printed instead of a bare count. The message is whatever follows the
+ * prefix `ERROR_LINE` already matches — the counting regex is unchanged.
+ * @param {string} text
+ * @returns {{file: string, line: number, column: number, code: string, message: string}[]}
+ */
+export function parseTscDiagnostics(text) {
+  const diagnostics = []
+  for (const raw of String(text).split(/\r?\n/)) {
+    const m = raw.match(ERROR_LINE)
+    if (!m) continue
+    diagnostics.push({
+      file: m[1].replaceAll('\\', '/').trim(),
+      line: Number(m[2]),
+      column: Number(m[3]),
+      code: m[4],
+      message: raw.slice(m[0].length).trim(),
+    })
+  }
+  return diagnostics
+}
+
+/**
  * Count `error TSxxxx` diagnostics per file in raw vue-tsc/tsc output.
  * Continuation lines (indented explanation) are ignored — only the anchor line
  * of each diagnostic starts at column 0 with `file(line,col): error TSxxxx:`.
@@ -78,18 +102,37 @@ export function tightenedBaseline(baseline, current) {
   return Object.fromEntries(Object.entries(next).sort(([a], [b]) => a.localeCompare(b)))
 }
 
-/** @param {ReturnType<typeof compare>} result */
-export function formatReport(result) {
+/**
+ * The human half: what went wrong, where, and what to do about it.
+ * `diagnostics` is `parseTscDiagnostics(output)`; its lines are printed for the
+ * files that regressed. The per-file count is still what decides (see `compare`).
+ * @param {ReturnType<typeof compare>} result
+ * @param {Array<{file: string, line: number, column: number, code: string, message: string}>} [diagnostics]
+ */
+export function formatReport(result, diagnostics = []) {
   const lines = []
   if (result.regressions.length) {
     lines.push('New type errors (this is what the ratchet blocks):')
     for (const { file, base, now } of result.regressions) {
       lines.push(`  ${file}: ${base} -> ${now}`)
     }
+    const regressed = new Set(result.regressions.map((r) => r.file))
+    const shown = diagnostics.filter((d) => regressed.has(d.file))
+    if (shown.length) {
+      lines.push('')
+      lines.push('The errors vue-tsc reported, at their file(line,col) (old and new')
+      lines.push('alike — the count is per file, so the old ones are listed too):')
+      for (const { file, line, column, code, message } of shown) {
+        lines.push(`  ${file}(${line},${column}): error ${code}: ${message}`)
+      }
+    }
     lines.push('')
-    lines.push('Fix them, or — if you genuinely reduced errors elsewhere and this')
-    lines.push('file is unrelated — check whether you edited a file that was already')
-    lines.push('failing. The baseline never rises; that is the point.')
+    lines.push('Fix each one at that file(line,col). `pnpm run typecheck:raw` (vue-tsc')
+    lines.push('--noEmit) reprints the same diagnostic with its full explanation. The')
+    lines.push('ratchet blocks only NEW errors and the baseline never rises: if you')
+    lines.push('genuinely reduced errors elsewhere and this file is unrelated, check')
+    lines.push('whether you edited a file that was already failing.')
+    lines.push('Chapter: docs/manual/dev/frontend.md (质量闸 / gates).')
   }
   if (result.improvements.length) {
     lines.push(result.regressions.length ? '' : 'Type errors went down — tighten the baseline:')

@@ -32,7 +32,6 @@
   },
   "allSpaces": "All spaces",
   "emptyTitle": "No {project} yet",
-  "firstProjectName": "{name}'s project",
   "joinAction": "Join with a code",
   "joinBody": "The space's creator provides the invite code",
   "joinCancel": "Cancel",
@@ -317,7 +316,8 @@
       "muted": "Muted",
       "markAllRead": "Mark all as read",
       "markAllReadFailed": "Couldn't mark everything as read",
-      "notifyFailed": "Couldn't save the notification setting"
+      "notifyFailed": "Couldn't save the notification setting",
+      "allTasks": "All tasks"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -369,7 +369,8 @@
       "voidHint": "Voiding ends this review: nothing is merged and nothing is sent back for changes. It can be submitted for review again later",
       "voidReason": "Reason for voiding (optional)",
       "conflictsWithMain": "Conflicts with the main branch",
-      "checkRunning": "Running"
+      "checkRunning": "Running",
+      "checkCancelled": "Cancelled"
     },
     "retry": {
       "action": "Retry",
@@ -461,7 +462,6 @@
       "cancelReply": "Cancel reply",
       "removeAttachment": "Remove {name}",
       "summon": "Hand to {name}",
-      "summonShort": "Hand off",
       "summonOn": "{'@'}{name} is mentioned. Click to remove",
       "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)",
       "keysHint": "Enter to send, Shift+Enter for a new line, ⌘/Ctrl+Enter to send and hand to {name}. You can paste images",
@@ -522,7 +522,6 @@
       "sourceUnavailable": "Couldn't open this task. View another source",
       "noRepo": "No code repository",
       "switchToCommitted": "Switch to the committed version",
-      "missingInTask": "{path} is not in this task",
       "conflict": "This file changed while you were editing. Saving now overwrites those changes",
       "reloadLatest": "Load the latest version",
       "saveAnyway": "Save anyway",
@@ -692,6 +691,7 @@
       "source": {
         "baseline": "Original",
         "upload": "Upload",
+        "template": "New from a template",
         "ai": "Edited by an AI teammate",
         "editor": "Saved from the online editor",
         "restore": "Restore",
@@ -791,7 +791,8 @@
         "math": "Formula",
         "chart": "Chart",
         "diagram": "Diagram",
-        "status": "Status tag"
+        "status": "Status tag",
+        "canvas": "Canvas"
       },
       "selectionToolbar": "Selection actions",
       "copy": "Copy",
@@ -917,6 +918,31 @@
           "video": "Video"
         }
       },
+      "canvas": {
+        "untitled": "Untitled canvas",
+        "title": "Canvas title",
+        "about": "What the canvas shows",
+        "full": "Full screen",
+        "exitFull": "Exit full screen",
+        "saveFailed": "Couldn't save",
+        "loadFailed": "Can't read this canvas",
+        "notMade": "No canvas yet",
+        "make": "New canvas",
+        "elsewhere": "The canvas isn't shown here",
+        "height": "Drag to resize",
+        "empty": "No cards yet",
+        "addCard": "Add card",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out",
+        "fit": "Fit to view",
+        "openTask": "Open task",
+        "taskHidden": "You can't see this task",
+        "cardText": "Card text",
+        "emptyCard": "Empty card",
+        "removeCard": "Delete card",
+        "lineLabel": "Line label",
+        "removeLine": "Delete line"
+      },
       "historyView": "Show",
       "historyDiff": "Compare with previous",
       "historyFull": "Full text",
@@ -986,7 +1012,9 @@
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",
-      "topicFallback": "Channel",
+      "refThread": "Thread: {title}",
+      "refMissing": "missing reference",
+      "refMissingHint": "The channel, task or thread referenced here doesn't exist, or you can't see it",
       "timelineLabel": "Conversation",
       "liveNew": "{name}: {text}",
       "messageLabel": "{name}, {time}: {text}",
@@ -1216,6 +1244,7 @@
       "openLink": "Open",
       "checksFailed": "{n} checks failed",
       "checksRunning": "{n} checks running",
+      "checksCancelled": "{n} checks cancelled",
       "checksPassed": "{n} checks passed",
       "noApprovals": "No approvals yet",
       "voidTitle": "Void this review?",
@@ -1396,7 +1425,11 @@
     "moreMembers": "+{count}",
     "taskNeedsYou": "Needs you",
     "taskRunning": "Running",
-    "allTasks": "All tasks"
+    "allTasks": "All tasks",
+    "moreTasks": "Show 1 more | Show {count} more",
+    "fewerTasks": "Show fewer",
+    "tasksLoading": "Loading…",
+    "tasksFailed": "Couldn't load them. Click to retry"
   },
   "members": {
     "leave": "Leave project",
@@ -2073,7 +2106,10 @@
   },
   "image": {
     "alt": "Image",
-    "failed": "Couldn't load the image"
+    "close": "Close",
+    "failed": "Couldn't load the image",
+    "open": "View full size: {name}",
+    "zoomHint": "Scroll or pinch to zoom, drag to move"
   },
   "agentAvatar": {
     "defaultName": "Cheese",
@@ -2117,8 +2153,6 @@
     "leaveCollaboration": "Leave",
     "start": "Start",
     "startFailed": "Couldn't start. Try again later",
-    "reviewer": "Reviewer",
-    "reviewerNone": "Choose a reviewer",
     "startedLine": "{who} started {when}",
     "compare": "Compare with the start",
     "compareBack": "Back to the document",
@@ -2130,18 +2164,24 @@
     "checklist": "{name}'s checklist for this turn",
     "opening": {
       "drafting": "{name} is drafting…",
-      "draftingWhat": "Turning the discussion into this task's doc: goal, current state, decided, open",
+      "draftingWhat": "Turning the discussion into this task's doc",
       "waiting": "Not started yet; continues once the environment is connected",
       "failed": "{name} could not draft the doc",
       "failedWhy": "This turn did not finish",
       "retry": "Retry",
       "writeMyself": "Write it myself"
     },
+    "source": {
+      "channel": "From a message in #{title}",
+      "thread": "From a thread in #{title}",
+      "task": "From the task “{title}”",
+      "quote": "{name}: {text}",
+      "byPerson": "Created by {name}, not from a conversation",
+      "byAgent": "Created by {name}; which message it came from was not recorded",
+      "unknown": "Where this task came from was not recorded"
+    },
     "related": {
       "title": "Related",
-      "fromThread": "Original discussion · {count} replies in the thread",
-      "fromChannel": "Original discussion · channel",
-      "quote": "{name}: {text}",
       "untitled": "Untitled doc",
       "by": "{name}"
     },
@@ -2170,12 +2210,13 @@
   },
   "channel": {
     "overview": {
-      "project": "Project overview",
+      "project": "Project goals",
       "projectNote": "{name} reads this in every conversation",
       "expand": "Show all",
       "collapse": "Show less",
-      "noProject": "No project overview yet",
-      "writeProject": "Write one",
+      "noProject": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+      "writeProject": "Write project goals",
+      "editProject": "Edit project goals",
       "description": "About this channel",
       "edit": "Edit",
       "save": "Save",
@@ -2257,12 +2298,12 @@
     "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived"
   },
   "overview": {
-    "document": "Project overview",
-    "edit": "Edit",
+    "document": "Project goals",
+    "edit": "Edit project goals",
     "expand": "Show all",
     "collapse": "Collapse",
-    "noDocument": "No project overview yet",
-    "write": "Write one",
+    "noDocument": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+    "write": "Write project goals",
     "progress": "Recent progress",
     "progressFailed": "Unable to load recent progress",
     "noProgress": "No progress in the last two weeks",

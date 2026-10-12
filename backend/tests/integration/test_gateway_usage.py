@@ -899,3 +899,139 @@ async def test_a_route_marked_without_mid_conversation_system_launches_without_i
     assert (
         marked["env"]["CHEESE_AGENT_CONFIG"] != unmarked["env"]["CHEESE_AGENT_CONFIG"]
     )
+
+
+@pytest.mark.anyio
+async def test_cache_reads_the_gateway_reports_reach_the_ledger_row(
+    business_db_factory, tmp_path
+):
+    """The gateway prices a cached prompt cheaper and says how much of it was
+    read from cache; the row the turn lands keeps that, so the cache-hit share
+    of gateway spend can be read off the ledger like any other route's."""
+    import hashlib
+
+    import httpx
+    from sqlalchemy import select
+
+    from app.domain.usage.models import ResourceUsage
+
+    def daily_activity(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/key/generate":
+            return httpx.Response(200, json={"key": "sk-virtual"})
+        if request.url.path != "/user/daily/activity":
+            return httpx.Response(200, json={})
+        mine = hashlib.sha256(b"sk-virtual").hexdigest()
+        metrics = {
+            "prompt_tokens": 1_170_000,
+            "completion_tokens": 4_000,
+            "spend": 2.02,
+            "cache_read_input_tokens": 1_080_000,
+            "cache_creation_input_tokens": 30_000,
+        }
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "date": request.url.params["start_date"],
+                        "breakdown": {
+                            "models": {
+                                "gpt-6-astra": {
+                                    "api_key_breakdown": {mine: {"metrics": metrics}}
+                                }
+                            }
+                        },
+                    }
+                ]
+            },
+        )
+
+    gateway = gw.LlmGateway(
+        "http://gw", "mk", transport=httpx.MockTransport(daily_activity)
+    )
+    svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, gateway)
+    await svc.project_gateway_key(pid)
+
+    await svc.charge_turn_spend(pid, tid, uuid.uuid4())
+
+    async with factory() as session:
+        rows = list(
+            await session.scalars(
+                select(ResourceUsage).where(ResourceUsage.project_id == pid)
+            )
+        )
+    assert [
+        (r.model, r.route, r.input_tokens, r.cache_read_tokens, r.cache_write_tokens)
+        for r in rows
+    ] == [("gpt-6-astra", "gateway", 1_170_000, 1_080_000, 30_000)]
+
+
+@pytest.mark.anyio
+async def test_the_dashboard_counts_every_call_the_gateway_answered(
+    business_db_factory, tmp_path
+):
+    """The platform dashboard's count of calls covers gateway traffic call by
+    call: a drain that lands many calls as one ledger row still counts each of
+    them, and a call the gateway already reported is not counted again by the
+    next drain."""
+    import hashlib
+    from datetime import UTC, datetime, timedelta
+
+    import httpx
+
+    from app.domain.usage.repositories import UsageRepository
+
+    answered = {"calls": 37, "prompt_tokens": 9_000, "spend": 0.5}
+
+    def daily_activity(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/key/generate":
+            return httpx.Response(200, json={"key": "sk-virtual"})
+        if request.url.path != "/user/daily/activity":
+            return httpx.Response(200, json={})
+        mine = hashlib.sha256(b"sk-virtual").hexdigest()
+        metrics = {
+            "prompt_tokens": answered["prompt_tokens"],
+            "completion_tokens": 0,
+            "spend": answered["spend"],
+            "successful_requests": answered["calls"],
+            "failed_requests": 2,
+            "api_requests": answered["calls"] + 2,
+        }
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "date": request.url.params["start_date"],
+                        "breakdown": {
+                            "models": {
+                                "gpt-6-astra": {
+                                    "api_key_breakdown": {mine: {"metrics": metrics}}
+                                }
+                            }
+                        },
+                    }
+                ]
+            },
+        )
+
+    gateway = gw.LlmGateway(
+        "http://gw", "mk", transport=httpx.MockTransport(daily_activity)
+    )
+    svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, gateway)
+    await svc.project_gateway_key(pid)
+    now = datetime.now(UTC)
+
+    async def dashboard_calls() -> int:
+        async with factory() as session:
+            totals = await UsageRepository(session).platform_totals(
+                since=now - timedelta(days=1), until=now + timedelta(days=1)
+            )
+        return totals["calls"]
+
+    await svc.charge_turn_spend(pid, tid, uuid.uuid4())
+    assert await dashboard_calls() == 37
+
+    answered.update(calls=40, prompt_tokens=9_900, spend=0.55)
+    await svc.charge_turn_spend(pid, tid, uuid.uuid4())
+    assert await dashboard_calls() == 40

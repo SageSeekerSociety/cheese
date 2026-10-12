@@ -44,6 +44,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
+from app.domain.machine.infra_records import keep_refusal
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
@@ -329,7 +330,7 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
 async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     """One best-effort checkpoint (``checkpoint``) of each of the room's
     sessions on its machine, all at once, before the room's cleanup stops them
-    (``topic.retire``, which is handed this by whoever starts its sweep). The
+    (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
     cleanup goes on whatever they answer: what a lost checkpoint loses is held
     by the snapshot of the session's last turn."""
     rows = list(
@@ -617,6 +618,12 @@ async def switch_environment(
 # operation deadline. It is kept well inside the 300s the HTTP front gives any
 # response.
 PREPARING_WAIT_S = 50.0
+# How long a request that will not wait for a machine being prepared may still
+# take to be answered: one attempt at its hands, which a ready machine answers
+# well inside this (dev, 2026-10: under 4 s). Past it the request answers that
+# the machine is being prepared; holding it for the waiting bound instead kept
+# a session that asked not to wait from starting for 50 s.
+ANSWER_S = 10.0
 # How often a waiting request looks at the signal it waits on. Each look is
 # one row read and the hub's in-memory online set.
 PREPARING_POLL_S = 1.0
@@ -857,6 +864,18 @@ async def _attempt(
                 whole_machine=whole_machine,
             )
         except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
+            if not isinstance(refused, ComputeRefused):
+                await keep_refusal(
+                    db,
+                    session_id=session_id,
+                    conversation_id=row.conversation_id,
+                    reason=(
+                        "pool_full"
+                        if isinstance(refused, CloudPoolFull)
+                        else "provider_failing"
+                    ),
+                    said=refused.args[0],
+                )
             await db.commit()
             return {"unavailable": str(refused)}
         except SandboxRemoving:

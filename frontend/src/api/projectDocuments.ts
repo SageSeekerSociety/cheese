@@ -2,9 +2,10 @@
 // 但资料库的搜索找得到它，可以另存一份进来。
 import type { DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
+import { t } from '../i18n'
 import { rememberNumbered } from '../lib/addresses'
 
-import { request } from './http'
+import { authHeaders, BASE, request } from './http'
 
 export type { DocumentHit, DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
@@ -51,6 +52,19 @@ export function renameDocument(documentId: string, title: string): Promise<Proje
 
 export function deleteDocument(documentId: string): Promise<unknown> {
   return request(one(documentId), { method: 'DELETE' })
+}
+
+/** 文档里引用的一张图（`library/<名字>`，或任务文档所在频道里的文件），取回来做成
+ *  `<img>` 能用的 object URL。读得了这份文档的人才拿得到。
+ *
+ *  先 fetch 再转 URL，是因为只有 fetch 带得上登录凭证，`<img src>` 发出的请求是匿名的。
+ *  调用方在不再需要时 `URL.revokeObjectURL`。 */
+export async function documentImageUrl(documentId: string, path: string): Promise<string> {
+  const res = await fetch(`${BASE}${one(documentId)}/image?path=${encodeURIComponent(path)}`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw new Error(t('global.request.imageFailed', { status: res.status }))
+  return URL.createObjectURL(await res.blob())
 }
 
 /** 这份文档最后存下的正文；还没写过字时是空的。 */

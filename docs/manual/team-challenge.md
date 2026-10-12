@@ -141,7 +141,7 @@ parts:
     text: 报名已提交，项目已准备好
     at: 4
   - kind: doc
-    headings: 项目总览 | 赛题要求
+    headings: 项目目标 | 赛题要求
     at: 4
 ```
 :::

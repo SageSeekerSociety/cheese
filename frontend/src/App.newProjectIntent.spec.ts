@@ -41,10 +41,10 @@ vi.mock('@/api', async (original) => ({
 // `App.navigation.spec.ts` / `App.keepAlive.spec.ts` 同一处理。
 vi.mock('@/components/common/VersionBadge.vue', () => ({ default: { template: '<span />' } }))
 // 对话框里的「所属团队」要有一个选项，创建按钮才不是灰的。
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: {
     getMyTeams: vi.fn(async () => ({
-      data: { teams: [{ id: 7, name: '个人', personal: true }] },
+      teams: [{ id: 7, name: '个人', personal: true }],
     })),
   },
 }))

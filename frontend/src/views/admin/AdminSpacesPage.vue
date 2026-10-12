@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminSpacesPageView from './AdminSpacesPageView.vue'
 
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 // 管理后台的「空间申请」（`/admin/spaces`）：待平台管理员过目的开版申请。
 // 取数与写在这一半，画法在 `AdminSpacesPageView.vue`。
@@ -49,7 +49,7 @@ async function load() {
   loadError.value = null
   try {
     // 多要一条：见文件开头第 5 条。多的那一条只决定下一页按钮亮不亮。
-    const { items: rows } = (await SpacesApi.reviews(status.value, offset.value, PAGE + 1)).data
+    const { items: rows } = await SpacesApi.reviews(status.value, offset.value, PAGE + 1)
     hasMore.value = rows.length > PAGE
     items.value = hasMore.value ? rows.slice(0, PAGE) : rows
   } catch (e) {

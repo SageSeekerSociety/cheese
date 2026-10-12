@@ -16,6 +16,7 @@ import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
+import type { CanvasData } from '../../types/canvas'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -61,7 +62,7 @@ const props = withDefaults(
     mentionPeople?: MentionPoolEntry[]
     /** 项目话题表：正文里的 `<#id>` chip 靠它认名字。 */
     topicList?: Topic[]
-    /** 画在一整页里（项目文档的章程）：页头已经说了这是什么，不再画大标题和总览自动区。 */
+    /** 画在一整页里（项目文档的项目目标）：页头已经说了这是什么，不再画大标题和总览自动区。 */
     bare?: boolean
     /** 任务的实况文档：界面上不给它固定标题，正文自己说。 */
     untitled?: boolean
@@ -99,8 +100,10 @@ const props = withDefaults(
     fetchSuggestionReasons?: () => void
     /** 取一份最新的节点树（闪某一段要它）。 */
     fetchDocNodes: () => Promise<Block[]>
-    /** 图片 src 的显示期解析。 */
-    imageSrc: (src: string) => string
+    /** 文档里引用的一张图拿什么画。 */
+    imageSrc: (src: string) => Promise<string>
+    /** 文档里的画布拿什么读写。 */
+    canvas?: CanvasData | null
     // ---- 动作 ----
     toggleEditable: () => void
     setError: (message: string | null) => void
@@ -149,6 +152,7 @@ const props = withDefaults(
     avatarOf: () => '',
     loadVersions: undefined,
     restoreVersion: undefined,
+    canvas: null,
   }
 )
 
@@ -513,6 +517,7 @@ defineExpose({
                 :active-thread="openId"
                 :fetch-doc-nodes="fetchDocNodes"
                 :image-src="imageSrc"
+                :canvas="canvas"
                 :pulse="pulse"
                 :scroll-tick="scrollTick"
                 :agent-name="agentName"

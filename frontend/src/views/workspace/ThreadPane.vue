@@ -16,10 +16,10 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useMessageFold } from '@/composables/useMessageFold'
 
 import { ApiError } from '@/api'
-import { getThread } from '@/api/threads'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
@@ -32,11 +32,12 @@ import { t } from '@/i18n'
 import { isAgentBlock } from '@/lib/authorship'
 import { replySnippet } from '@/lib/blockDisplay'
 import { taskLine } from '@/lib/channelTasks'
+import { clockTime } from '@/lib/dateText'
 import { renderPlain } from '@/lib/renderMessage'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
-import { roomTasksQuery } from '@/query/room'
+import { roomTasksQuery, threadQuery } from '@/query/room'
 import { currentUserName } from '@/services/account'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -50,6 +51,8 @@ const props = defineProps<{
   memberNames: Record<string, string>
   /** 整页（手机）：没有关闭键，返回在顶栏。 */
   page?: boolean
+  /** 地址点名的支线里那一条（`?block=`）：打开时停在它上面。 */
+  focusBlock?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -65,30 +68,28 @@ const store = useWorkspaceStore()
 const viewer = computed(() => currentUserName.value ?? myHandle())
 // 正在看哪一轮的过程；null 是在看支线本身。
 const processTurn = ref<string | null>(null)
-const thread = ref<Thread | null>(null)
-const error = ref<string | null>(null)
 const busy = ref(false)
 
-async function load() {
-  const id = props.threadId
-  error.value = null
-  try {
-    const got = await getThread(id)
-    if (props.threadId === id) thread.value = got
-  } catch (e) {
-    if (props.threadId !== id) return
-    thread.value = null
-    error.value =
-      e instanceof ApiError && e.status === 404 ? t('work.room.thread.notFound') : t('work.room.thread.loadFailed')
-  }
-}
+// 这一条支线，和它挂着的那条消息（页头画的就是它）。第 2 个参数交给缓存：手上已经有
+// 那块消息（`query/room` 的 `listedThread`，从频道那段对话的窗口里找）时，页头立刻
+// 就有 —— 以前它只存在这个组件的一个 ref 里，谁都没存，所以每次打开都要等读回来。
+const threadRead = useQuery(
+  computed(() => threadQuery(props.threadId)),
+  queryClient
+)
+const thread = computed<Thread | null>(() => threadRead.data.value ?? null)
+const error = computed<string | null>(() => {
+  const failed = threadRead.error.value
+  if (!failed) return null
+  return failed instanceof ApiError && failed.status === 404
+    ? t('work.room.thread.notFound')
+    : t('work.room.thread.loadFailed')
+})
 // 打开就算读过：支线的未读只对说过话的人算，读过了概览里那个点就该灭。
 watch(
   () => props.threadId,
   (id) => {
-    thread.value = null
     processTurn.value = null
-    void load()
     store.markRead(id)
   },
   { immediate: true }
@@ -140,9 +141,7 @@ const subtitle = computed(() => {
     ? `${head} · ${t('work.room.thread.lastReply', { name: nameOf(root.value.author), text: replySnippet(root.value, refs.value, 40) })}`
     : head
 })
-const rootTime = computed(() =>
-  root.value ? new Date(root.value.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''
-)
+const rootTime = computed(() => (root.value ? clockTime(new Date(root.value.created_at).getTime()) : ''))
 const tasks = computed(() => {
   const id = root.value?.id
   return madeHere.value
@@ -160,7 +159,12 @@ function toTask() {
 </script>
 
 <template>
-  <section class="thread-pane" :aria-label="t('work.room.thread.title')" data-testid="thread-pane">
+  <section
+    v-guide-anchor="'thread-pane'"
+    class="thread-pane"
+    :aria-label="t('work.room.thread.title')"
+    data-testid="thread-pane"
+  >
     <header class="thread-pane__head">
       <div class="thread-pane__titles">
         <h2 class="thread-pane__title t-title">{{ t('work.room.thread.title') }}</h2>
@@ -186,6 +190,7 @@ function toTask() {
         class="thread-pane__chat"
         :topic="room"
         :conversation-id="threadId"
+        :focus-block="focusBlock ?? null"
         hide-header
         show-composer
         :composer-closed="room.status === 'archived' ? t('work.channel.archivedNotice') : null"

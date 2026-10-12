@@ -19,8 +19,8 @@ import { useRoute } from 'vue-router'
 
 import OAuthVerifyView from './OAuthVerifyView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
 const route = useRoute()
 
@@ -55,7 +55,7 @@ const verifyWithPassword = async (password: string) => {
   try {
     if (stateToken.value) {
       // 新的决策流程 - 使用 stateToken，直接提交表单
-      UserApi.bindOAuthToUser({
+      UserAuthApi.bindOAuthToUser({
         stateToken: stateToken.value,
         username: email.value,
         password,
@@ -63,7 +63,7 @@ const verifyWithPassword = async (password: string) => {
       // 后端会重定向，不需要处理响应
     } else {
       // 传统强制绑定流程 - 使用 sessionId
-      await UserApi.verifyOAuth({
+      await UserAuthApi.verifyOAuth({
         sessionId: sessionId.value,
         password,
       })

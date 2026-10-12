@@ -25,8 +25,8 @@ async function openFirstTopic(page: Page) {
 }
 
 // 这个房间的 AI 队友叫什么，从按钮自己的标签上读，不写死「芝士」：队友是建话题时
-// 选的，名字跟着它走。窄屏上这个 span 被 CSS 藏起来，所以读 textContent 而不是
-// innerText。
+// 选的，名字跟着它走。读 textContent 而不是 innerText：名字窄到装不下时是 CSS 截断
+// 的，innerText 在一些浏览器上会跟着给出省略号，而这里要的是原文。
 // 名字要拼进正则里，先转义（队友名字是人取的，不保证不含正则元字符）。
 function escapeRe(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -173,14 +173,14 @@ test.describe('把消息交给芝士', () => {
     await expect(sent.locator(`.mention[data-handle="${seat!.member_handle}"]`)).toBeVisible();
   });
 
-  // 手机宽度上按钮收掉名字，只留「交给」。这条不是审美，是排版会不会塌：那一行右边
-  // 还站着发送，按钮带着名字的时候它们挤不下就要换行。
+  // 手机宽度上「交给谁」照样写全。名字比「交给」两个字长，所以这条测的是把名字放
+  // 回去之后那一行还站不站得住：按钮不被挤出屏幕、不和发送叠在一起、名字不被截断。
   //
   // 手机宽度必须是**打开就这么宽**，不能把桌面窗口拖窄了测：工作台的分栏宽度是挂载
   // 时算出来的，拖窄之后整个输入框会塌成 0 宽（和这颗按钮无关——600px 上标签还好好
   // 显示着就已经塌了）。照那条路走，测到的是另一个毛病。所以先把视口调好再进这个
   // 话题；走 URL 是因为手机上左边那条项目栏是收起来的，点不进去。
-  test('手机宽度上按钮收掉名字，输入框那一行不换行', async ({ page }) => {
+  test('手机宽度上名字还在，输入框那一行不换行', async ({ page }) => {
     const projects = (await api(page, 'get', '/projects')).data as { id: string }[];
     const project = projects[0];
     expect(project, 'alice 名下没有项目').toBeTruthy();
@@ -194,9 +194,11 @@ test.describe('把消息交给芝士', () => {
 
     const button = page.locator('.summon-btn');
     await expect(button).toBeVisible();
-    // 名字收掉，留两个字说它是「交给」，不是「插入一个 @」。
-    await expect(button.locator('.summon-btn-label')).toBeHidden();
-    await expect(button.locator('.summon-btn-short')).toBeVisible();
+    // 名字还在，而且是「交给<队友名>」整句，不是被收成「交给」两个字。
+    const label = button.locator('.summon-btn-label');
+    await expect(label).toBeVisible();
+    const agent = await agentNameFrom(button);
+    expect(agent.length).toBeGreaterThan(0);
 
     // 同一行：按钮和发送键的垂直中心对得上，说明没有谁被挤到下一行去。
     const send = page.locator('.composer-send');
@@ -205,8 +207,12 @@ test.describe('把消息交给芝士', () => {
     expect(sd, '发送键没有布局盒子').not.toBeNull();
     const center = (box: { y: number; height: number }) => box.y + box.height / 2;
     expect(Math.abs(center(b!) - center(sd!))).toBeLessThan(4);
-    // 而且按钮没被挤出屏幕。
+    // 名字没被截断（省略号只在画面上，DOM 里量不到，所以量宽度差）。
+    const clipped = await label.evaluate((el) => el.scrollWidth - el.clientWidth);
+    expect(clipped, '手机上名字被截断了').toBeLessThanOrEqual(1);
+    // 而且按钮没被挤出屏幕，也没压到发送键上。
     expect(b!.x + b!.width).toBeLessThanOrEqual(375);
+    expect(b!.x + b!.width).toBeLessThanOrEqual(sd!.x + 1);
 
     // 收窄之后照样是那颗按钮：点一下，@ 还是进正文。
     await composer.fill('这条是说给人听的');

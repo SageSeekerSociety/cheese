@@ -36,7 +36,7 @@ const updateMaterialVisibility = vi.fn()
 const deleteMaterial = vi.fn()
 const downloadMaterial = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     listMaterials: (...a: unknown[]) => listMaterials(...a),
     uploadMaterial: (...a: unknown[]) => uploadMaterial(...a),
@@ -72,7 +72,7 @@ function material(over: Record<string, unknown> = {}) {
 }
 
 function listed(over: Record<string, unknown> = {}, canManage = true) {
-  return { data: { materials: [material(over)], canManage } }
+  return { materials: [material(over)], canManage }
 }
 
 /** 挂起来并等到某一串出现在屏幕上 —— 用例各自关心的那串不一样，
@@ -95,9 +95,9 @@ async function mount(expectText = '第三周讲义.pdf') {
 describe('资料库页', () => {
   beforeEach(() => {
     listMaterials.mockImplementation(async () => listed())
-    uploadMaterial.mockImplementation(async () => ({ data: { material: material() } }))
-    updateMaterialVisibility.mockImplementation(async () => ({ data: { material: material() } }))
-    deleteMaterial.mockImplementation(async () => ({ data: {} }))
+    uploadMaterial.mockImplementation(async () => ({ material: material() }))
+    updateMaterialVisibility.mockImplementation(async () => ({ material: material() }))
+    deleteMaterial.mockImplementation(async () => ({}))
     downloadMaterial.mockImplementation(async () => new Blob([new Uint8Array([1, 2, 3])]))
   })
 

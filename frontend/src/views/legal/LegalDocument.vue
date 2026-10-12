@@ -13,15 +13,15 @@
  * 同意的弹窗都新开一页链到这里。`?version=` 可以看任何一个发布过的版本。
  * 取数留在这里，画面在 `LegalDocumentView.vue`。
  */
-import type { LegalDocumentFull, LegalDocumentKey } from '@/network/api/legal/types'
+import type { LegalDocumentFull, LegalDocumentKey } from '@/types/apiLegal'
 
 import { ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import LegalDocumentView from './LegalDocumentView.vue'
 
+import { LegalApi } from '@/api/legal'
 import { t } from '@/i18n'
-import { LegalApi } from '@/network/api/legal'
 
 const props = defineProps<{ document: LegalDocumentKey }>()
 const route = useRoute()
@@ -34,8 +34,7 @@ watch(
   async ([document, version]) => {
     error.value = ''
     try {
-      const { data } = await LegalApi.getDocument(document, typeof version === 'string' ? version : undefined)
-      doc.value = data
+      doc.value = await LegalApi.getDocument(document, typeof version === 'string' ? version : undefined)
     } catch {
       doc.value = null
       error.value = t('account.legalLoadFailed')

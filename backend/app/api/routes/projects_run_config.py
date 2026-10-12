@@ -63,8 +63,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.projects import DbSession
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say

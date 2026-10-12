@@ -168,7 +168,8 @@ DEFERRED_WORKSPACE = "/unavailable-project"
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
-    """Sleep before the next attempt, or say the window is over.
+    """Sleep before the next attempt, or say the window is over. Hand-written,
+    not tenacity: this file runs on machines with the standard library only.
 
     ONLY for a connection that was refused: `http.client` raises that before it
     writes anything, which is what makes the replay safe. A failure any later —
@@ -676,6 +677,19 @@ class RemoteClient:
                 shlex.join(command),
             ]
         return command
+
+    def take_now(self):
+        """Take this session's hands as they are, without waiting for a
+        machine being prepared. False when the platform cannot hand them out
+        at this moment (the machine still being prepared, gone, or refused);
+        a platform that failed to answer at all still raises."""
+        try:
+            self.acquire(deadline=time.monotonic())
+        except PlatformHTTPError:
+            raise
+        except RuntimeError:
+            return False
+        return True
 
     def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the

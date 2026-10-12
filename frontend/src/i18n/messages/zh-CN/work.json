@@ -32,7 +32,6 @@
   },
   "allSpaces": "全部空间",
   "emptyTitle": "暂无{project}",
-  "firstProjectName": "{name}的项目",
   "joinAction": "用邀请码加入",
   "joinBody": "邀请码由空间的创建者提供",
   "joinCancel": "取消",
@@ -317,7 +316,8 @@
       "muted": "已静音",
       "markAllRead": "全部标为已读",
       "markAllReadFailed": "全部标为已读没成功",
-      "notifyFailed": "通知设置没保存"
+      "notifyFailed": "通知设置没保存",
+      "allTasks": "全部任务"
     },
     "archiveNotice": {
       "done": "已归档",
@@ -369,7 +369,8 @@
       "voidHint": "作废会结束这次审阅：不合并，也不退回修改。之后可以重新提交审阅",
       "voidReason": "作废理由（可选）",
       "conflictsWithMain": "与主分支冲突",
-      "checkRunning": "进行中"
+      "checkRunning": "进行中",
+      "checkCancelled": "已取消"
     },
     "retry": {
       "action": "重试",
@@ -461,7 +462,6 @@
       "cancelReply": "取消回复",
       "removeAttachment": "移除 {name}",
       "summon": "交给{name}",
-      "summonShort": "交给",
       "summonOn": "已 {'@'}{name}，点击取消",
       "summonOff": "发送并交给{name}（⌘/Ctrl+Enter）",
       "keysHint": "Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给{name}，可直接粘贴图片",
@@ -522,7 +522,6 @@
       "sourceUnavailable": "无法打开这个任务，换一个来源查看",
       "noRepo": "暂无代码仓库",
       "switchToCommitted": "切换到已提交版本",
-      "missingInTask": "{path} 不在这个任务里",
       "conflict": "你编辑期间，这个文件已被修改，直接保存会覆盖这些修改",
       "reloadLatest": "载入最新版本",
       "saveAnyway": "仍要保存",
@@ -692,6 +691,7 @@
       "source": {
         "baseline": "最初的样子",
         "upload": "上传",
+        "template": "从模板新建",
         "ai": "AI 队友修改",
         "editor": "在线编辑保存",
         "restore": "恢复",
@@ -791,7 +791,8 @@
         "math": "公式",
         "chart": "图表",
         "diagram": "流程图",
-        "status": "状态标签"
+        "status": "状态标签",
+        "canvas": "画布"
       },
       "selectionToolbar": "选区操作",
       "copy": "复制",
@@ -917,6 +918,31 @@
           "video": "视频"
         }
       },
+      "canvas": {
+        "untitled": "未命名画布",
+        "title": "画布标题",
+        "about": "画布说明",
+        "full": "全屏查看",
+        "exitFull": "退出全屏",
+        "saveFailed": "保存失败",
+        "loadFailed": "无法读取这块画布",
+        "notMade": "暂无画布",
+        "make": "新建画布",
+        "elsewhere": "这里不显示画布内容",
+        "height": "拖动调整高度",
+        "empty": "暂无格子",
+        "addCard": "添加格子",
+        "zoomIn": "放大",
+        "zoomOut": "缩小",
+        "fit": "显示全部",
+        "openTask": "打开任务",
+        "taskHidden": "你看不到这个任务",
+        "cardText": "格子内容",
+        "emptyCard": "空格子",
+        "removeCard": "删除格子",
+        "lineLabel": "连线上的字",
+        "removeLine": "删除连线"
+      },
       "historyView": "右边显示",
       "historyDiff": "与上一版比较",
       "historyFull": "这一版全文",
@@ -986,7 +1012,9 @@
       "waitingConnection": "等待连接",
       "today": "今天",
       "yesterday": "昨天",
-      "topicFallback": "频道",
+      "refThread": "支线：{title}",
+      "refMissing": "引用不存在",
+      "refMissingHint": "这里引用的频道、任务或支线不存在，或者你看不到它",
       "timelineLabel": "对话记录",
       "liveNew": "{name}：{text}",
       "messageLabel": "{name}，{time}：{text}",
@@ -1216,6 +1244,7 @@
       "openLink": "打开",
       "checksFailed": "{n} 项检查未通过",
       "checksRunning": "{n} 项检查进行中",
+      "checksCancelled": "{n} 项检查已取消",
       "checksPassed": "{n} 项检查通过",
       "noApprovals": "暂无批准",
       "voidTitle": "作废这次审阅？",
@@ -1396,7 +1425,11 @@
     "moreMembers": "+{count}",
     "taskNeedsYou": "需要你处理",
     "taskRunning": "运行中",
-    "allTasks": "全部任务"
+    "allTasks": "全部任务",
+    "moreTasks": "展开其余 {count} 个",
+    "fewerTasks": "收起",
+    "tasksLoading": "正在读取…",
+    "tasksFailed": "没读出来，点一下重试"
   },
   "members": {
     "leave": "退出项目",
@@ -2073,7 +2106,10 @@
   },
   "image": {
     "alt": "图片",
-    "failed": "图片加载失败"
+    "close": "关闭",
+    "failed": "图片加载失败",
+    "open": "查看大图：{name}",
+    "zoomHint": "滚轮或双指缩放，按住拖动"
   },
   "agentAvatar": {
     "defaultName": "芝士",
@@ -2117,8 +2153,6 @@
     "leaveCollaboration": "退出协作",
     "start": "开始",
     "startFailed": "未能开始，稍后重试",
-    "reviewer": "审阅人",
-    "reviewerNone": "选择审阅人",
     "startedLine": "{who} {when}开始",
     "compare": "与开始时相比",
     "compareBack": "返回文档",
@@ -2130,18 +2164,24 @@
     "checklist": "{name}这一轮的清单",
     "opening": {
       "drafting": "{name}正在整理…",
-      "draftingWhat": "把原讨论整理成这件任务的文档：目标、现状、已确定、待决",
+      "draftingWhat": "把原讨论整理成这件任务的文档",
       "waiting": "还没能开始，环境连上后会继续",
       "failed": "{name}没能整理出文档",
       "failedWhy": "这一轮没有完成",
       "retry": "重试",
       "writeMyself": "自己写"
     },
+    "source": {
+      "channel": "来自 #{title} 的一条消息",
+      "thread": "来自 #{title} 的一条支线",
+      "task": "来自任务「{title}」",
+      "quote": "{name}：{text}",
+      "byPerson": "{name} 新建的任务，不是从对话里转出来的",
+      "byAgent": "{name} 新建的任务，没有记下是从哪句话来的",
+      "unknown": "没有记下这个任务是从哪来的"
+    },
     "related": {
       "title": "相关",
-      "fromThread": "原讨论 · 支线 {count} 条回复",
-      "fromChannel": "原讨论 · 频道主线",
-      "quote": "{name}：{text}",
       "untitled": "未命名文档",
       "by": "{name}"
     },
@@ -2170,12 +2210,13 @@
   },
   "channel": {
     "overview": {
-      "project": "项目总览",
+      "project": "项目目标",
       "projectNote": "{name}在每段对话里都会读这一份",
       "expand": "展开全文",
       "collapse": "收起",
-      "noProject": "还没有项目总览",
-      "writeProject": "写一份",
+      "noProject": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+      "writeProject": "写项目目标",
+      "editProject": "编辑项目目标",
       "description": "频道说明",
       "edit": "编辑",
       "save": "保存",
@@ -2257,12 +2298,12 @@
     "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有进行中的任务时不能归档"
   },
   "overview": {
-    "document": "项目总览",
-    "edit": "编辑",
+    "document": "项目目标",
+    "edit": "编辑项目目标",
     "expand": "展开全文",
     "collapse": "收起",
-    "noDocument": "暂无项目总览",
-    "write": "写一份",
+    "noDocument": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+    "write": "写项目目标",
     "progress": "最近进展",
     "progressFailed": "无法读取最近进展",
     "noProgress": "最近两周暂无进展",

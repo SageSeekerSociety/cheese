@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const listCategories = vi.fn()
 const spaceUpdate = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     listCategories: (...a: unknown[]) => listCategories(...a),
     update: (...a: unknown[]) => spaceUpdate(...a),
@@ -65,8 +65,8 @@ async function mountPage() {
 
 beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
-  listCategories.mockReset().mockImplementation(async () => ({ data: { categories: CATEGORIES } }))
-  spaceUpdate.mockReset().mockImplementation(async () => ({ data: { space: {} } }))
+  listCategories.mockReset().mockImplementation(async () => ({ categories: CATEGORIES }))
+  spaceUpdate.mockReset().mockImplementation(async () => ({ space: {} }))
 })
 
 afterEach(() => {

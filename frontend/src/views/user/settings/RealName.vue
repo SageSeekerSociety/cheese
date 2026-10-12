@@ -31,7 +31,7 @@
 
 <script setup lang="ts">
 import type { UserRefTarget } from '@/lib/userRef'
-import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/types'
+import type { RealNameInfo, UserIdentityAccessLog } from '@/types/apiUsers'
 import type { RealNameLogRow } from './RealNameView.vue'
 
 import { computed, onMounted, ref } from 'vue'
@@ -45,18 +45,18 @@ import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAv
 
 import RealNameView from './RealNameView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
 import { userRefRoute } from '@/lib/userRef'
-import { UserApi } from '@/network/api/users'
-import { UserIdentityAccessType } from '@/network/api/users/types'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useDialog } from '@/plugins/dialog'
 import { currentUserId } from '@/services/account'
+import { UserIdentityAccessType } from '@/types/apiUsers'
 
 const LOG_PAGE = 20
 
 const dialogs = useDialog()
-const fail = (error: unknown, fallback: string) => toast.error(requestErrorMessage(error, fallback))
+const fail = (error: unknown, fallback: string) => toast.error(axiosErrorMessage(error, fallback))
 
 // ---- The record ----
 
@@ -71,7 +71,7 @@ async function load() {
   const userId = currentUserId.value
   if (!userId) return
   try {
-    const { data } = await UserApi.getRealNameInfo(userId)
+    const data = await UserApi.getRealNameInfo(userId)
     record.value = data.hasIdentity && data.identity ? data.identity : null
     full.value = null
     loadFailed.value = false
@@ -89,7 +89,7 @@ async function reveal(): Promise<boolean> {
   if (!userId) return false
   revealing.value = true
   try {
-    const { data } = await withSudo('realname:view', (ticket) => UserApi.getPreciseRealNameInfo(userId, ticket))
+    const data = await withSudo('realname:view', (ticket) => UserApi.getPreciseRealNameInfo(userId, ticket))
     full.value = data.identity ?? null
     // Seeing it in full is itself recorded.
     void loadLogs(true)
@@ -189,7 +189,7 @@ async function loadLogs(fromStart: boolean) {
   if (!userId) return
   loadingLogs.value = true
   try {
-    const { data } = await UserApi.getRealNameAccessLogs(userId, fromStart ? undefined : logsNext.value, LOG_PAGE)
+    const data = await UserApi.getRealNameAccessLogs(userId, fromStart ? undefined : logsNext.value, LOG_PAGE)
     logs.value = fromStart ? data.logs : [...logs.value, ...data.logs]
     logTotal.value = data.page.total ?? logs.value.length
     logsNext.value = data.page.nextStart ?? undefined

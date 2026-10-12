@@ -185,7 +185,7 @@ class Rates:
     @classmethod
     def of(cls, model: str, table: Mapping[str, RateRow] | None) -> "Rates | None":
         """``model``'s rates from the gateway's rate table
-        (``feature_stats.pricing.model_rates``); None when a call to it cannot
+        (``usage.pricing.model_rates``); None when a call to it cannot
         be charged."""
         if not table or model not in table:
             return None
@@ -762,6 +762,7 @@ class Ledger:
         turn_id: uuid.UUID | None = None,
         user_id: int | None = None,
         metered: bool = True,
+        calls: int = 1,
     ) -> float:
         """Write one usage row, naming the team that paid and the credits it
         cost, and charge those credits: the row and the deduction cannot come
@@ -785,6 +786,7 @@ class Ledger:
             team_id=payer.team_id,
             credits=credits,
             metered=metered,
+            calls=calls,
         )
         return await self.charge(payer, credits)
 
@@ -796,11 +798,14 @@ class Ledger:
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
         project_id: uuid.UUID | None = None,
         topic_id: uuid.UUID | None = None,
         turn_id: uuid.UUID | None = None,
         metered: bool = True,
         route: str = "gateway",
+        calls: int = 1,
     ) -> None:
         """Write the usage row of a call the platform made on its own (naming a
         room, sorting old memories, consolidating a project's memory). The
@@ -813,12 +818,15 @@ class Ledger:
             conversation_id=topic_id,
             model=model,
             input_tokens=input_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
             cost_usd=cost_usd,
             kind=kind,
             metered=metered,
             route=route,
             turn_id=turn_id,
+            calls=calls,
         )
 
     # ---- issuing -----------------------------------------------------------

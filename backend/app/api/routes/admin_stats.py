@@ -27,16 +27,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.routing import APIRoute
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.response import ok
+from app.api.request_deps import DbSession
+from app.api.response import ok, typed_response
 from app.api.routes.admin_common import PlatformAdminDep
-from app.core.db import get_db
+from app.domain.agent.device_hub import device_hub
+from app.domain.machine import admin as machine_admin
+from app.domain.machine.admin_schemas import MachinesOverviewOut
 from app.domain.platform_stats.services import PlatformStatsService
 
 router = APIRouter(prefix="/admin/stats", tags=["admin"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_platform_stats_service(db: DbSession) -> PlatformStatsService:
@@ -72,6 +72,9 @@ async def usage_stats(
     柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。
     `credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者
     不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。
+
+    `cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、
+    谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。
 
     `claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里
     唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，
@@ -199,3 +202,11 @@ async def integrations_stats(
     计量落账心跳都要先加埋点才查得到）。
     """
     return ok(await service.integrations())
+
+
+@router.get("/machines", **typed_response(MachinesOverviewOut))
+async def machines_stats(db: DbSession, handle: PlatformAdminDep) -> dict:
+    """机器那一块：MicroCloud 上的每台宿主机、它上面的沙箱、温机池，和过去一天沙箱
+    起得怎么样。口径写在 `app/domain/machine/admin.py` 的模块 docstring 上。"""
+    del handle
+    return ok(await machine_admin.overview(db, device_hub))

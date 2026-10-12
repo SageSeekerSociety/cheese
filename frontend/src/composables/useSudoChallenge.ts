@@ -7,14 +7,15 @@
 // 拿住一个一次性的密码框。线因此划在组件与这个 composable 之间：组件测试可以换成
 // 一段假的对话，不必拿模块 mock 去截网络层。
 import type { Ref } from 'vue'
-import type { MyAuthMethods } from '@/network/api/users/types'
+import type { MyAuthMethods } from '@/types/apiUsers'
 import type { SudoRequest } from '@/utils/sudo'
 
 import { computed, onScopeDispose, ref, watch } from 'vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { ApiError } from '@/api/http'
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { currentUserId, currentUserName } from '@/services/account'
 import { attemptMessage } from '@/views/account/attemptWait'
 import { passkeyWrongHostMessage } from '@/views/account/passkeyHost'
@@ -65,7 +66,7 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
     codeSentAt.value = 0
     let found = FALLBACK_METHODS
     try {
-      found = (await UserApi.getMyAuthMethods()).data
+      found = await UserAuthApi.getMyAuthMethods()
     } catch {
       // Without the list, offer the password, the way most accounts have.
     }
@@ -76,7 +77,8 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
   // An email code stops being accepted once two-step verification is on, which
   // can happen in another tab while this dialog is open.
   function emailCodeMessage(error: unknown): string | null {
-    const reason = (error as { error?: { data?: { reason?: unknown } } } | null)?.error?.data?.reason
+    const data = error instanceof ApiError ? error.data : (error as { error?: { data?: unknown } } | null)?.error?.data
+    const reason = (data as { reason?: unknown } | undefined)?.reason
     if (reason === 'email_code_unavailable') return t('account.sudo.emailCodeUnavailable')
     return attemptMessage(error)
   }
@@ -87,7 +89,7 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
     sending.value = true
     errorMessage.value = ''
     try {
-      const { data } = await UserApi.requestSudoEmailCode()
+      const data = await UserAuthApi.requestSudoEmailCode()
       if (request.value !== current) return
       codeSentTo.value = data.email
       codeSentAt.value = now.value = Date.now()
@@ -102,13 +104,13 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
   }
 
   /** 换票：跑一段、拿回票据就交给等着的调用方；失败就落一条说得清的提示。 */
-  async function verify(kind: SudoMethod, run: () => Promise<{ data: { sudoTicket?: string } }>): Promise<void> {
+  async function verify(kind: SudoMethod, run: () => Promise<{ sudoTicket?: string }>): Promise<void> {
     const current = request.value
     if (!current || loading.value) return
     loading.value = true
     errorMessage.value = ''
     try {
-      const { data } = await run()
+      const data = await run()
       if (!data.sudoTicket) throw new Error('No ticket in the confirmation')
       current.settle(data.sudoTicket)
     } catch (error: unknown) {
@@ -119,7 +121,7 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
         passkeyWrongHostMessage(error, passkeyRpId) ??
         ((error as { name?: string } | null)?.name === 'NotAllowedError'
           ? t('account.sudo.passkeyCanceled')
-          : requestErrorMessage(error, t('account.sudo.failed')))
+          : axiosErrorMessage(error, t('account.sudo.failed')))
       code.value = ''
     } finally {
       loading.value = false
@@ -131,17 +133,17 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
       errorMessage.value = t('account.sudo.passwordRequired')
       return Promise.resolve()
     }
-    return verify('password', () => UserApi.verifySudoPassword(password.value, request.value?.purpose))
+    return verify('password', () => UserAuthApi.verifySudoPassword(password.value, request.value?.purpose))
   }
 
   function verifyTotp(): Promise<void> {
     if (code.value.length !== 6) return Promise.resolve()
-    return verify('totp', () => UserApi.verifySudoTOTP(code.value, request.value?.purpose))
+    return verify('totp', () => UserAuthApi.verifySudoTOTP(code.value, request.value?.purpose))
   }
 
   function verifyEmailCode(): Promise<void> {
     if (code.value.length !== 6) return Promise.resolve()
-    return verify('email_code', () => UserApi.verifySudoEmailCode(code.value, request.value?.purpose))
+    return verify('email_code', () => UserAuthApi.verifySudoEmailCode(code.value, request.value?.purpose))
   }
 
   /**
@@ -151,10 +153,10 @@ export function useSudoChallenge(request: Ref<SudoRequest | null>) {
    */
   function verifyPasskey(sign: (options: any) => Promise<unknown>): Promise<void> {
     return verify('passkey', async () => {
-      const { data } = await UserApi.getPasskeyAuthenticationOptions(currentUserId.value)
+      const data = await UserAuthApi.getPasskeyAuthenticationOptions(currentUserId.value)
       passkeyRpId = data.options.rpId
       const assertion = await sign(data.options)
-      return UserApi.verifySudoPasskey(assertion, request.value?.purpose)
+      return UserAuthApi.verifySudoPasskey(assertion, request.value?.purpose)
     })
   }
 

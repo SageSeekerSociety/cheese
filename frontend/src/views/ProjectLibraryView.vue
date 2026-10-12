@@ -58,6 +58,7 @@ import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
 import { closeOverlay } from '@/lib/backOut'
 import { fmtBytes } from '@/lib/changesTree'
+import { refRoute } from '@/lib/refDirectory'
 import { relTime } from '@/lib/relTime'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -522,7 +523,7 @@ function read(file: LibraryFile) {
     :topic-list="workspace.topics"
     @titled="titled"
     @delete="confirmingDoc = openDocument"
-    @open-topic="openRoom"
+    @open-topic="(id: string) => router.push(refRoute(projectId, id))"
   />
   <AppPage v-else :title="selected && !mdAndUp ? selected.path : t('navigation.project.library')" width="full">
     <div

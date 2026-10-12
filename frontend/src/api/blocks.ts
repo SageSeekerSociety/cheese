@@ -74,3 +74,15 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
     body: JSON.stringify({ content }),
   })
 }
+
+// Take back your own answer to a question asked with quick replies, so the
+// question waits again and its options come back. `blockId` is the QUESTION —
+// the answer is an ordinary message, and what comes off is the line it left on
+// the question. Only whoever answered it can; anyone else is refused. Returns
+// the question as the room now records it, which every client also gets as a
+// `block_updated` frame.
+export function withdrawAnswer(questionId: string): Promise<Block> {
+  return request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
+    method: 'DELETE',
+  })
+}

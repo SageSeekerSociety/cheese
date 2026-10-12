@@ -1,12 +1,16 @@
 /**
- * 附件那两件在预览站里的条目：一条消息里的那张图，和一份文档的第一页。
+ * 附件这几件在预览站里的条目：一条消息里的那张图、一份文档的第一页，和把图放大看的
+ * 那一层。
  *
- * 两件画的都是「取回来的字节」——图要先 fetch 再转 object URL（`<img src>` 带不了
- * Authorization 头），文档的封面要先拿 PDF 字节再画。取字节的那个函数不再 import 在
+ * 头两件画的是「取回来的字节」——图要先 fetch 再转 object URL（`<img src>` 带不了
  * 组件里，而是从外壳注入（`lib/attachmentSource.ts`），所以这两件自己只吃 props。
  * 预览站里没有外壳，注入的是那份「取不到」的空实现 —— 于是这里摆的正是产品里真会走到
  * 的那几格：图取不回来时正文里那一句、待发条上那个断图图标、文档方格里那个类型图标，
  * 没有一格是空白。
+ *
+ * 放大看的那一层（`ImageLightbox`）反过来，一个字节都不取：地址是调用方交过来的
+ * （就是上面那张图转出来的那份 object URL），所以这里直接喂两张现成的图，摆它对窗口
+ * 里两种尺寸的处理。
  *
  * 条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
  * `catalog.ts`），单放一份是因为 `catalog.ts` 已经顶到一千行的上限 —— 和
@@ -17,6 +21,19 @@ import type { CatalogEntry } from './catalog'
 
 import AttachmentDocThumb from '@/components/AttachmentDocThumb.vue'
 import AttachmentImage from '@/components/AttachmentImage.vue'
+import ImageLightbox from '@/components/ImageLightbox.vue'
+
+/** 预览站里的两张图：内联 SVG，不去网上取，也不进仓库（`src` 吃的是一个地址，什么地址都行）。
+ *  给宽高是为了让浏览器报得出原尺寸 —— 这一层按原尺寸和窗口谁小来算摆多大。 */
+const LANDSCAPE =
+  'data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900">' +
+  '<rect width="1600" height="900" fill="%23cfe0f5"/><circle cx="1180" cy="270" r="120" fill="%23f2b464"/>' +
+  '<path d="M0 900 L520 470 L900 900 Z" fill="%236f8fb8"/><path d="M620 900 L1180 540 L1600 900 Z" fill="%235a7799"/></svg>'
+const PORTRAIT =
+  'data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1600">' +
+  '<rect width="900" height="1600" fill="%23f4efe4"/><rect x="90" y="120" width="720" height="1360" rx="24" fill="%23e0d6c2"/>' +
+  '<circle cx="450" cy="520" r="150" fill="%23c9a227"/><rect x="240" y="820" width="420" height="36" rx="18" fill="%23867a63"/>' +
+  '<rect x="240" y="900" width="300" height="36" rx="18" fill="%23867a63"/></svg>'
 
 export const ATTACHMENT_ENTRIES: CatalogEntry[] = [
   {
@@ -62,6 +79,32 @@ export const ATTACHMENT_ENTRIES: CatalogEntry[] = [
         note: '转换要约 2.5 秒，这期间方格不转圈，摆这个类型自己的图标 —— 一份幻灯片摆幻灯片的图标，不是一律 PDF：图标本身已经是一个正确的答案。',
         props: {},
         expectSelector: '.att-face .v-icon',
+      },
+    ],
+  },
+  {
+    id: 'image-lightbox',
+    title: 'ImageLightbox',
+    about:
+      '消息里那张图放大看的那一层：铺满窗口、滚轮或双指缩放、按住拖动，点空白或按 Esc 收起 —— 不开新标签页（那份字节只活在这一页里）。',
+    file: 'src/components/ImageLightbox.vue',
+    component: ImageLightbox,
+    needs: ['vuetify', 'i18n'],
+    // 这一层画在 body 上（铺满整个窗口），不在挂它的那个容器里。
+    teleport: true,
+    args: { src: LANDSCAPE, alt: '海岸线.png' },
+    states: [
+      {
+        name: '横向的一张图',
+        note: '宽的一张按窗口宽度缩到整张都看得见，不是按原尺寸铺开：看第一眼要的是「这是哪张图」，细节靠滚轮放大。',
+        props: {},
+        expectSelector: '.lightbox__figure',
+      },
+      {
+        name: '竖向的一张图',
+        note: '高的一张按窗口高度缩，见到的还是完整一张 —— 裁掉上下两端就成了另一张图。',
+        props: { src: PORTRAIT, alt: '海报.png' },
+        expectSelector: '.lightbox__figure',
       },
     ],
   },

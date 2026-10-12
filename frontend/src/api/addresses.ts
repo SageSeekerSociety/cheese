@@ -1,5 +1,7 @@
 // 人说得出口的地址：`/projects/<短名>/tasks/318`。浏览器拿短名和编号换出各接口要的
 // UUID，也拿 UUID 换回短地址。规则在后端 `app/domain/project/address.py`。
+import type { ConversationRef } from '../types/conversationRef'
+
 import { request } from './http'
 
 /** 地址里的三种编号，值就是地址里那一段。 */
@@ -31,6 +33,11 @@ export function resolveNumber(ref: string, kind: NumberedKind, number: string | 
 
 export function addressOf(kind: NumberedKind, id: string): Promise<ThingAddress> {
   return request<ThingAddress>(`/addresses/of/${kind}/${encodeURIComponent(id)}`)
+}
+
+/** 这些 id 各指着什么。指不到东西的、或者我看不到的，不在答案里。 */
+export function resolveRefs(ids: string[]): Promise<Record<string, ConversationRef>> {
+  return request<Record<string, ConversationRef>>(`/addresses/refs?ids=${encodeURIComponent(ids.join(','))}`)
 }
 
 export function setProjectSlug(projectId: string, slug: string): Promise<ProjectAddress> {

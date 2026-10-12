@@ -7,6 +7,11 @@
     "other": "其他",
     "otherPlaceholder": "自己写一个答案",
     "otherSend": "发送",
-    "closed": "已结束，不再等回答"
+    "closed": "已结束，不再等回答",
+    "withdraw": "撤回",
+    "withdrawAria": "撤回你对「{text}」的回答",
+    "withdrawTitle": "撤回这条回答？",
+    "withdrawBody": "撤回后这道题重新等回答，谁都能再选一次。你发的那句话还留在房间里。",
+    "withdrawFailed": "撤回没成功，再试一次"
   }
 }

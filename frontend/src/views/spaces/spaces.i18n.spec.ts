@@ -21,8 +21,8 @@ const spaceDetail = vi.fn()
 const listCategories = vi.fn()
 const listDomainGroups = vi.fn()
 
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: {
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: {
     previewFromPdf: (...a: unknown[]) => previewFromPdf(...a),
     confirmFromPdf: vi.fn(),
     create: vi.fn(),
@@ -30,12 +30,22 @@ vi.mock('@/network/api/tasks', () => ({
   },
 }))
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spaceDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
-    listMaterials: vi.fn().mockResolvedValue({ data: { materials: [], canManage: false } }),
+    listMaterials: vi.fn().mockResolvedValue({ materials: [], canManage: false }),
+  },
+}))
+
+// 发题页那份附件上传（`composables/useAttachmentUploads.ts`）挂载时会问一次单份文件的
+// 上限。这一页只量自己画的字，但真去问就是一条没人接的请求（happy-dom 下打到默认地址
+// 127.0.0.1:3000）。上限值本身不是这一页的文案，给一个就好。
+vi.mock('@/api/attachments', () => ({
+  AttachmentsApi: {
+    limits: vi.fn().mockResolvedValue({ maxFileBytes: 20 * 1024 * 1024 }),
+    upload: vi.fn(),
   },
 }))
 
@@ -102,26 +112,22 @@ afterAll(() => {
 })
 
 beforeEach(() => {
-  spaceDetail.mockResolvedValue({ data: { space: { id: SPACE_ID, name: 'Systems', admins: [] } } })
-  listCategories.mockResolvedValue({
-    data: { categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] },
-  })
-  listDomainGroups.mockResolvedValue({ data: { groups: [] } })
+  spaceDetail.mockResolvedValue({ space: { id: SPACE_ID, name: 'Systems', admins: [] } })
+  listCategories.mockResolvedValue({ categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] })
+  listDomainGroups.mockResolvedValue({ groups: [] })
   previewFromPdf.mockResolvedValue({
-    data: {
-      drafts: [
-        {
-          name: 'Find a segfault',
-          intro: 'Use gdb.',
-          description: 'A crash. ![fig](https://x.test/a.png)',
-          space: SPACE_ID,
-        },
-        { name: '', intro: 'Allocator.', description: '', space: SPACE_ID },
-      ],
-      templateUsed: {},
-      tokenUsed: 1200,
-      attachments: { pdf: { id: 1, name: 'hw.pdf', size: 10, contentType: 'application/pdf' }, images: [] },
-    },
+    drafts: [
+      {
+        name: 'Find a segfault',
+        intro: 'Use gdb.',
+        description: 'A crash. ![fig](https://x.test/a.png)',
+        space: SPACE_ID,
+      },
+      { name: '', intro: 'Allocator.', description: '', space: SPACE_ID },
+    ],
+    templateUsed: {},
+    tokenUsed: 1200,
+    attachments: { pdf: { id: 1, name: 'hw.pdf', size: 10, contentType: 'application/pdf' }, images: [] },
   })
 })
 

@@ -13,9 +13,9 @@ import pytest
 from app.domain.agent.session_host.driver import startup_refused
 from tests.conftest import StubChannel, wait_work_idle
 from tests.integration.conftest import (
-    open_task,
     post_project,
     session_auth_headers,
+    teammate_task,
 )
 
 # What dev's session host recorded for a session relaunched onto a machine the
@@ -49,16 +49,19 @@ def stub_hooks() -> MachineNotConnected:
 
 
 def _started_task(client, title: str = "接口分页") -> str:
-    """一个被负责人开始、而它的会话没能起来的任务，返回它的 id。"""
+    """一个已经开始、而它的会话没能起来的任务，返回它的 id。
+
+    建出来即已开始（#718），那句交代写在开场指令里 —— 机器没连上时，它躺在
+    投递账本上，房间里留下的是那张「可以重试」的卡。"""
     project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "频道"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    task_id = open_task(client, room, title)["id"]
+    task = teammate_task(client, room, title, start=True)
     wait_work_idle()
-    return task_id
+    return task["id"]
 
 
 def _retry_offered(client, task_id: str) -> bool:

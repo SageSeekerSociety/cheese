@@ -90,6 +90,22 @@ describe('打开话题，底下的行画出来变高了', () => {
     expect(scroll.restoresToBottom('t-open')).toBe(true)
   })
 
+  // 反方向：上面那几行收短（离屏的消息行从估计高度换成真实高度、一条长回复被折叠成
+  // 阅读高度），下面同时长出来。浏览器照样自己把 scrollTop 往上挪、发一个 scroll 事件，
+  // ResizeObserver 还是晚一步——和上面那一组是同一件事的两个方向。
+  it('浏览器自己往上挪的那一下也不算人往上翻：最后仍停在最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    expect(box.el.scrollTop).toBe(1600)
+    box.grow(-400) // 上面收短了 400
+    box.grow(300) // 下面同时长出来 300，正文还在变长
+    box.el.scrollTop = 1600 - 400 // 锚定把位置往上挪 400，离底部更远了
+    scroll.rememberScroll('t-shrink') // 那个 scroll 事件
+    fire() // 然后才是 ResizeObserver
+    expect(box.el.scrollTop).toBe(1500)
+    expect(scroll.atBottom.value).toBe(true)
+    expect(scroll.restoresToBottom('t-shrink')).toBe(true)
+  })
+
   it('人真的往上翻了：不跟、不拽回去，下次打开回到他停的地方', async () => {
     const { box, scroll } = await mounted(1000)
     box.el.scrollTop = 300

@@ -101,5 +101,105 @@
     },
     "noProject": "No project",
     "morePlaces": "{count} more"
+  },
+  "machines": {
+    "sub": "The platform's MicroCloud hosts, the sandboxes on each, and the warm pool; refreshed every 30 seconds",
+    "kpi": {
+      "hosts": "Hosts / cap",
+      "vms": "{n} of them are whole VMs.",
+      "slots": "Sandbox slots",
+      "slotsNote": "{free} free; the pool keeps at least {min} and adds a host below that",
+      "waiting": "Waiting for a sandbox",
+      "waitingNote": "The longest has waited {for}",
+      "failures": "Provider failures",
+      "failuresNote": "Hosts the provider broke in the last {minutes} minutes; at {limit} the platform stops opening machines and tries one every {probe} minutes",
+      "hostsNote": "Whole VMs count toward the cap; given-up and releasing hosts do not."
+    },
+    "alert": {
+      "notConfigured": "This deployment has no MicroCloud configured; cloud sandboxes are unavailable",
+      "refusing": "Refusing new sessions now: the provider broke {n} hosts recently (last at {at}), and the platform waits for a probe to succeed",
+      "atCap": "The pool is at its cap of {max} hosts: with no free slot, new sessions are refused"
+    },
+    "hosts": "Hosts",
+    "noHosts": "No hosts right now",
+    "vm": "Whole VM",
+    "col": {
+      "host": "Host",
+      "phase": "Phase",
+      "spec": "Spec",
+      "slots": "Sandboxes",
+      "age": "Age",
+      "note": "Note"
+    },
+    "phase": {
+      "creating": "Creating",
+      "enrolling": "Enrolling",
+      "enrollFailing": "Enroll failing",
+      "ready": "In use",
+      "idle": "Idle",
+      "offline": "Offline",
+      "error": "Provider error",
+      "releasing": "Releasing",
+      "failed": "Given up"
+    },
+    "state": {
+      "waiting": "Waiting for host",
+      "working": "Working",
+      "idle": "Idle",
+      "stopping": "Being destroyed"
+    },
+    "note": {
+      "failed": "Broken by the provider, given up at {at}; waiting for the provider to delete it",
+      "releasing": "Released at {at}; waiting for the provider to delete it",
+      "enrollFailing": "Enrollment attempt {n} failed: {error}",
+      "offline": "Connector away for {for}",
+      "idle": "Idle for {for}",
+      "vm": "Whole VM for {project}"
+    },
+    "when": {
+      "waiting": "Waiting for {for}",
+      "stopping": "Being destroyed for {for}",
+      "active": "Last tool call {ago} ago",
+      "reclaim": "reclaimed in {in} at the earliest",
+      "overdue": "past its idle time and not reclaimed yet (a later end to the room's latest turn, or a background command still running, pushes it back)"
+    },
+    "placed": "Placed {at}",
+    "taskRoom": "task",
+    "spec": "{cores} cores · {memory} GB · {disk} GB",
+    "dur": {
+      "s": "{n}s",
+      "m": "{n} min",
+      "h": "{n} h",
+      "d": "{n} d"
+    },
+    "history": "Last 24 hours",
+    "fact": {
+      "prepared": "Sandboxes started",
+      "ready": "Became ready",
+      "wait": "Wait p50 / p95 / max",
+      "waitValue": "{p50} / {p95} / {max}",
+      "abandoned": "Given up before ready",
+      "replaced": "Moved off a broken host",
+      "released": "Reclaimed (idle / out of credits)",
+      "releasedValue": "{idle} / {unpaid}",
+      "refused": "Sessions refused (pool full / provider failing)",
+      "refusedValue": "{sessions} ({full} / {failing})",
+      "hostsLost": "Hosts given up (provider error · offline · never enrolled)",
+      "hostsLostValue": "{n} ({error} · {away} · {never})",
+      "sandboxesLost": "Working sandboxes lost with their host"
+    },
+    "warm": "Warm pool (target {target})",
+    "noWarm": "No warm machines right now",
+    "warmAge": "Age {for}",
+    "config": "Each host takes the smaller of {perCore} sandboxes per core and as many as fit in its memory at {memory} GB each; a sandbox is destroyed after {sandboxIdle} idle, a host released after {hostIdle} idle, a whole VM after {vmIdle} idle",
+    "attempts": "1 attempt | {n} attempts",
+    "warmState": {
+      "preparing": "Preparing",
+      "ready": "Ready",
+      "reserved": "Reserved",
+      "claimFailed": "Claim failed",
+      "deleting": "Deleting",
+      "cleanupFailed": "Delete failed"
+    }
   }
 }

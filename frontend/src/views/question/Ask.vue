@@ -15,7 +15,14 @@
               v-bind="titleProps"
             ></v-text-field>
             <rich-editor holder="editor" :config="editorConfig" @create="onCreate" />
-            <topic-selector v-model="topics" class="mt-4" v-bind="topicsProps" :max="5" />
+            <topic-selector-view
+              v-model="topics"
+              class="mt-4"
+              v-bind="topicsProps"
+              :max="5"
+              :search-topics="searchTopics"
+              :create-topic="createTopic"
+            />
             <div class="d-flex align-center" style="gap: 16px">
               <BaseButton
                 kind="secondary"
@@ -79,16 +86,21 @@ import { z } from 'zod'
 import { defaultEditorConfig } from '@/utils/editor'
 import { vuetifyConfig } from '@/utils/form'
 
+import { useTopicSearch } from '@/composables/useTopicSearch'
+
+import { QuestionApi } from '@/api/questions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import RichEditor from '@/components/common/Editor/Editor.vue'
-import TopicSelector from '@/components/common/TopicSelector.vue'
-import { QuestionApi } from '@/network/api/questions'
+import TopicSelectorView from '@/components/common/TopicSelectorView.vue'
 
 let editor: EditorJS
 const { t } = useI18n()
 const editorConfig = defaultEditorConfig()
 const router = useRouter()
 const route = useRoute()
+
+// 话题的搜索与新建从这一层取，交给只认 props 的选择器；组件自己不碰接口。
+const { searchTopics, createTopic } = useTopicSearch()
 
 const groupId = computed(() => route.query.groupId)
 
@@ -154,7 +166,7 @@ const submit = handleSubmit(async (values) => {
     bounty: bounty.value ?? 0,
   })
   toast.success(t('questions.ask.success'))
-  router.push({ name: 'QuestionAnswerList', params: { questionId: res.data.id } })
+  router.push({ name: 'QuestionAnswerList', params: { questionId: res.id } })
 })
 </script>
 

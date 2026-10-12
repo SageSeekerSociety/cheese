@@ -1151,14 +1151,14 @@
     }
   },
   "projectOverviewView": {
-    "about": "The page you land on entering a project: the project-overview document, recent progress (by day), who's doing what (by owner), and what's been made (handed-over artifacts and sites).",
+    "about": "The page you land on entering a project: the project goals, recent progress (by day), who's doing what (by owner), and what's been made (handed-over artifacts and sites).",
     "s1": {
       "name": "All four blocks present",
-      "note": "Default cell: the left column is the project-overview document (with an 'Edit') and recent progress; the right column is who's doing what and what's been made (those two artifacts)."
+      "note": "Default cell: the left column is the project goals (with an 'Edit project goals') and recent progress; the right column is who's doing what and what's been made (those two artifacts)."
     },
     "s2": {
       "name": "No document yet",
-      "note": "When the document is empty (not unreadable) it offers a 'No project overview yet' line and a 'Write one'."
+      "note": "When the document is empty (not unreadable) it offers a 'No project goals yet' line saying what to write, and a 'Write project goals'."
     },
     "s3": {
       "name": "Progress unreadable",
@@ -1294,6 +1294,184 @@
     "s6": {
       "name": "Paging",
       "note": "When there is a previous or next page, pager buttons appear at the bottom right; a single page leaves no row of grey buttons."
+    }
+  },
+  "alertsView": {
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "s1": {
+      "name": "Counts with alerts",
+      "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: a progress bar, not an empty 'No alerts'."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read states the reason the server gave, with a retry beside it."
+    },
+    "s4": {
+      "name": "Nothing waiting",
+      "note": "Read, and there really is nothing: it says 'No alerts' rather than leaving a blank block."
+    }
+  },
+  "knowledgeView": {
+    "about": "The team knowledge base: the toolbar, the grid and the table, and the two dialogs. Fetching and writing stay in the page — this half only reads props and reports actions.",
+    "s1": {
+      "name": "Grid, four resources",
+      "note": "The default: cards, one per resource, with type, author and time."
+    },
+    "s2": {
+      "name": "Table view",
+      "note": "Switched to the table: the same rows as a list, with an actions menu on each row."
+    },
+    "s3": {
+      "name": "First load",
+      "note": "Not back yet: a spinner in the middle, not an empty base."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "A failed read states the reason and offers a retry."
+    },
+    "s5": {
+      "name": "No permission",
+      "note": "On 401/403 it says there is no access and offers no retry."
+    },
+    "s6": {
+      "name": "Nothing in the base",
+      "note": "Read, and there really are none: it offers how to add the first one."
+    },
+    "s7": {
+      "name": "Filtered to nothing",
+      "note": "Read, and the current filters match nothing: it says so and suggests adjusting them."
+    }
+  },
+  "adminMembersPageView": {
+    "about": "The admin 'members' page: the platform-admin roster in two groups (the root list from config, and the ones added here), with add and remove.",
+    "s1": {
+      "name": "The roster",
+      "note": "The default: two groups, avatars with nickname and handle, account status marks only the exceptions, and remove shows on the added rows only."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "No roster yet: skeleton rows in the table, not a premature empty state."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "The table says it could not be read (the server's words as the description) and the retry sits right there."
+    },
+    "s4": {
+      "name": "After adding",
+      "note": "A result notice — a success also speaks, so you can tell which handles were added."
+    },
+    "s5": {
+      "name": "Refreshing",
+      "note": "With a roster already on screen a refresh only dims it (busy); it does not flash the skeleton."
+    },
+    "s6": {
+      "name": "Add dialog",
+      "note": "Search is server-side; candidates already on the roster are drawn disabled, with a badge."
+    }
+  },
+  "pendingView": {
+    "about": "Requests and invitations: each section owns its loading, failure and results; actions go back to the page.",
+    "s1": {
+      "name": "Requests and invitations",
+      "note": "The three sections show their rows, with cancel, accept or decline for pending items."
+    },
+    "s2": {
+      "name": "Loading requests",
+      "note": "Requests load first; the other two sections retain their original empty states."
+    },
+    "s3": {
+      "name": "Loading team invitations",
+      "note": "Requests have arrived while team invitations are loading."
+    },
+    "s4": {
+      "name": "Loading project invitations",
+      "note": "The team sections have arrived while project invitations are loading."
+    },
+    "s5": {
+      "name": "Empty sections",
+      "note": "All three sections were successfully read and are empty."
+    },
+    "s6": {
+      "name": "Requests failed",
+      "note": "Only requests show a reason and retry; invitations remain usable."
+    },
+    "s7": {
+      "name": "Team invitations failed",
+      "note": "Team invitations retry independently of requests and project invitations."
+    },
+    "s8": {
+      "name": "Project invitations failed",
+      "note": "Project invitations show the failure without hiding the two team sections."
+    },
+    "s9": {
+      "name": "Answering a project invitation",
+      "note": "Only the current project invitation has both buttons disabled; other invitations remain usable."
+    },
+    "s10": {
+      "name": "Refreshing with existing rows",
+      "note": "Each refreshing section retains its existing rows instead of becoming an initial load."
+    }
+  },
+  "learningView": {
+    "about": "Learning analytics: filter by student and knowledge point, select stuck points or questions, and build a teaching outline.",
+    "s1": {
+      "name": "Queues and questions",
+      "note": "Shows stuck points and questions, with a reason for unavailable review signals."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Shows progress before queues arrive without prematurely showing empty questions."
+    },
+    "s3": {
+      "name": "Load failed",
+      "note": "A failed queue or question read replaces content with the reason and retry."
+    },
+    "s4": {
+      "name": "Empty queues and questions",
+      "note": "Loaded with no flagged items, stuck points or questions."
+    },
+    "s5": {
+      "name": "No member projects",
+      "note": "No member projects takes precedence even when the queue read failed."
+    },
+    "s6": {
+      "name": "Filters and selection",
+      "note": "Both filters are selected; a question is checked in both its stuck point and list row."
+    },
+    "s7": {
+      "name": "Generated outline",
+      "note": "Shows outline sessions, excerpts and the notice for unavailable questions."
+    },
+    "s8": {
+      "name": "Refreshing and building",
+      "note": "Keeps queues, selections and the outline while the build button is busy."
+    },
+    "s9": {
+      "name": "Flagged questions",
+      "note": "Available review signals show their questions instead of an unavailable reason."
+    }
+  },
+  "adminMachinesPageView": {
+    "about": "The machines screen: where each MicroCloud host is in its life, which sandboxes are on it, whether the pool has room right now, and how fast sandboxes came up over the last day.",
+    "s1": {
+      "name": "One row per host",
+      "note": "The default: one host in use, one offline, one broken by the provider and given up; opening the one in use shows a working sandbox and one waiting for its host."
+    },
+    "s2": {
+      "name": "Refusing new sessions",
+      "note": "The provider broke three hosts within the hour: the page says new sessions are being refused, instead of leaving a number to interpret."
+    },
+    "s3": {
+      "name": "A failed read is not an empty pool",
+      "note": "The request failed: say so and offer a retry, rather than drawing an empty pool."
+    },
+    "s4": {
+      "name": "An empty pool",
+      "note": "Read, and there really is no host: only then does it say so."
     }
   }
 }

@@ -16,20 +16,17 @@ like the /sandbox endpoints.
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Header
 
 from app.api.auth import require_seated_agent
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.core.errors import BadRequestError, UnauthorizedError
 from app.core.sandbox_auth import is_global_sandbox_token, scoped_token_claims
 from app.domain import backend_log  # module import: tests swap the intake singleton
 from app.domain.backend_log import BackendErrorBatchIn
 
 router = APIRouter(prefix="/backend-errors", tags=["backend-errors"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def _room(

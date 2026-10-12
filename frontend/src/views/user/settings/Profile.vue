@@ -38,9 +38,8 @@ import ProfileView from './ProfileView.vue'
 
 import { createAvatar } from '@/api/avatars'
 import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
 
 // The server serves these four as images and anything else as an opaque file,
@@ -48,8 +47,7 @@ import AccountService from '@/services/account'
 const AVATAR_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif']
 const AVATAR_MAX_BYTES = 2 * 1024 * 1024
 
-const fail = (error: unknown, fallback: string) =>
-  toast.error(axiosErrorMessage(error, requestErrorMessage(error, fallback)))
+const fail = (error: unknown, fallback: string) => toast.error(axiosErrorMessage(error, fallback))
 
 const user = computed(() => AccountService.user)
 

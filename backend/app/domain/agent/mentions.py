@@ -47,7 +47,11 @@ from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.membership.roster import roster_rows
-from app.domain.mentions import canonicalize_refs, expand_mention_names
+from app.domain.mentions import (
+    canonicalize_refs,
+    dangling_refs,
+    expand_mention_names,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.thread import reads as thread_reads
 from app.domain.topic.models import Topic, TopicKind
@@ -397,25 +401,39 @@ async def announce_mentions(
         block.refs = refs
     if not flag_unresolved:
         return
-    for bad in unresolved:
-        if bad in flagged:
-            continue
-        # Beside the message it is about, not in the room the message did not
-        # go to — same landing as the message.
-        room = await room_of(session, block.conversation_id)
-        in_task = room != block.conversation_id
-        landed = landing(
-            EventAbout.task if in_task else EventAbout.room,
-            project_id=block.project_id,
-            room_id=room,
-            task_id=block.conversation_id if in_task else None,
-        )
+    lines = [
+        say("mentionUnknownMember", member=f"<@{bad}>")
+        for bad in unresolved
+        if bad not in flagged
+    ]
+    # A `<#id>` that names no channel, task or 支线 draws as a reference that
+    # opens nothing; the agent that wrote it is told beside the message, as it
+    # is for a handle that names nobody. One an edit kept was told already.
+    kept = set(await dangling_refs(session, block.project_id, before))
+    lines += [
+        say("refUnknownConversation", ref=f"<#{ref}>")
+        for ref in await dangling_refs(session, block.project_id, text)
+        if ref not in kept
+    ]
+    if not lines:
+        return
+    # Beside the message it is about, not in the room the message did not
+    # go to — same landing as the message.
+    room = await room_of(session, block.conversation_id)
+    in_task = room != block.conversation_id
+    landed = landing(
+        EventAbout.task if in_task else EventAbout.room,
+        project_id=block.project_id,
+        room_id=room,
+        task_id=block.conversation_id if in_task else None,
+    )
+    for line in lines:
         await BlockRepository(session).add(
             project_id=landed.project_id,
             conversation_id=landed.conversation_id,
             author=author,
             author_type=AuthorType.participant,
-            content=say("mentionUnknownMember", member=f"<@{bad}>"),
+            content=line,
             kind=BlockKind.event,
             turn_id=block.turn_id,
             meta={"in_room": False},

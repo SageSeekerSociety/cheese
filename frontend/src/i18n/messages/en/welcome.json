@@ -1,0 +1,268 @@
+{
+  "title": "Getting started",
+  "intro": "Cheese has an AI teammate. Hand it a piece of work and it shows you a plan before it starts, then gives the result to you to review. Let's take a minute to get you set up.",
+  "name": {
+    "q": "What should your AI teammate call you?",
+    "why": "It uses this name in conversations, and your teammates see it too."
+  },
+  "role": {
+    "q": "What do you mainly use Cheese for?",
+    "why": "Your AI teammate uses this to suggest a first task and to know who it is working with.",
+    "org": "School or organisation (optional)",
+    "student": "Classes and course projects",
+    "studentHint": "Student",
+    "teacher": "Teaching",
+    "teacherHint": "Teacher or TA",
+    "office": "Day-to-day work",
+    "officeHint": "Office and business",
+    "research": "Research",
+    "researchHint": "Graduate student or researcher",
+    "maker": "My own project",
+    "makerHint": "Hobby or startup",
+    "other": "Something else"
+  },
+  "task": {
+    "q": "What would you like to get done first?",
+    "why": "Pick one, or write your own. It becomes your first project.",
+    "own": "Or write your own",
+    "files": "Drop the files you will need here, or click to choose (optional)",
+    "filesNote": "The files go to your AI teammate with your first task.",
+    "ownPlan": "Show me a plan first, and start once I confirm.",
+    "ownPlaceholder": "For example: turn this term's lecture notes into a revision outline"
+  },
+  "tasks": {
+    "student": {
+      "report": {
+        "label": "Write a course report or paper draft",
+        "hint": "Outline first, then the full text",
+        "name": "Course report",
+        "text": "Write a course report for me. Show me the outline first, and write it in full once I confirm. The topic and requirements are: "
+      },
+      "project": {
+        "label": "Build a course project",
+        "hint": "Web page, program, small tool",
+        "name": "Course project",
+        "text": "Build a course project for me and give me a preview I can open when it is done. Show me how you plan to do it first, and start once I confirm. What I need to build is: "
+      },
+      "review": {
+        "label": "Make revision notes",
+        "hint": "Slides and notes into an outline",
+        "name": "Revision notes",
+        "text": "Turn the slides and notes I attached into a revision outline with key points and worked examples. Show me the structure first, and write it in full once I confirm. The course is: "
+      },
+      "group": {
+        "label": "Split up group work",
+        "hint": "Tasks and a schedule",
+        "name": "Group assignment",
+        "text": "Break our group assignment into tasks we can act on, with a suggested split and a schedule. Show me how you would break it down first. The assignment is: "
+      }
+    },
+    "teacher": {
+      "assignment": {
+        "label": "Set an assignment",
+        "hint": "Task, requirements, rubric",
+        "name": "Assignment design",
+        "text": "Design an assignment for me with the task, submission requirements and a grading rubric. Show me the idea first, and write it in full once I confirm. The course and topic are: "
+      },
+      "slides": {
+        "label": "Organise course materials",
+        "hint": "Handouts, outlines, examples",
+        "name": "Course handout",
+        "text": "Turn the material I attached into a handout with key points and worked examples per section. Show me the structure first, and write it in full once I confirm. The lesson is about: "
+      },
+      "feedback": {
+        "label": "Draft feedback on work",
+        "hint": "Feedback against a rubric",
+        "name": "Assignment feedback",
+        "text": "Draft feedback on the attached submissions against the rubric. Show me how you plan to grade first, and write each one once I confirm. The rubric is: "
+      },
+      "course": {
+        "label": "Catalogue course materials",
+        "hint": "One line per file",
+        "name": "Course materials",
+        "text": "Organise the attached course materials into a catalogue with one line on each. Show me the categories first, and organise them once I confirm. The course is: "
+      }
+    },
+    "office": {
+      "doc": {
+        "label": "Write a document or notice",
+        "hint": "Summary, proposal, notice",
+        "name": "Work document",
+        "text": "Write a document for me. Show me the outline first, and write it in full once I confirm. What I need is: "
+      },
+      "table": {
+        "label": "Clean up spreadsheet data",
+        "hint": "Totals, checks, charts",
+        "name": "Data cleanup",
+        "text": "Clean up the attached spreadsheet and sum it up clearly. Tell me how you plan to handle it first, and start once I confirm. What I need is: "
+      },
+      "tool": {
+        "label": "Build a small tool",
+        "hint": "Web page, form, mini app",
+        "name": "Small tool",
+        "text": "Build a small web tool for me and give me a preview I can open when it is done. Show me the page structure first, and start once I confirm. It should: "
+      },
+      "plan": {
+        "label": "Plan a project and split the work",
+        "hint": "Tasks, owners, dates",
+        "name": "Project plan",
+        "text": "Break this into tasks we can act on, with a suggested split of the work and a schedule. Show me how you would break it down first. The work is: "
+      }
+    },
+    "research": {
+      "survey": {
+        "label": "Literature review",
+        "hint": "A survey with sources",
+        "name": "Literature review",
+        "text": "Find the relevant literature, cite your sources, and write it up as a survey. Show me the outline first, and write it in full once I confirm. The research question is: "
+      },
+      "data": {
+        "label": "Analyse data",
+        "hint": "Clean, summarise, plot",
+        "name": "Data analysis",
+        "text": "Analyse the attached data and give me the statistics and plots. Tell me how you plan to analyse it first, and start once I confirm. What I want to know is: "
+      },
+      "section": {
+        "label": "Write a section of a paper",
+        "hint": "Introduction, method, related work",
+        "name": "Paper writing",
+        "text": "Write a section of my paper. Show me the outline first, and write it in full once I confirm. The section is: "
+      },
+      "reproduce": {
+        "label": "Reproduce some code",
+        "hint": "Get a paper or repo running",
+        "name": "Reproduction",
+        "text": "Reproduce some code for me and tell me the results once it runs. Show me how you plan to do it first, and start once I confirm. What to reproduce: "
+      }
+    },
+    "general": {
+      "tidy": {
+        "label": "Tidy up or rewrite a document",
+        "hint": "Slides, articles, reports, spreadsheets",
+        "name": "Document cleanup",
+        "text": "Tidy up or rewrite the attached material for me. Show me how you plan to change it first, and start once I confirm. What I want is: "
+      },
+      "research": {
+        "label": "Research a topic into a report",
+        "hint": "With sources, ready to download",
+        "name": "Research",
+        "text": "Look up the material for me, cite your sources, and write it up as a report. Show me the outline first, and write it in full once I confirm. What I want to understand is: "
+      },
+      "build": {
+        "label": "Build a web page or small tool",
+        "hint": "Open the preview when it is done",
+        "name": "Small tool",
+        "text": "Build a web page for me and give me a preview I can open when it is done. Show me the page structure first, and start once I confirm. What I want to build is: "
+      },
+      "plan": {
+        "label": "Break down a goal and split the work",
+        "hint": "Tasks, owners, dates",
+        "name": "Project plan",
+        "text": "Break my goal into tasks I can act on, with a suggested split of the work and a schedule. Show me how you would break it down first. My goal is: "
+      }
+    }
+  },
+  "who": {
+    "q": "Who are you doing this with?",
+    "why": "People you work with can talk with you and your AI teammate in the project, and can review its work.",
+    "solo": "Just me for now",
+    "soloHint": "You can invite people any time",
+    "team": "With classmates or colleagues",
+    "teamHint": "Enter their usernames or emails",
+    "invitees": "Usernames or emails, separated by spaces"
+  },
+  "where": {
+    "q": "Your AI teammate needs a computer to work on",
+    "why": "It reads files, writes files and runs programs there. It keeps working after you close the page.",
+    "cloud": "Use the cloud (recommended)",
+    "cloudHint": "Nothing to set up. The first start takes a minute or two, and usage comes out of your credits.",
+    "device": "Use this computer",
+    "deviceHint": "It works in a separate folder and cannot see your other files.",
+    "webNote": "Install the Cheese desktop app first; then switch the project to this computer.",
+    "download": "Download the desktop app",
+    "deviceWeb": "Use your own computer"
+  },
+  "preview": {
+    "title": "Your project",
+    "brief": "Brief",
+    "files": "Files",
+    "members": "Members",
+    "about": "Knows that",
+    "where": "Works on",
+    "cloud": "The cloud",
+    "device": "This computer",
+    "hint": "Each answer adds to this card. The project is made when you click Create project.",
+    "nameFallback": "{name}'s project",
+    "listSep": ", ",
+    "aboutSep": ", ",
+    "invited": "{name} (invited)",
+    "aboutLine": "{name}: {about}"
+  },
+  "next": "Continue",
+  "back": "Back",
+  "skip": "Skip",
+  "skipAll": "Skip the guide",
+  "finish": "Create project",
+  "finishing": "Creating…",
+  "failed": "The project was not created: {reason}",
+  "notInvited": "These people could not be invited (no such account): {names}. You can invite them from the project's members page.",
+  "deviceFailed": "This computer could not be connected, so your AI teammate works in the cloud for now. You can switch in the project.",
+  "tour": {
+    "aria": "Interface tour",
+    "next": "Next",
+    "back": "Back",
+    "done": "Done",
+    "skip": "Skip the tour",
+    "gotIt": "Got it",
+    "auto": "Moves on once you do it"
+  },
+  "stepOf": "Step {n} of {total}",
+  "guide": {
+    "channels": {
+      "title": "Channels",
+      "text": "Conversations in a project are split into channels. The general channel has everyone in the project; open another from Browse channels."
+    },
+    "composer": {
+      "title": "Message box",
+      "text": "The first task you picked is already written here. Pressing Enter sends to project members only; {agent} does not pick it up."
+    },
+    "overview": {
+      "title": "Overview",
+      "text": "Where the project stands: who is on which task, recent progress, and what has been made."
+    },
+    "library": {
+      "title": "Library",
+      "text": "Files and results live here. Once a delivery is accepted, its files appear here."
+    },
+    "send": {
+      "title": "Hand off to {agent}",
+      "text": "Now hand your first task to {agent}: finish the message and send it from here. Hand off to {agent} is already on."
+    },
+    "reply": {
+      "title": "{agent}'s reply",
+      "text": "{agent} has replied, in a thread under your message. Open it.",
+      "textWaiting": "{agent} is working on it. The reply appears in a thread under your message; you can leave and will be notified.",
+      "textFailed": "{agent} could not reply this time; the thread says why. Open it, and once that is sorted, press Retry."
+    },
+    "confirm": {
+      "title": "Confirm in the thread",
+      "text": "{agent} shows you a plan first. Reply in this thread (for example \"Looks good, go ahead\") and it starts; ask for changes the same way.",
+      "textWaiting": "Open the thread under your message to read {agent}'s plan."
+    },
+    "task": {
+      "title": "Task",
+      "text": "{agent} turned this into a task. Open it to follow progress and changes.",
+      "textWaiting": "Once it starts, {agent} turns this into a task listed under your message."
+    },
+    "taskPage": {
+      "title": "Task page",
+      "text": "Progress, changes and the delivery are all here. When it is done {agent} hands the result to you to review; a task it raised on its own waits for you to click Start.",
+      "textWaiting": "Open the task {agent} created; progress and the delivery are inside."
+    },
+    "accept": {
+      "title": "Accept",
+      "text": "{agent} has delivered. Look at the result: accept it to add it to the project, or send it back with a reason.",
+      "textWaiting": "When it is done, {agent} hands the result to you to review and the review card appears here. You can leave and will be notified."
+    }
+  }
+}

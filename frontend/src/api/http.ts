@@ -148,7 +148,12 @@ const TOKEN_REFRESH_LEEWAY_MS = 60_000
 
 export function tokenExpiresWithin(token: string, ms: number): boolean {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1] ?? '')) as { exp?: number }
+    // base64url, like every JWT: `-` and `_` stand where base64 has `+` and `/`,
+    // and `atob` refuses both. Read them back the way `services/account.ts`
+    // does — a payload this function cannot decode is one it never refreshes,
+    // which is how a token that died on its own keeps going out to be refused.
+    const encoded = (token.split('.')[1] ?? '').replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(atob(encoded)) as { exp?: number }
     if (typeof payload.exp !== 'number') return false
     return payload.exp * 1000 - Date.now() <= ms
   } catch {
@@ -194,7 +199,9 @@ export async function ensureFreshToken(): Promise<void> {
  */
 export async function refreshNow(): Promise<void> {
   // A failed refresh leaves the stored token as it was; the caller still sees
-  // its own request's result.
+  // its own request's result. When the server is who turned it down, this is
+  // also where the browser is told the sign-in is over (`lib/session.ts`), and
+  // the account service takes it from there.
   await refreshSession()
 }
 
@@ -266,6 +273,12 @@ async function performRequestFull<T>(path: string, init?: RequestInit): Promise<
         attempt -= 1
         continue
       }
+      // Nothing replaced the credential, so this 401 is the request's answer and
+      // it goes to the caller as it is. A credential the server has already
+      // refused is not worth a second try — what happens to the session behind
+      // it is not this transport's business: a renewal the server turned down
+      // ends the sign-in where every stack can hear it (`lib/session.ts`'s
+      // `announceSessionOver`).
     }
     // A read refused for coming too fast waits as long as it was told, once.
     const backoff = rateRetried ? null : rateLimitRetryMs(method, res)

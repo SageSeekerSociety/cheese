@@ -95,6 +95,44 @@ async def test_failed_ssh_stops_before_running_bootstrap(tmp_path, monkeypatch):
         )
 
 
+async def test_ssh_is_retried_on_its_own_failure_until_the_window_closes(
+    tmp_path, monkeypatch
+):
+    """255 is ssh's own failure: tried again every poll until the wait runs
+    out, and the last attempt's output is what the error reports."""
+    tries = tmp_path / "tries"
+    ssh = tmp_path / "ssh"
+    ssh.write_text(
+        f'#!/bin/sh\necho x >> "{tries}"\n'
+        f'echo "no route $(wc -l < "{tries}")"\nexit 255\n'
+    )
+    ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setattr(enrollment, "SSH_READY_WAIT_S", 0.5)
+    monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.1)
+    with pytest.raises(enrollment.EnrollmentError) as failed:
+        await enrollment.run_bootstrap(
+            ip="guest", login_user="cheese", private_key="test", script="exit 0"
+        )
+    attempts = len(tries.read_text().splitlines())
+    assert 3 <= attempts <= 7
+    assert f"(255): no route {attempts}" in str(failed.value)
+
+
+async def test_a_command_failing_after_ssh_is_up_is_not_retried(tmp_path, monkeypatch):
+    tries = tmp_path / "tries"
+    ssh = tmp_path / "ssh"
+    ssh.write_text(f'#!/bin/sh\necho x >> "{tries}"\nexit 7\n')
+    ssh.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}:{os.environ['PATH']}")
+    monkeypatch.setattr(enrollment, "SSH_READY_POLL_S", 0.05)
+    with pytest.raises(enrollment.EnrollmentError, match=r"\(7\)"):
+        await enrollment.run_bootstrap(
+            ip="guest", login_user="cheese", private_key="test", script="exit 0"
+        )
+    assert len(tries.read_text().splitlines()) == 1
+
+
 async def test_a_machine_whose_ssh_comes_up_late_enrolls_in_one_attempt(
     tmp_path, monkeypatch
 ):

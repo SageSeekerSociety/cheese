@@ -26,8 +26,8 @@ import { currentPasskeyOffer, endPasskeyOffer, Enrollment } from './passkeyEnrol
 import { passkeyWrongHostMessage } from './passkeyHost'
 import PasskeyOfferView from './PasskeyOfferView.vue'
 
+import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
 const router = useRouter()
 

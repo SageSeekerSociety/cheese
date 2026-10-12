@@ -253,7 +253,23 @@ repos:
         pass_filenames: false
         files: ^docs/manual/
 
-      # A file-size ratchet, not a cliff: 35 files are already past their cap
+      # The other half of the same problem, for the files no site build reads:
+      # an agent document that names a path or a section of another document,
+      # where the target has since moved. Nothing else looks at .claude/ — no
+      # build, no test, no checker imports it — so the sentence keeps reading
+      # perfectly while the reader who obeys it gets a "No such file". The live
+      # example is in the script's docstring: five dead section names in
+      # cheese-py-code-review/SKILL.md, in the file a reviewer is told to trust.
+      # always_run because the claim is about the TREE, not about the file that
+      # carries it: a rename anywhere can be what falsifies a sentence here.
+      - id: doc-references
+        name: agent docs name paths and sections that exist
+        entry: python3 .claude/scripts/check-doc-references.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # A file-size ratchet, not a cliff: 7 files are already past their cap
       # (frontend/src 1000 lines, backend/app 1500) and each is frozen at the
       # size it had where this branch left main — the merge base, which is why
       # main moving on cannot fail a branch for a file it never touched. Only

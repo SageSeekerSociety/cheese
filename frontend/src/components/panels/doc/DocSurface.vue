@@ -20,6 +20,7 @@ import type { DocLinkTarget } from '../../../lib/docLinks'
 import type { RefItem } from '../../../lib/docMentionMenu'
 import type { SlashItem } from '../../../lib/docSlashMenu'
 import type { ThreadPlace } from '../../../lib/docThreadTypes'
+import type { CanvasData } from '../../../types/canvas'
 
 import { computed, nextTick, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import Collaboration from '@tiptap/extension-collaboration'
@@ -44,6 +45,7 @@ import { createEditMarks } from '../../../lib/docEditMarks'
 import { captureDocLink, safeDocHref } from '../../../lib/docLinks'
 import { commentAnchors, docExtensions, serializeDoc } from '../../../lib/docSchema'
 import { createSlashCommands } from '../../../lib/docSlashMenu'
+import { refsVersion } from '../../../lib/refDirectory'
 import LoadingSkeleton from '../../common/LoadingSkeleton.vue'
 import MentionMenu from '../../room/MentionMenu.vue'
 
@@ -80,8 +82,10 @@ const props = withDefaults(
     activeThread?: string | null
     /** 取一份最新的节点树：闪某一段要它。 */
     fetchDocNodes: () => Promise<Block[]>
-    /** 图片 src 的显示期解析：工作区相对路径走原始文件接口。 */
-    imageSrc: (src: string) => string
+    /** 文档里引用的一张图拿什么画：取回来的字节做成的 object URL（本来就是地址的原样给回）。 */
+    imageSrc: (src: string) => Promise<string>
+    /** 文档里的画布拿什么读写；不给就只画标题。 */
+    canvas?: CanvasData | null
     /** 段落定位不到时的兜底：整篇闪一下 —— 那一下归页面那一半画。 */
     pulse: () => void
     /** 页面每收到一次正文区的滚动就加一：滚动时收起代码块工具条。 */
@@ -101,6 +105,7 @@ const props = withDefaults(
     activeThread: null,
     scrollTick: 0,
     agentHandle: null,
+    canvas: null,
     title: '',
     placeholder: '',
   }
@@ -338,8 +343,13 @@ function onPointerDown() {
 function buildEditor(session: DocSession): DocEditor {
   return new DocEditor({
     extensions: [
-      ...editorBlocks(docExtensions({ resolveImageSrc: (src) => props.imageSrc(src) }), () =>
-        props.agentHandle ? { name: props.agentName, run: (ed, from, to) => emit('agent', spotAt(ed, from, to)) } : null
+      ...editorBlocks(
+        docExtensions({ loadImage: (src) => props.imageSrc(src) }),
+        () =>
+          props.agentHandle
+            ? { name: props.agentName, run: (ed, from, to) => emit('agent', spotAt(ed, from, to)) }
+            : null,
+        props.canvas ? { ...props.canvas, openTask: (id) => emit('open-topic', id) } : null
       ),
       Collaboration.configure({ document: session.doc }),
       CollaborationCaret.configure({ provider: session.provider, user: session.user, render: renderCaret }),
@@ -401,9 +411,10 @@ watch(
   () => [props.openThreads, props.activeThread],
   () => poke(commentHighlightKey)
 )
-// 名册比正文晚到：到了之后标签上的账号换成名字。
+// 名册比正文晚到：到了之后标签上的账号换成名字。`<#id>` 指着什么也是后到的
+// （lib/refDirectory）。
 watch(
-  () => [props.mentionNames, props.topicList],
+  () => [props.mentionNames, props.topicList, refsVersion.value],
   () => poke(tokenChipsKey)
 )
 function poke(key: PluginKey) {

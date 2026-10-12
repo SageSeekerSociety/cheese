@@ -45,7 +45,6 @@ from app.domain.identity.handles import (
 from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.living_doc.services import Documents
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
 from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.services import AcceptService
@@ -161,7 +160,10 @@ class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TopicRepository(session)
-        self._projects = ProjectRepository(session)
+        # deferred-import: breaks the cycle project.services -> topic.services
+        from app.domain.project.services import ProjectService
+
+        self._projects = ProjectService(session)
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
         # 与我的相关性 asks three other domains the same question at once, and
@@ -395,6 +397,9 @@ class TopicService:
             kind=BlockKind.event,
             meta={"platform": True},
         )
+
+    async def get_many(self, topic_ids: set[uuid.UUID]) -> list[Topic]:
+        return await self._repo.get_many(topic_ids)
 
     async def get_or_404(self, topic_id: uuid.UUID) -> Topic:
         topic = await self._repo.get(topic_id)
@@ -848,6 +853,7 @@ class TopicService:
             created_by=created_by,
             teammate=recipient_seat((block.meta or {}).get("agent_recipient")),
             origin_block_id=await self._main_line_message(block),
+            source_block_id=block.id,
         )
         return parent, task
 
@@ -900,6 +906,7 @@ class TopicService:
         teammate: str | None = None,
         named_by_teammate: bool = False,
         origin_block_id: uuid.UUID | None = None,
+        source_block_id: uuid.UUID | None = None,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
@@ -917,7 +924,8 @@ class TopicService:
 
         ``origin_block_id`` is the main-line message the task was made from;
         the task shows under it. A task made on its own is announced in the
-        main line instead.
+        main line instead. ``source_block_id`` is the message whose words it
+        came from, wherever that is; the task's page quotes it.
 
         The owner is the person named, else the person creating it, else — when
         no person is identifiable — the room's owner, then the project's. A task
@@ -960,6 +968,7 @@ class TopicService:
             created_by=created_by,
         )
         task.upgraded_from_block_id = origin_block_id
+        task.source_block_id = source_block_id
         if named and named_by_teammate:
             task.title_calibrated = True
             tasks.record_title(task, reason="teammate", by=teammate)

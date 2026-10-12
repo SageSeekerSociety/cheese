@@ -10,8 +10,8 @@
 
 <script setup lang="ts">
 // 「说明」页签：取材料清单、处理下载，画面交给 `BriefView.vue`。
-import type { TaskAttachmentData } from '@/network/api/tasks/types'
 import type { Task } from '@/types'
+import type { TaskAttachmentData } from '@/types/taskBoard'
 
 import { watch } from 'vue'
 

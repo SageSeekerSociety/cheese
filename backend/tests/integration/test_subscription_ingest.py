@@ -16,10 +16,10 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
-from app.domain.feature_stats import pricing
 from app.domain.project.services import ProjectService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
+from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 from app.domain.usage.models import IngestCheckpoint, ResourceUsage

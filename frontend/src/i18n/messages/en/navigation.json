@@ -29,7 +29,9 @@
     "unread": "Help and feedback, unread updates",
     "center": "Feedback center",
     "mine": "My feedback",
-    "admin": "Admin console"
+    "admin": "Admin console",
+    "guide": "New-user guide",
+    "tour": "Interface tour"
   },
   "admin": {
     "queue": "Feedback",
@@ -41,6 +43,7 @@
     "ratchet": "Ratchet",
     "credits": "Plans & credits",
     "runRecords": "Run records",
+    "machines": "Machines",
     "overview": "Platform overview",
     "performance": "Performance",
     "pipeline": "Delivery pipeline",

@@ -6,6 +6,8 @@
 import type { WorkspaceFile } from '../cx_types'
 import type { FileDiff } from './diff'
 
+import { fmtFileSize } from './usageFormat'
+
 /** 树上的一行：文件夹，或者一份文件。 */
 export interface FileRow {
   type: 'dir' | 'file'
@@ -18,10 +20,12 @@ export interface FileRow {
   diff?: FileDiff
 }
 
+/**
+ * 改动树这一族的字节数：一位小数（`1.5 KB`）。正文归一到 `usageFormat` 的
+ * `fmtFileSize`，这里只固定这一族一直用的小数位。
+ */
 export function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`
+  return fmtFileSize(n, 1)
 }
 
 export interface FileRowsInput {

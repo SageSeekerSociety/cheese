@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const detailByHandle = vi.fn()
 const join = vi.fn()
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: {
     detailByHandle: (...args: unknown[]) => detailByHandle(...args),
     join: (...args: unknown[]) => join(...args),
@@ -22,8 +22,8 @@ vi.mock('vue-router', () => ({ useRoute: () => route }))
 
 import Detail from './Detail.vue'
 
+import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 
 function team(overrides: Partial<Team> = {}): Team {
   return {
@@ -57,8 +57,8 @@ function mount() {
 beforeEach(() => {
   setLocale('zh-CN')
   route.params = { handle: 'crew' }
-  detailByHandle.mockReset().mockResolvedValue({ data: { team: team() } })
-  join.mockReset().mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
+  detailByHandle.mockReset().mockResolvedValue({ team: team() })
+  join.mockReset().mockResolvedValue({ team: team({ joinStatus: 'member' }) })
 })
 afterEach(cleanup)
 
@@ -70,7 +70,7 @@ describe('a team page', () => {
   })
 
   it('stays put when the team is renamed, and loads another team when the address changes', async () => {
-    detailByHandle.mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
+    detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
     mount()
     await screen.findByText('成员工作区内容')
     // The page itself renamed the team and replaced the address with the new handle.
@@ -96,8 +96,8 @@ describe('a team page', () => {
   })
 
   it('keeps an applicant on the profile until someone approves', async () => {
-    detailByHandle.mockResolvedValue({ data: { team: team({ joinApproval: true }) } })
-    join.mockResolvedValue({ data: { team: team({ joinApproval: true, joinStatus: 'pending' }) } })
+    detailByHandle.mockResolvedValue({ team: team({ joinApproval: true }) })
+    join.mockResolvedValue({ team: team({ joinApproval: true, joinStatus: 'pending' }) })
     mount()
     await fireEvent.click(await screen.findByRole('button', { name: '申请加入' }))
     await screen.findByText('已提交申请，等待团队管理员审批')
@@ -105,13 +105,13 @@ describe('a team page', () => {
   })
 
   it('gives members the workspace', async () => {
-    detailByHandle.mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
+    detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
     mount()
     await screen.findByText('成员工作区内容')
   })
 
   it('answers a hidden team the same way as a missing one', async () => {
-    detailByHandle.mockRejectedValue(new BusinessError('not found', 404))
+    detailByHandle.mockRejectedValue(new ApiError(404, 'not found'))
     mount()
     await screen.findByText('找不到这个团队，它可能已解散或不对你公开')
   })
@@ -128,7 +128,7 @@ describe('a team page', () => {
   })
 
   it('403 says no access, with no retry', async () => {
-    detailByHandle.mockRejectedValue({ code: 403 })
+    detailByHandle.mockRejectedValue({ status: 403 })
     mount()
 
     await screen.findByText('你没有权限查看')
@@ -140,7 +140,7 @@ describe('a team page', () => {
     mount()
     await screen.findByText('团队信息没读出来')
 
-    detailByHandle.mockResolvedValue({ data: { team: team({ joinStatus: 'member' }) } })
+    detailByHandle.mockResolvedValue({ team: team({ joinStatus: 'member' }) })
     await fireEvent.click(screen.getByText('重试'))
     await screen.findByText('成员工作区内容')
     expect(screen.queryByText('团队信息没读出来')).toBeNull()

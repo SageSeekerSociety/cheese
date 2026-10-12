@@ -4,9 +4,9 @@
 review 领域自己补上的一条读路径。产出落各自的卡和房间，和 webhook 送来的事件走同
 一条路 (`forge_repository_changed`)。
 
-So this is the review domain's own clock. `app/core/background.py` decides how
-often it turns; everything about WHAT a tick does is here and in the services it
-calls.
+So this is the review domain's own clock. `app/domain/review/periodic.py` sets
+how often it turns; everything about WHAT a tick does is here and in the services
+it calls.
 """
 
 import logging

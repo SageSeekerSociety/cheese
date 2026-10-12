@@ -15,7 +15,7 @@ def _topic(client, owner: str = "owner") -> str:
     t = client.post("/topics", json={"project_id": p["id"], "title": "话题"}).json()[
         "data"
     ]
-    return open_task(client, t["id"], owner=owner, start=False)["id"]
+    return open_task(client, t["id"], owner=owner)["id"]
 
 
 def test_doc_absent_then_created_and_updated(client):
@@ -149,7 +149,7 @@ def test_doc_canonicalizes_friendly_mentions(client, bearer):
     other = client.post(
         "/topics", json={"project_id": p["id"], "title": "分页调研"}
     ).json()["data"]
-    task = open_task(client, t["id"], owner="user-1", start=False)["id"]
+    task = open_task(client, t["id"], owner="user-1")["id"]
 
     client.put(
         _doc(client, task),

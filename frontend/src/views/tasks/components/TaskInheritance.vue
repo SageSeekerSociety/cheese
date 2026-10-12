@@ -9,7 +9,7 @@
 //
 // 合成在服务端由 `protocol.resolve()` 那一个循环算出来（`teaching.source` 也是
 // 它带出来的），这一块只把它摆出来，不重算、不猜。
-import type { TaskInheritanceData, TaskInheritanceSource } from '@/network/api/tasks/types'
+import type { TaskInheritanceData, TaskInheritanceSource } from '@/types/taskBoard'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'

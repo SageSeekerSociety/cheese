@@ -16,13 +16,34 @@ export function listAwaitingMe(): Promise<ListPayload<WaitingItem>> {
   return request<ListPayload<WaitingItem>>('/awaiting-me')
 }
 
-/** 新账号的第一个项目：每个账号只建一次，由服务端判（`POST /users/me/first-project`）。
- *  建过的再问回 null。 */
-export function createFirstProject(name: string): Promise<{ project_id: string | null }> {
-  return request<{ project_id: string | null }>('/users/me/first-project', {
-    method: 'POST',
-    body: JSON.stringify({ name }),
-  })
+/** 新手引导最后一步「建好项目」：回答存到账号上，按回答建项目、邀请同伴
+ *  （`POST /users/me/onboarding`）。`project_id` 每走一遍引导选一次，重试补完同一个项目。 */
+export interface OnboardingAnswers {
+  project_id: string
+  project_name: string
+  intent: string
+  nickname?: string
+  work_role?: WorkRole | null
+  organization?: string
+  invitees: string[]
+  solo: boolean
+  /** 桌面端：芝士在这台电脑上干活。 */
+  device_id?: string | null
+}
+export type WorkRole = 'student' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
+
+export function finishOnboarding(
+  answers: OnboardingAnswers
+): Promise<{ project_id: string; root_topic_id: string | null; not_invited: string[]; on_device: boolean }> {
+  return request('/users/me/onboarding', { method: 'POST', body: JSON.stringify(answers) })
+}
+
+/** 新手引导要的事实：这个人在这个项目里交给过芝士没有、芝士回过没有、项目采纳过交付没有；
+ *  `learned` 是他在哪个项目里亲手采纳过交付——那样就不用再带了。 */
+export function getStartSteps(
+  projectId: string
+): Promise<{ asked: boolean; answered: boolean; accepted: boolean; learned: boolean }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/start-steps`)
 }
 
 export function createProject(

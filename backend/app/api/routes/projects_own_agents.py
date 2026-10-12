@@ -13,8 +13,8 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.projects import DbSession
 from app.core.errors import ForbiddenError
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_instance.own import SETTING, allows_own_agents, listing

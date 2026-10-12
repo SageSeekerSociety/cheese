@@ -10,10 +10,11 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 vi.mock('@/components/common/Editor/Editor.vue', () => ({
   default: defineComponent({ setup: () => () => h('div') }),
 }))
-vi.mock('@/components/common/TopicSelector.vue', () => ({
+vi.mock('@/components/common/TopicSelectorView.vue', () => ({
   default: defineComponent({ setup: () => () => h('div') }),
 }))
-vi.mock('@/network/api/questions', () => ({ QuestionApi: { ask: vi.fn() } }))
+vi.mock('@/api/questions', () => ({ QuestionApi: { ask: vi.fn() } }))
+vi.mock('@/api/tags', () => ({ TagsApi: { search: vi.fn(), create: vi.fn() } }))
 
 import Ask from './Ask.vue'
 

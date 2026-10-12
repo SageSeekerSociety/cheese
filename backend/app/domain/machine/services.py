@@ -47,6 +47,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine.infra_records import keep_host_lost
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -892,10 +893,12 @@ class HostPool:
         the provider's record.
         """
         now = datetime.now(UTC)
+        first = host.released_at is None
         host.released_at = host.released_at or now
         if provider_failed:
             host.failed_at = host.failed_at or now
         lines = []
+        lost = replaced = 0
         for home in await self._repo.homes_on(host.id):
             row = (worked or {}).get(home.session_id)
             if row is not None:
@@ -903,8 +906,10 @@ class HostPool:
                     **(row.execution_request or {}),
                     LOST_KEY: True,
                 }
+                lost += 1
                 lines.append((home.topic_id, await tell_lost(self._session, home)))
             elif home.waiting_since is not None:
+                replaced += 1
                 lines.append(
                     (
                         home.topic_id,
@@ -912,6 +917,8 @@ class HostPool:
                     )
                 )
             await self._repo.delete_home(home)
+        if first:
+            await keep_host_lost(self._session, host, lost=lost, replaced=replaced)
         await self._session.commit()
         for topic_id, line in lines:
             await publish_line(topic_id, line)

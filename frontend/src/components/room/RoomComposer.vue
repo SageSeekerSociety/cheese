@@ -20,6 +20,7 @@ import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { pastedTextName } from '../../lib/attachments'
@@ -42,6 +43,12 @@ import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
+  /**
+   * 项目本体那一栏的输入框：界面导览指的是它（登记 `composer-input` /
+   * `composer-summon`）。支线、任务里的输入框不登记，否则后挂上的那只会把名字抢走，
+   * 导览就圈着旁边那栏的输入框。
+   */
+  guided?: boolean
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
   mentionPool: MentionPoolEntry[]
   /** @ 得到的话题，用来把「@话题名」展开成 <#id>。 */
@@ -435,7 +442,7 @@ defineExpose({
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
-    <div class="composer-box">
+    <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
       <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"
@@ -466,6 +473,7 @@ defineExpose({
         @compositionend="onCompositionEnd"
       />
       <ComposerActions
+        :guided="!!guided"
         :uploading="attsUploading"
         :can-send="canSend"
         :show-image-picker="!mdAndUp"

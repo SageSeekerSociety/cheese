@@ -1,4 +1,4 @@
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { render } from '@testing-library/vue'
 import { beforeAll, expect, it } from 'vitest'

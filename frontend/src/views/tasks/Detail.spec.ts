@@ -6,7 +6,7 @@
 // - 领了才能用这道题新建项目；
 // - 我的进度按我最新那一版提交与它的评审算。
 //
-// 接口在 `@/network/api/*` 那一层换掉：真 axios 会被 `src/test/setup-network.ts` 逮住。
+// 接口在 API 层换掉：真 axios 会被 `src/test/setup-network.ts` 逮住。
 // 页签内容是子路由，这里用空壳顶上 —— 它们各有各的测试。
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -24,8 +24,8 @@ const updateParticipant = vi.fn()
 const postSubmissionReview = vi.fn()
 const getSubmissionQueue = vi.fn()
 
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: {
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: {
     detail: (...a: unknown[]) => taskDetail(...a),
     listSubmissions: (...a: unknown[]) => listSubmissions(...a),
     getParticipants: (...a: unknown[]) => getParticipants(...a),
@@ -34,7 +34,7 @@ vi.mock('@/network/api/tasks', () => ({
     postSubmissionReview: (...a: unknown[]) => postSubmissionReview(...a),
   },
 }))
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: { getSubmissionQueue: (...a: unknown[]) => getSubmissionQueue(...a) },
 }))
 
@@ -56,8 +56,8 @@ vi.mock('@/composables/usePageTitle', () => ({
 }))
 
 // 交作业表单开场问一次单个文件的上限，写进「提交须知」。
-vi.mock('@/network/api/attachments', () => ({
-  AttachmentsApi: { upload: vi.fn(), limits: vi.fn(async () => ({ data: { maxFileBytes: 100 * 1024 * 1024 } })) },
+vi.mock('@/api/attachments', () => ({
+  AttachmentsApi: { upload: vi.fn(), limits: vi.fn(async () => ({ maxFileBytes: 100 * 1024 * 1024 })) },
 }))
 
 // 领取/退队/实名/对话那几张对话框挂在老机器上（事件总线 + `TaskDialogs`），这里只留空壳。
@@ -112,10 +112,8 @@ const APPROVED_ME = { hasParticipation: true, identities: [{ id: 11, type: 'USER
 
 function payload(task: Record<string, unknown> = {}, participation: Record<string, unknown> = {}) {
   return {
-    data: {
-      task: { ...BASE_TASK, ...task },
-      participation: { hasParticipation: false, identities: [], ...participation },
-    },
+    task: { ...BASE_TASK, ...task },
+    participation: { hasParticipation: false, identities: [], ...participation },
   }
 }
 
@@ -200,9 +198,9 @@ describe('题目详情', () => {
     listProjectsForTask.mockResolvedValue({ data: [] })
     // 默认是「路人」：非出题人、非管理员。
     AccountService.user = null
-    listSubmissions.mockImplementation(async () => ({ data: { submissions: [], page: {} } }))
-    getParticipants.mockImplementation(async () => ({ data: { participants: [] } }))
-    getSubmissionQueue.mockImplementation(async () => ({ data: { submissions: [] } }))
+    listSubmissions.mockImplementation(async () => ({ submissions: [], page: {} }))
+    getParticipants.mockImplementation(async () => ({ participants: [] }))
+    getSubmissionQueue.mockImplementation(async () => ({ submissions: [] }))
   })
 
   afterEach(() => {
@@ -277,7 +275,8 @@ describe('题目详情', () => {
 
   it('只能交一次、而且已经交过：不再给交作业的入口', async () => {
     listSubmissions.mockImplementation(async () => ({
-      data: { submissions: [{ id: 88, version: 1, review: { reviewed: false } }], page: {} },
+      submissions: [{ id: 88, version: 1, review: { reviewed: false } }],
+      page: {},
     }))
     const { container } = await mount({ resubmittable: false }, APPROVED_ME)
 
@@ -295,7 +294,8 @@ describe('题目详情', () => {
 
   it('我的进度按我那一份最新一版提交与它的评审算', async () => {
     listSubmissions.mockImplementation(async () => ({
-      data: { submissions: [{ id: 88, version: 3, review: { reviewed: true, detail: { accepted: true } } }], page: {} },
+      submissions: [{ id: 88, version: 3, review: { reviewed: true, detail: { accepted: true } } }],
+      page: {},
     }))
     const { container } = await mount({}, APPROVED_ME)
 
@@ -310,7 +310,7 @@ describe('题目详情', () => {
 
   it('交上一版之后，我的进度和「我的提交」上的版本号当场跟上，不用刷新', async () => {
     let versions: { id: number; version: number; review: { reviewed: boolean } }[] = []
-    listSubmissions.mockImplementation(async () => ({ data: { submissions: versions, page: {} } }))
+    listSubmissions.mockImplementation(async () => ({ submissions: versions, page: {} }))
     createSubmission.mockImplementation(async () => {
       versions = [{ id: 90, version: 1, review: { reviewed: false } }]
       return {}
@@ -337,11 +337,9 @@ describe('题目详情', () => {
     AccountService.user = { id: 1, nickname: '蔡松洋' } as never
     let approved = 'NONE'
     getParticipants.mockImplementation(async () => ({
-      data: {
-        participants: [
-          { id: 11, member: { id: 1, name: '蔡松洋', intro: '', avatarId: null }, createdAt: Date.now(), approved },
-        ],
-      },
+      participants: [
+        { id: 11, member: { id: 1, name: '蔡松洋', intro: '', avatarId: null }, createdAt: Date.now(), approved },
+      ],
     }))
     updateParticipant.mockImplementation(async () => {
       approved = 'APPROVED'
@@ -384,21 +382,20 @@ describe('题目详情', () => {
       review,
     })
     listSubmissions.mockImplementation(async () => ({
-      data: { submissions: [version()], page: { page_start: 0, page_size: 10, has_more: false, total: 1 } },
+      submissions: [version()],
+      page: { page_start: 0, page_size: 10, has_more: false, total: 1 },
     }))
     getParticipants.mockImplementation(async () => ({
-      data: {
-        participants: [
-          {
-            id: 11,
-            member: { id: 1, name: '蔡松洋', intro: '', avatarId: null },
-            createdAt: Date.now(),
-            approved: 'APPROVED',
-          },
-        ],
-      },
+      participants: [
+        {
+          id: 11,
+          member: { id: 1, name: '蔡松洋', intro: '', avatarId: null },
+          createdAt: Date.now(),
+          approved: 'APPROVED',
+        },
+      ],
     }))
-    getSubmissionQueue.mockImplementation(async () => ({ data: { submissions: [version()] } }))
+    getSubmissionQueue.mockImplementation(async () => ({ submissions: [version()] }))
     postSubmissionReview.mockImplementation(async () => {
       review = { reviewed: true, detail: { accepted: false, score: 0, comment: '' } }
       return {}

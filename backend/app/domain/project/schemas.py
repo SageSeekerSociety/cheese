@@ -62,6 +62,21 @@ class ProjectOut(BaseModel):
     shell: ShellOut | None = None
 
 
+class StartStepsOut(BaseModel):
+    """What the new-user guide needs to know about the caller
+    (`GET /projects/{id}/start-steps`)."""
+
+    #: They handed 芝士 something in this project.
+    asked: bool
+    #: An AI teammate replied where they asked.
+    answered: bool
+    #: A delivery was accepted into the project.
+    accepted: bool
+    #: They have accepted a delivery themselves in some project: past the first
+    #: steps, so the panel is not shown to them.
+    learned: bool
+
+
 class ForgeAttributionUpdate(BaseModel):
     requester_coauthor: bool | None
 

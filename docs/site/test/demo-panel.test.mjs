@@ -142,7 +142,8 @@ const onStep = (w) => w.querySelector('[data-walk-step].on')?.dataset.walkStep |
     ws[0].querySelector('[data-walk-step="1"]').dispatchEvent(new w.MouseEvent('click', { bubbles: true }))
     eq(onStep(ws[0]), '1', 'reduced motion: clicking step 1 highlights it')
     const f1 = seen(ws[0].querySelector('[data-walk-panel]'))
-    ok(f1.includes('讨论中') && f1.includes('目标'), `reduced motion: and shows the task page with its document, not yet started: ${f1}`)
+    const docShown = [...ws[0].querySelectorAll('[data-walk-panel] .dp-doc')].some((d) => !d.closest('[hidden]'))
+    ok(f1.includes('讨论中') && docShown, `reduced motion: and shows the task page with its document, not yet started: ${f1}`)
   }
 
   // Walking through once, then a click.

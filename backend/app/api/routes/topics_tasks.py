@@ -26,16 +26,24 @@ from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.room_task_rows import named_task, task_rows
-from app.api.routes.topics import (
-    BlockRepository,
-    DbSession,
-    ProjectRepository,
-    UsageRepository,
+from app.api.routes.topics import BlockRepository, ProjectRepository, UsageRepository
+from app.api.task_instructions import (
+    dispatch,
+    say_task_started,
+    start_task_at_once,
+    teammate_source_text,
+    tell_task,
 )
-from app.api.task_instructions import dispatch, teammate_source_text, tell_task
-from app.api.task_origin import discussion, materials, materials_text
+from app.api.task_origin import (
+    asked_in,
+    discussion,
+    materials,
+    materials_text,
+    source,
+)
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     ConflictError,
@@ -65,6 +73,7 @@ from app.domain.room_task import binding, presentation
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -252,7 +261,11 @@ async def related_of(db: AsyncSession, task) -> dict:
     """Where a task came from and what it was given, as its page's 相关 shows
     it; also the `related` of a task's room snapshot."""
     origin, blocks = await discussion(db, task)
-    return {"origin": origin, "materials": materials(blocks)}
+    return {
+        "source": await source(db, task),
+        "origin": origin,
+        "materials": materials(blocks),
+    }
 
 
 @router.post("/{topic_id}/opening")
@@ -443,6 +456,9 @@ async def create_task(
     task = await TopicService(db).create_task(
         room_id=place.room_id, created_by=actor.handle, title=body.title
     )
+    # 建出来即已开始：审阅人默认就是建它的人。没有那两档可退时留在讨论中，
+    # 负责人在任务页点「开始」时看到的是同一句话。
+    await start_task_at_once(db, task, by=actor.handle)
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     return ok(out)
@@ -466,13 +482,7 @@ async def start_task(
     task = await TaskService(db).start(
         task, by=actor.handle, reviewer_handle=body.reviewer_handle
     )
-    await announce(
-        db,
-        place_id=place.room_id,
-        task_id=task.id,
-        content=say("taskStarted", actor=f"<@{actor.handle}>", title=said_title(task)),
-        meta={"platform": True, "action": "task_started", "task_id": str(task.id)},
-    )
+    await say_task_started(db, task, actor=actor.handle)
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
     out = await _task_out(db, chat, task)
     await db.commit()
@@ -618,6 +628,14 @@ async def create_teammate_task(
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
     TopicService.refuse_tasks_in_private(place.room)
+    # A title nobody can read is not a title. Refused here, with the limit in
+    # the words, so the teammate writes a shorter one and calls again — cutting
+    # it instead would leave half a phrase in the sidebar and no one the wiser.
+    # Checked before the idempotency claim: a refused call leaves no record.
+    if not title_fits(body.title):
+        raise UnprocessableEntityError(
+            say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(body.title))
+        )
     # A turn sent again creates the same task again: one task, not two.
     continuation = get_work_runner().continuation_for(topic_id)
     key = (
@@ -641,6 +659,14 @@ async def create_teammate_task(
     ):
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     owner = named or (origin.author if origin is not None else None)
+    # What the person said that this turn answers is where the task came from;
+    # in a 支线 that is usually a reply, not the message the 支线 hangs under.
+    asked = await asked_in(
+        db,
+        place.conversation_id,
+        actor.handle,
+        main_line=place.thread is None and place.task is None,
+    )
     task = await TopicService(db).create_task(
         room_id=place.room_id,
         created_by=actor.handle,
@@ -649,15 +675,15 @@ async def create_teammate_task(
         teammate=actor.handle,
         named_by_teammate=True,
         origin_block_id=origin.id if origin is not None else None,
+        source_block_id=asked.id if asked is not None else None,
     )
     blocks = (await discussion(db, task))[1]
-    started, why_not = False, None
-    if body.start and task.owner_handle:
-        try:
-            await TaskService(db).start(task, by=task.owner_handle)
-            started = True
-        except UnprocessableEntityError as exc:
-            why_not = str(exc)
+    why_not = (
+        await start_task_at_once(db, task, by=task.owner_handle)
+        if body.start and task.owner_handle
+        else None
+    )
+    started = task.started_at is not None
     await tell_task(
         db,
         task,
@@ -667,6 +693,7 @@ async def create_teammate_task(
             source=teammate_source_text(actor.handle, body.summary, blocks),
             materials=materials_text(materials(blocks)),
             started=started,
+            reviewer=task.reviewer_handle,
         ),
         opening=True,
     )

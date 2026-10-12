@@ -1,9 +1,13 @@
 <script setup lang="ts">
-// 一个频道的文件：这个频道自己的东西都在这一页上——贴进来的截图、芝士交付的文档、
-// 定时任务交回的结果。以前只有干活的那台机器和记得住名字的人看得见它们。
+// 一个频道的文件：这个频道自己的东西都在这一页上——芝士交付的文档、定时任务交回的
+// 结果、有人放进来的文件。以前只有干活的那台机器和记得住名字的人看得见它们。
 //
-// 一页一份文件一行，最近改的在最前；点一份在右边一栏看内容，手机上它是整一页。
-// 数据和动作都从外面来（`ChannelFiles.vue`）。
+// 一层一层看，像文件夹：先列这一层的文件夹和文件，点文件夹进去，顶上一条面包屑回到
+// 上一层。路径里的层次是实的——定时任务往「runs/2026-09-14/」这样的地方写结果，平铺
+// 出来只会把日期那一层当成名字的一部分。
+//
+// 一行一份，写着它的名字，和是谁什么时候放下的；点一份在右边一栏看内容，手机上它是
+// 整一页。数据和动作都从外面来（`ChannelFiles.vue`）。
 import type { RoomFile } from '@/api/roomFiles'
 
 import { computed, ref, watch } from 'vue'
@@ -35,15 +39,62 @@ const emit = defineEmits<{
 
 const { mdAndUp } = useDisplay()
 
-// 看哪一份。地址上不留：这一页不是别人会转发的去处（要发给别人是「复制链接」拿到的
-// 那个频道地址），刷新回到清单。
+/** 这一层里的一个文件夹：它的路径、名字，和它底下有几份、最近改的是其中哪一份。 */
+interface FolderRow {
+  path: string
+  name: string
+  count: number
+  modified_at: string
+}
+
+// 看哪一层、看哪一份。地址上都不留：这一页不是别人会转发的去处（要发给别人是「复制
+// 链接」拿到的那个频道地址），刷新回到最上层。
+const here = ref('')
 const selected = ref<RoomFile | null>(null)
 watch(
   () => props.files,
   (rows) => {
     if (selected.value && !rows.some((row) => row.path === selected.value?.path)) selected.value = null
+    // 清单一换（重新读回来，或者别人挪走了东西），脚下这一层可能已经不在了。
+    if (here.value && !rows.some((row) => row.path.startsWith(`${here.value}/`))) here.value = ''
   }
 )
+
+/** 这一层有什么：文件夹在前，文件在后，各自按最近改的排。
+ *
+ *  文件夹是数出来的，不是问出来的：清单给的是每一份文件的路径，一个空文件夹不在里面
+ *  （也不会真的有——房间文件区里的文件夹都是因为有东西在里面才存在）。 */
+const listing = computed(() => {
+  const prefix = here.value ? `${here.value}/` : ''
+  const folders = new Map<string, FolderRow>()
+  const files: RoomFile[] = []
+  for (const file of props.files) {
+    if (prefix && !file.path.startsWith(prefix)) continue
+    const rest = file.path.slice(prefix.length)
+    const cut = rest.indexOf('/')
+    if (cut < 0) {
+      files.push(file)
+      continue
+    }
+    const path = `${prefix}${rest.slice(0, cut)}`
+    const found = folders.get(path)
+    if (!found) folders.set(path, { path, name: rest.slice(0, cut), count: 1, modified_at: file.modified_at })
+    else {
+      found.count += 1
+      if (file.modified_at > found.modified_at) found.modified_at = file.modified_at
+    }
+  }
+  return {
+    folders: [...folders.values()].sort((a, b) => b.modified_at.localeCompare(a.modified_at)),
+    files,
+  }
+})
+
+/** 从最上层到脚下这一层，一层一个名字，最后一个是现在这一层。 */
+const crumbs = computed(() => {
+  const parts = here.value ? here.value.split('/') : []
+  return parts.map((part, index) => ({ name: part, path: parts.slice(0, index + 1).join('/') }))
+})
 
 /** 名字和它所在的文件夹分开写：一个频道里文件可能重名，路径才不会。 */
 function name(file: RoomFile): string {
@@ -55,8 +106,27 @@ function folder(file: RoomFile): string {
   return cut < 0 ? '' : file.path.slice(0, cut)
 }
 
+//: 一份文件最后是怎么放下的。后端多出一种来源时这里没有它的词，那一项就不写——把键
+//: 本身印在屏幕上不如少说一项。这几个词和一份文件的保存历史用的是同一套
+//: （`components/panels/preview/RoomFileHistory.vue`）。
+const SOURCES = new Set(['baseline', 'upload', 'template', 'ai', 'editor', 'restore', 'scheduled'])
+
+function source(file: RoomFile): string {
+  const code = file.source
+  return code && SOURCES.has(code) ? t(`work.room.fileHistory.source.${code}`) : ''
+}
+
+/** 谁写的。队友照「芝士」写——`cheese-<hex>` 那种座位编号是内部的，屏幕上没人该看见
+ *  它；没有保存记录的照实说「来源未知」，不编一个人名。 */
+function who(file: RoomFile): string {
+  if (file.author_kind === 'agent') return t('work.room.defaultAgentName')
+  return file.author || t('work.library.unknownSource')
+}
+
+/** 从哪来的 · 什么时候 · 多大 —— 和资料库那一行同一种写法（`ProjectLibraryView`
+ *  的 `rowMeta`），只是这里多一项「从哪条路进来的」。 */
 function meta(file: RoomFile): string {
-  return [relTime(file.modified_at), fmtBytes(file.bytes)].filter(Boolean).join(' · ')
+  return [source(file), relTime(file.modified_at), fmtBytes(file.bytes)].filter(Boolean).join(' · ')
 }
 
 const title = computed(() => (selected.value && !mdAndUp ? name(selected.value) : t('navigation.project.channelFiles')))
@@ -84,25 +154,61 @@ function readSelected(asPdf: boolean): Promise<ArrayBuffer> {
           <v-progress-circular indeterminate size="28" color="primary" />
         </div>
 
-        <ul v-else-if="files.length" class="room-files__rows">
-          <li
-            v-for="file in files"
-            :key="file.path"
-            class="room-files__row"
-            :class="{ 'room-files__row--on': selected?.path === file.path }"
-          >
-            <button type="button" class="room-files__open" @click="selected = file">
-              <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="room-files__icon" />
-              <span class="room-files__id">
-                <span class="room-files__name t-body">{{ name(file) }}</span>
-                <span class="t-meta c-faint">{{ meta(file) }}</span>
-                <span v-if="folder(file)" class="t-meta c-faint room-files__folder">{{ folder(file) }}</span>
-              </span>
-            </button>
-          </li>
-        </ul>
+        <template v-else>
+          <!-- 在哪一层。最上层不用写（没有上一层可回）。 -->
+          <nav v-if="here" class="room-files__crumbs" :aria-label="t('files.room.crumbsLabel')">
+            <button type="button" class="room-files__crumb" @click="here = ''">{{ t('files.room.crumbsRoot') }}</button>
+            <template v-for="crumb in crumbs" :key="crumb.path">
+              <span class="room-files__crumb-sep" aria-hidden="true">/</span>
+              <button
+                type="button"
+                class="room-files__crumb"
+                :aria-current="crumb.path === here ? 'location' : undefined"
+                @click="here = crumb.path"
+              >
+                {{ crumb.name }}
+              </button>
+            </template>
+          </nav>
 
-        <BaseEmptyState v-else size="inline" align="center" class="room-files__empty" :title="t('files.room.empty')" />
+          <ul v-if="listing.folders.length || listing.files.length" class="room-files__rows">
+            <li v-for="row in listing.folders" :key="row.path" class="room-files__row">
+              <button type="button" class="room-files__open" @click="here = row.path">
+                <v-icon icon="mdi-folder-outline" size="20" class="room-files__icon" />
+                <span class="room-files__id">
+                  <span class="room-files__name t-body">{{ row.name }}</span>
+                  <span class="t-meta c-faint">{{
+                    t('work.library.folderMeta', { n: row.count, when: relTime(row.modified_at) })
+                  }}</span>
+                </span>
+              </button>
+            </li>
+            <li
+              v-for="file in listing.files"
+              :key="file.path"
+              class="room-files__row"
+              :class="{ 'room-files__row--on': selected?.path === file.path }"
+            >
+              <button type="button" class="room-files__open" @click="selected = file">
+                <v-icon :icon="KIND_ICONS[kindOf(file.path)]" size="20" class="room-files__icon" />
+                <span class="room-files__id">
+                  <span class="room-files__name t-body">{{ name(file) }}</span>
+                  <!-- 一行一句平话，不给人名做 chip：这一行整行已经是一个按钮（点开
+                       看内容），按钮里再放一个能点的东西，键盘和读屏都要打架。 -->
+                  <span class="t-meta c-faint">{{ who(file) }} · {{ meta(file) }}</span>
+                </span>
+              </button>
+            </li>
+          </ul>
+
+          <BaseEmptyState
+            v-else
+            size="inline"
+            align="center"
+            class="room-files__empty"
+            :title="t('files.room.empty')"
+          />
+        </template>
 
         <p v-if="truncated" class="t-meta c-faint room-files__truncated">
           {{ t('files.room.truncated', { n: files.length }) }}
@@ -114,7 +220,7 @@ function readSelected(asPdf: boolean): Promise<ArrayBuffer> {
         <header class="room-files__head">
           <h2 v-if="mdAndUp" class="t-title room-files__detail-name">{{ name(selected) }}</h2>
           <p class="t-meta c-faint room-files__detail-meta">
-            {{ meta(selected) }}
+            {{ who(selected) }} · {{ meta(selected) }}
             <template v-if="folder(selected)"> · {{ folder(selected) }}</template>
           </p>
           <div v-if="mdAndUp" class="room-files__actions">
@@ -164,6 +270,37 @@ function readSelected(asPdf: boolean): Promise<ArrayBuffer> {
   min-width: 0;
   padding: 20px 24px 32px;
   overflow-y: auto;
+}
+
+.room-files__crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  align-items: center;
+}
+
+.room-files__crumb {
+  padding: 2px 6px;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+}
+
+.room-files__crumb:hover {
+  color: var(--ink);
+}
+
+/* 现在这一层：还能点（回到它自己），但不必再动，写清是哪一层。 */
+.room-files__crumb[aria-current='location'] {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.room-files__crumb-sep {
+  color: var(--faint);
 }
 
 .room-files__rows {
@@ -216,10 +353,6 @@ function readSelected(asPdf: boolean): Promise<ArrayBuffer> {
 }
 
 .room-files__name {
-  overflow-wrap: anywhere;
-}
-
-.room-files__folder {
   overflow-wrap: anywhere;
 }
 

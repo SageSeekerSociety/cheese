@@ -154,7 +154,7 @@
           <!-- 上限是上传那一步真拦的那个数（`GET /attachments/limits`）；问不到就不写这一行，不猜一个数。 -->
           <v-list-item v-if="maxFileBytes" prepend-icon="mdi-file-upload-outline" class="ps-2">
             <v-list-item-title>{{
-              t('tasks.submit.guideFileSize', { size: formatFileSize(maxFileBytes) })
+              t('tasks.submit.guideFileSize', { size: fmtFileSize(maxFileBytes) })
             }}</v-list-item-title>
           </v-list-item>
           <v-list-item v-if="taskData?.resubmittable" prepend-icon="mdi-refresh" class="ps-2">
@@ -217,8 +217,8 @@
 </template>
 
 <script setup lang="ts">
-import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/network/api/tasks/types'
 import type { Task } from '@/types'
+import type { TaskParticipationIdentity, TaskParticipationInfo } from '@/types/taskBoard'
 
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -226,13 +226,12 @@ import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { throttle } from 'lodash-es'
 
-import { formatFileSize } from '@/utils/materials'
-
+import { AttachmentsApi } from '@/api/attachments'
+import { TaskBoardApi } from '@/api/taskBoard'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { AttachmentsApi } from '@/network/api/attachments'
-import { TasksApi } from '@/network/api/tasks'
+import { fmtFileSize } from '@/lib/usageFormat'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -305,7 +304,7 @@ watch(
     alreadySubmitted.value = false
     if (!taskId || resubmittable || !identityId) return
     try {
-      const { data } = await TasksApi.listSubmissions(taskId, identityId, {
+      const data = await TaskBoardApi.listSubmissions(taskId, identityId, {
         pageSize: 1,
         sort_by: 'createdAt',
         sort_order: 'desc',
@@ -350,8 +349,8 @@ const updateProgress = throttle((progressEvent: any) => {
 // 「提交须知」里那句上限：问不到就少说一句，上传照旧，不弹错。
 onMounted(async () => {
   try {
-    const { data } = await AttachmentsApi.limits()
-    maxFileBytes.value = data.maxFileBytes
+    const { maxFileBytes: bytes } = await AttachmentsApi.limits()
+    maxFileBytes.value = bytes
   } catch {
     maxFileBytes.value = null
   }
@@ -454,7 +453,7 @@ const submitTask = async () => {
           uploadSpeed.value = '0 KB/s'
           timeRemaining.value = t('tasks.submit.calculating')
 
-          const { data } = await AttachmentsApi.upload(
+          const data = await AttachmentsApi.upload(
             {
               type: 'file',
               file: entry.contentAttachment,
@@ -478,7 +477,7 @@ const submitTask = async () => {
     }
 
     // 使用参与者ID而不是成员ID进行提交
-    await TasksApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
+    await TaskBoardApi.createSubmission(props.taskData.id, currentIdentity.value.id, finalSubmissionContent)
     toast.success(t('tasks.submit.submitted'))
     // 题目页外框只在打开时读一次我的最新一版；不说一声，「我的进度」和「我的提交」上的数要等刷新才变。
     events.emit('participation-changed')

@@ -21,6 +21,7 @@ from redis.asyncio import Redis
 
 from app.core import alerting
 from app.core.errors import SystemBusyError
+from app.core.redis import GIVE_BACK_ONE_SCRIPT
 
 logger = logging.getLogger(__name__)
 
@@ -89,26 +90,12 @@ end
 return 1
 """
 
-_SITE_GIVE_BACK_SCRIPT = """
-if redis.call('EXISTS', KEYS[1]) == 1 then
-  redis.call('DECR', KEYS[1])
-end
-return 1
-"""
-
 _GIVE_BACK_SCRIPT = """
 redis.call('DEL', KEYS[1])
 for i = 2, #KEYS do
   if redis.call('EXISTS', KEYS[i]) == 1 then
     redis.call('DECR', KEYS[i])
   end
-end
-return 1
-"""
-
-_SITE_GIVE_BACK_SCRIPT = """
-if redis.call('EXISTS', KEYS[1]) == 1 then
-  redis.call('DECR', KEYS[1])
 end
 return 1
 """
@@ -159,7 +146,7 @@ async def take_site_mail(redis: Redis) -> bool:
 
 async def give_back_site_mail(redis: Redis) -> None:
     """Return the slot of a mail that never left."""
-    await redis.eval(_SITE_GIVE_BACK_SCRIPT, 1, MAIL_SITE_KEY)  # type: ignore[misc]
+    await redis.eval(GIVE_BACK_ONE_SCRIPT, 1, MAIL_SITE_KEY)  # type: ignore[misc]
 
 
 class MailQuota:

@@ -178,6 +178,7 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import threads_of_rooms
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -201,7 +202,7 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.thread.services import conversation_inputs, threads_of_rooms
+from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import load_topic
 from app.domain.user.services import language_of
@@ -1311,7 +1312,7 @@ class ChatService(SessionRecovery):
         """巡检一圈：哪些项目该整理记忆了，逐个跑（`periodic_jobs` 里的一个）。
 
         这一簇连同它按房间记的那四份状态搬去了 `memory_ledger.py`——判据、串行
-        和「派到哪个会话上」的文档都在那里。这里留一行委托：`core/background.py`
+        和「派到哪个会话上」的文档都在那里。这里留一行委托：`app/domain/agent/periodic.py`
         的周期任务和测试都按这个入口叫它。
         """
         return await self._memory.sweep()

@@ -101,5 +101,105 @@
     },
     "noProject": "不属于项目",
     "morePlaces": "另有 {count} 处"
+  },
+  "machines": {
+    "sub": "平台在 MicroCloud 上的宿主机、每台上的沙箱和温机池；每 30 秒刷新",
+    "kpi": {
+      "hosts": "宿主机 / 上限",
+      "vms": "其中 {n} 台是整机虚拟机。",
+      "slots": "沙箱槽位",
+      "slotsNote": "空闲 {free} 格，池子至少留 {min} 格，不够就加一台",
+      "waiting": "等沙箱的会话",
+      "waitingNote": "等得最久的已经 {for}",
+      "failures": "provider 失败",
+      "failuresNote": "{minutes} 分钟内 provider 弄坏的宿主机数；到 {limit} 台平台就停止开新机器，只每 {probe} 分钟试一台",
+      "hostsNote": "整机虚拟机也算在上限里；已放弃、释放中的不算"
+    },
+    "alert": {
+      "notConfigured": "这个部署没有配置 MicroCloud，云端沙箱不可用",
+      "refusing": "此刻在拒绝新会话：provider 近期连坏 {n} 台（最近一次 {at}），平台在等下一次试探成功",
+      "atCap": "宿主机数已到上限 {max}：没有空槽时，新会话会被拒绝"
+    },
+    "hosts": "宿主机",
+    "noHosts": "此刻一台宿主机都没有",
+    "vm": "整机",
+    "col": {
+      "host": "宿主机",
+      "phase": "阶段",
+      "spec": "规格",
+      "slots": "沙箱",
+      "age": "已存在",
+      "note": "说明"
+    },
+    "phase": {
+      "creating": "创建中",
+      "enrolling": "注册中",
+      "enrollFailing": "注册失败",
+      "ready": "在用",
+      "idle": "空闲",
+      "offline": "失联",
+      "error": "provider 报错",
+      "releasing": "释放中",
+      "failed": "已放弃"
+    },
+    "state": {
+      "waiting": "等宿主机",
+      "working": "工作中",
+      "idle": "空闲",
+      "stopping": "销毁中"
+    },
+    "note": {
+      "failed": "provider 弄坏了，{at} 放弃，等 provider 删掉",
+      "releasing": "{at} 释放，等 provider 删掉",
+      "enrollFailing": "注册第 {n} 次失败：{error}",
+      "offline": "连接器已断开 {for}",
+      "idle": "已空闲 {for}",
+      "vm": "{project} 的整机虚拟机"
+    },
+    "when": {
+      "waiting": "已等 {for}",
+      "stopping": "销毁已 {for}",
+      "active": "{ago}前用过工具",
+      "reclaim": "最早 {in}后回收",
+      "overdue": "已过空闲期还没回收（房间最近一轮结束得更晚、或后台命令还在跑，都会往后推）"
+    },
+    "placed": "{at} 放上来",
+    "taskRoom": "任务",
+    "spec": "{cores} 核 · {memory} GB · {disk} GB",
+    "dur": {
+      "s": "{n} 秒",
+      "m": "{n} 分钟",
+      "h": "{n} 小时",
+      "d": "{n} 天"
+    },
+    "history": "过去 24 小时",
+    "fact": {
+      "prepared": "开始准备的沙箱",
+      "ready": "准备好的",
+      "wait": "等待时长 p50 / p95 / 最长",
+      "waitValue": "{p50} / {p95} / {max}",
+      "abandoned": "没准备好就放弃",
+      "replaced": "宿主机坏掉、换了一台",
+      "released": "回收（空闲 / 额度用完）",
+      "releasedValue": "{idle} / {unpaid}",
+      "refused": "被拒的会话（池满 / provider 失败）",
+      "refusedValue": "{sessions} 个（{full} / {failing}）",
+      "hostsLost": "放弃的宿主机（provider 报错 · 失联 · 没注册上）",
+      "hostsLostValue": "{n} 台（{error} · {away} · {never}）",
+      "sandboxesLost": "随宿主机丢失的工作中沙箱"
+    },
+    "warm": "温机池（目标 {target} 台）",
+    "noWarm": "此刻没有温机",
+    "warmAge": "已存在 {for}",
+    "config": "每台宿主机放的沙箱数取两者中小的那个：每核 {perCore} 个，或内存放得下几个（每个 {memory} GB）；沙箱空闲 {sandboxIdle}后销毁，宿主机空闲 {hostIdle}后释放，整机虚拟机空闲 {vmIdle}后释放",
+    "attempts": "尝试 {n} 次",
+    "warmState": {
+      "preparing": "准备中",
+      "ready": "就绪",
+      "reserved": "已预定",
+      "claimFailed": "领用失败",
+      "deleting": "删除中",
+      "cleanupFailed": "删除失败"
+    }
   }
 }

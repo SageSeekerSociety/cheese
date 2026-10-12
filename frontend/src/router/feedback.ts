@@ -152,6 +152,14 @@ export default [
         meta: { titleKey: 'navigation.admin.runRecords', isFullPage: true },
       },
       {
+        // 机器（`/admin/machines`）：MicroCloud 上的宿主机、每台上的沙箱、温机池，和沙箱
+        // 起得怎么样。
+        path: 'machines',
+        name: 'AdminMachines',
+        component: () => import('@/views/admin/AdminMachinesPage.vue'),
+        meta: { titleKey: 'navigation.admin.machines', isFullPage: true },
+      },
+      {
         // 「功能数据」的目录页（`/admin/feature-stats`）：有哪些功能的数据页。
         // 它自己一个数字都不放，理由写在 `AdminFeatureStatsPage.vue` 的文件头。
         path: 'feature-stats',

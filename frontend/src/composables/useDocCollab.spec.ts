@@ -47,6 +47,11 @@ vi.mock('../api/docCollab', () => ({
   getDocTicket: async () => ({ document: 'doc:r1', ticket: 'ticket', read_only: false }),
 }))
 vi.mock('../me', () => ({ myAccount: () => null }))
+// 会话里那个人挑没挑过头像，`useChosenAvatar` 要问一次全局默认头像的 id。这条用例
+// 不关心头像，但不接住就是一条真请求（happy-dom 下打到默认地址 127.0.0.1:3000）。
+vi.mock('@/api/avatars', () => ({
+  getDefaultAvatarId: vi.fn().mockResolvedValue({ avatarId: 1 }),
+}))
 
 async function opened() {
   let collab!: ReturnType<typeof useDocCollab>

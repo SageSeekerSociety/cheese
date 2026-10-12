@@ -77,8 +77,8 @@ from fastapi import APIRouter
 from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.routes.projects import DbSession
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.schemas import (

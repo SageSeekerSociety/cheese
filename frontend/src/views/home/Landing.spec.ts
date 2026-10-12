@@ -20,7 +20,10 @@ import i18n, { resolveInitialLocale, setLocale } from '@/i18n'
 import HomeRoutes from '@/router/home'
 import AccountService from '@/services/account'
 
-vi.mock('@/services/account', () => ({ default: reactive({ loggedIn: false }) }))
+// 这里的人走过新手引导：没项目时落在待办（工作区）上，不进引导。
+vi.mock('@/services/account', () => ({
+  default: reactive({ loggedIn: false, user: { onboarded_at: '2026-10-11T00:00:00Z' } }),
+}))
 // The download page reads the published version and changelog; this site has none.
 // 登录后的根地址先问一遍项目清单：一个项目都没有，就落在待办上。
 vi.mock('@/api', () => ({ listProjects: async () => ({ data: [] }) }))

@@ -273,6 +273,8 @@ import { parse } from '@/utils/parser'
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
 import { usePageTitle } from '@/composables/usePageTitle'
 
+import { AnswersApi } from '@/api/answers'
+import { QuestionApi } from '@/api/questions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
@@ -283,8 +285,6 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import InvitationList from '@/components/questions/InvitationList.vue'
 import { NewAttitudeType } from '@/constants'
 import { questionDataInjectionKey } from '@/keys'
-import { AnswersApi } from '@/network/api/answers'
-import { QuestionApi } from '@/network/api/questions'
 
 const { t } = useI18n()
 let editor: EditorJS
@@ -358,9 +358,7 @@ const load = async (id: number) => {
   loadFailed.value = false
   loadError.value = null
   try {
-    const {
-      data: { question },
-    } = await QuestionApi.detail(id)
+    const { question } = await QuestionApi.detail(id)
     questionData.value = question
   } catch (error) {
     console.error('Failed to load the question', error)
@@ -379,7 +377,7 @@ const submit = async () => {
       return
     }
     const content = JSON.stringify(outputData)
-    const { data } = await AnswersApi.answerQuestion(questionData.value!.id, content)
+    const data = await AnswersApi.answerQuestion(questionData.value!.id, content)
     toast.success(t('questions.detail.postAnswerSuccess'))
     editor.clear()
     router.push({
@@ -392,23 +390,17 @@ const submit = async () => {
 }
 
 const attitudeQuestion = async (attitudeType: NewAttitudeType) => {
-  const {
-    data: { attitudes },
-  } = await QuestionApi.attitudeQuestion(questionData.value!.id, attitudeType)
+  const { attitudes } = await QuestionApi.attitudeQuestion(questionData.value!.id, attitudeType)
   questionData.value!.attitudes = attitudes
 }
 
 const toggleFollowQuestion = async () => {
   if (questionData.value!.is_follow) {
-    const {
-      data: { follow_count: followCount },
-    } = await QuestionApi.unfollowQuestion(questionData.value!.id)
+    const { follow_count: followCount } = await QuestionApi.unfollowQuestion(questionData.value!.id)
     questionData.value!.follow_count = followCount
     questionData.value!.is_follow = false
   } else {
-    const {
-      data: { follow_count: followCount },
-    } = await QuestionApi.followQuestion(questionData.value!.id)
+    const { follow_count: followCount } = await QuestionApi.followQuestion(questionData.value!.id)
     questionData.value!.follow_count = followCount
     questionData.value!.is_follow = true
   }

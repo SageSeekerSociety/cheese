@@ -17,13 +17,13 @@ import uuid
 from collections.abc import Iterable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from sqlalchemy import ColumnElement, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
@@ -43,7 +43,6 @@ from app.domain.user.services import faces_by_handle
 
 router = APIRouter(prefix="", tags=["project-context"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 SEARCHED_BLOCKS = (
     BlockKind.message,
@@ -482,7 +481,7 @@ async def search_documents(
 ) -> dict:
     """The library's search: the project's own documents by title and by what
     they say, and the living documents of the channels the caller may read —
-    tasks' documents, the project overview — by what they say. Those are not
+    tasks' documents, the project's goals — by what they say. Those are not
     in the library's list, but they are found here, under their channel and
     task, to open there or keep a copy of."""
     q = _query(q)
@@ -508,7 +507,7 @@ async def search_documents(
         library_hits.append(
             {**document_row(doc), "snippet": _snippet(doc.content, terms)}
         )
-    # A task's document goes by its task's title, the overview by 综合's.
+    # A task's document goes by its task's title, the project's goals by 综合's.
     task_titles: dict[uuid.UUID, str] = {
         task_id: title
         for task_id, title in await db.execute(

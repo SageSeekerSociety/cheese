@@ -183,7 +183,7 @@ def _poll(client) -> dict:
 
     在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：轮询会 `submit`
     真正的轮次，它们得落在 work runner 所在的那个循环上——生产上这一轮也正是
-    从那里跑的（`app/core/background.py` 的 "pr poll"）。
+    从那里跑的（`app/domain/review/periodic.py` 的 "pr poll"）。
     """
     from app.domain.review import pr_poll
 

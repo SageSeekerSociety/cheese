@@ -25,6 +25,7 @@ import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ADMIN_ENTRIES } from './catalogAdmin'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
+import { CANVAS_ENTRIES } from './catalogCanvas'
 import { CHANNEL_FILES_ENTRIES } from './catalogChannelFiles'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
@@ -70,6 +71,8 @@ import { RAIL_ENTRIES } from './catalogRail'
 import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
 import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
+import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
+import { SCENES_MISC3_ENTRIES } from './catalogScenesMisc3'
 import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
 import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
 import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
@@ -592,6 +595,11 @@ export const CATALOG: CatalogEntry[] = [
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。
   ...SCENES_MISC_ENTRIES,
+  // 第三批拆出来的画面（管理员看板告警、小队知识库、后台成员管理）在自己的文件里：
+  // `catalogScenesMisc2.ts`，数据在 `catalogScenesMisc2Fixtures.ts`（知识库那几条复用
+  // `catalogKnowledgeFixtures.ts`）。
+  ...SCENES_MISC2_ENTRIES,
+  ...SCENES_MISC3_ENTRIES,
   ...SCENES_SPACES_ENTRIES,
   ...SCENES_SPACES_DETAIL_ENTRIES,
   ...SCENES_WORKSPACE_ENTRIES,
@@ -875,6 +883,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   // 文档里的块、基础组件各在自己的文件里：`catalogDoc.ts`、`catalogBase.ts`。
   ...DOC_BLOCK_ENTRIES,
+  ...CANVAS_ENTRIES,
   ...BASE_ENTRIES,
   ...PANEL_ENTRIES,
   // 跨目录的共用件那一组（表壳与它的表头格、富文本编辑器与附件图、页头、句子里的人）在

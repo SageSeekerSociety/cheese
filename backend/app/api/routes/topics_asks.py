@@ -11,8 +11,9 @@ from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import BlockOut, DbSession
+from app.api.routes.topics import BlockOut
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.ask import ask

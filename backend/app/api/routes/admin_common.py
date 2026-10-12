@@ -19,16 +19,13 @@
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
-from app.core.db import get_db
+from app.api.request_deps import DbSession
 from app.core.errors import ForbiddenError
 from app.domain.admin.services import AdminService
 from app.domain.authz import policy
 from app.domain.identity.services import IdentityService
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_admin_service(db: DbSession) -> AdminService:

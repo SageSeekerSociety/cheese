@@ -30,7 +30,7 @@ class Screen(StubChannel):
 
 async def _three_turns(factory, tmp_path) -> list[tuple[str, str]]:
     """跑三轮，交回每一轮的（系统提示词，发出去的消息）。第一轮之后项目里多了一个
-    话题、项目总览也改了；第二轮之后什么都没变。"""
+    话题、项目目标也改了；第二轮之后什么都没变。"""
     screen = Screen()
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),

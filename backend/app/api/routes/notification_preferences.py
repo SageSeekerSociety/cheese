@@ -7,16 +7,11 @@
 404。写入是整份替换（一次 PUT），前端拿到的一直是完整的一份，不必自己拼增量。
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
-from app.auth.checker import require_auth_user
-from app.auth.core import AuthUserInfo
-from app.core.db import get_db
 from app.core.errors import ValidationError
 from app.domain.notification.preferences import (
     ChannelChoice,
@@ -32,8 +27,6 @@ from app.domain.notification.preferences_models import PreferencesRepository
 
 router = APIRouter(prefix="/notifications/preferences", tags=["notifications"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
-AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
 
 _HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
 

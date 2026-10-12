@@ -10,9 +10,12 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
+
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.project.models import Project
 from app.domain.run_record.models import RunRecord
+from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic, TopicKind
 from tests.integration.conftest import a_team
 
@@ -121,6 +124,123 @@ def test_an_agent_reply_ends_the_wait(client):
     _say(client, pid, rid, AGENT, ago=timedelta(minutes=8))
 
     assert _since(client, pid, rid) is None
+
+
+def _newest_block(client, room_id: str) -> str:
+    """The id of the newest message in a conversation."""
+    ids: list[str] = []
+
+    async def _read() -> None:
+        async with client.test_factory() as s:
+            ids.append(
+                str(
+                    await s.scalar(
+                        select(Block.id)
+                        .where(Block.conversation_id == uuid.UUID(room_id))
+                        .order_by(Block.created_at.desc())
+                        .limit(1)
+                    )
+                )
+            )
+
+    asyncio.run(_read())
+    return ids[0]
+
+
+def _thread(client, project_id: str, room_id: str, root_id: str) -> str:
+    """A 支线 under a message of the room, the way the browser opens one."""
+    ids: list[str] = []
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            thread = Thread(
+                project_id=uuid.UUID(project_id),
+                room_id=uuid.UUID(room_id),
+                root_block_id=uuid.UUID(root_id),
+                created_by="alice",
+            )
+            s.add(thread)
+            await s.commit()
+            ids.append(str(thread.id))
+
+    asyncio.run(_add())
+    return ids[0]
+
+
+def _another_room(client, project_id: str) -> str:
+    """A second room in the same project."""
+    ids: list[str] = []
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            room = Topic(
+                project_id=uuid.UUID(project_id), title="隔壁", kind=TopicKind.topic
+            )
+            s.add(room)
+            await s.commit()
+            ids.append(str(room.id))
+
+    asyncio.run(_add())
+    return ids[0]
+
+
+def _say_in(client, project_id: str, conversation_id: str, author: str, *, ago):
+    """Someone said something in a conversation of the room — a 支线, a task."""
+    at = datetime.now(UTC) - ago
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                Block(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(conversation_id),
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author=author,
+                    content="…",
+                    created_at=at,
+                    meta={},
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+
+
+def test_an_agent_reply_in_a_thread_ends_the_rooms_wait(client):
+    """芝士答一条主线上的消息，是在那条消息的**支线**里说的：这条频道没有芝士
+    自己那条线。所以支线里的那句就是这间房被答了 —— 只认主线的话，@ 完芝士再去
+    支线里回一句，侧栏那颗红点七天都不会灭。"""
+    pid, rid = _room(client)
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    said = _thread(client, pid, rid, _newest_block(client, rid))
+    _say_in(client, pid, said, AGENT, ago=timedelta(minutes=6))
+
+    assert _since(client, pid, rid) is None
+
+
+def test_a_reply_in_another_rooms_thread_does_not_end_this_rooms_wait(client):
+    """只算这间房自己的支线：隔壁那间房里的支线，跟这间房的等不等没关系。"""
+    pid, rid = _room(client)
+    other = _another_room(client, pid)
+    _say(client, pid, other, "alice", ago=timedelta(minutes=9), summons=True)
+    said = _thread(client, pid, other, _newest_block(client, other))
+    _say_in(client, pid, said, AGENT, ago=timedelta(minutes=6))
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+
+    assert _since(client, pid, rid) is not None
+    # 隔壁那间房自己被答了。
+    assert _since(client, pid, other) is None
+
+
+def test_a_reply_in_a_task_does_not_end_the_rooms_wait(client):
+    """一条活是它自己的一块板，有它自己的卡：芝士在那条活里说的话不是这间房在
+    回答。@ 芝士之后只去一条活里说了一句，这间房照旧在等它。"""
+    pid, rid = _room(client)
+    _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
+    _say_in(client, pid, _task(client, pid, rid), AGENT, ago=timedelta(minutes=6))
+
+    assert _since(client, pid, rid) is not None
 
 
 def test_a_new_summons_after_the_reply_starts_a_new_wait(client):

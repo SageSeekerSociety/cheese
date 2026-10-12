@@ -20,8 +20,8 @@ import { useDisplay } from 'vuetify'
 
 import ExploreView from './ExploreView.vue'
 
+import { TeamsApi } from '@/api/teams'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { TeamsApi } from '@/network/api/teams'
 
 const { mdAndUp } = useDisplay()
 const searchQuery = ref('')
@@ -46,9 +46,7 @@ const fetchSearchResults = async (query: string) => {
   // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
   searchError.value = null
   try {
-    const {
-      data: { teams },
-    } = await TeamsApi.search({ query })
+    const { teams } = await TeamsApi.search({ query })
     searchTeamsData.value = teams
   } catch (error) {
     // 不再弹红条：这一块就在原地换成失败的样子，同一件事不说两遍。

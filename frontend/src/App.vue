@@ -256,6 +256,28 @@
     </template>
     <CommandPalette />
     <DeviceConnect />
+    <!-- 新手引导的后半程：一个浮窗一步步带着把第一件事做完（composables/useProjectTour.ts）。
+         挂在最外层：任务页、支线里也要接着带。 -->
+    <GuideBubble
+      v-if="guideStep"
+      :target="guideStep.target"
+      :ring="!guideStep.area"
+      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
+      :text="
+        t(
+          `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
+          {
+            agent: t('work.room.defaultAgentName'),
+          }
+        )
+      "
+      :step="guide.stop.value + 1"
+      :total="guide.total"
+      :can-next="!guideStep.action"
+      @next="guide.next()"
+      @back="guide.back()"
+      @skip="guide.skip()"
+    />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
@@ -280,11 +302,13 @@ import { pendingSudo } from '@/utils/sudo'
 
 import { provideAttachmentSource } from '@/composables/useAttachmentSource'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
+import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { providePageChrome } from '@/composables/usePageChrome'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
+import { useProjectTour } from '@/composables/useProjectTour'
 import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import { useSessionRestore } from '@/composables/useSessionRestore'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
@@ -306,6 +330,8 @@ import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
 import { type AppVersion, createProject, getAppVersion } from '@/api'
+import { NotificationsApi } from '@/api/notifications'
+import { TeamsApi } from '@/api/teams'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
@@ -313,6 +339,7 @@ import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
+import GuideBubble from '@/components/common/GuideBubble.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
@@ -344,8 +371,6 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
-import { NotificationsApi } from '@/network/api/notifications'
-import { TeamsApi } from '@/network/api/teams'
 import { queryClient } from '@/query/client'
 import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
@@ -587,7 +612,7 @@ watch(
   () => AccountService.loggedIn && AccountService.user?.id,
   (userId, previous) => {
     if (typeof userId === 'number') {
-      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).data.token).catch(() => {})
+      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).token).catch(() => {})
     } else if (typeof previous === 'number') {
       desktopStopNotices()
     }
@@ -675,6 +700,36 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   event.preventDefault()
   appShortcutSheetOpen.value = true
 })
+// 新手引导此刻在哪一步、指着什么。动作步做到了自己往下走（`settle`），所以页面上一
+// 出现新东西（登记表一变）、服务端的事实一变，就重新判一次。
+const guide = useProjectTour()
+const guideRevision = useGuideAnchorRevision()
+const guideHas = (name: string) => !!guideAnchor(name)
+watch(
+  [guideRevision, guide.facts, guide.active],
+  () => {
+    if (guide.active.value && guide.facts.value) guide.settle({ facts: guide.facts.value, has: guideHas })
+  },
+  { immediate: true }
+)
+const guideStep = computed(() => {
+  void guideRevision.value
+  const step = guide.current.value
+  if (!guide.active.value || !step) return null
+  const hit = step.anchors.find((name) => guideAnchor(name))
+  const target = hit ? guideAnchor(hit) : null
+  const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
+  const at = target ?? waitingAt
+  if (!at) return null
+  return {
+    key: step.key,
+    target: at,
+    waiting: !target,
+    failed: !!hit && hit === step.failed,
+    area: !!step.area || !target,
+    action: !!step.done,
+  }
+})
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
@@ -750,9 +805,7 @@ async function loadProjectTeams() {
   teamLoadError.value = null
   newProjectTeamId.value = null
   try {
-    const {
-      data: { teams },
-    } = await TeamsApi.getMyTeams()
+    const { teams } = await TeamsApi.getMyTeams()
     newProjectTeams.value = teams
     if (!teams.length) teamLoadError.value = t('work.newProject.teamsEmpty')
   } catch {

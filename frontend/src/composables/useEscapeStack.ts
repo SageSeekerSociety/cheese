@@ -9,6 +9,12 @@ import { onScopeDispose, type Ref, watch } from 'vue'
 //
 // 一层的「关」由调用方给全：收起它，并把焦点还给打开它的那颗开关。这样两层各自回到
 // 各自的那颗，栈本身不用认识焦点在哪。
+//
+// 「谁吃掉了这一下 Esc」的约定：
+//  - 处理了 Esc 的一方 `preventDefault()`，这就是「已消费」的标记；
+//  - 还在听 Esc 的一方（这个栈、设置浮层……）先看 `event.defaultPrevented`，已经被消费
+//    就让过去。里层的 @keydown 先于 window 上的监听跑，所以到 window 时标记已写好；
+//  - 栈自己关了栈顶那层，同样 `preventDefault()`，别的 window 监听就不会再关第二层。
 
 interface EscapeLayer {
   close: () => void

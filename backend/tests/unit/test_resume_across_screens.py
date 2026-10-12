@@ -27,13 +27,21 @@ pytestmark = pytest.mark.anyio
 
 SESSION_ID = "9f1c0d3e-2b4a-4c6e-8d10-7a5b3c9e1f20"
 
-# Records its argv, then either dies before answering (a transcript it cannot
-# continue) or reports `init` and holds the session until stdin closes.
+# Records its argv, then dies before answering, or reports `init` and holds the
+# session until stdin closes. Claude Code that cannot continue a transcript says
+# so in a result record before it exits (``fail``); the executor client's
+# bootstrap in front of it fails before it runs and writes only a traceback
+# (``bootstrap``), as when its machine could not be leased.
 STAND_IN = """\
 import json, os, sys
 with open(os.environ["STAND_IN_ARGS"], "a") as output:
     output.write(json.dumps(sys.argv[1:]) + "\\n")
 if os.environ["STAND_IN_MODE"] == "fail":
+    print(json.dumps({"type": "result", "subtype": "error_during_execution",
+        "is_error": True, "errors": ["No conversation found"]}), flush=True)
+    sys.exit(1)
+if os.environ["STAND_IN_MODE"] == "bootstrap":
+    print("RuntimeError: the machine is still being prepared", file=sys.stderr)
     sys.exit(1)
 print(json.dumps({"type": "system", "subtype": "init", "session_id": "x"}), flush=True)
 sys.stdin.read()
@@ -58,7 +66,7 @@ def _transcript(config, session_id=SESSION_ID, content='{"type":"user"}\n'):
 async def _start(machine, *, resume=SESSION_ID, mode="init") -> list[str]:
     """One screen's life: the runner starts the session, and it ends.
 
-    ``init`` sessions are ended by us once they have answered; ``fail`` ones
+    ``init`` sessions are ended by us once they have answered; the others
     exit by themselves before answering. Returns the argv the stand-in got.
     """
     root, config, stand_in = machine
@@ -77,7 +85,7 @@ async def _start(machine, *, resume=SESSION_ID, mode="init") -> list[str]:
     )
     try:
         assert runner.process is not None
-        if mode == "fail":
+        if mode != "init":
             await asyncio.wait_for(runner.process.wait(), 10)
         else:
             async with asyncio.timeout(10):
@@ -127,6 +135,18 @@ async def test_a_resume_that_died_before_answering_is_not_tried_twice(machine):
 
     assert await _start(machine, mode="fail") == ["--resume", SESSION_ID]
     assert _session_id(await _start(machine)) != SESSION_ID
+
+
+async def test_a_start_that_failed_before_claude_code_ran_keeps_its_conversation(
+    machine,
+):
+    """A start that never reached Claude Code (its machine still being prepared,
+    a lease refused) says nothing about the transcript: the next start
+    continues the same conversation instead of beginning one without it."""
+    _transcript(machine[1])
+
+    assert await _start(machine, mode="bootstrap") == ["--resume", SESSION_ID]
+    assert await _start(machine) == ["--resume", SESSION_ID]
 
 
 async def test_a_resume_that_worked_can_be_used_again_later(machine):

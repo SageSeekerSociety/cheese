@@ -1,7 +1,11 @@
 <template>
   <div class="an-section">
     <div class="an-bar">
-      <AnalyticsPublisherSelect v-model="publisherIdModel" :space-id="spaceId" :filters="filters" />
+      <AnalyticsPublisherSelect
+        v-model="publisherIdModel"
+        :publishers="publisherOptions"
+        :loading="publishersLoading"
+      />
       <v-select
         v-model="groupByModel"
         autocomplete="off"
@@ -72,11 +76,13 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/network/api/spaces/types'
+import type { SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/types/apiSpaces'
 import type { AnalyticsGroupBy, SpaceAnalyticsQueryState } from './utils'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+
+import { useAnalyticsPublishers } from '@/composables/useAnalyticsPublishers'
 
 import AnalyticsAlertGrid from './components/AnalyticsAlertGrid.vue'
 import AnalyticsDistributionCard from './components/AnalyticsDistributionCard.vue'
@@ -89,10 +95,10 @@ import { useSpaceAnalyticsFilters } from './composables/useSpaceAnalyticsFilters
 import { formatCount, formatPercent, labelDistributionCodes, withDistributionPercent } from './helpers'
 import { buildAnalyticsApiParams } from './utils'
 
+import { SpacesApi } from '@/api/spaces'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { ANALYTICS_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { SpacesApi } from '@/network/api/spaces'
 
 const analyticsNames = ANALYTICS_ROUTE_NAMES
 const { filters, pushToSection, replaceFilters, spaceId } = useSpaceAnalyticsFilters()
@@ -106,6 +112,8 @@ const failed = ref(false)
 const errorDetail = ref<string | null>(null)
 const overview = ref<SpaceAnalyticsOverview | null>(null)
 const alerts = ref<SpaceAnalyticsAlerts | null>(null)
+const { publishers: publisherOptions, loading: publishersLoading } = useAnalyticsPublishers(spaceId, filters)
+
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
 const groupByModel = ref<AnalyticsGroupBy>(filters.value.groupBy)
 
@@ -135,8 +143,8 @@ const load = async () => {
       SpacesApi.getAnalyticsAlerts(spaceId.value),
     ])
 
-    overview.value = overviewResponse.data
-    alerts.value = alertsResponse.data
+    overview.value = overviewResponse
+    alerts.value = alertsResponse
   } catch (error) {
     console.error('load overview analytics failed', error)
     failed.value = true

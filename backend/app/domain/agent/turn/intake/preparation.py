@@ -15,8 +15,10 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
     TASK_MACHINE_NOT_STARTED,
     TASK_MACHINE_STARTED,
+    TOPIC_DOC_CHAR_BUDGET,
     UNTITLED_TASK,
     build_session_opening,
+    fit_doc_to_budget,
     platform_prompt,
     prompt_line,
     publication_prompt,
@@ -76,18 +78,52 @@ from app.domain.project.overview import project_brief, render_overview
 from app.domain.project.reads import load_project
 from app.domain.project.services import ProjectService
 from app.domain.room_task import naming
+from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.models import TaskStatus, TaskTitleSource
-from app.domain.room_task.place import PlaceResolver, doc_text_of
+from app.domain.room_task.place import Place, PlaceResolver, doc_text_of
 from app.domain.task import teaching as teaching_context
 from app.domain.task.teaching import TeachingContext
 from app.domain.thread.services import thread_opening
 from app.domain.topic.models import Topic, TopicStatus
-from app.domain.topic.reads import conversation_progress, project_topics
+from app.domain.topic.reads import (
+    conversation_progress,
+    open_rooms,
+    project_topics,
+)
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import team_terms
 from app.domain.user.services import language_of
 
 logger = logging.getLogger(__name__)
+
+
+#: At least as long as the note `fit_doc_to_budget` adds to a document it cut.
+_FIT_NOTE_CHARS = 300
+
+
+async def living_doc_text(
+    session: AsyncSession, place: Place, *, needs_place: bool
+) -> str | None:
+    """The living document as the system prompt carries it (`doc_text_of`),
+    and after it the canvases it holds, as text: the two together fit the
+    document's budget, the document giving way."""
+    text = await doc_text_of(session, place, needs_place=needs_place)
+
+    async def readable(rooms: set[uuid.UUID]) -> set[uuid.UUID]:
+        # A task of a channel only some may read is named on a card only when
+        # it is this conversation's own channel.
+        return await open_rooms(session, rooms) | ({place.room_id} & rooms)
+
+    canvases = await living_doc_canvases(session, place, readable) if text else ""
+    if not canvases or text is None:
+        return text
+    # The prompt fits the two again as one text; the room a compressed
+    # document's note takes is left, so that second fit has nothing to cut.
+    room = TOPIC_DOC_CHAR_BUDGET - len(canvases) - _FIT_NOTE_CHARS
+    return (
+        fit_doc_to_budget(text, room, full_read_hint="用 `cheese_doc_get` 读全文")
+        + canvases
+    )
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:
@@ -161,7 +197,7 @@ class TurnContext:
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
     doc_text: str | None
-    # 注入用的项目总览（`project/overview.py`），和芝士读写它时要用的编号。
+    # 注入用的项目目标（`project/overview.py`），和芝士读写它时要用的编号。
     overview_doc_text: str | None
     overview_doc_id: uuid.UUID | None
     # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
@@ -314,7 +350,7 @@ class TurnPreparation:
             agents = AgentInstanceService(session)
             agent = await _session_agent(agents, topic, project, agent_handle)
             needs_place = not _is_dm(topic)
-            doc_text = await doc_text_of(session, place, needs_place=needs_place)
+            doc_text = await living_doc_text(session, place, needs_place=needs_place)
             role = await agents.system_prompt(agent)
             harness, provider = await self._backend_for(session, agent, project)
             if provider is None:
@@ -472,7 +508,7 @@ class TurnPreparation:
             # 记忆和平台工具，加上会话自己那块 64 MiB 草稿区。
             needs_place = not _is_dm(topic)
             acting_agent = pinned_seat or await _acting_handle(session, topic.id, agent)
-            doc_text = await doc_text_of(session, place, needs_place=needs_place)
+            doc_text = await living_doc_text(session, place, needs_place=needs_place)
             phases_ms["identity"] = (time.monotonic() - started) * 1000
             # 只加载「本轮发言人」的那一份 private 索引（team 那一份每间房都
             # 有）：一个项目里的人可以很多，而注入是每一轮都要付的。
@@ -481,7 +517,18 @@ class TurnPreparation:
             # 队友手里的句柄不是一个作用域。本轮说话的这几位同时也是这一轮对账
             # 要点名的那几个（`MemoryLedger.remember_turn`），周期任务那一轮的主人也
             # 在里面：他没有署名的消息，只能从那一笔投递上认（`turn_speakers`）。
-            speakers = await turn_speakers(session, delivery_id, pending, private_owner)
+            speakers = await turn_speakers(
+                session,
+                delivery_id,
+                pending,
+                private_owner,
+                # 实况文档写给负责人看：任务自己的会话每一轮都读他那一份。
+                task_owner=(
+                    task.owner_handle
+                    if task is not None and place.thread is None
+                    else None
+                ),
+            )
             memory = await memory_index(
                 session, topic.project_id, speaker_handles=list(speakers)
             )
@@ -505,7 +552,7 @@ class TurnPreparation:
             teaching = await teaching_context.for_project(
                 session=session, project=project
             )
-            # 人和 agent 共同看的那一份（结论 7）：项目总览。它不是记忆，所以不走
+            # 人和 agent 共同看的那一份（结论 7）：项目目标。它不是记忆，所以不走
             # 召回那条路——写它的人（或 agent）留了痕，每段对话读到的是同一份，而
             # 这正是共享记忆池做不到的两件事。
             overview_doc = (

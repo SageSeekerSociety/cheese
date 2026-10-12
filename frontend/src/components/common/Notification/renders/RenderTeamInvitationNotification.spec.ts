@@ -1,6 +1,6 @@
 // 团队邀请在「待办」的动态里就能接受或拒绝，不用再绕到 团队 →「待定」。
 // 通知的形状照后端 /notifications 真实返回的写：邀请是 entities.application，带它此刻的状态。
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { defineComponent, h } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -12,10 +12,10 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import NotificationItem from '../NotificationItem.vue'
 
+import { TeamsApi } from '@/api/teams'
 import i18n, { setLocale } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
 
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: { acceptInvitation: vi.fn(), declineInvitation: vi.fn() },
 }))
 

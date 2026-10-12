@@ -20,6 +20,7 @@ import AdaptiveDialog from '../common/AdaptiveDialog.vue'
 import AdaptiveMenu from '../common/AdaptiveMenu.vue'
 
 import AcceptNoteLine from './AcceptNoteLine.vue'
+import { checkVerdictRank, isFailed, isNoVerdict } from './checkVerdict'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
@@ -96,16 +97,14 @@ interface Signal {
   more: boolean
 }
 
-const FAILED = ['failure', 'cancelled', 'timed_out', 'action_required']
 const checkRows = computed(() => {
   const rows = props.card.pr_number && props.prChecks?.available ? props.prChecks.checks ?? [] : []
   // 没过的排前面：展开明细时人要找的是它们。
-  const rank = (c: (typeof rows)[number]) =>
-    FAILED.includes(c.conclusion ?? '') ? 0 : c.status !== 'completed' ? 1 : 2
-  return [...rows].sort((a, b) => rank(a) - rank(b))
+  return [...rows].sort((a, b) => checkVerdictRank(a) - checkVerdictRank(b))
 })
-const failedChecks = computed(() => checkRows.value.filter((c) => FAILED.includes(c.conclusion ?? '')).length)
+const failedChecks = computed(() => checkRows.value.filter(isFailed).length)
 const runningChecks = computed(() => checkRows.value.filter((c) => c.status !== 'completed').length)
+const cancelledChecks = computed(() => checkRows.value.filter(isNoVerdict).length)
 
 const signals = computed<Signal[]>(() => {
   const out: Signal[] = []
@@ -124,6 +123,14 @@ const signals = computed<Signal[]>(() => {
         key: 'checks',
         label: t('work.room.review.checksRunning', { n: runningChecks.value }),
         icon: 'mdi-progress-clock',
+        iconColor: 'var(--faint)',
+        more: true,
+      })
+    else if (cancelledChecks.value)
+      out.push({
+        key: 'checks',
+        label: t('work.room.review.checksCancelled', { n: cancelledChecks.value }),
+        icon: 'mdi-cancel',
         iconColor: 'var(--faint)',
         more: true,
       })
@@ -332,24 +339,27 @@ const moreActions = computed<MenuAction[]>(() => {
         <v-icon
           size="14"
           :style="{
-            color: FAILED.includes(chk.conclusion ?? '')
+            color: isFailed(chk)
               ? 'var(--danger)'
-              : chk.status !== 'completed'
+              : chk.status !== 'completed' || isNoVerdict(chk)
                 ? 'var(--faint)'
                 : 'var(--ok)',
           }"
         >
           {{
-            FAILED.includes(chk.conclusion ?? '')
+            isFailed(chk)
               ? 'mdi-close-circle'
               : chk.status !== 'completed'
                 ? 'mdi-progress-clock'
-                : 'mdi-check-circle'
+                : isNoVerdict(chk)
+                  ? 'mdi-cancel'
+                  : 'mdi-check-circle'
           }}
         </v-icon>
         <a v-if="chk.url" :href="chk.url" target="_blank" rel="noopener" class="signal-detail__name">{{ chk.name }}</a>
         <span v-else class="signal-detail__name">{{ chk.name }}</span>
         <span v-if="chk.status !== 'completed'" class="c-faint">{{ t('work.room.accept.checkRunning') }}</span>
+        <span v-else-if="isNoVerdict(chk)" class="c-faint">{{ t('work.room.accept.checkCancelled') }}</span>
       </div>
     </div>
     <div v-else-if="openSignal === 'merge'" class="signal-detail">

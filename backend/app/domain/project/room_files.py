@@ -201,6 +201,30 @@ async def save_room_file(
     )
 
 
+async def latest_by_path(
+    session: AsyncSession, room_id: uuid.UUID
+) -> dict[str, RoomFileRevision]:
+    """这个房间里每一份文件最后保存的是哪一版，按路径。
+
+    文件区那一页列的是目录本身（走文件系统），一份文件可能从没经过
+    :func:`save_room_file`——所以作者和来源要照这张表补齐，缺的那些照列，只是说不出
+    是谁写的。
+    """
+    rows = (
+        (
+            await session.execute(
+                select(RoomFileRevision)
+                .where(RoomFileRevision.room_id == room_id)
+                .order_by(RoomFileRevision.path, RoomFileRevision.seq.desc())
+                .distinct(RoomFileRevision.path)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {row.path: row for row in rows}
+
+
 async def _latest(
     session: AsyncSession, room_id: uuid.UUID, path: str
 ) -> RoomFileRevision | None:

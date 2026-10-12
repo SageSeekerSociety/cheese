@@ -25,6 +25,7 @@ import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
 
+import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
@@ -32,6 +33,7 @@ import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
+import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
@@ -215,6 +217,43 @@ const TASK_ENTRIES: CatalogEntry[] = [
         note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
         props: TASK_HEADER_PROPS,
         expect: '登录页加「记住我」',
+      },
+    ],
+  },
+  {
+    id: 'task-source-line',
+    title: 'TaskSourceLine',
+    about: '任务页「概览」顶上那一行：这个任务是从哪句话来的。点它回到说这句话的那段对话，停在这一条上。',
+    file: 'src/components/task/TaskSourceLine.vue',
+    component: TaskSourceLine,
+    needs: UI_T,
+    args: {
+      task: { ...TASK_HEADER_PROPS.task, created_by: 'alice' },
+      memberNames: { alice: 'Alice', 'cheese-topica': AGENT_NAME },
+    },
+    states: [
+      {
+        name: '从支线里的一句话来',
+        note: '引原话：谁说的、在哪个频道的支线里、什么时候；@ 过的人读成名字。',
+        props: {
+          source: {
+            block_id: 'demo-block',
+            author: 'alice',
+            content: '<@cheese-topica> 登录页加一个「记住我」，勾上以后七天内不用再登录',
+            created_at: '2026-10-05T00:00:00Z',
+            conversation_id: 'demo-thread',
+            room_id: 'demo-room',
+            where: 'thread',
+            title: '前端',
+          },
+        },
+        expect: '来自 #前端 的一条支线',
+      },
+      {
+        name: '自己新建的',
+        note: '不是从哪句话转来的任务，照实说是谁新建的，不拿别的话顶替。',
+        props: { source: null },
+        expect: 'Alice 新建的任务，不是从对话里转出来的',
       },
     ],
   },
@@ -437,7 +476,7 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」。输入框始终在，不被它占用。选项之外永远多一颗「其他」：点开就地长出输入框，发的是他自己打的字，不是「其他」这两个字。',
+      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。选项之外永远多一颗「其他」：点开就地长出输入框，发的是他自己打的字，不是「其他」这两个字。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
@@ -452,14 +491,25 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '有人答过了',
-        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。',
+        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。答的人不是看着这一页的人，所以没有撤回的入口。',
         props: {
           block: askBlock([
             { kind: 'option', option: '按部门', note: null, by: 'alice', at: null },
             { kind: 'note', option: null, note: '外包单列一栏', by: 'bob', at: null },
           ]),
           names: { alice: 'Alice', bob: 'Bob' },
+          viewer: 'me',
         },
+      },
+      {
+        name: '自己答的，可以撤回',
+        note: '答过的那一条旁边多一个「撤回」；点它先弹确认框，题回到重新等回答。',
+        props: {
+          block: askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }]),
+          names: { alice: 'Alice' },
+          viewer: 'alice',
+        },
+        expect: '撤回',
       },
     ],
   },
@@ -491,6 +541,36 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         note: '一张图会走到缩略图那一支，但图源从外壳注入的 `AttachmentSource` 来：目录站不注入，取不到字节就画一个裂图记号 —— 这一格看的正是「读不到」的样子。',
         props: { topicId: 'demo', attachment: CHIP_IMAGE },
         expectSelector: '.im-thumb__failed',
+      },
+    ],
+  },
+  {
+    id: 'room-guide-bubble',
+    title: 'GuideBubble',
+    about:
+      '界面导览的一站：目标控件四周一圈高亮，旁边浮着一个小窗，写这里是什么、怎么用。导览里带上一步 / 下一步和第几站；「第一次」提示只有一颗「知道了」。',
+    file: 'src/components/common/GuideBubble.vue',
+    component: GuideBubble,
+    needs: ['vuetify'],
+    teleport: true,
+    states: [
+      {
+        name: '导览的一站',
+        note: '第 1 站，圈着左上角一个固定的框（预览站里没有真页面可指）：没有「上一步」。',
+        props: {
+          target: new DOMRect(16, 16, 160, 32),
+          title: '频道',
+          text: '项目里的对话按频道分开。',
+          step: 1,
+          total: 5,
+        },
+        expect: '1/5',
+      },
+      {
+        name: '「第一次」提示',
+        note: '不在导览里，只有一颗「知道了」。',
+        props: { target: new DOMRect(16, 16, 160, 32), title: '任务', text: '芝士把你交给它的事做成了任务。' },
+        expect: '芝士把你交给它的事做成了任务。',
       },
     ],
   },

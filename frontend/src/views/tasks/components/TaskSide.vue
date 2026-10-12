@@ -94,8 +94,8 @@
 <script setup lang="ts">
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
-import type { TaskParticipationIdentity } from '@/network/api/tasks/types'
 import type { Task, TaskSubmissionReview } from '@/types'
+import type { TaskParticipationIdentity } from '@/types/taskBoard'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'

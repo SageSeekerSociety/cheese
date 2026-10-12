@@ -82,7 +82,7 @@ steps:
 | team | `team/` | 这个项目所有人和所有芝士共看共写 | 项目成员 |
 | private | `private/<handle>/` | **人 × 项目**：某一个人在这个项目里的那一份 | 本人 + 项目管理员 |
 
-注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个没说话的人的偏好上是白付。
+注入的规矩：**`team/MEMORY.md` 加本轮说话那个人的 `private/<handle>/MEMORY.md`**，不是所有人的（`files_store.memory_index`，`speaker_handles` 里只进 `names_a_person()` 认的人）。这一轮替谁做事，他那一份也读，哪怕他这一轮没说话：周期任务那一轮是规则的主人，任务自己的会话里是任务的负责人，实况文档写给他看（`turn_speakers`）。项目里的人可以很多，索引是每一轮都要付的预算，付在一个和这一轮无关的人的偏好上是白付。
 
 这句话不是权限，是预算：`private` 的可见性是另一道闸，在 API 上（见下）。
 
@@ -201,7 +201,7 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 1. `memory_entries` 里 `scope = agent_project` 的活条目（那个 agent 在项目里学到的）；
 2. 同一张表里 `scope = user` 的池（某个 agent 关于某个人的认识）；
-3. 项目总览文档里的「大家都该知道的」和「项目记忆（由记忆整理迁入）」两节。
+3. 项目目标文档里的「大家都该知道的」和「项目记忆（由记忆整理迁入）」两节。
 
 **去处五选一，每条都有：** `team`（新建一条全项目共读的）、`private/<handle>`（新建一条只属于某人的）、`merge`（并进一条已经存在的记忆）、`suggest`（只建议写进 `CLAUDE.md` / `SKILL.md`，**一个字都不自动改**）、`discard`（不值得变成记忆，但理由要写出来）。去处由模型判（它读得到正文，这是「进 team 还是进某个人的 private」唯一的判据），判完的结论和报告一起**存下来**——人复核的是那一份，落笔时重放它，不问第二次模型。
 
@@ -230,6 +230,6 @@ limits: INDEX_MAX_LINES, INDEX_MAX_BYTES, INDEX_LINE_MAX, BODY_MAX
 
 索引每轮注入，正文要 agent 自己去读一个文件——这整套机制成立的前提就是**它会去读**。所以有一个数：`Read` 打到 `.cheese/memory/` 下的、不是 `MEMORY.md` 的那些调用，**按项目、按天**（`domain/memory/reads.py`）。
 
-数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录不准。天按 **UTC** 切（`platform_stats.windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
+数的是事件块（`blocks.kind = 'event'`，`meta.tool` / `meta.detail`），所以没有新表、没有新迁移，历史是免费的。判据用 `meta.detail`（**未剪裁**的参数原文）而不是 `meta.arg`：后者是给人看的预览，长路径会被剪成 `…/team/x.md`，拿它判目录不准。天按 **UTC** 切（`day_windows.utc_day`）——单参数的 `date_trunc('day', timestamptz)` 按会话时区切天，而部署的会话时区不一定是 UTC（本机是 `Asia/Shanghai`），那会把每天的边界挪几小时，还会让返回的日期和实际分桶的那条边界差一天。
 
 查：`GET /admin/memory/reads?days=7&project_id=…`（默认七天）。它回答的是「有没有人翻开」，不是「有没有用上」——读了没读懂照样 +1，要回答后者得看别的东西。试点要回答的问题是「一周下来是不是接近 0」；真是 0 的话，下一步是让索引行本身更有信息量，或者把最常要用的几条正文也放进注入预算，不是回去做关键词召回。

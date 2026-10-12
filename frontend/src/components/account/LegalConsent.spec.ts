@@ -16,7 +16,7 @@ import LegalConsent from './LegalConsent.vue'
 import { setLocale } from '@/i18n'
 
 const listDocuments = vi.fn()
-vi.mock('@/network/api/legal', () => ({ LegalApi: { listDocuments: () => listDocuments() } }))
+vi.mock('@/api/legal', () => ({ LegalApi: { listDocuments: () => listDocuments() } }))
 
 const Host = defineComponent({
   components: { LegalConsent },
@@ -61,12 +61,10 @@ beforeEach(() => {
   vi.stubGlobal('visualViewport', new EventTarget())
   listDocuments.mockReset()
   listDocuments.mockResolvedValue({
-    data: {
-      documents: [
-        { document: 'terms', title: '用户协议', version: '1.0', effectiveDate: '2026-09-23' },
-        { document: 'privacy', title: '隐私政策', version: '1.2', effectiveDate: '2026-09-23' },
-      ],
-    },
+    documents: [
+      { document: 'terms', title: '用户协议', version: '1.0', effectiveDate: '2026-09-23' },
+      { document: 'privacy', title: '隐私政策', version: '1.2', effectiveDate: '2026-09-23' },
+    ],
   })
 })
 

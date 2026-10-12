@@ -6,7 +6,7 @@
  * 也站得住，不能只在整齐的样例上好看。
  */
 import type { GatewayAuditEntry, GatewayModelInfo, GatewayProject, GatewayUsageNumbers } from '@/api'
-import type { SpaceApplication } from '@/network/api/spaces/types'
+import type { SpaceApplication } from '@/types/apiSpaces'
 import type { RatchetArea, RatchetBoard, RatchetCheck, RatchetPoint } from '@/views/admin/ratchetApi'
 
 import { featureReport } from '@/proto-feature-fixtures'

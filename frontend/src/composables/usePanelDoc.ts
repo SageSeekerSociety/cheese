@@ -12,16 +12,18 @@
 import type { Block, Topic } from '../cx_types'
 import type { DocAgentListener, DocAgentRequest } from '../lib/docAgent'
 import type { DocEdit } from '../lib/docEdits'
+import type { CanvasData } from '../types/canvas'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { addComment, getDocNodes, workspaceFileRawUrl } from '../api'
+import { addComment, getDocNodes } from '../api'
+import { changeCanvas, copyCanvas, createCanvas, getCanvas, setCanvasHeight } from '../api/canvases'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
-import { getDocumentAbout, renameDocument } from '../api/projectDocuments'
+import { documentImageUrl, getDocumentAbout, renameDocument } from '../api/projectDocuments'
 import { isAgentHandle } from '../lib/authorship'
 import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
@@ -52,7 +54,7 @@ export interface PanelDocProps {
   agentName?: string
   /** 项目 AI 队友的 handle。 */
   agentHandle?: string | null
-  /** 画在一整页里（资料库的那份章程）：总览的其余两块不在那儿画，也就不去取。 */
+  /** 画在一整页里（项目文档页的项目目标）：总览的其余两块不在那儿画，也就不去取。 */
   bare?: boolean
 }
 
@@ -62,7 +64,6 @@ export type PanelDocBundle = ReturnType<typeof usePanelDoc>
 /** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
 export function usePanelDoc(props: PanelDocProps) {
   const AUTHOR = myHandle()
-  const projectId = computed<string | null>(() => props.document?.projectId ?? props.topic?.project_id ?? null)
   // 房间的文档是哪一份：切到一个房间时问一次。之后的读写都对着这份文档的 id。
   const documentId = ref<string | null>(null)
   const resolveError = ref<string | null>(null)
@@ -169,14 +170,28 @@ export function usePanelDoc(props: PanelDocProps) {
     return applyDocEdits(did, edits)
   }
 
-  // Display-time image src resolution: workspace-relative paths (uploads/x.png)
-  // render through the raw-file API; absolute http(s)/data URLs pass through.
-  // The node attr keeps the ORIGINAL path, so the Markdown never gets a URL.
-  function imageSrc(src: string): string {
-    if (/^(https?:|data:|blob:|\/)/i.test(src)) return src
-    const pid = projectId.value
-    if (!pid) return src
-    return workspaceFileRawUrl(pid, src.replace(/^\.\//, ''), props.topic?.id)
+  // 文档里引用的一张图拿什么画：按这份文档去取（读得了文档的人才看得到），路径落在
+  // 哪儿由后端按文档是谁的来定。本来就是地址的（http(s)、data、blob、站内绝对路径）
+  // 原样画。节点里留着原来的路径，Markdown 里不会出现取回来的地址。
+  function imageSrc(src: string): Promise<string> {
+    if (/^(https?:|data:|blob:|\/)/i.test(src)) return Promise.resolve(src)
+    const did = documentId.value
+    if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return documentImageUrl(did, src.replace(/^\.\//, ''))
+  }
+
+  // 文档里的画布：读写都按画布自己的编号；新建、复制一块要知道是给哪份文档的。
+  function thisDocument(): string {
+    const did = documentId.value
+    if (!did) throw new Error(t('work.room.docEdit.unavailable'))
+    return did
+  }
+  const canvas: CanvasData = {
+    load: getCanvas,
+    change: changeCanvas,
+    setHeight: setCanvasHeight,
+    create: async () => (await createCanvas(thisDocument())).id,
+    copy: async (source) => (await copyCanvas(source, thisDocument())).id,
   }
 
   async function resolveDocument(tid: string, taskId: string | null) {
@@ -324,6 +339,7 @@ export function usePanelDoc(props: PanelDocProps) {
     setError,
     fetchDocNodes,
     imageSrc,
+    canvas,
     applyEdits,
   }
 }

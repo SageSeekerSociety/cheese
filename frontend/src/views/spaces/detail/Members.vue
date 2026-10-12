@@ -32,7 +32,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import MembersView from './MembersView.vue'
 
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 
@@ -54,7 +54,7 @@ async function refresh() {
   failed.value = false
   errorDetail.value = null
   try {
-    members.value = (await SpacesApi.listMembers(spaceId)).data.members ?? []
+    members.value = (await SpacesApi.listMembers(spaceId)).members ?? []
   } catch (error) {
     failed.value = true
     errorDetail.value = error instanceof Error && error.message ? error.message : null

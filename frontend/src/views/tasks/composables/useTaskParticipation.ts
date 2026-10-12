@@ -6,8 +6,8 @@ import { toast } from 'vuetify-sonner'
 
 import { useEvents } from '../events'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
-import { TasksApi } from '@/network/api/tasks'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 
@@ -65,7 +65,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
     if (!taskData.value || !teamId) return
 
     try {
-      const result = await TasksApi.join(
+      const result = await TaskBoardApi.join(
         taskData.value.id,
         {
           deadline: null,
@@ -81,7 +81,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       toast.success(t('tasks.participation.joined'))
       await loadTaskData()
       events.emit('reload-joined-teams')
-      await router.push(`/projects/${result.data.project.id}`)
+      await router.push(`/projects/${result.project.id}`)
     } catch (error) {
       toast.error(t('tasks.participation.teamClaimFailed'))
       console.error('Failed to join task as team:', error)
@@ -98,7 +98,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
         return
       }
 
-      const result = await TasksApi.join(taskData.value.id, {
+      const result = await TaskBoardApi.join(taskData.value.id, {
         deadline: null,
         email: contactInfo?.email,
         phone: contactInfo?.phone,
@@ -109,7 +109,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
       toast.success(t('tasks.participation.joined'))
       await loadTaskData()
-      await router.push(`/projects/${result.data.project.id}`)
+      await router.push(`/projects/${result.project.id}`)
     } catch (error) {
       toast.error(t('tasks.participation.claimFailed'))
     }
@@ -159,7 +159,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
     if (!userId) return
 
     try {
-      await TasksApi.removeParticipantByMemberId(taskData.value.id, userId)
+      await TaskBoardApi.removeParticipantByMemberId(taskData.value.id, userId)
       toast.success(t('tasks.participation.left'))
       await loadTaskData()
     } catch (error) {
@@ -172,7 +172,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
     if (!taskData.value || !teamId) return
 
     try {
-      await TasksApi.removeParticipantByMemberId(taskData.value.id, teamId)
+      await TaskBoardApi.removeParticipantByMemberId(taskData.value.id, teamId)
       toast.success(t('tasks.participation.teamLeft'))
       await loadTaskData()
     } catch (error) {

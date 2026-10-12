@@ -34,6 +34,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.domain.day_windows import utc_day
 from app.domain.feedback.models import (
     Feedback,
     FeedbackComment,
@@ -52,7 +53,6 @@ from app.domain.feedback.models import (
 # repository）。在这里再导出一遍，是因为本模块和 `services.py` 一直按 `THREAD_PAGE`
 # 的名字用它，名字留在原处比让每个调用点改一行强。不是给路由用的。
 from app.domain.feedback.paging import REPLIES_PAGE, THREAD_PAGE
-from app.domain.platform_stats.windows import utc_day
 from app.domain.topic.models import TopicMembership
 
 #: 「热门」要多少分 —— 按支持数算，不按浏览量。原型给过理由（「浏览是路过，

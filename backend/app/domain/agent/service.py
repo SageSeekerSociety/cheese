@@ -168,6 +168,9 @@ class AgentUsage:
     input_tokens: int = 0
     output_tokens: int = 0
     cost_usd: float = 0.0
+    # Part of ``input_tokens``, where the source reports them.
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:

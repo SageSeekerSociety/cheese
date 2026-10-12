@@ -6,10 +6,10 @@ import type { Team, TeamVisibility } from '@/types'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { ApiError } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
-import { BusinessError } from '@/network/types/error'
 
 const props = defineProps<{ team: Team }>()
 const emit = defineEmits<{ updated: [team: Team] }>()
@@ -36,9 +36,7 @@ async function saveHandle() {
   handleError.value = ''
   busy.value = true
   try {
-    const {
-      data: { team },
-    } = await TeamsApi.update(props.team.id, { handle: handle.value.trim() })
+    const { team } = await TeamsApi.update(props.team.id, { handle: handle.value.trim() })
     emit('updated', team)
     await router.replace({
       name: route.name ?? 'TeamsDetailDefault',
@@ -47,9 +45,9 @@ async function saveHandle() {
     })
   } catch (e) {
     handleError.value =
-      e instanceof BusinessError && e.code === 409
+      e instanceof ApiError && e.status === 409
         ? t('work.teamLink.handleTaken')
-        : e instanceof BusinessError && e.code === 400
+        : e instanceof ApiError && e.status === 400
           ? t('work.teamLink.handleInvalid')
           : t('work.teamLink.failed')
   } finally {
@@ -75,7 +73,7 @@ watch(
     link.value = null
     copied.value = false
     void run(async () => {
-      const { data } = await TeamsApi.getJoinLink(teamId)
+      const data = await TeamsApi.getJoinLink(teamId)
       if (props.team.id === teamId) link.value = data
     })
   },
@@ -85,21 +83,19 @@ watch(
 function reset() {
   copied.value = false
   void run(async () => {
-    link.value = (await TeamsApi.resetJoinLink(props.team.id)).data
+    link.value = await TeamsApi.resetJoinLink(props.team.id)
   })
 }
 
 function setApproval(approval: boolean | null) {
   void run(async () => {
-    link.value = (await TeamsApi.updateJoinLink(props.team.id, { approval: !!approval })).data
+    link.value = await TeamsApi.updateJoinLink(props.team.id, { approval: !!approval })
   })
 }
 
 function setVisibility(visibility: TeamVisibility) {
   void run(async () => {
-    const {
-      data: { team },
-    } = await TeamsApi.update(props.team.id, { visibility })
+    const { team } = await TeamsApi.update(props.team.id, { visibility })
     emit('updated', team)
   })
 }

@@ -25,7 +25,6 @@ from app.core.errors import (
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.services import AttachmentService
-from app.domain.feature_stats import pricing
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
@@ -51,6 +50,7 @@ from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.services import TeamService
+from app.domain.usage import pricing
 from app.domain.user.repositories import (
     UserRealNameRepository,
 )

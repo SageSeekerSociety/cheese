@@ -2,7 +2,7 @@ import { defineComponent, provide, reactive } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 import AttachmentImage from './AttachmentImage.vue'
@@ -75,9 +75,56 @@ it('draws the bytes it fetched, not a bare URL the browser cannot authenticate',
   await waitFor(() => expect(container.querySelector('img')).toBeTruthy())
   const img = container.querySelector('img')!
   expect(img.getAttribute('src')).toBe('blob:image-1')
-  // 点开看原图走的是同一个 object URL，不是那个匿名地址。
-  expect(container.querySelector('a')!.getAttribute('href')).toBe('blob:image-1')
+  // 没有一处把读者交给那个匿名地址：放大看在应用里做（下面那一条）。
+  expect(container.querySelector('a')).toBeNull()
   expect(attachmentImageUrl).toHaveBeenCalledWith('topic-a', 'uploads/a/图.png')
+})
+
+it('opens the picture larger in place, showing the same bytes the message shows', async () => {
+  attachmentImageUrl.mockResolvedValue('blob:image-1')
+
+  mount({})
+  await waitFor(() => expect(screen.getByAltText('图.png')).toBeTruthy())
+
+  await fireEvent.click(screen.getByRole('button', { name: '查看大图：图.png' }))
+
+  const dialog = await screen.findByRole('dialog')
+  expect(dialog.querySelector('img')!.getAttribute('src')).toBe('blob:image-1')
+  // 预览摆的就是这一份字节：它开着的时候谁都不能把地址还回去，还了预览里当场是空白。
+  expect(revoked).toEqual([])
+})
+
+it('gives the picture back once the preview is closed and the message goes away', async () => {
+  attachmentImageUrl.mockResolvedValue('blob:image-1')
+
+  const { unmount } = mount({})
+  await waitFor(() => expect(screen.getByAltText('图.png')).toBeTruthy())
+  await fireEvent.click(screen.getByRole('button', { name: '查看大图：图.png' }))
+  await screen.findByRole('dialog')
+
+  await fireEvent.keyDown(window, { key: 'Escape' })
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  // 关掉之后消息里那张图还在用这份字节，所以还不能还；消息真的走了才还。
+  expect(revoked).toEqual([])
+
+  unmount()
+
+  expect(revoked).toEqual(['blob:image-1'])
+})
+
+it('closes the preview when the message is edited to another picture', async () => {
+  attachmentImageUrl.mockResolvedValueOnce('blob:image-1').mockResolvedValueOnce('blob:image-2')
+
+  const { state } = mount({})
+  await waitFor(() => expect(screen.getByAltText('图.png')).toBeTruthy())
+  await fireEvent.click(screen.getByRole('button', { name: '查看大图：图.png' }))
+  await screen.findByRole('dialog')
+
+  state.path = 'uploads/a/另一张.png'
+
+  // 预览里那张已经不是这条消息的图了：收起来，旧的那份字节还回去。
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  await waitFor(() => expect(revoked).toEqual(['blob:image-1']))
 })
 
 it('uses the file name as alt text so a picture that never loads still says what it was', async () => {
@@ -122,8 +169,7 @@ it('says the picture failed instead of leaving a blank the reader reads as “no
   expect(container.querySelector('img')).toBeNull()
 })
 
-// 输入框里那张待发的缩略图：同一个组件、同一份字节，只是长得小，而且点不开
-// （「看原图」是发出去之后的事）。
+// 输入框里那张待发的缩略图：同一个组件、同一份字节，只是长得小。
 it('draws the composer thumbnail from the fetched bytes as well', async () => {
   attachmentImageUrl.mockResolvedValue('blob:image-1')
 
@@ -131,8 +177,20 @@ it('draws the composer thumbnail from the fetched bytes as well', async () => {
 
   await waitFor(() => expect(container.querySelector('.im-thumb__img')).toBeTruthy())
   expect(container.querySelector('.im-thumb__img')!.getAttribute('src')).toBe('blob:image-1')
-  expect(container.querySelector('a')).toBeNull()
   expect(attachmentImageUrl).toHaveBeenCalledWith('topic-a', 'uploads/a/图.png')
+})
+
+// 待发条上那一格也能放大看：小块里看不清的那张图，发出去之前就能确认。
+it('lets the composer thumbnail open the same preview', async () => {
+  attachmentImageUrl.mockResolvedValue('blob:image-1')
+
+  const { container } = mount({ thumb: true })
+  await waitFor(() => expect(container.querySelector('.im-thumb__img')).toBeTruthy())
+
+  await fireEvent.click(screen.getByRole('button', { name: '查看大图：图.png' }))
+
+  const dialog = await screen.findByRole('dialog')
+  expect(dialog.querySelector('img')!.getAttribute('src')).toBe('blob:image-1')
 })
 
 // 缩略图挂了也得占住那个方格：塌下去的时候待发条会整体跳一下，而且读者分不清

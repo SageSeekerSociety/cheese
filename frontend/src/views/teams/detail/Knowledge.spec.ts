@@ -17,7 +17,7 @@
  *   4. **详情**：点开画的是哪几行资料信息、来源频道与原始讨论；
  *   5. **写入**：删除与「打开资料」分别打到哪儿。
  *
- * 挂的是真页，接的却是**假的 api 模块**（`@/network/api/knowledges` /
+ * 挂的是真页，接的却是**假的 api 模块**（`@/api/knowledges` /
  * `materials`）：这一页的整条链子就是「页 → api」，没有 store 夹在中间，假在
  * 网络那一层和假在模块那一层是同一件事，而模块那一层能直接读请求参数。
  *
@@ -31,7 +31,6 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
-import dayjs from 'dayjs'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listMock = vi.hoisted(() => vi.fn())
@@ -43,7 +42,7 @@ const alertMock = vi.hoisted(() => vi.fn())
 const successMock = vi.hoisted(() => vi.fn())
 const errorMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@/network/api/knowledges', () => ({
+vi.mock('@/api/knowledges', () => ({
   KnowledgesApi: { create: createMock, list: listMock, deleteKnowledge: deleteMock },
 }))
 vi.mock('@/api/materials', () => ({ uploadMaterial: uploadMock }))
@@ -82,6 +81,7 @@ import dialogSource from '@/components/teams/knowledge/KnowledgeDetailDialog.vue
 import gridSource from '@/components/teams/knowledge/KnowledgeGrid.vue?raw'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
+import { absDate } from '@/lib/dateText'
 
 const ME = 1
 const OTHER = 2
@@ -112,10 +112,8 @@ function knowledge(over: Partial<Knowledge> = {}): Knowledge {
 
 function page(items: Knowledge[], over: Record<string, unknown> = {}) {
   return {
-    data: {
-      knowledges: items,
-      page: { pageStart: 0, pageSize: 20, hasMore: false, nextStart: null, total: items.length, ...over },
-    },
+    knowledges: items,
+    page: { pageStart: 0, pageSize: 20, hasMore: false, nextStart: null, total: items.length, ...over },
   }
 }
 
@@ -172,7 +170,7 @@ beforeEach(() => {
   answer = true
   listMock.mockReset().mockResolvedValue(page(three()))
   createMock.mockReset()
-  deleteMock.mockReset().mockResolvedValue({ data: undefined })
+  deleteMock.mockReset().mockResolvedValue(undefined)
   uploadMock.mockReset()
   confirmMock.mockReset().mockImplementation(() => ({ wait: () => Promise.resolve(answer) }))
   alertMock.mockReset()
@@ -326,8 +324,9 @@ describe('两种视图', () => {
     const first = gridCards(view)[0]!
     expect(first.textContent).toContain('设计规范')
     expect(first.textContent).toContain('图片')
-    // 卡片上的日期是这条自己那个时间戳的「月/日」，跟着本地时区走。
-    expect(first.textContent).toContain(dayjs(1_700_000_000_000).format('MM/DD'))
+    // 卡片上的日期是这条自己那个时间戳，跟着本地时区走；跨年才带年份。
+    expect(first.textContent).toContain(absDate(1_700_000_000_000))
+    expect(first.textContent).not.toContain('/')
     // 四个标签只画三个，剩下一个折成 +1。
     expect(first.textContent).toContain('设计')
     expect(first.textContent).toContain('+1')
