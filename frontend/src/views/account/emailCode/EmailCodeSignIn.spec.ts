@@ -12,13 +12,13 @@ import { lastSignIn } from '../lastSignIn'
 import Request from './Request.vue'
 import Verify from './Verify.vue'
 
+import { ApiError } from '@/api/http'
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { BusinessError } from '@/network/types/error'
 import AccountService from '@/services/account'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: { requestSignInCode: vi.fn(), signInWithEmailCode: vi.fn() },
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: { requestSignInCode: vi.fn(), signInWithEmailCode: vi.fn() },
 }))
 vi.mock('@/services/account', () => ({ default: { loggedIn: false, login: vi.fn() } }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
@@ -38,7 +38,7 @@ beforeEach(() => {
   device.canUnlockPasskeys = false
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
-  vi.mocked(UserApi.requestSignInCode).mockResolvedValue({} as never)
+  vi.mocked(UserAuthApi.requestSignInCode).mockResolvedValue({} as never)
 })
 afterEach(() => {
   cleanup()
@@ -84,19 +84,19 @@ async function typeCode(container: Element, code = '123456') {
 }
 
 function refusal(status: number, data: Record<string, unknown>) {
-  return new BusinessError('English text from the server', status, { name: 'Error', message: '', data })
+  return new ApiError(status, 'English text from the server', 'Error', undefined, undefined, data)
 }
 
 describe('asking for a code', () => {
   it('sends it to the address given and names that address on the code screen', async () => {
     const { view } = await askForCode('someone@example.com')
 
-    expect(UserApi.requestSignInCode).toHaveBeenCalledWith('someone@example.com')
+    expect(UserAuthApi.requestSignInCode).toHaveBeenCalledWith('someone@example.com')
     expect(await view.findByText('We sent a code to someone@example.com')).toBeTruthy()
   })
 
   it('says how long to wait when a code was asked for too recently', async () => {
-    vi.mocked(UserApi.requestSignInCode).mockRejectedValue(
+    vi.mocked(UserAuthApi.requestSignInCode).mockRejectedValue(
       refusal(400, { reason: 'email_code_too_soon', retryAfterSeconds: 42 })
     )
     const { view, router } = await open('/account/signin/email')
@@ -116,21 +116,23 @@ describe('asking for a code', () => {
 
 describe('entering the code', () => {
   it('signs in, remembers the way for next time, and goes where the sign-in was headed', async () => {
-    vi.mocked(UserApi.signInWithEmailCode).mockResolvedValue({
-      data: { accessToken: 'fresh-token', user, requires2FA: false },
+    vi.mocked(UserAuthApi.signInWithEmailCode).mockResolvedValue({
+      accessToken: 'fresh-token',
+      user,
+      requires2FA: false,
     } as never)
     const { view, router } = await askForCode('someone@example.com', '/projects/3')
 
     await typeCode(view.container, '654321')
 
     await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/3'))
-    expect(UserApi.signInWithEmailCode).toHaveBeenCalledWith({ email: 'someone@example.com', code: '654321' })
+    expect(UserAuthApi.signInWithEmailCode).toHaveBeenCalledWith({ email: 'someone@example.com', code: '654321' })
     expect(AccountService.login).toHaveBeenCalledWith('fresh-token', user)
     expect(lastSignIn()).toBe('email_code')
   })
 
   it('says a wrong or expired code is wrong, in the interface language', async () => {
-    vi.mocked(UserApi.signInWithEmailCode).mockRejectedValue(refusal(401, { reason: 'invalid_email_code' }))
+    vi.mocked(UserAuthApi.signInWithEmailCode).mockRejectedValue(refusal(401, { reason: 'invalid_email_code' }))
     const { view } = await askForCode()
     setLocale('zh-CN')
 
@@ -141,8 +143,9 @@ describe('entering the code', () => {
   })
 
   it('leads an account with two-step verification to that step instead of signing in', async () => {
-    vi.mocked(UserApi.signInWithEmailCode).mockResolvedValue({
-      data: { requires2FA: true, tempToken: 'pending-ticket' },
+    vi.mocked(UserAuthApi.signInWithEmailCode).mockResolvedValue({
+      requires2FA: true,
+      tempToken: 'pending-ticket',
     } as never)
     const { view, router } = await askForCode('someone@example.com', '/projects/3')
 
@@ -155,13 +158,11 @@ describe('entering the code', () => {
 
   it('offers a passkey to an account due one, on its way to the home page', async () => {
     device.canUnlockPasskeys = true
-    vi.mocked(UserApi.signInWithEmailCode).mockResolvedValue({
-      data: {
-        accessToken: 'fresh-token',
-        user,
-        requires2FA: false,
-        passkeyEnrollment: { ticket: 'enrollment-ticket', offer: true, canStopAsking: false },
-      },
+    vi.mocked(UserAuthApi.signInWithEmailCode).mockResolvedValue({
+      accessToken: 'fresh-token',
+      user,
+      requires2FA: false,
+      passkeyEnrollment: { ticket: 'enrollment-ticket', offer: true, canStopAsking: false },
     } as never)
     const { view, router } = await askForCode()
 
@@ -178,8 +179,8 @@ describe('entering the code', () => {
     vi.advanceTimersByTime(61_000)
     await fireEvent.click(await view.findByRole('button', { name: 'Resend' }))
 
-    await waitFor(() => expect(UserApi.requestSignInCode).toHaveBeenCalledTimes(2))
-    expect(UserApi.requestSignInCode).toHaveBeenLastCalledWith('someone@example.com')
+    await waitFor(() => expect(UserAuthApi.requestSignInCode).toHaveBeenCalledTimes(2))
+    expect(UserAuthApi.requestSignInCode).toHaveBeenLastCalledWith('someone@example.com')
     expect(await view.findByText('Resend in 60s')).toBeTruthy()
   })
 })

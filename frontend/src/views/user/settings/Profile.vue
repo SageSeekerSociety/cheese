@@ -38,8 +38,8 @@ import ProfileView from './ProfileView.vue'
 
 import { createAvatar } from '@/api/avatars'
 import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService from '@/services/account'
 
