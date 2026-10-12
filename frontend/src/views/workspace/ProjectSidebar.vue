@@ -1,27 +1,34 @@
 <script setup lang="ts">
+import type { MoreTasks } from '@/components/topic-sidebar/moreTasks'
 import type { RoomTask } from '@/cx_types'
 
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import { useCommands } from '@/commands'
+import { restOfChannel } from '@/components/topic-sidebar/moreTasks'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
+import { queryClient } from '@/query/client'
+import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
 // every navigation inside the project (ProjectShell's doc comment says why).
 //
-// Its one rule: EVERY click here is a route change in the content area. Nothing
-// in this file opens something "in place" — that split (some rows swapped the
-// panel, others pushed a full page and took the sidebar with them) was the
-// reason a click's outcome was unpredictable.
+// Its one rule: every row that opens something is a route change in the content
+// area. Nothing here opens something "in place" — that split (some rows swapped
+// the panel, others pushed a full page and took the sidebar with them) was the
+// reason a click's outcome was unpredictable. What changes only the sidebar
+// itself (folding a channel's subtree, expanding the rest of its tasks) leaves
+// the content area alone.
 defineOptions({ name: 'ProjectSidebar' })
 
 // `page`: 手机上话题列表是页面栈的一层，占满内容区（由 WorkspaceEntry 挂起来）。
@@ -44,7 +51,7 @@ const column = computed(
 const ids = computed(() => routeIds(route.params))
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? ids.value.topicId ?? null : null))
 const activeTaskId = computed(() => (route.name === 'workspace-task' ? ids.value.taskId ?? null : null))
-// 「全部任务」带着频道筛选打开时，那个频道下面的「全部任务」一行是选中的。
+// 「全部任务」带着频道筛选打开（频道的 ⋯ 里那一项）：那个频道留在侧栏上。
 const activeAllTasks = computed(() =>
   route.name === 'project-tasks' && typeof route.query.channel === 'string' ? route.query.channel : null
 )
@@ -68,8 +75,37 @@ const roomTaskTotals = computed<Record<string, number>>(() =>
     store.topics.filter((topic) => topic.my_tasks?.open).map((topic) => [topic.id, topic.my_tasks!.open])
   )
 )
-function openAllTasks(channelId: string) {
-  void router.push({ name: 'project-tasks', params: { projectId: props.projectId }, query: { channel: channelId } })
+
+// 频道下面最后那一行就地展开这个频道其余进行中的任务。读的是项目里还开着的任务那一份
+// （「全部任务」和项目总览读的也是它，任务一变 `query/changes` 就让它重读），只在有
+// 频道展开着的时候才读；换项目就都收起来。
+const expandedChannels = ref<string[]>([])
+watch(
+  () => props.projectId,
+  () => (expandedChannels.value = [])
+)
+const openTasks = useQuery(
+  computed(() => ({ ...openProjectTasksQuery(props.projectId), enabled: expandedChannels.value.length > 0 })),
+  queryClient
+)
+const moreTasks = computed<Record<string, MoreTasks>>(() => {
+  const listed = openTasks.data.value?.data
+  return Object.fromEntries(
+    expandedChannels.value.map((channelId): [string, MoreTasks] => {
+      if (listed)
+        return [channelId, { state: 'ready', rows: restOfChannel(listed, channelId, roomTasks.value[channelId] ?? []) }]
+      return [channelId, { state: openTasks.isError.value ? 'failed' : 'loading' }]
+    })
+  )
+})
+function toggleTasks(channelId: string) {
+  if (moreTasks.value[channelId]?.state === 'failed') {
+    void openTasks.refetch()
+    return
+  }
+  expandedChannels.value = expandedChannels.value.includes(channelId)
+    ? expandedChannels.value.filter((id) => id !== channelId)
+    : [...expandedChannels.value, channelId]
 }
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
@@ -172,7 +208,7 @@ useCommands(() => [
       :selected-topic-id="activeTopicId"
       :room-tasks="roomTasks"
       :room-task-totals="roomTaskTotals"
-      :all-tasks-channel-id="activeAllTasks"
+      :more-tasks="moreTasks"
       :selected-task-id="activeTaskId"
       :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
@@ -184,7 +220,7 @@ useCommands(() => [
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @select-task="openTask"
-      @all-tasks="openAllTasks"
+      @toggle-tasks="toggleTasks"
       @browse-channels="browseChannels"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"

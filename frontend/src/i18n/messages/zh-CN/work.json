@@ -317,7 +317,8 @@
       "muted": "已静音",
       "markAllRead": "全部标为已读",
       "markAllReadFailed": "全部标为已读没成功",
-      "notifyFailed": "通知设置没保存"
+      "notifyFailed": "通知设置没保存",
+      "allTasks": "全部任务"
     },
     "archiveNotice": {
       "done": "已归档",
@@ -1396,7 +1397,11 @@
     "moreMembers": "+{count}",
     "taskNeedsYou": "需要你处理",
     "taskRunning": "运行中",
-    "allTasks": "全部任务"
+    "allTasks": "全部任务",
+    "moreTasks": "展开其余 {count} 个",
+    "fewerTasks": "收起",
+    "tasksLoading": "正在读取…",
+    "tasksFailed": "没读出来，点一下重试"
   },
   "members": {
     "leave": "退出项目",
