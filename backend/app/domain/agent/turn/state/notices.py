@@ -1,5 +1,6 @@
 """Pure native failure and tool-action classification."""
 
+from app.core.obs import scrub_secrets
 from app.core.sentences import NoticeText, say
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
@@ -85,8 +86,12 @@ def _turn_failure_notice(
         severity=SEVERITY_ERROR,
         who=WHO_HUMAN,
         # 原话是唯一的一份——它没有第二个副本可以「去别处看」，所以原样收进
-        # detail，不截、不摘要。
-        detail=(say("hintAndServiceWords", hint=hint, said=detail) if detail else hint),
+        # detail，不截、不摘要；只把凭据遮成 ***：它会存进对话。
+        detail=(
+            say("hintAndServiceWords", hint=hint, said=scrub_secrets(detail))
+            if detail
+            else hint
+        ),
         detail_label=say("labelDetails"),
         retryable=retryable,
     )
@@ -97,4 +102,4 @@ def _with_log(meta: dict, log: str | None) -> dict:
     failed row there, with the text as its error. The room reads neither."""
     if not log or not log.strip():
         return meta
-    return {**meta, "failed": True, "error": log.strip()}
+    return {**meta, "failed": True, "error": scrub_secrets(log.strip())}

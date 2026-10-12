@@ -194,6 +194,7 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :fetch-suggestion-reasons="doc.fetchSuggestionReasons"
     :fetch-doc-nodes="doc.fetchDocNodes"
     :image-src="doc.imageSrc"
+    :canvas="doc.canvas"
     :toggle-editable="doc.toggleEditable"
     :set-error="doc.setError"
     :ask-agent="doc.askAgent"

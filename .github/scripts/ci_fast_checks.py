@@ -92,6 +92,10 @@ OFF_DISK_SPECS = (
     "src/components/admin/AdminGrid.spec.ts",
     "src/components/base/BaseButton.spec.ts",
     "src/components/base/SettingsRow.spec.ts",
+    # Reads BottomAppBar.vue off disk to hold the overlay fix in place. Added in
+    # #3521 (be7a1d36, 2026-10-12 16:38) without a tuple entry; that commit's
+    # cifast check was skipped, so this list's own test was the first to notice.
+    "src/components/common/Navigation/BottomAppBar.spec.ts",
     "src/githubSettingsSections.spec.ts",
     "src/offScreenSkipping.spec.ts",
     "src/styles/docBlocks.spec.ts",

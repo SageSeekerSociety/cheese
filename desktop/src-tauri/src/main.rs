@@ -343,6 +343,18 @@ fn main() {
             );
             let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .initialization_script(about)
+                // On the page someone picks up a project tile in the rail and
+                // drops it where it should go, and drops a file on the library to
+                // upload it — all of that is the page's own drag and drop, and it
+                // happens inside this webview. With wry's handler on, the webview
+                // answers its own drag-destination callbacks and WebKit's handling
+                // never runs, and this app's handler takes every drag it is offered
+                // whatever it carries, so on macOS the tile lifts and the page
+                // never sees the drop. Off, WebKit handles drags itself, which is
+                // what the page's drag code expects; nothing here listens for the
+                // events wry would send instead (`dragDrop` in the page is the DOM
+                // one, not Tauri's).
+                .disable_drag_drop_handler()
                 .theme(window_theme(&theme).flatten())
                 .title("Cheese")
                 // Shown once the app's own page has painted, so the window never
