@@ -205,8 +205,7 @@ export type SpaceMaterialsState = 'loading' | 'ready' | 'error'
 // ---- 「我发布的题目」（`SpacesApi.getMyPublishedTasks` 的形状）-----------------
 //
 // 这几个原来长在 `@/types/apiSpaces` 里；挪到领域类型这儿，是因为「题目列表」
-// 拆出来的那半张画面（`views/spaces/detail/TasksView.vue`）只认 props、不连网络层，
-// 不能从 `@/network` 取类型。网络层再从这儿转出去，对外形状一个字没变。
+// 拆出来的那半张画面（`views/spaces/detail/TasksView.vue`）只认 props、不连 API 层。
 
 /** 我发布的题目挂在哪个分类下。 */
 export type SpaceMyPublishedTaskCategory = {
@@ -258,10 +257,8 @@ export type SpaceMyPublishedTasks = {
 
 // ---- 空间分析 · 告警（`SpacesApi.getAnalyticsAlerts` 的形状）--------------------
 //
-// 原来是 `@/network/api/spaces/types` 里头那一组分析类型里的一格；挪到领域类型这儿，
-// 是因为「告警」那一格拆出来的半张画面（`views/spaces/detail/analytics/AlertsView.vue`）
-// 只认 props、不连网络层，不能从 `@/network` 取类型。网络层再从这儿转出去，对外形状
-// 一个字没变。
+// 原来长在旧网络栈的空间类型里；挪到领域类型这儿，是因为「告警」那一格拆出来的半张画面
+// （`views/spaces/detail/analytics/AlertsView.vue`）只认 props、不连 API 层。
 
 /** 管理员看板「告警」那一格里的几个待办计数。 */
 export type SpaceAnalyticsAlerts = {
@@ -275,9 +272,8 @@ export type SpaceAnalyticsAlerts = {
 
 // ---- 空间申请（`SpacesApi.reviews` 的形状）-------------------------------------
 //
-// 原来长在 `@/network/api/spaces/types` 里；挪到领域类型这儿，是因为「空间申请」
-// 拆出来的那半张画面（`views/admin/AdminSpacesPageView.vue`）只认 props、不连网络层，
-// 不能从 `@/network` 取类型。网络层再从这儿转出去，对外形状一个字没变。
+// 原来长在旧网络栈的空间类型里；挪到领域类型这儿，是因为「空间申请」拆出来的那半张画面
+// （`views/admin/AdminSpacesPageView.vue`）只认 props、不连 API 层。
 
 /** 一条开版申请：谁、申请了什么版、什么时候、说了什么，以及审到哪一步。 */
 export type SpaceApplication = {

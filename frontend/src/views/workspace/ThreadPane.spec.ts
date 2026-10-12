@@ -1,6 +1,7 @@
 /** 打开一条支线就算读过它；一条支线可以转出几件任务，转出来的都列在挂着的那条消息下面。 */
 import type { Component } from 'vue'
 import type { Block, RoomTask, Topic } from '@/cx_types'
+import type { ThreadSummary } from '@/types/threads'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -26,6 +27,8 @@ vi.mock('@/api', async (importOriginal) => ({
 import ThreadPane from './ThreadPane.vue'
 
 import { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 setLocale('zh-CN')
 const vuetify = createVuetify({ components, directives })
@@ -56,6 +59,20 @@ function task(id: string, origin: string, title = '一件任务'): RoomTask {
     updated_at: '2026-10-06T00:00:00Z',
     presentation: { column: 'building', phrase: 'running' },
   } as RoomTask
+}
+
+/** 主线上一块带着自己那条支线的消息（`GET /topics/{频道}/blocks` 就是这样的）。 */
+function summary(): ThreadSummary {
+  return {
+    id: 'th1',
+    room_id: 'r1',
+    root_block_id: 'b1',
+    reply_count: 2,
+    last_reply_at: '2026-10-06T00:01:00Z',
+    last_reply: { author: 'alice', content: '好', created_at: '2026-10-06T00:01:00Z' },
+    participants: ['alice'],
+    tasks: [],
+  }
 }
 
 // 对话那一栏的替身：支线页头那条消息要从它自己的滚动区里进去（真身上是 ChatTimeline 的
@@ -168,6 +185,18 @@ describe('支线', () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { container } = mount()
     await waitFor(() => expect(container.querySelector('[data-testid="chat-scroll"] .thread-root')).not.toBeNull())
+  })
+
+  it('手上已经有它挂着的那条消息时，页头不等支线读回来就在', async () => {
+    // 打开一条支线时页头那条「开局消息」不该空着等 `GET /topics/{支线}/thread`：点它的
+    // 那条消息本来就在频道的对话窗口里。这里让那次读永远不回来，页头照样要在。
+    queryClient.setQueryData(keys.roomNewestBlocks('r1'), {
+      blocks: [{ ...root(), thread: summary() }],
+      hasMore: false,
+    })
+    getThread.mockReturnValue(new Promise(() => {}))
+    const { findByText } = mount()
+    expect(await findByText('李安')).toBeTruthy()
   })
 
   it('反馈卡接在支线的对话后面', async () => {

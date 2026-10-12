@@ -37,11 +37,13 @@ import { installErrorReporter } from './errorReporter'
 import { registerPwa } from './pwa'
 import router from './router'
 
+import { resolveRefs } from '@/api/addresses'
 import i18n from '@/i18n'
 import { armAfterFirstPaint } from '@/lib/afterFirstPaint'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
 import { installRefChipKeys } from '@/lib/refChip'
+import { answerRefsWith } from '@/lib/refDirectory'
 // Plugins
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
@@ -69,6 +71,7 @@ installErrorReporter(app)
 
 // 消息和文档里的 @人、#话题、文件 chip：Enter / 空格按下去和点一下一样（lib/refChip.ts）。
 installRefChipKeys()
+answerRefsWith(resolveRefs)
 
 watch(
   i18n.global.locale,

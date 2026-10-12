@@ -281,7 +281,7 @@ def test_a_card_cannot_open_a_pr_of_its_own(client, monkeypatch):
     _github_world(monkeypatch, connected={"alice": "gho_alice"})
 
     _, root = _project(client, owner="alice")
-    tid = open_task(client, root, start=False)["id"]
+    tid = open_task(client, root)["id"]
 
     r = client.post(
         f"/topics/{delivery_task_id(client, tid)}/accept-card",

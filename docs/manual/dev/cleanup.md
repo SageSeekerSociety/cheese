@@ -4,7 +4,7 @@ kind: 参考
 summary: 资源目录的回收（宽限、一次尽力推送、旧房间文件与记录的保留）和主机磁盘的三道回收。
 covers:
   - backend/app/domain/agent/resource_cleanup.py
-  - backend/app/domain/topic/retire.py
+  - backend/app/domain/room_cleanup/retire.py
   - backend/app/domain/agent/device_storage.py
   - backend/scripts/retained_files.py
   - deploy/README-room-cleanup.md
@@ -71,7 +71,7 @@ covers:
 ## 记录（transcripts） {#transcripts}
 
 - 记录不上传。每个 Claude Code 会话都跑在中央会话主机上（`AGENT_SESSION_DEVICE_ID`），所以房间的记录就在它在那台机器上的 home 里。删 home 之前，先把 home 的 `.claude/projects` 树（主会话文件与每个分身的）压成 `~/.cheese/transcripts/<项目>/<房间>/<资源>.tar.gz`，保存在同一台机器上、只有该主机用户可读。**树里的链接按链接存，绝不跟随。** 别的设备不留记录。
-- 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/topic/retire.py`），同一个定时器删掉压缩包，操作变成 `complete`。
+- 之后操作停在 `retained` 状态：home 被删后三十天（`TRANSCRIPT_RETENTION`，`domain/room_cleanup/retire.py`），同一个定时器删掉压缩包，操作变成 `complete`。
 - 这份副本只是事后查 agent 干了什么用的，没有任何东西读它。交接工作不需要它：房间的对话、实况文档和行动时间线都跟着房间走。
 - 记录还在保留期内的时候取消归档，**什么都不会被还原**：房间拿到新的资源代际，agent 开新会话；那份压缩包按原计划到期。再归档一次，新代际的记录会在旁边存成第二份。
 

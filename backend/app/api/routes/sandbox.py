@@ -26,8 +26,8 @@ async def trigger_storage_sweep(x_cheese_token: str = Header(default="")) -> dic
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
 
-    # deferred-import: tests patch this name on app.domain.topic.retire
-    from app.domain.topic.retire import sweep_retired_storage
+    # deferred-import: tests patch this name on app.domain.room_cleanup.retire
+    from app.domain.room_cleanup.retire import sweep_retired_storage
 
     if not is_global_sandbox_token(x_cheese_token):
         raise UnauthorizedError("Cleanup trigger requires the server credential")

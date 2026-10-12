@@ -1,11 +1,14 @@
 // 支线：主线上一条消息下面的回复，自成一段对话。
-import type { Block, RoomTask } from '../cx_types'
+import type { Block, ChecklistMeta, RoomTask } from '../cx_types'
 
 /** 支线里最后说的一句：谁、说了什么（前两行够用的长度）、什么时候。 */
 export interface ThreadReply {
   author: string
   content: string
   created_at: string
+  /** 这一句是队友的步骤清单时它那份结构。摘要只显示一步，而正文里一步一行、折成
+   * 一行之后只剩一串记号，所以结构得由后端随回复带上（不是清单就是 null）。 */
+  checklist?: ChecklistMeta | null
 }
 
 /** 从支线（和它挂着的那条消息）出来的一件任务。 */
@@ -41,8 +44,10 @@ export interface Thread {
   root_block_id: string
   reply_count: number
   last_reply_at: string | null
-  created_by: string
-  created_at: string
+  /** 还在读这一条时先画的那一份（拿手上那块主线消息拼的，`query/room`）没有这两个：
+   *  那块消息只带着支线的 id、回复数和最后一句。谁都不读它们。 */
+  created_by?: string
+  created_at?: string
   root?: Block | null
 }
 

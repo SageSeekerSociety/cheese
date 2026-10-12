@@ -211,6 +211,7 @@
   "mentionFused": "AI teammates reached this hour's limit on mentioning each other; this one did not wake anyone",
   "mentionFusedDetail": "In one channel, AI teammates' mentions can start at most {limit} turns an hour, so they cannot keep mentioning each other forever. Not woken this time: {names}. Mentions by people are not limited.",
   "mentionUnknownMember": "Could not notify {member}: not a member of this project",
+  "refUnknownConversation": "{ref} points to no channel, task or thread in this project; readers see a reference that opens nothing",
   "mergeRefused": "GitHub refused to merge PR #{pr}",
   "mergeRefusedDetail": "{reason}\n{url}",
   "mergeRefusedOnAccept": "Accept not completed: GitHub refused to merge PR #{pr}",
@@ -418,5 +419,6 @@
   "mainChecksFailed": "Checks failed after merge: {checks}. {agent} will fix them in this step",
   "mainChecksFailedReopened": "Checks failed after merge: {checks}. The task is reopened for {agent} to fix",
   "deployedTo": "Deployed to {environment}",
-  "deployFailedTo": "Deploying to {environment} failed"
+  "deployFailedTo": "Deploying to {environment} failed",
+  "cloudHostGivenUp": "Cloud host {host} was given up: {lost} working sandboxes were lost with it, and {replaced} sandboxes being prepared moved to another host"
 }

@@ -8,6 +8,9 @@
 #   - `stop --purge` stops an older server of ours before deleting its data;
 #   - a Redis of ours that is not the pinned Valkey is replaced when it has no
 #     other clients, and refused with the count when it has some;
+#   - with CHEESEX_DEV_REDIS=fakeredis (what a host without cc falls back to)
+#     redis is the fakeredis server: started once, recognised as ours on the
+#     next start, and stopped by `stop`;
 #   - an install that lost files is refused by name, and nothing is started,
 #     while `stop` still stops the server that was running from it.
 # Every binary it runs is a stand-in on PATH; the "postgres" is a python3
@@ -307,6 +310,48 @@ dev_db "$d" "$port" stop
 check damaged "stop succeeds" [ "$status" = 0 ]
 check damaged "the running server is stopped" dead "$running"
 mv "$stub/lib/plpgsql.so.away" "$stub/lib/plpgsql.so"; mv "$stub/lib/plpgsql.dylib.away" "$stub/lib/plpgsql.dylib"
+
+# 10. No Valkey to build: redis is fakeredis, a process of ours found again by
+#     its pid file. `uv` is a stand-in that runs a listener answering PING
+#     for that one command and defers to the real uv for the rest.
+cat >"$stub/fake_redis_server.py" <<'PY'
+import os, signal, socket, sys
+args = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", int(args["--port"])))
+s.listen(8)
+with open(args["--pidfile"], "w") as f:
+    f.write(f"{os.getpid()}\n")
+signal.signal(signal.SIGTERM, lambda *_: (os.unlink(args["--pidfile"]), os._exit(0)))
+while True:
+    c, _ = s.accept()
+    c.recv(64)
+    c.sendall(b"+PONG\r\n")
+    c.close()
+PY
+cat >"$stub/uv" <<'SH'
+#!/usr/bin/env bash
+case "$*" in
+    *fake_redis_server.py*)
+        while [ "$1" != --port ]; do shift; done
+        exec python3 "$STUB/fake_redis_server.py" "$@" ;;
+esac
+PATH="${PATH#"$STUB:"}" exec uv "$@"
+SH
+chmod +x "$stub/uv"
+d="$(new_data_dir fakeredis)"; port="$(free_port)"; redis_port="$(free_port)"
+CHEESEX_DEV_REDIS=fakeredis dev_db "$d" "$port" start
+check fakeredis "start succeeds" [ "$status" = 0 ]
+check fakeredis "the log says it is fakeredis" grep -q "fakeredis" "$sandbox/err"
+fake="$(cat "$d/redis/redis.pid" 2>/dev/null || cat "$d/redis.pid" 2>/dev/null || echo 0)"
+check fakeredis "the server is up" alive "$fake"
+CHEESEX_DEV_REDIS=fakeredis dev_db "$d" "$port" start
+check fakeredis "second start reuses it" grep -q "fakeredis) already running" "$sandbox/err"
+CHEESEX_DEV_REDIS=fakeredis dev_db "$d" "$port" stop
+check fakeredis "stop succeeds" [ "$status" = 0 ]
+check fakeredis "the server is stopped" dead "$fake"
+unset redis_port
 
 if [ "$failures" != 0 ]; then
     echo "$failures check(s) failed"

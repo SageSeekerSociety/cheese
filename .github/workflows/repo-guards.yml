@@ -60,6 +60,7 @@ jobs:
           python3 .claude/scripts/check-migration-fork.py --self-test
           python3 .claude/scripts/check-migration-safety.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
+          python3 .claude/scripts/check-doc-references.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
           python3 .claude/scripts/catalog-ratchet.py --self-test
@@ -112,6 +113,13 @@ jobs:
       - name: Actions are pinned to a commit SHA
         run: uvx pre-commit run --all-files action-pins
 
+      # The files this one reads — .claude/** and the AGENTS.md files — are read
+      # by no product suite, so it needs a step of its own: naming a hook in
+      # .pre-commit-config.yaml only gets it run by a developer's commit, and
+      # each guard above names itself here for exactly that reason. No database,
+      # no network — 21 documents, paths matched in them, under a second.
+      - name: Agent docs name paths and sections that exist
+        run: uvx pre-commit run --all-files doc-references
 
       # The remote-tracking ref has to exist for the comparison; a PR checkout
       # does not create it. So does the HISTORY behind it, and that is the part

@@ -1,7 +1,8 @@
 ---
 name: cheese-docs-writing
 description: >-
-  写和改知是的用户文档：`docs/manual/*.md` 的正文、标题、步骤、页面里的演示画面
+  只管本仓 `docs/manual/` 下的用户手册，不是平台的 `cheese-docs`（那个管平台自己的说明书）：
+  写和改知是的用户文档——`docs/manual/*.md` 的正文、标题、步骤、页面里的演示画面
   （`demo-panel`、`:::walk`）和截图。规定读者是谁、用什么语体、每类页面的骨架、
   步骤怎么写、什么时候配画面和画面的规矩，并列出中文「AI 腔」的坏例与改法。
   TRIGGER when: 新建或修改 `docs/manual/` 下的用户页面，包括只改一段步骤、只加一个演示、

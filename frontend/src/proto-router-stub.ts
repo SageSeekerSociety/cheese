@@ -2,7 +2,7 @@
  * 预览精简构建里 `@/router` 的替身（临时，供话题预览用）。
  *
  * **为什么需要它**：`AdminSpacesPage.vue` 从 `@/api/spaces` 进来，那条链一路
- * 走到 `network/Interceptors/hooks/refreshToken.ts`，而它 `import router from '@/router'`
+ * 走到 token 刷新那条线，而它 `import router from '@/router'`
  * —— 只为了 token 过期时 `router.replace('/account/signin')` 这一句。`@/router` 是
  * **整棵应用路由树**，于是预览这份产物把工作区、WorkPanel、CodeEditor 和 monaco
  * （含 7MB 的 ts.worker）一起装了进去：量出来 proto.js 从 ~2MB 涨到 12.5MB，而预览

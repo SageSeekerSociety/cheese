@@ -160,8 +160,10 @@ describe('what counts as signed out', () => {
     await expect(tabA.refreshSession()).resolves.toEqual({ kind: 'rejected' })
     await new Promise((resolve) => setTimeout(resolve, 0))
 
-    expect(here).toHaveBeenCalledWith({ type: 'signed-out' })
-    expect(there).toHaveBeenCalledWith({ type: 'signed-out' })
+    // `refused`：这一句要说出「是服务端结束的」。人自己退出登录（`announceSignOut`）
+    // 不带它——那是另一回事（见 services/account.ts 里听这个事件的那一段）。
+    expect(here).toHaveBeenCalledWith({ type: 'signed-out', refused: true })
+    expect(there).toHaveBeenCalledWith({ type: 'signed-out', refused: true })
   })
 
   it.each([

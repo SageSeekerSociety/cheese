@@ -56,7 +56,7 @@ def test_a_task_made_from_a_message_comes_under_that_message(client):
 
 def test_a_task_started_in_the_room_comes_on_the_row_that_says_so(client):
     room = _room(client)
-    task = open_task(client, room, "整理周报模板", start=False)
+    task = open_task(client, room, "整理周报模板")
 
     rows = [b for b in _page(client, room) if b.get("tasks")]
 
@@ -67,10 +67,10 @@ def test_a_task_started_in_the_room_comes_on_the_row_that_says_so(client):
 
 def test_a_panel_reads_only_the_tasks_it_shows(client):
     room = _room(client)
-    kept = open_task(client, room, "还在做", start=False)
+    kept = open_task(client, room, "还在做")
     done = []
     for title in ("第一件", "第二件", "第三件", "第四件"):
-        task = open_task(client, room, title, start=False)
+        task = open_task(client, room, title)
         r = client.post(
             f"/topics/{task['id']}/close", json={"conclusion": "好了"}, headers=ALICE
         )
@@ -88,8 +88,8 @@ def test_a_panel_reads_only_the_tasks_it_shows(client):
 def test_the_tasks_some_blocks_carry_are_read_by_those_blocks(client):
     room = _room(client)
     said, from_message = _from_message(client, room, "这条拆出去")
-    started = open_task(client, room, "直接开的", start=False)
-    open_task(client, room, "别的", start=False)
+    started = open_task(client, room, "直接开的")
+    open_task(client, room, "别的")
     line = next(
         b
         for b in _page(client, room)

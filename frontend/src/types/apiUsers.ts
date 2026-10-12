@@ -1,4 +1,4 @@
-// 用户接口的形状。原先是 `@/network/api/users/types`，迁移后集中在这里，
+// 用户接口的形状，集中在这里，
 // 供 `@/api/users`、`@/api/userAuth` 与它们的消费者共用。
 
 import type { Answer, Page, Question, User } from '@/types'

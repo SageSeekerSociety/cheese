@@ -3,7 +3,7 @@
 这个脚本管三件事,每一件都是「改错了会让门禁看起来还是绿的」那一类,所以每条规则
 都在这里被钉住:
 
-1. **七条契约一条都不能少。** 少一条,刷新的对象就变小了——它会拿着一个残缺的声明
+1. **八条契约一条都不能少。** 少一条,刷新的对象就变小了——它会拿着一个残缺的声明
    刷出一份「通过」的基线。删掉或改名任何一条,脚本必须退 2,而不是照刷。
 2. **冻结块有固定的形状。** 标记行、副标题、排序、去重、不许通配符;谁手动改坏了
    其中一样,脚本必须拒绝动手,而不是把没识别的东西悄悄留在声明里。
@@ -157,12 +157,13 @@ def _c3_config(bogus: bool) -> str:
             "api-domain-core": [],
             "routes-touch-no-models": [],
             "domains-acyclic": entries,
+            "routes-independent": [],
         },
     )
 
 
 # ---------------------------------------------------------------------------
-# Every one of the seven contracts must be declared, or the refresh is refused.
+# Every one of the eight contracts must be declared, or the refresh is refused.
 # ---------------------------------------------------------------------------
 
 
@@ -296,6 +297,7 @@ def test_dry_run_without_update_reports_the_dry_run_first(tmp_path):
             "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
             "routes-touch-no-models": [],
             "domains-acyclic": [],
+            "routes-independent": [],
         },
     )
     config = _plant(tmp_path, config_text)
@@ -461,6 +463,7 @@ def test_a_stale_entry_is_dropped_on_the_clean_tree(tmp_path):
             "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
             "routes-touch-no-models": [],
             "domains-acyclic": [],
+            "routes-independent": [],
         },
     )
     config = _plant(tmp_path, config_text)
@@ -561,6 +564,7 @@ def test_a_refresh_that_would_not_converge_rolls_back(tmp_path):
             "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
             "routes-touch-no-models": [],
             "domains-acyclic": [],
+            "routes-independent": [],
         },
     )
     config = _plant(tmp_path, config_text, _cycle_files())

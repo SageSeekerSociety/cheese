@@ -1,24 +1,23 @@
 // @vitest-environment jsdom
-// questions / answers / legal / attachments / knowledges / tags 六域：逐个方法把**旧栈**与
-// **新栈**发出去的浏览器请求对拍（方法、地址与查询、鉴权头、JSON/多分体正文），并核对新的载
-// 荷契约 —— JSON 调用直接给 payload，无载荷命令给显式成功值。knowledges 走新 origin
-// （newer），其余五域走老 origin（primary）。比对的是浏览器可见的请求，不是 axios 配置或
-// 包装源码。
+// questions / answers / legal / attachments / knowledges / tags 六域：逐个方法钉住它发出去
+// 的浏览器请求（方法、地址与查询、鉴权头、JSON/多分体正文），并核对载荷契约 —— JSON 调用
+// 直接给 payload，无载荷命令给显式成功值。knowledges 走新 origin（newer），其余五域走老
+// origin（primary）。钉的是浏览器可见的请求，不是 axios 配置或包装源码。
 import type { InternalAxiosRequestConfig } from 'axios'
 
 import { http, HttpResponse } from 'msw'
 import { describe, expect, it } from 'vitest'
 
 import {
-  compareRequests,
   type ContractCase,
   contractEnvironment,
+  contractRequest,
   envelope,
   newer,
   primary,
   server,
   uploadFile,
-} from './migrationContract.spec.helper'
+} from './requestContract.spec.helper'
 
 contractEnvironment()
 
@@ -147,56 +146,30 @@ describe('primary-origin domains browser contract', () => {
   it.each(Object.entries(questions))(
     'questions.%s preserves the request and returns the payload',
     async (name, test) => {
-      const { QuestionApi: old } = await import('@/network/api/questions')
       const { QuestionApi: next } = await import('./questions')
-      await compareRequests(
-        test,
-        () => (old[name as keyof typeof old] as Callable)(...test.args),
-        () => (next[name as keyof typeof next] as Callable)(...test.args),
-        primary
-      )
+      await contractRequest(test, () => (next[name as keyof typeof next] as Callable)(...test.args), primary)
     }
   )
 
   it.each(Object.entries(answers))('answers.%s preserves the request and returns the payload', async (name, test) => {
-    const { AnswersApi: old } = await import('@/network/api/answers')
     const { AnswersApi: next } = await import('./answers')
-    await compareRequests(
-      test,
-      () => (old[name as keyof typeof old] as Callable)(...test.args),
-      () => (next[name as keyof typeof next] as Callable)(...test.args),
-      primary
-    )
+    await contractRequest(test, () => (next[name as keyof typeof next] as Callable)(...test.args), primary)
   })
 
   it.each(Object.entries(legal))('legal.%s preserves the request and returns the payload', async (name, test) => {
-    const { LegalApi: old } = await import('@/network/api/legal')
     const { LegalApi: next } = await import('./legal')
-    await compareRequests(
-      test,
-      () => (old[name as keyof typeof old] as Callable)(...test.args),
-      () => (next[name as keyof typeof next] as Callable)(...test.args),
-      primary
-    )
+    await contractRequest(test, () => (next[name as keyof typeof next] as Callable)(...test.args), primary)
   })
 
   it.each(Object.entries(tags))('tags.%s preserves the request and returns the payload', async (name, test) => {
-    const { TagsApi: old } = await import('@/network/api/tags')
     const { TagsApi: next } = await import('./tags')
-    await compareRequests(
-      test,
-      () => (old[name as keyof typeof old] as Callable)(...test.args),
-      () => (next[name as keyof typeof next] as Callable)(...test.args),
-      primary
-    )
+    await contractRequest(test, () => (next[name as keyof typeof next] as Callable)(...test.args), primary)
   })
 
   it('legal.getDocument pins a version into the path when given one', async () => {
-    const { LegalApi: old } = await import('@/network/api/legal')
     const { LegalApi: next } = await import('./legal')
-    await compareRequests(
+    await contractRequest(
       { method: 'GET', path: '/legal/documents/terms/versions/1.0', args: [] },
-      () => old.getDocument('terms', '1.0'),
       () => next.getDocument('terms', '1.0'),
       primary
     )
@@ -206,20 +179,12 @@ describe('primary-origin domains browser contract', () => {
     ['limits', { method: 'GET', path: '/attachments/limits', args: [] } as ContractCase],
     ['detail', { method: 'GET', path: '/attachments/9', args: [9] } as ContractCase],
   ])('attachments.%s preserves the request and returns the payload', async (name, test) => {
-    const { AttachmentsApi: old } = await import('@/network/api/attachments')
     const { AttachmentsApi: next } = await import('./attachments')
-    await compareRequests(
-      test,
-      () => (old[name as keyof typeof old] as Callable)(...test.args),
-      () => (next[name as keyof typeof next] as Callable)(...test.args),
-      primary
-    )
+    await contractRequest(test, () => (next[name as keyof typeof next] as Callable)(...test.args), primary)
   })
 
   it('attachments.upload keeps the ordered multipart fields, dials 60s and reports progress', async () => {
-    const { AttachmentsApi: old } = await import('@/network/api/attachments')
     const { AttachmentsApi: next } = await import('./attachments')
-    const oldHttp = await import('@/network/api')
     const { axiosApi } = await import('./axiosHttp')
     const payload = { id: 42 }
     const seen: unknown[] = []
@@ -243,38 +208,32 @@ describe('primary-origin domains browser contract', () => {
       })
     )
     // The upload dials its own 60s timeout above the 30s instance default; read
-    // it off each stack's transport as the request leaves, not off the source.
+    // it off the transport as the request leaves, not off the source.
     const timeouts: number[] = []
     const capture = (config: InternalAxiosRequestConfig) => {
       timeouts.push(config.timeout ?? -1)
       return config
     }
-    const oldInterceptor = oldHttp.default.instance.interceptors.request.use(capture)
-    const newInterceptor = axiosApi.interceptors.request.use(capture)
+    const interceptor = axiosApi.interceptors.request.use(capture)
     const progress: number[] = []
     try {
       const file = uploadFile()
-      const oldResult = await old.upload({ type: 'file', file }, (event) => progress.push(event.loaded ?? 0))
-      const nextResult = await next.upload({ type: 'file', file }, (event) => progress.push(event.loaded ?? 0))
-      // 旧栈给整只信封，新栈直接给 payload。
-      expect(oldResult.data).toEqual(payload)
-      expect(nextResult).toEqual(payload)
+      const result = await next.upload({ type: 'file', file }, (event) => progress.push(event.loaded ?? 0))
+      expect(result).toEqual(payload)
     } finally {
-      oldHttp.default.instance.interceptors.request.eject(oldInterceptor)
-      axiosApi.interceptors.request.eject(newInterceptor)
+      axiosApi.interceptors.request.eject(interceptor)
     }
     const expectedFile = {
       name: 'notes.pdf',
       type: 'application/pdf',
       bytes: [...new TextEncoder().encode('%PDF-1.7')],
     }
-    expect(seen).toHaveLength(2)
+    expect(seen).toHaveLength(1)
     expect(seen[0]).toEqual([
       ['type', 'file'],
       ['file', expectedFile],
     ])
-    expect(seen[1]).toEqual(seen[0])
-    expect(timeouts).toEqual([60000, 60000])
+    expect(timeouts).toEqual([60000])
     expect(progress.length).toBeGreaterThan(0)
   })
 })
@@ -283,14 +242,8 @@ describe('new-origin domain browser contract', () => {
   it.each(Object.entries(knowledges))(
     'knowledges.%s preserves the request and returns the payload',
     async (name, test) => {
-      const { KnowledgesApi: old } = await import('@/network/api/knowledges')
       const { KnowledgesApi: next } = await import('./knowledges')
-      await compareRequests(
-        test,
-        () => (old[name as keyof typeof old] as Callable)(...test.args),
-        () => (next[name as keyof typeof next] as Callable)(...test.args),
-        newer
-      )
+      await contractRequest(test, () => (next[name as keyof typeof next] as Callable)(...test.args), newer)
     }
   )
 })

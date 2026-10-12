@@ -51,8 +51,8 @@ def test_a_channel_opens_with_what_its_routes_say(client):
     said = post_message(client, room, "alice", {"content": "定一下发版时间"})
     r = client.put(f"/topics/{room}/pins/{said['id']}", headers=ALICE)
     assert r.status_code == 200, r.text
-    open_task(client, room, "还在做", start=False)
-    finished = open_task(client, room, "做完了", start=False)
+    open_task(client, room, "还在做")
+    finished = open_task(client, room, "做完了")
     r = client.post(f"/topics/{finished['id']}/close", json={}, headers=ALICE)
     assert r.status_code == 200, r.text
 
@@ -109,11 +109,9 @@ def test_a_channel_row_carries_my_tasks_owned_first_and_how_many_are_underway(cl
     join_project_team(client, project, "bob")
     room = _room(client, project)
     other = _room(client, project, "别的频道")
-    mine = open_task(client, room, "我的", start=False)
-    helping = open_task(
-        client, room, "我帮忙的", owner="bob", contributors=["alice"], start=False
-    )
-    open_task(client, room, "别人的", owner="bob", start=False)
+    mine = open_task(client, room, "我的")
+    helping = open_task(client, room, "我帮忙的", owner="bob", contributors=["alice"])
+    open_task(client, room, "别人的", owner="bob")
 
     rail = _sidebar(client, project, "alice")
 
@@ -132,7 +130,7 @@ def test_a_channel_row_shows_at_most_five_of_my_tasks_but_counts_them_all(client
     project = _project(client)
     room = _room(client, project)
     for n in range(7):
-        open_task(client, room, f"第{n}件", start=False)
+        open_task(client, room, f"第{n}件")
 
     rail = _sidebar(client, project, "alice")
 
@@ -143,7 +141,7 @@ def test_a_channel_row_shows_at_most_five_of_my_tasks_but_counts_them_all(client
 def test_a_closed_task_leaves_the_channel_row(client):
     project = _project(client)
     room = _room(client, project)
-    done = open_task(client, room, "做完了", start=False)
+    done = open_task(client, room, "做完了")
     r = client.post(f"/topics/{done['id']}/close", json={}, headers=ALICE)
     assert r.status_code == 200, r.text
 
@@ -153,7 +151,7 @@ def test_a_closed_task_leaves_the_channel_row(client):
 def test_one_topic_carries_the_same_tasks_as_its_row(client):
     project = _project(client)
     room = _room(client, project)
-    open_task(client, room, "我的", start=False)
+    open_task(client, room, "我的")
 
     assert (
         _read(client, f"/topics/{room}")["my_tasks"]

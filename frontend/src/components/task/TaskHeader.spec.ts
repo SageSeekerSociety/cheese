@@ -169,7 +169,7 @@ describe('任务页头', () => {
     const button = container.querySelector('[data-testid="task-start"]')
     expect(button).not.toBeNull()
     await fireEvent.click(button!)
-    expect(start).toHaveBeenCalledWith(null)
+    expect(start).toHaveBeenCalled()
   })
 
   it('开始之后不再有「开始」', () => {
@@ -184,13 +184,12 @@ describe('任务页头', () => {
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
   })
 
-  it('「开始」要先指定审阅人时，在提示里挑一位就直接开始', async () => {
+  it('开始被拒：只把原因说出来，不再让人在提示里挑审阅人', () => {
     const { container, start } = mount({}, PEOPLE, AGENTS, '需要指定由谁审阅，或在项目设置中设置默认审阅的人')
-    const select = container.querySelector<HTMLSelectElement>('[role="alert"] select')!
-    expect(select).not.toBeNull()
-    await fireEvent.update(select, 'bob')
-    expect(start).toHaveBeenCalledTimes(1)
-    expect(start).toHaveBeenCalledWith('bob')
+    const notice = container.querySelector('[role="alert"]')!
+    expect(notice.textContent).toContain('需要指定由谁审阅')
+    expect(notice.querySelector('select')).toBeNull()
+    expect(start).not.toHaveBeenCalled()
   })
 
   it('负责人在任务信息里看得到每条会话的环境，也能更换', async () => {

@@ -1,278 +1,390 @@
-"""Measure how long the five pages take to show their content on dev.
+"""Measure how long a page takes to show its content, in a running 知是 app.
 
-One browser tab carries the whole run (tab churn made Chrome abort here).
-Per page, two modes:
-  cold   - a full document load of the page URL
-  switch - vue-router push from another page in the same document
+What it answers: when you click a nav entry, how many milliseconds pass before
+that page's own content is on screen — and how much of that time was waiting on
+the network, how many API requests the page fired, and whether any of them were
+serial (one request's answer deciding the next one's URL).
 
-Every number is taken in the page's own performance timeline, so network and
-main-thread work partition the same window:
-  visibleIn    window until the target route's own content is on screen
-  apiLast      when the last API response of the window arrived (network floor)
-  apiSum       API request durations added up (network work, overlapping)
-  mainThread   long-task time on the main thread (script + layout + paint)
-  idle         visibleIn - apiLast - mainThread (waiting on the server)
+    cd frontend && npx vite --port 3000 --strictPort     # or any running build
+    uv run --with playwright python scripts/perf-open-page/measure.py \
+        --base-url http://127.0.0.1:3000 --runs 3 --out /tmp/perf-open-page.json
+
+Two modes per page:
+
+* walk  — the app is already open (cache warm); the script pushes the route
+          client-side and times it. This is the "click a nav entry" case.
+* cold  — a fresh page load of that URL with an empty browser cache.
+
+Both report `ready_ms` = the frame at which the page's own content was on
+screen (its root selector present and holding real text), taken from the
+document's own performance timeline. `last_response_ms` is the largest
+`responseEnd` in the window; when it is close to `ready_ms` the page is waiting
+on the network rather than on the main thread.
+
+The page list lives in pages.py — a page joins the measurement by gaining a
+row there (its route and the selector that means "its content is up").
 """
+
+from __future__ import annotations
+
+import argparse
 import json
-import os
-import sys
+import re
+import statistics
 import time
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
-sys.path.insert(0, "/var/tmp/perf")
-from cdp import new_tab  # noqa: E402
+from playwright.sync_api import Page, sync_playwright
 
-BASE = "https://okcheese.com"
+from pages import PageSpec, PAGES
 
-DEFER_LIST = [
-    "/users/me/timezone",
-    "/avatars/",
-    "/addresses/",
-    "/users/me/consents",
-    "/awaiting-me",
-    "/notifications/unread-count",
-    "/feedback/meta",
-    "/feedback/counts",
-    "/topic-unread",
-    "/private-unread",
-    "/topic-notify-levels",
-]
+# The sign-in form. Kept here (not in pages.py) because it is about the app
+# shell rather than about any one page; the fallbacks cover the current markup
+# and the plain-HTML shape the Vue components render.
+SERIAL_GAP_MS = 0.0
 
-DEFER_JS = r"""
-(() => {
-  const st = { on: __ON__, ms: __MS__, list: __LIST__ };
-  window.__defer = st;
-  const _open = XMLHttpRequest.prototype.open;
-  const _send = XMLHttpRequest.prototype.send;
-  XMLHttpRequest.prototype.open = function (m, u) {
-    try { this.__cxU = String(u); } catch (e) {}
-    return _open.apply(this, arguments);
-  };
-  XMLHttpRequest.prototype.send = function () {
-    try {
-      if (st.on && this.__cxU && st.list.some(s => this.__cxU.includes(s))) {
-        const self = this, a = arguments;
-        return setTimeout(() => _send.apply(self, a), st.ms);
-      }
-    } catch (e) {}
-    return _send.apply(this, arguments);
-  };
-  window.__deferSet = (on, ms) => { st.on = !!on; if (ms) st.ms = ms; };
-})();
+SIGNIN_URL = "/account/signin"
+USER_FIELD = "input[autocomplete='username'], input[name='username'], #username"
+PASSWORD_FIELD = "input[type='password']"
+SUBMIT_BUTTON = "button[type='submit']"
+
+# Long tasks: the app's own main-thread stalls, summed over the window.
+LONG_TASK_INIT = """
+window.__lt = { total: 0, count: 0 };
+new PerformanceObserver((l) => {
+  for (const e of l.getEntries()) { window.__lt.total += e.duration; window.__lt.count += 1; }
+}).observe({ entryTypes: ['longtask'] });
 """
 
-DEFER_ON = os.environ.get("DEFER_ON") == "1"
-DEFER_MS = int(os.environ.get("DEFER_MS", "3000"))
-
-def defer_source():
-    return (DEFER_JS.replace("__ON__", "true" if DEFER_ON else "false")
-                   .replace("__MS__", str(DEFER_MS))
-                   .replace("__LIST__", json.dumps(DEFER_LIST)))
-
-
-PORT = int(os.environ.get("CDP_PORT", "9333"))
-
-PROBE = r"""
-(() => {
-  try { performance.setResourceTimingBufferSize(10000); } catch (e) {}
-  const p = { visibleAt: null, t0: 0, len: 0, busy: false, baseText: null, basePath: null,
-              routeAt: null, samples: [], routeLog: [] };
-  window.__probe = p;
-  window.__longs = window.__longs || [];
-  try {
-    new PerformanceObserver(list => {
-      for (const e of list.getEntries()) window.__longs.push([Math.round(e.startTime), Math.round(e.duration)]);
-    }).observe({ type: 'longtask', buffered: true });
-  } catch (e) {}
-  const host = () => document.querySelector('main') || document.querySelector('#app');
-  const text = () => { const m = host(); return m ? ((m.innerText || '').trim()) : ''; };
-  const busy = () => !!document.querySelector('.v-progress-circular, .v-skeleton-loader, .v-overlay__scrim');
-  const moved = () => !p.basePath || location.pathname !== p.basePath;
-  let lastSample = -1e9;
-  p.tick = () => {
-    const t = text(), b = busy(), now = performance.now();
-    p.len = t.length; p.busy = b;
-    if (p.routeAt === null && moved()) p.routeAt = now;
-    if (now - lastSample > 250) { lastSample = now; p.samples.push([Math.round(now - p.t0), location.pathname, t.length]); }
-    if (p.visibleAt === null && moved() && !b && t.length > 60 && t !== p.baseText) p.visibleAt = now;
-    if (p.watch) requestAnimationFrame(p.tick);
-  };
-  p.listen = () => { p.watch = true; requestAnimationFrame(p.tick); };
-  p.arm = (target) => {
-    const t = text();
-    p.visibleAt = null; p.routeAt = null; p.watch = false; p.t0 = performance.now();
-    p.baseText = t || null; p.basePath = location.pathname || null;
-    p.samples = [[0, location.pathname, t.length]]; p.routeLog = [];
-    try {
-      const r = document.querySelector('#app').__vue_app__.config.globalProperties.$router;
-      if (!p.hooked) { p.hooked = true; r.afterEach((to) => p.routeLog.push([Math.round(performance.now() - p.t0), to.fullPath])); }
-    } catch (e) {}
-    p.listen();
-  };
-  p.watch = true; requestAnimationFrame(p.tick);
-})();
-"""
-
-REPORT = r"""
-() => {
-  const p = window.__probe;
-  const t0 = p.t0 || 0;
-  const nav = performance.getEntriesByType('navigation')[0];
-  const paint = Object.fromEntries(performance.getEntriesByType('paint').map(e => [e.name, Math.round(e.startTime)]));
-  const res = performance.getEntriesByType('resource').filter(r => r.startTime >= t0);
-  const isStream = r => (r.responseEnd - r.startTime) > 10000;
-  const apiAll = res.filter(r => r.name.includes('/api/'));
-  const streams = apiAll.filter(isStream);
-  const api = apiAll.filter(r => !isStream(r));
-  const SHELL = ['/api/users/me', '/api/projects', '/api/awaiting-me', '/api/feedback/', '/api/notifications/',
-                 '/api/avatars/', '/api/addresses/', '/api/admin/stats', '/api/users/me/consents'];
-  const shell = api.filter(r => SHELL.some(s2 => r.name.replace('https://okcheese.com','').startsWith(s2)));
-  const own = api.filter(r => !SHELL.some(s2 => r.name.replace('https://okcheese.com','').startsWith(s2)));
-  const chunk = res.filter(r => /\/assets\/.*\.(js|css)$/.test(r.name));
-  const longs = (window.__longs || []).filter(e => e[0] >= t0);
-  const sum = (a, f) => Math.round(a.reduce((x, e) => x + f(e), 0));
-  const slow = api.slice().sort((a, b) => b.duration - a.duration).slice(0, 8)
-    .map(r => [r.name.replace('https://okcheese.com', ''), Math.round(r.duration), r.transferSize || 0]);
-  const host = document.querySelector('main') || document.querySelector('#app');
-  return {
-    visibleIn: p.visibleAt === null ? null : Math.round(p.visibleAt - t0),
-    total: Math.round(performance.now() - t0),
-    textLen: p.len, busy: p.busy, path: location.pathname,
-    textHead: host ? (host.innerText || '').trim().slice(0, 120) : '',
-    apiCount: api.length, apiSum: sum(api, r => r.duration),
-    apiBytes: sum(api, r => r.transferSize || 0),
-    apiMax: api.length ? Math.round(Math.max(...api.map(r => r.duration))) : 0,
-    apiLast: api.length ? Math.round(Math.max(...api.map(r => r.responseEnd)) - t0) : 0,
-    apiOwnFirst: own.length ? Math.round(Math.min(...own.map(r => r.startTime)) - t0) : 0,
-    apiShellFirst: shell.length ? Math.round(Math.min(...shell.map(r => r.startTime)) - t0) : 0,
-    apiShellLast: shell.length ? Math.round(Math.max(...shell.map(r => r.responseEnd)) - t0) : 0,
-    apiShellCount: shell.length,
-    apiShellSum: sum(shell, r => r.duration),
-    apiOwnCount: own.length,
-    apiOwnSum: sum(own, r => r.duration),
-    apiOwnLast: own.length ? Math.round(Math.max(...own.map(r => r.responseEnd)) - t0) : 0,
-    apiOwnNames: own.map(r => r.name.replace('https://okcheese.com','').slice(0, 70)).slice(0, 12),
-    streamCount: streams.length,
-    routeAt: p.routeAt === null ? null : Math.round(p.routeAt - t0),
-    routeLog: (p.routeLog || []).slice(0, 4),
-    samples: (p.samples || []).slice(-12),
-    apiSlow: slow,
-    apiAll: api.slice().sort((a, b) => a.startTime - b.startTime).slice(0, 40).map(r => [
-      r.name.replace('https://okcheese.com/api/', '').slice(0, 130),
-      Math.round(r.startTime - t0), Math.round(r.duration), Math.round(r.responseEnd - t0)]),
-    chunkCount: chunk.length, chunkSum: sum(chunk, r => r.duration),
-    chunkFirstAt: chunk.length ? Math.round(Math.min(...chunk.map(r => r.startTime)) - t0) : 0,
-    chunkLastAt: chunk.length ? Math.round(Math.max(...chunk.map(r => r.responseEnd)) - t0) : 0,
-    chunkSlow: chunk.slice().sort((a, b) => a.startTime - b.startTime).slice(-6)
-      .map(r => [Math.round(r.startTime - t0), Math.round(r.duration), r.name.split('/').pop().slice(-24)]),
-    chunkBytes: sum(chunk, r => r.transferSize || 0),
-    longCount: longs.length, longMs: sum(longs, e => e[1]),
-    longSlow: longs.slice().sort((a, b) => b[1] - a[1]).slice(0, 6),
-    ttfb: nav ? Math.round(nav.responseStart) : null,
-    loadEnd: nav ? Math.round(nav.loadEventEnd) : null,
-    paint,
-  };
-}
+# In-page helpers. `__nav` starts a walk: it stamps t0 and pushes the route
+# through the app's own router, so every beforeEach/onMounted the app would run
+# on a real click runs here too. `__ready` is polled on animation frames and
+# freezes t1 on the first frame where the page's content is up, which is why
+# the numbers come from the browser's clock and not from ours.
+PROBE_INIT = """
+// A cold run starts a fresh document: the clock starts at the document, and
+// there is nobody to push a route. Installing the probe as an init script
+// gives that document the same helpers the walk uses.
+window.__probe = { t0: 0, t1: null, path: location.pathname };
+window.__lt = window.__lt || { total: 0, count: 0 };
+window.__nav = (path) => {
+  const app = document.querySelector('#app');
+  const router = app.__vue_app__.config.globalProperties.$router;
+  window.__probe = { t0: performance.now(), t1: null, path };
+  router.push(path);
+  return window.__probe.t0;
+};
+window.__ready = (spec) => {
+  if (!window.__probe) return false;
+  if (window.__probe.t1 !== null) return true;
+  const el = document.querySelector(spec.sel);
+  const text = el ? (el.innerText || '').trim() : '';
+  if (text.length < spec.min) return false;
+  if (spec.notSel && document.querySelector(spec.notSel)) return false;
+  window.__probe.t1 = performance.now();
+  return true;
+};
+window.__collect = () => {
+  const p = window.__probe || {};
+  // The page's own resource timeline, which is the same clock as t0/t1 and
+  // survives a service worker serving a request from cache.
+  const res = performance.getEntriesByType('resource').map((e) => ({
+    n: e.name, s: e.startTime, e: e.responseEnd, t: e.initiatorType, sz: e.transferSize,
+  }));
+  return { t0: p.t0, t1: p.t1, res, origin: performance.timeOrigin };
+};
 """
 
 
-def main():
-    ids = json.load(open("/var/tmp/perf/ids.json"))
-    pid = ids["pid"]
-    pages = [
-        ("频道", f"/projects/{pid}/channels/{ids['root_topic']}"),
-        ("任务对话", f"/projects/{pid}/tasks/{ids['task_number']}"),
-        ("空间详情", f"/spaces/{ids['space']}/tasks"),
-        ("资料库", f"/projects/{pid}/library"),
-        ("管理后台", "/admin/overview"),
-    ]
-    only = sys.argv[1].split(",") if len(sys.argv) > 1 else None
-    reps = int(os.environ.get("REPS", "3"))
-    phases = os.environ.get("PHASES", "cold,switch").split(",")
-    out_file = os.environ.get("OUT", "/var/tmp/perf/results.json")
-    results = {}
+@dataclass
+class Sample:
+    page: str
+    mode: str
+    ready_ms: float
+    last_response_ms: float | None
+    requests: int
+    api_count: int = 0
+    api_requests: list[str] = field(default_factory=list)
+    long_task_ms: float = 0.0
+    long_task_count: int = 0
+    network_ms: float | None = None
+    # API requests that ran as separate bursts, and the time spent in the bursts
+    # after the first: that time was spent waiting for an earlier request.
+    api_bursts: int = 0
+    api_serial_ms: float = 0.0
+    # (path, start_ms, end_ms) — on the page clock, for anyone re-checking.
+    api_timeline: list[list] = field(default_factory=list)
+    error: str | None = None
 
-    tab = new_tab(PORT)
-    for m in ("Page.enable", "Runtime.enable", "Network.enable"):
-        tab.send(m)
-    tab.send("Page.addScriptToEvaluateOnNewDocument", source=PROBE)
-    tab.send("Page.addScriptToEvaluateOnNewDocument", source=defer_source())
+    def to_dict(self) -> dict[str, Any]:
+        return self.__dict__
 
-    # The SPA renders a project page only for a signed-in account and reads the
-    # account from localStorage['user'] (frontend/src/me.ts).
-    tab.send("Page.navigate", url=BASE + "/")
-    time.sleep(5)
-    tab.eval(
-        f"""() => {{ localStorage.setItem('accessToken', {json.dumps(ids['token'])});
-        localStorage.setItem('user', {json.dumps(json.dumps(ids['user'], ensure_ascii=False))});
-        return true; }}"""
+
+def _login(page: Page, base_url: str, username: str, password: str) -> None:
+    page.goto(base_url + SIGNIN_URL, wait_until="domcontentloaded")
+    # A page opened into a context that already holds the session is sent home
+    # by the app's own `leaveSignInWhenSignedIn`, so the form never appears.
+    # Signing in again is only for the first page; the rest just wait for the
+    # shell.
+    # The app's own `leaveSignInWhenSignedIn` sends a signed-in session home, so
+    # on a reused context the form never appears. Wait for "either the form is
+    # here or we are no longer on the sign-in URL" rather than for the rail:
+    # the rail element is in the DOM on the sign-in page too, just not shown.
+    page.wait_for_function(
+        """() => window.location.pathname !== '/account/signin'
+                 || !!document.querySelector("input[name='username'], input[autocomplete='username'], #username")""",
+        timeout=60000,
     )
-    print("auth set", flush=True)
+    if page.url.split("?")[0].endswith(SIGNIN_URL):
+        page.fill(USER_FIELD, username)
+        page.fill(PASSWORD_FIELD, password)
+        page.click(SUBMIT_BUTTON)
+        page.wait_for_function(
+            "() => window.location.pathname !== '/account/signin'", timeout=30000
+        )
+    page.wait_for_load_state("networkidle", timeout=30000)
 
-    def run(name, path, kind):
-        r = {"page": name, "kind": kind, "defer": DEFER_ON, "deferMs": DEFER_MS}
-        tab.eval("() => window.__probe.arm(%s)" % json.dumps(path))
-        if kind == "switch":
-            tab.eval(
-                f"""() => {{ const app = document.querySelector('#app').__vue_app__;
-                app.config.globalProperties.$router.push({json.dumps(path)}); return true; }}"""
-            )
+
+def _measure_one(
+    page: Page,
+    spec: PageSpec,
+    url: str,
+    mode: str,
+    warm_url: str,
+    params: dict[str, object],
+    timeout_ms: int = 30000,
+) -> Sample:
+    if mode == "walk":
+        page.evaluate(LONG_TASK_INIT)
+        page.evaluate(PROBE_INIT)
+        page.goto(warm_url, wait_until="networkidle")
+        page.wait_for_timeout(300)
+        page.evaluate(LONG_TASK_INIT)
+        page.evaluate(PROBE_INIT)
+        # A path, not a URL: the router treats "http://host/inbox" as a path it
+        # cannot match, and the app would simply stay where it was.
+        page.evaluate("(p) => window.__nav(p)", spec.route_path(params))
+    else:
+        # The probes were installed with add_init_script, so the document that
+        # is about to load already has them.
+        page.goto(spec.path(url, params), wait_until="commit")
+
+    spec_payload = {"sel": spec.ready_selector, "min": spec.min_text, "notSel": spec.not_ready_selector}
+    try:
+        page.wait_for_function(
+            "(spec) => window.__ready(spec)", arg=spec_payload, timeout=timeout_ms, polling="raf"
+        )
+    except Exception as exc:  # noqa: BLE001 — a page that never shows content is a result too
+        return Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200])
+
+    probe = page.evaluate("() => window.__collect()")
+    lt = page.evaluate("() => window.__lt")
+    t0, t1 = probe["t0"], probe["t1"]
+    base = t0 if mode == "walk" else 0.0
+    ready = t1 - base
+
+    # Everything here is on the page's own clock: resource entries carry
+    # startTime/responseEnd relative to timeOrigin, so subtract where the page
+    # was told to open and both ends line up with ready_ms.
+    res = [r for r in probe["res"] if r["s"] >= base]
+    api = [r for r in res if "/api/" in r["n"]]
+    ends = [r["e"] - base for r in res]
+    starts = [r["s"] - base for r in res]
+    last = max(ends) if ends else None
+    # The network share: from the first request's start to the last response's
+    # end. Rendering that finishes earlier than the last response means the page
+    # drew something and kept fetching behind it, which is a different problem
+    # from waiting on the network.
+    network = (last - min(starts)) if (last is not None and starts) else None
+
+    # Requests fired together overlap, so they land in one burst. A request that
+    # only starts once everything already in flight has come back opens a new
+    # burst: it was waiting on an earlier response. ``api_serial_ms`` is the time
+    # spent in those later bursts — the part that only goes away if the request
+    # turns out not to have needed what it waited for.
+    intervals = sorted((r["s"] - base, r["e"] - base) for r in api)
+    bursts: list[list[float]] = []
+    for start_at, end_at in intervals:
+        if bursts and start_at <= bursts[-1][1] + SERIAL_GAP_MS:
+            bursts[-1][1] = max(bursts[-1][1], end_at)
         else:
-            tab.send("Page.navigate", url=BASE + path)
-        t0 = time.time()
-        deadline = time.time() + 45
-        while time.time() < deadline:
-            try:
-                v = tab.eval("() => window.__probe.visibleAt", retries=2)
-            except Exception:
-                v = None
-            if v:
+            bursts.append([start_at, end_at])
+    serial_ms = sum(end_at - start_at for start_at, end_at in bursts[1:])
+
+    return Sample(
+        page=spec.name,
+        mode=mode,
+        ready_ms=round(ready, 1),
+        last_response_ms=round(last, 1) if last is not None else None,
+        requests=len(res),
+        api_count=len(api),
+        api_requests=sorted({r["n"].split("/api/", 1)[1].split("?")[0] for r in api}),
+        long_task_ms=round(lt["total"], 1),
+        long_task_count=lt["count"],
+        network_ms=round(network, 1) if network is not None else None,
+        api_bursts=len(bursts),
+        api_serial_ms=round(serial_ms, 1),
+        api_timeline=[
+            [r["n"].split("/api/", 1)[-1].split("?")[0], round(r["s"] - base, 1), round(r["e"] - base, 1)]
+            for r in sorted(api, key=lambda r: r["s"])
+        ],
+    )
+
+
+def _placeholders(route: str) -> set[str]:
+    return {m for m in re.findall(r"\{(\w+)\}", route)}
+
+
+def _median(samples: list[Sample]) -> Sample:
+    ok = [s for s in samples if s.error is None and s.ready_ms == s.ready_ms]
+    if not ok:
+        return samples[0]
+    pick = statistics.median
+    last_vals = [s.last_response_ms for s in ok if s.last_response_ms is not None]
+    net_vals = [s.network_ms for s in ok if s.network_ms is not None]
+    return Sample(
+        page=ok[0].page,
+        mode=ok[0].mode,
+        ready_ms=round(pick([s.ready_ms for s in ok]), 1),
+        last_response_ms=round(pick(last_vals), 1) if last_vals else None,
+        requests=int(pick([s.requests for s in ok])),
+        api_count=int(pick([s.api_count for s in ok])),
+        api_requests=sorted({u for s in ok for u in s.api_requests}),
+        long_task_ms=round(pick([s.long_task_ms for s in ok]), 1),
+        long_task_count=int(pick([s.long_task_count for s in ok])),
+        network_ms=round(pick(net_vals), 1) if net_vals else None,
+        api_bursts=int(pick([s.api_bursts for s in ok])),
+        api_serial_ms=round(pick([s.api_serial_ms for s in ok]), 1),
+        # The timeline is not a number, so take it from the run whose ready_ms is
+        # the median: the rest of the row then describes that same run.
+        api_timeline=min(
+            ok, key=lambda s: abs(s.ready_ms - pick([x.ready_ms for x in ok]))
+        ).api_timeline,
+    )
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base-url", default="http://127.0.0.1:3000")
+    ap.add_argument("--username", default="alice")
+    ap.add_argument("--password", default="demo12345")
+    ap.add_argument("--runs", type=int, default=3)
+    ap.add_argument(
+        "--params",
+        default=str(Path(__file__).with_name("params.json")),
+        help="ids the route templates are filled from (see README.md)",
+    )
+    ap.add_argument("--out", default="perf-open-page.json")
+    ap.add_argument(
+        "--max-seconds",
+        type=float,
+        default=2400,
+        help="stop starting new pages after this long, so a long run still reports",
+    )
+    ap.add_argument("--only", default="", help="comma-separated page names")
+    ap.add_argument("--modes", default="walk", help="walk,cold")
+    ap.add_argument("--timeout-ms", type=int, default=30000)
+    args = ap.parse_args()
+
+    wanted = [n.strip() for n in args.only.split(",") if n.strip()]
+    specs = [p for p in PAGES if not wanted or p.name in wanted]
+    modes = [m.strip() for m in args.modes.split(",") if m.strip()]
+    params: dict[str, object] = json.loads(Path(args.params).read_text())
+    missing = sorted({p for s in specs for p in _placeholders(s.route) if p not in params})
+    if missing:
+        raise SystemExit(f"{args.params} is missing: {', '.join(missing)}")
+
+    results: dict[str, dict[str, Sample]] = {}
+    boot = time.time()
+    with sync_playwright() as pw:
+        # --disable-dev-shm-usage: the sandbox gives /dev/shm 64 MB, and a dev
+        # build of this app crashes the renderer once it fills up.
+        browser = pw.chromium.launch(args=["--no-sandbox", "--disable-dev-shm-usage"])
+        context = browser.new_context(viewport={"width": 1440, "height": 900})
+        page = context.new_page()
+        page.on("pageerror", lambda e: print("[pageerror]", str(e)[:200], flush=True))
+        _login(page, args.base_url, args.username, args.password)
+        home = page.url
+
+        # Every page is walked from the same warm origin (the workspace root),
+        # so one page's leftovers do not become the next page's head start.
+        warm_url = home
+        with open(args.out, "w") as fh:
+            fh.write("{}\n")  # so a killed run still reports where it stopped
+        for spec in specs:
+            if time.time() - boot > args.max_seconds:
+                print(f"[stopping] out of time before {spec.name}", flush=True)
                 break
-            time.sleep(0.05)
-        wall = time.time() - t0
-        rep = tab.eval(REPORT)
-        r.update(rep)
-        r["wall"] = round(wall * 1000)
-        r["shown"] = rep["visibleIn"] is not None
-        r["networkFloor"] = rep["apiLast"]
-        r["mainThread"] = rep["longMs"]
-        r["idle"] = max(0, (rep["visibleIn"] or rep["total"]) - rep["apiLast"] - rep["longMs"])
-        return r
+            page.goto(warm_url, wait_until="networkidle")
+            for mode in modes:
+                samples: list[Sample] = []
+                if mode == "walk":
+                    # A renderer crash is not a fact about the page: the page was
+                    # already loaded, so only rendering pushes it over. Retry the
+                    # walk on a fresh page before believing it.
+                    for i in range(args.runs):
+                        try:
+                            samples.append(
+                                _measure_one(page, spec, args.base_url, mode, warm_url, params, args.timeout_ms)
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            samples.append(Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200]))
+                    if all(s.error for s in samples):
+                        print(f"[retry] {spec.name}: {samples[0].error}", flush=True)
+                        try:
+                            page.close()
+                            page = context.new_page()
+                            page.on("pageerror", lambda e: print("[pageerror]", str(e)[:200], flush=True))
+                            _login(page, args.base_url, args.username, args.password)
+                            warm_url = page.url
+                            page.goto(warm_url, wait_until="networkidle")
+                            samples = []
+                            for i in range(args.runs):
+                                try:
+                                    samples.append(
+                                        _measure_one(page, spec, args.base_url, mode, warm_url, params, args.timeout_ms)
+                                    )
+                                except Exception as exc:  # noqa: BLE001
+                                    samples.append(Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200]))
+                        except Exception as exc:  # noqa: BLE001
+                            print(f"[retry failed] {str(exc)[:160]}", flush=True)
+                else:
+                    for i in range(args.runs):
+                        # cold is a fresh document every time anyway, so it gets
+                        # its own page: nothing from the walk stays resident.
+                        fresh = context.new_page()
+                        fresh.add_init_script(PROBE_INIT + "\n" + LONG_TASK_INIT)
+                        fresh.on("pageerror", lambda e: print("[pageerror]", str(e)[:200], flush=True))
+                        try:
+                            samples.append(
+                                _measure_one(fresh, spec, args.base_url, mode, warm_url, params, args.timeout_ms)
+                            )
+                        except Exception as exc:  # noqa: BLE001
+                            samples.append(Sample(spec.name, mode, float("nan"), None, 0, error=str(exc)[:200]))
+                        fresh.close()
+                    page.goto(warm_url, wait_until="networkidle")
+                time.sleep(0.4)
+                med = _median(samples)
+                results.setdefault(spec.name, {})[mode] = med
+                print(
+                    f"{spec.name:28s} {mode:4s} {med.ready_ms:>8} ms  "
+                    f"last_resp={med.last_response_ms}  reqs={med.requests}  lt={med.long_task_ms}  "
+                    f"{'ERROR ' + (med.error or '') if med.error else ''}",
+                    flush=True,
+                )
+                # Written after every page so a run that gets killed part-way
+                # still leaves the pages it did finish.
+                payload = {p: {m: s.to_dict() for m, s in per_mode.items()} for p, per_mode in results.items()}
+                Path(args.out).write_text(json.dumps(payload, ensure_ascii=False, indent=2))
 
-    KEYS = ("wall", "visibleIn", "routeAt", "apiLast", "apiOwnLast", "apiOwnFirst", "apiShellFirst",
-            "apiShellLast", "mainThread", "apiCount", "apiSum", "apiOwnCount", "apiOwnSum",
-            "apiShellCount", "apiShellSum", "apiMax", "chunkCount", "chunkSum", "chunkFirstAt",
-            "chunkLastAt", "longCount",
-            "textLen", "shown")
+        browser.close()
 
-    def loop(pages_, kind):
-        for name, path in pages_:
-            if only and not any(o in name for o in only):
-                continue
-            runs = []
-            for i in range(reps):
-                try:
-                    r = run(name, path, kind)
-                except Exception as e:
-                    r = {"page": name, "kind": kind, "error": repr(e)[:200]}
-                runs.append(r)
-                print(kind.upper(), name, i, json.dumps({k: r.get(k) for k in KEYS}, ensure_ascii=False), flush=True)
-                print("   detail", json.dumps({"path": r.get("path"), "routeLog": r.get("routeLog"),
-                      "apiOwnNames": r.get("apiOwnNames"), "apiSlow": (r.get("apiSlow") or [])[:4],
-                      "samples": r.get("samples")}, ensure_ascii=False), flush=True)
-                time.sleep(1.5)
-            results.setdefault(name, {})[kind] = runs
-
-    if "cold" in phases:
-        loop(pages, "cold")
-
-    if "switch" in phases:
-        tab.send("Page.navigate", url=BASE + pages[0][1])
-        time.sleep(8)
-        print("switch base:", pages[0][0], flush=True)
-        loop(pages[1:], "switch")
-
-    json.dump(results, open(out_file, "w"), ensure_ascii=False, indent=1)
-    print("saved", out_file, flush=True)
+    payload = {p: {m: s.to_dict() for m, s in per_mode.items()} for p, per_mode in results.items()}
+    Path(args.out).write_text(json.dumps(payload, ensure_ascii=False, indent=2))
+    print(f"\nwritten: {args.out}")
 
 
-main()
+if __name__ == "__main__":
+    main()

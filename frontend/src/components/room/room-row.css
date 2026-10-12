@@ -24,10 +24,19 @@
      由 lib/contentVisibility 挂 .cv-measure 临时关掉它。 */
   content-visibility: auto;
   contain-intrinsic-size: auto 48px;
+  /* 代价之一：`auto` 会开 paint containment，于是这一行里弹出来的浮层（菜单、popover）
+     被裁在行的边界内。要让它跑到行外，只能把浮层 teleport 出去，或者在这一行上单独
+     把 containment 抬掉；抬高 z-index 不解决裁剪。 */
 }
 /* 测量帧（向上翻页补偿、折叠判定）：这一窗里的行按真实高度铺开。见 lib/contentVisibility。
    选择器带 .cv-measure 前缀，胜过上面没带的那条。 */
 .cv-measure .im-row {
+  content-visibility: visible;
+}
+/* 正在改的那一行：@ 候选菜单从框的上边弹出这一行，被上面那条的 paint containment 裁掉，
+   人只看见贴着框沿的一小条。这一行本来就在眼前，省它一次不值得，抬掉 containment 就
+   是上面注释里说的那条路。改完（或取消）这一类就没了，别处的行照旧离屏不渲染。 */
+.im-row--editing {
   content-visibility: visible;
 }
 /* continuation rows of the same author sit tight under the first */

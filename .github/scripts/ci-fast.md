@@ -27,6 +27,13 @@ tier, which is *not* what `task ci:fast` runs — the Taskfile passes
 `extended` is the same work with more wall clock. It does not add suites, and a
 run that still exhausts 900s is reported **unknown**, never trimmed to green.
 
+The quick tier's 180s is the work machine's own limit, not a property of the
+selection. A narrowed frontend run seeds the read-off-disk specs beside the
+changed roots, and those fifteen cost ~70s on the work machine (127 tests,
+71.4s wall, one worker per file): on a tight local budget the tier can exhaust
+it and report unknown where the runner (1200s) has room. That is the budget
+talking, not the change.
+
 Both bounds are overridable, because they describe the machine rather than the
 tier: `--budget` and `--memory-mib` default to the work machine's own limits
 (the 3072 MiB default is literally its session cap), and a machine that can back
@@ -102,12 +109,63 @@ everything is still allowed to answer unknown.
   only `roomNotice`/`apiError`/`global`. This tier widens backend scope locally
   for any such edit so those guards still run here; the shared map — and what
   Required CI runs — is left untouched.
-- Frontend Vitest uses `related` only when a changed source root seeds the
-  graph. A config edit, a deleted path, an unknown path, or no merge base falls
-  back to the full Vitest run, which must be shown to have executed both i18n
-  guard specs. The narrow type project extends the real `frontend/tsconfig.json`,
-  bridges `node_modules`, and checks only the changed files against the existing
-  tsc-ratchet baseline — it is not a full consumer-type check.
+- Frontend Vitest runs the whole suite only when the change cannot be narrowed:
+  an edit to one of the six frontend config files this script watches
+  (`frontend/package.json`, `frontend/pnpm-lock.yaml`, `frontend/vite.config.ts`
+  and the three `frontend/tsconfig*.json`) or to `.pre-commit-config.yaml`, a
+  `.github/` edit, a `frontend/src/test/` or `frontend/scripts/` edit, an
+  unknown path, no merge base, or a change that seeds no related root while
+  carrying runtime content — a catalog, a ratchet baseline, a stylesheet, a
+  deletion with no surviving root, a path outside `frontend/` that the scope map
+  still routes here (a site stylesheet, a ratchet script). Whether a change
+  carries that content is read from the paths the scope map routed into frontend
+  scope, not from the whole diff: a backend route change rides in through a
+  regenerated `backend/openapi.json`, and its own `.py` files are not frontend
+  content — the one reader of that document writes types-only, so the suite has
+  nothing to execute for it. A config outside the watched list does not widen by
+  itself: `frontend/collab/vitest.config.ts` beside a changed source file still
+  stays `related`. The full run must be shown to have
+  executed both i18n guard specs. Everything else stays narrow: a deletion
+  beside a surviving source root that nothing surviving still imports, and a
+  catalog, stylesheet or prose edit next
+  to a changed source file, still seed `related` from those roots. Only a change
+  that seeds nothing *and* leaves the suite nothing to judge — prose (`.md`), a
+  declaration file, or a types-only input such as `backend/openapi.json` — leaves
+  the tier running the guards alone with `frontend-unit` recorded not-run and a
+  reason.
+
+  A narrowed run is seeded with the changed source roots **and** every spec that
+  judges a frontend file by reading it off disk rather than importing it
+  (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the fifteen specs that assert a
+  component's markup, a stylesheet's rules, a page's scroll container or a whole
+  directory). A read is not an import edge, so `related` would never select one
+  of them for the file it answers for, whatever else the change contains:
+  `src/styles/docBlocks.css` is imported by `main.ts` and the doc blocks but not
+  by `docBlocks.spec.ts`, which reads it with `readFileSync`; measured, changing
+  the `padding-left` of `.doc-status[data-status]` from 6px to 8px leaves both
+  i18n guards green and turns only `docBlocks.spec.ts` red. The same read hides
+  behind a surviving root when that stylesheet is edited beside a changed
+  component, or when the file a spec reads is itself the changed component. A
+  deletion is a read only where a spec reads it: a spec that *imports* the
+  deleted file is reached by neither the seeds nor this list, and the typecheck
+  cannot stand in for it, so that case widens the run instead. The report must
+  show each of those
+  specs ran, so a selection that silently drops one is unknown, not green, and
+  so is a report holding nothing but them: the seeds run whatever changed, so
+  passing only them is an empty selection wearing their exit code, which main
+  never read as green. A new
+  spec that reads the tree this way belongs in that tuple — `test_ci_fast.py`
+  holds it against the tree, so a renamed or newly reading spec fails the
+  self-test rather than quietly leaving the tuple. The
+  narrow type project
+  extends the real `frontend/tsconfig.json`,
+  bridges `node_modules`, and checks only the surviving changed files against the
+  existing tsc-ratchet baseline; a deleted non-spec source file forces the full
+  typecheck instead, since only the whole project sees its dangling importers.
+  Non-spec is read from the name's ending, not from the text: a helper module
+  called `migrationContract.spec.helper.ts` is imported by thirteen surviving
+  specs, and it is the full typecheck that sees them.
+  It is not a full consumer-type check.
 - **Not covered here**: contract / integration / build / e2e tests, remote
   checks, and full frontend consumer types. The summary lists every skipped
   item. Full Required CI + merge queue remains the only merge gate — **ci:fast
@@ -120,7 +178,15 @@ everything is still allowed to answer unknown.
 | 0 | every selected check actually ran and passed. Not full CI. |
 | 1 | a selected check really failed. |
 | 2 | **unknown** — nothing could be honestly judged: budget/time exhausted, a check killed by signal, a memory-ceiling stop, an empty or skipped test report, a selected file that produced no executed case, an unavailable merge base, a hook/config drift, a worktree that changed during the run, or an unreadable report. |
-| 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit), or the platform is not Linux. |
+| 3 | **blocked** — a required tool or dependency is missing (`backend/.venv`, `frontend/node_modules`, pre-commit, a machine without `ps`), or the platform is not Linux. |
+
+A single missed memory sample is not blocked. The sampler rides a few misses
+out, then stops measuring that check and leaves its verdict to the exit code
+and the clock; only `ps` itself being absent is blocked, because then no ceiling
+can be enforced at all. (Tying the sample's window to the check's remaining
+budget used to make a miss out of a nearly spent check, and that read as a
+missing tool — it turned an expected unknown into blocked twice on #3476,
+2026-10-12.)
 
 Unknown (2) and blocked (3) are never green: when the tier runs out of budget
 the remaining checks are recorded as not-run with a reason, and the run stops
@@ -137,7 +203,11 @@ head, base and dirty-tree fingerprint.
   session cap; up to 9216 MiB, refused above). This is not address-space
   enforcement: a very short peak can be missed, and a child that opens its own
   session is outside the group. Whatever cap the machine itself imposes stays
-  the hard limit.
+  the hard limit. A check whose sampling could not be read at all is recorded
+  `unmeasured: true` in the report rather than given a ceiling of 0; the
+  wall-clock bound still applies to it, though on a machine where `ps` answers
+  slowly the kill follows the deadline by up to one sampling window (about a
+  second). No verdict turns on that.
 - The frontend's Vitest parallelism is derived from that same cap
   (`vitest_workers`): one fork per 3072 MiB, also bounded by cores − 1 and 16 —
   the rule `frontend/vite.config.ts` already applies to the same box (a fork

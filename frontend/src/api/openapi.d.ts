@@ -387,6 +387,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/addresses/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve Refs
+         * @description What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a
+         *     task or a 支线, its title and the room it is in. An id that names none of
+         *     them, or one the caller may not see, is absent from the answer — so a
+         *     private channel is not told apart from one that was never made.
+         */
+        get: operations["resolve_refs_addresses_refs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/slug": {
         parameters: {
             query?: never;
@@ -1394,6 +1417,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/stats/machines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Machines Stats
+         * @description 机器那一块：MicroCloud 上的每台宿主机、它上面的沙箱、温机池，和过去一天沙箱
+         *     起得怎么样。口径写在 `app/domain/machine/admin.py` 的模块 docstring 上。
+         */
+        get: operations["machines_stats_admin_stats_machines_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/topics/{topic_id}/agent/control": {
         parameters: {
             query?: never;
@@ -2167,6 +2211,145 @@ export interface paths {
          *     to put the reaction under.
          */
         post: operations["toggle_reaction_blocks__block_id__reactions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/blocks/{block_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw Answer
+         * @description Take back your own answer to a question asked with quick replies, so the
+         *     question is unanswered again and its options come back for everyone.
+         *
+         *     ``block_id`` is the question, not the answer: an answer is an ordinary
+         *     message, and what is withdrawn is the line it left on the question
+         *     (`domain/block/questions`). Only whoever answered it can — anyone else gets
+         *     a refusal, not a way to erase somebody's answer. The message the answerer
+         *     sent stays in the room; its words are not what this changes.
+         *
+         *     Whoever was watching gets the question as a `block_updated` frame, and the
+         *     agent that asked it runs another turn, because the turn it had been going
+         *     on was decided on an answer that no longer counts.
+         */
+        delete: operations["withdraw_answer_blocks__block_id__answer_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{document_id}/canvases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Canvases
+         * @description The canvases the document's text names, each as text, in order.
+         */
+        get: operations["document_canvases_documents__document_id__canvases_get"];
+        put?: never;
+        /**
+         * Create Canvas
+         * @description A new, empty canvas of this document, for a canvas block an editor just
+         *     put in it.
+         */
+        post: operations["create_canvas_documents__document_id__canvases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canvases/{canvas_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Canvas */
+        get: operations["get_canvas_canvases__canvas_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Canvas */
+        patch: operations["patch_canvas_canvases__canvas_id__patch"];
+        trace?: never;
+    };
+    "/canvases/{canvas_id}/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Canvas Text
+         * @description The canvas as an outline an AI teammate reads; ``positions`` adds where
+         *     each card sits.
+         */
+        get: operations["canvas_text_canvases__canvas_id__text_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canvases/{canvas_id}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Canvas
+         * @description Make the changes in order, all or none; a refusal names the change
+         *     (``data.index``). Answers the canvas as it now is, and the numbers new
+         *     cards got by their ``ref`` (``refs``).
+         */
+        post: operations["change_canvas_canvases__canvas_id__changes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canvases/{canvas_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Canvas
+         * @description A copy of this canvas as it is now, belonging to ``document_id``: a
+         *     canvas block pasted into a document, or into the same one again. Whoever
+         *     may read the canvas and write that document may make one.
+         */
+        post: operations["copy_canvas_canvases__canvas_id__copy_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7341,11 +7524,14 @@ export interface paths {
         };
         /**
          * List Files
-         * @description 这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。
+         * @description 这个房间自己的文件：路径、大小、最后一次改动、是谁写的，最近改的在最前。
          *
          *     这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫
-         *     什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，
-         *     这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *     什么名字。定时任务交回的结果、芝士交付的文档、有人放进来的文件都落在同一个目录
+         *     下，这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *
+         *     作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存
+         *     补齐，没保存过的那几份照列。
          *
          *     `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
          */
@@ -12728,6 +12914,31 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** AddCard */
+        AddCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "add";
+            /** Ref */
+            ref?: string | null;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /** Task */
+            task?: string | null;
+            /** X */
+            x?: number | null;
+            /** Y */
+            y?: number | null;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
+        };
         /** AddEmailCodeRequest */
         AddEmailCodeRequest: {
             /** Email */
@@ -13110,12 +13321,207 @@ export interface components {
             /** Updates */
             updates: components["schemas"]["NotificationUpdate"][];
         };
+        /** CanvasCardOut */
+        CanvasCardOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Number */
+            number: number;
+            /** Content */
+            content: string;
+            /** X */
+            x: number | null;
+            /** Y */
+            y: number | null;
+            /** Width */
+            width: number | null;
+            /** Height */
+            height: number | null;
+            task: components["schemas"]["CanvasTaskOut"] | null;
+            /** Task Hidden */
+            task_hidden: boolean;
+            /** Updated By */
+            updated_by: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** CanvasChangedOut */
+        CanvasChangedOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Height */
+            height: number | null;
+            /** Writable */
+            writable: boolean;
+            /** Cards */
+            cards: components["schemas"]["CanvasCardOut"][];
+            /** Edges */
+            edges: components["schemas"]["CanvasEdgeOut"][];
+            /** Refs */
+            refs: {
+                [key: string]: number;
+            };
+            /** Added */
+            added: number[];
+        };
+        /** CanvasChangedOutEnvelope */
+        CanvasChangedOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["CanvasChangedOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** CanvasCopyIn */
+        CanvasCopyIn: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+        };
+        /** CanvasEdgeOut */
+        CanvasEdgeOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * From
+             * Format: uuid
+             */
+            from: string;
+            /**
+             * To
+             * Format: uuid
+             */
+            to: string;
+            /** Label */
+            label: string;
+        };
+        /** CanvasOut */
+        CanvasOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Height */
+            height: number | null;
+            /** Writable */
+            writable: boolean;
+            /** Cards */
+            cards: components["schemas"]["CanvasCardOut"][];
+            /** Edges */
+            edges: components["schemas"]["CanvasEdgeOut"][];
+        };
+        /** CanvasOutEnvelope */
+        CanvasOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["CanvasOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** CanvasPatchIn */
+        CanvasPatchIn: {
+            /** Height */
+            height: number | null;
+        };
+        /**
+         * CanvasTaskOut
+         * @description The task a card points at, as the reader's board shows it.
+         */
+        CanvasTaskOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Number */
+            number: number | null;
+            /** Title */
+            title: string;
+            /**
+             * Room Id
+             * Format: uuid
+             */
+            room_id: string;
+            /** Column */
+            column: string;
+            /** Phrase */
+            phrase: string;
+        };
+        /** CanvasTextOut */
+        CanvasTextOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Text */
+            text: string;
+        };
+        /** CanvasTextOutEnvelope */
+        CanvasTextOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["CanvasTextOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** ChangePasswordRequest */
         ChangePasswordRequest: {
             /** Password */
             password: string;
             /** Sudoticket */
             sudoTicket?: string | null;
+        };
+        /** ChangesIn */
+        ChangesIn: {
+            /** Changes */
+            changes: (components["schemas"]["AddCard"] | components["schemas"]["UpdateCard"] | components["schemas"]["MoveCard"] | components["schemas"]["DeleteCard"] | components["schemas"]["Connect"] | components["schemas"]["Disconnect"])[];
         };
         /**
          * ChatAttachmentIn
@@ -13395,6 +13801,27 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * Connect
+         * @description A line from one card to another; between two connected cards it
+         *     replaces the words on the line.
+         */
+        Connect: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "connect";
+            /** From */
+            from: number | string;
+            /** To */
+            to: number | string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+        };
         /** ConnectRequest */
         ConnectRequest: {
             /** Device Code */
@@ -13416,6 +13843,40 @@ export interface components {
             request: {
                 [key: string]: unknown;
             };
+        };
+        /** ConversationRefOut */
+        ConversationRefOut: {
+            /** Kind */
+            kind: string;
+            /** Title */
+            title: string;
+            /** Room Id */
+            room_id: string;
+            /** Project Id */
+            project_id: string;
+        };
+        /**
+         * ConversationRefs
+         * @description What each id that names something names, by id.
+         */
+        ConversationRefs: {
+            [key: string]: components["schemas"]["ConversationRefOut"];
+        };
+        /** ConversationRefsEnvelope */
+        ConversationRefsEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ConversationRefs"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** CreateInviteCodeRequest */
         CreateInviteCodeRequest: {
@@ -13600,6 +14061,16 @@ export interface components {
              */
             avatarId: number;
         };
+        /** DeleteCard */
+        DeleteCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "delete";
+            /** Card */
+            card: number | string;
+        };
         /**
          * Deleted
          * @description ``ok({"deleted": True})``: the thing is gone (or was never there to see).
@@ -13639,6 +14110,18 @@ export interface components {
          * @enum {string}
          */
         DigestCadence: "daily" | "weekly" | "off";
+        /** Disconnect */
+        Disconnect: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "disconnect";
+            /** From */
+            from: number | string;
+            /** To */
+            to: number | string;
+        };
         /** Dismissed */
         Dismissed: {
             /** Dismissed */
@@ -13668,6 +14151,35 @@ export interface components {
             expected_version: number;
             /** Operation Id */
             operation_id?: string | null;
+        };
+        /** DocumentCanvasTextOut */
+        DocumentCanvasTextOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+        };
+        /** DocumentCanvasTextOutListEnvelope */
+        DocumentCanvasTextOutListEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data: components["schemas"]["DocumentCanvasTextOut"][];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * DocumentIn
@@ -14808,6 +15320,201 @@ export interface components {
             /** Totpcode */
             totpCode?: string | null;
         };
+        /** MachineConfigOut */
+        MachineConfigOut: {
+            /** Slots Per Core */
+            slots_per_core: number;
+            /** Sandbox Memory Mb */
+            sandbox_memory_mb: number;
+            /** Sandbox Idle S */
+            sandbox_idle_s: number;
+            /** Host Idle Hold S */
+            host_idle_hold_s: number;
+            /** Vm Idle S */
+            vm_idle_s: number;
+        };
+        /** MachineHistoryOut */
+        MachineHistoryOut: {
+            /** Since */
+            since: string;
+            /** Prepared */
+            prepared: number;
+            /** Ready */
+            ready: number;
+            /** Abandoned */
+            abandoned: number;
+            /** Replaced */
+            replaced: number;
+            /** Released Idle */
+            released_idle: number;
+            /** Released Unpaid */
+            released_unpaid: number;
+            /** Wait P50 S */
+            wait_p50_s: number | null;
+            /** Wait P95 S */
+            wait_p95_s: number | null;
+            /** Wait Max S */
+            wait_max_s: number | null;
+            /** Refused Sessions */
+            refused_sessions: number;
+            /** Refused By Reason */
+            refused_by_reason: {
+                [key: string]: number;
+            };
+            /** Hosts Lost */
+            hosts_lost: number;
+            /** Hosts Lost By Reason */
+            hosts_lost_by_reason: {
+                [key: string]: number;
+            };
+            /** Sandboxes Lost */
+            sandboxes_lost: number;
+        };
+        /** MachineHostOut */
+        MachineHostOut: {
+            /** Id */
+            id: string;
+            /** Hostname */
+            hostname: string;
+            /** Machine Id */
+            machine_id: number | null;
+            /** Whole Machine */
+            whole_machine: boolean;
+            /** Project */
+            project: string | null;
+            /** Phase */
+            phase: string;
+            /** Status */
+            status: string;
+            /** Online */
+            online: boolean;
+            /** Ip */
+            ip: string | null;
+            /** Cores */
+            cores: number;
+            /** Memory Mb */
+            memory_mb: number;
+            /** Disk Gb */
+            disk_gb: number;
+            /** Slots */
+            slots: number;
+            /** Used */
+            used: number;
+            /** Created At */
+            created_at: string | null;
+            /** Enrolled At */
+            enrolled_at: string | null;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Idle Since */
+            idle_since: string | null;
+            /** Offline Since */
+            offline_since: string | null;
+            /** Failed At */
+            failed_at: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Enroll Attempts */
+            enroll_attempts: number;
+            /** Enroll Error */
+            enroll_error: string | null;
+            /** Sandboxes */
+            sandboxes: components["schemas"]["MachineSandboxOut"][];
+        };
+        /** MachinePoolOut */
+        MachinePoolOut: {
+            /** Hosts */
+            hosts: number;
+            /** Vms */
+            vms: number;
+            /** Max Hosts */
+            max_hosts: number;
+            /** At Cap */
+            at_cap: boolean;
+            /** Slots */
+            slots: number;
+            /** Used */
+            used: number;
+            /** Free */
+            free: number;
+            /** Min Free */
+            min_free: number;
+            /** Waiting */
+            waiting: number;
+            /** Oldest Wait Since */
+            oldest_wait_since: string | null;
+            /** Provider Failures */
+            provider_failures: number;
+            /** Provider Failure Limit */
+            provider_failure_limit: number;
+            /** Provider Window Min */
+            provider_window_min: number;
+            /** Provider Probe Min */
+            provider_probe_min: number;
+            /** Last Provider Failure */
+            last_provider_failure: string | null;
+            /** Refusing */
+            refusing: boolean;
+            /** Warm Target */
+            warm_target: number;
+        };
+        /** MachineSandboxOut */
+        MachineSandboxOut: {
+            /** Id */
+            id: string;
+            /** Spec */
+            spec: string;
+            /** State */
+            state: string;
+            /** Project Id */
+            project_id: string;
+            /** Project */
+            project: string | null;
+            /** Room Id */
+            room_id: string;
+            /** Room */
+            room: string | null;
+            /** Placed At */
+            placed_at: string | null;
+            /** Waiting Since */
+            waiting_since: string | null;
+            /** Active At */
+            active_at: string | null;
+            /** Stopped At */
+            stopped_at: string | null;
+            /** Idle Deadline */
+            idle_deadline: string | null;
+        };
+        /** MachinesOverviewOut */
+        MachinesOverviewOut: {
+            /** Configured */
+            configured: boolean;
+            /** Now */
+            now: string;
+            pool: components["schemas"]["MachinePoolOut"];
+            config: components["schemas"]["MachineConfigOut"];
+            /** Hosts */
+            hosts: components["schemas"]["MachineHostOut"][];
+            /** Warm */
+            warm: components["schemas"]["WarmMachineOut"][];
+            history: components["schemas"]["MachineHistoryOut"];
+        };
+        /** MachinesOverviewOutEnvelope */
+        MachinesOverviewOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["MachinesOverviewOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** MailIn */
         MailIn: {
             /**
@@ -14978,6 +15685,24 @@ export interface components {
             upstream_model?: string | null;
             /** Selectable */
             selectable?: boolean | null;
+        };
+        /** MoveCard */
+        MoveCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "move";
+            /** Card */
+            card: number | string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
         };
         /** NoteCreate */
         NoteCreate: {
@@ -16094,7 +16819,12 @@ export interface components {
         };
         /**
          * RoomFileOut
-         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间。
+         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间，以及最后是谁从哪条路
+         *     放下的。
+         *
+         *     作者是平台按写下来的那次动作记的（谁按的保存、谁交的），不是谁自己填的。三个
+         *     字段都可能空：目录里的一份文件可能从没有过保存记录（清单列的是目录本身，字节
+         *     可以由别的东西直接放进去），那时界面照列，只是说不出是谁写的。
          */
         RoomFileOut: {
             /** Path */
@@ -16103,6 +16833,12 @@ export interface components {
             bytes: number;
             /** Modified At */
             modified_at: string;
+            /** Author */
+            author: string | null;
+            /** Author Kind */
+            author_kind: string | null;
+            /** Source */
+            source: string | null;
         };
         /** RoutineIn */
         RoutineIn: {
@@ -16796,6 +17532,20 @@ export interface components {
             /** Content */
             content: string;
         };
+        /** UpdateCard */
+        UpdateCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "update";
+            /** Card */
+            card: number | string;
+            /** Content */
+            content?: string | null;
+            /** Task */
+            task?: string | null;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -16832,6 +17582,27 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** WarmMachineOut */
+        WarmMachineOut: {
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+            /** Machine Id */
+            machine_id: number | null;
+            /** Ip */
+            ip: string | null;
+            /** Online */
+            online: boolean;
+            /** Created At */
+            created_at: string | null;
+            /** Enrolled At */
+            enrolled_at: string | null;
+            /** Attempts */
+            attempts: number;
+            /** Error */
+            error: string | null;
         };
         /**
          * WebElementQuoteIn
@@ -16969,6 +17740,40 @@ export interface components {
             w: number;
             /** H */
             h: number;
+        };
+        /**
+         * WithdrawnAnswer
+         * @description 撤回一道题的回答，回的是这道题撤回之后的样子。
+         *
+         *     和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+         *     不必再取一次。
+         */
+        WithdrawnAnswer: {
+            /** Id */
+            id: string;
+            /**
+             * Answer Log
+             * @default []
+             */
+            answer_log: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** WithdrawnAnswerEnvelope */
+        WithdrawnAnswerEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["WithdrawnAnswer"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** WorkLeaseRequest */
         WorkLeaseRequest: {
@@ -17620,6 +18425,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_refs_addresses_refs_get: {
+        parameters: {
+            query?: {
+                ids?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationRefsEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -19344,6 +20180,26 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    machines_stats_admin_stats_machines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachinesOverviewOutEnvelope"];
                 };
             };
         };
@@ -21140,6 +21996,268 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    withdraw_answer_blocks__block_id__answer_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawnAnswerEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_canvases_documents__document_id__canvases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentCanvasTextOutListEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_canvas_documents__document_id__canvases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_canvas_canvases__canvas_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_canvas_canvases__canvas_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CanvasPatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    canvas_text_canvases__canvas_id__text_get: {
+        parameters: {
+            query?: {
+                positions?: boolean;
+            };
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasTextOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_canvas_canvases__canvas_id__changes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasChangedOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_canvas_canvases__canvas_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CanvasCopyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
                 };
             };
             /** @description Validation Error */

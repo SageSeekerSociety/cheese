@@ -1,0 +1,2672 @@
+{
+  "inbox": {
+    "walk": {
+      "page": "inbox",
+      "mode": "walk",
+      "ready_ms": 216.6,
+      "last_response_ms": 204.6,
+      "requests": 16,
+      "api_count": 1,
+      "api_requests": [
+        "awaiting-me",
+        "notifications",
+        "notifications/unread-count",
+        "spaces",
+        "teams/my-teams"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 202.4,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "awaiting-me",
+          152.4,
+          204.6
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "inbox",
+      "mode": "cold",
+      "ready_ms": 753.2,
+      "last_response_ms": 736.6,
+      "requests": 109,
+      "api_count": 11,
+      "api_requests": [
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications",
+        "notifications/unread-count",
+        "projects",
+        "spaces",
+        "teams/my-teams",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 247,
+      "long_task_count": 2,
+      "network_ms": 726.8,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          416.9,
+          558.0
+        ],
+        [
+          "awaiting-me",
+          417.1,
+          560.7
+        ],
+        [
+          "feedback/meta",
+          417.4,
+          558.2
+        ],
+        [
+          "feedback/counts",
+          417.5,
+          570.6
+        ],
+        [
+          "version",
+          417.8,
+          517.4
+        ],
+        [
+          "users/me",
+          422.3,
+          606.1
+        ],
+        [
+          "notifications/unread-count",
+          423.8,
+          657.4
+        ],
+        [
+          "users/me/consents",
+          424.3,
+          673.7
+        ],
+        [
+          "avatars/default/id",
+          424.6,
+          674.1
+        ],
+        [
+          "awaiting-me",
+          561.7,
+          688.6
+        ],
+        [
+          "spaces",
+          564.9,
+          736.6
+        ]
+      ],
+      "error": null
+    }
+  },
+  "settings-devices": {
+    "walk": {
+      "page": "settings-devices",
+      "mode": "walk",
+      "ready_ms": 268.2,
+      "last_response_ms": 256.7,
+      "requests": 9,
+      "api_count": 1,
+      "api_requests": [
+        "teams/my-teams"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 251.9,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "teams/my-teams",
+          132.5,
+          253.7
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "settings-devices",
+      "mode": "cold",
+      "ready_ms": 781.8,
+      "last_response_ms": 771.8,
+      "requests": 91,
+      "api_count": 10,
+      "api_requests": [
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "teams/my-teams",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 235,
+      "long_task_count": 2,
+      "network_ms": 763.2,
+      "api_bursts": 2,
+      "api_serial_ms": 121.6,
+      "api_timeline": [
+        [
+          "projects",
+          381.4,
+          494.5
+        ],
+        [
+          "awaiting-me",
+          381.6,
+          509.9
+        ],
+        [
+          "feedback/meta",
+          381.8,
+          509.6
+        ],
+        [
+          "feedback/counts",
+          382.0,
+          519.3
+        ],
+        [
+          "version",
+          382.3,
+          472.1
+        ],
+        [
+          "users/me",
+          385.8,
+          560.1
+        ],
+        [
+          "notifications/unread-count",
+          386.9,
+          587.8
+        ],
+        [
+          "users/me/consents",
+          387.3,
+          607.7
+        ],
+        [
+          "avatars/default/id",
+          387.9,
+          619.7
+        ],
+        [
+          "teams/my-teams",
+          654.0,
+          771.8
+        ]
+      ],
+      "error": null
+    }
+  },
+  "settings-connections": {
+    "walk": {
+      "page": "settings-connections",
+      "mode": "walk",
+      "ready_ms": 169.8,
+      "last_response_ms": 143.0,
+      "requests": 11,
+      "api_count": 3,
+      "api_requests": [
+        "me/integrations",
+        "me/mail-drafts",
+        "projects"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 137.9,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "me/integrations",
+          59.1,
+          142.7
+        ],
+        [
+          "me/mail-drafts",
+          59.4,
+          134.7
+        ],
+        [
+          "projects",
+          59.6,
+          143.0
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "settings-connections",
+      "mode": "cold",
+      "ready_ms": 799.2,
+      "last_response_ms": 759.7,
+      "requests": 93,
+      "api_count": 12,
+      "api_requests": [
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "me/integrations",
+        "me/mail-drafts",
+        "notifications/unread-count",
+        "projects",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 266,
+      "long_task_count": 2,
+      "network_ms": 750.8,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          421.9,
+          543.8
+        ],
+        [
+          "awaiting-me",
+          422.2,
+          600.2
+        ],
+        [
+          "feedback/meta",
+          422.4,
+          567.1
+        ],
+        [
+          "feedback/counts",
+          422.7,
+          589.2
+        ],
+        [
+          "version",
+          423.0,
+          517.9
+        ],
+        [
+          "users/me",
+          428.5,
+          644.7
+        ],
+        [
+          "notifications/unread-count",
+          430.2,
+          647.7
+        ],
+        [
+          "users/me/consents",
+          430.8,
+          667.8
+        ],
+        [
+          "avatars/default/id",
+          431.3,
+          683.7
+        ],
+        [
+          "me/integrations",
+          546.0,
+          708.0
+        ],
+        [
+          "me/mail-drafts",
+          546.3,
+          743.7
+        ],
+        [
+          "projects",
+          546.4,
+          759.7
+        ]
+      ],
+      "error": null
+    }
+  },
+  "settings-notifications": {
+    "walk": {
+      "page": "settings-notifications",
+      "mode": "walk",
+      "ready_ms": 132.3,
+      "last_response_ms": 118.7,
+      "requests": 11,
+      "api_count": 1,
+      "api_requests": [
+        "notifications/preferences"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 111.3,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "notifications/preferences",
+          51.9,
+          118.7
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "settings-notifications",
+      "mode": "cold",
+      "ready_ms": 668.2,
+      "last_response_ms": 629.7,
+      "requests": 93,
+      "api_count": 10,
+      "api_requests": [
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/preferences",
+        "notifications/unread-count",
+        "projects",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 318,
+      "long_task_count": 3,
+      "network_ms": 618.1,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          341.1,
+          463.5
+        ],
+        [
+          "awaiting-me",
+          341.3,
+          522.8
+        ],
+        [
+          "feedback/meta",
+          341.5,
+          464.9
+        ],
+        [
+          "feedback/counts",
+          341.8,
+          497.3
+        ],
+        [
+          "version",
+          342.0,
+          460.8
+        ],
+        [
+          "users/me",
+          346.1,
+          520.2
+        ],
+        [
+          "notifications/unread-count",
+          347.3,
+          604.8
+        ],
+        [
+          "users/me/consents",
+          347.7,
+          609.7
+        ],
+        [
+          "avatars/default/id",
+          348.0,
+          608.7
+        ],
+        [
+          "notifications/preferences",
+          447.5,
+          613.7
+        ]
+      ],
+      "error": null
+    }
+  },
+  "user-profile": {
+    "walk": {
+      "page": "user-profile",
+      "mode": "walk",
+      "ready_ms": 305.4,
+      "last_response_ms": 141.4,
+      "requests": 7,
+      "api_count": 2,
+      "api_requests": [
+        "users/alice/profile",
+        "users/alice/topics"
+      ],
+      "long_task_ms": 155,
+      "long_task_count": 1,
+      "network_ms": 138.8,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "users/alice/profile",
+          31.9,
+          141.4
+        ],
+        [
+          "users/alice/topics",
+          32.2,
+          124.3
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "user-profile",
+      "mode": "cold",
+      "ready_ms": 943.5,
+      "last_response_ms": 924.5,
+      "requests": 94,
+      "api_count": 11,
+      "api_requests": [
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "users/alice/profile",
+        "users/alice/topics",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 507,
+      "long_task_count": 3,
+      "network_ms": 913.5,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          423.7,
+          550.9
+        ],
+        [
+          "awaiting-me",
+          424.0,
+          592.2
+        ],
+        [
+          "feedback/meta",
+          424.3,
+          558.9
+        ],
+        [
+          "feedback/counts",
+          424.6,
+          573.6
+        ],
+        [
+          "version",
+          425.2,
+          517.8
+        ],
+        [
+          "users/me",
+          433.8,
+          572.6
+        ],
+        [
+          "notifications/unread-count",
+          436.3,
+          646.3
+        ],
+        [
+          "users/me/consents",
+          437.1,
+          678.2
+        ],
+        [
+          "avatars/default/id",
+          437.7,
+          680.0
+        ],
+        [
+          "users/alice/profile",
+          499.9,
+          731.0
+        ],
+        [
+          "users/alice/topics",
+          500.2,
+          707.1
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-channels": {
+    "walk": {
+      "page": "project-channels",
+      "mode": "walk",
+      "ready_ms": 143.6,
+      "last_response_ms": 133.7,
+      "requests": 5,
+      "api_count": 1,
+      "api_requests": [
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/channels"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 128.7,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/channels",
+          38.2,
+          133.7
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "project-channels",
+      "mode": "cold",
+      "ready_ms": 1091.9,
+      "last_response_ms": 1021.8,
+      "requests": 122,
+      "api_count": 16,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/channels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 320,
+      "long_task_count": 2,
+      "network_ms": 1009.5,
+      "api_bursts": 2,
+      "api_serial_ms": 234.9,
+      "api_timeline": [
+        [
+          "projects",
+          373.1,
+          426.0
+        ],
+        [
+          "awaiting-me",
+          373.5,
+          545.8
+        ],
+        [
+          "feedback/meta",
+          373.6,
+          518.1
+        ],
+        [
+          "feedback/counts",
+          373.9,
+          528.8
+        ],
+        [
+          "version",
+          374.3,
+          480.1
+        ],
+        [
+          "users/me",
+          378.4,
+          533.1
+        ],
+        [
+          "notifications/unread-count",
+          380.0,
+          567.5
+        ],
+        [
+          "users/me/consents",
+          380.5,
+          603.1
+        ],
+        [
+          "avatars/default/id",
+          380.8,
+          619.2
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          384.5,
+          635.5
+        ],
+        [
+          "topics",
+          774.7,
+          1009.6
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          775.0,
+          954.9
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          775.1,
+          945.9
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          775.3,
+          935.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/channels",
+          775.5,
+          1007.4
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+          775.6,
+          995.2
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-tasks": {
+    "walk": {
+      "page": "project-tasks",
+      "mode": "walk",
+      "ready_ms": 66.4,
+      "last_response_ms": 6.3,
+      "requests": 4,
+      "api_count": 0,
+      "api_requests": [],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 1.0,
+      "api_bursts": 0,
+      "api_serial_ms": 0,
+      "api_timeline": [],
+      "error": null
+    },
+    "cold": {
+      "page": "project-tasks",
+      "mode": "cold",
+      "ready_ms": 1000.7,
+      "last_response_ms": 942.5,
+      "requests": 122,
+      "api_count": 16,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/3",
+        "avatars/4",
+        "avatars/5",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/tasks",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 292,
+      "long_task_count": 2,
+      "network_ms": 927.9,
+      "api_bursts": 2,
+      "api_serial_ms": 195.0,
+      "api_timeline": [
+        [
+          "projects",
+          365.9,
+          455.8
+        ],
+        [
+          "awaiting-me",
+          366.2,
+          531.0
+        ],
+        [
+          "feedback/meta",
+          366.4,
+          508.1
+        ],
+        [
+          "feedback/counts",
+          366.6,
+          520.0
+        ],
+        [
+          "version",
+          366.9,
+          454.6
+        ],
+        [
+          "users/me",
+          372.7,
+          523.0
+        ],
+        [
+          "notifications/unread-count",
+          374.4,
+          591.6
+        ],
+        [
+          "users/me/consents",
+          374.8,
+          586.8
+        ],
+        [
+          "avatars/default/id",
+          375.2,
+          615.1
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          378.7,
+          622.9
+        ],
+        [
+          "topics",
+          739.2,
+          934.2
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          739.4,
+          907.7
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          739.6,
+          907.7
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          739.7,
+          884.3
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/tasks",
+          739.9,
+          889.9
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+          740.1,
+          932.6
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-library": {
+    "walk": {
+      "page": "project-library",
+      "mode": "walk",
+      "ready_ms": 73.6,
+      "last_response_ms": 9.6,
+      "requests": 24,
+      "api_count": 0,
+      "api_requests": [],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 4.5,
+      "api_bursts": 0,
+      "api_serial_ms": 0,
+      "api_timeline": [],
+      "error": null
+    },
+    "cold": {
+      "page": "project-library",
+      "mode": "cold",
+      "ready_ms": 1061.7,
+      "last_response_ms": 1050.9,
+      "requests": 150,
+      "api_count": 17,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/documents",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/library",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 352,
+      "long_task_count": 2,
+      "network_ms": 1041.4,
+      "api_bursts": 2,
+      "api_serial_ms": 254.7,
+      "api_timeline": [
+        [
+          "projects",
+          306.1,
+          369.2
+        ],
+        [
+          "awaiting-me",
+          306.4,
+          450.4
+        ],
+        [
+          "feedback/meta",
+          306.6,
+          423.9
+        ],
+        [
+          "feedback/counts",
+          306.7,
+          439.3
+        ],
+        [
+          "version",
+          307.0,
+          391.7
+        ],
+        [
+          "users/me",
+          310.8,
+          440.0
+        ],
+        [
+          "notifications/unread-count",
+          312.1,
+          494.9
+        ],
+        [
+          "users/me/consents",
+          312.5,
+          510.8
+        ],
+        [
+          "avatars/default/id",
+          313.5,
+          530.8
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          316.3,
+          538.8
+        ],
+        [
+          "topics",
+          796.2,
+          974.7
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          796.4,
+          953.4
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          796.6,
+          952.6
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          796.7,
+          940.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/library",
+          796.9,
+          955.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/documents",
+          797.1,
+          921.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+          797.1,
+          1050.9
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-docs-charter": {
+    "walk": {
+      "page": "project-docs-charter",
+      "mode": "walk",
+      "ready_ms": 258.9,
+      "last_response_ms": 236.8,
+      "requests": 17,
+      "api_count": 2,
+      "api_requests": [
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/overview",
+        "topics/c957ed57-79b9-4f7e-868c-dd7b6b506e9c"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 233.0,
+      "api_bursts": 2,
+      "api_serial_ms": 132.7,
+      "api_timeline": [
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/overview",
+          37.9,
+          99.1
+        ],
+        [
+          "topics/c957ed57-79b9-4f7e-868c-dd7b6b506e9c",
+          99.9,
+          240.7
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "project-docs-charter",
+      "mode": "cold",
+      "ready_ms": 1272.7,
+      "last_response_ms": 1233.4,
+      "requests": 142,
+      "api_count": 18,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/overview",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "topics/c957ed57-79b9-4f7e-868c-dd7b6b506e9c",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 364,
+      "long_task_count": 2,
+      "network_ms": 1220.4,
+      "api_bursts": 3,
+      "api_serial_ms": 410.6,
+      "api_timeline": [
+        [
+          "projects",
+          343.7,
+          455.6
+        ],
+        [
+          "awaiting-me",
+          343.9,
+          504.9
+        ],
+        [
+          "feedback/meta",
+          344.1,
+          458.1
+        ],
+        [
+          "feedback/counts",
+          344.4,
+          480.5
+        ],
+        [
+          "version",
+          344.7,
+          443.7
+        ],
+        [
+          "users/me",
+          349.4,
+          503.8
+        ],
+        [
+          "notifications/unread-count",
+          351.0,
+          569.4
+        ],
+        [
+          "users/me/consents",
+          352.5,
+          585.4
+        ],
+        [
+          "avatars/default/id",
+          352.9,
+          586.3
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          356.0,
+          599.3
+        ],
+        [
+          "topics",
+          851.1,
+          1040.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          851.4,
+          990.4
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          851.5,
+          961.3
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          851.7,
+          986.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          851.8,
+          985.2
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+          851.9,
+          1015.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/overview",
+          990.4,
+          1105.6
+        ],
+        [
+          "topics/c957ed57-79b9-4f7e-868c-dd7b6b506e9c",
+          1106.7,
+          1233.4
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-artifact": {
+    "walk": {
+      "page": "project-artifact",
+      "mode": "walk",
+      "ready_ms": 118.9,
+      "last_response_ms": 112.6,
+      "requests": 12,
+      "api_count": 1,
+      "api_requests": [
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/artifacts/c975d45d-ba99-4850-aef3-f0fb7e7b33bd"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 107.4,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/artifacts/c975d45d-ba99-4850-aef3-f0fb7e7b33bd",
+          32.1,
+          112.6
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "project-artifact",
+      "mode": "cold",
+      "ready_ms": 1028.0,
+      "last_response_ms": 1010.6,
+      "requests": 127,
+      "api_count": 14,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/artifacts/c975d45d-ba99-4850-aef3-f0fb7e7b33bd",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 360,
+      "long_task_count": 3,
+      "network_ms": 999.5,
+      "api_bursts": 2,
+      "api_serial_ms": 214.9,
+      "api_timeline": [
+        [
+          "projects",
+          351.9,
+          489.4
+        ],
+        [
+          "awaiting-me",
+          352.1,
+          519.8
+        ],
+        [
+          "feedback/meta",
+          352.2,
+          490.6
+        ],
+        [
+          "feedback/counts",
+          352.5,
+          519.0
+        ],
+        [
+          "version",
+          352.8,
+          451.9
+        ],
+        [
+          "users/me",
+          359.3,
+          521.5
+        ],
+        [
+          "notifications/unread-count",
+          361.7,
+          583.5
+        ],
+        [
+          "users/me/consents",
+          362.3,
+          609.9
+        ],
+        [
+          "avatars/default/id",
+          362.9,
+          610.0
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          367.7,
+          621.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          770.1,
+          956.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          770.4,
+          945.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          770.5,
+          944.7
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/artifacts/c975d45d-ba99-4850-aef3-f0fb7e7b33bd",
+          770.9,
+          985.0
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-members": {
+    "walk": {
+      "page": "project-members",
+      "mode": "walk",
+      "ready_ms": 152.5,
+      "last_response_ms": 130.8,
+      "requests": 6,
+      "api_count": 2,
+      "api_requests": [
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/agents",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/invitations"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 126.0,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/agents",
+          51.9,
+          128.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/invitations",
+          52.1,
+          127.2
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "project-members",
+      "mode": "cold",
+      "ready_ms": 1106.8,
+      "last_response_ms": 1072.5,
+      "requests": 125,
+      "api_count": 18,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/agents",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/invitations",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 294,
+      "long_task_count": 2,
+      "network_ms": 1061.6,
+      "api_bursts": 2,
+      "api_serial_ms": 281.7,
+      "api_timeline": [
+        [
+          "projects",
+          374.9,
+          506.4
+        ],
+        [
+          "awaiting-me",
+          375.1,
+          549.7
+        ],
+        [
+          "feedback/meta",
+          375.4,
+          506.9
+        ],
+        [
+          "feedback/counts",
+          375.5,
+          552.0
+        ],
+        [
+          "version",
+          375.8,
+          467.7
+        ],
+        [
+          "users/me",
+          380.8,
+          536.5
+        ],
+        [
+          "notifications/unread-count",
+          382.2,
+          599.1
+        ],
+        [
+          "users/me/consents",
+          382.6,
+          637.2
+        ],
+        [
+          "avatars/default/id",
+          383.6,
+          637.1
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          387.7,
+          648.7
+        ],
+        [
+          "topics",
+          790.5,
+          967.9
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          790.9,
+          944.2
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          791.0,
+          944.3
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          791.2,
+          922.4
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          791.3,
+          942.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/agents",
+          791.5,
+          944.3
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/invitations",
+          791.7,
+          1040.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+          791.8,
+          1072.5
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-settings": {
+    "walk": {
+      "page": "project-settings",
+      "mode": "walk",
+      "ready_ms": 80.1,
+      "last_response_ms": 7.3,
+      "requests": 13,
+      "api_count": 0,
+      "api_requests": [],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 2.8,
+      "api_bursts": 0,
+      "api_serial_ms": 0,
+      "api_timeline": [],
+      "error": null
+    },
+    "cold": {
+      "page": "project-settings",
+      "mode": "cold",
+      "ready_ms": 776.7,
+      "last_response_ms": 655.5,
+      "requests": 123,
+      "api_count": 10,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 291,
+      "long_task_count": 2,
+      "network_ms": 644.6,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          379.6,
+          495.8
+        ],
+        [
+          "awaiting-me",
+          379.7,
+          492.8
+        ],
+        [
+          "feedback/meta",
+          380.0,
+          502.3
+        ],
+        [
+          "feedback/counts",
+          380.2,
+          522.3
+        ],
+        [
+          "version",
+          380.5,
+          470.9
+        ],
+        [
+          "users/me",
+          383.8,
+          504.0
+        ],
+        [
+          "notifications/unread-count",
+          385.0,
+          579.7
+        ],
+        [
+          "users/me/consents",
+          385.4,
+          603.9
+        ],
+        [
+          "avatars/default/id",
+          385.7,
+          613.2
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          389.1,
+          612.2
+        ]
+      ],
+      "error": null
+    }
+  },
+  "project-skills": {
+    "walk": {
+      "page": "project-skills",
+      "mode": "walk",
+      "ready_ms": 137,
+      "last_response_ms": 122.8,
+      "requests": 13,
+      "api_count": 1,
+      "api_requests": [
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills"
+      ],
+      "long_task_ms": 51,
+      "long_task_count": 1,
+      "network_ms": 118.3,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills",
+          57.7,
+          122.8
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "project-skills",
+      "mode": "cold",
+      "ready_ms": 969.3,
+      "last_response_ms": 914.6,
+      "requests": 131,
+      "api_count": 16,
+      "api_requests": [
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 288,
+      "long_task_count": 2,
+      "network_ms": 905.2,
+      "api_bursts": 2,
+      "api_serial_ms": 170.4,
+      "api_timeline": [
+        [
+          "projects",
+          303.6,
+          403.3
+        ],
+        [
+          "awaiting-me",
+          303.8,
+          447.6
+        ],
+        [
+          "feedback/meta",
+          304.0,
+          429.9
+        ],
+        [
+          "feedback/counts",
+          304.2,
+          434.9
+        ],
+        [
+          "version",
+          304.5,
+          394.9
+        ],
+        [
+          "users/me",
+          307.9,
+          442.9
+        ],
+        [
+          "notifications/unread-count",
+          309.2,
+          517.0
+        ],
+        [
+          "users/me/consents",
+          309.6,
+          520.7
+        ],
+        [
+          "avatars/default/id",
+          309.9,
+          545.7
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          312.7,
+          541.0
+        ],
+        [
+          "topics",
+          713.2,
+          886.6
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          713.3,
+          874.4
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          713.6,
+          844.2
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          713.7,
+          876.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills",
+          713.9,
+          860.6
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          714.0,
+          851.2
+        ]
+      ],
+      "error": null
+    }
+  },
+  "teams": {
+    "walk": {
+      "page": "teams",
+      "mode": "walk",
+      "ready_ms": 290.7,
+      "last_response_ms": 274.1,
+      "requests": 21,
+      "api_count": 3,
+      "api_requests": [
+        "spaces",
+        "teams/my-teams"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 270.2,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "teams/my-teams",
+          51.8,
+          150.9
+        ],
+        [
+          "spaces",
+          52.2,
+          139.9
+        ],
+        [
+          "teams/my-teams",
+          52.5,
+          274.1
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "teams",
+      "mode": "cold",
+      "ready_ms": 728.6,
+      "last_response_ms": 713.8,
+      "requests": 107,
+      "api_count": 14,
+      "api_requests": [
+        "avatars/2",
+        "avatars/3",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "spaces",
+        "teams/my-teams",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 276,
+      "long_task_count": 2,
+      "network_ms": 704.6,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          322.0,
+          437.2
+        ],
+        [
+          "awaiting-me",
+          322.2,
+          471.5
+        ],
+        [
+          "feedback/meta",
+          322.4,
+          425.1
+        ],
+        [
+          "feedback/counts",
+          322.5,
+          467.8
+        ],
+        [
+          "version",
+          322.8,
+          411.1
+        ],
+        [
+          "users/me",
+          326.6,
+          464.1
+        ],
+        [
+          "notifications/unread-count",
+          328.0,
+          521.6
+        ],
+        [
+          "users/me/consents",
+          328.3,
+          560.6
+        ],
+        [
+          "avatars/default/id",
+          328.7,
+          560.5
+        ],
+        [
+          "teams/my-teams",
+          460.5,
+          613.5
+        ],
+        [
+          "spaces",
+          462.0,
+          638.4
+        ],
+        [
+          "teams/my-teams",
+          462.7,
+          713.8
+        ],
+        [
+          "avatars/3",
+          675.7,
+          697.2
+        ],
+        [
+          "avatars/2",
+          676.9,
+          695.8
+        ]
+      ],
+      "error": null
+    }
+  },
+  "team-detail": {
+    "walk": {
+      "page": "team-detail",
+      "mode": "walk",
+      "ready_ms": 263.3,
+      "last_response_ms": 245.3,
+      "requests": 20,
+      "api_count": 4,
+      "api_requests": [
+        "projects",
+        "spaces",
+        "teams/by-handle/perf-demo",
+        "teams/my-teams"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 243.0,
+      "api_bursts": 2,
+      "api_serial_ms": 101.9,
+      "api_timeline": [
+        [
+          "teams/by-handle/perf-demo",
+          37.0,
+          130.0
+        ],
+        [
+          "teams/my-teams",
+          37.3,
+          135.0
+        ],
+        [
+          "spaces",
+          37.7,
+          147.9
+        ],
+        [
+          "projects",
+          138.0,
+          245.3
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "team-detail",
+      "mode": "cold",
+      "ready_ms": 753.6,
+      "last_response_ms": 733.4,
+      "requests": 112,
+      "api_count": 15,
+      "api_requests": [
+        "avatars/2",
+        "avatars/3",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "spaces",
+        "teams/by-handle/perf-demo",
+        "teams/my-teams",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 187,
+      "long_task_count": 1,
+      "network_ms": 724.8,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          318.9,
+          423.3
+        ],
+        [
+          "awaiting-me",
+          319.1,
+          488.5
+        ],
+        [
+          "feedback/meta",
+          319.4,
+          432.6
+        ],
+        [
+          "feedback/counts",
+          319.4,
+          470.3
+        ],
+        [
+          "version",
+          319.8,
+          415.0
+        ],
+        [
+          "users/me",
+          323.5,
+          493.5
+        ],
+        [
+          "notifications/unread-count",
+          324.9,
+          556.8
+        ],
+        [
+          "users/me/consents",
+          325.3,
+          568.4
+        ],
+        [
+          "avatars/default/id",
+          325.7,
+          570.3
+        ],
+        [
+          "teams/by-handle/perf-demo",
+          412.7,
+          599.1
+        ],
+        [
+          "teams/my-teams",
+          413.4,
+          632.0
+        ],
+        [
+          "spaces",
+          414.9,
+          621.9
+        ],
+        [
+          "projects",
+          613.1,
+          733.4
+        ],
+        [
+          "avatars/2",
+          673.4,
+          693.7
+        ],
+        [
+          "avatars/3",
+          674.2,
+          699.7
+        ]
+      ],
+      "error": null
+    }
+  },
+  "spaces": {
+    "walk": {
+      "page": "spaces",
+      "mode": "walk",
+      "ready_ms": 250.5,
+      "last_response_ms": 216.0,
+      "requests": 25,
+      "api_count": 5,
+      "api_requests": [
+        "projects",
+        "space-applications",
+        "spaces",
+        "teams/my-teams"
+      ],
+      "long_task_ms": 0,
+      "long_task_count": 0,
+      "network_ms": 213.8,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          73.4,
+          165.9
+        ],
+        [
+          "teams/my-teams",
+          81.8,
+          216.0
+        ],
+        [
+          "spaces",
+          82.3,
+          207.2
+        ],
+        [
+          "space-applications",
+          82.8,
+          197.3
+        ],
+        [
+          "spaces",
+          83.3,
+          207.1
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "spaces",
+      "mode": "cold",
+      "ready_ms": 840.2,
+      "last_response_ms": 801.4,
+      "requests": 111,
+      "api_count": 14,
+      "api_requests": [
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "space-applications",
+        "spaces",
+        "teams/my-teams",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 354,
+      "long_task_count": 2,
+      "network_ms": 785.7,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [
+        [
+          "projects",
+          385.1,
+          522.3
+        ],
+        [
+          "awaiting-me",
+          385.3,
+          580.6
+        ],
+        [
+          "feedback/meta",
+          385.5,
+          568.5
+        ],
+        [
+          "feedback/counts",
+          385.7,
+          562.6
+        ],
+        [
+          "version",
+          386.1,
+          504.4
+        ],
+        [
+          "users/me",
+          390.8,
+          557.6
+        ],
+        [
+          "notifications/unread-count",
+          392.4,
+          649.7
+        ],
+        [
+          "users/me/consents",
+          392.9,
+          660.0
+        ],
+        [
+          "avatars/default/id",
+          393.3,
+          664.6
+        ],
+        [
+          "projects",
+          577.2,
+          692.9
+        ],
+        [
+          "teams/my-teams",
+          598.5,
+          761.6
+        ],
+        [
+          "spaces",
+          599.7,
+          748.8
+        ],
+        [
+          "space-applications",
+          605.8,
+          802.7
+        ],
+        [
+          "spaces",
+          614.1,
+          815.7
+        ]
+      ],
+      "error": null
+    }
+  },
+  "channel": {
+    "walk": {
+      "page": "channel",
+      "mode": "walk",
+      "ready_ms": 351.6,
+      "last_response_ms": 320.5,
+      "requests": 67,
+      "api_count": 3,
+      "api_requests": [
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/blocks",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/environment",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/read"
+      ],
+      "long_task_ms": 85,
+      "long_task_count": 1,
+      "network_ms": 317.9,
+      "api_bursts": 2,
+      "api_serial_ms": 111.8,
+      "api_timeline": [
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/blocks",
+          2.6,
+          115.5
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/read",
+          110.3,
+          182.5
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/environment",
+          208.7,
+          320.5
+        ]
+      ],
+      "error": null
+    },
+    "cold": {
+      "page": "channel",
+      "mode": "cold",
+      "ready_ms": 1577.6,
+      "last_response_ms": 1431.8,
+      "requests": 197,
+      "api_count": 19,
+      "api_requests": [
+        "addresses/of/channels/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/2",
+        "avatars/3",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/blocks",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/feedback-proposals",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 604,
+      "long_task_count": 4,
+      "network_ms": 1420.6,
+      "api_bursts": 4,
+      "api_serial_ms": 498.2,
+      "api_timeline": [
+        [
+          "projects",
+          378.1,
+          485.2
+        ],
+        [
+          "awaiting-me",
+          378.3,
+          516.6
+        ],
+        [
+          "feedback/meta",
+          378.5,
+          481.8
+        ],
+        [
+          "feedback/counts",
+          378.6,
+          534.7
+        ],
+        [
+          "version",
+          378.9,
+          462.6
+        ],
+        [
+          "users/me",
+          385.2,
+          514.9
+        ],
+        [
+          "notifications/unread-count",
+          386.5,
+          571.8
+        ],
+        [
+          "users/me/consents",
+          386.9,
+          591.1
+        ],
+        [
+          "avatars/default/id",
+          387.3,
+          595.3
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          390.5,
+          623.2
+        ],
+        [
+          "addresses/of/channels/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+          624.1,
+          731.4
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/feedback-proposals",
+          735.1,
+          868.0
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/blocks",
+          735.4,
+          868.5
+        ],
+        [
+          "topics",
+          1040.7,
+          1241.6
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          1040.9,
+          1206.7
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          1041.1,
+          1193.2
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          1041.3,
+          1188.4
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+          1041.4,
+          1265.6
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+          1041.5,
+          1246.6
+        ]
+      ],
+      "error": null
+    }
+  },
+  "thread": {
+    "walk": {
+      "page": "thread",
+      "mode": "walk",
+      "ready_ms": 429.9,
+      "last_response_ms": 86.5,
+      "requests": 48,
+      "api_count": 0,
+      "api_requests": [
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills",
+        "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/feedback-proposals",
+        "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/read",
+        "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/thread",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/feedback-proposals",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/members",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/pins",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/read",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/tasks",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/threads"
+      ],
+      "long_task_ms": 87,
+      "long_task_count": 1,
+      "network_ms": 81.8,
+      "api_bursts": 0,
+      "api_serial_ms": 0,
+      "api_timeline": [],
+      "error": null
+    },
+    "cold": {
+      "page": "thread",
+      "mode": "cold",
+      "ready_ms": 1732.7,
+      "last_response_ms": 1723.8,
+      "requests": 208,
+      "api_count": 31,
+      "api_requests": [
+        "addresses/of/channels/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/2",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/blocks",
+        "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/feedback-proposals",
+        "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/read",
+        "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/thread",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/blocks",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/environment",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/feedback-proposals",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/members",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/pins",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/read",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/tasks",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/threads",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 646,
+      "long_task_count": 5,
+      "network_ms": 1712.4,
+      "api_bursts": 3,
+      "api_serial_ms": 801.9,
+      "api_timeline": [
+        [
+          "projects",
+          336.8,
+          464.8
+        ],
+        [
+          "awaiting-me",
+          337.0,
+          485.0
+        ],
+        [
+          "feedback/meta",
+          337.2,
+          459.0
+        ],
+        [
+          "feedback/counts",
+          337.3,
+          469.0
+        ],
+        [
+          "version",
+          337.7,
+          425.7
+        ],
+        [
+          "users/me",
+          342.3,
+          480.3
+        ],
+        [
+          "notifications/unread-count",
+          343.7,
+          549.7
+        ],
+        [
+          "users/me/consents",
+          344.0,
+          581.7
+        ],
+        [
+          "avatars/default/id",
+          344.5,
+          580.3
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          347.5,
+          592.1
+        ],
+        [
+          "addresses/of/channels/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+          602.4,
+          708.2
+        ],
+        [
+          "topics",
+          1009.8,
+          1200.3
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          1010.1,
+          1186.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          1010.2,
+          1185.5
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          1011.3,
+          1154.5
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+          1011.4,
+          1406.2
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/tasks",
+          1011.5,
+          1186.9
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/tasks",
+          1011.8,
+          1169.0
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/pins",
+          1011.8,
+          1286.6
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/threads",
+          1012.1,
+          1387.8
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/members",
+          1012.3,
+          1408.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+          1012.4,
+          1405.4
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/feedback-proposals",
+          1381.4,
+          1496.1
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills",
+          1381.6,
+          1512.4
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/blocks",
+          1382.5,
+          1569.0
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/read",
+          1419.2,
+          1594.8
+        ],
+        [
+          "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/thread",
+          1466.5,
+          1619.4
+        ],
+        [
+          "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/read",
+          1466.8,
+          1617.6
+        ],
+        [
+          "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/feedback-proposals",
+          1467.8,
+          1669.2
+        ],
+        [
+          "topics/3057fc50-bcb9-478b-ac3e-83bf19124f8d/blocks",
+          1485.8,
+          1694.3
+        ],
+        [
+          "avatars/2",
+          1496.1,
+          1697.5
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558/environment",
+          1524.9,
+          1723.8
+        ]
+      ],
+      "error": null
+    }
+  },
+  "workspace-task": {
+    "walk": {
+      "page": "workspace-task",
+      "mode": "walk",
+      "ready_ms": 339.2,
+      "last_response_ms": 73.1,
+      "requests": 49,
+      "api_count": 2,
+      "api_requests": [
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/skills",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/accept-card",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/blocks",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/document",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/preview",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/read",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/shown"
+      ],
+      "long_task_ms": 94,
+      "long_task_count": 1,
+      "network_ms": 71.0,
+      "api_bursts": 1,
+      "api_serial_ms": 0,
+      "api_timeline": [],
+      "error": null
+    },
+    "cold": {
+      "page": "workspace-task",
+      "mode": "cold",
+      "ready_ms": 1357.4,
+      "last_response_ms": 1327.6,
+      "requests": 199,
+      "api_count": 22,
+      "api_requests": [
+        "addresses/of/tasks/13b774c5-2393-44b1-b370-25dcce7ff66f",
+        "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+        "avatars/default/id",
+        "awaiting-me",
+        "feedback/counts",
+        "feedback/meta",
+        "notifications/unread-count",
+        "projects",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/members",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+        "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+        "topics",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/accept-card",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/blocks",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/feedback-proposals",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/preview",
+        "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/task",
+        "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+        "users/me",
+        "users/me/consents",
+        "version"
+      ],
+      "long_task_ms": 488,
+      "long_task_count": 3,
+      "network_ms": 1317.2,
+      "api_bursts": 4,
+      "api_serial_ms": 570.6,
+      "api_timeline": [
+        [
+          "projects",
+          337.4,
+          468.1
+        ],
+        [
+          "awaiting-me",
+          337.6,
+          454.3
+        ],
+        [
+          "feedback/meta",
+          337.8,
+          442.3
+        ],
+        [
+          "feedback/counts",
+          337.9,
+          460.0
+        ],
+        [
+          "version",
+          338.2,
+          422.2
+        ],
+        [
+          "users/me",
+          342.2,
+          462.1
+        ],
+        [
+          "notifications/unread-count",
+          343.5,
+          537.6
+        ],
+        [
+          "users/me/consents",
+          344.0,
+          557.2
+        ],
+        [
+          "avatars/default/id",
+          345.0,
+          553.3
+        ],
+        [
+          "addresses/projects/7bbacd90-de6f-4740-89df-de2309e265f8",
+          349.2,
+          570.1
+        ],
+        [
+          "addresses/of/tasks/13b774c5-2393-44b1-b370-25dcce7ff66f",
+          575.2,
+          677.3
+        ],
+        [
+          "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/feedback-proposals",
+          680.7,
+          854.3
+        ],
+        [
+          "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/blocks",
+          680.9,
+          824.3
+        ],
+        [
+          "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/preview",
+          681.6,
+          824.1
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-unread",
+          1000.7,
+          1157.4
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/private-unread",
+          1001.0,
+          1155.0
+        ],
+        [
+          "projects/7bbacd90-de6f-4740-89df-de2309e265f8/topic-notify-levels",
+          1001.1,
+          1126.7
+        ],
+        [
+          "topics/13b774c5-2393-44b1-b370-25dcce7ff66f/task",
+          1001.3,
+          1187.9
+        ],
+        [
+          "topics/b51a64ef-58de-43dc-b5a8-6c48961e8558",
+          1001.3,
+          1203.1
+        ]
+      ],
+      "error": null
+    }
+  }
+}

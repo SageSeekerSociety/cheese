@@ -46,7 +46,7 @@ if not os.path.isabs(GIT_DIR):
 PASS, FAIL, UNKNOWN, BLOCKED = 0, 1, 2, 3
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 FAST_HOOKS = {
-    "guards": ["file-size", "repo-rules", "action-pins", "manual-anchors"],
+    "guards": ["file-size", "repo-rules", "action-pins", "manual-anchors", "doc-references"],
     "backend": ["ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"],
     "frontend": ["eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"],
 }
@@ -216,7 +216,8 @@ def run(args, report, finish, started):
             report["not_run"].append({"id": row["id"], "reason": "无相关文件" if row["result"] == "not_applicable" else "超时/预算耗尽"})
         if row["result"] != "not_applicable":
             report["ran"].append(row)
-        print(f"  {row['id']}: {row['result']} ({row['seconds']}s; sampled RSS {row['peak_rss_mib']} MiB)", flush=True)
+        rss_note = "sampled RSS未采到" if row.get("unmeasured") else f"sampled RSS {row['peak_rss_mib']} MiB"
+        print(f"  {row['id']}: {row['result']} ({row['seconds']}s; {rss_note})", flush=True)
         if row["result"] not in ("pass", "not_applicable"):
             print("\n".join(out.strip().splitlines()[-15:]))
             label = {"timeout": "超时", "skipped": "被跳过"}.get(row["result"], row["result"])
@@ -253,6 +254,13 @@ def run(args, report, finish, started):
     if any(p.startswith("frontend/src/i18n/messages/") for p in changed):
         report["i18n_backend_guard"] = not scope.get("backend")
         scope["backend"] = True
+    # Which paths the map itself routed into frontend scope, for the planner:
+    # a backend change reaches that scope through a regenerated
+    # backend/openapi.json, and the planner must not read the same change's
+    # .py files as frontend content the suite has to execute — it would run the
+    # whole Vitest suite for a document no test can load.
+    frontend_scope = [p for p in changed
+                      if any(fnmatch.fnmatchcase(p, pat) for pat in paths_map["frontend"])]
     report["scope"] = scope
     print(f"ci:fast: tier={args.tier} base={base_sha or 'NONE'} head={head[:12]} scope={[s for s, v in scope.items() if v]}")
     if args.tier != "static":
@@ -305,7 +313,7 @@ def run(args, report, finish, started):
     if args.tier != "static":
         with tempfile.TemporaryDirectory(prefix="ci-fast-") as tmp:
             plan, omissions = test_plan(Path(REPO_ROOT), changed, scope, Path(tmp),
-                                        bool(unknown) or not base_sha, args.memory_mib)
+                                        bool(unknown) or not base_sha, args.memory_mib, frontend_scope)
             report["not_run"].extend(omissions)
             for check in plan:
                 invoke(check["id"], check["command"], check["cwd"], check.get("evidence"), check.get("env"))

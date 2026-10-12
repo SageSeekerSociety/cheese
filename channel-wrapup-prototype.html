@@ -1,0 +1,704 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>频道活儿干完了 · 可点原型</title>
+<style>
+/* ---- token：照 frontend/src/style.css 的两套主题块抄下来 ---- */
+:root{
+  color-scheme:light;
+  --ink:#191a1c; --text:#36383c; --muted:#5a5e66; --faint:#747a82;
+  --line:#ecedef; --line-2:#e2e3e6; --fill:#f4f5f7; --fill-2:#eeeff1;
+  --canvas:#f7f8fa; --surface:#ffffff; --raised:#ffffff;
+  --accent:#f57f17; --accent-press:#d96e0a; --accent-ink:#9a5413; --accent-wash:#fdf1e2;
+  --ok:#1f9d55; --ok-ink:#12703a; --ok-wash:#e8f6ee;
+  --warn:#e8901c; --warn-ink:#8f5406; --warn-wash:#faf0dc;
+  --danger:#dc2626; --danger-ink:#b91c1c; --danger-wash:#fdecec;
+  /* 侧栏红黄绿灯的黄。和琥珀（--accent / --warn）拉开：未读数字是琥珀色。 */
+  --signal-yellow:#eab308;
+  --focus-ring:#c2570a; --overlay:rgba(25,26,28,.44);
+  --shadow-1:0 1px 2px rgba(25,26,28,.06), 0 2px 8px rgba(25,26,28,.06);
+  --shadow-2:0 4px 12px rgba(25,26,28,.1), 0 12px 32px rgba(25,26,28,.1);
+  --inverse-surface:#23242a; --inverse-ink:#fff; --inverse-fill:rgba(255,255,255,.14);
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'PingFang SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --ink:#f3f4f6; --text:#d3d6db; --muted:#aeb4bd; --faint:#888ea0;
+  --line:#2b2e33; --line-2:#3a3e45; --fill:#212429; --fill-2:#282c31;
+  --canvas:#141517; --surface:#1b1d20; --raised:#212429;
+  --accent:#ffa733; --accent-press:#ffbc5e; --accent-ink:#ffc670; --accent-wash:#2e2216;
+  --ok:#3fbf7f; --ok-ink:#6fd9a0; --ok-wash:#14261d;
+  --warn:#f0a94a; --warn-ink:#f7c078; --warn-wash:#2a2114;
+  --danger:#f0625c; --danger-ink:#f79490; --danger-wash:#2e1a1a;
+  --signal-yellow:#facc15;
+  --focus-ring:rgba(255,167,51,.65); --overlay:rgba(0,0,0,.6);
+  --shadow-1:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+  --shadow-2:0 4px 12px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
+  --inverse-surface:#3a3d44; --inverse-ink:#f3f4f6; --inverse-fill:rgba(255,255,255,.1);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{
+  margin:0;background:var(--canvas);color:var(--text);
+  font-family:var(--font-sans);font-size:14px;line-height:20px;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0;color:var(--ink);font-weight:600;text-wrap:balance}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px}
+.t-meta{font-size:12px;line-height:18px;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---- 页面本身的外壳（不是产品的一部分） ---- */
+.chrome{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:16px 24px;background:var(--surface);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;
+}
+.chrome__mark{
+  width:34px;height:34px;border-radius:var(--radius-md);flex:none;
+  background:linear-gradient(140deg,#f9b233,#e85d2c);color:#fff;
+  display:grid;place-items:center;font-weight:700;
+}
+.chrome__id{display:flex;align-items:center;gap:12px;min-width:0}
+.chrome__id h1{font-size:18px;line-height:26px}
+.chrome__tools{margin-left:auto;display:flex;align-items:center;gap:12px}
+.stage{padding:20px 24px 150px;display:flex;flex-direction:column;gap:12px;align-items:center}
+.hint{max-width:1180px;width:100%}
+.steps{display:flex;gap:6px;flex-wrap:wrap;max-width:1180px;width:100%}
+.steps button{
+  height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;
+  background:var(--surface);border:1px solid var(--line-2);color:var(--muted);
+}
+.steps button:hover{background:var(--fill)}
+.steps button.is-on{background:var(--inverse-surface);color:var(--inverse-ink);border-color:var(--inverse-surface);font-weight:600}
+
+/* ---- 浏览器框 + 假界面 ---- */
+.frame{
+  width:100%;max-width:1180px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-2);overflow:hidden;
+}
+.frame__bar{
+  display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;
+  background:var(--fill);border-bottom:1px solid var(--line);
+}
+.frame__dot{width:9px;height:9px;border-radius:var(--radius-pill);background:var(--line-2)}
+.frame__url{
+  margin-left:8px;flex:1;height:22px;border-radius:var(--radius-pill);
+  background:var(--surface);border:1px solid var(--line);
+  display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--muted);
+  font-family:var(--mono);
+}
+.frame__tag{
+  font-size:11px;font-weight:600;color:var(--accent-ink);background:var(--accent-wash);
+  border-radius:var(--radius-pill);padding:2px 8px;
+}
+.frame__scroll{overflow-x:auto}
+.app{position:relative;display:flex;min-width:1060px;height:640px;background:var(--canvas)}
+/* ---- 项目轨 ---- */
+.rail{
+  width:56px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:12px 0;
+}
+.rail__btn{
+  width:34px;height:34px;border-radius:var(--radius-md);display:grid;place-items:center;
+  font-weight:700;font-size:13px;color:var(--muted);background:var(--fill);
+}
+.rail__btn.is-on{background:var(--inverse-surface);color:var(--inverse-ink)}
+/* ---- 频道侧栏 ---- */
+.side{
+  width:264px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;
+}
+.side__head{
+  display:flex;align-items:center;gap:4px;height:48px;padding:0 8px 0 16px;
+  border-bottom:1px solid var(--line);
+}
+.side__proj{font-weight:600;color:var(--ink);font-size:14px;flex:1;text-align:left}
+.side__label{
+  display:flex;align-items:center;gap:6px;padding:16px 8px 4px 16px;
+  font-size:12px;font-weight:600;color:var(--faint);
+}
+.side__label span{flex:1}
+.side__list{display:flex;flex-direction:column;padding:0 8px;gap:1px;overflow-y:auto}
+.row{
+  display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  min-height:32px;padding:4px 8px;border-radius:var(--radius-md);color:var(--text);
+  font-size:13px;
+}
+.row:hover{background:var(--fill)}
+.row.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
+.row__name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.row__glyph{color:var(--faint);flex:none;font-size:12px}
+.row--sub{padding-left:26px;color:var(--muted);font-size:12.5px;min-height:28px}
+.row--gone{opacity:.5}
+/* 侧栏那一行尾巴上的两样东西：等你拍板的黄点、以及未读数字 */
+.row-slot{width:8px;height:8px;flex:none;display:grid;place-items:center}
+.await-dot{width:8px;height:8px;border-radius:50%;background:var(--signal-yellow)}
+.unread{
+  flex:none;min-width:18px;height:18px;padding:0 5px;border-radius:var(--radius-pill);
+  background:var(--accent);color:#fff;font-size:11px;font-weight:600;
+  display:grid;place-items:center;font-family:var(--mono);
+}
+.side__tail{margin-top:auto;border-top:1px solid var(--line);padding:8px}
+.side__nav{display:flex;gap:2px;padding:8px 8px 12px}
+.side__nav button{
+  flex:1;height:34px;border-radius:var(--radius-md);font-size:12px;color:var(--muted);
+  display:flex;align-items:center;justify-content:center;
+}
+.side__nav button.is-on{background:var(--fill-2);color:var(--ink);font-weight:600}
+
+/* ---- 主区 ---- */
+.view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--canvas)}
+.scr{display:none;flex-direction:column;min-height:0;height:100%}
+.scr.is-on{display:flex}
+/* 频道页头 —— 照 TopicHeader.vue：只有名字、状态标、成员、概览、⋯ */
+.th{
+  display:flex;align-items:center;gap:8px;height:48px;padding:0 12px;flex:none;
+  background:var(--surface);border-bottom:1px solid var(--line);position:relative;
+}
+.th__text{display:flex;flex:1 1 auto;align-items:center;gap:8px;min-width:0}
+.th__glyph{color:var(--faint)}
+.th__title{color:var(--ink);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.th__state{
+  display:inline-flex;flex:none;align-items:center;padding:1px 8px;border-radius:var(--radius-sm);
+  background:var(--ok-wash);color:var(--ok-ink);font-size:12px;font-weight:600;white-space:nowrap;
+}
+.faces{display:flex;align-items:center;flex:none}
+.face{
+  width:20px;height:20px;border-radius:var(--radius-pill);flex:none;
+  display:grid;place-items:center;font-size:10px;font-weight:600;color:#fff;
+  background:var(--tone,#3d4a5c);
+}
+.face--sm{width:18px;height:18px;font-size:9px}
+.faces .face{margin-left:-5px;box-shadow:0 0 0 2px var(--surface)}
+.faces .face:first-child{margin-left:0}
+/* ---- 对话 ---- */
+.chat{flex:1;min-height:0;overflow-y:auto;padding:16px 20px 8px}
+.msg{display:flex;gap:10px;margin-bottom:16px}
+.msg__body{flex:1;min-width:0}
+.msg__who{font-size:13px;font-weight:600;color:var(--ink);margin-bottom:2px}
+.msg__who .t-meta{margin-left:6px;font-weight:400}
+.msg__text{font-size:15px;line-height:24px;color:var(--text)}
+.notice{display:flex;gap:10px;margin-bottom:14px}
+.notice__body{flex:1;min-width:0;font-size:13px;line-height:20px}
+.notice__body b{color:var(--ink);font-weight:600}
+.notice__link{color:var(--muted);font-family:var(--mono);font-size:12px;word-break:break-all}
+.notice__sub{color:var(--muted)}
+.plainline{text-align:center;color:var(--faint);font-size:12px;line-height:18px;margin:0 0 14px}
+.dayline{display:flex;align-items:center;gap:10px;margin:4px 0 16px;color:var(--faint);font-size:12px}
+.dayline::before,.dayline::after{content:'';flex:1;height:1px;background:var(--line)}
+/* ---- 验收卡 ---- */
+.acc{
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);background:var(--surface);
+  box-shadow:var(--shadow-1);padding:14px 16px;margin-bottom:16px;
+}
+.acc__top{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.acc__top h4{font-size:14px;line-height:20px;flex:1}
+.acc__body{font-size:13px;line-height:20px;color:var(--muted);margin-bottom:10px}
+.acc__url{font-family:var(--mono);font-size:12px;color:var(--faint);word-break:break-all;margin-bottom:12px}
+.acc__foot{display:flex;gap:10px;align-items:center}
+.acc__done{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text)}
+.tick{
+  width:18px;height:18px;border-radius:var(--radius-pill);background:var(--ok-wash);color:var(--ok-ink);
+  display:grid;place-items:center;font-size:11px;font-weight:700;flex:none;
+}
+/* ---- 那一问：落在对话最后一条，紧贴输入框 ---- */
+.ask{
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);background:var(--surface);
+  box-shadow:var(--shadow-2);padding:16px;margin-bottom:4px;
+}
+.ask__top{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.ask__top h4{font-size:15px;line-height:22px;flex:1}
+.ask__lead{font-size:13px;line-height:20px;color:var(--muted);margin-bottom:12px}
+.ask__opts{display:flex;flex-direction:column;gap:8px;max-width:620px}
+.opt{
+  display:flex;flex-direction:column;align-items:flex-start;gap:2px;max-width:100%;
+  padding:8px 12px;text-align:left;background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--radius-md);
+}
+.opt:hover{background:var(--fill);border-color:var(--line-2)}
+.opt__t{font-size:14px;line-height:20px;color:var(--ink);font-weight:600}
+.opt__d{font-size:12px;line-height:18px;color:var(--muted)}
+.opt__d em{font-style:normal;color:var(--faint)}
+.ask__foot{margin-top:12px;font-size:12px;line-height:18px;color:var(--faint)}
+/* 答完之后：收成一行，不再占地方 */
+.wrapbar{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  border:1px solid var(--line-2);border-radius:var(--radius-md);background:var(--surface);
+  padding:8px 12px;margin-bottom:8px;font-size:12px;line-height:18px;color:var(--muted);
+}
+.wrapbar b{color:var(--ink);font-weight:600}
+.wrapbar button{color:var(--accent-ink);font-weight:600;font-size:12px}
+/* ---- 归档横幅 ---- */
+.arch{
+  display:flex;align-items:center;gap:10px;flex:none;padding:10px 20px;
+  background:var(--warn-wash);color:var(--warn-ink);font-size:13px;line-height:20px;
+}
+/* ---- 输入框 ---- */
+.composer{flex:none;padding:8px 20px 16px;background:var(--canvas)}
+.composer__box{
+  display:flex;align-items:center;gap:8px;min-height:44px;padding:10px 12px;
+  border:1px solid var(--line-2);border-radius:var(--radius-md);
+  background:var(--surface);color:var(--faint);font-size:15px;
+}
+.composer__box.is-off{background:var(--fill);border-color:var(--line);color:var(--muted)}
+.composer__hint{margin-top:6px;font-size:12px;color:var(--faint)}
+/* ---- 对照页（场景 5） ---- */
+.cmp{flex:1;min-height:0;overflow-y:auto;padding:20px}
+.cmp__lead{font-size:14px;line-height:22px;color:var(--text);margin-bottom:16px;max-width:760px}
+.cmpcols{display:flex;gap:16px;align-items:flex-start}
+.cmpcol{flex:1;min-width:0}
+.cmpcol__cap{font-size:12px;line-height:18px;color:var(--muted);margin-top:10px}
+.railbox{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);
+  padding:8px;min-height:150px;
+}
+.railbox .row{font-size:13px}
+/* ---- 积木 ---- */
+.chip{
+  display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;flex:none;
+  border-radius:var(--radius-sm);font-size:12px;font-weight:600;
+  background:var(--fill);color:var(--muted);
+}
+.chip--warn{background:var(--warn-wash);color:var(--warn-ink)}
+.chip--ok{background:var(--ok-wash);color:var(--ok-ink)}
+.btn{
+  height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;font-weight:600;
+  display:inline-flex;align-items:center;gap:6px;border:1px solid transparent;flex:none;
+}
+.btn--primary{background:var(--accent);color:#fff}
+.btn--primary:hover{background:var(--accent-press)}
+.btn--secondary{background:var(--surface);border-color:var(--line-2);color:var(--ink)}
+.btn--secondary:hover{background:var(--fill)}
+.btn--ghost{color:var(--muted)}
+.btn--ghost:hover{background:var(--fill)}
+.btn--sm{height:28px;padding:0 10px;font-size:12px}
+.iconbtn{
+  width:28px;height:28px;border-radius:var(--radius-md);display:grid;place-items:center;
+  color:var(--muted);font-size:16px;line-height:1;flex:none;
+}
+.iconbtn:hover{background:var(--fill)}
+/* ---- 改动标记 ---- */
+.mk{
+  display:inline-grid;place-items:center;width:17px;height:17px;border-radius:var(--radius-pill);
+  background:var(--accent);color:#fff;font-size:11px;font-weight:700;font-style:normal;
+  margin-left:5px;vertical-align:2px;cursor:pointer;font-family:var(--mono);
+  box-shadow:0 0 0 2px var(--accent-wash);
+}
+.mk:hover{background:var(--accent-press)}
+.mk.is-seen{background:var(--muted);box-shadow:0 0 0 2px var(--fill)}
+/* ---- 说明卡（底部） ---- */
+.sheet{
+  position:fixed;left:50%;bottom:20px;transform:translateX(-50%);
+  width:min(780px,calc(100vw - 32px));background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);
+  z-index:60;overflow:hidden;
+}
+.sheet[hidden]{display:none}
+.sheet__head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.sheet__no{
+  width:26px;height:26px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;
+  display:grid;place-items:center;font-size:12px;font-weight:700;flex:none;font-family:var(--mono);
+}
+.sheet__head h3{font-size:15px;line-height:21px;flex:1}
+.sheet__body{padding:12px 16px 16px;display:grid;gap:8px}
+.sheet__row{display:flex;gap:10px;font-size:13px;line-height:20px}
+.sheet__k{width:64px;flex:none;color:var(--faint)}
+.sheet__v{flex:1;color:var(--text)}
+.sheet__foot{display:flex;align-items:center;gap:8px;padding:0 12px 12px;font-size:12px;color:var(--faint)}
+@media (max-width:900px){
+  .stage{padding:12px 12px 150px}
+  .chrome{padding:12px 16px}
+  .cmpcols{flex-direction:column}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="chrome__id">
+    <span class="chrome__mark">知</span>
+    <div>
+      <h1>频道活儿干完了 · 可点原型</h1>
+      <p class="t-meta">频道里没活了就在对话里问发起者一句：还接着用吗 · 带数字的黄标点一下，看这一处改什么</p>
+    </div>
+  </div>
+  <div class="chrome__tools">
+    <span class="t-meta mono" id="seen">已看过 0 / 7</span>
+    <button class="btn btn--secondary btn--sm" id="themeBtn">深色</button>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="steps" id="steps">
+    <button data-step="1" class="is-on">① 今天：干完了没人问</button>
+    <button data-step="2">② 对话里弹出这一问</button>
+    <button data-step="3">③ 答了「继续用 / 再留 N 小时」</button>
+    <button data-step="4">④ 24 小时没人答：归档</button>
+    <button data-step="5">⑤ 这条提示不报黄灯</button>
+  </div>
+
+  <div class="frame">
+    <div class="frame__bar">
+      <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+      <span class="frame__url">okcheese.com/workspace</span>
+      <span class="frame__tag">原型 · 不是线上</span>
+    </div>
+    <div class="frame__scroll">
+      <div class="app" id="app" data-scene="1">
+
+        <nav class="rail" aria-label="项目">
+          <button class="rail__btn is-on" title="知是平台">知</button>
+          <button class="rail__btn" title="另一个项目">课</button>
+        </nav>
+
+        <aside class="side">
+          <div class="side__head"><button class="side__proj">知是平台</button><button class="iconbtn" title="更多">⋯</button></div>
+          <div class="side__label"><span>频道</span><button class="iconbtn" title="新建频道">＋</button></div>
+          <div class="side__list">
+            <button class="row"><span class="row__glyph">#</span><span class="row__name">综合</span></button>
+
+            <!-- 测试频道：场景 4 归档之后整组从这儿离开，落到下面的「已归档」 -->
+            <div data-here>
+              <button class="row is-on"><span class="row__glyph">#</span><span class="row__name">测试频道</span>
+                <!-- 这一问只算未读：这儿留的是空槽，黄点不画 -->
+                <span class="row-slot"></span>
+                <span class="unread" data-show="2" hidden>1</span>
+              </button>
+              <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">题库搜索框</span><span class="chip chip--ok">已完成</span></button>
+              <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">题目标签筛选</span><span class="chip chip--ok">已完成</span></button>
+              <button class="row row--sub"><span class="row__glyph">↳</span><span class="row__name">导出题库</span><span class="chip chip--ok">已完成</span></button>
+            </div>
+
+            <button class="row"><span class="row__glyph">#</span><span class="row__name">前端</span>
+              <span class="row-slot"><span class="await-dot" title="有待处理的事项"></span></span>
+            </button>
+            <button class="row"><span class="row__glyph">#</span><span class="row__name">bug-fixing</span><span class="unread">3</span></button>
+          </div>
+          <div class="side__label" data-gone hidden><span>已归档</span></div>
+          <div class="side__list" data-gone hidden>
+            <button class="row row--gone"><span class="row__glyph">#</span><span class="row__name">测试频道</span></button>
+          </div>
+          <div class="side__tail">
+            <nav class="side__nav">
+              <button>首页</button><button class="is-on">工作区</button><button>待办</button>
+            </nav>
+          </div>
+        </aside>
+
+        <div class="view">
+
+          <!-- ========== 场景 5：侧栏对照 ========== -->
+          <section class="scr" data-scr="5">
+            <div class="th"><div class="th__text"><span class="th__title">这一问和红黄绿灯什么关系</span></div></div>
+            <div class="cmp">
+              <p class="cmp__lead">侧栏那一行尾巴上能有两样东西：一颗黄点（＝等你拍板，卡着你了）和右边的琥珀色未读数字。<b>这一问只占后者，不点黄点。</b>下面三行是同一个位置，三种情况。</p>
+              <div class="cmpcols">
+                <div class="cmpcol">
+                  <div class="railbox">
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">前端</span>
+                      <span class="row-slot"><span class="await-dot"></span></span>
+                    </button>
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">综合</span></button>
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">bug-fixing</span><span class="unread">3</span></button>
+                  </div>
+                  <p class="cmpcol__cap"><b>黄点亮</b> —— 有张验收卡点名等你，或者芝士停在一道只有你能答的问题上。这是「卡着你了」。<em class="mk" data-item="5">5</em></p>
+                </div>
+                <div class="cmpcol">
+                  <div class="railbox">
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">测试频道</span>
+                      <span class="row-slot"></span><span class="unread">1</span>
+                    </button>
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">综合</span></button>
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">bug-fixing</span><span class="unread">3</span></button>
+                  </div>
+                  <p class="cmpcol__cap"><b>这一问：黄点不亮</b>，只有未读数字跳。功能都在，活儿也干完了，没什么卡着你——你想看再点进去。</p>
+                </div>
+                <div class="cmpcol">
+                  <div class="railbox">
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">综合</span></button>
+                    <button class="row"><span class="row__glyph">#</span><span class="row__name">bug-fixing</span><span class="unread">3</span></button>
+                    <button class="row row--gone"><span class="row__glyph">#</span><span class="row__name">测试频道</span></button>
+                  </div>
+                  <p class="cmpcol__cap"><b>归档之后</b> —— 这行从侧栏里离开（下面那个灰的是「已归档」分组里的样子），随时撤销。</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- ========== 频道页（场景 1-4 共用一份） ========== -->
+          <section class="scr is-on" data-scr="1 2 3 4">
+            <div class="th">
+              <div class="th__text">
+                <span class="th__glyph">#</span><span class="th__title">测试频道</span>
+                <span class="th__state" data-arch hidden>已归档</span>
+              </div>
+              <div class="faces">
+                <span class="face" style="--tone:#8a5a44">蔡</span>
+                <span class="face" style="--tone:#3f4a63">芝</span>
+                <span class="face" style="--tone:#4a5a3f">王</span>
+              </div>
+              <button class="btn btn--secondary btn--sm">概览</button>
+              <button class="iconbtn" title="更多操作">⋯</button>
+            </div>
+
+            <div class="chat">
+              <p class="plainline">昨天</p>
+
+              <div class="msg">
+                <span class="face" style="--tone:#8a5a44">蔡</span>
+                <div class="msg__body">
+                  <div class="msg__who">蔡松洋<span class="t-meta">昨天 15:02</span></div>
+                  <p class="msg__text">题库里题多了以后翻着太费劲，加个搜索框吧，能按题干搜。</p>
+                </div>
+              </div>
+
+              <div class="msg">
+                <span class="face" style="--tone:#3f4a63">芝</span>
+                <div class="msg__body">
+                  <div class="msg__who">芝士<span class="t-meta">昨天 15:31</span></div>
+                  <p class="msg__text">加好了：题库页顶部一个搜索框，按题干和知识点过滤，搜不到的时候给一行提示。PR #3401 递上来了。</p>
+                </div>
+              </div>
+
+              <div class="acc">
+                <div class="acc__top">
+                  <span class="face face--sm" style="--tone:#3f4a63">芝</span>
+                  <h4>PR #3401 可以合并了，等蔡松洋采纳</h4>
+                </div>
+                <p class="acc__body">这个 PR 满足项目的合并规则，采纳即当场合并。</p>
+                <p class="acc__url">https://github.com/zhishi/okcheese/pull/3401</p>
+                <div class="acc__foot">
+                  <span class="acc__done"><span class="tick">✓</span>已采纳（昨天 15:40）</span>
+                  <button class="btn btn--secondary btn--sm">看改动</button>
+                </div>
+              </div>
+
+              <div class="notice">
+                <span class="face" style="--tone:#3f4a63">芝</span>
+                <div class="notice__body">
+                  <div><b>蔡松洋 采纳了这次改动，PR #3401 已合并</b><span class="t-meta"> 昨天 15:40</span></div>
+                  <div class="notice__link">https://github.com/zhishi/okcheese/pull/3401</div>
+                  <div class="notice__sub">频道保持活跃，归档由人决定。要再交付一份改动，新建一个任务。</div>
+                </div>
+              </div>
+
+              <div class="notice">
+                <span class="face" style="--tone:#4a4a52">平</span>
+                <div class="notice__body">
+                  <div><b>「题库搜索框」「题目标签筛选」「导出题库」都收了工</b><span class="t-meta"> 今天 15:40</span><em class="mk" data-item="1">1</em></div>
+                  <div class="notice__sub">这个频道里没有进行中的任务了。</div>
+                </div>
+              </div>
+
+              <p class="plainline" data-show="1">活儿到这儿就完了。没有人被问过一句，这个频道会一直挂在侧栏上 ↓</p>
+
+              <!-- 那一问：落在对话最后一条，紧贴输入框；没人答就一直钉在这儿 -->
+              <div class="ask" data-ask hidden>
+                <div class="ask__top">
+                  <span class="face face--sm" style="--tone:#4a4a52">平</span>
+                  <h4>这个频道的活都干完了<span class="t-meta"> 今天 15:40</span><em class="mk" data-item="2">2</em></h4>
+                </div>
+                <p class="ask__lead">测试频道里 3 个任务都收了工，没有进行中的活了。这个频道还接着用吗？<em class="mk" data-item="3">3</em></p>
+                <div class="ask__opts">
+                  <button class="opt" data-pick="keep">
+                    <span class="opt__t">继续使用</span>
+                    <span class="opt__d">这个频道留着，以后想起什么还能在这儿派活</span>
+                  </button>
+                  <button class="opt" data-pick="wait">
+                    <span class="opt__t">再留 24 小时</span>
+                    <span class="opt__d">先不决定，到点我再问一次 <em>· 也可以选 6 小时 / 3 天</em></span>
+                  </button>
+                  <button class="opt" data-pick="archive">
+                    <span class="opt__t">直接归档</span>
+                    <span class="opt__d">这个频道从侧栏离开，历史都留着，随时可以撤销</span>
+                  </button>
+                </div>
+                <p class="ask__foot">24 小时内没人回，就自动归档。<em class="mk" data-item="6">6</em></p>
+              </div>
+
+              <!-- 答完之后收成一行 -->
+              <div class="wrapbar" data-show="3" hidden>
+                <span>这个频道的活都干完了</span>
+                <span>·</span>
+                <b data-picked>再留 24 小时，明天 15:40 到点</b>
+                <span style="margin-left:auto"></span>
+                <button data-pick="archive">现在就归档</button>
+              </div>
+
+              <!-- 归档那条通知 -->
+              <div class="notice" data-show="4" hidden>
+                <span class="face" style="--tone:#4a4a52">平</span>
+                <div class="notice__body">
+                  <div><b>24 小时没人回，测试频道已归档</b><span class="t-meta"> 明天 15:40</span><em class="mk" data-item="7">7</em></div>
+                  <div class="notice__sub">频道里的历史都留着，谁都能翻。想接着用，点撤销。</div>
+                  <div style="margin-top:8px"><button class="btn btn--secondary btn--sm">撤销</button></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="arch" data-arch hidden>这个频道已归档，只能查看</div>
+
+            <div class="composer">
+              <div class="composer__box" data-norm>说点什么，芝士接着做…</div>
+              <div class="composer__box is-off" data-arch hidden>频道已归档，不能发言</div>
+              <p class="composer__hint" data-arch hidden>想接着派活，先点上面那条通知里的「撤销」。</p>
+            </div>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <p class="hint t-meta">五个场景就是这条改动的全部：① 今天什么样 ② 改后弹出这一问 ③ 答完之后 ④ 24 小时没人答 ⑤ 和红黄绿灯的关系。带数字的黄标点开，写的是「现状 / 这一版 / 要动哪里」。</p>
+</main>
+
+<aside class="sheet" id="sheet" hidden>
+  <div class="sheet__head">
+    <span class="sheet__no" id="sheetNo">1</span>
+    <div style="flex:1">
+      <h3 id="sheetTitle"></h3>
+      <p class="t-meta" id="sheetSrc"></p>
+    </div>
+    <button class="iconbtn" id="sheetClose">×</button>
+  </div>
+  <div class="sheet__body">
+    <div class="sheet__row"><span class="sheet__k">现状</span><span class="sheet__v" id="sheetNow"></span></div>
+    <div class="sheet__row"><span class="sheet__k">这一版</span><span class="sheet__v" id="sheetFix"></span></div>
+    <div class="sheet__row"><span class="sheet__k">要动哪里</span><span class="sheet__v" id="sheetWork"></span></div>
+  </div>
+  <div class="sheet__foot">
+    <button class="btn btn--ghost btn--sm" id="prevBtn">上一个</button>
+    <button class="btn btn--ghost btn--sm" id="nextBtn">下一个</button>
+    <span style="margin-left:auto">带数字的黄标点开是看某一处；上一个 / 下一个是这一条改动里的下一处</span>
+  </div>
+</aside>
+
+<script>
+(function(){
+  var ITEMS = {
+    1:{t:'什么时候问', s:'这个频道里没有进行中的活了',
+       now:'今天没有这一问。任务在最末一步被采纳后自己收工，这条频道就静静挂在侧栏上，没人被问过一句，也一直不会被归档——这样的频道只会越攒越多。想收得自己去频道页顶栏的 ⋯ 里翻「归档频道」。',
+       fix:'整条频道空了才问一次：里面的任务都收了工，就在对话里问一句。不是每个任务做完问一次——一个频道派了三件活，就攒到三件都完，问一回。',
+       work:'加一处判定「这个频道里还有没有没做完的任务」，挂在任务收工那条路的末尾；空了就落一条平台消息。'},
+    2:{t:'问在哪儿', s:'对话页面里，不在页头加东西',
+       now:'归档这个动作藏在频道页顶栏的 ⋯ → 频道详情里（那句话是「归档频道」），不点开不知道有它。页头本身又是红黄绿灯排布最紧的地方，再塞一颗常驻按钮进去，两排东西会打架。',
+       fix:'页头一个字不动。这一问落在对话最后一条，紧贴输入框——和验收卡、芝士的提问同一个位置。没人答就一直钉在那儿，答了就收走。',
+       work:'前端频道对话里加这张卡；页头、⋯ 菜单、频道详情都不改。'},
+    3:{t:'谁被问', s:'建这个频道的人',
+       now:'归档不是谁都能点：只认这个房间的 owner / admin（项目所有人、团队管理员都不算），房间没有管理员时才轮到项目管理者补位。入口又藏在频道页顶栏的 ⋯ 里，所以除了那个人，别人多半也不去看这件事。',
+       fix:'问建这个频道的人。房间的 owner 是建这个房间那一轮的人种下来的，所以通常就是他，他点了就成。万一 owner 和建房间的人不是同一个，按钮只对真能归档的那个可点，别让人点了报错。卡片这个频道里所有人都看得见，但话是对他说的；他一答，别人看到的就变成结果那行字。',
+       work:'读频道的 created_by 找到发起者；按钮按房间成员的 owner / admin 判可不可点。'},
+    4:{t:'三个选择', s:'继续用 / 再留 N 小时 / 直接归档',
+       now:'没有这一问，也就没有这三个选择。',
+       fix:'继续使用＝频道留着，以后还能在这儿派活；再留 N 小时＝先不决定，到点再问一次（6 小时 / 1 天 / 3 天）；直接归档＝现在就收，走现有那条归档。',
+       work:'卡上三个按钮：前两个改到期时刻，第三个直接调归档。'},
+    5:{t:'不报黄灯', s:'侧栏那颗黄点不亮',
+       now:'那颗黄点是「等你拍板、卡着你了」的意思——有张验收卡点名给你，或者芝士停在一道只有你能答的问题上。这一问要是也点它，几乎每个频道尾部都要常亮一颗，灯就不值钱了。',
+       fix:'这一问不点黄点，只算未读：侧栏右边那个琥珀色数字照常跳，你想看再点进去。先例已经有了——未读的 @ 也不点这颗灯，同一个理由。',
+       work:'后端算频道行 awaits_me 那处，不把这一问算进去。'},
+    6:{t:'24 小时不动就归档', s:'默认动作是归档',
+       now:'没有这一问，也就没有到点这回事。',
+       fix:'卡片落下去满 24 小时没人答，平台直接归档，并留一条可撤销的通知。答了「继续使用」或者「再留 N 小时」就按答的来，不再自动收。',
+       work:'一个到点扫描（平台已有定时任务的架子）+ 一条到期规则：到点先查这频道里还有没有没答的这一问，没有就不动。'},
+    7:{t:'归档那一刻照旧', s:'走现在这条归档，一个字不改',
+       now:'归档会把频道里还没收工的任务一起收掉，在那些任务里各留一句「随所在频道一同归档」，然后弹一个带「撤销」的提示。归档之后频道只读，历史消息还能看、还能搜。',
+       fix:'这些全不动。自动归档和人点菜单走同一条路，所以撤销、只读、可搜、消息里那句话，都一模一样。',
+       work:'这段代码不动，只是让它多一个入口进来。'}
+  };
+
+  var app = document.getElementById('app');
+  var scene = 1, picked = '', seen = {}, current = 1;
+  var $ = function(s,r){return (r||document).querySelector(s);};
+  var $$ = function(s,r){return Array.prototype.slice.call((r||document).querySelectorAll(s));};
+  function inScene(el){ return String(el.dataset.show).split(' ').indexOf(String(scene)) >= 0; }
+
+  var KEEP = '继续使用，这个频道留着';
+  var WAIT = '再留 24 小时，明天 15:40 到点';
+
+  function render(){
+    app.dataset.scene = String(scene);
+    var archived = (scene === 4);
+    // 场景 4 之后频道从「频道」那组离开，落到「已归档」分组
+    $$('[data-here]').forEach(function(el){ el.hidden = archived; });
+    $$('[data-gone]').forEach(function(el){ el.hidden = !archived; });
+    $$('[data-arch]').forEach(function(el){ el.hidden = !archived; });
+    $$('[data-norm]').forEach(function(el){ el.hidden = archived; });
+    $$('.scr').forEach(function(s){
+      s.classList.toggle('is-on', String(s.dataset.scr).split(' ').indexOf(String(scene)) >= 0);
+    });
+    // 那一问：场景 2 完整展开，场景 3 / 4 收走，场景 1 还没出现
+    $('[data-ask]').hidden = scene !== 2;
+    $$('[data-show]').forEach(function(el){ el.hidden = !inScene(el); });
+    // 那一问只算未读，黄点不画：侧栏那行只有右边的数字在跳
+    $$('[data-picked]').forEach(function(el){ el.textContent = picked || WAIT; });
+    // 聊天区像真实窗口一样停在最新一条
+    var c = $('.chat');
+    if(c) c.scrollTop = c.scrollHeight;
+  }
+
+  document.addEventListener('click', function(e){
+    var mk = e.target.closest('.mk');
+    if(mk){ e.stopPropagation(); openSheet(mk.dataset.item); return; }
+    var st = e.target.closest('#steps button');
+    if(st){ go(st.dataset.step); window.scrollTo({top:0,behavior:'auto'}); return; }
+    var pick = e.target.closest('[data-pick]');
+    if(pick){
+      var kind = pick.dataset.pick;
+      picked = kind === 'keep' ? KEEP : (kind === 'wait' ? WAIT : '');
+      go(kind === 'archive' ? '4' : '3');
+      return;
+    }
+    if(e.target.closest('#confirmClose')){ return; }
+  });
+
+  function openSheet(n){
+    var it = ITEMS[n]; if(!it) return;
+    current = Number(n); seen[n] = 1;
+    $$('.mk').forEach(function(m){ if(m.dataset.item === String(n)) m.classList.add('is-seen'); });
+    $('#seen').textContent = '已看过 ' + Object.keys(seen).length + ' / 7';
+    $('#sheetNo').textContent = n;
+    $('#sheetTitle').textContent = it.t;
+    $('#sheetSrc').textContent = it.s;
+    $('#sheetNow').textContent = it.now;
+    $('#sheetFix').textContent = it.fix;
+    $('#sheetWork').textContent = it.work;
+    $('#sheet').hidden = false;
+  }
+
+  $('#sheetClose').addEventListener('click', function(){ $('#sheet').hidden = true; });
+  $('#prevBtn').addEventListener('click', function(){ openSheet(current > 1 ? current - 1 : 7); });
+  $('#nextBtn').addEventListener('click', function(){ openSheet(current < 7 ? current + 1 : 1); });
+  $('#themeBtn').addEventListener('click', function(){
+    var dark = document.documentElement.dataset.theme === 'dark';
+    document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+    this.textContent = dark ? '深色' : '浅色';
+  });
+
+  function go(n){
+    scene = Number(n);
+    if(scene === 4) picked = '';
+    $$('#steps button').forEach(function(b){ b.classList.toggle('is-on', b.dataset.step === String(scene)); });
+    render();
+  }
+
+  // 地址栏带 #2 / #3 / #4 / #5 可以直接进某个场景，方便单独发给别人看
+  if(/^#[1-5]$/.test(location.hash)) go(location.hash.slice(1));
+  else render();
+
+  window.addEventListener('hashchange', function(){
+    if(/^#[1-5]$/.test(location.hash)) go(location.hash.slice(1));
+  });
+})();
+</script>
+</body>
+</html>

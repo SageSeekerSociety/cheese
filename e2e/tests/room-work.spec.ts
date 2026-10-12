@@ -17,13 +17,10 @@ async function freshRoom(page: Page, title: string) {
   return room.id;
 }
 
-/** 一个任务：alice 建的，她负责，并且已经开始（审阅人也是她）。 */
+/** 一个任务：alice 建的，她负责。建出来就已经开始，审阅人因此也是她。 */
 async function dispatch(page: Page, roomId: string, title: string) {
-  const task = (await api(page, "post", `/topics/${roomId}/tasks`, {
+  return (await api(page, "post", `/topics/${roomId}/tasks`, {
     title,
-  })) as { id: string };
-  return (await api(page, "post", `/topics/${task.id}/start`, {
-    reviewer_handle: "alice",
   })) as { id: string; number: number; branch_name?: string };
 }
 

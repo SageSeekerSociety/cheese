@@ -44,6 +44,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine import lease_claim
 from app.domain.machine.environments import device_for_spec, environment_of
+from app.domain.machine.infra_records import keep_refusal
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
@@ -329,7 +330,7 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
 async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     """One best-effort checkpoint (``checkpoint``) of each of the room's
     sessions on its machine, all at once, before the room's cleanup stops them
-    (``topic.retire``, which is handed this by whoever starts its sweep). The
+    (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
     cleanup goes on whatever they answer: what a lost checkpoint loses is held
     by the snapshot of the session's last turn."""
     rows = list(
@@ -863,6 +864,18 @@ async def _attempt(
                 whole_machine=whole_machine,
             )
         except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
+            if not isinstance(refused, ComputeRefused):
+                await keep_refusal(
+                    db,
+                    session_id=session_id,
+                    conversation_id=row.conversation_id,
+                    reason=(
+                        "pool_full"
+                        if isinstance(refused, CloudPoolFull)
+                        else "provider_failing"
+                    ),
+                    said=refused.args[0],
+                )
             await db.commit()
             return {"unavailable": str(refused)}
         except SandboxRemoving:

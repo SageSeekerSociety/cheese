@@ -27,6 +27,20 @@ describe('tokenExpiresWithin', () => {
     expect(tokenExpiresWithin('', 60_000)).toBe(false)
     expect(tokenExpiresWithin(`h.${btoa(JSON.stringify({ handle: 'a' }))}.s`, 60_000)).toBe(false)
   })
+
+  it('reads a base64url payload — the alphabet a server-signed token uses', () => {
+    // `-` and `_` stand where base64 has `+` and `/`, and `atob` refuses both.
+    // A payload it cannot read is one it never refreshes: the token then goes
+    // out until the server turns it down. The `~` is there to force a `+` into
+    // the encoding (only a group whose last byte is `~` or `?` reaches 62/63 in
+    // ASCII text), so this really is base64url and not base64.
+    const exp = Math.floor((Date.now() + 10_000) / 1000)
+    const standard = btoa(`{"exp":${exp},"pad":"x~"}`)
+    expect(standard).toContain('+')
+    const urlSafe = standard.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+    expect(tokenExpiresWithin(`h.${urlSafe}.sig`, 60_000)).toBe(true)
+  })
 })
 
 describe('ensureFreshToken', () => {

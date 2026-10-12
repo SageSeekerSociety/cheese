@@ -18,13 +18,13 @@ from app.api.deps import (
     get_work_runner,
 )
 from app.api.message_effects import announce_edited_message
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.room_task_rows import tasks_under_blocks
 from app.api.routes.projects import rail_tasks
 from app.api.routes.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService, project_refs_text
@@ -83,8 +83,6 @@ from app.domain.usage.services import UsageService
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:

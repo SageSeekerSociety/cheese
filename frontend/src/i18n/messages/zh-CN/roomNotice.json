@@ -211,6 +211,7 @@
   "mentionFused": "AI 队友之间的点名本小时已到上限，这次没有叫醒对方",
   "mentionFusedDetail": "同一个频道里，AI 队友点名每小时最多叫起 {limit} 轮，防止互相点名停不下来。这次没叫醒：{names}。人点名不受这个限制。",
   "mentionUnknownMember": "未能通知 {member}：项目中没有这个成员",
+  "refUnknownConversation": "{ref} 指不到这个项目里的频道、任务或支线，读的人看到的是一个打不开的引用",
   "mergeRefused": "PR #{pr} 被 GitHub 拒绝合并",
   "mergeRefusedDetail": "{reason}\n{url}",
   "mergeRefusedOnAccept": "采纳未完成：GitHub 拒绝合并 PR #{pr}",
@@ -418,5 +419,6 @@
   "mainChecksFailed": "合并后检查未通过：{checks}。{agent} 会在这一步一起修复",
   "mainChecksFailedReopened": "合并后检查未通过：{checks}。任务已重新打开，由 {agent} 修复",
   "deployedTo": "已部署到 {environment}",
-  "deployFailedTo": "部署到 {environment} 失败"
+  "deployFailedTo": "部署到 {environment} 失败",
+  "cloudHostGivenUp": "云端宿主机 {host} 已放弃：{lost} 个工作中的沙箱随它丢失，{replaced} 个准备中的沙箱换到了别的宿主机"
 }

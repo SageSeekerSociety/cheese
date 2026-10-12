@@ -2,11 +2,12 @@ name: Architecture metrics
 
 # The board, not a gate: `.claude/scripts/arch-metrics.py` prints where the
 # architecture stands — the frontend's A/B/C/D component grades, the frozen
-# entries behind the seven backend contracts, files over their size cap, and the
+# entries behind the eight backend contracts, files over their size cap, and the
 # hotspots of the last 30 and 90 days — and how each number moved against the
 # revision 30 days back. Runs on main and weekly, never in a pull request: the
-# three checks in `.claude/rules/architecture.md` are what block a change, and
-# this exists so that "did the last month help" has an answer that is not an
+# boundary checks (`backend/.importlinter`,
+# `frontend/import-boundary-baseline.json`) are what block a change, and this
+# exists so that "did the last month help" has an answer that is not an
 # argument.
 #
 # Since the ratchet board was added, this job also COLLECTS: it runs every gate

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 // The task board's failure and edge evidence: what a refusal, an edge page, a
-// lost network, a 401 and an empty-payload command each do to the old axios
-// stack and the new payload stack. The happy-path request/response contract for
-// every method lives in `taskBoardContract.spec.ts`; this file is only the cases
-// a success handler cannot reach, kept separate so neither spec becomes a bin.
+// lost network, a 401 and an empty-payload command each do to the new payload
+// stack. The happy-path request/response contract for every method lives in
+// `taskBoardContract.spec.ts`; this file is only the cases a success handler
+// cannot reach, kept separate so neither spec becomes a bin.
 //
 // The last section pins the notifications `del` command (same batch, pilot
 // domain): a real 204 must resolve to the explicit success value `true`, never
@@ -20,7 +20,7 @@ import {
   replace,
   server,
   uploadFile,
-} from './migrationContract.spec.helper'
+} from './requestContract.spec.helper'
 
 // The reporter is a side effect (a queued fetch to the run records), not a
 // method under test: silence it so a swallowed failure does not leave the
@@ -29,21 +29,15 @@ vi.mock('@/errorReporter', () => ({ reportError: vi.fn() }))
 
 contractEnvironment()
 
-let oldTasks: typeof import('@/network/api/tasks').TasksApi
-let newTasks: typeof import('./taskBoard').TaskBoardApi
-let oldNotifications: typeof import('@/network/api/notifications').NotificationsApi
-let newNotifications: typeof import('./notifications').NotificationsApi
+let tasks: typeof import('./taskBoard').TaskBoardApi
+let notifications: typeof import('./notifications').NotificationsApi
 let handler: typeof import('@/services/ErrorHandler').default
-let legacyErrorMessage: (error: unknown, fallback: string) => string
 let newErrorMessage: (error: unknown, fallback: string) => string
 
 beforeAll(async () => {
-  ;({ TasksApi: oldTasks } = await import('@/network/api/tasks'))
-  ;({ TaskBoardApi: newTasks } = await import('./taskBoard'))
-  ;({ NotificationsApi: oldNotifications } = await import('@/network/api/notifications'))
-  ;({ NotificationsApi: newNotifications } = await import('./notifications'))
+  ;({ TaskBoardApi: tasks } = await import('./taskBoard'))
+  ;({ NotificationsApi: notifications } = await import('./notifications'))
   ;({ default: handler } = await import('@/services/ErrorHandler'))
-  ;({ requestErrorMessage: legacyErrorMessage } = await import('@/network/utils/requestErrorMessage'))
   ;({ axiosErrorMessage: newErrorMessage } = await import('./axiosHttp'))
 })
 
@@ -58,24 +52,17 @@ const structuredRefusal = (status: number) =>
     { status }
   )
 
-describe('task board migration: structured refusals keep their meaning', () => {
+describe('task board: structured refusals keep their meaning', () => {
   it.each([400, 403, 404, 422, 500, 503])('%s keeps the condition name, sentence and data', async (status) => {
     server.use(http.get(`${newer}/tasks/7`, () => structuredRefusal(status)))
-    const old = await oldTasks.detail(7).catch((error) => error)
-    const next = await newTasks.detail(7).catch((error) => error)
-    expect(old).toMatchObject({
-      message: 'You cannot read this',
-      code: status,
-      error: { name: 'AccessDeniedError', data: { reason: 'membership' } },
-    })
-    expect(next).toMatchObject({
+    const error = await tasks.detail(7).catch((failure) => failure)
+    expect(error).toMatchObject({
       message: 'You cannot read this',
       status,
       code: 'AccessDeniedError',
       data: { reason: 'membership' },
     })
-    expect(legacyErrorMessage(old, 'fallback')).toBe('You cannot read this')
-    expect(newErrorMessage(next, 'fallback')).toBe('You cannot read this')
+    expect(newErrorMessage(error, 'fallback')).toBe('You cannot read this')
   })
 
   it('keeps an unnamed 403 sentence rather than replacing it with a generic one', async () => {
@@ -84,22 +71,16 @@ describe('task board migration: structured refusals keep their meaning', () => {
         HttpResponse.json({ code: 403, message: 'Server sentence', data: null }, { status: 403 })
       )
     )
-    const old = await oldTasks.detail(7).catch((error) => error)
-    const next = await newTasks.detail(7).catch((error) => error)
-    expect(legacyErrorMessage(old, 'fallback')).toBe('Server sentence')
-    expect(newErrorMessage(next, 'fallback')).toBe('Server sentence')
+    const error = await tasks.detail(7).catch((failure) => failure)
+    expect(newErrorMessage(error, 'fallback')).toBe('Server sentence')
   })
 
   it('reads an edge page as a transport failure, including a 200 one', async () => {
     for (const status of [200, 502]) {
       server.use(http.get(`${newer}/tasks/7`, () => new HttpResponse('<html>offline</html>', { status })))
-      const old = await oldTasks.detail(7).catch((error) => error)
-      const next = await newTasks.detail(7).catch((error) => error)
-      expect(old).toBeInstanceOf(Error)
-      expect(next).toBeInstanceOf(Error)
-      expect(next.message).toBe(old.message)
-      expect(legacyErrorMessage(old, 'fallback')).toBe(old.message)
-      expect(newErrorMessage(next, 'fallback')).toBe(old.message)
+      const error = (await tasks.detail(7).catch((failure) => failure)) as Error
+      expect(error).toBeInstanceOf(Error)
+      expect(newErrorMessage(error, 'fallback')).toBe(error.message)
     }
   })
 
@@ -111,29 +92,23 @@ describe('task board migration: structured refusals keep their meaning', () => {
         return HttpResponse.error()
       })
     )
-    const old = await oldTasks.detail(7).catch((error) => error)
-    const next = await newTasks.detail(7).catch((error) => error)
-    expect(old).toBeInstanceOf(Error)
-    expect(next).toBeInstanceOf(Error)
-    expect(legacyErrorMessage(old, 'fallback')).toBe('fallback')
-    expect(newErrorMessage(next, 'fallback')).toBe('fallback')
-    expect(requests).toBe(2)
+    const error = await tasks.detail(7).catch((failure) => failure)
+    expect(error).toBeInstanceOf(Error)
+    expect(newErrorMessage(error, 'fallback')).toBe('fallback')
+    expect(requests).toBe(1)
   })
 })
 
-describe('task board migration: a read never invents a command success', () => {
+describe('task board: a read never invents a command success', () => {
   it.each([null, false, 0, ''])('a payload read returns falsy %j unchanged', async (value) => {
     server.use(http.get(`${newer}/tasks/7`, () => HttpResponse.json(envelope(value))))
-    const old = await oldTasks.detail(7)
-    const next = await newTasks.detail(7)
-    expect(old).toEqual({ code: 200, message: 'ok', data: value })
-    expect(next).toEqual(value)
+    expect(await tasks.detail(7)).toEqual(value)
   })
 
   it('distinguishes a command sentinel from a caught failure for the caller', async () => {
     server.use(http.delete(`${newer}/tasks/42`, () => HttpResponse.json(envelope(null))))
     const success = vi.fn()
-    const sentinel = await handler.withErrorHandling(() => newTasks.del(42), { showToast: false })
+    const sentinel = await handler.withErrorHandling(() => tasks.del(42), { showToast: false })
     if (sentinel !== undefined) success()
     expect(sentinel).toBe(true)
     expect(success).toHaveBeenCalledOnce()
@@ -144,7 +119,7 @@ describe('task board migration: a read never invents a command success', () => {
       )
     )
     const failure = vi.fn()
-    const caught = await handler.withErrorHandling(() => newTasks.del(42), { showToast: false })
+    const caught = await handler.withErrorHandling(() => tasks.del(42), { showToast: false })
     if (caught !== undefined) failure()
     expect(caught).toBeUndefined()
     expect(failure).not.toHaveBeenCalled()
@@ -157,7 +132,7 @@ describe('task board migration: a read never invents a command success', () => {
     server.use(http.delete(`${newer}/tasks/42`, () => HttpResponse.json(envelope(null))))
     const removed = vi.fn()
     try {
-      await newTasks.del(42)
+      await tasks.del(42)
       removed()
     } catch {
       /* the consumer shows the failure toast here */
@@ -171,7 +146,7 @@ describe('task board migration: a read never invents a command success', () => {
     )
     const failed = vi.fn()
     try {
-      await newTasks.del(42)
+      await tasks.del(42)
       removed()
     } catch {
       failed()
@@ -180,7 +155,7 @@ describe('task board migration: a read never invents a command success', () => {
   })
 })
 
-describe('task board migration: authentication edge cases', () => {
+describe('task board: authentication edge cases', () => {
   const detailUnauthorized = () => {
     let requests = 0
     server.use(
@@ -206,7 +181,7 @@ describe('task board migration: authentication edge cases', () => {
           return HttpResponse.json(envelope({ task: { id: 7 } }))
         })
       )
-      expect(await newTasks.detail(7)).toEqual({ task: { id: 7 } })
+      expect(await tasks.detail(7)).toEqual({ task: { id: 7 } })
     }
   })
 
@@ -226,27 +201,25 @@ describe('task board migration: authentication edge cases', () => {
         return HttpResponse.json(envelope({ task: { id: 7 } }))
       })
     )
-    expect(await newTasks.detail(7)).toEqual({ task: { id: 7 } })
+    expect(await tasks.detail(7)).toEqual({ task: { id: 7 } })
     expect(authorization).toEqual(['Bearer contract-token', 'Bearer refreshed-token'])
     expect(refresh).toHaveBeenCalledOnce()
   })
 
-  it('redirects to sign-in when the refresh is rejected, without a retry', async () => {
-    const count = detailUnauthorized()
-    refresh.mockReset().mockResolvedValue({ kind: 'rejected' })
-    replace.mockReset()
-    await expect(newTasks.detail(7)).rejects.toBeInstanceOf(Error)
-    expect(count()).toBe(1)
-    expect(replace).toHaveBeenCalledWith('/account/signin')
-  })
-
-  it('does not redirect when the refresh is unreachable', async () => {
-    const count = detailUnauthorized()
-    refresh.mockReset().mockResolvedValue({ kind: 'unreachable' })
-    replace.mockReset()
-    await expect(newTasks.detail(7)).rejects.toBeInstanceOf(Error)
-    expect(count()).toBe(1)
-    expect(replace).not.toHaveBeenCalled()
+  // A renewal that fails — turned down or out of reach — is attempted once, and
+  // that is all this layer owes. Ending the sign-in is no longer its job:
+  // `lib/session.ts` announces a renewal the server turned down, and
+  // `services/account.ts` drops the session and takes the person to a sign-in,
+  // for both stacks (`account.sessionOver.spec.ts`).
+  it('does not retry a failed renewal, and does not navigate to a sign-in itself', async () => {
+    for (const outcome of [{ kind: 'rejected' as const }, { kind: 'unreachable' as const }]) {
+      const count = detailUnauthorized()
+      refresh.mockReset().mockResolvedValue(outcome)
+      replace.mockReset()
+      await expect(tasks.detail(7)).rejects.toBeInstanceOf(Error)
+      expect(count()).toBe(1)
+      expect(replace).not.toHaveBeenCalled()
+    }
   })
 
   it('stops after a refreshed request is still unauthorized', async () => {
@@ -255,14 +228,14 @@ describe('task board migration: authentication edge cases', () => {
       auth.accessToken = 'refreshed-token'
       return { kind: 'ok', token: 'refreshed-token' }
     })
-    const error = await newTasks.detail(7).catch((failure) => failure)
+    const error = await tasks.detail(7).catch((failure) => failure)
     expect(error).toBeInstanceOf(Error)
     expect(count()).toBe(2)
     expect(refresh).toHaveBeenCalledOnce()
   })
 })
 
-describe('task board migration: upload progress, timeout and multipart shape', () => {
+describe('task board: upload progress, timeout and multipart shape', () => {
   it('lets a slow attachment upload finish and carries the 60s upload timeout, not the 30s default', async () => {
     const { axiosNewApi } = await import('./axiosHttp')
     // What is verified: the upload dial raises the per-request timeout above
@@ -285,7 +258,7 @@ describe('task board migration: upload progress, timeout and multipart shape', (
           return HttpResponse.json(envelope({ attachment: { id: 1 } }), { status: 201 })
         })
       )
-      const attachment = await newTasks.uploadAttachment(7, uploadFile(), (event) => {
+      const attachment = await tasks.uploadAttachment(7, uploadFile(), (event) => {
         progress.push(event.loaded ?? 0)
         final = { loaded: event.loaded ?? 0, total: event.total ?? 0 }
       })
@@ -316,7 +289,7 @@ describe('task board migration: upload progress, timeout and multipart shape', (
           return HttpResponse.json(envelope({ tasks: [], template: { id: 1 }, tokens: 0 }))
         })
       )
-      const preview = await newTasks.previewFromPdf({ spaceId: 7, file: uploadFile() })
+      const preview = await tasks.previewFromPdf({ spaceId: 7, file: uploadFile() })
       expect(preview).toEqual({ tasks: [], template: { id: 1 }, tokens: 0 })
       // PDF_TIMEOUT_MS defaults to 600000 when VITE_PDF_UPLOAD_TIMEOUT_MS is unset.
       expect(seenTimeout).toBe(600000)
@@ -341,26 +314,23 @@ describe('task board migration: upload progress, timeout and multipart shape', (
         return HttpResponse.json(envelope({ attachment: { id: 1 } }), { status: 201 })
       })
     )
-    await newTasks.uploadAttachment(7, uploadFile())
+    await tasks.uploadAttachment(7, uploadFile())
     expect(seen[0]).toEqual([['file', { name: 'notes.pdf', type: 'application/pdf' }]])
   })
 })
 
-describe('notifications migration: an empty-payload command is an explicit success', () => {
+describe('notifications: an empty-payload command is an explicit success', () => {
   it('turns a real 204 delete into true, not the undefined failure sentinel', async () => {
     server.use(http.delete(`${newer}/notifications/9`, () => new HttpResponse(null, { status: 204 })))
-    const old = await oldNotifications.del(9)
-    const next = await newNotifications.del(9)
-    // The old stack hands the raw body back (empty for a 204); it is never the
-    // boolean. The new stack states the outcome as an explicit `true`.
-    expect(old).toBe('')
-    expect(old).not.toBe(true)
-    expect(next).toBe(true)
+    const result = await notifications.del(9)
+    // A 204 carries no payload, but the command states the outcome as an
+    // explicit `true` rather than the undefined a caught failure maps to.
+    expect(result).toBe(true)
   })
 
   it('still returns a payload delete as the payload, not the sentinel', async () => {
     server.use(http.delete(`${newer}/notifications/9`, () => HttpResponse.json(envelope({ ok: 1 }))))
-    expect(await newNotifications.del(9)).toEqual({ ok: 1 })
+    expect(await notifications.del(9)).toEqual({ ok: 1 })
   })
 
   it('keeps a failed delete a throw, so the feed never removes the row on error', async () => {
@@ -369,7 +339,7 @@ describe('notifications migration: an empty-payload command is an explicit succe
         HttpResponse.json({ code: 500, message: 'boom', data: null }, { status: 500 })
       )
     )
-    const error = await newNotifications.del(9).catch((failure) => failure)
+    const error = await notifications.del(9).catch((failure) => failure)
     expect(error).toBeInstanceOf(Error)
   })
 })

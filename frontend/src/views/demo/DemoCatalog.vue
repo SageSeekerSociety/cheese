@@ -24,8 +24,10 @@ import CatalogFramePage from './CatalogFramePage.vue'
 import CatalogIndexPage from './CatalogIndexPage.vue'
 import CatalogRail from './CatalogRail.vue'
 import { installDemoBackend } from './demoBackend'
-import { defaultPrefs, groupCatalog, parseCatalogPath, STUDIO } from './demoCatalogStudio'
+import { defaultPrefs, groupCatalog, parseCatalogPath, reservedPage, STUDIO, STUDIO_PAGES } from './demoCatalogStudio'
 import { applyMotion } from './demoMotion'
+import DemoMotionPage from './DemoMotionPage.vue'
+import DemoTokensPage from './DemoTokensPage.vue'
 
 import { applyResolvedTheme } from '@/theme'
 
@@ -45,7 +47,16 @@ watch(
 
 const id = computed(() => route.value.id)
 const entry = computed(() => (id.value === null ? null : catalogEntry(id.value)))
-const missing = computed(() => id.value !== null && entry.value === null)
+
+/**
+ * 这一页是不是站自己的页面（动效台、token 页），不是某个组件。
+ *
+ * 它们和组件共用 `/demo/catalog/<id>` 这一段地址，所以「目录里没有这一个」得先让它
+ * 们过去；两边撞名的事由 `demoCatalogStudio.spec.ts` 的一条测试挡着。
+ */
+const page = computed(() => reservedPage(id.value))
+
+const missing = computed(() => id.value !== null && entry.value === null && page.value === null)
 
 /** iframe 里要画的那一格：地址上给了第几格，就画第几格。 */
 const frameState = computed(() => {
@@ -140,7 +151,9 @@ watch(narrow, (isNarrow) => {
 })
 
 /** 搜到东西就直接看结果，不管现在站在哪一页上。 */
-const showingIndex = computed(() => (id.value === null || query.value.trim() !== '') && !missing.value)
+const showingIndex = computed(
+  () => (id.value === null || query.value.trim() !== '') && !missing.value && page.value === null
+)
 
 function toggleTheme(): void {
   studio.theme = studio.theme === 'dark' ? 'light' : 'dark'
@@ -148,7 +161,7 @@ function toggleTheme(): void {
 </script>
 
 <template>
-  <!-- iframe 取的那一格：不带壳，只有这一格本身。 -->
+  <!-- The cell the iframe pulls: no shell around it, just the cell itself. -->
   <CatalogFramePage
     v-if="frameState && entry"
     :entry="entry"
@@ -194,6 +207,16 @@ function toggleTheme(): void {
       </span>
 
       <span class="studio-count">{{ CATALOG.length }} 个组件</span>
+
+      <a
+        v-for="item in STUDIO_PAGES"
+        :key="item.id"
+        class="studio-toplink"
+        :href="`/demo/catalog/${item.id}`"
+        :aria-current="page?.id === item.id ? 'page' : undefined"
+      >
+        {{ item.label }}
+      </a>
       <a class="studio-demo" href="/demo/quickstart">动态演示 →</a>
 
       <button
@@ -229,7 +252,9 @@ function toggleTheme(): void {
       </aside>
 
       <main class="studio-main">
-        <CatalogIndexPage v-if="showingIndex" :groups="groups" :note="resultNote" />
+        <DemoMotionPage v-if="page?.id === 'motion'" />
+        <DemoTokensPage v-else-if="page?.id === 'tokens'" />
+        <CatalogIndexPage v-else-if="showingIndex" :groups="groups" :note="resultNote" />
         <CatalogDetailPage v-else-if="entry" :entry="entry" />
         <p v-if="missing" class="catalog-missing">
           目录里没有这一个。回<a class="catalog-missing-link" href="/demo/catalog">目录</a>看看。
@@ -277,11 +302,13 @@ function toggleTheme(): void {
 
 .studio-brand {
   display: flex;
+  flex: none;
   gap: 8px;
   align-items: center;
   font-size: 15px;
   font-weight: 600;
   color: var(--ink);
+  white-space: nowrap;
   text-decoration: none;
 }
 
@@ -332,7 +359,8 @@ function toggleTheme(): void {
 }
 
 .studio-count,
-.studio-demo {
+.studio-demo,
+.studio-toplink {
   font-size: 13px;
   color: var(--muted);
 }
@@ -341,12 +369,21 @@ function toggleTheme(): void {
   margin-left: auto;
 }
 
-.studio-demo {
+.studio-demo,
+.studio-toplink {
   text-decoration: none;
+  white-space: nowrap;
 }
 
-.studio-demo:hover {
+.studio-demo:hover,
+.studio-toplink:hover {
   color: var(--accent-ink);
+}
+
+/* 站自己的那两页：站在上面时给个记号，不然看不出点没点动。 */
+.studio-toplink[aria-current='page'] {
+  font-weight: 600;
+  color: var(--ink);
 }
 
 .studio-icon {
@@ -401,8 +438,10 @@ function toggleTheme(): void {
     place-items: center;
   }
 
+  /* 窄屏上这一排收掉：左栏（抽屉）里那两页还在，顶栏再挤两个入口就装不下搜索框了。 */
   .studio-count,
-  .studio-demo {
+  .studio-demo,
+  .studio-toplink {
     display: none;
   }
 

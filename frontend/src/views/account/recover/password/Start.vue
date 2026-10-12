@@ -14,7 +14,6 @@ import StartView from './StartView.vue'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const error = ref('')
 const sent = ref(false)
@@ -27,7 +26,7 @@ const submit = async (email: string) => {
     await UserAuthApi.recoverPasswordRequest(email)
     sent.value = true
   } catch (e) {
-    error.value = axiosErrorMessage(e, requestErrorMessage(e, t('account.recover.failed')))
+    error.value = axiosErrorMessage(e, t('account.recover.failed'))
   } finally {
     submitting.value = false
   }

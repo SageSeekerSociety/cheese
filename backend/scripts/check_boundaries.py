@@ -33,7 +33,7 @@ Everything else is import-linter's own machinery: the contracts live in
 is enough to reproduce a verdict by hand. This script adds the two things above
 and nothing more.
 
-    ... --self-test   plant each violation the seven contracts exist to catch,
+    ... --self-test   plant each violation the eight contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
                       code is unchanged. The record's shape is fixed in
@@ -73,6 +73,7 @@ CONTRACT_IDS = (
     "turn-no-composition-imports",
     "realtime-no-turn",
     "turn-storage-purity",
+    "routes-independent",
 )
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
@@ -284,6 +285,11 @@ _BOUNDARY_FIXES = {
         "T4 turn storage/state must not reach upper layers or realtime. Move "
         "orchestration up and keep storage focused on persistence."
     ),
+    "C4": (
+        "C4 route modules are independent of one another. Move what both routes "
+        "need into a neutral module (app/api/request_deps.py for request "
+        "dependencies, a domain service for behaviour) and import it from both."
+    ),
 }
 
 
@@ -346,7 +352,13 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
         )
         from importlinter.application.user_options import UserOptions
     except Exception as exc:  # pragma: no cover - depends on the installed version
-        return CANNOT_JUDGE, f"import-linter is not usable here: {exc!r}", None
+        return (
+            CANNOT_JUDGE,
+            f"import-linter is not usable here: {exc!r}. A system python3 "
+            "does not have the project's dependencies; run `cd backend && uv run "
+            "python scripts/check_boundaries.py`",
+            None,
+        )
 
     try:
         parsed = read_configuration(str(config_path))
@@ -482,6 +494,8 @@ _SEED = {
     "app/api/deps.py": "def get_db():\n    ...\n",
     "app/api/routes/__init__.py": "",
     "app/api/routes/demo.py": "from app.domain.bar.services import read_bar\n",
+    "app/api/routes/other.py": "",
+    "app/api/shared.py": "",
     "app/core/__init__.py": "",
     "app/domain/__init__.py": "",
     "app/domain/bar/__init__.py": "",
@@ -618,6 +632,33 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         ("turn-storage-purity",),
     ),
     (
+        "one route importing another (C4)",
+        {"app/api/routes/demo.py": "import app.api.routes.other\n"},
+        BROKEN,
+        None,
+        ("routes-independent",),
+    ),
+    (
+        "two routes meeting through a shared helper (C4 transitive)",
+        {
+            "app/api/routes/demo.py": "import app.api.shared\n",
+            "app/api/shared.py": "import app.api.routes.other\n",
+        },
+        BROKEN,
+        None,
+        ("routes-independent",),
+    ),
+    (
+        "routes sharing a neutral module that imports no route remain allowed (C4)",
+        {
+            "app/api/routes/demo.py": "import app.api.shared\n",
+            "app/api/routes/other.py": "import app.api.shared\n",
+        },
+        OK,
+        None,
+        (),
+    ),
+    (
         "real downward layers and a steps publisher remain allowed",
         {
             "app/domain/agent/turn/intake/messages.py": _IMPORT_STEPS,
@@ -630,7 +671,7 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
     ),
 ]
 
-#: A config that declares nothing, and one that declares all seven contracts
+#: A config that declares nothing, and one that declares all eight contracts
 #: but freezes an exception as a wildcard — the one thing this format must not
 #: accept, and which import-linter itself honours happily.
 _THIN_CONFIG = "[importlinter]\nroot_package = app\n"
@@ -750,7 +791,7 @@ def self_test() -> int:
                     "scripts/check_boundaries.py` to recheck",
                 )
                 for contract_id in _broken:
-                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4")[
+                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4")[
                         CONTRACT_IDS.index(contract_id)
                     ]
                     report(
@@ -789,7 +830,7 @@ def self_test() -> int:
         tmp = sandbox / "thin"
         tmp.mkdir()
         report(
-            "a declaration that lost all seven contracts",
+            "a declaration that lost all eight contracts",
             *_run(_THIN_CONFIG, {}, tmp),
             CANNOT_JUDGE,
             "missing",
@@ -910,7 +951,7 @@ def self_test() -> int:
             for index, (what, _f, expected, _n, _broken) in enumerate(_CASES)
         ]
         json_cases.append(
-            ("thin", "a declaration that lost all seven contracts", CANNOT_JUDGE)
+            ("thin", "a declaration that lost all eight contracts", CANNOT_JUDGE)
         )
         json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
         json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))
@@ -958,10 +999,10 @@ def self_test() -> int:
         )
         return 1
     print(
-        "PASS: check_boundaries self-test (7 contracts fire on the violation they "
+        "PASS: check_boundaries self-test (8 contracts fire on the violation they "
         "exist to catch; an absent, a trimmed and a wildcarded declaration each "
         "come back not-passing; every case agrees with the exit code under --json, "
-        "on one line of stdout, naming all seven contracts)"
+        "on one line of stdout, naming all eight contracts)"
     )
     return 0
 

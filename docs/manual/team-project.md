@@ -227,9 +227,8 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 讨论中
+    status: 已开始
     owner: 你 负责
-    button: 开始
     at: 2
     until: 3
   - kind: head
@@ -252,7 +251,7 @@ parts:
     at: 1
     until: 2
   - kind: doc
-    headings: 3 阶 B 树的插入和查找，周五前通过测试 | 等你点「开始」
+    headings: 3 阶 B 树的插入和查找，周五前通过测试 | 芝士正在整理…
     at: 2
     until: 3
   - kind: msg
@@ -262,7 +261,7 @@ parts:
   - kind: task
     title: B 树的插入和查找
     owner: 你 负责
-    status: 待你开始
+    status: 已开始
     at: 3
   - kind: composer
     placeholder: 输入消息，@芝士 交给它处理
@@ -277,7 +276,7 @@ parts:
 ```
 :::
 
-接下来在任务里和芝士确认要求、点「开始」，再审阅芝士的结果，步骤见[把一件事交给芝士并验收](/working-with-cheese#start-work)。点「开始」时会提示选择「审阅人」，审阅人负责检查芝士提交的结果。
+接下来在任务里和芝士确认要求、再审阅芝士的结果，步骤见[把一件事交给芝士并验收](/working-with-cheese#start-work)。转为任务后它就已经开始，审阅人默认是自己；提交审阅后由审阅人检查芝士交付的结果。
 
 ## 请同学一起做一个任务 {#collaborate}
 
@@ -296,9 +295,8 @@ parts:
   - kind: head
     room: 综合
     title: B 树的插入和查找
-    status: 讨论中
+    status: 已开始
     owner: 你 负责
-    button: 开始
   - kind: bars
     lines: 2
     until: 1

@@ -11,6 +11,8 @@
 // system working, and recording them would bury the failures that are not.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/api/http'
+
 const reportError = vi.fn()
 
 vi.mock('@/errorReporter', () => ({
@@ -52,13 +54,9 @@ describe('ErrorHandler', () => {
   })
 
   it('stays quiet for a refusal the product means', async () => {
-    const denied = new Error('denied')
-    denied.name = 'AccessDeniedError'
-    await errorHandler.handle(denied)
-
-    const locked = new Error('locked')
-    locked.name = 'TeamLockedError'
-    await errorHandler.handle(locked)
+    // 服务端给回绝起的名字就是 `ApiError` 的 `code`，注册过的那两条按名字对上。
+    await errorHandler.handle(new ApiError(403, 'denied', 'AccessDeniedError'))
+    await errorHandler.handle(new ApiError(403, 'locked', 'TeamLockedError'))
 
     expect(reportError).not.toHaveBeenCalled()
   })
