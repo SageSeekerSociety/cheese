@@ -76,8 +76,8 @@ const cases: Record<string, ContractCase> = {
   update: {
     method: 'PATCH',
     path: '/teams/7',
-    args: [7, { name: '小队', intro: 'i', avatarId: 3, visibility: 'PUBLIC', handle: 'squad' }],
-    body: { name: '小队', intro: 'i', avatarId: 3, visibility: 'PUBLIC', handle: 'squad' },
+    args: [7, { name: '小队', intro: 'i', avatarId: 3, visibility: 'public', handle: 'squad' }],
+    body: { name: '小队', intro: 'i', avatarId: 3, visibility: 'public', handle: 'squad' },
   },
   del: { method: 'DELETE', path: '/teams/7', args: [7] },
   detail: { method: 'GET', path: '/teams/7', args: [7] },
