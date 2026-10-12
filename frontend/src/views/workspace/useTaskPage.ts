@@ -75,15 +75,15 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
   const people = computed(() => opts.people().filter((m) => !m.agent))
 
   // ---- 开始 ----
-  // 项目没有默认审阅人时，开始会被拒，负责人在页头下面指定一位再开始。
+  // 开始只还留给芝士自己想、还没人让它做的那种任务：人建的任务建出来就开始了。
   const starting = ref(false)
   const startError = ref<string | null>(null)
-  async function start(reviewer: string | null) {
+  async function start() {
     if (!task.value || starting.value) return
     starting.value = true
     startError.value = null
     try {
-      await apply(await startTask(task.value.id, reviewer))
+      await apply(await startTask(task.value.id))
     } catch (e) {
       startError.value = e instanceof ApiError && e.message ? e.message : t('work.task.startFailed')
     } finally {

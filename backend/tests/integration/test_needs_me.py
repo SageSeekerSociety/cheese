@@ -28,12 +28,13 @@ from app.domain.room_task.services import TaskService
 from app.domain.task_quiet.sweep import remind_quiet_tasks
 from app.domain.topic.models import Topic, TopicStatus
 from tests.ask_fixtures import active_ask, wait_turn_idle
-from tests.conftest import seed_user
+from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
     join_project_team,
     open_task,
     post_project,
     session_auth_headers,
+    teammate_task,
 )
 
 
@@ -426,15 +427,18 @@ def _shown(client, task: str) -> dict:
 def test_starting_a_task_with_its_questions_unanswered_starts_it(
     client, stub_hooks, monkeypatch
 ):
-    """芝士的题还没答，负责人选好审阅人点了「开始」：任务就是开始了。
+    """芝士的题还没答，负责人点了「开始」：任务就是开始了。
 
     页头、频道的任务卡、项目的任务列表写的都是进行中那一列，不是「待回答」；题也不再
-    挂在负责人的待办上。
+    挂在负责人的待办上。这一下只能落在停着的活上（芝士自己想的），人建的活建出来
+    即已开始，没有题挂着的时候。
     """
     project = _project(client)
     channel = _channel(client, project)
-    task = open_task(client, channel, owner="alice", start=False)["id"]
+    task = teammate_task(client, channel, owner="alice")["id"]
     _ask(client, stub_hooks, monkeypatch, task)
+    # 问完等初稿那一段跑完：还在跑的时候这一格是「运行中」，不是「待开始」。
+    wait_work_idle()
     assert _shown(client, task)["phrase"] == NeedsYou.awaiting_answer
 
     r = client.post(
@@ -458,7 +462,7 @@ def test_a_question_asked_after_the_start_still_waits_for_its_answer(
 ):
     project = _project(client)
     channel = _channel(client, project)
-    task = open_task(client, channel, owner="alice", reviewer="alice")["id"]
+    task = open_task(client, channel, owner="alice")["id"]
     wait_turn_idle(client, task)
 
     _ask(client, stub_hooks, monkeypatch, task)

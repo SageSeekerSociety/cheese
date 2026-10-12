@@ -34,7 +34,12 @@ from app.api.routes.topics import (
     ProjectRepository,
     UsageRepository,
 )
-from app.api.task_instructions import dispatch, teammate_source_text, tell_task
+from app.api.task_instructions import (
+    dispatch,
+    start_task_at_once,
+    teammate_source_text,
+    tell_task,
+)
 from app.api.task_origin import (
     asked_in,
     discussion,
@@ -454,6 +459,9 @@ async def create_task(
     task = await TopicService(db).create_task(
         room_id=place.room_id, created_by=actor.handle, title=body.title
     )
+    # 建出来即已开始：审阅人默认就是建它的人。没有那两档可退时留在讨论中，
+    # 负责人在任务页点「开始」时看到的是同一句话。
+    await start_task_at_once(db, task, by=actor.handle)
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
     return ok(out)
@@ -679,13 +687,12 @@ async def create_teammate_task(
         source_block_id=asked.id if asked is not None else None,
     )
     blocks = (await discussion(db, task))[1]
-    started, why_not = False, None
-    if body.start and task.owner_handle:
-        try:
-            await TaskService(db).start(task, by=task.owner_handle)
-            started = True
-        except UnprocessableEntityError as exc:
-            why_not = str(exc)
+    why_not = (
+        await start_task_at_once(db, task, by=task.owner_handle)
+        if body.start and task.owner_handle
+        else None
+    )
+    started = task.started_at is not None
     await tell_task(
         db,
         task,
@@ -695,6 +702,7 @@ async def create_teammate_task(
             source=teammate_source_text(actor.handle, body.summary, blocks),
             materials=materials_text(materials(blocks)),
             started=started,
+            reviewer=task.reviewer_handle,
         ),
         opening=True,
     )

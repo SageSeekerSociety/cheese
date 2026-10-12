@@ -7,7 +7,9 @@ from datetime import UTC, datetime
 
 from app.api.deps import get_work_runner
 from app.api.routes.topics import BlockRepository
+from app.core.errors import UnprocessableEntityError
 from app.domain.agent.chat import ChatService
+from app.domain.room_task.services import TaskService
 
 #: How many messages before the one a task comes from its agent is shown: what
 #: was being talked about when it was said.
@@ -93,3 +95,21 @@ async def dispatch(chat: ChatService) -> None:
     from app.domain.delivery.agent import dispatch_pending
 
     await dispatch_pending(chat.session_factory, chat=chat, runner=get_work_runner())
+
+
+async def start_task_at_once(db, task, *, by: str) -> str | None:
+    """分支任务建出来即已开始：审阅人由 ``TaskService.start`` 按档定（负责人那一
+    档不是人时落项目默认），开始时刻和当时那版文档照记 —— 改动的对照面还是开始
+    那一刻。
+
+    人手动新建的空任务与芝士受人所托建的任务都走这里，两者只差负责人是谁。芝士
+    自想的那种（``start=false``）不走：它停在讨论中，等负责人说要做。
+
+    不成立时返回没开始的理由（沿用 ``start`` 的话），任务留在讨论中等负责人；这
+    与 `POST /start` 报同一句话，所以人自己点「开始」时看到的是同一件事。
+    """
+    try:
+        await TaskService(db).start(task, by=by)
+    except UnprocessableEntityError as exc:
+        return str(exc)
+    return None

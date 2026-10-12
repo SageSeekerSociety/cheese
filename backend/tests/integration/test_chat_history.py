@@ -175,7 +175,7 @@ def test_every_block_kind_can_be_read_with_its_complete_fields(client, kind):
 
 def test_room_history_and_task_history_have_separate_scopes(client):
     project, room = _room(client)
-    task = open_task(client, room, "Investigate", start=False)["id"]
+    task = open_task(client, room, "Investigate")["id"]
     parent, child = uuid.uuid4(), uuid.uuid4()
     ids = _seed(
         client,

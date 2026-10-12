@@ -2120,8 +2120,6 @@
     "leaveCollaboration": "退出协作",
     "start": "开始",
     "startFailed": "未能开始，稍后重试",
-    "reviewer": "审阅人",
-    "reviewerNone": "选择审阅人",
     "startedLine": "{who} {when}开始",
     "compare": "与开始时相比",
     "compareBack": "返回文档",

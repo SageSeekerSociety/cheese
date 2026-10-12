@@ -2120,8 +2120,6 @@
     "leaveCollaboration": "Leave",
     "start": "Start",
     "startFailed": "Couldn't start. Try again later",
-    "reviewer": "Reviewer",
-    "reviewerNone": "Choose a reviewer",
     "startedLine": "{who} started {when}",
     "compare": "Compare with the start",
     "compareBack": "Back to the document",

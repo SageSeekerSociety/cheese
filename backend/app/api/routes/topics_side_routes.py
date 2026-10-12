@@ -46,7 +46,12 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.response import ok
 from app.api.routes.topics import BlockRepository, DbSession
-from app.api.task_instructions import dispatch, source_text, tell_task
+from app.api.task_instructions import (
+    dispatch,
+    source_text,
+    start_task_at_once,
+    tell_task,
+)
 from app.api.task_origin import discussion, materials, materials_text
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
@@ -208,6 +213,8 @@ async def upgrade_block(
         block_id=block_id,
         created_by=actor.handle,
     )
+    # 转出来即已开始：审阅人默认就是转它的人，不用再挑一次。
+    await start_task_at_once(db, task, by=actor.handle)
     out = TaskOut.model_validate(task).model_dump(mode="json")
     # The task's agent drafts its document from the message and what was said
     # around it. Recorded in this transaction, so a rolled-back upgrade leaves
@@ -220,6 +227,8 @@ async def upgrade_block(
             owner=task.owner_handle,
             source=await source_text(db, block),
             materials=materials_text(materials((await discussion(db, task))[1])),
+            started=task.started_at is not None,
+            reviewer=task.reviewer_handle,
         ),
         opening=True,
     )

@@ -10,7 +10,8 @@ refuses, and that card is acceptable by nobody: it looks correctly routed on the
 card face, and 403s whoever it names at the one step that matters.
 
 Both sources are covered here — the handle named when filing, and the one the
-default ladder picks — because they meet the same rule at the same place.
+task itself carries (负责人开始时点名的那个) — because they meet the same rule
+at the same place.
 """
 
 import itertools
@@ -20,10 +21,10 @@ from tests.conftest import wait_work_idle
 from tests.delivery import delivery_artifact
 from tests.integration.conftest import (
     join_project_team,
-    open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
+    teammate_task,
 )
 from tests.machine_work import declare_task, machine_commits
 
@@ -43,14 +44,6 @@ def _project(client) -> str:
     return r.json()["data"]["id"]
 
 
-def _default_reviewer(client, pid: str, handle: str) -> None:
-    r = client.put(
-        f"/projects/{pid}/branch-protection", json={"default_reviewer": handle}
-    )
-    assert r.status_code == 200, r.text
-    assert r.json()["data"]["default_reviewer"] == handle
-
-
 def _room(client, pid: str) -> str:
     r = client.post(
         "/topics",
@@ -61,12 +54,21 @@ def _room(client, pid: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _task(client, room: str, title: str, reviewer: str | None = None) -> dict:
-    """A task the room's owner creates and starts; with no reviewer named the
-    project's default applies."""
-    task = open_task(client, room, title, owner=OWNER, reviewer=reviewer)
+def _task(client, room: str, title: str, reviewer: str) -> dict:
+    """一件负责人开着的活，验收的人是 ``reviewer``。
+
+    停着的那件（芝士自己想的，`teammate_task`）只有这里等得到：人建的活建出来
+    即已开始，没有再点一次「开始」的机会 —— 所以「任务上写着谁审」这件事，今天
+    只有在这一下里写得上去。"""
+    task = teammate_task(client, room, title, owner=OWNER)
+    r = client.post(
+        f"/topics/{task['id']}/start",
+        json={"reviewer_handle": reviewer},
+        headers=session_auth_headers(OWNER),
+    )
+    assert r.status_code == 200, r.text
     wait_work_idle()
-    return task
+    return r.json()["data"]
 
 
 def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
@@ -167,7 +169,7 @@ def test_a_task_cannot_start_with_an_ai_teammate_reviewing_it(client):
     pid = _project(client)
     room = _room(client, pid)
     seat = room_agent_seat(client, room)
-    task = open_task(client, room, "一条活", owner=OWNER, start=False)
+    task = teammate_task(client, room, "一条活", owner=OWNER)
 
     r = client.post(
         f"/topics/{task['id']}/start",
@@ -234,17 +236,15 @@ def test_a_card_can_be_reassigned_to_a_member_of_the_room(client):
     assert r.json()["data"]["reviewer_handle"] == OTHER_MEMBER
 
 
-# --- 递卡：名字由默认路由选出来 ---------------------------------------------
+# --- 递卡：名字由任务带着（开始那一刻点名的那个） ---------------------------
 
 
-def test_the_default_ladder_cannot_route_a_card_to_somebody_the_room_refuses(client):
-    """项目的默认验收人是一个设置，开始任务时写在 `Task.reviewer_handle` 上，递卡时
-    照抄下来 —— 它记的是「谁验收」，从不问「谁是成员」。这条不挡住的话，同一个
-    死卡从另一条路照样进得来。"""
+def test_a_card_the_task_carries_cannot_go_to_somebody_the_room_refuses(client):
+    """任务上写着谁验收，递卡时照抄下来 —— 它记的是「谁验收」，从不问「谁
+    是成员」。这条不挡住的话，同一个死卡从另一条路照样进得来。"""
     pid = _project(client)
-    _default_reviewer(client, pid, STRANGER)
     room = _room(client, pid)
-    task = _task(client, room, "一条活")
+    task = _task(client, room, "一条活", STRANGER)
     assert task["reviewer_handle"] == STRANGER
 
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
@@ -254,12 +254,11 @@ def test_the_default_ladder_cannot_route_a_card_to_somebody_the_room_refuses(cli
     assert _cards(client, room) == []
 
 
-def test_a_card_the_default_ladder_routes_to_a_member_still_goes_through(client):
+def test_a_card_the_task_carries_to_a_member_still_goes_through(client):
     pid = _project(client)
     join_project_team(client, pid, MEMBER)
-    _default_reviewer(client, pid, MEMBER)
     room = _room(client, pid)
-    task = _task(client, room, "一条活")
+    task = _task(client, room, "一条活", MEMBER)
 
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
 
