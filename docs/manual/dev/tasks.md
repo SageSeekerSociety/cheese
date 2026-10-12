@@ -69,11 +69,13 @@ covers:
 
 一条消息可以转出好几件任务。消息在支线里时，任务记在支线挂着的那条主线消息上（`upgraded_from_block_id`），频道主线把任务卡挂在那条消息下面；单独新建的任务才在主线上落一行 `task_created`。
 
+任务另记它是从哪句话来的（`source_block_id`），可以是支线里的一条回复，也可以是另一个任务里的一条：转为任务的是被转的那一条；`cheese_task` 建的是这个 AI 队友在那段对话里最近收到的一句人话，频道主线上只认点了它名字的那句。任务页顶上引这句话，点它回到那段对话并停在这一条上（`?block=`）。这一列加上之前建的任务没有它，退回 `upgraded_from_block_id`；两样都没有的（单独新建的任务）照实说是谁新建的。
+
 `cheese_task` 的 `owner` 是要这件事的人，省略时是支线挂着的那条消息的作者。有人让芝士去做时它填 `start: true`，任务建好就以负责人的名义开始（项目没有默认审阅人时开不了，回复里说明原因）；芝士自己想到的填 `false`，任务停在讨论中，由芝士在支线里问一次。
 
 私聊里没有任务：新建、转为任务、`cheese_task` 这三条在同一处拒绝（`privateChatHasNoTasks`）。
 
-后两种入口给任务会话的开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本和它起的那一轮现读，不另存。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务的原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
+后两种入口给任务会话的开场指令标成「开场那一条」（`agent/opening.py`）。读任务（`GET /topics/{task}/task`）时，文档还空着就带一个 `opening`：`drafting`、`waiting` 或 `failed`，从投递账本和它起的那一轮现读，不另存。失败后负责人和协作者用 `POST /topics/{task}/opening` 把同一条指令再发一次。`GET /topics/{task}/related` 交回任务从哪句话来（`source`）、原讨论（支线或频道主线）和讨论里用到的文档、文件，开场指令里也附着同一份清单。
 
 交给 AI 队友的指令在投递账本里过了 30 分钟还没开始（`delivery/agent.py` 的 `GIVE_UP_AFTER`），记为失败，不再每五分钟重试；有意在等的（等发问的会话、等回执）不算。
 

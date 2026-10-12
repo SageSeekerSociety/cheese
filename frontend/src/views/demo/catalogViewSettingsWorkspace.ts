@@ -754,7 +754,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         props: {},
         // 有文档时才画那颗「编辑」。
         expectSelector: '[data-testid="overview-edit"]',
-        expect: '项目总览',
+        expect: '项目目标',
       },
       {
         get name() {
@@ -764,7 +764,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
           return t('catalog.projectOverviewView.s2.note')
         },
         props: { overviewText: '' },
-        expect: '暂无项目总览',
+        expect: '暂无项目目标',
         expectSelector: '[data-testid="overview-write"]',
       },
       {

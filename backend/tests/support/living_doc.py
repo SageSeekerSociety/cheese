@@ -45,7 +45,7 @@ async def write_overview(
     content: str,
     actor: str = "alice",
 ):
-    """Record ``content`` as the project overview's next version, by ``actor``."""
+    """Record ``content`` as the project goals' next version, by ``actor``."""
     projects = ProjectService(session)
     doc = await projects.overview_document(await projects.get_or_404(project_id))
     return await DocumentWriter(session, summarize_doc_change).record(
@@ -62,7 +62,7 @@ def document_of(client, task_id, **kwargs) -> str:
 
 
 def overview_of(client, project_id, **kwargs) -> str:
-    """The id of the project's overview document, as a page finds it out
+    """The id of the project's goals document, as a page finds it out
     (``GET /projects/{id}/overview``)."""
     response = client.get(f"/projects/{project_id}/overview", **kwargs)
     assert response.status_code == 200, response.text

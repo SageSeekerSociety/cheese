@@ -77,7 +77,7 @@ async def conversation_document(
 async def project_overview_document(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """Which document is the project's overview. It is made, empty, the first
+    """Which document holds the project's goals. It is made, empty, the first
     time anyone asks."""
     actor = await resolver.resolve(project_id=project_id, read_only=True)
     await authorize_in_project(resolver, actor, project_id)

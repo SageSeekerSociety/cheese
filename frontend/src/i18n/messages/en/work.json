@@ -461,7 +461,6 @@
       "cancelReply": "Cancel reply",
       "removeAttachment": "Remove {name}",
       "summon": "Hand to {name}",
-      "summonShort": "Hand off",
       "summonOn": "{'@'}{name} is mentioned. Click to remove",
       "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)",
       "keysHint": "Enter to send, Shift+Enter for a new line, ⌘/Ctrl+Enter to send and hand to {name}. You can paste images",
@@ -2137,11 +2136,17 @@
       "retry": "Retry",
       "writeMyself": "Write it myself"
     },
+    "source": {
+      "channel": "From a message in #{title}",
+      "thread": "From a thread in #{title}",
+      "task": "From the task “{title}”",
+      "quote": "{name}: {text}",
+      "byPerson": "Created by {name}, not from a conversation",
+      "byAgent": "Created by {name}; which message it came from was not recorded",
+      "unknown": "Where this task came from was not recorded"
+    },
     "related": {
       "title": "Related",
-      "fromThread": "Original discussion · {count} replies in the thread",
-      "fromChannel": "Original discussion · channel",
-      "quote": "{name}: {text}",
       "untitled": "Untitled doc",
       "by": "{name}"
     },
@@ -2170,12 +2175,13 @@
   },
   "channel": {
     "overview": {
-      "project": "Project overview",
+      "project": "Project goals",
       "projectNote": "{name} reads this in every conversation",
       "expand": "Show all",
       "collapse": "Show less",
-      "noProject": "No project overview yet",
-      "writeProject": "Write one",
+      "noProject": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+      "writeProject": "Write project goals",
+      "editProject": "Edit project goals",
       "description": "About this channel",
       "edit": "Edit",
       "save": "Save",
@@ -2257,12 +2263,12 @@
     "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived"
   },
   "overview": {
-    "document": "Project overview",
-    "edit": "Edit",
+    "document": "Project goals",
+    "edit": "Edit project goals",
     "expand": "Show all",
     "collapse": "Collapse",
-    "noDocument": "No project overview yet",
-    "write": "Write one",
+    "noDocument": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+    "write": "Write project goals",
     "progress": "Recent progress",
     "progressFailed": "Unable to load recent progress",
     "noProgress": "No progress in the last two weeks",

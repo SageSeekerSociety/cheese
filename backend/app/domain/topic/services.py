@@ -848,6 +848,7 @@ class TopicService:
             created_by=created_by,
             teammate=recipient_seat((block.meta or {}).get("agent_recipient")),
             origin_block_id=await self._main_line_message(block),
+            source_block_id=block.id,
         )
         return parent, task
 
@@ -900,6 +901,7 @@ class TopicService:
         teammate: str | None = None,
         named_by_teammate: bool = False,
         origin_block_id: uuid.UUID | None = None,
+        source_block_id: uuid.UUID | None = None,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
@@ -917,7 +919,8 @@ class TopicService:
 
         ``origin_block_id`` is the main-line message the task was made from;
         the task shows under it. A task made on its own is announced in the
-        main line instead.
+        main line instead. ``source_block_id`` is the message whose words it
+        came from, wherever that is; the task's page quotes it.
 
         The owner is the person named, else the person creating it, else — when
         no person is identifiable — the room's owner, then the project's. A task
@@ -960,6 +963,7 @@ class TopicService:
             created_by=created_by,
         )
         task.upgraded_from_block_id = origin_block_id
+        task.source_block_id = source_block_id
         if named and named_by_teammate:
             task.title_calibrated = True
             tasks.record_title(task, reason="teammate", by=teammate)

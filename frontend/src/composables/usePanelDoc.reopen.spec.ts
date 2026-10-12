@@ -32,7 +32,7 @@ function topic(id: string): Topic {
   return { id, project_id: 'p1' } as Topic
 }
 
-describe('the overview document opens once', () => {
+describe('the project goals document opens once', () => {
   it('stays open when the page refetches the same room', async () => {
     resetRooms()
     seedRoom('doc-r1', '# 概览\n\n正文')

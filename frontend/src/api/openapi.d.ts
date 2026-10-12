@@ -4871,7 +4871,7 @@ export interface paths {
         };
         /**
          * Project Overview Document
-         * @description Which document is the project's overview. It is made, empty, the first
+         * @description Which document holds the project's goals. It is made, empty, the first
          *     time anyone asks.
          */
         get: operations["project_overview_document_projects__project_id__overview_get"];
@@ -5599,7 +5599,7 @@ export interface paths {
          * Search Documents
          * @description The library's search: the project's own documents by title and by what
          *     they say, and the living documents of the channels the caller may read —
-         *     tasks' documents, the project overview — by what they say. Those are not
+         *     tasks' documents, the project's goals — by what they say. Those are not
          *     in the library's list, but they are found here, under their channel and
          *     task, to open there or keep a copy of.
          */
@@ -9839,8 +9839,8 @@ export interface paths {
          * Record Weekly
          * @description 记一份周报到周报集 (spec §7.1) —— 项目文档页的「周报集」就是从这条读的。
          *
-         *     一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是章程和话题文档
-         *     的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
+         *     一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是任务和它们的实况
+         *     文档的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
          *     列 —— 它是这一条记录的属性，没有第二处会读它。
          *
          *     `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。

@@ -33,7 +33,7 @@ export interface RouteMetaTitle {
     /** i18n key；项目的壳换词（「项目」叫「工作」）时跟着换。 */
     label: string
     icon: string
-    /** 除 projectId 以外必填的路由参数，例如项目文档默认打开章程。 */
+    /** 除 projectId 以外必填的路由参数，例如项目文档默认打开项目目标。 */
     params?: Record<string, string>
   }
 }

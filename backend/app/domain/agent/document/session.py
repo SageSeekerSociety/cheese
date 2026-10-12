@@ -83,7 +83,7 @@ def session_for(
     spec = SessionSpec(
         system_prompt=system_prompt(
             bound.agent_name,
-            around.charter,
+            around.goals,
             around.memory,
             where=where,
             workspace=(around.machine or {}).get("workspace"),

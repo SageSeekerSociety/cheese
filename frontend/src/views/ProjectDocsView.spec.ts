@@ -23,7 +23,7 @@ vi.mock('../api/docHistory', () => ({
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('../me', () => ({ myHandle: () => 'writer', myId: () => 'writer' }))
-// 章程是项目概览那一篇文档的面板：评论和节点照旧从接口读，这里给空的。
+// 项目目标是那一篇文档的面板：评论和节点照旧从接口读，这里给空的。
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
@@ -32,10 +32,10 @@ vi.mock('../api', async () => {
     deleteMemory: vi.fn(),
   }
 })
-// 章程开的是项目概览那一份文档，面板会读它叫什么。
+// 项目目标开的是那一份文档，面板会读它叫什么。
 vi.mock('../api/projectDocuments', async () => ({
   ...(await vi.importActual<typeof import('../api/projectDocuments')>('../api/projectDocuments')),
-  getDocumentAbout: async (id: string) => ({ id, title: '项目概览' }),
+  getDocumentAbout: async (id: string) => ({ id, title: '项目目标' }),
 }))
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 vi.mock('../api/docCollab', async () => ({
@@ -134,8 +134,8 @@ describe('in English', () => {
   })
 })
 
-describe('章程', () => {
-  it('打开的是项目概览那一篇协同文档，谁在别处改的都在这儿', async () => {
+describe('项目目标', () => {
+  it('打开的是项目目标那一篇协同文档，谁在别处改的都在这儿', async () => {
     seedRoom('overview', '我们给高中生做算法课。')
     const view = show('charter', {
       rootTopic: { id: 'root', kind: 'root', title: '项目', project_id: 'p' },
@@ -151,7 +151,7 @@ describe('章程', () => {
 })
 
 describe('称呼项目的 AI 队友用它自己的名字', () => {
-  it('队友改名叫小杉，章程的提示说的是给小杉下指令', async () => {
+  it('队友改名叫小杉，项目目标的提示里称呼的是小杉', async () => {
     const pinia = createPinia()
     setActivePinia(pinia)
     seedProjects([])
@@ -178,8 +178,8 @@ describe('称呼项目的 AI 队友用它自己的名字', () => {
       global: { plugins: [createVuetify(), pinia] },
     })
 
-    expect(view.getByText('改了就等于给小杉下指令')).toBeTruthy()
-    expect(view.queryByText('改了就等于给芝士下指令')).toBeNull()
+    expect(view.container.textContent).toContain('小杉')
+    expect(view.container.textContent).not.toContain('芝士')
     view.unmount()
   })
 })
