@@ -22,7 +22,7 @@ from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import background
-from app.core.errors import GatewayUnavailableError
+from app.core.errors import UpstreamUnavailableError
 from app.domain.project import forge
 from app.domain.review.github_pr import GitHubPRError
 from app.domain.room_task.models import Task, TaskStatus
@@ -71,7 +71,7 @@ async def close_task_pr(
             if pr.get("state") != "open" or pr.get("merged"):
                 return False
             await client.close_pr(number)
-    except (GitHubPRError, GatewayUnavailableError, httpx.HTTPError):
+    except (GitHubPRError, UpstreamUnavailableError, httpx.HTTPError):
         logger.warning(
             "the PR #%s of closed task %s stays open: closing it failed",
             number,

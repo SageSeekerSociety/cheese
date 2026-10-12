@@ -1371,10 +1371,9 @@ class GitHubPRClient:
                 json={"state": "closed"},
                 headers=self._headers(token),
             )
-        if resp.status_code != 200:
-            raise GitHubPRError(
-                f"PR close failed (HTTP {resp.status_code}): {resp.text[:300]}"
-            )
+        status, reply = resp.status_code, resp.text[:300]
+        if status != 200:
+            raise GitHubPRError(say("githubPrCloseFailed", status=status, reply=reply))
         return resp.json()
 
     @_as_pr_error

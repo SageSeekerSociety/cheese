@@ -580,6 +580,7 @@
   "githubRefusedCheckRuns": "GitHub 拒绝列出 check-runs（HTTP {status}）：{reply}",
   "githubRefusedCommitOrder": "GitHub 拒绝比较两个 commit 的先后关系（HTTP {status}）：{reply}",
   "githubPrBodyUpdateFailed": "PR 正文更新失败 (HTTP {status}): {reply}",
+  "githubPrCloseFailed": "关闭 PR 失败 (HTTP {status}): {reply}",
   "githubPrReadyFailed": "PR 转 ready 失败 (HTTP {status}): {reply}",
   "githubPrReadyFailedErrors": "PR 转 ready 失败：{errors}",
   "deliverUrlInvalid": "deliver_url 要是一个能打开的网址（http:// 或 https://）",
