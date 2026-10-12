@@ -6,7 +6,7 @@ description: 芝士文档里每一种块的写法。随 cheese-docs 技能发出
 
 # 块的写法
 
-目录：提示框、状态标签、时间线、指标卡、图表、流程图、分栏、折叠、脚注、公式、HTML。
+目录：提示框、状态标签、时间线、指标卡、图表、流程图、图片、分栏、折叠、脚注、公式、HTML。
 
 照下面的样子写，空格和换行也照抄：改文档时要逐字引用原文，文档存下来就是这个样子。写错了，写入会被拒，返回里写着哪一行、正确的写法是什么。
 
@@ -75,6 +75,27 @@ flowchart TD
 ```
 
 一张图不超过 8 个节点，从上往下画（TD），每个判断最多两条分支，节点里的字不超过 10 个。带具体时刻的事件用时间线块，不用 mermaid 的 timeline。
+
+## 图片
+
+图表块和 mermaid 都画不出来的，用 Python（matplotlib）画成 PNG。机器上没装 matplotlib 时，用 `uv run --with matplotlib python 画图.py` 临时装上。图里有中文时，建议加载机器上的中文字体，不然中文会显示成方框：
+
+```python
+import os
+import matplotlib.pyplot as plt
+from matplotlib import font_manager
+
+font_manager.fontManager.addfont(os.path.join(os.environ["TYPST_FONT_PATHS"], "NotoSansSC-VF.otf"))
+plt.rcParams["font.family"] = "Noto Sans SC"
+```
+
+图存在工作目录里，不用提交。用 `cheese show figures/耗时.png` 摆出来（它也会成为任务的预览），再在任务的实况文档里用同一个路径引用：
+
+```
+![各阶段耗时](figures/耗时.png)
+```
+
+能读这份文档的人都看得到这张图。项目文档只显示资料库里的图，写成 `![说明](library/<名字>)`；你放不进资料库，需要的话请人在摆出来的那张图上按「保存到资料库」。
 
 ## 分栏
 
