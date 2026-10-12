@@ -4,7 +4,7 @@
 // the new payload stack. The happy-path request/response contract for every
 // method lives in `spacesContract.spec.ts`; this file is only the cases a
 // success handler cannot reach, kept separate so neither spec becomes a bin.
-import { http, HttpResponse } from 'msw'
+import { delay, http, HttpResponse } from 'msw'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -226,8 +226,16 @@ describe('spaces migration: authentication edge cases', () => {
 })
 
 describe('spaces migration: upload progress, timeout and multipart shape', () => {
-  it('uploads with real progress and the 60s upload timeout, not the 30s default', async () => {
+  it('lets a slow upload finish and carries the 60s upload timeout, not the 30s default', async () => {
     const { axiosNewApi } = await import('./axiosHttp')
+    // What is verified: the upload dial raises the per-request timeout above
+    // the 30s instance default (read off the request as it reaches the
+    // transport), a delayed upload still completes, and progress fires and
+    // settles at loaded === total. What is NOT verified here: a real
+    // 30s-against-60s wall-clock boundary. MSW's XHR shim ignores xhr.timeout
+    // (a 50ms-timeout request answered after 600ms still resolves), and a
+    // genuine boundary would need a real network stack or a 30s wait — neither
+    // fits this tier. Treat that boundary as open.
     expect(axiosNewApi.defaults.timeout).toBe(30000)
     let seenTimeout: number | undefined
     const interceptor = axiosNewApi.interceptors.request.use((config) => {
@@ -238,18 +246,18 @@ describe('spaces migration: upload progress, timeout and multipart shape', () =>
       const progress: number[] = []
       let final: { loaded: number; total: number } | undefined
       server.use(
-        http.post(`${newer}/spaces/7/materials`, () =>
-          HttpResponse.json(envelope({ material: { id: 1 } }), { status: 201 })
-        )
+        http.post(`${newer}/spaces/7/materials`, async () => {
+          await delay(400)
+          return HttpResponse.json(envelope({ material: { id: 1 } }), { status: 201 })
+        })
       )
-      await newSpaces.uploadMaterial(7, uploadFile(), 'members', (event) => {
+      const material = await newSpaces.uploadMaterial(7, uploadFile(), 'members', (event) => {
         progress.push(event.loaded ?? 0)
         final = { loaded: event.loaded ?? 0, total: event.total ?? 0 }
       })
+      expect(material).toEqual({ material: { id: 1 } })
       // The event measures the request body (the multipart envelope around the
-      // file, so a few bytes more than the file alone). What matters is that
-      // it fires at all and settles at loaded === total, not that it is a
-      // config value nobody exercised.
+      // file, so a few bytes more than the file alone).
       expect(progress.length).toBeGreaterThan(0)
       expect(final!.total).toBeGreaterThan(uploadFile().size)
       expect(final!.loaded).toBe(final!.total)
