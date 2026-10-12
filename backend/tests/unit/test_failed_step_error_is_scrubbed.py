@@ -53,3 +53,17 @@ def test_a_tool_lines_command_is_stored_without_the_token():
     for stored in (meta["arg"], meta["detail"], text):
         assert "ghp_" not in stored and "hunter22" not in stored
         assert "git push" in stored
+
+
+def test_a_failed_turns_notice_is_stored_without_the_token():
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    secret = "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+    said = f"upstream refused: Authorization: Bearer {secret}"
+    log = f"curl -H 'Authorization: Bearer {secret}' failed"
+    line, meta = _turn_failure_notice(said, None, log=log)
+    detail = meta.get("detail")
+    stored = repr(line) + repr(meta) + repr(getattr(detail, "descriptor", dict)())
+    assert secret not in stored
+    # The service's words are still kept, only the credential is gone.
+    assert "upstream refused" in stored
