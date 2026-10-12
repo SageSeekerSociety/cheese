@@ -6,10 +6,16 @@
 
 ## 管辖范围
 
-两棵树：``app/domain`` 与 ``app/api/routes``。路由不属于任何一个领域，所以它 import
-的每一条 repository 都是跨域的，98 条全在下面的白名单里。守卫只看 ``app/domain`` 的
-时候这 98 条 CI 一条也看不见，而它们恰恰是这层约束最容易被绕过去的地方——HTTP 处理
-函数手上就有 session，拿对方的 repository 直接查一行比找对方的 service 省事。
+三处：``app/domain``、``app/api/routes``，以及点名的几个路由共享依赖模块
+（``_SCANNED_MODULES``）。后两处都不属于任何一个领域，所以它们 import 的每一条
+repository 都是跨域的，存量全在下面的白名单里。守卫只看 ``app/domain`` 的时候这些边
+CI 一条也看不见，而它们恰恰是这层约束最容易被绕过去的地方——HTTP 处理函数手上就有
+session，拿对方的 repository 直接查一行比找对方的 service 省事。
+
+共享依赖模块本来也在这道守卫的账上，只是 2026-10 那轮重构把路由里共用的依赖从
+``routes/`` 搬进 ``app/api/*_deps.py`` 时，新家不在任何一棵被扫的树里，账上删掉的
+豁免就没有人再看着了：往那个文件里新加一条跨域 repository import，全绿。所以这里
+把它们点名扫上——**搬出路由不等于掉出管辖**。
 
 **这道守卫治的是分层纪律，不是依赖环——别指望它把环拆没。** 按正路改完，包和包之间
 那条边还在，只是从 repository 层挪到了 services 层；包级依赖图一条边都不会少。真要解
@@ -43,9 +49,30 @@ BACKEND_ROOT = Path(__file__).resolve().parents[2]
 #: 扫哪几棵树，相对 backend 根。见上面「管辖范围」。
 _SCANNED = ("app/domain", "app/api/routes")
 
+#: 另外点名扫描的文件：路由的共享依赖模块。它们和路由一样不属于任何领域，摸谁的
+#: repository 都算跨域。**点名而不是扫整个 ``app/api``**：那棵树里还有别的模块，
+#: 历史导入与本类纪律无关，一起扫进来只会多出一批要单独解释的行。往里面新增共享
+#: 依赖模块时，把路径写在这里。
+_SCANNED_MODULES = (
+    "app/api/admin_deps.py",
+    "app/api/users_deps.py",
+    "app/api/space_deps.py",
+    "app/api/space_payloads.py",
+    "app/api/task_deps.py",
+)
+
 #: 路由那棵树的「领域」。它不是领域包，这个值只用来让路由发出的每一条 repository
 #: import 都算跨域——它不等于任何一个领域包的名字。
 _ROUTES = "<api.routes>"
+
+#: 共享依赖模块的「领域」，同理。两者分开取值，是为了让这两处各自的账在
+#: ``_EXEMPT`` 里一眼分得清。
+_SHARED_API = "<api.shared>"
+
+#: ``app/api/admin_deps`` 这样的模块名集合，供 ``_domain_of`` 查。
+_SHARED_API_MODULES = frozenset(
+    path[: -len(".py")].replace("/", ".") for path in _SCANNED_MODULES
+)
 
 # ---------------------------------------------------------------------------
 # 存量豁免。格式：(发起方模块, 被 import 的 repository 模块)
@@ -209,8 +236,8 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.usage.subscription_ingest", "app.domain.project.repositories"),
         # --- app/api/routes ---
         # 路由一个领域都不属于，所以它碰的每一个 repository 都是别人家的。下面
-        # 98 条是守卫扩到这棵树那一刻就在的存量，和上面的领域内债一样入账：还法
-        # 是路由改调对方的 service，然后把这里对应的行删掉。
+        # 这些是守卫扩到这棵树那一刻就在的存量（当时 98 条，其余都已还），和上面的
+        # 领域内债一样入账：还法是路由改调对方的 service，然后把这里对应的行删掉。
         ("app.api.routes.agent_credential", "app.domain.project.repositories"),
         ("app.api.routes.answers", "app.domain.answers.repositories"),
         ("app.api.routes.answers", "app.domain.discussion.repositories"),
@@ -296,6 +323,24 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # lines above, re-attributed to the module the code now lives in.
         ("app.api.routes.users_team", "app.domain.team.repositories"),
         ("app.api.routes.webhooks", "app.domain.topic.repositories"),
+        # --- app/api 共享依赖模块 ---
+        # 2026-10 那轮重构把路由里共用的依赖从 routes/ 搬进 app/api/*_deps.py。
+        # 下面六条是随之搬家的存量债：被摸的 repository 一个没多，只是发起方从某个
+        # 路由模块换成了共享依赖模块——`space_deps` / `space_payloads` 接走的是
+        # routes/spaces.py 的那一对（spaces.py 自己留着 user.repositories 那条，所以
+        # user 这条按两个发起方各记一行），`task_deps` 接走的是
+        # routes/tasks/_common.py 的 team 与 user 两条，外加 space.repositories 里
+        # 跟着 `get_task_submission_service` 走的那两个名字（`_common.py` 自己留着
+        # 同模块的另外三个名字，故 space 这条同样按两个发起方各记一行）。守卫的扫描
+        # 面同时补上了这几个模块（`_SCANNED_MODULES`）：搬出路由不等于掉出管辖，
+        # 否则账上删掉的三条就再没有人看着了。还法与路由那批相同——改成调对方的
+        # service，然后删行。
+        ("app.api.space_deps", "app.domain.task.repositories"),
+        ("app.api.space_deps", "app.domain.user.repositories"),
+        ("app.api.space_payloads", "app.domain.user.repositories"),
+        ("app.api.task_deps", "app.domain.space.repositories"),
+        ("app.api.task_deps", "app.domain.team.repositories"),
+        ("app.api.task_deps", "app.domain.user.repositories"),
     }
 )
 
@@ -313,10 +358,13 @@ def _is_repository_module(name: str) -> bool:
 
 
 def _domain_of(module: str) -> str | None:
-    """``app.domain.<pkg>.<...>`` → ``<pkg>``；路由 → ``_ROUTES``；其余 None。"""
+    """``app.domain.<pkg>.<...>`` → ``<pkg>``；路由 → ``_ROUTES``；共享依赖
+    模块 → ``_SHARED_API``；其余 None。"""
     parts = module.split(".")
     if len(parts) >= 4 and parts[:3] == ["app", "api", "routes"]:
         return _ROUTES
+    if module in _SHARED_API_MODULES:
+        return _SHARED_API
     if len(parts) < 4 or parts[0] != "app" or parts[1] != "domain":
         return None
     return parts[2]
@@ -341,35 +389,41 @@ def _scan(tree: Path = BACKEND_ROOT) -> list[tuple[str, str, int]]:
     tmp 里的假树。
     """
     found: list[tuple[str, str, int]] = []
+    paths: list[Path] = []
     for scanned in _SCANNED:
         root = tree / scanned
         if not root.is_dir():
             continue  # 假树只搭用得上的那半棵
-        for py in sorted(root.rglob("*.py")):
-            src_mod = _module_name(py, tree)
-            src_dom = _domain_of(src_mod)
-            if src_dom is None:
-                continue  # domain/common.py 这类顶层文件，不属于任何领域包
-            parsed = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
-            for node in ast.walk(parsed):
-                targets: list[str] = []
-                if isinstance(node, ast.Import):
-                    targets = [a.name for a in node.names]
-                elif isinstance(node, ast.ImportFrom):
-                    mod = _resolve(node, src_mod)
-                    if not mod:
-                        continue
-                    # 两种写法都要抓：
-                    #   from app.domain.x.repositories import Foo
-                    #   from app.domain.x import repositories
-                    targets = [mod] + [f"{mod}.{a.name}" for a in node.names]
-                for t in targets:
-                    if not _is_repository_module(t):
-                        continue
-                    dst_dom = _domain_of(t)
-                    if dst_dom is None or dst_dom == src_dom:
-                        continue
-                    found.append((src_mod, t, node.lineno))
+        paths.extend(root.rglob("*.py"))
+    for rel in _SCANNED_MODULES:
+        named = tree / rel
+        if named.is_file():  # 假树只搭用得上的那半棵
+            paths.append(named)
+    for py in sorted(paths):
+        src_mod = _module_name(py, tree)
+        src_dom = _domain_of(src_mod)
+        if src_dom is None:
+            continue  # domain/common.py 这类顶层文件，不属于任何领域包
+        parsed = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+        for node in ast.walk(parsed):
+            targets: list[str] = []
+            if isinstance(node, ast.Import):
+                targets = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                mod = _resolve(node, src_mod)
+                if not mod:
+                    continue
+                # 两种写法都要抓：
+                #   from app.domain.x.repositories import Foo
+                #   from app.domain.x import repositories
+                targets = [mod] + [f"{mod}.{a.name}" for a in node.names]
+            for t in targets:
+                if not _is_repository_module(t):
+                    continue
+                dst_dom = _domain_of(t)
+                if dst_dom is None or dst_dom == src_dom:
+                    continue
+                found.append((src_mod, t, node.lineno))
     return found
 
 
@@ -508,6 +562,31 @@ def test_self_test_a_route_touching_a_repository_is_caught(tmp_path: Path) -> No
     assert _violations(root, frozenset()) == [
         ("app.api.routes.tasks", "app.domain.beta.repositories")
     ]
+
+
+def test_self_test_a_shared_dependency_module_is_caught(tmp_path: Path) -> None:
+    """共享依赖模块和路由同管——搬出 routes/ 不是为了掉出管辖范围。
+
+    这条自检是补面那一刻的回归：把这两处的 ``_SCANNED_MODULES`` 去掉，它会红。
+    """
+    root = _fake_tree(
+        tmp_path,
+        {"api/task_deps.py": "from app.domain.beta.repositories import BetaRepo\n"},
+    )
+    assert _violations(root, frozenset()) == [
+        ("app.api.task_deps", "app.domain.beta.repositories")
+    ]
+
+
+def test_self_test_a_shared_dependency_module_calling_a_service_stays_green(
+    tmp_path: Path,
+) -> None:
+    """共享依赖模块调对方的 service 就是正路，不许误判成违规。"""
+    root = _fake_tree(
+        tmp_path,
+        {"api/task_deps.py": "from app.domain.beta.services import BetaService\n"},
+    )
+    assert _violations(root, frozenset()) == []
 
 
 def test_self_test_a_route_calling_a_service_stays_green(tmp_path: Path) -> None:
