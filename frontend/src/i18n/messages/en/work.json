@@ -370,7 +370,8 @@
       "voidHint": "Voiding ends this review: nothing is merged and nothing is sent back for changes. It can be submitted for review again later",
       "voidReason": "Reason for voiding (optional)",
       "conflictsWithMain": "Conflicts with the main branch",
-      "checkRunning": "Running"
+      "checkRunning": "Running",
+      "checkCancelled": "Cancelled"
     },
     "retry": {
       "action": "Retry",
@@ -1223,6 +1224,7 @@
       "openLink": "Open",
       "checksFailed": "{n} checks failed",
       "checksRunning": "{n} checks running",
+      "checksCancelled": "{n} checks cancelled",
       "checksPassed": "{n} checks passed",
       "noApprovals": "No approvals yet",
       "voidTitle": "Void this review?",

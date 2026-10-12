@@ -45,7 +45,17 @@ jobs:
             echo "No finished Required CI run on $HEAD_SHA; its title step will read the PR when it runs."
             exit 0
           fi
+          # Only a job that actually ran is worth re-running: `CI required` is a
+          # literal name in required-ci.yml, so it also matches the job of a
+          # draft-quick or superseded run, where it is skipped or cancelled and
+          # re-running it would report nothing about the title.
           job=$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json jobs \
-            --jq '.jobs[] | select(.name == "CI required") | .databaseId')
+            --jq '.jobs[] | select(.name == "CI required")
+                  | select(.conclusion != "skipped" and .conclusion != "cancelled")
+                  | .databaseId')
+          if [ -z "$job" ]; then
+            echo "Run $run has no 'CI required' that ran (draft quick or superseded); the run in flight reads the title when it does."
+            exit 0
+          fi
           echo "Re-running 'CI required' (job $job) of Required CI run $run."
           gh run rerun --job "$job" --repo "$GITHUB_REPOSITORY"

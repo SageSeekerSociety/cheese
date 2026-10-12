@@ -20,6 +20,8 @@ import os
 import tempfile
 from collections.abc import Awaitable, Callable
 
+from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
+
 from app.core.config import settings
 from app.core.sentences import say
 from app.domain.agent import connector_build
@@ -309,6 +311,12 @@ echo "cheese.service active"
 """
 
 
+def _last_result(state: RetryCallState):
+    """What the last attempt returned, once retrying it has run out."""
+    assert state.outcome is not None
+    return state.outcome.result()
+
+
 async def run_bootstrap(
     *,
     ip: str,
@@ -330,35 +338,34 @@ async def run_bootstrap(
             handle.write(private_key)
         ssh = ["ssh", "-i", key_path, *SSH_OPTS, f"{login_user}@{ip}"]
 
+        async def once(*command: str) -> tuple[int | None, bytes]:
+            child = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            try:
+                output, _ = await asyncio.wait_for(
+                    child.communicate(), timeout=SSH_TIMEOUT_S
+                )
+            except TimeoutError as exc:
+                child.kill()
+                await child.wait()
+                raise EnrollmentError("Claude transfer timed out") from exc
+            return child.returncode, output
+
         async def run(*command: str, wait_for_ssh: bool = False) -> bytes:
             deadline = asyncio.get_running_loop().time() + SSH_READY_WAIT_S
-            while True:
-                child = await asyncio.create_subprocess_exec(
-                    *command,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT,
-                )
-                try:
-                    output, _ = await asyncio.wait_for(
-                        child.communicate(), timeout=SSH_TIMEOUT_S
-                    )
-                except TimeoutError as exc:
-                    child.kill()
-                    await child.wait()
-                    raise EnrollmentError("Claude transfer timed out") from exc
+            returncode, output = await AsyncRetrying(
                 # 255 is ssh's own failure — the connection, not the command.
-                if (
-                    wait_for_ssh
-                    and child.returncode == 255
-                    and asyncio.get_running_loop().time() < deadline
-                ):
-                    await asyncio.sleep(SSH_READY_POLL_S)
-                    continue
-                break
-            if child.returncode:
+                retry=retry_if_result(lambda ran: wait_for_ssh and ran[0] == 255),
+                stop=lambda _: asyncio.get_running_loop().time() >= deadline,
+                wait=wait_fixed(SSH_READY_POLL_S),
+                retry_error_callback=_last_result,
+            )(once, *command)
+            if returncode:
                 raise EnrollmentError(
-                    f"Claude transfer failed ({child.returncode}): "
-                    f"{output.decode()[-300:]}"
+                    f"Claude transfer failed ({returncode}): {output.decode()[-300:]}"
                 )
             return output
 

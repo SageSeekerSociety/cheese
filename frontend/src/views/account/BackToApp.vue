@@ -30,9 +30,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { forgetAppChallenge, pendingAppChallenge } from './appSignIn'
 import BackToAppView from './BackToAppView.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { appLink } from '@/lib/desktopApp'
 import { myId } from '@/me'
-import { UserApi } from '@/network/api/users'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -64,7 +64,7 @@ async function handOver() {
   }
   handing.value = true
   try {
-    const { data } = await UserApi.startAppSignIn(challenge)
+    const data = await UserAuthApi.startAppSignIn(challenge)
     forgetAppChallenge()
     openApp(appLink(`/account/oauth/from-browser?${new URLSearchParams({ code: data.code })}`))
   } catch (e) {

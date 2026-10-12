@@ -9,15 +9,13 @@
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import Deleted, ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.db import get_db
 from app.core.errors import ForbiddenError
 from app.core.sentences import say
 from app.domain.agent.project_feed import TOPICS, tell_project
@@ -26,8 +24,6 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/topics", tags=["topics"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.post("/{topic_id}/archive")

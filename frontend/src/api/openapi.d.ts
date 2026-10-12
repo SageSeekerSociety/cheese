@@ -1255,6 +1255,9 @@ export interface paths {
          *     `credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者
          *     不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。
          *
+         *     `cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、
+         *     谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。
+         *
          *     `claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里
          *     唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，
          *     理由见那个模块的 docstring）。
@@ -2165,6 +2168,37 @@ export interface paths {
          */
         post: operations["toggle_reaction_blocks__block_id__reactions_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/blocks/{block_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw Answer
+         * @description Take back your own answer to a question asked with quick replies, so the
+         *     question is unanswered again and its options come back for everyone.
+         *
+         *     ``block_id`` is the question, not the answer: an answer is an ordinary
+         *     message, and what is withdrawn is the line it left on the question
+         *     (`domain/block/questions`). Only whoever answered it can — anyone else gets
+         *     a refusal, not a way to erase somebody's answer. The message the answerer
+         *     sent stays in the room; its words are not what this changes.
+         *
+         *     Whoever was watching gets the question as a `block_updated` frame, and the
+         *     agent that asked it runs another turn, because the turn it had been going
+         *     on was decided on an answer that no longer counts.
+         */
+        delete: operations["withdraw_answer_blocks__block_id__answer_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -12967,6 +13001,12 @@ export interface components {
             where?: string | null;
             /** Request Id */
             request_id?: string | null;
+            /** Received Events */
+            received_events?: number | null;
+            /** Upstream Failure */
+            upstream_failure?: string | null;
+            /** Ended By */
+            ended_by?: string | null;
         };
         /** BindTeamRequest */
         BindTeamRequest: {
@@ -17021,6 +17061,40 @@ export interface components {
             w: number;
             /** H */
             h: number;
+        };
+        /**
+         * WithdrawnAnswer
+         * @description 撤回一道题的回答，回的是这道题撤回之后的样子。
+         *
+         *     和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+         *     不必再取一次。
+         */
+        WithdrawnAnswer: {
+            /** Id */
+            id: string;
+            /**
+             * Answer Log
+             * @default []
+             */
+            answer_log: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** WithdrawnAnswerEnvelope */
+        WithdrawnAnswerEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["WithdrawnAnswer"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** WorkLeaseRequest */
         WorkLeaseRequest: {
@@ -21192,6 +21266,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    withdraw_answer_blocks__block_id__answer_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawnAnswerEnvelope"];
                 };
             };
             /** @description Validation Error */

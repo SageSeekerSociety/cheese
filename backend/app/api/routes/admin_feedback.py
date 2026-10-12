@@ -20,11 +20,10 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
-from app.core.db import get_db
 from app.core.errors import ForbiddenError
 from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
@@ -50,9 +49,6 @@ class FeedbackAdminCounts(FeedbackCounts):
 
 class FeedbackAdminListOut(Page[FeedbackCard]):
     counts: FeedbackAdminCounts
-
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_feedback_service(db: DbSession) -> feedback_services.FeedbackService:

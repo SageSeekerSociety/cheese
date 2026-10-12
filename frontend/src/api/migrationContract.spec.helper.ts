@@ -118,6 +118,10 @@ export async function compareRequests(
         url: request.url,
         authorization: request.headers.get('authorization'),
         contentType: test.fileFields ? 'multipart/form-data' : request.headers.get('content-type'),
+        // Whether the browser would send the refresh cookie: `withCredentials`
+        // on the config decides it, so a method that loses the flag still sends
+        // the same method/url/body and only this value would tell them apart.
+        credentials: request.credentials,
         body,
       })
       return test.blob

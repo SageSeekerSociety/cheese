@@ -17,13 +17,13 @@ import uuid
 from collections.abc import Iterable
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from sqlalchemy import ColumnElement, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import Block, BlockKind
@@ -43,7 +43,6 @@ from app.domain.user.services import faces_by_handle
 
 router = APIRouter(prefix="", tags=["project-context"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 SEARCHED_BLOCKS = (
     BlockKind.message,

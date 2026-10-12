@@ -93,3 +93,12 @@ export function dayLabel(date: string): string {
   const [, month, day] = date.slice(0, 10).split('-')
   return `${Number(month)}/${Number(day)}`
 }
+
+/** 账本上的通路代号 → 人话。`''` 是补上这一列之前写下的那些行。 */
+export function usageRouteLabel(t: Trans, route: string): string {
+  if (route === 'gateway') return t('feedback.dashboard.usage.route.gateway')
+  if (route === 'subscription') return t('feedback.dashboard.usage.route.subscription')
+  if (route === 'native') return t('feedback.dashboard.usage.route.native')
+  if (route === 'own') return t('feedback.dashboard.usage.route.own')
+  return t('feedback.dashboard.usage.route.unknown')
+}

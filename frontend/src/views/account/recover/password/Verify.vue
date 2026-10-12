@@ -8,7 +8,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { TokenPayload } from '@/network/api/users/types'
+import type { TokenPayload } from '@/types/apiUsers'
 import type { SignInNoticeKey } from '../../signInNotice'
 
 import { computed, ref } from 'vue'
@@ -17,8 +17,9 @@ import { jwtDecode } from 'jwt-decode'
 
 import VerifyView from './VerifyView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 
 const route = useRoute()
@@ -47,7 +48,7 @@ const submit = async (password: string) => {
   }
   submitting.value = true
   try {
-    await UserApi.recoverPasswordVerify({
+    await UserAuthApi.recoverPasswordVerify({
       token: token.value,
       password,
     })
@@ -55,7 +56,7 @@ const submit = async (password: string) => {
     const message: SignInNoticeKey = 'passwordReset'
     router.replace({ name: 'SignIn', query: { username: username.value, message } })
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.resetPassword.failed'))
+    error.value = axiosErrorMessage(e, requestErrorMessage(e, t('account.resetPassword.failed')))
   } finally {
     submitting.value = false
   }

@@ -3384,7 +3384,7 @@
           "admin"
         ],
         "summary": "Usage Stats",
-        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。\n\n`claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里\n唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，\n理由见那个模块的 docstring）。",
+        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。\n\n`cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、\n谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。\n\n`claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里\n唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，\n理由见那个模块的 docstring）。",
         "operationId": "usage_stats_admin_stats_usage_get",
         "parameters": [
           {
@@ -7204,6 +7204,50 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Toggle Reaction Blocks  Block Id  Reactions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/blocks/{block_id}/answer": {
+      "delete": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Withdraw Answer",
+        "description": "Take back your own answer to a question asked with quick replies, so the\nquestion is unanswered again and its options come back for everyone.\n\n``block_id`` is the question, not the answer: an answer is an ordinary\nmessage, and what is withdrawn is the line it left on the question\n(`domain/block/questions`). Only whoever answered it can — anyone else gets\na refusal, not a way to erase somebody's answer. The message the answerer\nsent stays in the room; its words are not what this changes.\n\nWhoever was watching gets the question as a `block_updated` frame, and the\nagent that asked it runs another turn, because the turn it had been going\non was decided on an answer that no longer counts.",
+        "operationId": "withdraw_answer_blocks__block_id__answer_delete",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawnAnswerEnvelope"
                 }
               }
             }
@@ -51986,6 +52030,42 @@
               }
             ],
             "title": "Request Id"
+          },
+          "received_events": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Events"
+          },
+          "upstream_failure": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Failure"
+          },
+          "ended_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended By"
           }
         },
         "type": "object",
@@ -62774,6 +62854,65 @@
         ],
         "title": "WebViewportIn",
         "description": "选区当时视口的大小，和 `WebRectIn` 一起还原出位置。"
+      },
+      "WithdrawnAnswer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "answer_log": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Answer Log",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "WithdrawnAnswer",
+        "description": "撤回一道题的回答，回的是这道题撤回之后的样子。\n\n和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，\n不必再取一次。"
+      },
+      "WithdrawnAnswerEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WithdrawnAnswer"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WithdrawnAnswerEnvelope"
       },
       "WorkLeaseRequest": {
         "properties": {

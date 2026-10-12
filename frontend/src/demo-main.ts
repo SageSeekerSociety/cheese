@@ -23,7 +23,8 @@ import { demoRouter } from '@/views/demo/demoRouter'
 import DemoView from '@/views/demo/DemoView.vue'
 
 // 这一条入口上现在有两页，地址说了算：组件预览站（/demo/catalog…）和动态演示
-// （/demo/<名字>）。两页都是「地址当 props 传进去」，只是预览站不看查询串。
+// （/demo/<名字>）。两页都是「地址当 props 传进去」；查询串两页都收：动态演示按它
+// 选演示，预览站按它给 iframe 里的那一格定主题、动效和底色。
 const catalog = /^\/demo\/catalog(\/|$)/.test(location.pathname)
 // 预览里根路径就是这一页：话题预览把根路径直接喂给演示页，地址栏留的是 `/`。
 // 那时按 `/` 去选页会落到 DemoView 上、它不认识这个地址，结果一片空白——所以
@@ -36,12 +37,12 @@ const root = location.pathname === '/' || location.pathname === '/index.html'
 const asked = new URLSearchParams(location.search).get('theme')
 if (asked === 'dark' || asked === 'light') {
   applyResolvedTheme(asked)
-  vuetify.theme.global.name.value = asked
+  vuetify.theme.change(asked)
 }
 
 createApp(catalog || root ? (DemoCatalog as Component) : DemoView, {
   path: root ? '/demo/catalog/ask-takeover' : location.pathname,
-  ...(catalog || root ? {} : { search: location.search }),
+  search: location.search,
 })
   .use(vuetify)
   .use(i18n)

@@ -15,16 +15,15 @@ buttons to draw.
 
 import uuid
 from datetime import datetime
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import notice_keys, say
 from app.domain.agent_instance.own import may_work_for
@@ -39,8 +38,6 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["routines"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class RoutineIn(BaseModel):

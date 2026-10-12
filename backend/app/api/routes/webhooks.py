@@ -9,13 +9,12 @@ app.main, which this path is deliberately NOT listed under.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Request
 
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import async_session_factory, get_db
+from app.core.db import async_session_factory
 from app.core.errors import AuthenticationRequiredError, ValidationError
 from app.core.sentences import say
 from app.domain.project.services import refuse_writes_if_archived
@@ -23,8 +22,6 @@ from app.domain.topic.repositories import TopicRepository
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def _caller_token(request: Request) -> str:

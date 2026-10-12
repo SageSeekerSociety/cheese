@@ -12,14 +12,14 @@ import Profile from './Profile.vue'
 
 import { createAvatar, getDefaultAvatarId } from '@/api/avatars'
 import { ApiError } from '@/api/http'
+import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import AccountService from '@/services/account'
 
 const DEFAULT_AVATAR = 1
 const CHOSEN_AVATAR = 30
 
-vi.mock('@/network/api/users', () => ({ UserApi: { updateUserInfo: vi.fn() } }))
+vi.mock('@/api/users', () => ({ UserApi: { updateUserInfo: vi.fn() } }))
 vi.mock('@/api/avatars', () => ({ createAvatar: vi.fn(), getDefaultAvatarId: vi.fn() }))
 vi.mock('@/services/account', async () => {
   const { reactive } = await import('vue')

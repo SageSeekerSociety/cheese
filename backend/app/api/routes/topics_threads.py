@@ -19,8 +19,9 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.routes.topics import _actor_in_place
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say

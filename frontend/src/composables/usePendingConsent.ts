@@ -17,8 +17,8 @@ import { useNavigation } from '@/composables/useNavigation'
 
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { LegalApi } from '@/api/legal'
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService, { currentUserId } from '@/services/account'
 
@@ -63,7 +63,7 @@ export function usePendingConsent() {
     // 和用户菜单里的退出同一个顺序：先让服务端作废刷新令牌，否则下次打开页面
     // 会话又被恢复回来。退出后没有身份，弹窗也就不会再出现，直到下次登录。
     try {
-      await UserApi.logout()
+      await UserAuthApi.logout()
     } catch (e) {
       console.warn('Logout request failed; clearing local session anyway:', e)
     } finally {

@@ -489,7 +489,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/textfile.py": 1,
     "app/domain/thread/services.py": 1,
     "app/domain/topic/cleanup_trigger.py": 1,
-    "app/domain/topic/retire.py": 8,
+    "app/domain/room_cleanup/retire.py": 8,
     "app/domain/topic/services.py": 15,
     "app/domain/topic_membership/services.py": 10,
     "app/domain/usage/ledger.py": 1,
@@ -522,16 +522,63 @@ def test_every_exemption_says_why():
     )
 
 
+def _moved_files(
+    baseline: dict[str, int], found: Counter[str], exists
+) -> dict[str, str]:
+    """Old key -> new key, for a file that moved with its English refusals.
+
+    A moved file shows up twice: its old line counts as gone and its new path as
+    a file that grew from nothing. The two are the same debt, so the one to do is
+    to rename the key. A key is read as moved when its file no longer exists and
+    a file not in the baseline holds exactly its count.
+    """
+    gone = {p: n for p, n in baseline.items() if found.get(p, 0) == 0 and not exists(p)}
+    fresh = {p: n for p, n in found.items() if p not in baseline}
+    moved: dict[str, str] = {}
+    for old, n in sorted(gone.items()):
+        for new in sorted(fresh):
+            if fresh[new] == n and new not in moved.values():
+                moved[old] = new
+                break
+    return moved
+
+
+def _how_to_update(baseline: dict[str, int], found: Counter[str], exists) -> str:
+    moved = _moved_files(baseline, found, exists)
+    lines = [
+        "To update _BASELINE in this file, replace its lines for the files below "
+        "(a count that fell, or a file now gone, is deleted or lowered; a file "
+        "that moved keeps its count under its new path):"
+    ]
+    for old, new in moved.items():
+        lines.append(
+            f'  moved?: rename "{old}" to "{new}" ({baseline[old]}) if the file '
+            "moved, else delete the old line"
+        )
+    for path, count in sorted(baseline.items()):
+        now = found.get(path, 0)
+        if now < count and path not in moved:
+            lines.append(
+                f'  fell: "{path}": {count} -> {now}'
+                + (" (delete the line)" if now == 0 else "")
+            )
+    return "\n".join(lines)
+
+
 def test_a_refusal_isnt_written_in_english_or_the_count_only_falls():
     _, found, _ = _app_scan()
+    exists = lambda path: (BACKEND / path).exists()  # noqa: E731
+    moved = _moved_files(_BASELINE, found, exists)
     grew = {
         path: (count, _BASELINE.get(path, 0))
         for path, count in found.items()
-        if count > _BASELINE.get(path, 0)
+        if count > _BASELINE.get(path, 0) and path not in moved.values()
     }
     assert not grew, (
         "English written where a refusal is raised, more than this file held "
-        f"before (file: now, before): {grew}\n{ENGLISH_TO_FIX}"
+        f"before (file: now, before): {grew}\n{ENGLISH_TO_FIX}\n"
+        "If the file only moved, its line in _BASELINE needs the new path.\n"
+        + _how_to_update(_BASELINE, found, exists)
     )
     shrank = {
         path: (count, found.get(path, 0))
@@ -539,9 +586,22 @@ def test_a_refusal_isnt_written_in_english_or_the_count_only_falls():
         if found.get(path, 0) < count
     }
     assert not shrank, (
-        "These English refusals are gone; lower or delete their lines in "
-        f"_BASELINE (file: before, now): {shrank}"
+        "These English refusals are gone or their file moved (file: before, "
+        f"now): {shrank}\n" + _how_to_update(_BASELINE, found, exists)
     )
+
+
+def test_a_moved_file_is_told_to_rename_its_baseline_line():
+    baseline = {"app/old.py": 3, "app/kept.py": 2, "app/fixed.py": 1}
+    found = Counter({"app/new.py": 3, "app/kept.py": 2})
+    present = {"app/kept.py", "app/new.py"}
+    assert _moved_files(baseline, found, present.__contains__) == {
+        "app/old.py": "app/new.py"
+    }
+    hint = _how_to_update(baseline, found, present.__contains__)
+    assert 'rename "app/old.py" to "app/new.py" (3)' in hint
+    assert '"app/fixed.py": 1 -> 0 (delete the line)' in hint
+    assert "app/kept.py" not in hint
 
 
 def _scan_text(

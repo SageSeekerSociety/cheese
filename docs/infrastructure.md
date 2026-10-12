@@ -378,8 +378,12 @@ changes before merging.
 `.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
 It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
 Documentation-only changes run repository guards. Failed scope detection, failed
-or cancelled selected suites, and unexpected skips fail `CI required`. The same
-job checks this repo's commit titles with `.github/scripts/check-commit-title.py`:
+or cancelled selected suites, and unexpected skips fail `CI required`. A draft PR
+runs the fast tier instead, aggregated by a separate job named
+`CI required (draft quick)`; both aggregating job names are literals in the
+workflow, so a cancelled run still shows its name and not its expression. The
+full-tier job checks this repo's commit titles with
+`.github/scripts/check-commit-title.py`:
 the PR title on a pull request, and every squash commit about to land in the
 merge queue. Remote
 execution acceptance remains advisory pending the stability target in #1279; the

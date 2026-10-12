@@ -16,6 +16,7 @@ invocation available on the machine (CI provides it via uv — `uvx pre-commit`
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -40,6 +41,18 @@ def git(repo, *args):
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
 
 
+def _cores():
+    """The core count the code under test will see.
+
+    Not the host's online cores: `ci_fast_checks._cores` prefers the process's
+    own affinity/CPU count. A skip decided on a different number would run a
+    core-capped assertion on a machine whose cgroup or cpuset is narrower than
+    the host, where it can only fail.
+    """
+    from ci_fast_checks import _cores as cores
+    return cores()
+
+
 class CiFastTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="ci-fast-test-"))
@@ -62,16 +75,17 @@ class CiFastTest(unittest.TestCase):
         (self.repo / "backend/app").mkdir(parents=True)
         (self.repo / "frontend/src").mkdir(parents=True)
 
-    def write_hooks(self, failing=(), omit=(), extra_entries=""):
+    def write_hooks(self, failing=(), omit=(), slow=(), extra_entries=""):
         entries = []
         for hook_id in ALL_HOOKS:
             if hook_id in omit:
                 continue
             exit_code = 1 if hook_id in failing else 0
+            tail = "sleep 30; " if hook_id in slow else ""
             entries.append(
                 f"""      - id: {hook_id}
         name: {hook_id} stub
-        entry: bash -c 'echo {hook_id} >> .ci-fast-ran; echo {hook_id}-output; exit {exit_code}'
+        entry: bash -c 'echo {hook_id} >> .ci-fast-ran; {tail}echo {hook_id}-output; exit {exit_code}'
         language: system
         pass_filenames: false
         always_run: true
@@ -267,6 +281,33 @@ class CiFastTest(unittest.TestCase):
         self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
         self.assertIn("strange-dir/thing.xyz", self.report()["unknown_paths"])
 
+    # --- prose is not an unknown path: a docs-only diff must not pull in the
+    # product suites. The map leaves README.md/AGENTS.md/SKILL.md unnamed, so
+    # before this they widened the scope to the full suite — which a quick run
+    # cannot fit, so a docs-only draft answered "unknown" (2026-10-12).
+    def test_docs_only_diff_does_not_widen_scope(self):
+        self.write_hooks()
+        self.make_base_and_head("README.md")
+        for path in ("AGENTS.md", "docs/manual/dev/ci.md", ".claude/skills/x/SKILL.md"):
+            self.commit_file(path)
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(FRONTEND_HOOKS & self.ran_hooks())
+        self.assertFalse(BACKEND_HOOKS & self.ran_hooks())
+        self.assertTrue(GUARD_HOOKS <= self.ran_hooks())
+        self.assertEqual(self.report()["unknown_paths"], [])
+
+    # --- ...but prose alongside a path the map cannot place does not excuse it
+    def test_docs_next_to_an_unknown_path_still_widens(self):
+        self.write_hooks()
+        self.make_base_and_head("README.md")
+        self.commit_file("strange-dir/thing.xyz")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertTrue(FRONTEND_HOOKS & self.ran_hooks())
+        self.assertTrue(BACKEND_HOOKS & self.ran_hooks())
+        self.assertEqual(self.report()["unknown_paths"], ["strange-dir/thing.xyz"])
+
     # --- staged + unstaged + untracked all count, and the report proves it
     def test_dirty_worktree_selected_and_fingerprinted(self):
         self.write_hooks()
@@ -452,6 +493,23 @@ if "--project" in args:
         config_path = rows["frontend-typecheck-changed"]["command"][-2]
         self.assertFalse(Path(config_path).exists(), "temporary project must be cleaned")
 
+    @unittest.skipIf(_cores() < 3, "the pool is core-capped on this machine")
+    def test_quick_pool_follows_a_runner_sized_ceiling(self):
+        # The draft job hands the runner's ceiling down, so the frontend pool
+        # must come from it instead of staying at the local default of one.
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/probe.ts")
+        proc = self.run_ci_fast("--tier", "quick", "--title", "feat: size the pool",
+                                "--memory-mib", "9216", env_extra=self.quick_tools())
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rep = self.report()
+        self.assertEqual(rep["memory_limit_mib"], 9216)
+        rows = {r["id"]: r for r in rep["ran"]}
+        workers = next(a.split("=", 1)[1] for a in rows["frontend-unit"]["command"]
+                       if a.startswith("--maxWorkers="))
+        self.assertGreater(int(workers), 1)
+        self.assertIn(f"--maxWorkers={workers}", rows["frontend-i18n"]["command"])
+
     def test_quick_empty_tests_are_unknown(self):
         self.write_hooks()
         self.make_base_and_head("frontend/src/probe.ts")
@@ -590,6 +648,41 @@ sys.exit(0)
         self.assertEqual(proc.returncode, 2, proc.stdout)
         self.assertLess(self.report()["seconds"], 3)
         self.assertTrue(any(r["result"] in ("budget", "timeout") for r in self.report()["ran"]))
+
+    def test_memory_limit_above_the_default_is_accepted(self):
+        # The work machine's 3072 MiB session cap is the default, not a hard
+        # ceiling: a runner that can back more may raise it, and past the cap
+        # the value is refused rather than clamped. The cap is read out of
+        # --help so raising it does not have to be mirrored here.
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        cap = int(re.search(r"ceiling, 1\.\.(\d+)", self.run_ci_fast("--help").stdout).group(1))
+        self.assertGreater(cap, 3072)
+        proc = self.run_ci_fast("--memory-mib", str(cap))
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.report()["memory_limit_mib"], cap)
+        proc = self.run_ci_fast("--memory-mib", str(cap + 1))
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn(str(cap), proc.stderr)
+
+    def test_js_hook_without_budget_is_unknown_not_run(self):
+        # A node hook started on a nearly empty budget would spend its life
+        # being killed instead of judged; report it unknown, never a red it did
+        # not observe. The budget is spent by a real (slow) stub hook first, so
+        # nothing here is stubbed away.
+        self.write_hooks(slow={"manual-anchors"})
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--budget", "3", "--timeout", "2")
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        rows = {r["id"]: r for r in self.report()["ran"]}
+        for identifier in ("eslint", "stylelint", "boundary-check-frontend"):
+            self.assertEqual(rows[identifier]["result"], "unknown", identifier)
+        self.assertNotIn("eslint", self.ran_hooks())
+        # The two ratchets are python scripts costing seconds, far too cheap for
+        # a fixed floor to judge: they are left to their own per-check timeout,
+        # so a budget that ran out must still never read as their failure.
+        for identifier in ("scene-ratchet", "catalog-ratchet"):
+            self.assertNotEqual(rows.get(identifier, {}).get("result"), "fail", identifier)
 
 
 class SelectionEvidenceTest(unittest.TestCase):
@@ -806,6 +899,48 @@ class SelectionEvidenceTest(unittest.TestCase):
             plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root, conservative)
             unit = next(p for p in plan if p["id"] == "frontend-unit")
             self.assertEqual(unit["evidence"]["mode"], "full", changed)
+
+    def test_vitest_workers_follow_the_memory_ceiling(self):
+        # The arithmetic bounds the black-box path below cannot reach: the core
+        # count capping a huge ceiling, and the pool never spending a ceiling
+        # entirely on workers. The wiring (ceiling -> flag) is black-box tested
+        # by test_quick_pool_follows_a_runner_sized_ceiling.
+        from ci_fast_checks import MIB_PER_VITEST_WORKER, vitest_flags, vitest_workers
+        # One fork per 3 GiB is frontend/vite.config.ts's own rule (a fork
+        # peaks at 1.7–2.1 GB), so the two stay in step on the same machine.
+        self.assertEqual(MIB_PER_VITEST_WORKER, 3 * 1024)
+        # A tiny ceiling leaves room for one fork and the pool never drops
+        # below that, whatever the machine has.
+        self.assertEqual(vitest_workers(3072), 1)
+        self.assertEqual(vitest_workers(1024), 1)
+        # A ceiling that pays for more forks than the machine has cores is
+        # capped by the cores: the memory term (341 forks) cannot bind here, so
+        # the core count is the only variable, and the floor still applies.
+        self.assertEqual(vitest_workers(1024 * 1024), max(1, min(16, _cores() - 1)))
+        if _cores() >= 3:
+            # The boundary itself: exactly two forks' worth of ceiling buys two
+            # forks on a machine with three or more cores.
+            self.assertEqual(vitest_workers(6 * 1024), 2)
+            self.assertEqual(vitest_workers(8 * 1024), 2)
+        if _cores() >= 4:
+            # The draft job's ceiling on the 4 vCPU runner: what vite.config.ts
+            # computes for that box, i.e. the pool a frontend change is meant to
+            # get there instead of the single worker.
+            self.assertEqual(vitest_workers(9216), 3)
+        flags = vitest_flags(8 * 1024)
+        self.assertIn(f"--maxWorkers={vitest_workers(8 * 1024)}", flags)
+        if _cores() >= 3:
+            # A ceiling that buys more than one fork must show more than that in
+            # the flags, not the single-worker pin this replaced.
+            self.assertNotIn("--maxWorkers=1", flags)
+        self.assertIn("--no-passWithNoTests", flags)
+        # A single worker keeps the files in the process that started Vitest —
+        # the form the tier had while its pool was pinned to one, and the local
+        # default under the work machine's own 3 GiB cap. Once the ceiling backs
+        # a pool, the pool is what bounds memory and the serial-file pin goes.
+        self.assertIn("--no-file-parallelism", vitest_flags(3072))
+        if _cores() >= 3:
+            self.assertNotIn("--no-file-parallelism", flags)
 
     def test_frontend_meta_and_ambient_force_full_typecheck(self):
         from ci_fast_checks import test_plan

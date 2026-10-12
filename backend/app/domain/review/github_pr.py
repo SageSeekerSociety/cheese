@@ -18,7 +18,7 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import Any, Final, Literal, Protocol
+from typing import Any, Literal, Protocol
 
 import httpx
 
@@ -31,7 +31,13 @@ from app.domain.review.github_pr_status import (
     parse_pull_request_status,
     settled,
 )
-from app.domain.review.pr_signals import ReviewSignal
+from app.domain.review.merge_state import RED_CONCLUSIONS
+from app.domain.review.pr_signals import (
+    ReviewSignal,
+    review_comment_signal,
+    review_signal,
+)
+from app.domain.review.superseded_runs import actions_job_id, drop_superseded
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +335,13 @@ class GitHubPrClient(Protocol):
         ...
 
 
-_FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "stale"}
+#: 算「红」的结论词只有一份，在 `merge_state`（它同时管必跑名单的判定）：
+#: `cancelled` 不在里面 —— 被顶替、被人工取消、作业被取消都不是「没通过」，
+#: 见 `superseded_runs`。
+_FAILED_CONCLUSIONS = RED_CONCLUSIONS
+
+#: 既不算过、也不算没通过的那些：说出来（卡面标「已取消」），别说成全绿。
+_NO_VERDICT_CONCLUSIONS = frozenset({"cancelled", "stale"})
 
 
 def _is_pr_already_exists(resp: httpx.Response) -> bool:
@@ -412,8 +424,6 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _TOKEN_SHAPE_RE = re.compile(
     r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,})"
 )
-#: An Actions check-run's html_url: `.../actions/runs/<run>/job/<job>`.
-_ACTIONS_JOB_URL_RE = re.compile(r"/actions/runs/\d+/job/(?P<job>\d+)")
 
 
 class HttpxGitHubPrClient:
@@ -542,9 +552,20 @@ class HttpxGitHubPrClient:
         except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError):
             return None
 
-    async def check_state(
-        self, *, owner: str, repo: str, ref: str, token: str
-    ) -> tuple[CheckState, str]:
+    async def _check_runs(
+        self,
+        owner: str,
+        repo: str,
+        ref: str,
+        token: str,
+        key: str = "githubRefusedCheckRuns",
+    ) -> list[dict]:
+        """`/commits/{ref}/check-runs` 的读，去掉被顶替运行留下的那些。
+
+        去掉这一步（`superseded_runs`）只在真的有「跑完了、结论不绿」的 check
+        run 时才多读一次 Actions 的运行列表 —— 全绿和还在跑的稳态仍是一问一答，
+        轮询不会凭空多一次往返。
+        """
         async with forge_client(transport=self._transport, timeout=30.0) as client:
             resp = await client.get(
                 f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
@@ -552,8 +573,25 @@ class HttpxGitHubPrClient:
                 params={"per_page": 100},
             )
         if resp.status_code != 200:
-            raise _refused("githubRefusedCheckStatus", resp)
-        runs = resp.json().get("check_runs", [])
+            raise _refused(key, resp)
+        runs = resp.json().get("check_runs") or []
+        kept = [run for run in runs if isinstance(run, dict)]
+        return await drop_superseded(
+            kept,
+            self._api_base,
+            owner,
+            repo,
+            ref,
+            self._headers(token),
+            self._transport,
+        )
+
+    async def check_state(
+        self, *, owner: str, repo: str, ref: str, token: str
+    ) -> tuple[CheckState, str]:
+        runs = await self._check_runs(
+            owner, repo, ref, token, "githubRefusedCheckStatus"
+        )
         if runs:
             # Real check-runs showed up — whatever ambiguity there was about
             # this ref is resolved, forget any grace-period bookkeeping.
@@ -591,7 +629,7 @@ class HttpxGitHubPrClient:
         blocks: list[str] = []
         for run in failed[:_FAILURE_DETAIL_MAX_JOBS]:
             block = _failure_headline(run)
-            job_id = _actions_job_id(run)
+            job_id = actions_job_id(run)
             if job_id is not None:
                 excerpt = await self._job_log_excerpt(
                     owner=owner, repo=repo, job_id=job_id, token=token
@@ -839,16 +877,7 @@ class HttpxGitHubPrClient:
     async def list_check_runs(
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> list[dict]:
-        async with forge_client(transport=self._transport, timeout=30.0) as client:
-            resp = await client.get(
-                f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
-                headers=self._headers(token),
-                params={"per_page": 100},
-            )
-        if resp.status_code != 200:
-            raise _refused("githubRefusedCheckRuns", resp)
-        runs = resp.json().get("check_runs") or []
-        return [run for run in runs if isinstance(run, dict)]
+        return await self._check_runs(owner, repo, ref, token)
 
     async def compare_status(
         self, *, owner: str, repo: str, base: str, head: str, token: str
@@ -869,20 +898,8 @@ class HttpxGitHubPrClient:
     async def check_run_names(
         self, *, owner: str, repo: str, ref: str, token: str
     ) -> set[str]:
-        async with forge_client(transport=self._transport, timeout=30.0) as client:
-            resp = await client.get(
-                f"{self._api_base}/repos/{owner}/{repo}/commits/{ref}/check-runs",
-                headers=self._headers(token),
-                params={"per_page": 100},
-            )
-        if resp.status_code != 200:
-            raise _refused("githubRefusedCheckRuns", resp)
-        runs = resp.json().get("check_runs") or []
-        return {
-            str(run.get("name"))
-            for run in runs
-            if isinstance(run, dict) and run.get("name")
-        }
+        runs = await self._check_runs(owner, repo, ref, token)
+        return {str(run.get("name")) for run in runs if run.get("name")}
 
     async def review_signals(
         self,
@@ -896,8 +913,8 @@ class HttpxGitHubPrClient:
         base = f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}"
         out: list[ReviewSignal] = []
         for path, builder in (
-            ("reviews", _review_signal),
-            *((("comments", _review_comment_signal),) if with_comments else ()),
+            ("reviews", review_signal),
+            *((("comments", review_comment_signal),) if with_comments else ()),
         ):
             for item in await self._review_page(f"{base}/{path}", token=token):
                 signal = builder(item)
@@ -955,60 +972,12 @@ class HttpxGitHubPrClient:
         )
 
 
-#: GitHub's review states 芝士 is expected to act on. `APPROVED` and
-#: `DISMISSED` are left out on purpose: neither asks for a change, and a card
-#: that nudged on an approval would be pure noise.
-_ACTIONABLE_REVIEW_STATES: Final = {
-    "CHANGES_REQUESTED": "changes_requested",
-    "COMMENTED": "commented",
-}
-
-
-def _review_signal(item: dict) -> ReviewSignal | None:
-    """One entry of `GET /pulls/{n}/reviews`, or None if it asks for nothing.
-
-    A `COMMENTED` review with an empty body is what GitHub records when
-    somebody submits inline comments without a summary — the comments
-    themselves come from the other endpoint, so this row would only duplicate
-    them.
-    """
-    state = str(item.get("state") or "").upper()
-    kind = _ACTIONABLE_REVIEW_STATES.get(state)
-    if kind is None:
-        return None
-    body = str(item.get("body") or "")
-    if kind == "commented" and not body.strip():
-        return None
-    return ReviewSignal(
-        id=f"review:{item.get('id')}",
-        kind=kind,
-        author=str((item.get("user") or {}).get("login") or ""),
-        body=body,
-    )
-
-
-def _review_comment_signal(item: dict) -> ReviewSignal | None:
-    """One entry of `GET /pulls/{n}/comments` — an inline comment on a line."""
-    body = str(item.get("body") or "")
-    if not body.strip():
-        return None
-    path = str(item.get("path") or "")
-    line = item.get("line") or item.get("original_line")
-    where = f"{path}:{line}" if path and isinstance(line, int) else path
-    return ReviewSignal(
-        id=f"comment:{item.get('id')}",
-        kind="comment",
-        author=str((item.get("user") or {}).get("login") or ""),
-        body=body,
-        where=where,
-    )
-
-
 def _summarize_runs(runs: list[dict]) -> tuple[CheckState, str]:
     if not runs:
         return "pending", "还没有检查报告"
     pending_names = []
     failed = []
+    no_verdict = []
     for run in runs:
         name = run.get("name", "?")
         if run.get("status") != "completed":
@@ -1017,27 +986,20 @@ def _summarize_runs(runs: list[dict]) -> tuple[CheckState, str]:
         conclusion = run.get("conclusion")
         if conclusion in _FAILED_CONCLUSIONS:
             failed.append(f"{name}: {conclusion}")
+        elif conclusion in _NO_VERDICT_CONCLUSIONS:
+            no_verdict.append(f"{name}: {conclusion}")
     if failed:
         return "failure", "、".join(failed[:10])
-    if pending_names:
-        return "pending", "等待中：" + "、".join(pending_names[:10])
+    if pending_names or no_verdict:
+        # 「已取消」不是结论，所以这一档不能报成通过；但它也不是「没通过」，
+        # 所以要说清楚它是什么（卡面照这句标「已取消」）。
+        parts = []
+        if pending_names:
+            parts.append("等待中：" + "、".join(pending_names[:10]))
+        if no_verdict:
+            parts.append("已取消：" + "、".join(no_verdict[:10]))
+        return "pending", "；".join(parts)
     return "success", f"全部 {len(runs)} 项检查通过"
-
-
-def _actions_job_id(run: dict) -> int | None:
-    """The Actions job id behind a check-run, or None when it isn't one.
-
-    Read out of the `/actions/runs/<run>/job/<job>` URL rather than the
-    check-run's own `id`. The two are equal today (verified against this
-    repo's check-runs on 2026-08-11), but only the URL shape *says* the
-    check-run is an Actions job — other apps publish check-runs too (codecov
-    and friends), and handing one of their ids to the jobs API just 404s.
-    """
-    for key in ("html_url", "details_url"):
-        match = _ACTIONS_JOB_URL_RE.search(str(run.get(key) or ""))
-        if match:
-            return int(match.group("job"))
-    return None
 
 
 def _failure_headline(run: dict) -> str:
@@ -1486,6 +1448,17 @@ class GitHubPRClient:
             raise GitHubPRError(
                 f"check-runs read failed (HTTP {resp.status_code}): {resp.text[:300]}"
             )
+        # 卡面数「未通过」用的就是这一份：被顶替的旧运行留下的 check run 一个都
+        # 不该出现在这里。
+        kept = await drop_superseded(
+            resp.json().get("check_runs", []),
+            self._api_base,
+            self._owner,
+            self._repo,
+            ref,
+            self._headers(token),
+            self._transport,
+        )
         return [
             {
                 "name": run.get("name"),
@@ -1493,5 +1466,5 @@ class GitHubPRClient:
                 "conclusion": run.get("conclusion"),
                 "url": run.get("html_url"),
             }
-            for run in resp.json().get("check_runs", [])
+            for run in kept
         ]
