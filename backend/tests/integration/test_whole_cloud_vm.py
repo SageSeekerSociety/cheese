@@ -706,3 +706,22 @@ def test_every_sandbox_is_marked_as_its_sessions_own(cloud):
 
     assert case.client.portal.call(lease, boxed)["own"] is True
     assert case.client.portal.call(lease, on_vm)["own"] is True
+
+
+def test_a_session_refused_a_machine_is_counted_once_however_often_it_asks(
+    cloud, monkeypatch
+):
+    case = cloud
+    monkeypatch.setattr(settings, "cloud_pool_max_hosts", 1)
+    monkeypatch.setattr(settings, "platform_admin_handles", ["ops"])
+    first, second = _room(case, WHOLE_VM, "A"), _room(case, WHOLE_VM, "B")
+    assert _lease(case, first, timeout=0.001).json()["data"]["preparing"]
+
+    for _ in range(3):
+        assert "unavailable" in _lease(case, second, timeout=5).json()["data"]
+
+    history = case.client.get(
+        "/admin/stats/machines", headers=session_auth_headers("ops")
+    ).json()["data"]["history"]
+    assert history["refused_sessions"] == 1
+    assert history["refused_by_reason"] == {"pool_full": 1}

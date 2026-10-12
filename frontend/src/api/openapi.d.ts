@@ -15355,6 +15355,20 @@ export interface components {
             wait_p95_s: number | null;
             /** Wait Max S */
             wait_max_s: number | null;
+            /** Refused Sessions */
+            refused_sessions: number;
+            /** Refused By Reason */
+            refused_by_reason: {
+                [key: string]: number;
+            };
+            /** Hosts Lost */
+            hosts_lost: number;
+            /** Hosts Lost By Reason */
+            hosts_lost_by_reason: {
+                [key: string]: number;
+            };
+            /** Sandboxes Lost */
+            sandboxes_lost: number;
         };
         /** MachineHostOut */
         MachineHostOut: {

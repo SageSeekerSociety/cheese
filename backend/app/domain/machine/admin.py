@@ -8,14 +8,8 @@
 
 过去一天的部分读运行记录：一个沙箱开始准备时记一条 ``cloud_startup``，就绪时记一条
 ``cloud_provisioning``（``progress.py``），两条都带 ``home``。按 ``home`` 配对，就
-是一个会话等沙箱等了多久。
-
-**这一页看不见的两件事**，页面上照实写着：
-
-* 池满（``CloudPoolFull``）或 provider 连续失败（``CloudKeepsFailing``）时，会话
-  直接被拒，不留记录 —— 只能说「此刻会不会拒」，数不出过去拒了几次。
-* 宿主机失联后，上面工作中的沙箱丢了（``tell_lost``），那句话写进了对话本身而不是运
-  行记录，宿主机的行也随之删掉 —— 过去一天丢了几个沙箱，这里数不出来。
+是一个会话等沙箱等了多久。会话被拒（``cloud_refused``）和宿主机被放弃
+（``cloud_host_lost``）各有一条记录，写在 ``infra_records.py``。
 """
 
 from __future__ import annotations
@@ -31,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.agent.environment import spec_of
+from app.domain.machine import infra_records
 from app.domain.machine.models import (
     MAX_PROVIDER_ERRORS,
     PROVIDER_ERROR_WINDOW,
@@ -138,7 +133,7 @@ async def _names(
 async def _history(
     session: AsyncSession, now: datetime, waiting_now: set[str]
 ) -> dict[str, Any]:
-    """过去 ``HISTORY`` 里沙箱的准备、就绪、替换和回收。"""
+    """过去 ``HISTORY`` 里沙箱的准备、就绪、替换和回收，会话被拒，宿主机被放弃。"""
     since = now - HISTORY
     rows = (
         await session.execute(
@@ -150,7 +145,13 @@ async def _history(
             )
             .where(
                 RunRecord.kind.in_(
-                    ["cloud_startup", "cloud_provisioning", "sandbox_asleep"]
+                    [
+                        "cloud_startup",
+                        "cloud_provisioning",
+                        "sandbox_asleep",
+                        infra_records.REFUSED,
+                        infra_records.HOST_LOST,
+                    ]
                 ),
                 RunRecord.created_at >= since,
             )
@@ -159,12 +160,19 @@ async def _history(
     ).all()
     started: dict[str, datetime] = {}
     ready: dict[str, datetime] = {}
-    replaced = released_idle = released_unpaid = 0
+    replaced = released_idle = released_unpaid = sandboxes_lost = 0
+    refused: dict[str, set[str]] = defaultdict(set)
+    hosts_lost: dict[str, int] = defaultdict(int)
     for kind, severity, meta, at in rows:
         meta = meta or {}
         home = meta.get("home")
         said = ((meta.get("i18n") or {}).get("content") or {}).get("key")
-        if kind == "sandbox_asleep":
+        if kind == infra_records.REFUSED:
+            refused[str(meta.get("reason"))].add(str(meta.get("session_id")))
+        elif kind == infra_records.HOST_LOST:
+            hosts_lost[str(meta.get("reason"))] += 1
+            sandboxes_lost += int(meta.get("lost") or 0)
+        elif kind == "sandbox_asleep":
             if severity == "warn":
                 released_unpaid += 1
             else:
@@ -188,6 +196,13 @@ async def _history(
         "replaced": replaced,
         "released_idle": released_idle,
         "released_unpaid": released_unpaid,
+        # 数会话，不数记录：被拒的会话每十分钟记一条
+        # （``infra_records.REFUSAL_REPEAT``）。
+        "refused_sessions": len(set().union(*refused.values())),
+        "refused_by_reason": {reason: len(ids) for reason, ids in refused.items()},
+        "hosts_lost": sum(hosts_lost.values()),
+        "hosts_lost_by_reason": dict(hosts_lost),
+        "sandboxes_lost": sandboxes_lost,
         "wait_p50_s": _percentile(waits, 50),
         "wait_p95_s": _percentile(waits, 95),
         "wait_max_s": waits[-1] if waits else None,
