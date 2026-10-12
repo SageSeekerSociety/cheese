@@ -595,18 +595,24 @@ def self_test() -> int:
     check("a plain call's command comes from arg", calls[1][3], "ruff check .")
 
     # The same two commands through the signal they feed: a check ends the run of
-    # edits, so four either side of one is not a block. Read either command as
-    # empty — it no longer reads as a check — and the eight join into one.
+    # edits, so four either side of one is not a block. Each command is the only
+    # check between the eight in turn, so reading that one from the wrong field
+    # stops it reading as a check and the eight join into one block.
     def edit(i: int) -> dict:
         return {"id": f"e{i}", "meta": {"tool": "Edit", "at": f"2026-10-12T11:00:{i:02d}", "arg": "改文件"}}
 
-    calls = calls_of(
-        {
-            "data": [edit(i) for i in range(4)] + [described, plain] + [edit(i) for i in range(10, 14)],
-            "has_more": False,
-        }
-    )
-    check("a check ends the run of edits", edit_blocks([(c[1], c[2], c[3]) for c in calls]), [])
+    for middle in (described, plain):
+        calls = calls_of(
+            {
+                "data": [edit(i) for i in range(4)] + [middle] + [edit(i) for i in range(10, 14)],
+                "has_more": False,
+            }
+        )
+        check(
+            f"{middle['id']}'s command ends the run of edits",
+            edit_blocks([(c[1], c[2], c[3]) for c in calls]),
+            [],
+        )
     check("tasks sort by number", ledger["s"]["tasks"], ["2", "10"])
     check("a task without a number keeps its id", _label({"number": None, "id": "abcdef12"}), "?abcdef")
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)
