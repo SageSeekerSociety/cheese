@@ -39,7 +39,8 @@ of the project lives somewhere else entirely, and its HOME carries a shell
 startup file of its own, which nothing may see. So the two records must be
 equal with no path rewritten: the only replacements are the values in
 NORMALIZATIONS, each drawn at random or naming the session host's own
-process. Any other difference is a bug in the remote path, not something to
+process, and, for `local_apart` alone, the directory that run's session works
+in, read as the executor's path. Any other difference is a bug in the remote path, not something to
 add to that list.
 
 `--shell zsh` gives the machine zsh as its user shell, with its own aliases,
@@ -89,7 +90,7 @@ client = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(client)
 
 # Every value the two runs may differ in, and why. `normalize` applies exactly
-# these; the receipt lists them. No path is among them.
+# these; the receipt lists them. One path is among them, for one run alone.
 NORMALIZATIONS = {
     "<SESSION>": "The session id, which the build draws at random.",
     "<TASK n>": "Background task ids, which the build draws at random; "
@@ -108,6 +109,12 @@ NORMALIZATIONS = {
     "off the clock, not produced by any command; the pinned build takes no "
     "setting that fixes its date (CLAUDE_CODE_OVERRIDE_DATE leaves it "
     "unchanged), so exactly that notice is removed.",
+    "local_apart: its directory": "A member's own session whose executor is "
+    "on another machine works in a directory of its own on its host, which "
+    "has no forwarded view, and the build prints that directory where a "
+    "central session prints the executor's path: the accepted cost of that "
+    "shape (docs/remote-execution.md). For that run alone, the directory is "
+    "read as the executor's path.",
     "environment: session-host process": "CLAUDE_PID, "
     "CLAUDE_CODE_MESSAGING_SOCKET and CLAUDE_CODE_MESSAGING_TOKEN name the "
     "session host's Claude Code process: a pid, and a Unix socket with its "
@@ -421,9 +428,12 @@ class Run:
         self.fail = None
         self.relaunch = None
         self.close = session.stop
+        # Paths read as other paths: only `local_apart`'s directory (see
+        # NORMALIZATIONS).
+        self.paths = []
 
     def replacements(self):
-        pairs = []
+        pairs = list(self.paths)
         _, init = self.session.wait(is_("system", "init"), 1)
         if init:
             pairs.append((init["session_id"], "<SESSION>"))
@@ -762,6 +772,36 @@ def local_relaunched(binary, layout, port):
         return init["session_id"]
 
     run.relaunch = relaunch
+    return run
+
+
+def local_apart(binary, layout, port):
+    """A member's own Claude Code whose executor is on another machine: the
+    session, started with its lease, works in a directory of its own holding
+    a copy of the project's context, and everything it runs goes to the
+    executor at the executor's path."""
+    room = Room(binary, layout, port)
+    launch = room.prepare(
+        {
+            "kind": "deferred",
+            "workspace": str(layout.project),
+            "lease_path": LEASE_PATH,
+            "setup_env": {},
+            "mcp_servers": [],
+            "local": True,
+            "apart": True,
+        }
+    )
+    assert room.relay.leases, "the session did not start with its lease"
+    assert launch["cwd"] != str(layout.project), launch
+    assert "enter" not in launch["command"], launch
+    run = room.run("local_apart", room.session("own-apart", launch))
+    # The directory, and the name the build gives its own state for it (its
+    # transcripts, task output), which spells the path with dashes.
+    run.paths = [
+        (spelled(launch["cwd"]), spelled(str(layout.project)))
+        for spelled in (str, lambda path: re.sub(r"[^A-Za-z0-9]", "-", path))
+    ]
     return run
 
 
@@ -1232,6 +1272,7 @@ RUNS = {
     "relaunched": relaunched,
     "local": local,
     "local_relaunched": local_relaunched,
+    "local_apart": local_apart,
 }
 # The window's commands after the one that takes the lease (`window`).
 WINDOW_AFTER_THE_LEASE = (

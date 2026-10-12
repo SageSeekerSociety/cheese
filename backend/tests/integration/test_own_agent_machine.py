@@ -1,9 +1,11 @@
-"""A member's own Claude Code works on its owner's machine (#2991).
+"""A member's own Claude Code: its session on its owner's machine, its tools in
+its execution environment (#2991, #2320).
 
 Its session runs on one of its owner's computers, with the login the owner gave
-the platform there, and its hands — the files, the commands — are that same
-computer: whatever the room chose, and whether or not that computer serves the
-project. No other member's computer is ever its hands.
+the platform there: no other member's computer is ever its session host. What
+it runs — the files, the commands — goes to the execution environment its
+conversation has, like any agent's, which is its owner's computer only when
+that is the environment.
 """
 
 import json
@@ -19,6 +21,7 @@ from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.owner_provider import OWNER_CHANNEL, OwnerChannel
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
@@ -60,7 +63,7 @@ async def _machine(devices, name, owner, project_id=None):
     return device.device_id
 
 
-def _hub():
+def _hub(online=lambda device: True):
     async def install(device, argv, **kwargs):
         return {
             "exit": 0,
@@ -75,7 +78,7 @@ def _hub():
 
     return SimpleNamespace(
         target=lambda _device: "linux-amd64",
-        is_online=lambda device: True,
+        is_online=online,
         reconnecting=lambda device: False,
         exec=AsyncMock(side_effect=install),
     )
@@ -106,9 +109,12 @@ def _executor(target, method, *args, **_kwargs):
     return {"device": target["device_id"]}
 
 
-async def _own_session(client, *, session_host_of):
-    """A project whose room works on the room owner's computer, and Bob's own
-    Claude Code in it, its session on the machine ``session_host_of`` names."""
+async def _own_session(client, *, environment_on):
+    """A project whose room works on Alice's computer, and Bob's own Claude
+    Code in it, its session on Bob's laptop. ``environment_on`` names whose
+    computer the conversation's execution environment is: the room's (Alice's)
+    or Bob's laptop, attached to the project. Alice gave the platform a Claude
+    Code login on her computer too."""
     project = post_project(client, json={"name": "Own hands"}, owner="alice").json()[
         "data"
     ]
@@ -121,8 +127,8 @@ async def _own_session(client, *, session_host_of):
     async with client.test_factory() as db:
         devices = sql_device_service(db)
         alice, bob = await _user(db, "alice"), await _user(db, "bob")
-        rooms_machine = await _machine(devices, "alices-desk", alice, project_id)
-        bobs_laptop = await _machine(devices, "bobs-laptop", bob)
+        alices_desk = await _machine(devices, "alices-desk", alice, project_id)
+        bobs_laptop = await _machine(devices, "bobs-laptop", bob, project_id)
         instance = AgentInstance(
             project_id=project_id,
             handle=f"own-{uuid.uuid4().hex[:8]}",
@@ -136,29 +142,28 @@ async def _own_session(client, *, session_host_of):
                 instance_id=instance.id, owner_user_id=bob.id, harness="claude-code"
             )
         )
-        # Bob gave the platform his login on his laptop.
-        db.add(
-            DeviceClaudeLoginRow(
-                device_id=bobs_laptop,
-                installed=True,
-                logged_in=True,
-                checked_at=datetime.now(UTC),
+        for machine in (bobs_laptop, alices_desk):
+            db.add(
+                DeviceClaudeLoginRow(
+                    device_id=machine,
+                    installed=True,
+                    logged_in=True,
+                    checked_at=datetime.now(UTC),
+                )
             )
-        )
         actor = (await IdentityService(db).ensure_room_agent_user(topic_id)).username
         topic = await db.get(Topic, topic_id)
         topic.default_environment = {
             "kind": "self_hosted",
-            "device_id": rooms_machine,
+            "device_id": {"alice": alices_desk, "bob": bobs_laptop}[environment_on],
         }
         resource = str(topic.resource_id or topic_id)
         # A session names its agent by the instance's handle, as a turn does.
         session = await AgentSessionService(db).ensure(
             topic_id, instance.handle, harness="claude-code"
         )
-        host = {"bob": bobs_laptop, "alice": rooms_machine}[session_host_of]
         session.runtime_location = {
-            "device_id": host,
+            "device_id": bobs_laptop,
             "resource_id": resource,
             "channel": OWNER_CHANNEL,
         }
@@ -178,43 +183,47 @@ async def _own_session(client, *, session_host_of):
         session_id=session.id,
         token=token,
         bobs_laptop=bobs_laptop,
+        alices_desk=alices_desk,
         handle=instance.handle,
     )
 
 
-async def test_an_own_agent_works_on_its_owners_machine_not_the_rooms(
-    client, monkeypatch
-):
-    own = await _own_session(client, session_host_of="bob")
-    monkeypatch.setattr(work_lease, "device_hub", _hub())
-    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=_executor))
-
-    response = client.post(
+def _lease(client, own):
+    return client.post(
         f"/topics/{own.topic_id}/sessions/{own.session_id}/work-lease",
         headers={"X-Cheese-Token": own.token},
         json={"env": {}},
     )
+
+
+async def test_an_own_agents_tools_run_in_its_environment_not_its_owners_machine(
+    client, monkeypatch
+):
+    own = await _own_session(client, environment_on="alice")
+    monkeypatch.setattr(work_lease, "device_hub", _hub())
+    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=_executor))
+
+    response = _lease(client, own)
+
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["target"]["device_id"] == own.alices_desk
+
+
+async def test_an_own_agent_whose_environment_is_its_owners_machine_works_there(
+    client, monkeypatch
+):
+    own = await _own_session(client, environment_on="bob")
+    monkeypatch.setattr(work_lease, "device_hub", _hub())
+    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=_executor))
+
+    response = _lease(client, own)
 
     assert response.status_code == 200, response.text
     assert response.json()["data"]["target"]["device_id"] == own.bobs_laptop
 
 
-async def test_an_own_agent_is_never_given_another_members_machine(client, monkeypatch):
-    own = await _own_session(client, session_host_of="alice")
-    monkeypatch.setattr(work_lease, "device_hub", _hub())
-    monkeypatch.setattr(execution, "call", AsyncMock(side_effect=_executor))
-
-    response = client.post(
-        f"/topics/{own.topic_id}/sessions/{own.session_id}/work-lease",
-        headers={"X-Cheese-Token": own.token},
-        json={"env": {}},
-    )
-
-    assert response.status_code == 403, response.text
-
-
 async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):
-    own = await _own_session(client, session_host_of="bob")
+    own = await _own_session(client, environment_on="alice")
     channel = OwnerChannel(
         DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
     )
@@ -227,3 +236,25 @@ async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):
     )
 
     assert placement.machine == own.bobs_laptop
+
+
+async def test_another_members_machine_is_never_an_own_agents_session_host(client):
+    # Alice's computer is online, logged in to Claude Code, and the very one
+    # the conversation's tools run on; Bob's laptop is away.
+    own = await _own_session(client, environment_on="alice")
+    channel = OwnerChannel(
+        DeviceChannel(
+            hub=_hub(online=lambda device: device == own.alices_desk),
+            session_factory=client.test_request_factory,
+        )
+    )
+
+    with pytest.raises(ScreenSetupError):
+        client.portal.call(
+            lambda: channel.precheck(
+                SessionRef(
+                    own.project_id, own.topic_id, own.handle, harness="claude-code"
+                ),
+                needs_place=False,
+            )
+        )
