@@ -514,6 +514,7 @@ routes:
   # app.api.routes.blocks
   - {protocol: "http", method: "PATCH", path: "/blocks/{block_id}", auth: "actor.topic.enforced", owner: "block"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/reactions", auth: "actor.topic.enforced", owner: "block"}
+  - {protocol: "http", method: "DELETE", path: "/blocks/{block_id}/answer", auth: "actor.topic.enforced", owner: "block"}
   # app.api.routes.chat
   - {protocol: "ws", method: "WS", path: "/rooms/live", auth: "chat.ws", owner: "topic.chat"}
   # app.api.routes.comments

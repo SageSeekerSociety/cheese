@@ -2,18 +2,25 @@
 //
 // 点一个快捷回复，就是把那几个字作为对这道题的回复发出去 —— 和在输入框里打字是
 // 同一条消息；输入框始终在，从不被题占用。
+//
+// 答过之后还能收回来：一道题只收一个回答，点错一下就没有别的路可走。撤回的是这道
+// 题上的那条答复，不是他说过的那句话 —— 消息留着，题回到没人答。
 import type { Component } from 'vue'
 import type { Block, Topic } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render } from '@testing-library/vue'
+import { fireEvent, render, screen, within } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+
+// 确认框（Vuetify 的 v-dialog）算位置时要问 `window.visualViewport`，happy-dom 没有
+// 这一件。补一个够用的空壳 —— 浏览器里本来就有它。
+vi.stubGlobal('visualViewport', new EventTarget())
 
 const Panel = ChatPanel as unknown as Component
 
@@ -31,7 +38,8 @@ function topicOf(id: string): Topic {
   } as Topic
 }
 
-function question(topic: string, answered = false): Block {
+/** 一道题。`by` 是谁答的，null 是还没人答 —— 撤回的入口只长在答过的那一位旁边。 */
+function question(topic: string, by: string | null = null): Block {
   return {
     id: `q-${topic}`,
     project_id: 'p1',
@@ -46,8 +54,8 @@ function question(topic: string, answered = false): Block {
     meta: {
       asked: 'me',
       options: [{ text: '按部门', explain: '和去年的报表对得上' }, { text: '按项目' }],
-      answer_log: answered
-        ? [{ kind: 'option', option: '按部门', note: null, by: 'me', at: '2026-08-01T00:01:00Z', reply_id: 'r1' }]
+      answer_log: by
+        ? [{ kind: 'option', option: '按部门', note: null, by, at: '2026-08-01T00:01:00Z', reply_id: 'r1' }]
         : [],
     },
   } as unknown as Block
@@ -56,6 +64,8 @@ function question(topic: string, answered = false): Block {
 let vuetify: ReturnType<typeof createVuetify>
 let history: Block[] = []
 let sent: Array<{ url: string; body: Record<string, unknown> }> = []
+/** 撤回那一次请求（`DELETE …/answer`）：落在这儿的就只有它。 */
+let takenBack: string[] = []
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
@@ -65,6 +75,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   history = []
   sent = []
+  takenBack = []
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
@@ -76,6 +87,17 @@ beforeEach(() => {
     }
   )
   vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+    // 撤回：题目上那条答复没了，题回到还没人答 —— 服务端回来的就是这一块。
+    if (String(url).endsWith('/answer') && init?.method === 'DELETE') {
+      const id = String(url).split('/blocks/')[1].replace('/answer', '')
+      takenBack.push(id)
+      const open = question('withdrawn')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ code: 200, data: { ...open, id, meta: { ...open.meta, answer_log: [] } } }),
+      }
+    }
     if (String(url).includes('/messages') && init?.method === 'POST') {
       const body = JSON.parse(String(init.body))
       sent.push({ url: String(url), body })
@@ -145,10 +167,53 @@ describe('芝士的提问是一条带快捷回复的消息', () => {
   })
 
   it('有人答过之后，快捷回复收成谁说了什么', async () => {
-    history = [question('t-done', true)]
+    history = [question('t-done', 'me')]
     const { container, queryByRole } = await open('t-done')
     expect(queryByRole('button', { name: /按项目/ })).toBeNull()
     expect(container.querySelector('.ask-replies__answers')?.textContent).toContain('按部门')
     expect(container.querySelector('.composer')).toBeTruthy()
+  })
+})
+
+describe('自己答过的题可以撤回', () => {
+  it('答的那一条旁边有撤回', async () => {
+    history = [question('t-own', 'me')]
+    const { container } = await open('t-own')
+    const line = container.querySelector('.ask-replies__answers li')!
+    expect(line.textContent).toContain('按部门')
+    expect(within(line as HTMLElement).getByRole('button')).toBeTruthy()
+  })
+
+  it('别人的答案没有撤回入口', async () => {
+    history = [question('t-theirs', 'alice')]
+    const { container, queryByRole } = await open('t-theirs')
+    expect(container.querySelector('.ask-replies__answers')?.textContent).toContain('按部门')
+    expect(queryByRole('button', { name: /撤回/ })).toBeNull()
+  })
+
+  it('点了先弹确认：题会重新等回答，人点掉才发出去', async () => {
+    history = [question('t-confirm', 'me')]
+    const { getByRole } = await open('t-confirm')
+    await fireEvent.click(getByRole('button', { name: /撤回/ }))
+    const dialog = await screen.findByRole('alertdialog')
+    expect(dialog.textContent).toContain('撤回这条回答？')
+    expect(dialog.textContent).toContain('谁都能再选一次')
+    expect(takenBack).toEqual([])
+    await fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+    expect(takenBack).toEqual([])
+  })
+
+  it('确认之后才请服务端撤回，那一块原地换掉：题回到没人答', async () => {
+    history = [question('t-yes', 'me')]
+    const { container, getByRole, queryByRole } = await open('t-yes')
+    await fireEvent.click(getByRole('button', { name: /撤回/ }))
+    const dialog = await screen.findByRole('alertdialog')
+    await fireEvent.click(within(dialog).getByRole('button', { name: '撤回' }))
+    await until(() => takenBack.length > 0)
+    expect(takenBack).toEqual(['q-t-yes'])
+    // 题回到还没人答：选项重新长出来，撤回的入口也跟着没了。
+    await until(() => !!container.querySelector('.ask-replies__options'))
+    expect(queryByRole('button', { name: /按项目/ })).toBeTruthy()
+    expect(container.querySelector('.ask-replies__answers')).toBeNull()
   })
 })

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 from sqlalchemy import select
 
-from app.core.errors import ValidationError
+from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -117,3 +117,39 @@ async def post_questions(
     for row in rows:
         row.meta = {**(row.meta or {}), "notice_id": str(rows[0].id)}
     return rows
+
+
+def answered_by(question: Block, handle: str) -> bool:
+    """``handle`` 在这道题上答过话没有。"""
+    return any(
+        (entry or {}).get("by") == handle
+        for entry in ((question.meta or {}).get("answer_log") or [])
+    )
+
+
+async def withdraw_answer(session, *, question: Block, by: str) -> Block:
+    """把 ``by`` 自己那条答复从题上撤掉，让这道题回到「还没人答」。
+
+    「只有回答的人可以撤回」落在这一行：撤掉的是 ``answer_log`` 里 ``by`` 等于他的
+    条目，别人的一条不动。没答过的人来撤什么也撤不掉，直接拒掉 —— 否则这里就是任何
+    人抹掉别人答案的入口。
+
+    撤的是这道题上的记录，不是他说的那句话：那条消息还在房间里，内容不改。撤到没有
+    人答过之后，选项重新出现，题也重新算作在等回答（`_awaiting_an_answer` 的判据同
+    此，读的是同一个 ``answer_log``）。叫醒谁、房间看到什么，由调用方负责。
+
+    flush，不 commit。
+    """
+    if not answered_by(question, by):
+        raise ForbiddenError(say("askNothingToWithdraw"))
+    meta = dict(question.meta or {})
+    question.meta = {
+        **meta,
+        "answer_log": [
+            entry
+            for entry in (meta.get("answer_log") or [])
+            if (entry or {}).get("by") != by
+        ],
+    }
+    await session.flush()
+    return question
