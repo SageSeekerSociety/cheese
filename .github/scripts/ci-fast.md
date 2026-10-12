@@ -135,7 +135,7 @@ everything is still allowed to answer unknown.
   reason.
 
   A narrowed run is seeded with the changed source roots **and** every spec that
-  judges a frontend file by reading it with `node:fs` rather than importing it
+  judges a frontend file by reading it off disk rather than importing it
   (`OFF_DISK_SPECS` in `ci_fast_checks.py`: the fifteen specs that assert a
   component's markup, a stylesheet's rules, a page's scroll container or a whole
   directory). A read is not an import edge, so `related` would never select one
@@ -162,6 +162,9 @@ everything is still allowed to answer unknown.
   bridges `node_modules`, and checks only the surviving changed files against the
   existing tsc-ratchet baseline; a deleted non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.
+  Non-spec is read from the name's ending, not from the text: a helper module
+  called `migrationContract.spec.helper.ts` is imported by thirteen surviving
+  specs, and it is the full typecheck that sees them.
   It is not a full consumer-type check.
 - **Not covered here**: contract / integration / build / e2e tests, remote
   checks, and full frontend consumer types. The summary lists every skipped

@@ -1009,6 +1009,38 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
                          "related")
 
+    def test_frontend_deletion_of_a_helper_imported_without_its_suffix_widens(self):
+        # A dot in a specifier says nothing about where the file name ends:
+        # `./helper.spec.kit` names helper.spec.kit.ts, and the resolver appends
+        # the module kinds it knows. Reading `.kit` as the whole name matched
+        # nothing, so deleting a helper that surviving specs import left the run
+        # narrowed and green — the failure is at import resolution, and no type
+        # check stands in for it.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/keep.ts", "export const x = 1\n")
+        self.put("frontend/src/uses.spec.ts",
+                 "import { h } from './helper.spec.kit'\nexport const y = h\n")
+        plan, _ = test_plan(
+            self.root, ["frontend/src/helper.spec.kit.ts", "frontend/src/keep.ts"],
+            {"frontend": True}, self.root)
+        unit = next(p for p in plan if p["id"] == "frontend-unit")
+        self.assertEqual(unit["evidence"]["mode"], "full")
+        # The deleted helper is a module, not a spec: `spec` in the middle of a
+        # name does not make the check that sees its importers unnecessary.
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+
+    def test_frontend_deleted_helper_named_like_a_spec_widens_types_alone(self):
+        # With no importer left behind the run stays narrowed, but the deleted
+        # helper is still a module the whole-project typecheck is for; only a
+        # file that itself ends as a spec or a test leaves nothing dangling.
+        from ci_fast_checks import test_plan
+        self.put("frontend/src/keep.ts", "export const x = 1\n")
+        plan, _ = test_plan(self.root, ["frontend/src/helper.spec.kit.ts", "frontend/src/keep.ts"],
+                            {"frontend": True}, self.root)
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "related")
+        self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+
     def test_frontend_scope_is_the_paths_the_map_routed_there(self):
         # The path map routes backend/openapi.json into frontend scope, so a
         # backend change enters this branch through it. Read from the whole
@@ -1032,12 +1064,16 @@ class SelectionEvidenceTest(unittest.TestCase):
     def test_read_off_disk_specs_matches_the_specs_that_read_the_tree(self):
         # The tuple is written by hand, and a stale entry is filtered out of
         # both the seeds and required_files by `is_file()` without a word. This
-        # is what notices a spec starting to read the tree, or one renamed.
+        # is what notices a spec starting to read the tree, or one renamed. The
+        # read is matched by the specifier it writes, not by the substring
+        # `node:fs`: `from 'fs'` and `from 'fs/promises'` are the same read, and
+        # a tuple that missed one would stop seeding it without a word.
         from ci_fast_checks import I18N_SPECS, OFF_DISK_SPECS
         src = SCRIPT.parents[2] / "frontend" / "src"
+        reads_the_tree = re.compile(r"""["'](?:node:)?fs(?:/promises)?["']""")
         readers = {"src/" + p.relative_to(src).as_posix()
                    for p in src.rglob("*.spec.ts")
-                   if "node:fs" in p.read_text(encoding="utf-8", errors="ignore")}
+                   if reads_the_tree.search(p.read_text(encoding="utf-8", errors="ignore"))}
         # src/collab/ is outside this Vitest project (frontend/vite.config.ts
         # excludes it, it has its own config); the i18n guards are required by
         # frontend-i18n instead.

@@ -226,9 +226,17 @@ def _resolves_to(specifier, importer, frontend):
 
 
 def _candidates(target):
-    """What an extension-less specifier can resolve to, plus the file itself."""
+    """What a specifier can resolve to, plus the file it names itself.
+
+    A specifier that ends in a module kind this frontend imports is that file.
+    One that ends in anything else — no extension at all, or an extension the
+    resolver does not know — still gets the known kinds appended, because a
+    dot in a specifier says nothing about where the file name ends:
+    ``./x.spec.helper`` names ``x.spec.helper.ts``, and reading ``.helper`` as
+    the whole name matched no file at all.
+    """
     yield target
-    if target.suffix:
+    if target.suffix in SPECIFIER_SUFFIXES:
         return
     for suffix in SPECIFIER_SUFFIXES:
         yield Path(str(target) + suffix)
@@ -366,9 +374,12 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         ts_files = [p for p in surviving if p.endswith((".ts", ".tsx", ".vue"))]
         # Only a deleted module can leave importers dangling project-wide; a
         # deleted spec or asset cannot, and the narrow project judges the rest.
+        # A spec is judged by the name it ends with, not by the substring: a
+        # helper module called x.spec.helper.ts is a module other files import,
+        # and reading it as a spec would skip the one check that sees them.
         deleted_sources = [p for p in deleted
                            if p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
-                           and ".spec." not in p and ".test." not in p]
+                           and not re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", p)]
         full_types = (conservative
                       or any(p in FRONTEND_META or p in FRONTEND_TYPES_META or p.endswith(".d.ts") for p in changed)
                       or any(p.startswith(".github/") for p in changed)
