@@ -41,6 +41,7 @@ import SiteStepOutput from './SiteStepOutput.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import { t } from '@/i18n'
+import { clockTime } from '@/lib/dateText'
 import { vRovingTabs } from '@/lib/rovingTabs'
 
 const props = withDefaults(
@@ -183,8 +184,8 @@ function authorLabel(b: Block): string {
 }
 
 function fmtTime(iso: string): string {
-  // Local HH:mm, not raw UTC slice.
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  // Local 24-hour HH:mm, not raw UTC slice, and not the browser's default locale.
+  return clockTime(new Date(iso).getTime())
 }
 
 // 参数里有中文的（文档标题、验收卡标题、一句说明）不走等宽：中文没有等宽字形，

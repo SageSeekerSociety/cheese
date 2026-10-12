@@ -66,10 +66,20 @@ describe('带钟点的日词', () => {
     expect(dayTimeText(local(2026, 10, 4, 12), NOW)).toBe('10-04 12:00')
   })
 
+  // 界面语言现在只有 zh-CN 和 en 两种；判定写成「英文族」是为了以后加 en-GB 这类
+  // 变体时不静默掉回中文。
   it('英文：2 天及以上一律给绝对日期，英文没有「前天」', () => {
     setLocale('en')
     expect(dayTimeText(DAY_BEFORE, NOW)).toBe('10-09 23:00')
     expect(dayTimeText(local(2026, 10, 8, 10), NOW)).toBe('10-08 10:00')
+  })
+
+  it('给不出时间的给空串，不摆 NaN', () => {
+    expect(clockTime(NaN)).toBe('')
+    expect(absDate(NaN, NOW)).toBe('')
+    expect(absDateTime(NaN, NOW)).toBe('')
+    expect(dayStamp(NaN, NOW)).toBe('')
+    expect(dayTimeText(NaN, NOW)).toBe('')
   })
 
   it('跨年带上年份，中英同形', () => {

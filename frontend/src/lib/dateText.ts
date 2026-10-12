@@ -26,8 +26,15 @@ function pad2(n: number): string {
   return String(n).padStart(2, '0')
 }
 
+/** 给不出时间的（NaN、空值）一律给空串，不把 `NaN-NaN` 摆到界面上。 */
+function usable(at: number): boolean {
+  return Number.isFinite(at)
+}
+
 /**
- * `at` 比 `now` 早几个日历天：0 是同一天，1 是昨天，负数在将来。
+ * `at` 比 `now` 早几个日历天：0 是今天，1 是昨天，**负数是将来，各调用点一律
+ * 当今天**（时钟偏了、或者服务端给了一个将来的时刻，说「刚刚 / 今天 HH:mm」比说
+ * 「-1 天前」强）。
  *
  * 先各自归到当天零点再相减，夏令时那天差不到 24 小时，所以取整用 `Math.round`。
  */
@@ -37,12 +44,14 @@ export function calendarDaysAgo(at: number, now: number = Date.now()): number {
 
 /** 本地时刻，24 小时制、补零：`09:05`。中英同形。 */
 export function clockTime(at: number): string {
+  if (!usable(at)) return ''
   const d = new Date(at)
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`
 }
 
 /** `10-09`；不在 `now` 那一年就带上年份：`2025-12-25`。 */
 export function absDate(at: number, now: number = Date.now()): string {
+  if (!usable(at)) return ''
   const d = new Date(at)
   const md = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
   return d.getFullYear() === new Date(now).getFullYear() ? md : `${d.getFullYear()}-${md}`
@@ -50,11 +59,13 @@ export function absDate(at: number, now: number = Date.now()): string {
 
 /** `10-09 23:00`，跨年就是 `2025-12-25 09:00`。 */
 export function absDateTime(at: number, now: number = Date.now()): string {
+  if (!usable(at)) return ''
   return `${absDate(at, now)} ${clockTime(at)}`
 }
 
 /** 一行里塞得下的时间戳：今天的给钟点，更早的给日期。 */
 export function dayStamp(at: number, now: number = Date.now()): string {
+  if (!usable(at)) return ''
   return calendarDaysAgo(at, now) <= 0 ? clockTime(at) : absDate(at, now)
 }
 
@@ -74,9 +85,19 @@ export function relativeDayWord(days: number, locale: string = i18n.global.local
  * 「昨天 {time}」／`Today`／`Yesterday`），只有调用点知道该用哪一套。
  */
 export function dayTimeText(at: number, now: number = Date.now()): string {
+  if (!usable(at)) return ''
   const days = calendarDaysAgo(at, now)
-  if (days >= 2 && days < 7 && i18n.global.locale.value !== 'en') {
+  if (days >= 2 && days < 7 && !hasDayBeforeYesterday(i18n.global.locale.value)) {
     return `${relativeDayWord(days)} ${clockTime(at)}`
   }
   return absDateTime(at, now)
+}
+
+/**
+ * 这个语言有没有「前天」这个词。英文（含 en-GB、en-US）到 2 天前就只说
+ * 「2 days ago」，中文、日文这些有自己的一天前、两天前的说法。以后加第三种语言时
+ * 要在这里补一句——`Intl.RelativeTimeFormat` 本身问不出这件事。
+ */
+function hasDayBeforeYesterday(locale: string): boolean {
+  return locale.toLowerCase().startsWith('en')
 }

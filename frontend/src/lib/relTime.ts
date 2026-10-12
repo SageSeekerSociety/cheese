@@ -14,6 +14,7 @@ export function relTime(iso: string | null | undefined): string {
   const locale = i18n.global.locale.value
   const now = Date.now()
   const days = calendarDaysAgo(at, now)
+  // 今天之内按流逝时长说；将来（时钟偏了）也走这一支，秒数是负的，按「刚刚」。
   if (days <= 0) {
     const s = (now - at) / 1000
     if (s < 60) return t('topic.time.justNow')
