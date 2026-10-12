@@ -102,8 +102,8 @@ describe('callers degrade as a whole when too large', () => {
   })
 
   it('inlineDiff returns one deleted and one added segment', () => {
-    const before = 'x'.repeat(2100)
-    const after = 'y'.repeat(2100)
+    const before = 'x '.repeat(2001)
+    const after = 'y '.repeat(2001)
     expect(inlineDiff(before, after)).toEqual([
       { text: before, kind: 'del' },
       { text: after, kind: 'add' },
