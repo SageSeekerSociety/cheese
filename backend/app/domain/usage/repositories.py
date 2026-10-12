@@ -42,6 +42,12 @@ def unpriced_tokens() -> Any:
     )
 
 
+def call_count() -> Any:
+    """How many model calls the rows cover: the sum of ``calls``, not the
+    number of rows, because a gateway drain lands many calls as one row."""
+    return func.coalesce(func.sum(ResourceUsage.calls), 0)
+
+
 class UsageRepository:
     def __init__(self, session: AsyncSession):
         self._session = session
@@ -65,6 +71,7 @@ class UsageRepository:
         user_id: int | None = None,
         team_id: int | None = None,
         credits: float = 0.0,
+        calls: int = 1,
     ) -> ResourceUsage:
         """Record spend against its originating message or platform work id.
 
@@ -77,6 +84,9 @@ class UsageRepository:
         still worth writing — it says work happened, on which project, with
         which model, which is the difference between "we do not know how much"
         and "we do not know anything".
+
+        ``calls`` is how many model calls the row covers: one, except a gateway
+        drain, which lands a model's calls since the last drain as one row.
 
         Spend outside any project has no ``project_id`` and names, in
         ``user_id``, the person whose credits paid for it.
@@ -98,6 +108,7 @@ class UsageRepository:
             route=route,
             team_id=team_id,
             credits=credits,
+            calls=calls,
         )
         self._session.add(row)
         await self._session.flush()
@@ -220,15 +231,16 @@ class UsageRepository:
         也不允许出现。这里的两端由 `utc_day_window` 算好传进来，条件照旧是半开的
         `>= since AND < until`。
 
-        `calls` 是**行数**，也就是计量代理记下的 `/v1/messages` 调用次数 —— 一行一次
-        调用。它和 `_agg` 的 `turns` 不是一回事（那个数的是「有归属的单元」，一个
-        单元可以写好几行），两个数回答的是不同的问题，所以各叫各的名字。
+        `calls` 是模型调用次数，各行 `calls` 之和（`call_count`）：计量代理一行一次
+        调用，网关的一次收取把一个模型的许多次调用记成一行。它和 `_agg` 的
+        `turns` 不是一回事（那个数的是「有归属的单元」，一个单元可以写好几行），
+        两个数回答的是不同的问题，所以各叫各的名字。
 
         `unpriced_tokens` 走 `unpriced_tokens()`，和单键聚合共用同一条判据。
         """
         stmt = select(
             func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
-            func.count(),
+            call_count(),
             func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
             func.coalesce(unpriced_tokens(), 0),
         ).where(
@@ -258,7 +270,7 @@ class UsageRepository:
             select(
                 day.label("day"),
                 func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
-                func.count(),
+                call_count(),
                 func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
             )
             .where(
@@ -298,7 +310,7 @@ class UsageRepository:
             select(
                 ResourceUsage.model,
                 func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
-                func.count(),
+                call_count(),
                 func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
                 func.coalesce(unpriced_tokens(), 0),
             )
@@ -334,7 +346,7 @@ class UsageRepository:
             select(
                 ResourceUsage.route,
                 func.coalesce(func.sum(ResourceUsage.total_tokens), 0),
-                func.count(),
+                call_count(),
                 func.coalesce(func.sum(ResourceUsage.cost_usd), 0.0),
                 func.coalesce(unpriced_tokens(), 0),
             )

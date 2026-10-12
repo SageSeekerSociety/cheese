@@ -241,6 +241,10 @@ class ResourceUsage(UuidPk, Timestamps, Base):
         ForeignKey("team.id", ondelete="CASCADE"), nullable=True
     )
     credits: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+    # How many model calls the row covers. One per row, except a gateway drain,
+    # which lands each model's calls since the last drain as one row, so the
+    # platform's count of calls is this column's sum, not the number of rows.
+    calls: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
 
 class IngestCheckpoint(Base):
