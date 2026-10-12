@@ -14,9 +14,8 @@ than the helper: ``test_a_released_savepoint_is_not_a_commit.py`` says what
 ``after_own_commit`` must do, and this says that ``close_pr_after_commit`` asks
 it to do so. Reverting that one call to a one-shot listener fails here.
 
-``test_a_closed_task_closes_its_pr.py`` closes a PR end to end. It holds the
-handed-off work and runs it after the request returns, so it answers what the
-work does once it runs, not when it was handed off.
+``test_a_closed_task_closes_its_pr.py`` closes a PR end to end, so it answers
+what the work does once it runs. This file answers when it was handed off.
 """
 
 import asyncio
