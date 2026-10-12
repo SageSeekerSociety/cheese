@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CatalogFrame from './CatalogFrame.vue'
 import { FRAME_MESSAGE } from './demoCatalogStudio'
 
+import { setIframePageLoading } from '@/test/happyDom'
+
 const STUB = class {
   observe(): void {}
   unobserve(): void {}
@@ -19,11 +21,11 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', STUB)
   // 测试里的 iframe 会真的去取 src 上那个地址，取不到就抛一条没人接的错，把测试判红。
   // 这一份要量的是框本身（宽度、缩放、高度），不是去连一台开发服务器。
-  window.happyDOM.settings.disableIframePageLoading = true
+  setIframePageLoading(true)
 })
 
 afterEach(() => {
-  window.happyDOM.settings.disableIframePageLoading = false
+  setIframePageLoading(false)
   vi.unstubAllGlobals()
 })
 

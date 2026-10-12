@@ -5,7 +5,8 @@
 // `<html>` 上（`style.css` 的深色选择器是 `:root[data-theme='dark']`），动效改的是自
 // 己的 `--dur-*`。画完把内容高度报回外面，外面拿它定框高。
 import type { CatalogEntry, CatalogState } from './catalog'
-import type { BackdropId, MotionMode } from './demoCatalogStudio'
+import type { BackdropId } from './demoCatalogStudio'
+import type { MotionMode } from './demoMotion'
 
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 

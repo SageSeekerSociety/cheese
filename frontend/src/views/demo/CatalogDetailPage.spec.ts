@@ -14,11 +14,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CatalogDetailPage from './CatalogDetailPage.vue'
 import { defaultPrefs, STUDIO } from './demoCatalogStudio'
 
+import { setIframePageLoading } from '@/test/happyDom'
+
 // 同一个对象挂在两个字段下（共用，不是环）：参数表要两处都写得出来。
 export const REUSED = { where: 'reused' }
 
 vi.mock('./catalog', () => ({
-  stateProps: (entry: { args?: Record<string, unknown> }, state: { props?: Record<string, unknown> }) => ({
+  stateProps: (
+    entry: { args?: Record<string, unknown> },
+    state: { name?: string; props?: Record<string, unknown> }
+  ) => ({
     ...entry.args,
     ...state.props,
     // 第一格额外带两个指向同一个对象的字段。
@@ -70,11 +75,11 @@ beforeEach(() => {
     }
   )
   // 框里那些地址测试里取不到；不去取，免得抛出一条没人接的错。
-  window.happyDOM.settings.disableIframePageLoading = true
+  setIframePageLoading(true)
 })
 
 afterEach(() => {
-  window.happyDOM.settings.disableIframePageLoading = false
+  setIframePageLoading(false)
   vi.unstubAllGlobals()
 })
 
