@@ -42,7 +42,7 @@ def _project_topic(client, owner: str) -> tuple[str, str]:
 
 def _task(client, tid: str, owner: str = "alice") -> str:
     """A task in the room, owned by ``owner``: the conversation with a document."""
-    return open_task(client, tid, owner=owner, start=False)["id"]
+    return open_task(client, tid, owner=owner)["id"]
 
 
 def _doc(client, tid: str, owner: str = "alice") -> str:

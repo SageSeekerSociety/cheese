@@ -12,6 +12,7 @@ import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import { deleteMemory, getProjectWeeklies, listMemory } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
+import { refRoute } from '../lib/refDirectory'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
 
@@ -282,7 +283,7 @@ useCommands(() => {
           :agent-handle="workspace?.agentHandle"
           :members="workspace?.members ?? []"
           :topic-list="workspace?.topics ?? []"
-          @open-topic="(id: string) => router.push(topicTo(id))"
+          @open-topic="(id: string) => router.push(refRoute(projectId, id))"
         />
         <div v-else class="text-medium-emphasis text-body-2 py-2">{{ t('project.docs.noCharter') }}</div>
       </template>

@@ -966,6 +966,51 @@
         }
       }
     },
+    "/addresses/refs": {
+      "get": {
+        "tags": [
+          "addresses"
+        ],
+        "summary": "Resolve Refs",
+        "description": "What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a\ntask or a 支线, its title and the room it is in. An id that names none of\nthem, or one the caller may not see, is absent from the answer — so a\nprivate channel is not told apart from one that was never made.",
+        "operationId": "resolve_refs_addresses_refs_get",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 3700,
+              "default": "",
+              "title": "Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRefsEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/slug": {
       "put": {
         "tags": [
@@ -53302,6 +53347,78 @@
           "request"
         ],
         "title": "ControlIn"
+      },
+      "ConversationRefOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "title",
+          "room_id",
+          "project_id"
+        ],
+        "title": "ConversationRefOut"
+      },
+      "ConversationRefs": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/ConversationRefOut"
+        },
+        "type": "object",
+        "title": "ConversationRefs",
+        "description": "What each id that names something names, by id."
+      },
+      "ConversationRefsEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConversationRefs"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConversationRefsEnvelope"
       },
       "CreateInviteCodeRequest": {
         "properties": {

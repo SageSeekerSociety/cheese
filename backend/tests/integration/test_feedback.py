@@ -1706,7 +1706,7 @@ def test_a_dismissal_in_a_task_is_remembered_too(client):
     """
     project = _project(client, REPORTER)
     room = _topic(client, project, REPORTER)
-    task = open_task(client, room, owner=REPORTER, start=False)["id"]
+    task = open_task(client, room, owner=REPORTER)["id"]
     token = mint_scoped_token(project_id=project, topic_id=task)
 
     block_id = _propose(client, task, token).json()["data"]["block_id"]

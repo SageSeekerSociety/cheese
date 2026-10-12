@@ -46,17 +46,17 @@ def _read(client, pid: str, **params) -> dict:
 def _closed_tasks(client):
     pid, front, back = _project(client)
     tasks = {
-        "mine-front": open_task(client, front, "我的前端", owner="alice", start=False),
-        "mine-back": open_task(client, back, "我的后端", owner="alice", start=False),
+        "mine-front": open_task(client, front, "我的前端", owner="alice"),
+        "mine-back": open_task(client, back, "我的后端", owner="alice"),
         "helping": open_task(
-            client, front, "帮忙的", owner="bob", start=False, contributors=["alice"]
+            client, front, "帮忙的", owner="bob", contributors=["alice"]
         ),
-        "others": open_task(client, back, "别人的", owner="bob", start=False),
+        "others": open_task(client, back, "别人的", owner="bob"),
     }
     # Closing writes into the task's conversation: the last one closed moved last.
     for key in ("mine-front", "helping", "others", "mine-back"):
         _close(client, tasks[key], "bob" if key in ("helping", "others") else "alice")
-    still_open = open_task(client, front, "还在做", owner="alice", start=False)
+    still_open = open_task(client, front, "还在做", owner="alice")
     return pid, front, tasks, still_open
 
 

@@ -387,6 +387,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/addresses/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve Refs
+         * @description What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a
+         *     task or a 支线, its title and the room it is in. An id that names none of
+         *     them, or one the caller may not see, is absent from the answer — so a
+         *     private channel is not told apart from one that was never made.
+         */
+        get: operations["resolve_refs_addresses_refs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/slug": {
         parameters: {
             query?: never;
@@ -13500,6 +13523,40 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ConversationRefOut */
+        ConversationRefOut: {
+            /** Kind */
+            kind: string;
+            /** Title */
+            title: string;
+            /** Room Id */
+            room_id: string;
+            /** Project Id */
+            project_id: string;
+        };
+        /**
+         * ConversationRefs
+         * @description What each id that names something names, by id.
+         */
+        ConversationRefs: {
+            [key: string]: components["schemas"]["ConversationRefOut"];
+        };
+        /** ConversationRefsEnvelope */
+        ConversationRefsEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ConversationRefs"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** CreateInviteCodeRequest */
         CreateInviteCodeRequest: {
             /**
@@ -17878,6 +17935,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_refs_addresses_refs_get: {
+        parameters: {
+            query?: {
+                ids?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationRefsEnvelope"];
                 };
             };
             /** @description Validation Error */

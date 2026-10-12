@@ -75,7 +75,7 @@ def _task_with_pr(client, number: int) -> dict:
     room = post_project(client, {"name": "PRs"}, owner="alice").json()["data"][
         "root_topic_id"
     ]
-    task = open_task(client, room, "做一件事", owner="alice", start=False)
+    task = open_task(client, room, "做一件事", owner="alice")
 
     async def record_pr() -> None:
         async with client.test_request_factory() as session:
@@ -133,7 +133,7 @@ def test_a_task_without_a_pr_asks_github_nothing(client, github):
     room = post_project(client, {"name": "PRs"}, owner="alice").json()["data"][
         "root_topic_id"
     ]
-    task = open_task(client, room, "还没提交过", owner="alice", start=False)
+    task = open_task(client, room, "还没提交过", owner="alice")
 
     _close(client, task)
 

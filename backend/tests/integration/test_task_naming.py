@@ -506,11 +506,14 @@ def test_a_calibration_that_renames_does_so_quietly(client, alice, gateway):
     """The new title shows where the old one did; nothing is said in the
     task's conversation about it."""
     rid = _named(client, alice, gateway)
+    # A task made already started says so in its own conversation, so this one
+    # is not empty; what is pinned here is that the rename adds nothing to it.
+    said = [b.id for b in _events(client, rid)]
     gateway["answers"].append({"keep": False, "title": "Valkey 连接池耗尽"})
     renamed = _run(client, rid, "turn")
     assert renamed is not None and renamed.previous == "dev 外网访问慢排查"
     assert _shown(client, rid) == ("Valkey 连接池耗尽", "auto")
-    assert _events(client, rid) == []
+    assert [b.id for b in _events(client, rid)] == said
     assert _history(client, rid)[-1] == ("Valkey 连接池耗尽", "auto", "calibrate")
 
 
@@ -537,6 +540,7 @@ def test_following_up_needs_a_signal_and_respects_the_throttle(client, alice, ga
 
 def test_a_follow_up_that_only_rewords_keeps_the_title(client, alice, gateway):
     rid = _named(client, alice, gateway)
+    said = [b.id for b in _events(client, rid)]
     _set(
         client,
         rid,
@@ -547,7 +551,7 @@ def test_a_follow_up_that_only_rewords_keeps_the_title(client, alice, gateway):
     gateway["answers"].append({"keep": False, "title": "dev-外网访问慢排查！"})
     assert _run(client, rid, "signal") is None
     assert _row(client, rid).title == "dev 外网访问慢排查"
-    assert _events(client, rid) == []
+    assert [b.id for b in _events(client, rid)] == said
 
 
 def test_a_persons_name_is_never_overwritten(client, alice, gateway):
