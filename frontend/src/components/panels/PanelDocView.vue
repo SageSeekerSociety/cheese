@@ -99,8 +99,8 @@ const props = withDefaults(
     fetchSuggestionReasons?: () => void
     /** 取一份最新的节点树（闪某一段要它）。 */
     fetchDocNodes: () => Promise<Block[]>
-    /** 图片 src 的显示期解析。 */
-    imageSrc: (src: string) => string
+    /** 文档里引用的一张图拿什么画。 */
+    imageSrc: (src: string) => Promise<string>
     // ---- 动作 ----
     toggleEditable: () => void
     setError: (message: string | null) => void

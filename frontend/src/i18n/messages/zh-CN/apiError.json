@@ -378,6 +378,7 @@
   "agentTypeNotFound": "agent 类型 {type} 不存在",
   "commentContentRequired": "评论内容不能为空",
   "docCommentNotFound": "文档原评论不存在",
+  "docImageLibraryOnly": "项目文档里的图片只能引用资料库里的（library/<名字>）",
   "commentThreadUpdated": "评论线程已更新，请重新读取",
   "commentResolvedReopenFirst": "评论已解决，请先重开",
   "commentAlreadyInState": "评论已经处于目标状态",
