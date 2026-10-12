@@ -242,6 +242,13 @@ class TaskService:
         """The tasks underway in these rooms that ``person`` owns or helps on."""
         return await self._repo.underway_with(room_ids, person)
 
+    async def unseen_deliveries(
+        self, room_ids: list[uuid.UUID], person: str
+    ) -> set[uuid.UUID]:
+        """Which of these rooms hold a delivery ``person`` has not opened since:
+        the delivered task's conversation id and its room's, both in the set."""
+        return await self._repo.unseen_deliveries(room_ids, person)
+
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.
 

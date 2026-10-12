@@ -20,10 +20,12 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.project.address import Numbered, take_number
 from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
+from app.domain.topic.models import TopicReadState
 
 
 def _uuids(name: str, values: Collection[uuid.UUID] | None):
@@ -122,6 +124,67 @@ class TaskRepository:
             or_(Task.owner_handle == person, self._whose("helping", person)),
         )
         return list((await self._session.execute(stmt)).scalars().all())
+
+    async def unseen_deliveries(
+        self, room_ids: list[uuid.UUID], person: str
+    ) -> set[uuid.UUID]:
+        """哪几件活「交付完了、而这个人从那以后还没点开看过」：那件活自己的谈
+        话 id，和它所在的房间 id，两个都在返回的这一堆里 —— 侧栏的灯问的就是这
+        两种行（`TopicOut.unseen_delivery` / `RoomTask.unseen_delivery`）。
+
+        交付完了 = 卡片被采纳过（`accepted_at`）。「点开看过」认这个人在这段对话
+        上的已读位那一行动没动过：点开会推已读位，那一行跟着写一次时间
+        （`TopicRepository.mark_read_many` 每次都把 `updated_at` 写成当下），所以
+        它最后被动过的时刻就是最后点开的时刻。
+
+        频道要问的是「我在这间房里看过没有」，不只「我看过那件活没有」——点开频道
+        这个动作落在房间的已读位上，点开那件活落在活自己的已读位上，两个都算看
+        过。所以取两个时刻里晚的那个（`greatest` 在 Postgres 里跳过 NULL，全空才
+        是空）。两处都没有 = 从来没点开过，那也是没看过。
+
+        只算这个人自己参与的活（负责人或协作者）：一件与他无关的活交付了，不该在
+        他的侧栏上亮灯 —— 和 `TopicRepository.unread_counts` 给任务算未读是同一条
+        规矩。
+        """
+        if not room_ids:
+            return set()
+        task_read = aliased(TopicReadState)
+        room_read = aliased(TopicReadState)
+        stmt = (
+            select(
+                Task.id,
+                Task.room_id,
+                Task.accepted_at,
+                func.greatest(task_read.updated_at, room_read.updated_at),
+            )
+            .outerjoin(
+                task_read,
+                and_(
+                    task_read.topic_id == Task.id,
+                    task_read.user_handle == person,
+                ),
+            )
+            .outerjoin(
+                room_read,
+                and_(
+                    room_read.topic_id == Task.room_id,
+                    room_read.user_handle == person,
+                ),
+            )
+            .where(
+                Task.room_id.in_(room_ids),
+                Task.accepted_at.is_not(None),
+                or_(Task.owner_handle == person, self._whose("helping", person)),
+            )
+        )
+        unseen: set[uuid.UUID] = set()
+        for task_id, room_id, accepted_at, looked_at in (
+            await self._session.execute(stmt)
+        ).all():
+            if looked_at is None or accepted_at > looked_at:
+                unseen.add(task_id)
+                unseen.add(room_id)
+        return unseen
 
     async def tasks_of_rooms(
         self, room_ids: list[uuid.UUID]

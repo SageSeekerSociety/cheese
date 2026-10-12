@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Protocol
 
@@ -39,7 +39,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
-from app.domain.agent.liveness import running_tasks
+from app.domain.agent.liveness import last_output_at, running_tasks
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import (
@@ -506,9 +506,21 @@ def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
         raise UnprocessableEntityError(say("taskPageCursorInvalid")) from exc
 
 
-async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> list[dict]:
+async def _project_task_rows(
+    db,
+    chat: ChatService,
+    me: str,
+    tasks: list,
+    *,
+    silent_of: Callable[[uuid.UUID], float | None] | None = None,
+    delivered_of: Callable[[uuid.UUID], bool] | None = None,
+) -> list[dict]:
     """The project rail's rows for ``tasks``: each with its board cell, its
-    card, whether it waits on ``me``, whether it stalled, when it last moved."""
+    card, whether it waits on ``me``, whether it stalled, when it last moved,
+    and — when the caller can say it — when its running turn last produced
+    output (`silent_of`; the sidebar's red light, `TopicRailTaskRow`) and
+    whether it holds a delivery ``me`` has not opened since (`delivered_of`;
+    the sidebar's 长绿, same row component)."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
@@ -537,6 +549,13 @@ async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> lis
         )
         last_activity = said_at or task.created_at
         is_running = task.id in running
+        # 在跑的那一轮上一次有输出是什么时候（取整到分钟）。和话题清单那一头同一个
+        # 来源、同一个形状（`agent.liveness.last_output_at`），侧栏两处的红灯同一条
+        # 判据。None = 此刻没有在跑的一轮，或者这个进程说不了（那种「不知道」不当成
+        # 「很新」用，读的人自己决定，这里也不编一个）。
+        quiet_at = (
+            None if silent_of is None else last_output_at(silent_of(task.id), now)
+        )
         # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
         # 点和任务列表的橙字都读它，不各自从列再推一遍。
         asking = asked.get(task.id)
@@ -566,6 +585,18 @@ async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> lis
                 **TaskOut.model_validate(task).model_dump(mode="json"),
                 "presentation": shown.as_dict(),
                 "awaits_me": awaits is not None,
+                # 这条活此刻在不在往前走（侧栏那盏呼吸绿）。判据在
+                # `presentation.work_moving`：有一轮在跑，或者走在交付链路上 ——
+                # 和它上面那个 `presentation` 同一个来源，不由读的人各推一份。
+                "moving": presentation.work_moving(shown),
+                # 在跑、但上一次有输出是什么时候（`quiet_at`，取整到分钟）。
+                "last_output_at": None if quiet_at is None else quiet_at.isoformat(),
+                # 这件活交付完了、而这个人从那以后没点开看过（侧栏的长绿）。和频道
+                # 那一头同一个来源（`room_task/repositories.unseen_deliveries`）。
+                # 说不了（调用方没算）就是 false——不亮，不是「亮着但说不清」。
+                "unseen_delivery": bool(delivered_of(task.id))
+                if delivered_of is not None
+                else False,
                 "stalled": presentation.is_stalled(
                     shown, running=is_running, last_activity=last_activity, now=now
                 ),
@@ -1148,6 +1179,9 @@ async def rail_tasks(
     chat: ChatService,
     actor: Actor,
     room_ids: list[uuid.UUID],
+    *,
+    silent_of: Callable[[uuid.UUID], float | None] | None = None,
+    delivered_of: Callable[[uuid.UUID], bool] | None = None,
 ) -> dict[uuid.UUID, dict]:
     """What the sidebar hangs under each channel, keyed by channel: how many
     tasks are underway there (`open`, the count after 「全部任务」), and the ones
@@ -1162,7 +1196,9 @@ async def rail_tasks(
     service = TaskService(db)
     counts = await service.underway_counts(room_ids)
     mine = await service.underway_with(room_ids, me) if actor.authenticated else []
-    rows = await _project_task_rows(db, chat, me, mine)
+    rows = await _project_task_rows(
+        db, chat, me, mine, silent_of=silent_of, delivered_of=delivered_of
+    )
     shown: dict[str, list[dict]] = {}
     for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
         if not row["stalled"]:
