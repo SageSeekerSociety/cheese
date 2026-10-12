@@ -579,6 +579,7 @@ def self_test() -> int:
             copy: str | None = None,
             keep: bool = False,
             where: Path | None = None,
+            path: str | None = None,
         ) -> subprocess.CompletedProcess:
             argv = [
                 sys.executable,
@@ -596,7 +597,7 @@ def self_test() -> int:
             return subprocess.run(
                 argv,
                 cwd=str(where or repo),
-                env=env,
+                env={**env, "PATH": path} if path else env,
                 capture_output=True,
                 text=True,
                 check=False,
@@ -607,6 +608,44 @@ def self_test() -> int:
             "end to end: red without the fix, green with it → PROVEN",
             prove(without, runs, copy="helper.py").returncode == 0,
         )
+
+        # The inferred runner is what a caller gets by saying nothing, so it has
+        # to work with no --command, from the subdirectory its layout names, on
+        # the worktree half as well as the real tree. `uv` here is a shim that
+        # appends its working directory to a file — what is being checked is
+        # where the inference ran, not what pytest said. It keys on the test
+        # file, which is the one thing present in both halves at the right
+        # depth: it is copied into the worktree, and it is the node id itself.
+        # Run from the repository root instead, the file is not there, the shim
+        # says nothing, and the count below is short by one.
+        shims = Path(scratch) / "shims"
+        shims.mkdir()
+        seen = Path(scratch) / "ran-in.txt"
+        shim = shims / "uv"
+        shim.write_text(
+            "#!/bin/sh\n"
+            "if [ -f tests/test_app.py ]; then\n"
+            f'  pwd >> "{seen}"\n'
+            "  exit 0\n"
+            "fi\n"
+            "exit 1\n",
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+        inferred = prove(
+            without,
+            None,
+            node="backend/tests/test_app.py",
+            path=f"{shims}{os.pathsep}{env.get('PATH', '')}",
+        )
+        lines = seen.read_text(encoding="utf-8").splitlines() if seen.is_file() else []
+        tally.case(
+            "end to end: the inferred runner runs from the subdirectory it named",
+            inferred.returncode == 1
+            and len(lines) == 2
+            and all(Path(line).name == "backend" for line in lines),
+        )
+        seen.unlink(missing_ok=True)
 
         # The case above cannot tell a test that failed from a test that was
         # never copied in — both are red on the before half. Keeping the
