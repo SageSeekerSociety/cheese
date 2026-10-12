@@ -310,6 +310,40 @@ async def test_a_session_whose_process_exited_ends_the_turn_visibly():
         await room.close()
 
 
+async def test_a_session_whose_process_never_started_says_why():
+    """A relaunch whose process ended before Claude Code ever ran (dev,
+    2026-10-12: its machine was being prepared again when the relaunch took the
+    lease) is a session that did not start. The room hears the reason its
+    runner recorded, as it does for a start that failed outright, not that a
+    process exited."""
+    channel = Scripted(_talks)
+    channel.ending = (
+        "Claude Code exited with status 1 before it started:\n"
+        "Traceback (most recent call last):\n"
+        '  File "/h/.cheese/remote-execution/client.py", line 622, '
+        "in _take_leased_machine\n"
+        "    client.acquire(deadline=time.monotonic())\n"
+        '  File "/h/.cheese/remote-execution/executor_transport.py", line 739, '
+        "in acquire\n"
+        "RuntimeError: 环境仍在准备，对话和平台工具仍可用（等到操作时限仍未就绪）"
+    )
+    room = Room(channel)
+    try:
+        await room.send("fix the login page")
+        await _until(lambda: room.channel._session_for(room.topic).working)
+        room.channel.alive = False
+        await _until(lambda: room.results())
+
+        (ended,) = room.results()
+        assert ended.is_error
+        assert "process exited" not in str(ended.text)
+        assert "环境还在准备" in str(ended.text)
+        # What the runner recorded stays with the failure, for 现场.
+        assert "_take_leased_machine" in (ended.log or "")
+    finally:
+        await room.close()
+
+
 @pytest.mark.usefixtures("quick_retries")
 async def test_a_runner_out_of_reach_too_long_ends_the_turn(monkeypatch):
     monkeypatch.setattr(room_sessions, "RUNNER_GONE_S", 0.5)

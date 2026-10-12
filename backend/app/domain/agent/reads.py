@@ -33,6 +33,9 @@ class Ended:
     longer than ``SessionSpec.gone_after_s``."""
 
     reason: str
+    #: What its runner recorded of a process that ended before it ever
+    #: started, when it recorded that (`Driver.last_words`).
+    said: str = ""
 
 
 @dataclass(frozen=True)

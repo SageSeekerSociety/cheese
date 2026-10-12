@@ -22,6 +22,7 @@ from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness import SessionRef as Seat
 from app.domain.agent.harness.claude_code import (
+    NEVER_STARTED,
     ClaudeLaunch,
     Subscription,
     accepts_inputs,
@@ -132,6 +133,7 @@ class ClaudeCodeDriver:
             frozenset(status.get("capabilities") or ()),
             screen.sid,
             status.get("input_protocol"),
+            name,
         )
 
     async def _greet(self, wire: Wire, host: str, ref: SessionRef, name: str) -> dict:
@@ -247,6 +249,18 @@ class ClaudeCodeDriver:
             moved=readers.moved,
             input_protocol=launched.input_protocol,
         )
+
+    async def last_words(
+        self, wire: Wire, host: str, ref: SessionRef, launched: Launched
+    ) -> str:
+        """Its runner's record of this launch never coming up, which the
+        runner writes before it says the process is gone."""
+        if launched.name is None:
+            return ""
+        # The same record carries other lines this launch signed (a memory sync
+        # held back); only these words say it never came up.
+        record = await self._ended(wire, host, ref.state, launched.name)
+        return record if NEVER_STARTED in record else ""
 
     async def adopt(self, wire: Wire, found: list[tuple[str, Access]]) -> None:
         """The screen machinery forgets every screen when the backend restarts,
