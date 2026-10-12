@@ -2,7 +2,7 @@ import type { Block, ChecklistMeta, TodoItem } from '@/cx_types'
 
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { askAnswers, askOptions, replyBlock, replySnippet } from './blockDisplay'
+import { askAnswers, askOptions, isVideoBlock, replyBlock, replySnippet } from './blockDisplay'
 import { loadDocRead } from './docReadLoad'
 
 import { setLocale } from '@/i18n'
@@ -23,6 +23,35 @@ function said(author: string, content: string): Block {
     created_at: '2026-09-25T00:00:00Z',
   } as Block
 }
+
+describe('视频附件的内联播放入口', () => {
+  it.each(['mp4', 'm4v', 'mov', 'webm', 'ogv', 'MP4', 'MOV'])(
+    '媒体读取白名单内的 .%s 显示播放器，不依赖上传时的 MIME',
+    (suffix) => {
+      const block = {
+        ...said('alice', `library/clip.${suffix}`),
+        kind: 'attachment',
+        mime_type: 'application/octet-stream',
+      } as Block
+      expect(isVideoBlock(block)).toBe(true)
+    }
+  )
+
+  it.each([
+    ['clip.avi', 'video/x-msvideo'],
+    ['clip.mkv', 'video/x-matroska'],
+    ['clip', 'video/mp4'],
+    ['clip.html', 'video/mp4'],
+    ['clip.svg', 'video/webm'],
+  ])('不在媒体读取白名单的 %s 走下载，即使 MIME 是 %s', (name, mime) => {
+    const block = { ...said('alice', `library/${name}`), kind: 'attachment', mime_type: mime } as Block
+    expect(isVideoBlock(block)).toBe(false)
+  })
+
+  it('只有附件显示播放器，普通消息里的视频路径不播放', () => {
+    expect(isVideoBlock(said('alice', 'library/clip.mp4'))).toBe(false)
+  })
+})
 
 const maps = { mentionNames: { 'cheese-3fa2': '芝士', lixue: '李雪' }, topicTitles: { t9: '第三节图表' } }
 
