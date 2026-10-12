@@ -388,6 +388,22 @@ async def _dispatch_nudges(
     )
     ledger = pr_signals.NudgeLedger.load(saved_state)
     fresh = [p for p in pending if not ledger.already_sent(p.kind, p.signature)]
+    # 卡面那一行说的是「这张卡此刻停在哪」（`notes` 的码），不是「这一轮又新发现
+    # 了什么」。所以它取**本轮全部待发**里最重的那条，不取 `fresh`：一条已经叫过
+    # 人的理由（签名进了账本，`fresh` 里再也不会出现）在卡面被别的分支清掉之后就
+    # 再也写不回来 —— CI 从红转绿时 `notes.clear(card)` 正是这么清的。理由还挡着
+    # 的那件事（标题分家，两条合并路径都不放行）没走，卡面却成了一行空白的普通
+    # 待办，验收人的黄灯不亮。这正是这次改动要消灭的那种「停住了却看不出来」。
+    #
+    # 不担心盖掉队列/合并态那几句：进队列的卡在 `_poll_pr_card` 更早处就返回了，
+    # 走不到这里（`waiting_merge_queue` 那条分支）。
+    loudest = (
+        max(pending, key=lambda n: pr_signals.NOTE_PRIORITY[n.kind])
+        if pending
+        else None
+    )
+    if loudest is not None and loudest.note:
+        notes.record(card, loudest.note_code, loudest.note)
     if not fresh:
         return
     task = await TaskService(self._session).get(card.task_id) if card.task_id else None
@@ -414,9 +430,6 @@ async def _dispatch_nudges(
                 detail_label=nudge.detail_label or None,
             ),
         )
-    loudest = max(fresh, key=lambda n: pr_signals.NOTE_PRIORITY[n.kind])
-    if loudest.note:
-        notes.record(card, loudest.note_code, loudest.note)
     for nudge in fresh:
         ledger.record(nudge.kind, nudge.signature)
     card.nudge_state = ledger.dump()

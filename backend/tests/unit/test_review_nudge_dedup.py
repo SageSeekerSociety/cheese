@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.domain.review import notes, pr_signals
 from app.domain.review.notes import NoteCode
 from app.domain.review.services import AcceptService
 
@@ -64,6 +65,50 @@ async def test_nudge_dedup_still_suppresses_a_repeat_ci_failure():
 
     assert card.note == first_note
     assert service._record_task_nudge.await_count == 1
+    runner.submit.assert_not_called()
+
+
+@pytest.mark.anyio
+async def test_a_cleared_card_face_comes_back_while_the_reason_still_stands():
+    """CI 转绿时清掉的那句理由，只要挡着的事还在，卡面就要自己长回来。
+
+    真实形状（独立复核 #3509 报的）：一张 PR 标题和卡片不一致的卡，同时 CI 红。
+    第一轮两条都新，卡面写 CI 那句（优先级 3 > 2），标题那条的签名照样进了账本。
+    此后 CI 转绿，`polling` 的 `notes.clear(card)` 把卡面清空；标题仍不一致，可它
+    的签名已经在账本里、`fresh` 为空 —— 旧写法到这里直接 return，卡面就空着，而
+    两条合并路径还挡着。卡面于是看起来是一张没人要处理的普通待办，正是这次改动
+    要消灭的那种「停住了却看不出来」。
+    """
+    service, card, topic = _service_and_card()
+    runner = MagicMock()
+    title = pr_signals.PendingNudge(
+        kind=pr_signals.NudgeKind.pr_title,
+        signature="pr-title:the-card-line",
+        event="prTitleDisagrees",
+        content="PR 标题和卡片不是同一行，平台停下不合。",
+        note="PR #7 的标题和卡片不一致，合并已暂停",
+        note_code=NoteCode.pr_title_disagrees,
+        event_type="merge_refused",
+    )
+    # 上一轮已经叫过这一条：签名在账本里，这一轮的 fresh 是空的。
+    ledger = pr_signals.NudgeLedger()
+    ledger.record(title.kind, title.signature)
+    card.nudge_state = ledger.dump()
+    # CI 转绿那一轮把卡面清掉了。
+    notes.clear(card)
+
+    await service._dispatch_nudges(
+        card=card,
+        topic=topic,
+        pending=[title],
+        chat_service=MagicMock(),
+        runner=runner,
+    )
+
+    assert card.note_code is NoteCode.pr_title_disagrees
+    assert card.note.strip()
+    # 理由长回卡面，不等于再叫一次人。
+    assert service._record_task_nudge.await_count == 0
     runner.submit.assert_not_called()
 
 
