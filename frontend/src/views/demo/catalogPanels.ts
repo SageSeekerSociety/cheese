@@ -379,7 +379,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     about: '频道概览里「支线」那一格：有人回过话的支线，最近有回复的在前，转成任务的写那件任务。',
     file: 'src/components/panels/PanelThreads.vue',
     component: PanelThreads,
-    needs: [],
+    needs: ['vuetify', 'i18n'],
     args: {
       rows: THREAD_ROWS,
       loading: false,
