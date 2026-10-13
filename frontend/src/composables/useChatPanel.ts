@@ -774,12 +774,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
   // chip 只会写「#话题」。
+  // 只改变了的那几个：每条消息的正文都盯着这张表，整张清空再填，项目里任何一件任务
+  // 一动（话题列表就刷新一次），整条时间线就重画一遍，停在底部的人会被甩上去
+  // （见 useChatScroll 的 lastTop）。
   watch(
     [() => topicList(), roomTasks.known],
     ([ts, tasks]) => {
-      for (const k of Object.keys(topicTitles)) delete topicTitles[k]
-      for (const t of ts) topicTitles[t.id] = topicTitle(t)
-      for (const t of tasks.values()) topicTitles[t.id] = taskTitle(t)
+      const next = new Map<string, string>()
+      for (const t of ts) next.set(t.id, topicTitle(t))
+      for (const t of tasks.values()) next.set(t.id, taskTitle(t))
+      for (const k of Object.keys(topicTitles)) if (!next.has(k)) delete topicTitles[k]
+      for (const [k, title] of next) if (topicTitles[k] !== title) topicTitles[k] = title
     },
     { immediate: true, deep: true }
   )
