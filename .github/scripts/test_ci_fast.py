@@ -473,6 +473,21 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         self.assertIn("node_modules", proc.stdout)
 
+    # --- the tier is the other half of the same question, and the only run
+    # --- where it is the whole answer: off the static tier the pre-push filter
+    # --- still drops the three node hooks, so the selection can say nothing
+    # --- about node while the tier's own remaining checks still type-check the
+    # --- frontend. Blocked for the missing dependency, not red by a toolchain
+    # --- that was never installed.
+    def test_pre_push_off_the_static_tier_still_gates_on_node_modules(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        shutil.rmtree(self.repo / "frontend/node_modules")
+        # `run_ci_fast` writes `--tier static` first and the last one wins.
+        proc = self.run_ci_fast("--tier", "quick", "--pre-push")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("node_modules", proc.stdout)
+
     # --- a config that is not text is a blocked run with a sentence, not a
     # --- traceback: `UnicodeDecodeError` is a `ValueError`, so the `except
     # --- OSError` that reads like it covers an unreadable file does not, and
@@ -526,6 +541,12 @@ class CiFastTest(unittest.TestCase):
         the caller asks for the report by name instead. Only a run that did not
         pass writes it: a passing run has nothing to act on, and a room told
         about one would be told to look for a problem that is not there.
+
+        The stub also records what it was asked to run, because the argv is the
+        entry point's whole job: `--pre-push` is the flag that drops the three
+        node-toolchain hooks, and `--tier static` is what the report calls the
+        draft tier's scope. A stub that ignores its arguments would not notice
+        the day either one changed.
         """
         entry = SCRIPT.parents[2] / ".cheese/pre-push"
         tools = self.tmp / "tools"
@@ -534,12 +555,18 @@ class CiFastTest(unittest.TestCase):
         work.mkdir()
         git(work, "init", "-b", "main")
         report = self.tmp / "report.txt"
+        argv = self.tmp / "argv"
         env = {
             "PATH": str(tools) + os.pathsep + os.environ["PATH"],
             "CI_FAST_PRE_PUSH_REPORT": str(report),
         }
         python = tools / "python3"
-        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 0\n")
+        python.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' \"$@\" > {shlex.quote(str(argv))}\n"
+            "echo 'ruff 报了一个错'\n"
+            "exit 0\n"
+        )
         python.chmod(0o755)
 
         passed = subprocess.run(
@@ -551,6 +578,11 @@ class CiFastTest(unittest.TestCase):
         self.assertFalse(
             report.exists(), "a passing run left a report for the room"
         )
+        self.assertEqual(
+            argv.read_text().splitlines(),
+            [".github/scripts/ci-fast.py", "--tier", "static", "--pre-push"],
+            "the entry point ran something other than the draft tier's checks",
+        )
 
         python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 1\n")
         failed = subprocess.run(
@@ -559,6 +591,80 @@ class CiFastTest(unittest.TestCase):
         )
         self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
         self.assertEqual(report.read_text(), "ruff 报了一个错\n")
+
+    # --- the other half of "a report, not a gate": nobody asked for a report,
+    # --- so the run has a reader and the status is what it is worth. The
+    # --- documented way to use this by hand is to link it into your own
+    # --- `.git/hooks/pre-push`, where git honours what it returns; the
+    # --- platform's own push asks for the report by name, which is what caps
+    # --- it at 0 above.
+    def test_the_entry_point_hands_a_direct_run_the_checks_status(self):
+        """Run by hand this is a hook; asked for a report, it is a report.
+
+        `--pre-push`'s own promise (`ci-fast.md`: the exit code is unchanged,
+        1 for a real failure, 2/3 for unknown/blocked) is a promise about the
+        checks, and the direct run is where a caller reads it.
+        """
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        work = self.tmp / "work"
+        work.mkdir()
+        git(work, "init", "-b", "main")
+        python = tools / "python3"
+        env = {"PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+
+        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 0\n")
+        python.chmod(0o755)
+        passing = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(passing.returncode, 0, passing.stdout + passing.stderr)
+
+        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 1\n")
+        failing = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(failing.returncode, 1, failing.stdout + failing.stderr)
+        self.assertIn("ruff 报了一个错", failing.stdout)
+
+    # --- the wall clock the header and `docs/workflows.md` both advertise, and
+    # --- the one thing the tier's own budgets cannot cover: a machine that
+    # --- cannot reach pre-commit's index hangs before any check starts. On the
+    # --- delivery path that hang would eat the budget the push shares with the
+    # --- hook, so the kill has to arrive long before it.
+    def test_the_entry_point_cuts_a_run_that_outlasts_its_wall_clock(self):
+        """A hung check must not become a hung push.
+
+        The stub replaces itself with `sleep`, so the `TERM` the wall clock
+        sends lands on the process the pipe is waiting for and the run really
+        ends there — a shell that kept a grandchild alive would hold the
+        command substitution open for the whole sleep.
+        """
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        work = self.tmp / "work"
+        work.mkdir()
+        git(work, "init", "-b", "main")
+        python = tools / "python3"
+        python.write_text("#!/bin/sh\nexec sleep 30\n")
+        python.chmod(0o755)
+        started = time.monotonic()
+        proc = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env={
+                "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+                "CI_FAST_PRE_PUSH_REPORT": str(self.tmp / "report.txt"),
+                "CI_FAST_PRE_PUSH_TIMEOUT": "1",
+            },
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertLess(
+            time.monotonic() - started, 15, "the wall clock did not fire"
+        )
 
     # --- an unknown path widens the scope; it must not shrink to guards-only
     def test_unknown_path_widens_scope(self):

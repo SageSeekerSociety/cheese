@@ -3189,15 +3189,21 @@ def _git_task(
             # since the next attempt unlinks it before it runs. Kept for
             # `_sync_task` to hand over either way.
             #
+            # A missing file is an answer too, and it is not "no answer": this
+            # attempt unlinked whatever the last one left, so nothing there
+            # means this attempt's own hook ran and passed. `_keep_pre_push_report`
+            # drops the attempt before it, so a retry that passed is not
+            # reported with the text of the attempt it replaced.
+            #
             # `errors="replace"` because this is a message, not data: a
             # project's entry point could echo a path its filesystem holds in
             # some other encoding, and one undecodable byte must not turn a
             # push that landed into a reported delivery failure.
             try:
                 report_text = pre_push_report.read_text(errors="replace").strip()
-                _keep_pre_push_report(pre_push_report, report_text)
             except OSError:
-                pass
+                report_text = ""
+            _keep_pre_push_report(pre_push_report, report_text)
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
     # Raw for NUL-separated paths: a file name may begin with a space.
@@ -3218,13 +3224,23 @@ def _pre_push_report_path(worktree: Path) -> Path:
 # Reports read back from a delivery push, keyed by the checkout they came
 # from and waiting for `_sync_task` to hand them over. Keyed and not a list
 # because one sync can push the same checkout twice: `_once_more_if_transient`
-# retries a delivery, and both attempts read the file that attempt wrote.
+# retries a delivery, and each attempt reads the file that attempt wrote.
 _pending_pre_push_reports: dict[str, str] = {}
 
 
 def _keep_pre_push_report(path: Path, text: str) -> None:
+    """Record this attempt's report, or forget the last attempt's.
+
+    Called once per delivery push, so silence has to be able to overwrite
+    text: a retry whose hook passes writes no file, and the reader of the
+    room message is owed the outcome of the push that landed, not of the one
+    that was thrown away.
+    """
+    key = str(path)
     if text:
-        _pending_pre_push_reports[str(path)] = text
+        _pending_pre_push_reports[key] = text
+    else:
+        _pending_pre_push_reports.pop(key, None)
 
 
 class _RoomMessage:

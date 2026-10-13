@@ -91,12 +91,14 @@ delivery push that reported every clean commit would be noise.
 
 The report carries `"pre_push": true`, and the exit code is unchanged — `1` for
 a real failure, `2`/`3` for unknown/blocked — which is what the reproduce
-commands and any direct run of the entry point read. What does not read it is
-the push: the installed hook runs the script and exits 0 regardless, because a
-push refused there is a commit the platform has never delivered and the
-checkout it lives in does not survive to retry. `--pre-push` stays honest about
-what it checked; blocking a merge remains CI's job, and it stays the hook's job
-not to lose the work it is reporting on.
+commands and any direct run of the entry point read (a direct run cut by the
+entry point's own wall clock is `124`, the one status that is about the run
+rather than about a check). What does not read it is the push: that caller
+asked for the report by name, and the installed hook exits 0 whatever happens,
+because a push refused there is a commit the platform has never delivered and
+the checkout it lives in does not survive to retry. `--pre-push` stays honest
+about what it checked; blocking a merge remains CI's job, and it stays the
+hook's job not to lose the work it is reporting on.
 
 `uvx` puts its tool venv's `bin` first on the hooks' `PATH`, so a
 `language: system` hook whose entry says `python3` runs under whichever

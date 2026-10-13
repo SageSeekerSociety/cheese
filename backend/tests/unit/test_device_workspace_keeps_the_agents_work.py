@@ -620,6 +620,45 @@ def test_a_push_killed_for_outrunning_its_budget_still_reports(
     assert budgets[1] > budgets[0]
 
 
+def test_a_retried_push_that_passed_forgets_the_attempt_before_it(
+    device, tmp_path, monkeypatch
+):
+    """The room hears the push that landed, not the one that was thrown away.
+
+    `_once_more_if_transient` re-runs a delivery on a flaky link, and each
+    attempt unlinks the report file before its own push. An attempt whose hook
+    passes leaves no file, so the read-back has nothing for it — and nothing is
+    what it has to say: the text the attempt before it left is dropped, rather
+    than posted as the outcome of a push whose check passed.
+    """
+    cli, _tasks, _remote, _home = device
+    work = tmp_path / "work"
+    work.mkdir()
+    report = work / "report.txt"
+    pushes = []
+
+    class Ran:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def first_failed(args, **_kwargs):
+        if args[-1] == "push":
+            pushes.append(1)
+            if len(pushes) == 1:
+                report.write_text("ruff 报了一个错\n")
+        return Ran()
+
+    cli._pending_pre_push_reports.clear()
+    monkeypatch.setattr(cli.subprocess, "run", first_failed)
+    cli._git_task(work, "push", pre_push_report=report)
+    assert list(cli._pending_pre_push_reports.values()) == ["ruff 报了一个错"]
+
+    # The retry: its own hook runs, passes, and writes nothing.
+    cli._git_task(work, "push", pre_push_report=report)
+    assert list(cli._pending_pre_push_reports.values()) == []
+
+
 def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
     cli, tasks, remote, home = device
     task = next(iter(tasks))
