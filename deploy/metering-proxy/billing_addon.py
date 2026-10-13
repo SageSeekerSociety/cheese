@@ -202,7 +202,7 @@ def load(loader):
     CLAUDE_ACCOUNTS.snapshot()
 
 
-def _record_usage(project_id, topic_id, usage, model):
+def _record_usage(project_id, topic_id, usage, model, kind=""):
     """Meter a turn, then refresh the pool the board reads.
 
     The two belong together: the snapshot's `retry_after` is a countdown, so it
@@ -210,7 +210,7 @@ def _record_usage(project_id, topic_id, usage, model):
     happens on every served turn. Cooldown changes publish on their own (every
     state change writes through `ClaudeAccounts._save`).
     """
-    METER.record(project_id, topic_id, usage, model)
+    METER.record(project_id, topic_id, usage, model, kind)
     CLAUDE_ACCOUNTS.snapshot()
 
 
@@ -1246,6 +1246,9 @@ async def _admit(
 
     verdict, check_started, check_finished = await asyncio.to_thread(check_admission)
     admission_finished = time.perf_counter()
+    # Read back when the response is metered: the kind admission named for
+    # this call (`Verdict.usage_kind`), the dream's while one runs.
+    flow.metadata["cheese_usage_kind"] = verdict.usage_kind
     flow.metadata["cheese_admission_ms"] = (
         admission_finished - admission_started
     ) * 1000
@@ -1701,7 +1704,13 @@ def _meter_subscription_stream(
     extractor.close()
     project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
     if extractor.usage:
-        _record_usage(project_id, topic_id, extractor.usage, extractor.model)
+        _record_usage(
+            project_id,
+            topic_id,
+            extractor.usage,
+            extractor.model,
+            flow.metadata.get("cheese_usage_kind", ""),
+        )
         if interrupted:
             logger.warning(
                 "subscription turn's stream was interrupted before its end; "
@@ -2318,4 +2327,5 @@ def response(flow: http.HTTPFlow) -> None:
         return
     usage, model = payload.get("usage", {}), payload.get("model", "")
     if usage:
-        _record_usage(project_id, topic_id, usage, model)
+        kind = flow.metadata.get("cheese_usage_kind", "")
+        _record_usage(project_id, topic_id, usage, model, kind)

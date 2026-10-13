@@ -8525,7 +8525,7 @@
           "connector"
         ],
         "summary": "My Model Connections",
-        "description": "The caller's model connections across the machines they enrolled\n(#2991): what each logs in with, where it is kept, its last check. Never a\nkey.",
+        "description": "The caller's model connections (#2991): the logins on the machines they\nenrolled — what each logs in with, where it is kept, its last check — and\nthe API keys and model services their account holds. Never a key.",
         "operationId": "my_model_connections_connector_my_model_connections_get",
         "responses": {
           "200": {
@@ -8534,6 +8534,186 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ModelConnectionsOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Add Account Connection",
+        "description": "Keep an Anthropic API key or a model service on the caller's account,\nwith no machine (#2991). The service is called once first; a connection\nit refuses is not kept, and the refusal says why. The key is sealed and\nnever returned.",
+        "operationId": "add_account_connection_connector_my_model_connections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountConnectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/model-connections/{connection_id}/check": {
+      "post": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Check Account Connection",
+        "description": "Call the service again with the connection, and record what it said.",
+        "operationId": "check_account_connection_connector_my_model_connections__connection_id__check_post",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/model-connections/{connection_id}": {
+      "delete": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Remove Account Connection",
+        "description": "Remove a connection the caller's account holds: its key is deleted at\nonce, and nothing starts with it again. The own agents on it stay in their\nprojects with no connection, as one on a removed machine login does.\nAnswers with what was removed.",
+        "operationId": "remove_account_connection_connector_my_model_connections__connection_id__delete",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Rename Account Connection",
+        "description": "Name a connection; the own agents on it are named after it.",
+        "operationId": "rename_account_connection_connector_my_model_connections__connection_id__patch",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountConnectionRename"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -52119,6 +52299,171 @@
         ],
         "title": "AcceptRequest"
       },
+      "AccountConnectionIn": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "model_service"
+            ],
+            "title": "Kind"
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Key"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^https://[^\\s/]+\\S*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^\\S+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "key"
+        ],
+        "title": "AccountConnectionIn",
+        "description": "An API key or a model service to keep on the caller's account."
+      },
+      "AccountConnectionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "key_last4": {
+            "type": "string",
+            "title": "Key Last4"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "check_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "key_last4",
+          "service_host",
+          "model",
+          "checked_at",
+          "check_error",
+          "created_at"
+        ],
+        "title": "AccountConnectionOut",
+        "description": "A model connection the caller's account holds: an Anthropic API key or\na model service, kept sealed by the platform. Never the key."
+      },
+      "AccountConnectionRename": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "AccountConnectionRename"
+      },
       "AddCard": {
         "properties": {
           "op": {
@@ -59421,11 +59766,19 @@
             },
             "type": "array",
             "title": "Connections"
+          },
+          "account_connections": {
+            "items": {
+              "$ref": "#/components/schemas/AccountConnectionOut"
+            },
+            "type": "array",
+            "title": "Account Connections"
           }
         },
         "type": "object",
         "required": [
-          "connections"
+          "connections",
+          "account_connections"
         ],
         "title": "ModelConnectionsOut"
       },
@@ -59826,8 +60179,41 @@
             ],
             "title": "Model"
           },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "on_account": {
+            "type": "boolean",
+            "title": "On Account"
+          },
           "machine_name": {
-            "type": "string",
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Machine Name"
           },
           "online": {
@@ -59849,6 +60235,9 @@
           "kind",
           "plan",
           "model",
+          "name",
+          "service_host",
+          "on_account",
           "machine_name",
           "online",
           "added",
@@ -60419,13 +60808,18 @@
               }
             ],
             "title": "Model"
+          },
+          "on_account": {
+            "type": "boolean",
+            "title": "On Account"
           }
         },
         "type": "object",
         "required": [
           "kind",
           "plan",
-          "model"
+          "model",
+          "on_account"
         ],
         "title": "OwnAgentConnectionOut"
       },

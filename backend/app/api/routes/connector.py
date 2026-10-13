@@ -24,7 +24,7 @@ import logging
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -62,7 +62,10 @@ from app.domain.agent.device_hub import (
 )
 from app.domain.agent.device_storage import keep_device_room_files
 from app.domain.agent.harness.claude_code import executor_launch, owner_login
+from app.domain.agent_instance import account_connections
+from app.domain.agent_instance.own import rename_for_connection
 from app.domain.device import owner_reads, sandbox
+from app.domain.device.login_kind import ConnectionKind
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -777,20 +780,159 @@ class ModelConnectionOut(ClaudeCodeLoginOut):
     last_used_at: str | None
 
 
+class AccountConnectionOut(BaseModel):
+    """A model connection the caller's account holds: an Anthropic API key or
+    a model service, kept sealed by the platform. Never the key."""
+
+    id: str
+    kind: ConnectionKind
+    #: What its owner calls it.
+    name: str | None
+    #: The key's last four characters, to tell keys apart.
+    key_last4: str
+    #: A model service's host and model; None for an API key.
+    service_host: str | None
+    model: str | None
+    #: When the service last answered a check, and its refusal if it refused.
+    checked_at: str | None
+    check_error: str | None
+    created_at: str
+
+
 class ModelConnectionsOut(BaseModel):
+    #: The logins the caller's machines hold.
     connections: list[ModelConnectionOut]
+    #: The connections the caller's account holds.
+    account_connections: list[AccountConnectionOut]
 
 
 @router.get("/my/model-connections")
 async def my_model_connections(
     resolver: ActorResolverDep, db: DbSession
 ) -> ModelConnectionsOut:
-    """The caller's model connections across the machines they enrolled
-    (#2991): what each logs in with, where it is kept, its last check. Never a
-    key."""
+    """The caller's model connections (#2991): the logins on the machines they
+    enrolled — what each logs in with, where it is kept, its last check — and
+    the API keys and model services their account holds. Never a key."""
     user_id = await _require_user(resolver)
     connections = await model_connections.of_owner(db, user_id, device_hub)
-    return ModelConnectionsOut.model_validate({"connections": connections})
+    held = await account_connections.of_owner(db, user_id)
+    return ModelConnectionsOut.model_validate(
+        {
+            "connections": connections,
+            "account_connections": [account_connections.view(r) for r in held],
+        }
+    )
+
+
+class AccountConnectionIn(BaseModel):
+    """An API key or a model service to keep on the caller's account."""
+
+    kind: Literal[ConnectionKind.api_key, ConnectionKind.model_service]
+    key: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1024)
+    ]
+    #: A model service's address and model; an API key calls Anthropic.
+    base_url: (
+        Annotated[
+            str,
+            StringConstraints(
+                strip_whitespace=True, pattern=r"^https://[^\s/]+\S*$", max_length=512
+            ),
+        ]
+        | None
+    ) = None
+    model: (
+        Annotated[
+            str,
+            StringConstraints(strip_whitespace=True, pattern=r"^\S+$", max_length=128),
+        ]
+        | None
+    ) = None
+    name: (
+        Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)] | None
+    ) = None
+
+
+class AccountConnectionRename(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)]
+
+
+async def _my_account_connection(db, resolver, connection_id: uuid.UUID):
+    user_id = await _require_user(resolver)
+    row = await account_connections.owned(db, user_id, connection_id)
+    if row is None:
+        raise NotFoundError(say("ownAgentConnectionNotFound"))
+    return row
+
+
+# The handler decides: a person keeps a connection on their own account.
+@router.post("/my/model-connections", dependencies=[ROUTE_DECIDES])
+async def add_account_connection(
+    body: AccountConnectionIn, resolver: ActorResolverDep, db: DbSession
+) -> AccountConnectionOut:
+    """Keep an Anthropic API key or a model service on the caller's account,
+    with no machine (#2991). The service is called once first; a connection
+    it refuses is not kept, and the refusal says why. The key is sealed and
+    never returned."""
+    user_id = await _require_user(resolver)
+    row = await account_connections.create(
+        db,
+        user_id,
+        kind=body.kind,
+        key=body.key,
+        base_url=body.base_url,
+        model=body.model,
+        name=body.name,
+    )
+    await db.commit()
+    return AccountConnectionOut.model_validate(account_connections.view(row))
+
+
+# The handler decides: only its owner.
+@router.post(
+    "/my/model-connections/{connection_id}/check", dependencies=[ROUTE_DECIDES]
+)
+async def check_account_connection(
+    connection_id: uuid.UUID, resolver: ActorResolverDep, db: DbSession
+) -> AccountConnectionOut:
+    """Call the service again with the connection, and record what it said."""
+    row = await _my_account_connection(db, resolver, connection_id)
+    await account_connections.check(db, row)
+    await db.commit()
+    return AccountConnectionOut.model_validate(account_connections.view(row))
+
+
+# The handler decides: only its owner.
+@router.patch("/my/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES])
+async def rename_account_connection(
+    connection_id: uuid.UUID,
+    body: AccountConnectionRename,
+    resolver: ActorResolverDep,
+    db: DbSession,
+) -> AccountConnectionOut:
+    """Name a connection; the own agents on it are named after it."""
+    row = await _my_account_connection(db, resolver, connection_id)
+    row.name = body.name or None
+    await db.flush()
+    await rename_for_connection(db, account_connection_id=row.id)
+    await db.commit()
+    return AccountConnectionOut.model_validate(account_connections.view(row))
+
+
+# The handler decides: only its owner.
+@router.delete("/my/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES])
+async def remove_account_connection(
+    connection_id: uuid.UUID, resolver: ActorResolverDep, db: DbSession
+) -> AccountConnectionOut:
+    """Remove a connection the caller's account holds: its key is deleted at
+    once, and nothing starts with it again. The own agents on it stay in their
+    projects with no connection, as one on a removed machine login does.
+    Answers with what was removed."""
+    row = await _my_account_connection(db, resolver, connection_id)
+    removed = AccountConnectionOut.model_validate(account_connections.view(row))
+    await db.delete(row)
+    await db.commit()
+    return removed
 
 
 @router.post("/my/devices/{device_id}/claude-code")

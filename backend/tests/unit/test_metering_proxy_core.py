@@ -1453,3 +1453,38 @@ def test_one_spent_account_leaves_the_others_alone():
     limits.spent("zhifei", 9000.0)
     assert limits.decide("fri") == (limits.SEND, 0.0)
     assert limits.decide("zhifei")[0] == limits.ANSWER
+
+
+def test_a_call_admission_names_as_the_dream_is_metered_as_the_dream(tmp_path):
+    """While a project's memory is consolidated, admission names the call's
+    kind in its supply answer; the usage line carries it, so the backend books
+    the call as the dream's instead of as a room turn. A room turn's line
+    carries no kind."""
+    captured = json.dumps(
+        {
+            "data": {
+                "allow": True,
+                "reason": "admitted",
+                "supply": {"pool": "subscription", "kind": "memory_dream"},
+            }
+        }
+    ).encode()
+
+    class _Resp:
+        def __enter__(self):
+            return io.BytesIO(captured)
+
+        def __exit__(self, *a):
+            return False
+
+    with mock.patch.object(core.urllib.request, "urlopen", return_value=_Resp()):
+        verdict = core._post_admission("http://backend/llm/admission", "tok", 3.0)
+    assert verdict.usage_kind == "memory_dream"
+
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p1", "t1", {"input_tokens": 5}, "m", verdict.usage_kind)
+    meter.record("p1", "t1", {"input_tokens": 5}, "m")
+    lines = [
+        json.loads(line) for line in (tmp_path / "usage.jsonl").read_text().splitlines()
+    ]
+    assert [line.get("kind") for line in lines] == ["memory_dream", None]

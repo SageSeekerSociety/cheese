@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -172,14 +173,31 @@ func (m *Manager) Adopt(name string) *Session {
 }
 
 // SaveIdentity keeps recovery data with the session that owns the process.
+//
+// The data is the launch message, credentials included, so it reaches tmux on
+// stdin as a command file rather than as an argument: an argument is on the
+// tmux client's command line, which every local user can read in `ps`.
 func (m *Manager) SaveIdentity(name, owner, data string) error {
-	if out, err := m.tmux("set-option", "-t", name, "@cheese-owner", owner).CombinedOutput(); err != nil {
-		return fmt.Errorf("terminal: save owner: %w: %s", err, out)
-	}
-	if out, err := m.tmux("set-option", "-t", name, "@cheese-screen", data).CombinedOutput(); err != nil {
+	commands := fmt.Sprintf("set-option -t %s @cheese-owner %s\nset-option -t %s @cheese-screen %s\n",
+		tmuxQuote(name), tmuxQuote(owner), tmuxQuote(name), tmuxQuote(data))
+	cmd := m.tmux("source-file", "-")
+	cmd.Stdin = strings.NewReader(commands)
+	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("terminal: save identity: %w: %s", err, out)
 	}
 	return nil
+}
+
+// tmuxQuote makes s one word of tmux's command syntax that tmux reads back as
+// exactly s. Single quotes, because inside them tmux expands nothing (`$`, `~`
+// and `\` are taken literally by every tmux with this parser, while what a
+// backslash escape means inside double quotes differs between releases). The
+// characters single quotes cannot hold — a single quote, and a line break,
+// which would end the command — go in double-quoted pieces of the same word.
+func tmuxQuote(s string) string {
+	return "'" + strings.NewReplacer(
+		"'", `'"'"'`, "\n", `'"\n"'`, "\r", `'"\r"'`,
+	).Replace(s) + "'"
 }
 
 func (m *Manager) Identities(owner string) (map[string]string, error) {
@@ -243,9 +261,15 @@ func atLeastUsable(cols, rows int) (int, int) {
 }
 
 // Spawn launches argv in a fresh tmux session sized cols x rows, with env (a
-// list of KEY=VALUE) present in the program's environment. Env is applied by
-// exec'ing the program through `env`, which is both portable and inherited by
+// list of KEY=VALUE) present in the program's environment and inherited by
 // every child process in the session.
+//
+// The environment carries the session's credentials, so none of it may be an
+// argument: whatever is on a command line — the tmux client's, the tmux server
+// it starts (which keeps that command line for as long as it runs), a wrapper
+// like `env` — is readable by every local user in `ps`. It goes into a file
+// only this user can read, which the session's shell loads, deletes and then
+// replaces itself with argv; nothing is left on disk once the program runs.
 func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Session, error) {
 	if len(argv) == 0 {
 		return nil, fmt.Errorf("terminal: empty command")
@@ -258,8 +282,13 @@ func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Sessi
 	}
 	cols, rows = atLeastUsable(cols, rows)
 	launch := argv
+	envFile := ""
 	if len(env) > 0 {
-		launch = append(append([]string{"env"}, env...), argv...)
+		var err error
+		if envFile, err = m.writeEnvFile(env); err != nil {
+			return nil, err
+		}
+		launch = append([]string{"/bin/sh", "-c", loadEnvAndExec, envFile}, argv...)
 	}
 	args := []string{"new-session", "-d", "-s", name,
 		"-x", strconv.Itoa(cols), "-y", strconv.Itoa(rows)}
@@ -268,9 +297,45 @@ func (m *Manager) Spawn(name string, argv, env []string, cols, rows int) (*Sessi
 	cmd := m.tmux(args...)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		if envFile != "" {
+			_ = os.Remove(envFile)
+		}
 		return nil, fmt.Errorf("terminal: spawn %q: %w: %s", name, err, stderr.String())
 	}
 	return &Session{m: m, name: name, stop: make(chan struct{})}, nil
+}
+
+// loadEnvAndExec is the session's first program: $0 is the environment file,
+// the rest is the command. The file is deleted whether or not it loaded.
+const loadEnvAndExec = `. "$0"; loaded=$?; rm -f -- "$0"; [ "$loaded" -eq 0 ] || exit "$loaded"; exec "$@"`
+
+// envName is what a shell accepts as a variable name.
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// writeEnvFile writes env as shell exports into a new file in the manager's
+// private runtime dir (0700), readable by this user alone.
+func (m *Manager) writeEnvFile(env []string) (string, error) {
+	var script strings.Builder
+	for _, kv := range env {
+		key, value, _ := strings.Cut(kv, "=")
+		if !envName.MatchString(key) {
+			return "", fmt.Errorf("terminal: environment variable name %q is not one a shell accepts", key)
+		}
+		script.WriteString("export " + key + "='" + strings.ReplaceAll(value, "'", `'\''`) + "'\n")
+	}
+	f, err := os.CreateTemp(filepath.Dir(m.sock), "env-*") // created 0600
+	if err != nil {
+		return "", fmt.Errorf("terminal: environment file: %w", err)
+	}
+	_, err = f.WriteString(script.String())
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		_ = os.Remove(f.Name())
+		return "", fmt.Errorf("terminal: environment file: %w", err)
+	}
+	return f.Name(), nil
 }
 
 // Snapshot returns the last polled screen contents.

@@ -63,8 +63,8 @@ class OwnAgentCallersUpdate(BaseModel):
 
 
 class OwnAgentAdd(BaseModel):
-    # One of the caller's model connections (`GET /my/model-connections`),
-    # named by the machine holding it.
+    # One of the caller's model connections (`my_connections[].id`): named by
+    # the machine holding it, or by the connection their account holds.
     connection_id: str = Field(min_length=1, max_length=64)
 
 
@@ -79,6 +79,9 @@ class OwnAgentConnectionOut(BaseModel):
     plan: str | None
     # The model a model service is called with.
     model: str | None
+    # Held by its owner's account, so it runs on the platform rather than on
+    # one of its owner's machines.
+    on_account: bool
 
 
 class OwnAgentOut(BaseModel):
@@ -100,7 +103,15 @@ class MyConnectionOut(BaseModel):
     kind: ConnectionKind
     plan: str | None
     model: str | None
-    machine_name: str
+    # What the reader named a connection their account holds.
+    name: str | None
+    # A model service's host.
+    service_host: str | None
+    # Held by the reader's account rather than one of their machines.
+    on_account: bool
+    # The machine holding it; None when the account does.
+    machine_name: str | None
+    # Whether that machine is online; one the account holds always is.
     online: bool
     # Already here as one of the reader's own agents.
     added: bool

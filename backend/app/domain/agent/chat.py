@@ -1378,7 +1378,6 @@ class ChatService(SessionRecovery):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
-        platform: bool = False,
     ) -> tuple[dict, str]:
         """Resolve a turn's model, model environment and usage route
         (gateway_usage.py)."""
@@ -1393,14 +1392,20 @@ class ChatService(SessionRecovery):
             topic_id,
             agent=agent,
             acting_agent=acting_agent,
-            platform=platform,
         )
 
-    async def project_gateway_key(self, project_id: uuid.UUID) -> str | None:
-        """The project's virtual gateway key, minted on first use
-        (gateway_usage.py)."""
+    async def project_gateway_key(
+        self, project_id: uuid.UUID, *, dream: bool = False
+    ) -> str | None:
+        """The project's virtual gateway key, minted on first use; with
+        ``dream``, the key its memory consolidation runs on (gateway_usage.py)."""
         return await project_gateway_key(
-            self, self._sessions, self._gateway, self._gateway_lock, project_id
+            self,
+            self._sessions,
+            self._gateway,
+            self._gateway_lock,
+            project_id,
+            dream=dream,
         )
 
     async def _gateway_budget_target(
