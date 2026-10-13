@@ -75,7 +75,14 @@ async function mount() {
 beforeEach(() => {
   vi.clearAllMocks()
   setLocale('zh-CN')
-  vi.mocked(listBlocks).mockResolvedValue({ data: [failure], total: 1 })
+  vi.mocked(listBlocks).mockResolvedValue({
+    data: [failure],
+    total: 1,
+    has_more: false,
+    oldest_id: failure.id,
+    has_newer: false,
+    newest_id: failure.id,
+  })
   vi.stubGlobal(
     'WebSocket',
     class {
@@ -121,6 +128,10 @@ describe('失败回复的重试入口', () => {
         },
       ],
       total: 2,
+      has_more: false,
+      oldest_id: failure.id,
+      has_newer: false,
+      newest_id: 'second-failure',
     })
     vi.mocked(summonAgent).mockResolvedValue({ started: true })
     const view = await mount()
@@ -150,7 +161,14 @@ describe('失败回复的重试入口', () => {
     )
     const view = await mount()
     await fireEvent.click(view.getByRole('button', { name: '重试' }))
-    vi.mocked(listBlocks).mockResolvedValue({ data: [], total: 0 })
+    vi.mocked(listBlocks).mockResolvedValue({
+      data: [],
+      total: 0,
+      has_more: false,
+      oldest_id: null,
+      has_newer: false,
+      newest_id: null,
+    })
     await view.rerender({ topic: topic('another-room') })
     resolve({ started: true })
     await waitFor(() => expect(view.queryByRole('button', { name: '重试' })).toBeNull())
