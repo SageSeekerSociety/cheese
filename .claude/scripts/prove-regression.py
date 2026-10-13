@@ -1630,8 +1630,18 @@ def self_test() -> int:
         # `plant` makes a worktree, proves it is really registered — so a case
         # cannot pass off a git that never made one — and ages it by hand rather
         # than by sleeping.
+        #
+        # The name carries this run's own scratch directory in the middle, the
+        # way the escape case above does, because the temp directory is every
+        # process's on the machine: under a fixed name two concurrent self-tests
+        # create and remove each other's worktree, and the `worktree add` below
+        # is `check=True`, so the race the loser loses is a traceback at exit 1
+        # — the code for NOT PROVEN — out of a run that judged nothing. The pid
+        # stays the last field, which is the one field `reclaim_stale` reads.
         def plant(pid: int, age: float = 0.0) -> Path:
-            path = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}0deada0deada-{pid}"
+            path = Path(tempfile.gettempdir()) / (
+                f"{WORKTREE_PREFIX}0deada0deada-{Path(scratch).name}-{pid}"
+            )
             # Whatever a previous run of this case left, so the case cannot pass
             # or fail on /tmp's history rather than on reclaim_stale.
             git("worktree", "remove", "--force", str(path), cwd=repo)
@@ -1703,9 +1713,16 @@ def self_test() -> int:
         # that is this tool's own litter whatever its pid says, so it is removed,
         # and either way the sweep must not raise: a raise here is exit 1, NOT
         # PROVEN, out of a run that judged nothing.
+        #
+        # Named after this run's own scratch directory, like `plant` above, so
+        # that two concurrent self-tests are not building the same directory:
+        # the token goes in the middle, and the suffix — the field the rule
+        # reads — stays last.
         odd = []
         for suffix in ("²", "99999999999"):
-            path = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}odd-{suffix}"
+            path = Path(tempfile.gettempdir()) / (
+                f"{WORKTREE_PREFIX}odd-{Path(scratch).name}-{suffix}"
+            )
             git("worktree", "remove", "--force", str(path), cwd=repo)
             shutil.rmtree(path, ignore_errors=True)
             subprocess.run(
@@ -1805,8 +1822,9 @@ def self_test() -> int:
         # trees above by where the run stands, but a worktree a person made —
         # `my-feature` — is neither, and its last field is not a pid, so without
         # the prefix it goes straight to `remove_worktree` and the directory and
-        # the registration both go. Aged, and carrying this run's pid, so
-        # neither the age nor the owner is what keeps it.
+        # the registration both go. Aged past the window by hand, so freshness
+        # is not what keeps it: with the prefix gone the last field is what the
+        # rule is left with, and there is no pid there either.
         human = Path(scratch) / "my-feature"
         subprocess.run(
             ["git", "worktree", "add", "-q", "--detach", str(human), "HEAD"],
@@ -1870,10 +1888,13 @@ def self_test() -> int:
         # A report is not a worktree, so `git worktree list` never shows it and
         # the sweep over the temp directory is the only thing that collects a
         # killed run's half. Its name carries the pid for exactly this: the
-        # report of a live run is not litter.
+        # report of a live run is not litter. The third field carries this run's
+        # own scratch directory, which the rule never reads, so a concurrent
+        # self-test writing the same file cannot put it back between this run's
+        # sweep and the look that follows.
         leaked = (
             Path(tempfile.gettempdir())
-            / f"{WORKTREE_PREFIX}before-{unused_pid()}-leak.json"
+            / f"{WORKTREE_PREFIX}before-{unused_pid()}-{Path(scratch).name}.json"
         )
         leaked.write_text('{"numTotalTests": 1}', encoding="utf-8")
         mine = report_path("after")
@@ -1892,10 +1913,16 @@ def self_test() -> int:
         # `int` refuses it, and an all-digit field can be past what `os.kill`
         # takes. Either one raises out of the sweep, and a raise here is exit 1
         # — the code for NOT PROVEN — out of a run that judged nothing.
+        #
+        # The third field carries this run's own scratch directory, so that two
+        # concurrent self-tests are not writing the same file — the field the
+        # rule reads is the one the odd number goes in, and that stays second.
+        # Under a fixed name the run that reads the file after the other one
+        # unlinked it fails on that race rather than on the sweep.
         odd = []
         for name in (
-            f"{WORKTREE_PREFIX}before-99999999999-aaaa.json",
-            f"{WORKTREE_PREFIX}before-²-x.json",
+            f"{WORKTREE_PREFIX}before-99999999999-{Path(scratch).name}.json",
+            f"{WORKTREE_PREFIX}before-²-{Path(scratch).name}.json",
         ):
             path = Path(tempfile.gettempdir()) / name
             path.write_text('{"numTotalTests": 1}', encoding="utf-8")
@@ -1923,9 +1950,14 @@ def self_test() -> int:
         # one carries nineteen characters of it — still ends up with the three
         # fields the rule reads past the cut, and the sweep reads it as a
         # report of its own and unlinks it. Aged, with a pid that is gone, so
-        # neither the age nor the owner is what keeps it.
+        # neither the age nor the owner is what keeps it. The junk stands where
+        # the prefix would; the third field carries this run's own scratch
+        # directory, a field the rule never reads, so that two concurrent
+        # self-tests are not writing and unlinking the same file.
         neighbour = Path(tempfile.gettempdir()) / (
-            "0123456789abcdefghi" + f"before-{unused_pid()}-aaaa" + ".json"
+            "0123456789abcdefghi"
+            + f"before-{unused_pid()}-{Path(scratch).name}"
+            + ".json"
         )
         neighbour.write_text('{"numTotalTests": 1}', encoding="utf-8")
         when = time.time() - STALE_AFTER - 60
@@ -2108,8 +2140,12 @@ def self_test() -> int:
         # of /tmp — makes the next `worktree add` fail with "missing but already
         # registered", so the add is preceded by a remove. The checkout has to
         # survive a state the fixture above never reaches.
+        # Named after this run's own scratch directory, like `plant` above: the
+        # pid stays the last field, in the position the reclaim rule reads, and
+        # two concurrent self-tests no longer build the same directory here.
         stranded = (
-            Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}stranded-{unused_pid()}"
+            Path(tempfile.gettempdir())
+            / f"{WORKTREE_PREFIX}stranded-{Path(scratch).name}-{unused_pid()}"
         )
         git("worktree", "remove", "--force", str(stranded), cwd=repo)
         shutil.rmtree(stranded, ignore_errors=True)
