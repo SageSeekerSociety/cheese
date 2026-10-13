@@ -48,6 +48,8 @@ async function mounted(content: number) {
       },
     })
   )
+  // 和 ChatPanel 里一样，滚动框和输入框那一块是同一层里的兄弟。
+  document.createElement('div').append(box.el, document.createElement('div'))
   scroll.scrollRef.value = box.el
   scroll.contentRef.value = document.createElement('div')
   await nextTick()
@@ -145,5 +147,20 @@ describe('正文被就地改写', () => {
     scroll.rememberScroll('t-wheel')
     expect(scroll.atBottom.value).toBe(false)
     expect(box.el.scrollTop).toBe(1300)
+  })
+})
+
+// 滚动框底下那一块（输入框、「谁在忙」那一行）在同一个任务里没了又回来：这一下滚动框
+// 变高，停在底部的位置被夹上去；它回来时滚动框高度复原，位置却留在了上面。
+// ResizeObserver 看不到，时间线里也一个节点都没变。
+describe('滚动框底下那一块闪了一下', () => {
+  it('没人动，位置却往上挪了：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    box.el.parentElement!.lastElementChild!.append(document.createElement('div'))
+    await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
+    box.el.scrollTop = 1600 - 196
+    scroll.rememberScroll('t-composer')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
   })
 })
