@@ -137,3 +137,37 @@ def test_an_overload_says_it_is_worth_retrying():
     assert meta["severity"] == "warn"
     assert meta["who"] == "platform"
     assert meta["retryable"] is True
+
+
+# ---- 同一句话结束了一轮 ----
+
+
+def test_a_turn_ended_by_the_subscription_cooling_down_says_so():
+    """FB-87: the proxy refused every call because each Claude account of the
+    subscription was cooling down, Claude Code ended the turn with that refusal,
+    and the room read only 「本轮未完成」. A turn that ends incomplete says why
+    on its line, and the service's words stay behind it."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    said = (
+        "API Error: Server is temporarily limiting requests (not your usage "
+        "limit) · cheese: all Claude accounts are cooling down（rate_limit）"
+    )
+    line, meta = _turn_failure_notice(said, None)
+    assert line != say("turnFailedService")
+    # Not the provider being briefly overloaded: waiting a moment will not help.
+    overloaded = cli_notice("API Error: 529 Overloaded.")
+    assert overloaded is not None and line != overloaded[0]
+    assert said in meta["detail"]
+
+
+def test_a_turn_the_provider_throttled_says_so():
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    line, _ = _turn_failure_notice(
+        "API Error: Server is temporarily limiting requests (not your usage limit)",
+        None,
+    )
+    assert line != say("turnFailedService")

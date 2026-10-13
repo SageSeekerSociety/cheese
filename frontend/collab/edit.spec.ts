@@ -125,3 +125,53 @@ describe('the agent’s suggestion inside a block', () => {
     expect(nodeMarkdown(direct.doc)).toContain(':::chart line')
   })
 })
+
+describe('an edit in a list whose item opens empty above a nested list', () => {
+  // What an editor makes when someone indents the items below an empty bullet:
+  // the empty item holds an empty line and the nested list.
+  const live = parseMarkdown('x').type.schema.nodeFromJSON({
+    type: 'doc',
+    content: [
+      { type: 'heading', attrs: { level: 2 }, content: [{ type: 'text', text: '分工' }] },
+      {
+        type: 'bulletList',
+        content: [
+          {
+            type: 'listItem',
+            content: [
+              { type: 'paragraph' },
+              {
+                type: 'bulletList',
+                content: [
+                  {
+                    type: 'listItem',
+                    content: [{ type: 'paragraph', content: [{ type: 'text', text: '芝士：调度审查。' }] }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: 'listItem',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: '芝士S：先让测试全绿。' }] }],
+          },
+        ],
+      },
+      { type: 'paragraph', content: [{ type: 'text', text: '后记。' }] },
+    ],
+  })
+
+  it('is placed, as a suggestion or directly', () => {
+    for (const mode of ['suggest', 'direct'] as const) {
+      const result = applyEdits(live, [{ old: '先让测试全绿', new: '先补契约' }], mode, 'cheese-agent')
+      if (!result.ok) throw new Error(`${mode}: ${JSON.stringify(result)}`)
+      const reads = nodeMarkdown(mode === 'suggest' ? withoutSuggestions(result.doc) : result.doc)
+      expect(reads).toContain(mode === 'suggest' ? '先让测试全绿' : '先补契约')
+      if (mode === 'suggest') {
+        expect(pendingSuggestions(result.doc)).toEqual([expect.objectContaining({ author: 'cheese-agent' })])
+      }
+      // The empty item and its nested list are still there.
+      expect(result.doc.child(1).child(0).childCount).toBe(2)
+    }
+  })
+})
