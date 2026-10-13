@@ -70,7 +70,12 @@ const bpBusy = computed(() => props.saving !== null)
 function faceOf(input: unknown) {
   const item = input as { raw?: unknown }
   const raw = item?.raw
-  if (raw && typeof raw === 'object' && typeof (raw as MergeMemberItem).handle === 'string' && (raw as MergeMemberItem).handle) {
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    typeof (raw as MergeMemberItem).handle === 'string' &&
+    (raw as MergeMemberItem).handle
+  ) {
     const r = raw as MergeMemberItem
     return { handle: r.handle, name: r.name, avatarId: r.avatarId, agent: r.agent }
   }
