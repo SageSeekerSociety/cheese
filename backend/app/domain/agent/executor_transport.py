@@ -145,6 +145,20 @@ MACHINE_PREPARING = (
 MACHINE_STILL_PREPARING = "执行环境仍在准备，对话和平台工具仍可用"
 
 
+def failure_text(exc: BaseException) -> str:
+    """What the agent reads when a tool call raised.
+
+    A refusal written for the agent (`PlatformToolError`, `PlatformHTTPError`,
+    `MachineOutOfReach`, a `ValueError` naming the problem) reads as written.
+    A lookup failure does not: ``str(KeyError("id"))`` is ``'id'``, and an
+    agent handed that bare word cannot tell it from an answer. Those, and an
+    exception with no text, are named by their type."""
+    text = str(exc)
+    if text and not isinstance(exc, LookupError):
+        return text
+    return f"Tool call failed with {type(exc).__name__}: {text or '(no message)'}"
+
+
 class MachineOutOfReach(RuntimeError):
     """够不着这件事，判得出来的那一种。
 
