@@ -838,6 +838,94 @@ def test_queued_accept_stays_pending_until_github_merges(
         assert card["decided_by"] == "alice"
 
 
+def _queue_mirror(client, card_id: str) -> dict:
+    """卡面上那份镜像，直接从库里读。
+
+    读卡这条路（`_cards`）自己会把过期的快照补上（`refresh_stale_pr_snapshots`），
+    要测轮询写下的那一份就不能从它那里读。"""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    async def _do() -> dict:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None and isinstance(card.merge_state, dict)
+            return dict(card.merge_state)
+
+    return asyncio.run(_do())
+
+
+def _age_queue_mirror(client, card_id: str, *, seconds: int) -> str:
+    """把镜像的 `checked_at` 推回 `seconds` 秒之前，理由和状态都不动 ——
+    摆成「上一次看这张卡是很久以前」，返回那个时刻。"""
+    from app.domain.review.repositories import AcceptCardRepository
+
+    stale_at = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat()
+
+    async def _do() -> None:
+        async with client.test_factory() as s:
+            card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
+            assert card is not None and isinstance(card.merge_state, dict)
+            card.merge_state = {**card.merge_state, "checked_at": stale_at}
+            await s.commit()
+
+    asyncio.run(_do())
+    return stale_at
+
+
+def _waiting_on_checks(client, topic_id: str) -> bool:
+    """环境释放判据读的就是它（`machine.lifecycle`）。"""
+    from app.domain.review.queries import waiting_on_checks
+
+    task_id = _uuid.UUID(str(delivery_task_id(client, topic_id)))
+
+    async def _do() -> bool:
+        async with client.test_factory() as s:
+            return await waiting_on_checks(s, task_id)
+
+    return asyncio.run(_do())
+
+
+def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatch):
+    """卡在合并队列里时，镜像照样一轮刷一次 —— 「还在等 CI」的持有不该在队列
+    里比普通路径短。
+
+    进队列时写下的那份镜像带着 `ci_running`，但队列里 PR 的
+    `mergeStateStatus` 被 GitHub 钉在 BLOCKED，判定重算没有意义，所以它之后
+    再也不变。`checked_at` 是「还在等 CI」这句话的有效期：冻在入队那一刻，
+    过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 15 分钟）就没人再当这张卡在等 CI，
+    环境释放判据把机器收掉 —— 而轮询其实一直在看，回头还要叫醒这条线重建环境、
+    重读文档。队列里这段和普通路径是同一件事，就该挂同一根钟（1 小时）。"""
+    fake = app_world["fake"]
+    _pid, tid, cid, _number, head = _ready_card(client, app_world)
+    fake.check_state_by_sha[head] = ("success", "green")
+
+    async def enqueue(**kwargs):
+        return github_pr.MergeResult(queued=True)
+
+    async def in_queue(**kwargs):
+        return True
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "merge_queue_entry", in_queue, raising=False)
+
+    assert _accept(client, cid).status_code == 200
+    _poll(client)  # 队列里的一跳：镜像该被刷到此刻
+    first = _queue_mirror(client, cid)
+    assert first["reasons"][0]["kind"] == "ci_running"
+
+    # 摆成「上一次看这张卡是三个轮询间隔以前」：不刷新的话，判据就该不再认它。
+    stale_at = _age_queue_mirror(client, cid, seconds=3 * 300 + 1)
+    assert not _waiting_on_checks(client, tid)
+
+    _poll(client)  # 队列里的下一跳
+
+    again = _queue_mirror(client, cid)
+    assert again["state"] == "blocked"
+    assert again["reasons"] == first["reasons"]  # 判定没变，只有 checked_at 走
+    assert again["checked_at"] > stale_at
+    assert _waiting_on_checks(client, tid)
+
+
 @pytest.mark.parametrize("action", ["reject", "void"])
 def test_cancelling_queued_card_dequeues_first(client, app_world, monkeypatch, action):
     fake = app_world["fake"]

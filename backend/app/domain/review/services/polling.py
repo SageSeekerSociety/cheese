@@ -15,10 +15,11 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.review import (
+    merge_state,
     notes,
     pr_signals,
 )
-from app.domain.review.merge_state import RED_CONCLUSIONS
+from app.domain.review.merge_state import RED_CONCLUSIONS, MergeVerdict
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
@@ -47,6 +48,7 @@ from app.domain.review.services._shared import (
     logger,
     notice,
 )
+from app.domain.review.services.merge_queue import _write_merge_mirror
 from app.domain.review.task_landing import delivery_landed
 
 
@@ -635,6 +637,28 @@ async def _poll_pr_card(
         if await client.merge_queue_entry(
             owner=owner, repo=repo, number=number, token=creds.read
         ):
+            # 队列里这段是和普通路径**一样**的等 CI，只是 PR 的 `mergeStateStatus`
+            # 被 GitHub 钉在 BLOCKED、判定算出来没有意义，所以上面那条路不进。可
+            # 镜像照旧要一轮刷一次：`checked_at` 是「还在等 CI」这句话的有效期，
+            # 冻在入队那一刻，等不到队列检查出结果就先过期了 —— 环境释放判据会当
+            # 没人再看这张卡，把机器收掉，而轮询其实一直在看，回头又要叫醒这条线
+            # 重建环境、重读文档。只推 `checked_at` 到此刻：state、reasons 说的都还
+            # 是入队时那份判定，没有任何一条更新。
+            _write_merge_mirror(
+                self,
+                card,
+                MergeVerdict(
+                    state="blocked",
+                    reasons=(
+                        merge_state.MergeReason(
+                            kind="ci_running", detail="等待合并队列检查"
+                        ),
+                    ),
+                ),
+                "ci",
+                card.pr_head_sha or "",
+            )
+            await self._session.flush()
             return
         # Removal can mean failed checks or a human cancellation. Never
         # re-enqueue; but the card still reads 「已采纳」, so note it and wake
