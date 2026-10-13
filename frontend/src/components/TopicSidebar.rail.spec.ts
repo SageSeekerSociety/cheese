@@ -484,6 +484,23 @@ describe('C5 行操作', () => {
     expect(onSelectTopic).not.toHaveBeenCalled()
   })
 
+  // 「综合」是频道分组里的第一个频道，行尾那颗 ⋯ 和别的频道行是同一颗。它自己的
+  // 那几项（新建任务、全部任务、文件）以前只在右键里摸得到，看着像这一行没有操作。
+  it('综合那一行的行尾也有那颗 ⋯，点开是它自己那几项', async () => {
+    const { container } = mount()
+    const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
+    if (!row) throw new Error('没有找到「综合」那一行')
+    const more = row.querySelector('.row-actions .v-btn')
+    if (!more) throw new Error('「综合」那一行的行尾没有那颗 ⋯')
+    await fireEvent.click(more as HTMLElement)
+    await vi.waitFor(() => {
+      const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
+        n.textContent?.trim()
+      )
+      expect(items).toEqual(expect.arrayContaining(['新建任务', '全部任务', '文件']))
+    })
+  })
+
   it('排序菜单已经不在侧栏里', () => {
     const { container } = mount()
     const buttons = Array.from(container.querySelectorAll('.v-btn')) as HTMLElement[]
@@ -544,6 +561,13 @@ describe('整页形态', () => {
     const { container } = mount({ page: true })
     expect(container.querySelector('.v-navigation-drawer')).toBeNull()
     expect(container.querySelector('.rail-resizer')).toBeNull()
+  })
+
+  // 整页形态没有行的 hover，那里的操作是长按一行升起的面板，所以这颗 ⋯ 一个都不画
+  // ——「综合」那一行也一样，不能只有它留一颗手指摸不到的按钮。
+  it('行尾不画那颗 ⋯，综合那一行也不画', () => {
+    const { container } = mount({ page: true })
+    expect(container.querySelectorAll('.row-actions').length).toBe(0)
   })
 
   it('装的东西和抽屉形态一样', () => {
