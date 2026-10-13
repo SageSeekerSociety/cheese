@@ -11584,7 +11584,9 @@ export interface paths {
         };
         /**
          * Get Thread
-         * @description One 支线, and the message it hangs under.
+         * @description One 支线, the message it hangs under, and the seat of the AI teammate
+         *     it is talking with (`thread_teammate`; null before anyone called one): the
+         *     one its composer offers to hand a message to.
          */
         get: operations["get_thread_topics__topic_id__thread_get"];
         put?: never;

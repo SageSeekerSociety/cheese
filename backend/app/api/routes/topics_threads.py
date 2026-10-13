@@ -29,7 +29,7 @@ from app.domain.agent.staleness import announce_stale
 from app.domain.block.schemas import BlockOut
 from app.domain.thread import reads
 from app.domain.thread.schemas import ThreadOut
-from app.domain.thread.services import open_thread
+from app.domain.thread.services import open_thread, thread_teammate
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -137,7 +137,9 @@ async def list_threads(
 async def get_thread(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """One 支线, and the message it hangs under."""
+    """One 支线, the message it hangs under, and the seat of the AI teammate
+    it is talking with (`thread_teammate`; null before anyone called one): the
+    one its composer offers to hand a message to."""
     place = await TopicService(db).place_or_404(topic_id)
     await _actor_in_place(resolver, place)
     if place.thread is None:
@@ -150,5 +152,6 @@ async def get_thread(
             "root": BlockOut.model_validate(root).model_dump(mode="json")
             if root is not None
             else None,
+            "teammate": await thread_teammate(db, place.thread),
         }
     )

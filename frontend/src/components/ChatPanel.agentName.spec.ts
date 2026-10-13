@@ -269,8 +269,9 @@ describe('点消息上的头像和名字', () => {
 
 // 任务里负责人可以把这件事单独交给另一位队友（任务信息卡那行「AI 队友」的「改」）。
 // 换完之后发送框那个 @ 得跟着换：正文里写着「@芝士」而接手的是别人，读的人只会当成
-// 换人没生效——和气泡上署错名是同一个报障，只是换到了输入框这一头。
-describe('任务里单独指定了队友，发送框 @ 的是那一位', () => {
+// 换人没生效——和气泡上署错名是同一个报障，只是换到了输入框这一头。支线里叫来的是
+// 另一位队友时也一样：这条支线是在和它说话。
+describe('任务或支线另有队友时，发送框 @ 的是那一位', () => {
   const OTHER = 'cheese-t2'
 
   beforeEach(() => {
@@ -305,7 +306,7 @@ describe('任务里单独指定了队友，发送框 @ 的是那一位', () => {
       props: {
         topic: topicOf(room),
         conversationId: taskId,
-        taskAgentHandle: handle,
+        agentHandle: handle,
         alwaysSummon: true,
         showComposer: true,
       },
@@ -333,6 +334,46 @@ describe('任务里单独指定了队友，发送框 @ 的是那一位', () => {
 
     await typeAndSummon(container, '无言')
     expect(sent[0]?.content).toBe(`<@${OTHER}> 整理一下方案`)
+  })
+
+  function renderThread(room: string, threadId: string, teammate: string | null) {
+    return render(Panel, {
+      props: {
+        topic: topicOf(room),
+        conversationId: threadId,
+        inThread: true,
+        agentHandle: teammate,
+        showComposer: true,
+      },
+      global: { plugins: [vuetify, i18n] },
+    })
+  }
+
+  function mine(id: string, recipient: Record<string, unknown>): Block {
+    return { ...aiMsg(id, '先看一下', 'me'), meta: { agent_recipient: recipient } } as Block
+  }
+
+  it('支线在和另一位队友说话：「交给」和 Ctrl+Enter 写的都是那一位', async () => {
+    history = []
+    const { container } = renderThread('t3', 'thread-3', OTHER)
+    await settle()
+
+    await waitFor(() => expect(container.textContent).toContain(t('work.room.composer.summon', { name: '无言' })))
+    const box = container.querySelector<HTMLTextAreaElement>('.composer textarea')!
+    box.focus()
+    await fireEvent.update(box, '整理一下方案')
+    await fireEvent.keyDown(box, { key: 'Enter', ctrlKey: true })
+    await settle()
+    expect(sent[0]?.content).toBe(`<@${OTHER}> 整理一下方案`)
+  })
+
+  it('支线里上一句交给过它，打开时预先填的是那一位', async () => {
+    history = [mine('m1', { handle: 'opus', instance_id: 'i-2', mentioned: true })]
+    const { container } = renderThread('t4', 'thread-4', OTHER)
+    await settle()
+
+    const box = container.querySelector<HTMLTextAreaElement>('.composer textarea')!
+    await waitFor(() => expect(box.value).toBe('@无言 '))
   })
 
   it('这件事没单独指定，还是房间那位', async () => {

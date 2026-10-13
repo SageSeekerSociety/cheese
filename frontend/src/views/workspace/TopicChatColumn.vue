@@ -149,7 +149,7 @@ defineExpose({
       ref="chatRef"
       :topic="topic"
       :conversation-id="taskId"
-      :task-agent-handle="taskAgentHandle ?? null"
+      :agent-handle="taskAgentHandle ?? null"
       :composer-closed="composerClosed"
       :ask-closed="askClosed"
       :always-summon="!!taskId"

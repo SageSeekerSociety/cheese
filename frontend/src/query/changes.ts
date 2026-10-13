@@ -49,8 +49,13 @@ export function roomChanged({ room, project, resource, id }: RoomChange): Promis
       return tasksChanged(room, project)
     case 'pins':
       return invalidate(keys.roomPins(room))
+    // 支线有了新回复：清单，和打开着的那条支线本身——一句 @ 换了它正在和谁说话
+    // （`teammate`），输入框就该写新那位。支线的 key 不带频道，所以按形状挑。
     case 'threads':
-      return invalidate(keys.roomThreads(room))
+      return Promise.all([
+        invalidate(keys.roomThreads(room)),
+        refreshQueries({ predicate: (query) => query.queryKey[0] === 'room' && query.queryKey[2] === 'thread' }),
+      ])
     default:
       return null
   }
