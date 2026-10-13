@@ -203,15 +203,14 @@ async def _model_kwargs(
     and a room's main thread is not a piece of work, so it always gets the
     project default (`room_task/binding.py`).
 
-    Machine providers assemble their own scoped credentials. Other providers
-    retain their gateway/profile transport, carrying that resolved model.
+    Every channel a turn runs on builds its own model environment
+    (``builds_model_env``: the central and owner channels, both device
+    transports), so a real turn returns before the profile and gateway-key
+    branch below. That branch is reached only with ``provider=None``, which no
+    turn passes: turn preparation stops a turn that has no channel
+    (`turn/intake/preparation.py`), and the platform's own work (the memory
+    consolidation) runs on the default channel (`ComputePool.platform_work`).
     The optional snapshots keep model, role and author consistent within a turn.
-
-    ``provider=None`` means there is no machine in this turn at all (私聊 走
-    platform work): the platform is the one about to call the model, so it needs
-    the same base_url + key a sandbox would have been handed. That is exactly
-    the not-``builds_model_env`` branch, so it falls through to it rather than
-    growing a second way to answer the same question.
     """
     environment = None
     async with sessions() as session:
@@ -286,17 +285,13 @@ async def _model_kwargs(
         # Author identity, chat skills, and native RC arguments are installed
         # at process birth; refresh them together at the next task boundary.
         #
-        # 模型和它的池也在里面：两条路都在启动那一刻把 model 钉进进程 ——
-        # 容器那条路是 `session_launch.py` 拼进 argv 的 `claude --model`，
-        # device 那条路是下面的 `ANTHROPIC_MODEL`。Claude Code 按它组装整套
-        # 系统提示词和自我介绍（Opus 与 Sonnet 用的是两份不同的提示词），
-        # 而这个哈希是唯一比较「屏幕是不是还配得上现在的选择」的地方，所以改
-        # 项目模型在两条路上都会到下一个 task boundary 收屏重开一次，提示词
-        # 随之换成新模型的。device 上每个请求实际跑哪个模型仍然只由准入决定
-        # （结论 46），计量代理把答案写进请求体；启动时的这个名字只决定提示
-        # 词，在重开之前的那几轮里它可能落后于绑定。容器那条路没有代理改写，
-        # 不放进哈希就是屏幕带着 `--model glm-5.2` 继续跑而准入已经解析成订阅
-        # 池，此后每一轮都死在「订阅池收到 glm-5.2」上，直到有人手动重启屏幕。
+        # 模型和它的池也在里面：启动那一刻 model 由下面的 `ANTHROPIC_MODEL`
+        # 钉进进程，Claude Code 按它组装整套系统提示词和自我介绍（Opus 与
+        # Sonnet 用的是两份不同的提示词），而这个哈希是唯一比较「屏幕是不是还
+        # 配得上现在的选择」的地方，所以改项目模型会到下一个 task boundary 收屏
+        # 重开一次，提示词随之换成新模型的。每个请求实际跑哪个模型仍然只由准入
+        # 决定（结论 46），计量代理把答案写进请求体；启动时的这个名字只决定提示
+        # 词，在重开之前的那几轮里它可能落后于绑定。
         (
             json.dumps(
                 {
@@ -353,8 +348,6 @@ async def _model_kwargs(
             project.owner_handle if project else None,
         )
         kwargs["env"].update(profile.full_env())
-        kwargs["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model
-        kwargs["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"] = model
         # Only the pool profile routes through the gateway; the testing
         # (native Claude) profiles pin their own base_url + credentials.
         pool_route = profile.base_url == settings.anthropic_base_url
