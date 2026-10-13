@@ -65,7 +65,8 @@ async def repeat_of_latest_shown(
     It duplicates the conversation's newest card when that card shows the same
     path as the same kind, went up within :data:`SHOWN_AGAIN_WINDOW`, and the file
     has not been saved since (``file_saved_at``, when the page or a file it loads
-    was last saved, is not after the card). A changed file is a new version and gets a new card."""
+    was last saved, is not after the card). A changed file is a new version and
+    gets a new card."""
     latest = await BlockRepository(db).latest_artifact(conversation_id)
     if (
         latest is None
