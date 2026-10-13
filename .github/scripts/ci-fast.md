@@ -88,9 +88,12 @@ in the run's `not_run`):
   consumer — it loads its routes that way — and drag most of the suite in.
 - **A run the tier could not finish.** As everywhere else in this tool, an
   exhausted budget or a check with no input is `unknown` (exit 2), never a red
-  it did not observe. What is different here is only what the workflow does with
-  that exit code: `1` (a real failure) fails the draft, `2`/`3` do not — they
-  are written into the step summary and a warning annotation instead. GitHub has
+  it did not observe. What is different here is only how the workflow reads
+  that exit: `1` (a real failure) reddens the draft, and so does an exit that
+  left no report behind — a run that never reached a verdict, which this step
+  must not dress as a pass. `2`/`3` redden it only where ci-fast's own report
+  says `unknown`/`blocked`; there they are written into the step summary and a
+  warning annotation instead. GitHub has
   no third conclusion, so the summary is where "not judged" is readable; the
   green of `CI required (draft quick)` is not a statement that everything ran.
   The merge queue's full run on the same commit is.
