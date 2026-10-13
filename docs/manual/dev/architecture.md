@@ -49,7 +49,7 @@ covers:
 |---|---|---|
 | 1 底座 | 没有业务判断、被所有人用的记录和工具 | `common`、`day_windows`、`conversation`、`idempotency`、`run_record`、`attachment`、`avatars`、`textfile`、`service_keys`、`backend_log`、`frontend_log`、`tag`、`legal` |
 | 2 身份与归属 | 谁、属于哪个团队和项目、在哪个话题里、能做什么 | `identity`、`user`、`team`、`project`、`topic`、`membership`、`topic_membership`、`authz`、`policy`、`invite`、`passkey`、`oauth`、`agent_type`、`agent_credential`、`ratchet` |
-| 3 平台服务 | 被业务同步调用的能力：模型单次调用、额度与计量（含计价）、通知收件箱 | `repository`、`integration`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification` |
+| 3 平台服务 | 被业务同步调用的能力：模型单次调用、额度与计量（含计价）、通知收件箱、外站题目成绩核对 | `repository`、`integration`、`external_problem`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification` |
 | 4 协作内容 | 房间里的东西：消息、线程、任务、采纳、文档、记忆、反馈、题目 | `block`、`thread`、`pin`、`mentions`、`room_task`、`task`、`review`、`living_doc`、`documents`、`library`、`memory`、`feedback`、`space`、`groups`、`questions`、`answers`、`comments`、`discussion`、`knowledge`、`materials`、`project_skill`、`search`、`docs_site`、`canvas` |
 | 5 智能体执行 | 一轮怎么跑、在哪台机器上跑 | `agent` 拆出的各包（见[下文](#agent-split)）、`agent_session`、`agent_instance`、`machine`、`device`、`local_fs`、`shell`、`site`、`preview`、`assistant`、`delivery` |
 | 6 编排 | 到点或有事时决定唤起谁、清理什么 | `routine`、`task_quiet`、`admin`、`room_cleanup` |
@@ -64,7 +64,7 @@ covers:
 
 另外三组（平台通知 `agent/announce.py`、`agent/platform_notices.py`；代码托管凭据 `agent/github_app.py`、`agent/forgejo_tokens.py`、`agent/forge_cli.py`；投递账本 `delivery/addressing.py`、`delivery/ledger.py`）不搬。2026-10-12 在补入口文件之前的依赖图上模拟：五组全搬，包间依赖从 403 条变成 425 条，最大环 40 → 39；只搬上面两组，最大环 40 → 36。三组的层位也还没定：第 2 层的 `membership`、`team`、`policy`、`project` 要用它们，放在第 3、4 层仍是向上依赖；平台通知还依赖第 5 层的 `agent_instance` 和 `delivery`，本身就在环上，放进哪一层都留向上依赖。先拆开这些依赖，再定层位。
 
-向上的包级边按上表在 2026-10-12 实测，归档清理挪到编排层之后是 64 条（搬家前 72 条，两组搬完 67 条，服务密钥表挪走后 66 条；向上的 import 语句 156 条降到 140 条），已全部冻进 C5 分层契约，之后逐条还。`canvas` 定在第 4 层（读 `living_doc`，被同层的 `room_task` 读）、`onboarding` 定在第 7 层（只读下面的层，没有包读它），两个包进来时按这个归属算，向上的边一条没多。归档清理原来在 `topic` 里，第 2 层直接调第 5 层的机器和会话，现在是编排层的 `room_cleanup`。大头是三类：`topic` 的服务直接调智能体执行层（第 2 层调第 5 层）；`project` 直接读 `review`、`task`、`library`（第 2 层调第 4 层）；`block`、`review`、`room_task` 直接调 `agent` 的 `chat` 和 `runtime` 去唤起一轮（第 4 层调第 5 层，12 条）。
+向上的包级边按上表在 2026-10-12 实测，归档清理挪到编排层之后是 64 条（搬家前 72 条，两组搬完 67 条，服务密钥表挪走后 66 条；向上的 import 语句 156 条降到 140 条），已全部冻进 C5 分层契约，之后逐条还。`canvas` 定在第 4 层（读 `living_doc`，被同层的 `room_task` 读）、`onboarding` 定在第 7 层（只读下面的层，没有包读它）、`external_problem` 定在第 3 层（读第 1 层的 `common`，眼下没有包读它；和 `integration` 同类，是同步调外部站点，留在第 3 层也给将来读它结果的第 4 层 `task` 留了向下的路），三个包进来时按这个归属算，向上的边一条没多。归档清理原来在 `topic` 里，第 2 层直接调第 5 层的机器和会话，现在是编排层的 `room_cleanup`。大头是三类：`topic` 的服务直接调智能体执行层（第 2 层调第 5 层）；`project` 直接读 `review`、`task`、`library`（第 2 层调第 4 层）；`block`、`review`、`room_task` 直接调 `agent` 的 `chat` 和 `runtime` 去唤起一轮（第 4 层调第 5 层，12 条）。
 
 **哪些改成事件，哪些保留同步调用。** 只有「让高层去做一件事」改成事件：话题已归档、消息已写入、采纳卡已通过、任务已创建，由第 5、6 层订阅后决定唤起谁、清理什么。需要当场拿到结果的调用（拿 GitHub 令牌、查额度、写一条平台消息）保留同步，办法是把被调用方放到调用方下面（先把依赖拆开，再定它的层位）。
 
