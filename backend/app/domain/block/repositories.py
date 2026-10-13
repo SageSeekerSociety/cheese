@@ -676,9 +676,10 @@ class BlockRepository:
         A reply to a question (`reply_to` — what clicking one of its options
         sends) answers that question, but only while it is unanswered: a
         question takes one answer, so a reply to one already answered records
-        nothing. Whether its author may answer it is the caller's to judge
-        (`announce.answer_questions` refuses a reply from someone it does not
-        ask). A reply to any other message answers nothing.
+        nothing. Nor does a reply from someone who may not answer it
+        (`block.asked.may_answer`): it is talk about the question — a teammate
+        quoting it to say which option he would pick — posted like any other
+        message, not its answer. A reply to any other message answers nothing.
 
         A message that replies to nothing answers the open questions in its
         conversation its author may answer (`block.asked.may_answer`: asked of
@@ -704,7 +705,7 @@ class BlockRepository:
             # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
             # 经了结的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
             # `_awaiting_an_answer` 一致（`block.asked.settled`）。
-            if settled(parent.meta):
+            if settled(parent.meta) or not may_answer(parent.meta, reply.author):
                 return []
             return [parent]
         spoke_before = (

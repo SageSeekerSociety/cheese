@@ -16,7 +16,7 @@ person's list.
 Answering by one of its options (or 「其他」, a reply to it in one's own words)
 is held to the same rule as typing an answer and skipping: only the people it
 names, anyone in the channel when it asks everyone, anyone when it names nobody
-in particular. Anyone else is refused, and nothing of theirs is stored.
+in particular. Anyone else's reply to it is an ordinary message, not its answer.
 
 Real HTTP, PostgreSQL and the room's runner; the session is the scripted stub.
 """
@@ -388,7 +388,7 @@ def test_a_question_naming_one_person_the_old_way_is_answered_by_his_words(
 
 def _click(client, room, question_id, handle, text="按部门"):
     """``handle`` clicks an option: a message replying to the question, sent
-    the way the browser sends it. Returns the response, refused or not."""
+    the way the browser sends it."""
     response = client.post(
         f"/topics/{room}/messages",
         json={
@@ -419,29 +419,32 @@ def test_a_person_the_question_names_answers_it_by_an_option(
     assert _answer_log(client, room, question["id"]) == [("option", "bob")]
 
 
-def test_someone_the_question_does_not_name_cannot_answer_it_by_an_option(
+def test_a_reply_from_someone_the_question_does_not_name_is_talk_not_its_answer(
     client, stub_hooks, monkeypatch
 ):
+    """A teammate quoting the question to say which option he would pick is
+    posted like any other message; it just is not the answer."""
     _, room = _with_bob(client)
     question = _ask(client, stub_hooks, monkeypatch, room, to=["alice"])
-    before = len(_blocks(client, room))
     prompts = _prompts(stub_hooks, monkeypatch)
 
-    clicked = _click(client, room, question["id"], "bob")
-    # 「其他」: his own words, sent as a reply to the question.
-    other = _click(client, room, question["id"], "bob", "按季度")
+    reply = _click(client, room, question["id"], "bob", "我会选按部门")
 
-    for refused in (clicked, other):
-        assert refused.status_code == 403, refused.text
-        assert "这道题问的不是你" in refused.text
-    # Nothing of his is stored, and the question still waits on alice.
-    assert len(_blocks(client, room)) == before
+    assert reply.status_code == 200, reply.text
+    said = next(
+        b for b in _blocks(client, room) if b["id"] == reply.json()["data"]["id"]
+    )
+    assert said["content"] == "我会选按部门"
+    assert said["reply_to"] == question["id"]
+    # Not its answer: nothing on the question, it still waits on alice.
     assert _answer_log(client, room, question["id"]) == []
     assert _waiting_questions(client, "alice") == [question["id"]]
+    # The agent that asked is not handed it as an answer.
     assert prompts == []
-    # Alice, whom it asks, still can.
+    # Alice, whom it asks, still answers it.
     assert _click(client, room, question["id"], "alice").status_code == 200
     assert _answer_log(client, room, question["id"]) == [("option", "alice")]
+    assert _waiting_questions(client, "alice") == []
 
 
 def test_a_question_that_names_nobody_is_answered_by_an_option_from_anyone(

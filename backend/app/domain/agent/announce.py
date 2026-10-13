@@ -36,9 +36,9 @@ from collections.abc import Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import ValidationError
 from app.core.live_frames import show_once_committed
-from app.core.sentences import notice_message, say, with_keys
+from app.core.sentences import notice_message, with_keys
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
     SEVERITY_INFO,
@@ -48,7 +48,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
-from app.domain.block.asked import asked_of, may_answer, settled, skipped_by
+from app.domain.block.asked import asked_of, settled, skipped_by
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -328,13 +328,6 @@ async def answer_questions(
     )
     if reply.reply_to is None:
         questions = _typed_answers(reply, questions)
-    elif questions and not may_answer(questions[0].meta, reply.author):
-        # A reply to an open question is an answer to it (a click on one of its
-        # options, or 「其他」); only those it asks give one, as typing and
-        # skipping only count from them (`block.asked.may_answer`). Refused, not
-        # stored as talk: the person meant it as an answer, and would otherwise
-        # see it sent while the question went on waiting.
-        raise ForbiddenError(say("askAnswerNotYours"))
     if not questions:
         return []
     said = " ".join(_MENTION_RE.sub("", reply.content or "").split())

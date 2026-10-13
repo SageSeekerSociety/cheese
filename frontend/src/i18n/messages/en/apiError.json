@@ -937,7 +937,6 @@
   "askNothingToWithdraw": "You haven't answered this question, so there is nothing to take back",
   "askNotAQuestion": "This message is not a question with options",
   "askSkipNotYours": "This question isn't waiting on you, so you can't skip it",
-  "askAnswerNotYours": "This question isn't asked of you, so you can't answer it",
   "askAlreadyAnswered": "This question has already been answered",
   "askAlreadySkipped": "You've already skipped this question",
   "askToList": "to must be a non-empty list of people's handles, or all for everyone in the channel",
