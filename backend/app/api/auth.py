@@ -12,12 +12,12 @@ from collections.abc import Sequence
 from dataclasses import replace
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project, outsiders_reading
 from app.common.auth import verify_access_token
-from app.core.config import settings
+from app.core.config import GATEWAY_MOUNT, settings
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -922,17 +922,61 @@ class ActorResolver:
         return await conversations.project_of(self._session, topic_id)
 
 
-def get_actor_resolver(
-    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+def _resolver_for(
+    request: Request, db: AsyncSession, bearer: str | None
 ) -> ActorResolver:
     return ActorResolver(
         session=db,
-        bearer=_bearer(request.headers.get("authorization")),
+        bearer=bearer,
         cheese_token=request.headers.get("x-cheese-token") or "",
         screen_token=request.headers.get("x-cheese-screen") or "",
         writes=request.method not in ("GET", "HEAD", "OPTIONS"),
         endpoint=_endpoint_name(request),
     )
+
+
+def get_actor_resolver(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> ActorResolver:
+    return _resolver_for(request, db, _bearer(request.headers.get("authorization")))
+
+
+#: The cookie a ``<video>`` element's own requests prove the viewer with. The
+#: element streams a recording by asking for one byte range after another and
+#: cannot add an ``Authorization`` header to any of them, so the one fetch the
+#: page makes with the header leaves this cookie behind, scoped to that room's
+#: raw-attachment path (``topics_attachments.attachment_raw``). It carries the
+#: same access token the page already holds — it grants nothing new and dies
+#: with that token — and it is read on that one read-only route alone.
+MEDIA_COOKIE = "cheese_media"
+
+
+def remember_for_media(response: Response, request: Request) -> None:
+    """Leave :data:`MEDIA_COOKIE` behind for the ``<video>`` element's own
+    requests to this same path, carrying the token this request was made with.
+
+    Only a token sent as ``Authorization`` is mirrored: a cookie is never
+    turned into a fresh cookie, so it cannot outlive the page's own token.
+    """
+    token = _bearer(request.headers.get("authorization"))
+    if token:
+        response.set_cookie(
+            MEDIA_COOKIE,
+            token,
+            path=f"{GATEWAY_MOUNT}{request.url.path}",
+            max_age=settings.access_token_expires_seconds,
+            httponly=True,
+            samesite="lax",
+        )
+
+
+def get_media_actor_resolver(
+    request: Request, db: Annotated[AsyncSession, Depends(get_db)]
+) -> ActorResolver:
+    """``get_actor_resolver`` that also takes the :data:`MEDIA_COOKIE` when the
+    request carries no ``Authorization`` header."""
+    bearer = _bearer(request.headers.get("authorization"))
+    return _resolver_for(request, db, bearer or request.cookies.get(MEDIA_COOKIE))
 
 
 def _endpoint_name(request: Request) -> str | None:
@@ -946,6 +990,7 @@ def _endpoint_name(request: Request) -> str | None:
 # builds the resolver from the ?token= query param itself (照 reference
 # viewer_authz.py) — see app/api/routes/chat.py.
 ActorResolverDep = Annotated[ActorResolver, Depends(get_actor_resolver)]
+MediaActorResolverDep = Annotated[ActorResolver, Depends(get_media_actor_resolver)]
 
 
 async def require_seated_agent(

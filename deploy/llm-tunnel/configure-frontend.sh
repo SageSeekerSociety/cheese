@@ -127,6 +127,21 @@ server {
   }
 
 ${PREVIEW_TUNNEL_LOCATION}
+  # A message's attachment upload: a phone recording runs to the backend's
+  # 200 MB video ceiling (MAX_VIDEO_BYTES), which every hop on the way in must
+  # admit. Every other route keeps the 100m below.
+  location ~ ^/api/topics/[^/]+/attachments\$ {
+    proxy_pass http://frontend_active;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$http_host;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_read_timeout 300s;
+    proxy_send_timeout 300s;
+    client_max_body_size 210m;
+    proxy_request_buffering off;
+    proxy_buffering off;
+  }
+
   location / {
     proxy_pass http://frontend_active;
     proxy_http_version 1.1;
@@ -192,6 +207,11 @@ server {
     proxy_buffering off;
     proxy_request_buffering off;
     client_max_body_size 100m;
+    # The attachment upload, as on the plain listener above.
+    location ~ ^/api/topics/[^/]+/attachments\$ {
+      proxy_pass http://127.0.0.1:$LISTEN_PORT;
+      client_max_body_size 210m;
+    }
   }
 }
 EOF

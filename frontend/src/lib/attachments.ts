@@ -6,6 +6,8 @@ import { ref } from 'vue'
 import { attachLibraryFile, uploadAttachment } from '../api'
 import { t } from '../i18n'
 
+import { videoMimeOf } from './fileKind'
+
 const MAX_PENDING = 9
 
 /** One entry in the composer's strip. While a file is still going up it is
@@ -96,6 +98,16 @@ export function uploaded(items: readonly PendingAttachment[]): ChatAttachment[] 
   return items.filter((a) => !a.uploading && !a.error).map(({ path, mime }) => ({ path, mime }))
 }
 
+/** The backend's ceilings (`MAX_FILE_BYTES` / `MAX_VIDEO_BYTES` in
+ *  app/domain/library/service.py): a video gets room for a phone recording,
+ *  everything else 10 MB. Judged by the name the backend judges it by. */
+const MAX_FILE_MB = 10
+const MAX_VIDEO_MB = 200
+
+function uploadLimitMb(file: File): number {
+  return videoMimeOf(file.name) ? MAX_VIDEO_MB : MAX_FILE_MB
+}
+
 let placeholderSeq = 0
 
 export function usePendingAttachments(
@@ -159,8 +171,9 @@ export function usePendingAttachments(
           onError?.(t('work.room.attachments.tooMany'))
           break
         }
-        if (f.size > 10 * 1024 * 1024) {
-          onError?.(t('work.room.attachments.tooLarge', { name: f.name }))
+        const limitMb = uploadLimitMb(f)
+        if (f.size > limitMb * 1024 * 1024) {
+          onError?.(t('work.room.attachments.tooLarge', { name: f.name, mb: limitMb }))
           continue
         }
         // Take the slot BEFORE the upload, so the strip has a frame to draw

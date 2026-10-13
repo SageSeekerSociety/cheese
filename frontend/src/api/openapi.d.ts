@@ -10285,6 +10285,12 @@ export interface paths {
         /**
          * Attachment Raw
          * @description Authorized raster images and video bytes, never executable HTML/SVG.
+         *
+         *     A room's own file is served from disk with byte ranges, so a player seeking
+         *     through a long recording reads only the part it shows. A video read with the
+         *     ``Authorization`` header leaves a cookie for this path behind
+         *     (``remember_for_media``): the ``<video>`` element's own range requests
+         *     cannot carry the header, and the cookie is how they prove the same viewer.
          */
         get: operations["attachment_raw_topics__topic_id__attachments_raw_get"];
         put?: never;
