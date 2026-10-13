@@ -52,7 +52,7 @@ covers:
 | 3 平台服务 | 被业务同步调用的能力：模型单次调用、额度与计量（含计价）、通知收件箱、外站题目成绩核对 | `repository`、`integration`、`external_problem`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification` |
 | 4 协作内容 | 房间里的东西：消息、线程、任务、采纳、文档、记忆、反馈、题目 | `block`、`thread`、`pin`、`mentions`、`room_task`、`task`、`review`、`living_doc`、`documents`、`library`、`memory`、`feedback`、`space`、`groups`、`questions`、`answers`、`comments`、`discussion`、`knowledge`、`materials`、`project_skill`、`search`、`docs_site`、`canvas` |
 | 5 智能体执行 | 一轮怎么跑、在哪台机器上跑 | `agent` 拆出的各包（见[下文](#agent-split)）、`agent_session`、`agent_instance`、`machine`、`device`、`local_fs`、`shell`、`site`、`preview`、`assistant`、`delivery` |
-| 6 编排 | 到点或有事时决定唤起谁、清理什么 | `routine`、`task_quiet`、`admin`、`room_cleanup` |
+| 6 编排 | 到点或有事时决定唤起谁、清理什么 | `routine`、`task_quiet`、`admin`、`room_cleanup`、`wake_watch` |
 | 7 报表 | 只读汇总，没有任何包依赖它 | `platform_stats`、`feature_stats`、`dashboard`、`project_progress`、`onboarding` |
 
 分层之前先搬两组模块。它们住在高层的包里，却被低层引用；不搬的话，分层契约第一天就冻进「其实只是放错地方」的边。这两组已经搬完（2026-10-12）：

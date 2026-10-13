@@ -986,6 +986,10 @@ class Settings(BaseSettings):
     #: 报警，但同一个问题一小时只报一条。
     delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
+    #: 叫醒链的两拍（#1343 的定时器、看门狗的心跳）多久核一遍
+    #: （`domain/wake_watch/`，只跑在平台自己那一侧）。比拍的周期密得多就行 ——
+    #: 判停摆的线是 60 分钟，它只决定「多久发现」。0 关闭。
+    wake_watch_interval_s: int = 300
     #: 挂过外站题号的题多久回外站看一遍（`domain/external_problem/periodic.py`）。
     #: 一天一次是有意的：那边是个校内的老站点，抓的是老师本人的账号，抓得太勤会被
     #: 封号 —— 老师随时可以自己点「同步」，这一趟只负责「他没点，但学生昨晚做了」。

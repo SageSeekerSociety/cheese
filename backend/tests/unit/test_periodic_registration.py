@@ -328,6 +328,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "memory_dream_sweep_interval_s",
         "ratchet_ingest_interval_s",
         "external_problem_sync_interval_s",
+        "wake_watch_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -367,6 +368,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("memory dream", 117),
         ("ratchet ingest", 118),
         ("external problem sync", 119),
+        ("wake watch", 120),
     ]
     assert all(job.owner_only for job in world.jobs.values())
     world.get_runner.assert_not_called()
