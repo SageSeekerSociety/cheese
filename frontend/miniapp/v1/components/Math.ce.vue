@@ -9,20 +9,5 @@ const html = computed(() =>
 <template>
   <!-- KaTeX output of the app's own formula; the app already runs any script it likes in its sandbox. -->
   <!-- eslint-disable-next-line vue/no-v-html -->
-  <span :class="{ block: display }" v-html="html" />
+  <span v-html="html" />
 </template>
-<style>
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-:host {
-  display: inline;
-}
-.block {
-  display: block;
-  margin: 8px 0;
-  text-align: center;
-}
-</style>

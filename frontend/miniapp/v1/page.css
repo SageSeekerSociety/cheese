@@ -17,3 +17,7 @@ button:hover { background: var(--fill); }
 button.primary { border-color: var(--ink); background: var(--ink); color: var(--surface); }
 button:disabled { opacity: 0.5; cursor: default; }
 code { font-family: var(--font-mono); font-size: 13px; }
+/* <c-math> renders into the page, not a shadow root, so its look lives here. A formula wider than
+   the column scrolls instead of being cut off at the frame's edge. */
+c-math[display] { display: block; max-width: 100%; margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+c-math[display] .katex-display { margin: 0; }

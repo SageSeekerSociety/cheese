@@ -78,6 +78,28 @@ const n = ref(5)
   expect(errors).toEqual([]);
 });
 
+test('a formula wider than a phone stays inside the column and can be scrolled to its end', async ({ page }) => {
+  await page.setViewportSize({ width: 400, height: 800 });
+  const errors = await runApp(
+    page,
+    `<template>
+  <c-math display tex="T(n) = 99 \\min(n, 10) + 79 \\min(\\max(n - 10, 0), 40) + 59 \\max(n - 50, 0) + 12 \\times 0.85 \\times T(n)" />
+</template>`
+  );
+  const formula = page.locator('c-math .katex-display').first();
+  await expect(formula).toBeVisible();
+  const whole = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: window.innerWidth }));
+  expect(whole.scroll).toBeLessThanOrEqual(whole.width);
+  const box = await page.locator('c-math').evaluate((el) => {
+    el.scrollLeft = el.scrollWidth;
+    const end = el.querySelector('.katex-display')!.getBoundingClientRect().right;
+    return { end, right: el.getBoundingClientRect().right, scrolls: el.scrollWidth > el.clientWidth };
+  });
+  expect(box.scrolls).toBe(true);
+  expect(box.end).toBeLessThanOrEqual(box.right + 1);
+  expect(errors).toEqual([]);
+});
+
 test('an app cannot reach the network', async ({ page }) => {
   await runApp(
     page,
