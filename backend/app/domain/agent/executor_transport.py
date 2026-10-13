@@ -1,6 +1,7 @@
 """Room executor transport shared by agent harnesses."""
 
 import base64
+import hashlib
 import json
 import logging
 import math
@@ -84,6 +85,114 @@ LINK_INTERRUPTED = (
     "执行中与机器的连接断了一下，这次操作可能已经执行，也可能没有；"
     "先查看结果，再决定要不要重做。其他工具照常可用。"
 )
+
+
+# 这个会话的凭证不再归它所有：拿机器那一步（`acquire`）被拒，理由是凭证不认这个
+# 会话（`session_work._attempt`），或者会话已经属于另一段对话（`routes/execution.py`）。
+# 房间改成任务、会话换了房间时就是这样。凭证里的声明是签死的，新凭证又只能从同一个
+# 被拒的请求里拿，所以这个进程里以后每一次都会被拒 —— 10-05 一个房间里的会话照旧
+# 每两秒重试一次，连拒几个小时。说「可以重试」是假话，所以这句话叫它停。
+SESSION_ENDED = (
+    "平台已经收回了这个会话用机器的凭证（它所在的房间或任务换了归属）："
+    "这个会话里要用机器的工具都不会再成功，重试结果一样。停下来，结束这一轮。"
+)
+_DEAD_CREDENTIAL = (
+    "Execution credential does not own this session",
+    "This credential works another conversation",
+)
+
+# 平台接连答 5xx：再发也是一样，只是让 agent 每一两秒重试一次（10-04 一个会话连着
+# 376 次）。连续 `BREAKER_AFTER` 次之后，这段时间内的平台请求不发出去，直接给这句
+# 话；时间从 `BREAKER_WINDOW_S[0]` 秒起，每再断一次翻倍，到 `BREAKER_WINDOW_S[1]`
+# 为止。任何一个不是 5xx 的应答都把它清掉。504 不算：那是前面一跳等不及，平台还在
+# 准备机器（`acquire`）。
+PLATFORM_FAILING = (
+    "平台接连出错，这个会话 {seconds} 秒内不再向平台发请求：现在重试结果一样，"
+    "{seconds} 秒后再试。这不是这次调用本身的问题。"
+)
+BREAKER_AFTER = 3
+BREAKER_WINDOW_S = (30, 300)
+_BREAKER_STATUSES = frozenset({500, 502, 503})
+
+
+def _fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def _dead_credential(error) -> bool:
+    """Whether a refused lease says this credential can never take its machine."""
+    if error.status != 403:
+        return False
+    try:
+        body = json.loads(error.body)
+    except ValueError:
+        return False
+    if not isinstance(body, dict) or body.get("retryable") is True:
+        return False
+    detail = body.get("error") if isinstance(body.get("error"), dict) else {}
+    message = f"{body.get('message', '')} {detail.get('message', '')}"
+    return any(text in message for text in _DEAD_CREDENTIAL)
+
+
+class PlatformHealth:
+    """What this session has learned about the platform: a credential it
+    refused for good (``dead``, by fingerprint) and its run of 5xx answers.
+
+    A Claude Code session starts one process per command, so the state lives
+    in a file beside the session's target (`target_file`) when there is one;
+    a harness that keeps one client for the session (Codex, pi) holds it in
+    memory. Writers race only to lose a count, never to corrupt the file
+    (`_replace_file`)."""
+
+    def __init__(self, config):
+        target = config.get("target_file")
+        self.path = Path(target).with_name("platform-health.json") if target else None
+        self.memory = {}
+
+    def read(self):
+        if self.path is None:
+            return dict(self.memory)
+        try:
+            state = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return {}
+        return state if isinstance(state, dict) else {}
+
+    def write(self, state):
+        if self.path is None:
+            self.memory = dict(state)
+        else:
+            _replace_file(self.path, json.dumps(state))
+
+    def check(self, token=None):
+        """Raise instead of sending, while the platform is known to refuse."""
+        state = self.read()
+        if token is not None and state.get("dead") == _fingerprint(token):
+            raise RuntimeError(SESSION_ENDED)
+        wait = state.get("until", 0) - time.time()
+        if wait > 0:
+            raise RuntimeError(PLATFORM_FAILING.format(seconds=math.ceil(wait)))
+
+    def answered(self, status):
+        state = self.read()
+        if status not in _BREAKER_STATUSES:
+            if state.get("failures") or state.get("until"):
+                state.pop("failures", None)
+                state.pop("trips", None)
+                state.pop("until", None)
+                self.write(state)
+            return
+        state["failures"] = state.get("failures", 0) + 1
+        if state["failures"] >= BREAKER_AFTER:
+            state["trips"] = state.get("trips", 0) + 1
+            first, most = BREAKER_WINDOW_S
+            state["until"] = time.time() + min(first * 2 ** (state["trips"] - 1), most)
+        self.write(state)
+
+    def refused_for_good(self, token):
+        state = self.read()
+        state["dead"] = _fingerprint(token)
+        self.write(state)
 
 
 def _device_is_offline(response) -> bool:
@@ -461,6 +570,7 @@ class RemoteClient:
         self.publication = None
         self.platform_lock = threading.Lock()
         self.platform = None
+        self.health = PlatformHealth(config)
 
     def execution_token(self):
         if self.config.get("execution_token"):
@@ -470,6 +580,15 @@ class RemoteClient:
             with open(token_file) as stream:
                 return stream.read().strip()
         return os.environ["CHEESE_TOKEN"]
+
+    def platform_token(self):
+        # A session answering someone's question calls the platform with the
+        # credential minted for that question, never the one it started with.
+        return self.config.get("platform_token") or (
+            self.execution_token()
+            if self.config.get("token_file")
+            else os.environ.get("CHEESE_TOKEN", "")
+        )
 
     def platform_request(self, args):
         method = args.get("method", "GET").upper()
@@ -484,15 +603,10 @@ class RemoteClient:
         ):
             raise ValueError("Platform requests require a relative API path and method")
         api = os.environ.get("CHEESE_API", "").rstrip("/")
-        # A session answering someone's question calls the platform with the
-        # credential minted for that question, never the one it started with.
-        token = self.config.get("platform_token") or (
-            self.execution_token()
-            if self.config.get("token_file")
-            else os.environ.get("CHEESE_TOKEN", "")
-        )
+        token = self.platform_token()
         if not api or not token:
             raise RuntimeError("Platform requests require room credentials")
+        self.health.check()
         with self.platform_lock:
             if self.platform is None or self.platform.config["url"] != api:
                 if self.platform is not None:
@@ -520,6 +634,7 @@ class RemoteClient:
                 )
                 response = connection.getresponse()
                 body = response.read().decode()
+                self.health.answered(response.status)
                 if not 200 <= response.status < 300:
                     raise PlatformHTTPError(response.status, body)
             except Exception:
@@ -734,6 +849,8 @@ class RemoteClient:
         # request answers "preparing" only after the platform's bounded wait,
         # and the wait is exactly when the caller would otherwise hear nothing.
         told = preparing is None
+        token = self.platform_token()
+        self.health.check(token)
         while True:
             remaining = deadline - time.monotonic()
             try:
@@ -750,6 +867,9 @@ class RemoteClient:
                 )
                 result = json.loads(response["value"]["stdout"])["data"]
             except PlatformHTTPError as error:
+                if _dead_credential(error):
+                    self.health.refused_for_good(token)
+                    raise RuntimeError(SESSION_ENDED) from error
                 # A front that gave up on the request before the platform
                 # answered says nothing about the machine: it is still being
                 # prepared as far as anyone knows, so this asks again. Handed
