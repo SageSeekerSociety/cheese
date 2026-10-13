@@ -226,15 +226,18 @@ def gh_queue_timeline(n):
 #:
 #: The words that name the verification half, for a heading (`## Tests`) and for a label
 #: line (`**验证**：…`) alike: the same section written two ways, so a word missing from
-#: one of them is how `## 测试` came to read as neither half. Both read this one list.
-#: `check` is the one word only a label line may use — `Checks: …` and `Checked locally: …`
-#: are verification, but a heading containing it is usually another subject (a
-#: `… checklist …` heading is not the verification section).
-_VERIFIED_WORDS = ("验证", "怎么验证", "测试", "自测", "verif", "valid", "test")
+#: one of them is how `## 测试` came to read as neither half. Both read this base list,
+#: and each adds one word of its own to keep from reading the wrong thing: a label line
+#: takes `check` (`Checks: …`, `Checked locally: …` are verification and a line is short
+#: enough not to wander), a heading takes `checks` and `checked` (`## Checks` is
+#: verification, while `## … checklist …` is not — it does not contain `checks`, which is
+#: why plain `check` stays out of the headings).
+_VERIFIED_WORDS = ("验证", "怎么验", "测试", "自测", "verif", "valid", "test")
+_VERIFIED_HEADING_WORDS = _VERIFIED_WORDS + ("checks", "checked")
 _VERIFIED_LABEL_WORDS = _VERIFIED_WORDS + ("check",)
 _SECTION_WORDS = {
     "changed": ("what chang", "changes", "改动", "改了什么"),
-    "verified": _VERIFIED_WORDS,
+    "verified": _VERIFIED_HEADING_WORDS,
 }
 #: A line that labels the part after it — `**验证**：…`, `验证：`, `## Tests` alike. How
 #: this repo actually writes the second half, far more often than as a heading.
@@ -247,10 +250,13 @@ _LABEL = re.compile(
 _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
 #: A line that is nothing but the name of a section — `Verification`, `验证`, `Tests` —
 #: with no colon after it. The block below it is that section: a body puts the name on
-#: its own line when a list follows, rather than beside the first sentence. Only lines
-#: that really are one of the names count, so a short unpunctuated line of prose does
-#: not become one.
-_BARE_LABEL = re.compile(r"^[ \t]*(?:\*\*)?([^\n：:*]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
+#: its own line when a list follows, rather than beside the first sentence. Three things
+#: keep a line of prose out of it: the name has to be one of the section's (§
+#: `_names_a_section`), the line has to stand as a block of its own with nothing above it
+#: but a blank line (§ `_stands_alone`), and it must not be a table row or carry a code
+#: span — a sentence that wraps onto `repo checkout.`, a table's `| Check | Result |` and
+#: a command in a code block all read as names otherwise.
+_BARE_LABEL = re.compile(r"^[ \t]*(?:\*\*)?([^\n：:*|`]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 #: Everything from the first of these lines down is the platform's, not the author's.
 _TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
@@ -292,7 +298,8 @@ def brief(desc, limit=400):
     heads = list(_HEADING.finditer(text))
     # 可能会切走一节的行，从早到晚：带冒号的标签行，和整行只有章节名的那些。
     labels = sorted(list(_LABEL.finditer(text))
-                    + [m for m in _BARE_LABEL.finditer(text) if _names_a_section(m)],
+                    + [m for m in _BARE_LABEL.finditer(text)
+                       if _names_a_section(m) and _stands_alone(text, m)],
                     key=lambda m: m.start())
     ver = [m for m in labels
            if any(w in m.group(1).lower() for w in _VERIFIED_LABEL_WORDS)]
@@ -317,12 +324,16 @@ def _under_heading(text, heads, want):
     A heading that only mentions the word does not name the section: a change list whose
     item reads `… 各带自己的挂载测试` is not the verification section, and when a body
     also has a plain `## 验证方式` under it, that is the one meant. The shorter name is
-    the one about the section, so it wins."""
+    the one about the section, so it wins.
+
+    A name that says the opposite loses to one that does not, however short: `## 没验证的`
+    beside `## 怎么验证的` is the other half of what the reader has to know. It is still
+    used when it is the only one there."""
     hits = [i for i, h in enumerate(heads)
             if any(w in h.group(2).lower() for w in _SECTION_WORDS[want])]
     if not hits:
         return ""
-    i = min(hits, key=lambda i: (len(heads[i].group(2)), heads[i].start()))
+    i = min(hits, key=lambda i: (_negates(heads[i]), len(heads[i].group(2)), heads[i].start()))
     end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
     return text[heads[i].end():end].strip()
 
@@ -331,6 +342,25 @@ def _names_a_section(m):
     """Whether a short unpunctuated line is one of the section names rather than prose."""
     low = m.group(1).lower()
     return any(w in low for w in _VERIFIED_LABEL_WORDS + _SECTION_WORDS["changed"])
+
+
+def _negates(h):
+    """Whether a heading names the section by saying it is not that: `没验证的`, `No tests`."""
+    low = h.group(2).strip().lower()
+    if low.startswith(("没", "未", "无", "不")):
+        return True
+    return re.split(r"[\s:：,，—-]+", low, 1)[0] in ("not", "no", "never", "without",
+                                                    "unverified", "none", "nothing")
+
+
+def _stands_alone(text, m):
+    """Whether the line `m` matched is a block of its own.
+
+    A name on its own line has a blank line above it. A sentence that merely wrapped
+    onto a short line does not, and taking one for a name cuts the section above it and
+    hands the rest to the other half."""
+    before = text[:m.start()].rstrip(" \t")
+    return not before.strip() or before.endswith("\n\n")
 
 
 def _under_label(text, hits, labels):
