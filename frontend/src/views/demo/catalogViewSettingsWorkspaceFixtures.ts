@@ -217,7 +217,7 @@ export const DEVICE_TEAMS: MyTeam[] = [
   { id: 2, handle: 'data', name: '数据组' },
 ]
 
-// ---- 浏览频道（`ChannelBrowseView`）----------------------------------------
+// ---- 全部频道（`ChannelBrowseView`）----------------------------------------
 
 /** 项目里我能看到的几个频道：默认那个、一个我没加入的、一个我已加入的。 */
 export const CHANNEL_ENTRIES: ChannelEntry[] = [

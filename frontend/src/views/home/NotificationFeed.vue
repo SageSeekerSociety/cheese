@@ -35,6 +35,7 @@
           v-for="notification in notifications"
           :key="notification.id"
           :notification="notification"
+          :category-label="t(CATEGORY_LABEL[notificationCategoryOf(notification.type)])"
           :on-mark-as-read="markAsRead"
           :on-delete="deleteNotification"
         />
@@ -55,12 +56,13 @@
       </div>
     </div>
     <p v-else-if="!loading" class="notification-feed__quiet t-body">
-      {{ filter === 'unread' ? t('notifications.common.noUnread') : t('notifications.common.noNotifications') }}
+      {{ t('notifications.common.noNotifications') }}
     </p>
   </section>
 </template>
 
 <script setup lang="ts">
+import type { NotificationCategory } from '@/components/common/Notification/categories'
 import type { Notification } from '@/types/apiNotifications'
 
 import { computed, onMounted, ref, watch } from 'vue'
@@ -72,6 +74,11 @@ import { NotificationsApi } from '@/api/notifications'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import LoadingSkeleton from '@/components/common/LoadingSkeleton.vue'
+import {
+  NOTIFICATION_CATEGORIES,
+  notificationCategoryOf,
+  typesOfCategory,
+} from '@/components/common/Notification/categories'
 import NotificationItem from '@/components/common/Notification/NotificationItem.vue'
 import SegmentedControl from '@/components/common/SegmentedControl.vue'
 
@@ -79,21 +86,48 @@ const { t } = useI18n()
 
 const unread = useUnreadNotifications()
 
-// 「全部 / 未读」这个筛选记在这台浏览器上，下次打开还是上次那样。
+// 三档各自的词条（`notifications.category.*`）。写在这里而不是拼字符串，是为了
+// catalog 的「每个键都有调用处」那一关看得见它们。
+const CATEGORY_LABEL: Record<NotificationCategory, string> = {
+  mine: 'notifications.category.mine',
+  notice: 'notifications.category.notice',
+  system: 'notifications.category.system',
+}
+
+// 停在哪一档记在这台浏览器上，下次打开还是上次那样。读过的那几档（「全部」「未读」
+// 是上一版的写法）不认识了就回「需我处理」。
 const FILTER_KEY = 'cheesex.notificationFeed.filter'
-type FeedFilter = 'all' | 'unread'
-function readFilter(): FeedFilter {
+function readFilter(): NotificationCategory {
   try {
-    return localStorage.getItem(FILTER_KEY) === 'unread' ? 'unread' : 'all'
+    const saved = localStorage.getItem(FILTER_KEY)
+    return NOTIFICATION_CATEGORIES.find((category) => category === saved) ?? 'mine'
   } catch {
-    return 'all'
+    return 'mine'
   }
 }
-const filter = ref<FeedFilter>(readFilter())
-const filterOptions = computed<ReadonlyArray<{ value: FeedFilter; label: string }>>(() => [
-  { value: 'all', label: t('notifications.common.filterAll') },
-  { value: 'unread', label: t('notifications.common.filterUnread') },
-])
+const filter = ref<NotificationCategory>(readFilter())
+
+// 每一档各有多少条。载荷里带「全部 12 条」那个数就是它；删掉一条之后要重新问一遍。
+const counts = ref<Record<NotificationCategory, number> | null>(null)
+const filterOptions = computed(() =>
+  NOTIFICATION_CATEGORIES.map((category) => ({
+    value: category,
+    label: counts.value ? `${t(CATEGORY_LABEL[category])} · ${counts.value[category]}` : t(CATEGORY_LABEL[category]),
+  }))
+)
+
+// 三档的数字各问一次服务端（一组类型只要一条，拿的是它的 total）。
+async function refreshCounts() {
+  try {
+    const [mine, notice, system] = await NotificationsApi.countByTypes(
+      NOTIFICATION_CATEGORIES.map((category) => typesOfCategory(category))
+    )
+    counts.value = { mine, notice, system }
+  } catch (error) {
+    // 数字取不到不影响读列表：三档的格子先只写名字。
+    console.error('获取动态条数失败:', error)
+  }
+}
 
 const notifications = ref<Notification[]>([])
 const loading = ref(false)
@@ -111,7 +145,7 @@ const hasMore = ref(false)
 const hasUnread = computed(() => notifications.value.some((notification) => !notification.read))
 
 // 获取通知列表。每换一次筛选 generation 加一：换之前发出、换之后才回来的那一页
-// 属于上一种筛选，丢掉，不然「未读」那一栏会混进已读的。
+// 属于上一档，丢掉，不然「需我处理」那一栏会混进别的档的通知。
 let generation = 0
 const fetchNotifications = async (isMore = false) => {
   if (loading.value) return
@@ -124,8 +158,9 @@ const fetchNotifications = async (isMore = false) => {
   errorReason.value = ''
   try {
     const page = await NotificationsApi.list({
-      // 未读筛选只问服务端要没读的；「全部」不传这一位，行为和从前一样。
-      read: filter.value === 'unread' ? false : undefined,
+      // 只问服务端要这一档的几种事由。已读未读不问服务端：读没读靠行的底色和「标为
+      // 已读」区分，不改变这一条属于哪一档。
+      type: typesOfCategory(filter.value),
       pageStart: cursorStart.value,
       pageSize: pageSize.value,
     })
@@ -176,13 +211,9 @@ const markAsRead = async (notificationId: number) => {
   try {
     await NotificationsApi.updateStatus(notificationId, true)
 
-    // 更新本地通知状态
+    // 更新本地通知状态。读掉的那条还留在这一档里——它没换事由，只是不再是新的。
     const notification = notifications.value.find((n) => n.id === notificationId)
-    if (notification) {
-      notification.read = true
-      // 正在看未读那一栏：读掉的那条不该再占着一格。
-      if (filter.value === 'unread') notifications.value = notifications.value.filter((n) => n.id !== notificationId)
-    }
+    if (notification) notification.read = true
 
     // 更新未读数量
     fetchUnreadCount()
@@ -201,9 +232,6 @@ const markAllAsRead = async () => {
       notification.read = true
     })
 
-    // 未读那一栏被清空了：从服务端再问一遍，而不是留一列刚读掉的行。
-    if (filter.value === 'unread') reload()
-
     // 更新未读数量
     fetchUnreadCount()
   } catch (error) {
@@ -219,8 +247,9 @@ const deleteNotification = async (notificationId: number) => {
     // 从列表中移除
     notifications.value = notifications.value.filter((n) => n.id !== notificationId)
 
-    // 更新未读数量
+    // 更新未读数量；这一档的总数也少了一条。
     fetchUnreadCount()
+    void refreshCounts()
   } catch (error) {
     console.error('删除通知失败:', error)
   }
@@ -229,8 +258,9 @@ const deleteNotification = async (notificationId: number) => {
 // 读完、删完之后把首页那一格的小点对上。
 const fetchUnreadCount = () => unread.refresh()
 
-// 初始化加载通知
+// 初始化加载通知。三档的数字和第一页一起要，格子一出来就带着数。
 onMounted(() => {
+  void refreshCounts()
   fetchNotifications()
 })
 </script>

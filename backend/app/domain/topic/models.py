@@ -163,6 +163,12 @@ class Topic(UuidPk, Timestamps, Base):
     )
     resource_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     cleanup_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    # 删除：一个人把频道删了。它一定也是归档（内容冻结、清理入库），但和归档不同
+    # ——归档等一个人取消归档，删除等清理走完。带这个时刻的行不再出现在任何频道
+    # 列表里，也不给「取消归档」；`topic/retire.py` 在它的清理收尾时把行删掉。
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class RoomCleanup(UuidPk, Timestamps, Base):

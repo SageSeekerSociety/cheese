@@ -529,6 +529,7 @@
   "protectionEmptyHandle": "{what} has an empty handle",
   "handleTooLong": "A handle can't be longer than {max} characters",
   "defaultReviewerNul": "default_reviewer can't contain a NUL byte",
+  "dispatchSeatNul": "The dispatch seat can't contain a NUL byte",
   "protectionOverrideList": "The override list",
   "projectNeedsTeam": "A project has to belong to a team",
   "projectNumberTaken": "This project number is already in use",
@@ -1032,5 +1033,14 @@
   "specDevicesOf": "{name}'s devices",
   "environmentDefaultPeopleOnly": "The default execution environment for new teammates is set by people; an AI teammate can only change its own",
   "environmentOwnOnly": "An AI teammate can only change its own execution environment",
-  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices."
+  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices.",
+  "externalProblemAccountRequired": "A YOJ account name is required",
+  "externalProblemPasswordRequired": "A YOJ password is required",
+  "externalProblemNumberInvalid": "A YOJ problem number can only be digits",
+  "externalProblemNotSet": "This task has no YOJ problem number yet — set one before syncing",
+  "deleteChannelSignIn": "Sign in to delete a channel",
+  "projectRootCannotDelete": "The project itself can't be deleted",
+  "channelDeletedCannotUnarchive": "This channel was deleted and can't be brought back",
+  "privateChatHasNoThreads": "A direct chat has no threads; start one in a channel",
+  "threadTitleRequired": "A thread needs a name — write one line and create it"
 }

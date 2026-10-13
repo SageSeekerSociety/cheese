@@ -56,7 +56,7 @@ test.describe("房间里的任务", () => {
     );
   });
 
-  test("侧栏项目名下的「总览」打开项目总览，别的频道里的任务也在上面", async ({
+  test("侧栏的项目菜单里打开项目总览，别的频道里的任务也在上面", async ({
     page,
   }) => {
     const projectId = await projectIdOf(page);
@@ -64,12 +64,14 @@ test.describe("房间里的任务", () => {
     const roomId = await freshRoom(page, `跨房间 ${stamp}`);
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
 
-    // 从一个频道里出发，点侧栏那个常驻入口，而不是直接敲地址：这一条要钉的一半
-    // 正是「找得到」。项目名下那一行的第一格就是总览。
+    // 从一个频道里出发，走侧栏找到它，而不是直接敲地址：这一条要钉的一半正是
+    // 「找得到」。总览不在项目名下那一行（2026-10-12 清单第 9 条把它挪走了），
+    // 它在点项目名弹出的菜单里。
     await page.goto(`/projects/${projectId}/topics/${roomId}`);
+    await page.getByRole('button', { name: '项目菜单', exact: true }).click();
     await page
-      .locator('[aria-label="项目页面"]')
-      .getByText("总览", { exact: true })
+      .locator('.v-overlay-container')
+      .getByText('总览', { exact: true })
       .click();
     await expect(page).toHaveURL(/\/projects\/[^/]+\/overview/);
 
