@@ -37,6 +37,9 @@
 `rejected`。这件事必须在这里判，不能只在数据库那一侧拒：这里一旦收下，基线就记成
 了会话那一版，下一次对账会把平台的旧版静默地铺回磁盘，agent 写的东西不留痕迹。
 
+**索引新加的一行跟着它指的文件走。** 文件这一轮没进这棵树（超长没收，或者根本
+没写），指向它的新行也不收（`_without_dangling`）；早先就在的行不动。
+
 **一次删掉半棵树，先当它没删。** 一条一条删记忆是 agent 想明白了；一个作用域同时
 少掉一大半，更像是那棵树本身出了事（家被重建、磁盘没挂上）。这是上一条的兜底：
 上一条堵的是根因，这一条保证根因万一再出现也删不掉东西（`BULK_DELETE_*`）。
@@ -45,7 +48,13 @@
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
-from app.domain.memory.files import INDEX_NAME, digest, limit_breach
+from app.domain.memory.files import (
+    INDEX_NAME,
+    digest,
+    limit_breach,
+    parse_index,
+    without_entries,
+)
 
 #: `refused` 里那一条的正文为空串时，被拒的不是一次修改而是一次**删除**：会话把
 #: 这个文件删了，而平台这一份在那之后也变了。空串不是「没有正文」的正文，两者在
@@ -182,6 +191,14 @@ def sync_tree(
         settled[path] = requested[path]
         baseline_after[path] = digest(requested[path])
         refused.pop(path, None)
+    for path, content in list(settled.items()):
+        prefix, name = _split(path)
+        if name != INDEX_NAME:
+            continue
+        kept = _without_dangling(content, requested.get(path), prefix, settled)
+        if kept != content:
+            settled[path] = kept
+            baseline_after[path] = digest(kept)
     return TreeSync(
         files=settled,
         refused=refused,
@@ -194,6 +211,44 @@ def sync_tree(
             if _split(path)[1] == INDEX_NAME
         },
     )
+
+
+def _without_dangling(
+    index: str, before: str | None, prefix: str, settled: dict[str, str]
+) -> str:
+    """这一次新加进索引、却指向本作用域对账后并不存在的文件的那几行，不收。
+
+    最常见的来路是上面那条上限：一条新记忆超长被拒，它在同一轮里加进索引的那一
+    行却照收，于是平台的索引指向一个不存在的文件，每次同步铺到所有房间，读它的
+    agent 读到「文件不存在」。所以索引和它新指向的文件同生同死：文件没收，指它的
+    新行也不收，agent 改短重写时连那一行一起再加。
+
+    只量新加的行（`before` 是平台原来那一版）：别人早先留下的行不动，哪怕它也指
+    空——那可能是另一间房正在写、还没对账的那一条。只管指向本作用域里一个文件名
+    的行；写成别的样子的链接不是这里认得出的指针，原样留着。
+    """
+    old = set((before or "").splitlines())
+    added = {
+        entry.path
+        for entry in parse_index(
+            "\n".join(line for line in index.splitlines() if line not in old)
+        )
+    }
+    missing = {
+        target
+        for target in added
+        if "/" not in target
+        and target.endswith(".md")
+        and f"{prefix}/{target}" not in settled
+    }
+    if not missing:
+        return index
+    kept_old = [
+        line
+        for line in index.splitlines()
+        if line in old or without_entries(line, missing) == line
+    ]
+    return "\n".join(kept_old) + ("\n" if index.endswith("\n") else "")
 
 
 def _too_many_to_delete(requested: dict[str, str], dropped: list[str]) -> list[str]:

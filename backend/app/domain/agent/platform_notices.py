@@ -442,7 +442,8 @@ def memory_rejected_notice(*, where: str, reasons: dict[str, str]) -> str:
     return (
         f"{where}记忆里有几条超出长度上限，没有写入，记忆里还是原来那一版：\n"
         f"{lines}\n"
-        "改短之后重新写入。"
+        "这一轮在 `MEMORY.md` 里新加的、指向没写入的文件的那一行也没有留下。"
+        "改短之后重新写入，再把索引那一行加回去。"
     )
 
 
