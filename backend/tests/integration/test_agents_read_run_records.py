@@ -4,13 +4,15 @@ project is refused: the records name other projects and their conversations."""
 
 import importlib.util
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
 import pytest
 
 from app.core.config import settings
+from app.domain.agent.models import AgentTurn
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.run_record.models import RunRecord
 from tests.integration.conftest import (
     post_project,
@@ -104,6 +106,56 @@ def test_an_agent_on_the_platform_reads_the_errors_and_one_of_them_whole(
     whole = agent.run(key="fp-site", kind="backend_error")
     assert "Traceback" in whole
     assert "别的" in whole
+
+
+def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
+    """`turns` reads the denominator the kind-per-line listing cannot: how many
+    turns ran in the window, and which of them left a terminal event."""
+    platform, _ = projects
+    topic = _room(client, platform)
+    agent = AgentHost(client, platform, topic)
+    now = datetime.now(UTC)
+    clean, failed = uuid.uuid4(), uuid.uuid4()
+
+    async def seed() -> None:
+        async with client.test_factory() as s:
+            for turn_id, started in (
+                (clean, now - timedelta(minutes=2)),
+                (failed, now - timedelta(minutes=5)),
+            ):
+                s.add(
+                    AgentTurn(
+                        id=turn_id,
+                        conversation_id=uuid.UUID(topic),
+                        continuation_id=turn_id,
+                        author="alice",
+                        started_at=started,
+                        stopped_at=started + timedelta(minutes=1),
+                    )
+                )
+            s.add(
+                Block(
+                    project_id=uuid.UUID(platform),
+                    conversation_id=uuid.UUID(topic),
+                    author="platform",
+                    author_type=AuthorType.platform,
+                    kind=BlockKind.event,
+                    content="",
+                    turn_id=failed,
+                    meta={"event_type": "turn_failed"},
+                )
+            )
+            await s.commit()
+
+    client.portal.call(seed)
+
+    listed = agent.run(turns=True)
+    by_turn = {line.split("  ")[0]: line for line in listed.splitlines()}
+    assert "2 轮" in listed
+    assert "turn_failed" in by_turn[str(failed)]
+    assert "turn_failed" not in by_turn[str(clean)]
+    # 成功不写事件：这一行只能说明平台没为这一轮记过失败。
+    assert "不是记了成功" in listed
 
 
 def test_an_agent_elsewhere_is_refused(client, projects):
