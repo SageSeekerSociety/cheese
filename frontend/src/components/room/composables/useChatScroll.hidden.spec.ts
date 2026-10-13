@@ -54,14 +54,14 @@ function pane(content: number) {
 
 afterEach(() => vi.unstubAllGlobals())
 
-async function mounted(content: number) {
+async function mounted(content: number, topicId?: string) {
   vi.stubGlobal('ResizeObserver', FakeResizeObserver)
   const box = pane(content)
   let scroll!: ReturnType<typeof useChatScroll>
   render(
     defineComponent({
       setup() {
-        scroll = useChatScroll()
+        scroll = useChatScroll({ topicId: () => topicId })
         return () => h('div')
       },
     })
@@ -124,5 +124,26 @@ describe('藏在别的页签后面', () => {
     fire()
 
     expect(box.el.scrollTop).toBe(box.el.scrollHeight - box.el.clientHeight)
+  })
+})
+
+// 藏着的时候整段换了内容（断线回来接不上，换成最新一页）：他读的那段已经不在了，
+// 记着的偏移指的是新内容里随便哪个高度。要的是最新那条，露出来、下次进来都该在那儿。
+describe('藏着的时候被带到最新那条', () => {
+  it('露出来停在底部，不回到藏起来之前那个偏移', async () => {
+    const { box, scroll } = await mounted(2000, 't-swapped')
+    box.el.scrollTop = 700
+    scroll.rememberScroll('t-swapped')
+
+    box.hide()
+    fire()
+    scroll.scrollToBottom()
+    await nextTick()
+    box.grow(-500) // 换上来的那一页比原来那段短
+    box.show()
+    fire()
+
+    expect(box.el.scrollTop).toBe(box.el.scrollHeight - box.el.clientHeight)
+    expect(scroll.restoresToBottom('t-swapped')).toBe(true)
   })
 })

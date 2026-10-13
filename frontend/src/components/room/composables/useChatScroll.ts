@@ -55,9 +55,12 @@ export function useChatScroll(
      * 底部：不钉底、不跟新消息，位置也不记（回来时显示的是最新的一段）。
      */
     showingNewest?: () => boolean
+    /** 此刻这一栏是哪个话题：落到底部时替它记下「停在底部」。 */
+    topicId?: () => string | undefined
   } = {}
 ): ChatScroll {
   const showingNewest = options.showingNewest ?? (() => true)
+  const topicId = options.topicId ?? (() => undefined)
   const scrollRef = ref<HTMLElement | null>(null)
   const contentRef = ref<HTMLElement | null>(null)
 
@@ -169,13 +172,19 @@ export function useChatScroll(
     }, CATCH_UP_IDLE_MS)
   }
 
+  // 要的是最新那条，就连同「藏起来时停在哪」和记下的位置一起改掉：这一栏藏着时
+  // `place` 写不进去（见 `pendingTop`），滚动事件也不来，留着旧的那两份，露出来、或者
+  // 切走再回来时就会被放回一个指着别的内容的偏移——整段换过之后正是这样。
   function scrollToBottom() {
+    pendingTop = null
     void nextTick(() => {
       const el = scrollRef.value
       if (el) {
         place(el, el.scrollHeight)
         atBottom.value = true
       }
+      const id = topicId()
+      if (id && showingNewest()) scrollMemory.set(id, { top: el?.scrollTop ?? 0, atBottom: true })
     })
   }
 

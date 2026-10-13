@@ -31,7 +31,8 @@ import { setCachedWindow } from '@/query/blocks'
 /**
  * 断线重连：屏幕上正是这间房，什么都不清。读回最新一页就地合进时间线，再开 socket；
  * 现场等连上后的 room_state 核对。输入框、待发的图片、正在编辑的那条、未读线、滚动
- * 位置是读的人自己的，一样不动。
+ * 位置是读的人自己的，一样不动——只有接不上、整段换成最新一页时，原来那段已经不在
+ * 屏幕上，落到最新那条（见 readTail）。
  *
  * 补读（`catchUp`）是同一件事去掉断线的那一半：连接好好的，只是读的那一页早于订阅
  * 生效，中间落下的那几条两头都没带来（useRoomTail）。按编号只读那几条，各自按时间
@@ -52,6 +53,8 @@ export function useRoomResync(room: {
     atBottom: Ref<boolean>
     /** 跟到最新：来了新的而读的人停在底部时。 */
     follow: () => void
+    /** 落到最新那条上，不管读的人刚才停在哪（整段换过之后）。 */
+    toNewest: () => void
     /** 一屏没画满就往回补（最新一带常常整页不露面）。 */
     fill: () => Promise<unknown>
   }
@@ -78,10 +81,14 @@ export function useRoomResync(room: {
     fresh.blocks = applyLiveChanges(fresh, read.changes, read.reactions)
     // 排队中的那几轮核对不了：断线期间可能已经跑完了。
     if (afterOutage) room.runRecords.forgetWaiting()
-    const grew = mergeResyncedPage(room.timeline, room.runRecords, fresh)
+    const merged = mergeResyncedPage(room.timeline, room.runRecords, fresh)
     for (const block of fresh.blocks) room.settle(block)
     setCachedWindow(topicId, room.timeline.newest())
-    if (grew && room.scroll.atBottom.value) room.scroll.follow()
+    // 整段换过：换上来的这一页和原来那段一条都不重合（接不上才换），读的人刚才看的那条
+    // 已经不在了。照旧的 scrollTop 指的是新内容里随便哪个高度——停在中间不是因为他翻到
+    // 那儿。落到最新那条上，下次回来也从那儿开始。
+    if (merged.replaced) room.scroll.toNewest()
+    else if (merged.grew && room.scroll.atBottom.value) room.scroll.follow()
     return true
   }
 
@@ -138,12 +145,15 @@ export function useRoomResync(room: {
   return { resync, catchUp }
 }
 
-/** 把重连后读回来的最新一页合进时间线。返回最新的那一块换没换（来了新的）。 */
+/**
+ * 把重连后读回来的最新一页合进时间线。`grew`：最新的那一块换没换（来了新的）；
+ * `replaced`：接不上，整段换成了这一页。
+ */
 export function mergeResyncedPage(
   timeline: ReturnType<typeof useTimeline>,
   runRecords: ReturnType<typeof useRunRecords>,
   fresh: BlockWindow
-): boolean {
+): { grew: boolean; replaced: boolean } {
   // 断线期间开始又结束的轮次，排队那一行要知道它已经开始过了：它在历史里留下的块
   // 带着轮次 id。
   for (const block of fresh.blocks) if (block.turn_id) runRecords.turnBegan(block.turn_id)
@@ -156,7 +166,7 @@ export function mergeResyncedPage(
     for (const id of plan.removed) timeline.remove(id)
     for (const block of plan.upserts) upsert(timeline, block)
   }
-  return timeline.newest().blocks.at(-1)?.id !== newestBefore
+  return { grew: timeline.newest().blocks.at(-1)?.id !== newestBefore, replaced: plan.gap }
 }
 
 function upsert(timeline: ReturnType<typeof useTimeline>, block: Block) {
