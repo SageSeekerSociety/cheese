@@ -243,9 +243,7 @@ class ResourceIn(BaseModel):
     params: dict[str, Any] = {}
 
 
-@router.post(
-    "/topics/{topic_id}/mcp/{name}/resources", dependencies=[ROUTE_DECIDES]
-)
+@router.post("/topics/{topic_id}/mcp/{name}/resources", dependencies=[ROUTE_DECIDES])
 async def read_resource(
     topic_id: uuid.UUID,
     name: str,

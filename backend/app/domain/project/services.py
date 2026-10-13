@@ -500,6 +500,9 @@ class ProjectService:
             # 队友的配置，和 `default_role` 落 preset 走同一条 configure。它是**题目**
             # 给的，不是某个类型预设给的，所以不新造权限开关，只往既有配置上加。
             if protocol.prompt or protocol.skills:
+                # agent_instance 自己要读 project.models：提到模块顶，project ↔
+                # agent_instance 就成 C3 环（同上面那份算力默认值）。
+                # deferred-import: keeps C3 acyclic (agent_instance reads project)
                 from app.domain.agent_instance.configuration import AgentConfiguration
 
                 config = AgentConfiguration.model_validate(instance.configuration or {})

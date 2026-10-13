@@ -961,16 +961,8 @@ class Executor:
                         )
                     return {"started": True}
                 cwd = Path(native_path(params.get("cwd") or str(self.root)))
-                # `is_dir()` 只吞 ENOENT/ENOTDIR/EBADF/ELOOP。会话给的 cwd 落在本沙箱
-                # **看不见**的地方时它抛 EPERM（macOS 上就是会话机那份项目视图），
-                # 一整轮工具调用被这一句打成 502，屏幕报「这台机器现在够不着」。
-                # 看不见的 cwd 和「它不在了」是同一件事：退回这一侧自己的 root。
-                try:
-                    usable = cwd.is_dir()
-                except OSError:
-                    usable = False
-                if not usable:
-                    # Gone since the session last looked: its own reset.
+                # 看不见的 cwd 会抛 EPERM：Path.is_dir 吞不住，os.path.isdir 当它不在
+                if not os.path.isdir(cwd):
                     cwd = self.root
                 env = self.command_env()
                 env.update(

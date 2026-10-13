@@ -29,6 +29,25 @@ depends_on: str | Sequence[str] | None = None
 _CONSTRAINT = "uq_task_submission_review_submission_reviewer"
 
 
+def _invalid(name: str) -> bool:
+    """同名索引留着、但没建成功（上一次 CONCURRENTLY 中途失败）。
+
+    这一类索引不拦任何写入 —— 唯一性等于没有 —— 而 `if_not_exists` 会让重跑
+    静静跳过它，所以先丢掉再建。同 `22d5c7f33018`。
+    """
+    return bool(
+        op.get_bind()
+        .execute(
+            sa.text(
+                "SELECT NOT i.indisvalid FROM pg_index i "
+                "JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = :name"
+            ),
+            {"name": name},
+        )
+        .scalar()
+    )
+
+
 def upgrade() -> None:
     with_lock_retries("task_submission_review")
     op.add_column(
@@ -42,16 +61,35 @@ def upgrade() -> None:
     op.alter_column("task_submission_review", "reviewer_id", nullable=False)
     # 部分唯一索引：只看活行。软删一条再重判是允许的（同一个人同一版上活着的
     # 评审仍只有一条），所以带上 `deleted_at IS NULL`。
-    op.create_index(
-        _CONSTRAINT,
-        "task_submission_review",
-        ["submission_id", "reviewer_id"],
-        unique=True,
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
+    #
+    # 它建在一张有数据的已有表上，所以必须 CONCURRENTLY：普通建索引会把「写评审」
+    # 这一步卡住到建完为止（`.claude/rules/migrations.md`）。CONCURRENTLY 不能在
+    # 事务里跑，单独开一段。
+    with op.get_context().autocommit_block():
+        if _invalid(_CONSTRAINT):
+            op.drop_index(
+                _CONSTRAINT,
+                table_name="task_submission_review",
+                postgresql_concurrently=True,
+            )
+        op.create_index(
+            _CONSTRAINT,
+            "task_submission_review",
+            ["submission_id", "reviewer_id"],
+            unique=True,
+            postgresql_where=sa.text("deleted_at IS NULL"),
+            postgresql_concurrently=True,
+            if_not_exists=True,
+        )
 
 
 def downgrade() -> None:
     with_lock_retries("task_submission_review")
-    op.drop_index(_CONSTRAINT, table_name="task_submission_review")
+    with op.get_context().autocommit_block():
+        op.drop_index(
+            _CONSTRAINT,
+            table_name="task_submission_review",
+            postgresql_concurrently=True,
+            if_exists=True,
+        )
     op.drop_column("task_submission_review", "reviewer_id")
