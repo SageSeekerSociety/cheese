@@ -1454,8 +1454,8 @@
     "fewerTasks": "收起",
     "tasksLoading": "正在读取…",
     "tasksFailed": "没读出来，点一下重试",
-    "fillIn": "补足",
-    "fillInTip": "这个频道里和你有关的不到三条，这一条是补上来的",
+    "fillIn": "他人负责",
+    "fillInTip": "这条不是你负责的：这个频道里和你有关的不到三条，它是借来补上的",
     "collapseTasks": "收起这个频道下面的任务",
     "expandTasks": "展开这个频道下面的任务",
     "collapsedTasks": "{count} 个进行中的任务"

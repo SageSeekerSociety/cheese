@@ -7,8 +7,8 @@
 // 不亮就不画。
 //
 // 这一条不是和我有关的、是频道里别人的、被借来凑够三条的（`task.filling_in`）：整个
-// 标题淡一档、后面缀一个「补足」小签，说清它为什么在这儿 —— 不然侧栏里突然多出一条
-// 我没参与过的活，看起来像我漏看了什么。
+// 标题淡一档、后面缀一个「他人负责」小签（`work.sidebar.fillIn`），说清它为什么在这儿 ——
+// 不然侧栏里突然多出一条我没参与过的活，看起来像我漏看了什么。
 import type { RowLight } from '@/lib/roomLight'
 import type { RailTask } from './moreTasks'
 
@@ -128,7 +128,7 @@ const emit = defineEmits<{
 .rail-task__title--unread {
   font-weight: 650;
 }
-/* 补足的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
+/* 借来的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
    自己再抬一次——上面那两条改的是行盒的颜色，标题自己有颜色时继承不到。 */
 .rail-task--filled .rail-task__title {
   color: var(--muted);
@@ -137,7 +137,7 @@ const emit = defineEmits<{
 .rail-task--filled.rail-task--selected .rail-task__title {
   color: var(--ink);
 }
-/* 「补足」小签：形态沿用频道行那颗计数丸，字更小、不抢眼。 */
+/* 「他人负责」小签：形态沿用频道行那颗计数丸，字更小、不抢眼。 */
 .rail-task__fill {
   flex: none;
   font-size: 11px;

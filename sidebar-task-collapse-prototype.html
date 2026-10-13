@@ -379,7 +379,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
        work:'后端 rail_tasks() 去掉 [:RAIL_TASKS] 的截断（backend/app/api/routes/projects.py）；前端不用改。'},
     3:{t:'不足 3 条就补到 3 条', s:'第 2 条：拿这个频道其余进行中的任务补',
        now:'没有这一条。频道里只有一两条和你有关的，下面就只有一两行。',
-       fix:'和你有关的不足 3 条时，用这个频道其余进行中的任务补足到 3 条，带「补足」标签的那几条就是补的。看「产品设计」：你有 2 条，补了 1 条。',
+       fix:'和你有关的不足 3 条时，用这个频道其余进行中的任务补足到 3 条，带「他人负责」标签的那几条就是补的。看「产品设计」：你有 2 条，补了 1 条。',
        ask:'「少于 3 条」数的是「我负责的 + 我协助的」还是只数「我负责的」？这一版按前者做的。',
        work:'rail_tasks() 里补足的逻辑，外加一个字段告诉前端哪几条是补的；前端 TopicRailTaskRow.vue 给补的那几条画淡一档 + 标签。'},
     4:{t:'排序：我负责的在前', s:'第 3 条：排序方式不变',
@@ -399,7 +399,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
        work:'不用改。TopicRailMoreTasksRow.vue 和 moreTasks.ts 都留着。'},
     7:{t:'一条都没有的频道', s:'第 2 条照字面读出来的结果',
        now:'和你没有任何关系的频道下面一直空着，什么都不挂。',
-       fix:'这一版照字面做：像「测试频道」这样，你一条都没有，也补到 3 条，全是别人的（都带「补足」标签）。',
+       fix:'这一版照字面做：像「测试频道」这样，你一条都没有，也补到 3 条，全是别人的（都带「他人负责」标签）。',
        ask:'这条是照字面做的，不一定是你要的。要不要改成「我一条都没有就干脆不挂」？那样侧栏会短很多。',
        work:'rail_tasks() 里给「我 0 条」的频道也补足；做不做由你定。'}
   };
@@ -492,7 +492,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
         parts.push('<button class="'+cls+'" data-task="'+esc(t.t)+'" data-chid="'+ch.id+'">');
         parts.push('<span class="tk__t">'+esc(t.t)+'</span>');
         parts.push('<span class="tk__tail">');
-        if (t.rel === 'pad' && mode === 'new') parts.push('<span class="tk__tag">补足</span>');
+        if (t.rel === 'pad' && mode === 'new') parts.push('<span class="tk__tag">他人负责</span>');
         if (t.badge) parts.push('<span class="tk__badge">'+t.badge+'</span>');
         parts.push(dotHTML(t.dot));
         if (t.t === '电脑端待办入口位置') parts.push(mk(2));

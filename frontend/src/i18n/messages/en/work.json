@@ -1454,8 +1454,8 @@
     "fewerTasks": "Show fewer",
     "tasksLoading": "Loading…",
     "tasksFailed": "Couldn't load them. Click to retry",
-    "fillIn": "Filled in",
-    "fillInTip": "Fewer than three of your own tasks are here; this row makes up the three",
+    "fillIn": "Someone else's",
+    "fillInTip": "Not yours: this channel has fewer than three of your own tasks, so this one is borrowed to make up the three",
     "collapseTasks": "Collapse this channel's tasks",
     "expandTasks": "Expand this channel's tasks",
     "collapsedTasks": "{count} tasks under way"

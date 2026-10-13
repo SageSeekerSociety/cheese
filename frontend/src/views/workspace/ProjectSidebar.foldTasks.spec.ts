@@ -49,6 +49,7 @@ vi.mock('@/api', async (importOriginal) => ({
   listProjectTasks: api.listProjectTasks,
 }))
 
+import { t } from '@/i18n'
 import { workspaceRoutes } from '@/router/workspaceRoutes'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { seedProject, seedProjects } from '@/test/seedQueries'
@@ -177,15 +178,17 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.getAllByRole('button', { name: "Collapse this channel's tasks" })).toHaveLength(1)
   })
 
-  it('凑够三条借来的那几条，行上说是补上来的', async () => {
+  it('凑够三条借来的那几条，行上写着这条不是我负责的', async () => {
     await openProject([
       channel('topic-a', [task(K1, '任务一'), task(K2, '任务二', 'topic-a', { filling_in: true })], 4),
     ])
 
-    const chip = screen.getByText('Filled in')
-    // 补的那一条明确说是补的：不然会像一条你漏看了的活。
-    expect(chip.getAttribute('title')).toBe('Fewer than three of your own tasks are here; this row makes up the three')
+    // 借来的那一条挂一个小签、带一句说明自己为什么在这儿的话：不然会像一条你漏看了
+    // 的活。签上的字取词表里那一份，不在这里抄一遍——换文案不该让这条红。
+    const label = t('work.sidebar.fillIn')
+    const chip = screen.getByText(label)
+    expect(chip.getAttribute('title')).toBe(t('work.sidebar.fillInTip'))
     // 和我有关的那些不挂这个签。
-    expect(screen.getAllByText('Filled in')).toHaveLength(1)
+    expect(screen.getAllByText(label)).toHaveLength(1)
   })
 })
