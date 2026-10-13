@@ -143,6 +143,7 @@ function bottomOf(pane: HTMLElement) {
 
 /** 人往上翻到顶上那几条。 */
 async function readUp(pane: HTMLElement) {
+  pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
   pane.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
   await flush()
