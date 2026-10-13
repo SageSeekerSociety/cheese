@@ -877,7 +877,7 @@ def _seed_domain_table() -> list[str]:
     return list(_SEED_DOMAIN_TABLE)
 
 
-def _seed_config(declared: dict[str, str]) -> str:
+def _seed_config(declared: dict[str, str], text: str | None = None) -> str:
     """The real declaration, rewritten so the planted trees satisfy it.
 
     The trees `_SEED` plants hold none of the repository's domain packages, so
@@ -887,8 +887,13 @@ def _seed_config(declared: dict[str, str]) -> str:
     catch. The turn table is the repository's, which the seed already builds the
     modules for. Everything else — the exemptions and the plumbing around them —
     is untouched, so what a case exercises is the contract and not the fixture.
+
+    `text` is the declaration to rewrite, defaulting to the real file. A caller
+    that already read one — `declared_layers` returns layer lists, not the text
+    they came from, so the two can be a mutation apart — passes it, and the
+    rewrite then works on what the gate read rather than on what is on disk.
     """
-    lines = DEFAULT_CONFIG.read_text().split("\n")
+    lines = (text if text is not None else DEFAULT_CONFIG.read_text()).split("\n")
     turn_lines = [f"    {layer}" for layer in declared["turn-layers"]]
     for contract_id, replacement in (
         ("domain-layers", _seed_domain_table()),

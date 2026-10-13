@@ -728,11 +728,19 @@ def _header_with_a_trailing_space(text: str) -> str:
 )
 def test_the_seed_finds_the_header_the_gate_reads(mutate):
     """`declared_layers` reads the header off a line the gate would accept, so
-    the rewrite has to find that same line. A trailing space or a CR is not a
-    different section — not to configparser, not to import-linter — and it must
-    not be one to the fixture either."""
-    declared = cb.declared_layers(mutate(REAL_CONFIG.read_text()))
-    assert "    agent" in cb._seed_config(declared)
+    the rewrite has to find that same line in that same text. A trailing space
+    or a CR is not a different section — not to configparser, not to
+    import-linter — and it must not be one to the fixture either.
+
+    The needle is the seed's own second layer, which is not in the repository's
+    table: `agent` is, there and in the seed's, so asserting on it would pass
+    with the rewrite skipped entirely.
+    """
+    mutated = mutate(REAL_CONFIG.read_text())
+    declared = cb.declared_layers(mutated)
+    seeded = cb._seed_config(declared, mutated)
+    assert "    agent" in seeded
+    assert "    alpha : bar" in seeded
 
 
 @pytest.mark.parametrize(
