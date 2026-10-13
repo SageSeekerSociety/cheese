@@ -1320,7 +1320,7 @@
       "building": "进行中",
       "delivering": "检查中",
       "needs_you": "待处理",
-      "done": "已完成",
+      "done": "已关闭",
       "archived": "已归档"
     },
     "phrase": {
@@ -1341,7 +1341,7 @@
       "accepted": "已采纳",
       "closed": "已关闭",
       "archived": "已归档",
-      "completed": "已完成"
+      "completed": "已关闭"
     },
     "noAssignee": "暂无负责人",
     "made": "做出了什么",
@@ -1388,7 +1388,7 @@
   },
   "topicState": {
     "draft": "草稿",
-    "done": "已完成",
+    "done": "已关闭",
     "open": "进行中",
     "archived": "已归档"
   },
@@ -2249,7 +2249,7 @@
       "quietRunning": "最近 7 天都没有动静，{count} 个在全部任务里看",
       "latest": "{name}：{text}",
       "owner": "{name} 负责 · {when}",
-      "recentDone": "最近完成",
+      "recentDone": "最近关闭",
       "allTasks": "全部任务"
     },
     "pins": {
@@ -2335,7 +2335,7 @@
       "created": "新建",
       "started": "开始",
       "accepted": "采纳",
-      "completed": "完成",
+      "completed": "关闭",
       "closed": "关闭",
       "returned": "退回",
       "stalled": "停滞",

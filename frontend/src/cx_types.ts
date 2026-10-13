@@ -317,7 +317,7 @@ export interface RoomTask {
  *    building   进行中 —— 已开始，还没递出交付
  *    delivering 检查中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
- *    done       已完成 —— 已采纳，或已关闭且没交付
+ *    done       已关闭 —— 任务关了：最后一步已采纳，或没交付就关了
  *    archived   已归档 —— 房间才有；活不归档
  */
 export type BoardColumn = 'not_started' | 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'

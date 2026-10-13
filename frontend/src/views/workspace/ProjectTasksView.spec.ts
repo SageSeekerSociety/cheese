@@ -176,7 +176,6 @@ it('全部状态同时列进行中与已关闭，并把两边的总数相加', (
   const row = view.getByRole('button', { name: /结束了/ })
   expect(row.textContent).toContain(t('work.channelTasks.closed'))
   expect(row.textContent).toContain(t('taskList.deliveryAccepted'))
-  expect(view.queryByText(t('work.board.column.done'))).toBeNull()
 })
 
 it('状态是单选，重复点已关闭仍是已关闭，交付选择不随之改变', async () => {
