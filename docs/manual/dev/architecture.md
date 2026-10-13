@@ -103,7 +103,7 @@ app/domain/<包>/
 
 ### `agent` 包拆成什么 {#agent-split}
 
-`agent` 一个包 66,454 行，包着模型网关、设备链路、预览隧道、代码托管凭据和整个轮次运行时，所以它依赖 31 个包、又被 20 个包依赖。按职责拆：
+`agent` 一个包 66,454 行，包着模型网关、设备链路、预览隧道、代码托管凭据和整个轮次运行时，所以它依赖 32 个包、又被 20 个包依赖。按职责拆：
 
 | 新包 | 从 `agent/` 搬走的 | 层 |
 |---|---|---|
@@ -116,7 +116,7 @@ app/domain/<包>/
 | `gateway` | `gateway*` | 5 |
 | `preview`（并入现有包） | `preview_hub`、`preview_owner`、`preview_tunnel` | 5 |
 
-`chat.py` 不并进 `conversation`：`conversation` 在第 1 层，一个依赖都没有、被 20 个包依赖，把 `chat.py` 的依赖带进去会当场造出新环。
+`chat.py` 不并进 `conversation`：`conversation` 在第 1 层，一个依赖都没有、被 24 个包依赖，把 `chat.py` 的依赖带进去会当场造出新环。
 
 拆的顺序按依赖：先拆 `forge` 和 `notices`（先拆开它们的向上依赖），再拆 `preview`、`device`；`gateway` 今天还引用 `agent` 内部的 `service`、`queries`、`room.sessions`、`profiles`、`supply`（`gateway_usage.py:42`），要先断开这几条才能独立。`chat.py` 和 `runtime.py` 最后拆，并且等「合并异常基类」那条任务进 main，否则两边同时大改同一批文件。
 
