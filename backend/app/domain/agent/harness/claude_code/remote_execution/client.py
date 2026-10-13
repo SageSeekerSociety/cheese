@@ -45,10 +45,12 @@ if __package__:
         PlatformHost,
         RemoteClient,
         dial_runner,
+        failure_text,
         read_file_on_the_machine,
         session_path,
         session_servers,
         stat_file_on_the_machine,
+        to_machine,
     )
     from app.domain.agent.harness.claude_code.remote_execution.context_service import (
         serve,
@@ -56,6 +58,7 @@ if __package__:
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         allow_native_tools,
         carry_conversation,
+        copy_context,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
@@ -81,10 +84,12 @@ else:
         PlatformHost,
         RemoteClient,
         dial_runner,
+        failure_text,
         read_file_on_the_machine,
         session_path,
         session_servers,
         stat_file_on_the_machine,
+        to_machine,
     )
 
     # Its siblings sit beside it, which a script run has first on sys.path and
@@ -95,6 +100,7 @@ else:
     from release import (
         allow_native_tools,
         carry_conversation,
+        copy_context,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
@@ -271,12 +277,12 @@ def prepare(
     unavailable = target.get("kind") in {"unavailable", "deferred"}
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
-    # The executor is on this machine (a member's own Claude Code on their own
-    # computer, `owner_provider`): the session sees the project where the
-    # executor holds it, with no forwarded view and no namespace of its own.
-    # Before its lease it starts in an empty directory of its own, which is
-    # its placeholder here.
+    # A member's own Claude Code on their own computer (`owner_provider`): no
+    # view, no namespace. It sees the project where an executor on this machine
+    # holds it; before its lease, and with the executor elsewhere (`apart`), in
+    # a directory of its own (`context_copy`), its placeholder here.
     local = bool(target.get("local"))
+    apart = local and bool(target.get("apart"))
     placeholder = str(directory / "workspace") if local else DEFERRED_WORKSPACE
     workspace = (
         directory / "workspace"
@@ -314,9 +320,10 @@ def prepare(
     # every path the build prints is the one it prints running there (`enter`).
     # `central_workspace` is where this host holds the view of it.
     seen = session_path(info["workspace"])
+    at_placeholder = local and (unavailable or apart)
     if local:
-        seen = placeholder if unavailable else info["workspace"]
-        if not unavailable:
+        seen = placeholder if at_placeholder else info["workspace"]
+        if not at_placeholder:
             workspace = Path(info["workspace"])
     carry_conversation(config, extra_args, seen)
     target = dict(
@@ -326,7 +333,7 @@ def prepare(
         # Where its paths are rewritten from once it takes its machine
         # (`RemoteClient.call`): the directory it started in, not the
         # placeholder a session in its own namespace sees.
-        **({"virtual_workspace": placeholder} if local and unavailable else {}),
+        **({"virtual_workspace": placeholder} if at_placeholder else {}),
         # The session reads every skill from its config dir. The project's
         # are links into the view, and are the project's on the executor; the
         # rest the platform wrote there itself, and the executor holds its own
@@ -480,7 +487,7 @@ def prepare(
     settings.update(
         skipDangerousModePermissionPrompt=True,
         enableArtifact=False,
-        attribution={"sessionUrl": False},
+        attribution={**settings.get("attribution", {}), "sessionUrl": False},
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
@@ -636,6 +643,8 @@ def sync_context(target_path, supplied_tree=None):
                 "Project context leaves the forwarded project boundary: "
                 + ", ".join(unsupported)
             )
+        if target.get("apart") and "central_workspace" in target:
+            copy_context(target, tree, RemoteClient(target))
         generation_path = Path(target_path).parent / "context-generation"
         tree_path = Path(target_path).parent / "context-tree.json"
         previous = generation_path.read_text() if generation_path.exists() else None
@@ -661,23 +670,14 @@ def sync_context(target_path, supplied_tree=None):
     workspace = Path(target["central_workspace"])
     manifest = Path(target_path).parent / "context-manifest.json"
     old = json.loads(manifest.read_text()) if manifest.exists() else []
-    known_files = {}
-    for name in old:
-        path = workspace / name
-        if path.is_file():
-            known_files[name] = hashlib.sha256(path.read_bytes()).hexdigest()
     # The shell can replace even the executor's own files and responses. Keep
     # executable central configuration independent of anything it returns.
-    snapshot = (
-        {
-            "files": {},
-            "instructions": MACHINE_OUT_OF_REACH
-            if target.get("kind") in {"unavailable", "deferred"}
-            else PRIVATE_INSTRUCTIONS,
-        }
-        if target.get("kind") in {"private", "unavailable", "deferred"}
-        else RemoteClient(target).call("context", {"known_files": known_files})
-    )
+    snapshot = {
+        "files": {},
+        "instructions": MACHINE_OUT_OF_REACH
+        if target.get("kind") == "unavailable"
+        else PRIVATE_INSTRUCTIONS,
+    }
     files = snapshot["files"]
     file_names = snapshot.get("file_names", list(files))
     for name in old:
@@ -845,8 +845,10 @@ def run_on_the_machine(target, command):
     # its directory need no respelling. Its skills are the one thing the build
     # reads from this host's config directory (`link_forwarded_user_context`),
     # where the executor has none: a command naming a skill's file names it in
-    # the project.
+    # the project. A session in a directory of its own names the executor's.
     def outward(text):
+        seen = target.get("virtual_workspace")
+        text = to_machine(text, seen, target["workspace"]) if seen else text
         return skill_paths(target, text)
 
     cwd = os.getcwd()
@@ -872,7 +874,7 @@ def run_on_the_machine(target, command):
         ).decode()
     env = {name: os.environ[name] for name in FORWARDED_ENV if name in os.environ}
     if "CLAUDE_PROJECT_DIR" in os.environ:
-        env["CLAUDE_PROJECT_DIR"] = os.environ["CLAUDE_PROJECT_DIR"]
+        env["CLAUDE_PROJECT_DIR"] = outward(os.environ["CLAUDE_PROJECT_DIR"])
     merge = _same_file(1, 2)
     command_id = "shell-" + uuid.uuid4().hex
     client = RemoteClient(target)
@@ -1020,8 +1022,8 @@ def _report_directory(target, client, final, spelled):
     final = final[:4096]
     if _under(final, machine):
         spelled_here = seen + final[len(machine) :]
-        if target.get("kind") == "private":
-            # The private scratch view is a plain directory here.
+        if target.get("kind") == "private" or (target.get("local") and seen != machine):
+            # A plain directory here: the private scratch view, an own session's.
             Path(spelled_here).mkdir(parents=True, exist_ok=True)
     else:
         spelled_here = "/"
@@ -1484,10 +1486,8 @@ def transport(config, target_path):
         host = PlatformHost(client, invoke, call_id, doc_versions)
         try:
             text = cheese.run_platform_tool(tool, args, host)
-        except MachineOutOfReach:
-            return {"error": MACHINE_OUT_OF_REACH}
         except Exception as exc:  # noqa: BLE001 — the agent reads the reason
-            return {"error": str(exc)}
+            return {"error": failure_text(exc)}
         return {"value": {"stdout": text, "stderr": ""}}
 
     def handle(request):
@@ -1706,7 +1706,7 @@ def transport(config, target_path):
             response = {
                 "jsonrpc": "2.0",
                 "id": request["id"],
-                "error": {"code": -32000, "message": str(exc)},
+                "error": {"code": -32000, "message": failure_text(exc)},
             }
         with output_lock:
             print(json.dumps(response), flush=True)

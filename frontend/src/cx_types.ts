@@ -106,6 +106,20 @@ export interface Topic {
   // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
   // 当下的钟判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
   waits?: MemberWait[]
+  // 上一次有**输出**是什么时候：在跑的那一轮最后一帧（后端取整到分钟）。None =
+  // 此刻没有在跑的轮次，或者那个戳没记着——后端不编，前端也不编，「显示在跑、但五
+  // 分钟没动静」的红灯就靠它（`lib/roomLight.ts`）。只有 list/get 话题时才带。
+  last_output_at?: string | null
+  // 这间房（或它名下的活）「交付完了、而**我**从那以后还没点开看过」。侧栏的长绿
+  // 看它（`lib/roomLight.ts`）：这里做过事、都交付完了，你还没看过。点开会推已读位，
+  // 服务端下一份就不再这么说了；在那之前由本地先灭（`stores/workspace` 的
+  // `forgetUnseenDelivery`）。只对负责人和协作者算，没有登录的人一律 false。
+  unseen_delivery?: boolean
+  // 这间房里有没有活在往前走：有一轮在跑，或者走在交付链路上（等闸门、等 CI、修
+  // 检查、解冲突、换基）—— 含**它名下的活**那一半（后端 `presentation.work_moving`，
+  // 判据只写在那一处）。侧栏的呼吸绿看它（`lib/roomLight.ts`）。只有 list/get 话题时
+  // 才带，别处一律 false：私聊和项目本体没有「名下的活」这一层。
+  moving?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
   //
   // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
@@ -274,6 +288,19 @@ export interface RoomTask {
   awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
   waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
+  // 在跑的那一轮上一次有**输出**是什么时候（侧栏这份行才带；说不出来是 null，后端
+  // 取整到分钟）：侧栏任务行的红灯看它（`lib/roomLight.ts`）。和频道行那一头同一个
+  // 来源、同一个形状。None = 没有在跑的轮次，或者那个进程说不了——那种「不知道」不
+  // 当成「很新」用，也不当成卡住（不画红）。
+  last_output_at?: string | null
+  // 这条活在不在往前走（侧栏这份行才带）：有一轮在跑，或者走在交付链路上。判据在
+  // 后端 `presentation.work_moving`，和频道行那一头同一个来源。别的调用方不带这一位，
+  // 读作 false——不亮，不是「亮着但说不清」。
+  moving?: boolean
+  // 这件活交付完了、而**我**从那以后还没点开看过（侧栏这份行才带）：侧栏的长绿看它
+  // （`lib/roomLight.ts`），和频道行那一头同一个来源。别的调用方（项目级列表、
+  // 频道里的全部任务）不带这一位，读作 false——不亮，不是「亮着但说不清」。
+  unseen_delivery?: boolean
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
   // 落在哪一格、写哪句话。必有：状态只在后端算一次，前端不另推（见 lib/board.ts）。
@@ -516,99 +543,21 @@ export interface SpaceDashboard {
   [key: string]: unknown
 }
 
-// ---- 成员页 / portfolio (spec §7.2) ----
-
-// A topic the member started, shown on their member page.
-export type MemberTopic = Pick<Topic, 'id' | 'title' | 'status'>
-
-// GET /api/projects/{id}/members/{handle}/summary
-export interface MemberSummary {
-  handle: string
-  /** 他在这个项目里的来路：所有者、团队成员、外部成员、AI 队友（带 instance_handle）；查不到是 null。 */
-  source?: 'owner' | 'team' | 'external' | 'agent' | null
-  topics_started: MemberTopic[]
-  topics_active?: MemberTopic[]
-  weekly_contributions?: number
-  waiting_on_you: TopicRef[]
-  [key: string]: unknown
-}
-
-// ---- 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2, §8.4) ----
-
-/** How the person is in a project: its owner, through its team, invited alone, or as its AI teammate. */
-export type ProfileProjectRole = 'owner' | 'team' | 'external' | 'agent'
-
-// One project the person is in, as the viewer may see it.
-export interface ProfileProject {
-  project_id: string
-  name: string
-  source: ProfileProjectRole
-  topics_started: number
-  contributions: number
-  /** Their newest contribution there; null when they have none. */
-  last_active_at: string | null
-  /** Contributions in the last 12 trailing 7-day spans, oldest first. */
-  weekly: number[]
-}
-
-// A team the person is in that the viewer may see (the TeamSummary payload).
-export interface ProfileTeam {
-  id: number
-  /** Null only for a team that no longer exists. */
-  handle: string | null
-  name: string
-  intro: string
-  avatarId: number | null
-}
-
-/** One UTC day of the activity year. `date` is `YYYY-MM-DD`. */
-export interface ProfileActivityDay {
-  date: string
-  count: number
-}
-
-// One thing an agent noted about this person, and where it was noted. The
-// project is null once the person can no longer read it.
-export interface ProfileUnderstanding {
-  id: string
-  content: string
-  created_at: string
-  project_id: string | null
-  project_name: string | null
-  agent_handle: string | null
-  agent_name: string | null
-  agent_name_source?: string | null
-}
-
-// GET /api/users/{handle}/profile — cut to what the viewer may see.
-// `understanding` = what 芝士 has learned about this person (个人记忆, §8.4);
-// only the person themselves receives it, everyone else gets [].
-export interface UserProfile {
-  handle: string
-  name: string
-  bio: string
-  /** The raw profile avatar, which may be the platform default (see useChosenAvatar). */
-  avatar_id: number | null
-  /** Null when no account holds this handle. */
-  joined_at: string | null
-  teams: ProfileTeam[]
-  /** The last 365 UTC days, oldest first, today last. */
-  activity: { days: ProfileActivityDay[]; total: number }
-  projects: ProfileProject[]
-  understanding: ProfileUnderstanding[]
-}
-
-// GET /api/users/{handle}/topics — a topic the person wrote in.
-export interface ProfileTopic {
-  id: string
-  title: string
-  status: string
-  project_id: string
-  project_name: string
-  /** Their contributions in it, inside the requested dates when given. */
-  contributions: number
-  last_participated_at: string
-}
+// ---- 成员页 / portfolio、个人主页 (spec §1, §7.2, §8.4) ----
+//
+// 这几件搬去了 `./types/profile`：这个文件顶在行数上限上，只能变短。这里只把它们
+// 转出去，`@/cx_types` 对外的名字一个都没变。
+export type {
+  MemberSummary,
+  MemberTopic,
+  ProfileActivityDay,
+  ProfileProject,
+  ProfileProjectRole,
+  ProfileTeam,
+  ProfileTopic,
+  ProfileUnderstanding,
+  UserProfile,
+} from './types/profile'
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
 
@@ -924,37 +873,6 @@ export interface ForgeAttribution {
   requester_coauthor: boolean | null
   effective: boolean
   deployment_default: boolean
-}
-
-// 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页配置。
-// GitHub 能判定的听 GitHub，判定不了的平台按这份配置补位。
-export interface RequiredCheck {
-  name: string
-  // 相对仓库根的 glob；缺省/为空 = 每个 PR 都要求这条检查。
-  paths?: string[]
-}
-// 可写的规则本体。PUT partial-update：body 里出现哪个键就改哪个，返回值也是这一块。
-export interface BranchProtectionRules {
-  required_checks: RequiredCheck[]
-  strict: boolean
-  dismiss_stale: boolean
-  auto_merge_allowed: boolean
-  // null = 未配置：默认由项目 owner 和 lead 放行。
-  override_handles: string[] | null
-  approvals_required: number
-  // '' = 未指定。
-  default_reviewer: string
-}
-export type BranchProtectionPatch = Partial<BranchProtectionRules>
-// GET 额外带两块只读附注，说明 GitHub 那一侧的现实。
-export interface BranchProtection extends BranchProtectionRules {
-  // 绑定 GitHub 的项目从仓库设置读；未绑定固定 'squash'。只读。
-  merge_method: string
-  github_protection: {
-    enforced: boolean
-    status: 'unbound' | 'enforced' | 'none' | 'unknown'
-    detail?: string | null
-  }
 }
 
 // A user's OAuth/App connections — GET /users/{userId}/oauth/connections

@@ -6,10 +6,10 @@
     cd backend && uv run python scripts/boundary_baseline.py --dry-run
     cd backend && uv run python scripts/boundary_baseline.py          # report only
 
-WHAT IT DOES. Runs the four contracts that carry a frozen baseline and rewrites
-their `ignore_imports` block. C1 and C2 are shrink-only: an entry that no longer
-matches is dropped, and an entry that *would* have to be added is reported and
-refused unless `--freeze-new` accepts it on purpose.
+WHAT IT DOES. Runs the five contracts that carry a frozen baseline and rewrites
+their `ignore_imports` block. C1, C2 and C5 are shrink-only: an entry that no
+longer matches is dropped, and an entry that *would* have to be added is reported
+and refused unless `--freeze-new` accepts it on purpose.
 
 C3 IS DIFFERENT, and the whole reason this script is not a few lines shorter.
 Its frozen list is a cycle-breaker set, and that set is not unique: recomputed
@@ -57,7 +57,7 @@ CHECKER = HERE.parent / "check_boundaries.py"
 #: The contracts `check_boundaries.py` claims to run, kept in step with it on
 #: purpose: a declaration that lost one must not be "refreshed" into a smaller
 #: check, and this script refuses to judge a file that no longer declares all
-#: eight even though it only ever writes four of them.
+#: nine even though it only ever writes five of them.
 CONTRACT_IDS = (
     "api-domain-core",
     "routes-touch-no-models",
@@ -67,6 +67,7 @@ CONTRACT_IDS = (
     "realtime-no-turn",
     "turn-storage-purity",
     "routes-independent",
+    "domain-layers",
 )
 
 #: The contracts that carry a generated frozen block. The four turn contracts
@@ -77,6 +78,7 @@ BLOCK_CONTRACTS = (
     "routes-touch-no-models",
     "domains-acyclic",
     "routes-independent",
+    "domain-layers",
 )
 
 #: The contracts whose stale entries come from the checker instead of a
@@ -396,9 +398,9 @@ def check_tree(config_path: Path) -> tuple[int, dict[str, list[str]]]:
 def recompute(text: str) -> dict[str, list[str]]:
     """Every violation in `text` with the baselines stripped, per contract id.
 
-    Only C1 and C2 are read from this: it names the edges a *recompute* calls
-    violations, which for C3 and C4 is a different cut of the same cycles and not the
-    set that was frozen.
+    Only the recomputed contracts (C1, C2, C5) are read from this: it names the
+    edges a *recompute* calls violations, which for C3 and C4 is a different cut of
+    the same cycles and not the set that was frozen.
     """
     sys.path.insert(0, str(Path.cwd()))
     try:
@@ -459,8 +461,8 @@ def recompute(text: str) -> dict[str, list[str]]:
 def measure(text: str, stale: dict[str, list[str]]) -> dict[str, list[str]]:
     """The baseline `text` should carry.
 
-    C1 and C2 are recomputed from their violations; C3 and C4 keep their frozen cut and
-    drops only the entries the checker called stale; the turn contracts hold
+    C1, C2 and C5 are recomputed from their violations; C3 and C4 keep their frozen
+    cut and drop only the entries the checker called stale; the turn contracts hold
     nothing.
     """
     frozen = read_entries(text)
@@ -518,7 +520,7 @@ def main() -> int:
     parser.add_argument(
         "--freeze-new",
         action="store_true",
-        help="also freeze C1/C2 violations not in the baseline yet, printing them",
+        help="also freeze C1/C2/C5 violations not in the baseline yet, printing them",
     )
     args = parser.parse_args()
 

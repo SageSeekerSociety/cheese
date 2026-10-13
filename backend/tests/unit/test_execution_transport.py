@@ -387,6 +387,25 @@ def central_transport(executor, tmp_path):
         log.close()
 
 
+def test_a_platform_tool_call_that_breaks_is_not_answered_with_a_bare_key(
+    central_transport,
+):
+    """A checklist call that reached the transport without the build's call id
+    (FB-91) came back as the single word ``'id'``: the agent read it as the
+    tool's answer, not as the transport failing."""
+    process, _, _, _ = central_transport
+    with pytest.raises(RuntimeError) as failure:
+        process.call(
+            "tools/call",
+            {
+                "name": "todo_write",
+                "arguments": {"todos": [{"content": "补测试", "status": "pending"}]},
+            },
+        )
+    assert str(failure.value) != "'id'"
+    assert "KeyError" in str(failure.value)
+
+
 def test_platform_mcp_posts_literal_json_without_executor_invocation(central_transport):
     process, clients, _, work = central_transport
     tool = next(
@@ -839,6 +858,36 @@ async def test_codex_tool_retry_uses_the_executor_mutation_receipt(
     assert first["success"] is True
     assert await tools("item/tool/call", request) == first
     assert (workspace / "once.txt").read_text() == "x"
+
+
+def test_a_session_prepared_here_does_not_credit_claude_code(
+    central_transport, tmp_path, monkeypatch
+):
+    """A teammate's commits and PRs carry the platform's identities, never the
+    CLI's own "Co-Authored-By: Claude" trailer or "Generated with Claude Code"
+    footer, whichever machine the session runs from."""
+    from app.domain.agent.harness.claude_code.session_launch import session_settings
+
+    monkeypatch.setenv("CHEESE_TOKEN", "fixture")
+    monkeypatch.setattr(central.os.path, "ismount", lambda _path: True)
+    helpers = tmp_path / "helpers"
+    helpers.mkdir()
+    for name, source in release.sources().items():
+        (helpers / name).write_text(source)
+    monkeypatch.setattr(central, "__file__", str(helpers / "client.py"))
+    target = json.loads((tmp_path / "central.json").read_text())
+    version_probe = tmp_path / "claude-version"
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.282\\n'\n")
+    version_probe.chmod(0o700)
+    directory = tmp_path / "prepared"
+
+    central.prepare(
+        directory, target, claude=str(version_probe), base_settings=session_settings()
+    )
+
+    attribution = json.loads((directory / "settings.json").read_text())["attribution"]
+    assert attribution["commit"] == ""
+    assert attribution["pr"] == ""
 
 
 def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(

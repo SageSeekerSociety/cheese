@@ -41397,6 +41397,48 @@
             }
           }
         }
+      },
+      "delete": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Delete Topic",
+        "description": "删除频道 (清单第 2 条): 频道连同消息、任务和文档一起走，不能恢复。\n\nIt goes the way archiving goes — session stopped, cards settled, machines\nfreed — and then does not come back: no list shows it, and 取消归档 is\nrefused for it.",
+        "operationId": "delete_topic_topics__topic_id__delete",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/topics/{topic_id}/blocks": {
@@ -42208,143 +42250,6 @@
         }
       }
     },
-    "/topics/{topic_id}/archive": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Archive Topic",
-        "description": "手动归档 (归档去向): explicit archive, independent of 采纳.",
-        "operationId": "archive_topic_topics__topic_id__archive_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Archive Topic Topics  Topic Id  Archive Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/cleanup": {
-      "get": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Cleanup Status",
-        "operationId": "cleanup_status_topics__topic_id__cleanup_get",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Cleanup Status Topics  Topic Id  Cleanup Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/unarchive": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Unarchive Topic",
-        "description": "取消归档: bring an archived topic back to active.",
-        "operationId": "unarchive_topic_topics__topic_id__unarchive_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Unarchive Topic Topics  Topic Id  Unarchive Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/topics/{topic_id}/check-result": {
       "post": {
         "tags": [
@@ -42384,117 +42289,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Record Check Result Topics  Topic Id  Check Result Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/lock": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Take Room Lock",
-        "description": "Take one of the room's two locks, or be told who has it.\n\nNever waits: blocking would spend a whole turn's compute standing still,\nand the caller has better answers available — write a different file, use\n`Edit` instead of a whole-file write, come back next turn.",
-        "operationId": "take_room_lock_topics__topic_id__lock_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LockIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Take Room Lock Topics  Topic Id  Lock Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/unlock": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Release Room Lock",
-        "operationId": "release_room_lock_topics__topic_id__unlock_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LockIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Release Room Lock Topics  Topic Id  Unlock Post"
                 }
               }
             }
@@ -43667,6 +43461,143 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Decide Document Revisions Topics  Topic Id  Documents Revisions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/archive": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Archive Topic",
+        "description": "手动归档 (归档去向): explicit archive, independent of 采纳.",
+        "operationId": "archive_topic_topics__topic_id__archive_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Archive Topic Topics  Topic Id  Archive Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/cleanup": {
+      "get": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Cleanup Status",
+        "operationId": "cleanup_status_topics__topic_id__cleanup_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Cleanup Status Topics  Topic Id  Cleanup Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/unarchive": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Unarchive Topic",
+        "description": "取消归档: bring an archived topic back to active.",
+        "operationId": "unarchive_topic_topics__topic_id__unarchive_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Unarchive Topic Topics  Topic Id  Unarchive Post"
                 }
               }
             }
@@ -45266,6 +45197,58 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response List Threads Topics  Topic Id  Threads Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Create Thread",
+        "description": "新建支线 (清单第 4 条): a 支线 opened from a channel by a person, which\ntoday is not possible — a 支线 needs a message to hang under, and the only\nway to one was replying to a message that was already said.\n\nA person opens it, as with the other road into a 支线: 芝士 does not open\none by itself, and cats may not speak in a channel they have not joined.",
+        "operationId": "create_thread_topics__topic_id__threads_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadCreateIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadOutEnvelope"
                 }
               }
             }
@@ -58053,39 +58036,6 @@
         "title": "LibraryRoom",
         "description": "一份资料是在哪个房间给出来的（`room_ref`）：房间的 id 和名字。"
       },
-      "LockIn": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "pattern": "^heavy$",
-            "title": "Kind"
-          },
-          "task_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
-          },
-          "resource": {
-            "type": "string",
-            "maxLength": 0,
-            "title": "Resource",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "kind"
-        ],
-        "title": "LockIn",
-        "description": "Acquire or release the room's heavy-operation lane."
-      },
       "LoginRequest": {
         "properties": {
           "username": {
@@ -64274,6 +64224,21 @@
         "title": "TextRangeQuoteIn",
         "description": "A passage picked out of rendered document text.\n\nText has no page number to point at: editing one sentence reflows the file,\nso a line number stops holding. The location is the heading it sits under\n(None at the top of the file) plus the context on either side, which is what\ntells one occurrence of a sentence from another."
       },
+      "ThreadCreateIn": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "ThreadCreateIn"
+      },
       "ThreadMutation": {
         "properties": {
           "operation_id": {
@@ -64294,6 +64259,93 @@
           "expected_revision"
         ],
         "title": "ThreadMutation"
+      },
+      "ThreadOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "root_block_id": {
+            "type": "string",
+            "title": "Root Block Id"
+          },
+          "reply_count": {
+            "type": "integer",
+            "title": "Reply Count"
+          },
+          "last_reply_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reply At"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "room_id",
+          "root_block_id",
+          "reply_count",
+          "last_reply_at",
+          "created_by",
+          "created_at"
+        ],
+        "title": "ThreadOut",
+        "description": "A 支线 as the routes hand it back: enough for a list row, nothing more.\n\nIds are strings on the wire (they are ``uuid`` columns underneath), and\n``last_reply_at`` is null until someone replies."
+      },
+      "ThreadOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ThreadOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ThreadOutEnvelope"
       },
       "TimelineOut": {
         "properties": {

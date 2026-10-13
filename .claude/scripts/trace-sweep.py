@@ -10,6 +10,7 @@ problem instead of the repository (or the platform) fixing it once.
     OKCHEESE_TOKEN=... python3 .claude/scripts/trace-sweep.py --channel <id>
     python3 .claude/scripts/trace-sweep.py --channel <id> --hours 24 --ledger-doc <doc-id>
     python3 .claude/scripts/trace-sweep.py --self-test
+    python3 .claude/scripts/trace-sweep.py retro --since 2026-10-12T11:00 --until 2026-10-12T14:05 --room <id>
 
 Credentials come from the environment only: OKCHEESE_TOKEN, or
 OKCHEESE_USERNAME + OKCHEESE_PASSWORD to log in. OKCHEESE_API overrides the
@@ -27,12 +28,39 @@ one. After running the deep dive, pass --mark-deep-dive once to reset the
 counters. The deep dive itself (falsifying candidates, checking the in-flight
 list, placing each by the fix-priority table) is a person's or an agent's
 job, not this script's.
+
+The sweep also lists tasks that made EDIT_BLOCK or more edits with no test or
+check run between them. Like the error counts, it needs no judgement; signals
+that do (handoff cost, sleep totals, whether a read was wasted) stay out.
+
+How to dig, chosen in round 9 of the gap research (library doc 9f19a6dc):
+
+  * Trigger on events as well as volume: a task line with a red CI round or a
+    must-fix review item gets a deep dive.
+  * Deep dive = escaped defects: list the line's must-fix review items, red CI
+    rounds and corrections by people, and place each one on the fix-priority
+    table (L0 platform ... L6 memory). Drop cancelled and superseded "reds".
+  * Before calling anything new, match it against PR titles of the last few
+    days (`gh pr list --state all --search "created:>=<date>"`); one already in
+    flight is marked "已在做 #PR", not filed again.
+  * Shortest-path comparison (ideal steps vs actual) only for the ten or fewer
+    lines a week with the highest ratio; it is expensive and its ideal path is
+    a guess.
+  * Every conclusion points back at the evidence: task, block time, and a
+    command that finds it again.
+
+`retro` prints the orchestrator's review tables for a window (trace_retro.py):
+merged PRs, first-push CI pass rate, CI rounds per PR, merge-queue drops,
+card wait split into waiting for CI and waiting for review, start to first
+PR, and unfinished turns by seat and reason. It needs `gh`; --room adds the
+platform half and uses the same credentials as the sweep.
 """
 
 from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -41,6 +69,7 @@ import urllib.error
 import urllib.request
 from collections import defaultdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 LEDGER_OPEN = "<!-- trace-sweep-ledger"
@@ -183,8 +212,30 @@ def _tasks(channel: str, token: str, since: str) -> list[dict]:
     return [t for t in tasks if (t.get("updated_at") or "") >= since]
 
 
-def _errors(task: dict, token: str, since: str, until: str):
-    """Yield (block id, at, tool, error) for every errored tool call inside the window."""
+def _command_of(meta: dict) -> str:
+    """The command a tool call ran.
+
+    A call that gave a description shows the description instead of the command,
+    and the command moves to `detail`; a plain call has no `detail` and keeps it
+    in `arg`. Reading only `detail` sees an empty command for every call of the
+    second kind, which is most of them."""
+    return str(meta.get("detail") or meta.get("arg") or "")
+
+
+def _order_of(block: dict) -> tuple:
+    """A block's own place in the transcript: its seq, then its full timestamp.
+
+    ``at`` is truncated to the second, so it cannot tell apart the several calls
+    one turn makes inside that second. Sorting by it alone leaves the tie to the
+    rest of the key — enough for ``Bash`` to sort ahead of the edits it actually
+    followed."""
+    meta = block.get("meta") or {}
+    seq = block.get("seq")
+    return (seq if isinstance(seq, int) else -1, meta.get("at") or block.get("created_at") or "")
+
+
+def _tool_calls(task: dict, token: str, since: str, until: str):
+    """Yield (order, block id, at, tool, command, error) for every tool call inside the window."""
     before = None
     for _ in range(100):
         query = f"/topics/{task['id']}/transcript?limit=200" + (f"&before={before}" if before else "")
@@ -195,12 +246,54 @@ def _errors(task: dict, token: str, since: str, until: str):
             meta = block.get("meta") or {}
             at = (meta.get("at") or block.get("created_at") or "")[:19]
             oldest = at if oldest is None or at < oldest else oldest
-            error = meta.get("error")
-            if isinstance(error, str) and error and since <= at <= until:
-                yield block.get("id") or f"{task['id']}:{at}", at, meta.get("tool") or "?", error
+            tool, error = meta.get("tool"), meta.get("error")
+            if (tool or error) and since <= at <= until:
+                yield (
+                    _order_of(block),
+                    block.get("id") or f"{task['id']}:{at}",
+                    at,
+                    tool or "?",
+                    _command_of(meta),
+                    error if isinstance(error, str) and error else "",
+                )
         before = page.get("oldest_id")
         if not page.get("has_more") or not before or (oldest and oldest < since):
             return
+
+
+# Edits with no check run between them (round 9, method 3): the cheapest
+# unambiguous signal that an agent is editing blind. A block counts once it
+# reaches EDIT_BLOCK edits; the commands that end one are the repo's checks.
+EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+EDIT_BLOCK = 8
+_CHECK_RE = re.compile(
+    r"\b(pytest|vitest|jest|playwright|ruff|pyright|mypy|eslint|tsc|vue-tsc|pre-commit|"
+    r"import-linter|check[-_][a-z-_]+|[a-z-]*ratchet[a-z-]*|frontend_grade|ci[:_-]fast|"
+    r"task (test|guards|check)|npm (run )?test|pnpm (run )?test)\b",
+    re.IGNORECASE,
+)
+
+
+def edit_blocks(calls: list[tuple[str, str, str]]) -> list[int]:
+    """Sizes of the runs of at least EDIT_BLOCK edits with no check between them.
+
+    ``calls`` is (at, tool, command) in time order."""
+    blocks, run = [], 0
+    for _, tool, command in calls:
+        if tool in EDIT_TOOLS:
+            run += 1
+        elif tool == "Bash" and _CHECK_RE.search(command):
+            if run >= EDIT_BLOCK:
+                blocks.append(run)
+            run = 0
+    if run >= EDIT_BLOCK:
+        blocks.append(run)
+    return blocks
+
+
+def _timeline(calls: list[tuple]) -> list[tuple[str, str, str]]:
+    """(at, tool, command) in the transcript's own order, for ``edit_blocks``."""
+    return [(at, tool, command) for _, _, at, tool, command, _ in sorted(calls, key=lambda c: c[0])]
 
 
 def _label(task: dict) -> str:
@@ -221,8 +314,12 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
     found: dict[str, dict] = {}
     tasks = _tasks(channel, token, since)
     calls = 0
+    blind: dict[str, list[int]] = {}
     for task in tasks:
-        for block_id, at, tool, error in _errors(task, token, since, until):
+        task_calls = list(_tool_calls(task, token, since, until))
+        for _order, block_id, at, tool, command, error in task_calls:
+            if not error:
+                continue
             calls += 1
             clean = redact(error)
             sig = signature(clean)
@@ -245,6 +342,8 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
             row["ids"][block_id] = at
             row["tasks"].add(_label(task))
             row["first"], row["last"] = min(row["first"], at), max(row["last"], at)
+        if blocks := edit_blocks(_timeline(task_calls)):
+            blind[_label(task)] = blocks
     return {
         "since": since,
         "until": until,
@@ -252,6 +351,7 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
         "task_numbers": sorted((_label(t) for t in tasks), key=_task_order),
         "errors": calls,
         "rows": found,
+        "edit_blocks": blind,
     }
 
 
@@ -284,6 +384,17 @@ def summarize(result: dict) -> str:
         lines.append(
             f"| {len(r['tasks'])} | {r['count']} | {r['owner']} | {r['kind']} | {sample} | {tasks} |"
         )
+    blind = result.get("edit_blocks") or {}
+    if blind:
+        lines += [
+            "",
+            f"改了没跑检查（连续 {EDIT_BLOCK} 次以上编辑、中间没跑测试或检查）：",
+            "",
+            "| 任务 | 块数 | 最长一块 |",
+            "|---|---|---|",
+        ]
+        for label, blocks in sorted(blind.items(), key=lambda kv: -max(kv[1])):
+            lines.append(f"| #{label} | {len(blocks)} | {max(blocks)} |")
     return "\n".join(lines)
 
 
@@ -464,6 +575,85 @@ def self_test() -> int:
         "until": "z",
     }
     ledger = merge_ledger({}, result)
+    edits = [("a", "Edit", "")] * 9
+    check("a blind edit block is counted", edit_blocks(edits + [("b", "Bash", "uv run pytest -q")]), [9])
+    check("a check ends the block", edit_blocks(edits[:4] + [("b", "Bash", "ruff check .")] + edits[:4]), [])
+    check("other commands do not", edit_blocks(edits[:4] + [("b", "Bash", "git status")] + edits[:4]), [8])
+    check(
+        "a described command reads through detail",
+        _command_of({"arg": "跑测试", "detail": "uv run pytest -q"}),
+        "uv run pytest -q",
+    )
+    check("a plain command reads from arg", _command_of({"arg": "uv run pytest -q"}), "uv run pytest -q")
+    check(
+        "a check with no description still ends the block",
+        edit_blocks(edits[:4] + [("b", "Bash", _command_of({"arg": "ruff check ."}))] + edits[:4]),
+        [],
+    )
+    # The transcript a real turn leaves: one call described, one not. Read
+    # through `_tool_calls`, because a command taken from the wrong field is
+    # invisible to a test that calls `_command_of` itself.
+    described = {
+        "id": "b1",
+        "meta": {"tool": "Bash", "at": "2026-10-12T11:00:04", "arg": "跑测试", "detail": "uv run pytest -q"},
+    }
+    plain = {"id": "b2", "meta": {"tool": "Bash", "at": "2026-10-12T11:00:05", "arg": "ruff check ."}}
+
+    def calls_of(page: dict) -> list[tuple]:
+        real_request = _request
+        globals()["_request"] = lambda *a, **k: page
+        try:
+            return list(_tool_calls({"id": "t"}, "tok", "2026-10-12T00:00:00", "2026-10-12T23:00:00"))
+        finally:
+            globals()["_request"] = real_request
+
+    calls = calls_of({"data": [described, plain], "has_more": False})
+    check("a described call's command comes from detail", calls[0][4], "uv run pytest -q")
+    check("a plain call's command comes from arg", calls[1][4], "ruff check .")
+
+    # The same two commands through the signal they feed: a check ends the run of
+    # edits, so four either side of one is not a block. Each command is the only
+    # check between the eight in turn, so reading that one from the wrong field
+    # stops it reading as a check and the eight join into one block.
+    def edit(i: int) -> dict:
+        return {"id": f"e{i}", "meta": {"tool": "Edit", "at": f"2026-10-12T11:00:{i:02d}", "arg": "改文件"}}
+
+    for middle in (described, plain):
+        calls = calls_of(
+            {
+                "data": [edit(i) for i in range(4)] + [middle] + [edit(i) for i in range(10, 14)],
+                "has_more": False,
+            }
+        )
+        check(
+            f"{middle['id']}'s command ends the run of edits",
+            edit_blocks(_timeline(calls)),
+            [],
+        )
+
+    # One turn makes several calls inside the same second, so the truncated `at`
+    # cannot order them: only the block's own `seq` can. Eight edits either side
+    # of a check, all stamped 11:00:05, arriving check-last. Order by the second
+    # and the tie falls to the tool name — Bash sorts before Edit, the check
+    # lands first, and the eight edits join into one block of 8. Drop the sort
+    # and the check stays last, which does the same. Either way the table this
+    # sweep exists to print is wrong.
+    def stamped(seq: int, tool: str, command: str) -> dict:
+        return {"id": f"s{seq}", "seq": seq, "meta": {"tool": tool, "at": "2026-10-12T11:00:05", "arg": command}}
+
+    tied = calls_of(
+        {
+            "data": [stamped(s, "Edit", "改文件") for s in (100, 101, 102, 103, 110, 111, 112, 113)]
+            + [stamped(104, "Bash", "ruff check .")],
+            "has_more": False,
+        }
+    )
+    check("a check in the same second still ends the block", edit_blocks(_timeline(tied)), [])
+    check(
+        "ordering that second by tool name would not",
+        edit_blocks([(c[2], c[3], c[4]) for c in tied]),
+        [8],
+    )
     check("tasks sort by number", ledger["s"]["tasks"], ["2", "10"])
     check("a task without a number keeps its id", _label({"number": None, "id": "abcdef12"}), "?abcdef")
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)
@@ -498,7 +688,26 @@ def self_test() -> int:
     return 1 if failures else 0
 
 
+def retro(argv: list[str]) -> int:
+    """`trace-sweep.py retro ...`: the dispatch retro's tables, in trace_retro.py."""
+    spec = importlib.util.spec_from_file_location("trace_retro", Path(__file__).with_name("trace_retro.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # One implementation of the platform reads, so a refused token fails the
+    # same way here as in the sweep.
+    module._request, module.token_from_env = _request, token_from_env
+    # `--room x` and `--room=x` are the same request to argparse; both need the
+    # token armed, or the platform half silently runs without one.
+    room = next((a for a in argv if a == "--room" or a.startswith("--room=")), None)
+    if room is not None and "--self-test" not in argv:
+        # The same credentials as the sweep, password login included.
+        os.environ["OKCHEESE_TOKEN"] = token_from_env()
+    return module.retro_main(argv)
+
+
 def main() -> int:
+    if sys.argv[1:2] == ["retro"]:
+        return retro(sys.argv[2:])
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--channel", help="channel (room) topic id to sweep")
     parser.add_argument("--hours", type=float, default=3.0, help="window length ending now (default 3)")

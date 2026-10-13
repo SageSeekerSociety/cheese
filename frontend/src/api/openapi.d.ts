@@ -9807,7 +9807,15 @@ export interface paths {
         get: operations["get_topic_topics__topic_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Topic
+         * @description 删除频道 (清单第 2 条): 频道连同消息、任务和文档一起走，不能恢复。
+         *
+         *     It goes the way archiving goes — session stopped, cards settled, machines
+         *     freed — and then does not come back: no list shows it, and 取消归档 is
+         *     refused for it.
+         */
+        delete: operations["delete_topic_topics__topic_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10110,63 +10118,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/topics/{topic_id}/archive": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Archive Topic
-         * @description 手动归档 (归档去向): explicit archive, independent of 采纳.
-         */
-        post: operations["archive_topic_topics__topic_id__archive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/cleanup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cleanup Status */
-        get: operations["cleanup_status_topics__topic_id__cleanup_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/unarchive": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Unarchive Topic
-         * @description 取消归档: bring an archived topic back to active.
-         */
-        post: operations["unarchive_topic_topics__topic_id__unarchive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/topics/{topic_id}/check-result": {
         parameters: {
             query?: never;
@@ -10191,47 +10142,6 @@ export interface paths {
          *     got reported as "inconclusive" would rot into a second full CI.
          */
         post: operations["record_check_result_topics__topic_id__check_result_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/lock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Take Room Lock
-         * @description Take one of the room's two locks, or be told who has it.
-         *
-         *     Never waits: blocking would spend a whole turn's compute standing still,
-         *     and the caller has better answers available — write a different file, use
-         *     `Edit` instead of a whole-file write, come back next turn.
-         */
-        post: operations["take_room_lock_topics__topic_id__lock_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/unlock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Release Room Lock */
-        post: operations["release_room_lock_topics__topic_id__unlock_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10672,6 +10582,63 @@ export interface paths {
          *     conflict here rather than an overwrite.
          */
         post: operations["decide_document_revisions_topics__topic_id__documents_revisions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive Topic
+         * @description 手动归档 (归档去向): explicit archive, independent of 采纳.
+         */
+        post: operations["archive_topic_topics__topic_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cleanup Status */
+        get: operations["cleanup_status_topics__topic_id__cleanup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unarchive Topic
+         * @description 取消归档: bring an archived topic back to active.
+         */
+        post: operations["unarchive_topic_topics__topic_id__unarchive_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11309,7 +11276,16 @@ export interface paths {
          */
         get: operations["list_threads_topics__topic_id__threads_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Thread
+         * @description 新建支线 (清单第 4 条): a 支线 opened from a channel by a person, which
+         *     today is not possible — a 支线 needs a message to hang under, and the only
+         *     way to one was replying to a message that was already said.
+         *
+         *     A person opens it, as with the other road into a 支线: 芝士 does not open
+         *     one by itself, and cats may not speak in a channel they have not joined.
+         */
+        post: operations["create_thread_topics__topic_id__threads_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -15323,21 +15299,6 @@ export interface components {
             /** Title */
             title: string;
         };
-        /**
-         * LockIn
-         * @description Acquire or release the room's heavy-operation lane.
-         */
-        LockIn: {
-            /** Kind */
-            kind: string;
-            /** Task Id */
-            task_id?: string | null;
-            /**
-             * Resource
-             * @default
-             */
-            resource: string;
-        };
         /** LoginRequest */
         LoginRequest: {
             /** Username */
@@ -17498,6 +17459,11 @@ export interface components {
             /** Suffix */
             suffix: string;
         };
+        /** ThreadCreateIn */
+        ThreadCreateIn: {
+            /** Title */
+            title: string;
+        };
         /** ThreadMutation */
         ThreadMutation: {
             /**
@@ -17507,6 +17473,45 @@ export interface components {
             operation_id: string;
             /** Expected Revision */
             expected_revision: number;
+        };
+        /**
+         * ThreadOut
+         * @description A 支线 as the routes hand it back: enough for a list row, nothing more.
+         *
+         *     Ids are strings on the wire (they are ``uuid`` columns underneath), and
+         *     ``last_reply_at`` is null until someone replies.
+         */
+        ThreadOut: {
+            /** Id */
+            id: string;
+            /** Room Id */
+            room_id: string;
+            /** Root Block Id */
+            root_block_id: string;
+            /** Reply Count */
+            reply_count: number;
+            /** Last Reply At */
+            last_reply_at: string | null;
+            /** Created By */
+            created_by: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** ThreadOutEnvelope */
+        ThreadOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ThreadOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * TimelineOut
@@ -39424,6 +39429,37 @@ export interface operations {
             };
         };
     };
+    delete_topic_topics__topic_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_topic_blocks_topics__topic_id__blocks_get: {
         parameters: {
             query?: {
@@ -39822,105 +39858,6 @@ export interface operations {
             };
         };
     };
-    archive_topic_topics__topic_id__archive_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cleanup_status_topics__topic_id__cleanup_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    unarchive_topic_topics__topic_id__unarchive_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     record_check_result_topics__topic_id__check_result_post: {
         parameters: {
             query?: never;
@@ -39933,80 +39870,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CheckResultIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    take_room_lock_topics__topic_id__lock_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LockIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    release_room_lock_topics__topic_id__unlock_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LockIn"];
             };
         };
         responses: {
@@ -40703,6 +40566,105 @@ export interface operations {
                 };
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_topic_topics__topic_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_status_topics__topic_id__cleanup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unarchive_topic_topics__topic_id__unarchive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -41708,6 +41670,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_thread_topics__topic_id__threads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadOutEnvelope"];
                 };
             };
             /** @description Validation Error */

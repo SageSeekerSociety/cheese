@@ -7,8 +7,10 @@
 //
 // **这一半不认识路由**：跳转、「我在哪」、行的 ⋯ 里那几项（要 router 才算得出链接）
 // 在 `useTopicRailRoutes.ts`。分开是为了让这一半能在一个没有路由的宿主里跑起来。
+import type { RailTask } from '../components/topic-sidebar/moreTasks'
 import type { Topic } from '../cx_types'
 import type { RailMemberMark } from '../lib/memberActivity'
+import type { RowLight } from '../lib/roomLight'
 import type { FlatRow, VisibleRow } from '../lib/topicTree'
 import type { TopicUnread } from '../types/channels'
 
@@ -17,6 +19,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { waitStalled, waitText } from '../lib/replyWait'
+import { lightOf as lightFor } from '../lib/roomLight'
 import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 import { getAvatarUrl } from '../utils/materials'
@@ -36,6 +39,8 @@ export interface TopicRailSource {
   unreadMap?: Record<string, TopicUnread>
   /** 私聊未读：{peerHandle: count}。侧栏只用它的总数。 */
   privateUnreadMap?: Record<string, number>
+  /** 挂在频道下面的活（频道 id → 那几条），侧栏任务行的灯按它们各自的四样事实算。 */
+  roomTasks?: Record<string, RailTask[]>
 }
 
 /** 拍平树的一行：话题 + 缩进深度。 */
@@ -119,7 +124,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     const depths = new Map<string, number>()
     const rows: TreeRow[] = []
     for (const row of tree.value) {
-      // 侧栏只列我加入了的频道，外加我此刻正在里面的那一个（从「浏览频道」点进来、还没
+      // 侧栏只列我加入了的频道，外加我此刻正在里面的那一个（从「全部频道」点进来、还没
       // 加入的）——不然人就不知道自己在哪儿。打开它的一件任务也还在它里面：顶栏写着
       // 「# 频道 / 任务」，侧栏不能在这时把那个频道收走。已归档的频道不在侧栏里，在项目设置的
       // 「频道」一栏。`joined` 缺席（没经过 list_topics 的载荷）当作加入了：宁可多列，
@@ -150,8 +155,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   )
 
   // ---- 状态查表 ----
-  // 折叠聚合要按 id 问「这里有队友在干活吗 / 在等人吗」，而拍平树里只留了 id。走一遍
-  // props.topics 建索引，别在每一行上做线性查找。
+  // 折叠聚合要按 id 问「这一行此刻画哪盏灯」，而拍平树里只留了 id。走一遍 props.topics
+  // 建索引，别在每一行上做线性查找。
   //
   // 房间自己没有状态：问的都是房间里的成员。侧栏只画在干活的队友，不画打字的人——
   // 这份列表隔一阵才读一次，而打字几秒就过去了，画出来多半已经不是真的了。
@@ -159,14 +164,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   function workersOf(topic: Topic | undefined) {
     return (topic?.activity ?? []).filter((a) => a.kind === 'working')
   }
-  function workingOf(id: string): boolean {
-    return workersOf(topicById.value.get(id)).length > 0
-  }
-  function awaitsOf(id: string): boolean {
-    return topicById.value.get(id)?.awaits_me === true
-  }
 
-  // 红标要跟着钟亮：列表三十秒才刷一次，而「等满五分钟」是时间自己走到的，不是
+  // 灯要跟着钟亮：列表三十秒才刷一次，而「等满五分钟」是时间自己走到的，不是
   // 数据变出来的。所以这里自己有一只慢钟，每 10 秒拨一下让判断重算。
   const clock = ref(Date.now())
   let clockTimer: number | undefined
@@ -176,6 +175,39 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   onUnmounted(() => {
     if (clockTimer !== undefined) window.clearInterval(clockTimer)
   })
+
+  // ---- 灯 ----
+  // 四盏灯的判据只写在 `lib/roomLight.ts` 一处；这一层只把后端给的事实凑齐，再带上
+  // 这只钟。频道行和任务行凑的是同样四样，所以两边的灯说的是同一件事。
+  //
+  // 「点开过就灭」的长绿不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
+  // 点开时 `stores/workspace` 先把本地那一份灭掉）。
+  function lightOf(id: string): RowLight | null {
+    const topic = topicById.value.get(id)
+    if (!topic) return null
+    return lightFor(
+      {
+        awaitsMe: topic.awaits_me === true,
+        moving: topic.moving === true,
+        unseenDelivery: topic.unseen_delivery === true,
+        lastOutputAt: topic.last_output_at,
+      },
+      clock.value
+    )
+  }
+
+  /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份。 */
+  function taskLight(task: RailTask): RowLight | null {
+    return lightFor(
+      {
+        awaitsMe: task.awaits_me === true,
+        moving: task.moving === true,
+        unseenDelivery: task.unseen_delivery === true,
+        lastOutputAt: task.last_output_at,
+      },
+      clock.value
+    )
+  }
 
   // 房间在等的成员里，此刻算卡住了的那几位：它那一轮报错了（立刻算），或等满了阈值。
   function stalledWaits(topic: Topic | undefined) {
@@ -311,8 +343,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
       collapsed: collapsedIds.value,
       reveal: selectedPath.value,
       unreadOf,
-      workingOf,
-      awaitsOf,
+      lightOf,
       stalledOf,
     })
   )
@@ -346,12 +377,17 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   /** 侧栏提示里说的那个队友的名字，不写死「芝士」。 */
   const agentName = computed(() => store.agentName)
 
-  // 行的折叠开关 hover 那一句：收着的时候要说清里面有什么（展开之后就不必了）。
+  // 行的折叠开关 hover 那一句：收着的时候要说清**里面**有什么 —— 开关说的是展开
+  // 这件事，所以只看收起来的后代，这一行自己的灯在行尾那颗点上。
   function toggleTitle(row: VisibleRow<Topic>): string {
     if (!row.collapsed) return t('work.sidebar.collapse')
     if (row.hiddenStalled) return t('work.sidebar.expandStalled')
-    if (row.hiddenAwaits) return t('work.sidebar.expandAwaits')
-    if (row.hiddenWorking) return t('work.sidebar.expandWorking')
+    const hidden = row.hiddenLight
+    if (hidden?.kind === 'red') return t('work.sidebar.expandQuiet')
+    if (hidden?.kind === 'yellow') return t('work.sidebar.expandAwaits')
+    if (hidden?.kind === 'green') {
+      return t(hidden.breathe ? 'work.sidebar.expandWorking' : 'work.sidebar.expandDelivered')
+    }
     return t('work.sidebar.expand')
   }
 
@@ -370,8 +406,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     freshOf,
     privateUnreadTotal,
     stalledOf,
-    awaitsOf,
-    workingOf,
+    lightOf,
+    taskLight,
     memberMarks,
     toggleTitle,
   }

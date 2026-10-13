@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「浏览频道」：项目里我能看到的频道，找、加入、退出、新建这一页都有（新建侧栏那颗 ＋
+// 「全部频道」：项目里我能看到的频道，找、加入、退出、新建都在这一页（新建侧栏那颗 ＋
 // 也开同一个对话框）。侧栏只列我加入的频道，别的频道从这里找。数据和动作都从外面来
 // （`ChannelBrowse.vue`）。
 import type { ChannelEntry } from '@/types/channelDirectory'
@@ -62,13 +62,20 @@ const shown = computed(() => {
 
 const FILTERS: Filter[] = ['all', 'joined', 'archived']
 
-function meta(c: ChannelEntry): string {
-  const parts: string[] = []
-  if (c.joined) parts.push(t('work.channelBrowse.joined'))
-  parts.push(t('work.channelBrowse.members', { count: c.member_count }))
-  if (c.open_tasks) parts.push(t('work.channelBrowse.openTasks', { count: c.open_tasks }))
-  if (c.last_activity_at) parts.push(t('work.channelBrowse.active', { when: relTime(c.last_activity_at) }))
-  return parts.join(' · ')
+/** 卡片底下那一行小字。分段给，因为「进行中的任务」那一段带悬停说明（清单第 14 条：
+ *  说清这个数含不含停在那儿的任务），别的一段没有。 */
+function meta(c: ChannelEntry): { text: string; hint?: string }[] {
+  const parts: { text: string; hint?: string }[] = []
+  if (c.joined) parts.push({ text: t('work.channelBrowse.joined') })
+  parts.push({ text: t('work.channelBrowse.members', { count: c.member_count }) })
+  // 这一个数和侧栏那一行、项目总览取的是同一个字段（后端 `underway_counts`）。
+  if (c.open_tasks)
+    parts.push({
+      text: t('work.channelBrowse.openTasks', { count: c.open_tasks }),
+      hint: t('work.sidebar.underwayHint'),
+    })
+  if (c.last_activity_at) parts.push({ text: t('work.channelBrowse.active', { when: relTime(c.last_activity_at) }) })
+  return parts
 }
 </script>
 
@@ -126,7 +133,12 @@ function meta(c: ChannelEntry): string {
             </button>
             <span v-if="c.description" class="t-body c-muted browse__about" data-user-content>{{ c.description }}</span>
             <span v-else class="t-body c-faint">{{ t('work.channel.overview.noDescription') }}</span>
-            <span class="t-meta c-faint">{{ meta(c) }}</span>
+            <span class="t-meta c-faint">
+              <template v-for="(p, i) in meta(c)" :key="i">
+                <span v-if="i" aria-hidden="true"> · </span>
+                <span :title="p.hint">{{ p.text }}</span>
+              </template>
+            </span>
           </div>
           <span v-if="c.general" class="t-meta c-faint">{{ t('work.channelBrowse.general') }}</span>
           <template v-else-if="!c.archived">

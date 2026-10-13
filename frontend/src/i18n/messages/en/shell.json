@@ -66,6 +66,7 @@
     "rename": "Couldn’t rename",
     "archive": "Couldn’t archive",
     "unarchive": "Couldn’t unarchive",
+    "deleteChannel": "Couldn’t delete the channel",
     "createTopic": "Couldn’t create the channel",
     "convertMessage": "Couldn’t convert this message"
   }
