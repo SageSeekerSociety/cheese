@@ -5,7 +5,7 @@ summary: 芝士的会话开场时拿到哪些上下文、按什么顺序、各�
 covers:
   - backend/app/domain/agent/harness/prompt.py
   - backend/app/domain/agent/skills.py
-  - backend/app/domain/agent/skill_library/
+  - backend/app/domain/skill_library/
   - backend/sandbox/skills/cheese/SKILL.md
 ---
 

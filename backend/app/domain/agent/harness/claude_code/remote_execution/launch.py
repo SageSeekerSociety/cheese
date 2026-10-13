@@ -28,8 +28,11 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     session_transfer,
 )
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
-from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
 from app.domain.project_skill.service import project_skill_names, session_skill_files
+from app.domain.skill_library import (
+    SKILLS_SHIPPED_BEFORE_THE_LIST,
+    shipped_skill_names,
+)
 
 # What the session's Stop checkpoint runs on the executor (`runtime.control`):
 # every task checkout with something unpushed backed up and pushed.
