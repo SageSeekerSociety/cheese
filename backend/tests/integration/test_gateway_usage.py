@@ -185,6 +185,7 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP",
     }
 
 
@@ -588,6 +589,7 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP",
     }
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
@@ -617,6 +619,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP",
     }
     assert kwargs["model"] == "claude-sonnet-5"
 
@@ -652,6 +655,7 @@ async def test_a_turn_on_a_machine_is_metered_by_the_subscription_proxy(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP",
     }
     assert fake.minted == []  # no gateway key is minted for it
 

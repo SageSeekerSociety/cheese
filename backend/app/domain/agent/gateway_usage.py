@@ -324,6 +324,12 @@ async def _model_kwargs(
             # self-description for the model the turn actually runs on.
             "ANTHROPIC_MODEL": model,
             "CLAUDE_CODE_SUBAGENT_MODEL": child_model,
+            # The built-in Explore agent inherits the parent's model, except
+            # that Claude Code caps a parent outside the haiku/sonnet/opus
+            # family (deepseek-flash, gpt-*) to the `opus` alias, which names
+            # claude-opus-* and is refused by admission in any catalogue
+            # without it. Without the cap Explore runs on the parent's model.
+            "CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP": "1",
             # The teammate's thinking effort and compaction share. Both are in
             # `agent.configuration`, and so in the hash above: changing either
             # restarts the session at the next task boundary, which is when

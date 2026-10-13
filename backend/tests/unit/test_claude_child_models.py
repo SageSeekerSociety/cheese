@@ -214,3 +214,140 @@ def test_native_child_default_and_explicit_model_reach_admission(
         for item in requests
         if item not in children
     )
+
+
+@pytest.mark.parametrize("cap_disabled", [False, True])
+def test_explore_inherits_a_non_claude_parent_only_without_the_cap(
+    tmp_path, cap_disabled
+):
+    """Built-in Explore asks for `opus` under a parent outside the Claude
+    families unless `CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP` is set, which
+    `gateway_usage` sets for every session: admission refuses claude-opus-* in
+    a catalogue without it, so Explore failed under deepseek-flash and gpt-*."""
+    child_models = []
+    spawned = False
+
+    class Provider(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            nonlocal spawned
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if "/messages" not in self.path or "count_tokens" in self.path:
+                self.reply(b'{"input_tokens":10}', "application/json")
+                return
+            if self.headers.get("x-claude-code-agent-id"):
+                child_models.append(body["model"])
+            tools = {tool["name"] for tool in body.get("tools", [])}
+            block = {"type": "text", "text": ""}
+            delta = {"type": "text_delta", "text": "fixture complete"}
+            stop = "end_turn"
+            if "Agent" in tools and not spawned:
+                spawned = True
+                block = {
+                    "type": "tool_use",
+                    "id": "toolu_x",
+                    "name": "Agent",
+                    "input": {},
+                }
+                delta = {
+                    "type": "input_json_delta",
+                    "partial_json": json.dumps(
+                        {
+                            "description": "x",
+                            "prompt": "Reply ok",
+                            "subagent_type": "Explore",
+                        }
+                    ),
+                }
+                stop = "tool_use"
+            events = [
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_x",
+                        "type": "message",
+                        "role": "assistant",
+                        "model": body["model"],
+                        "content": [],
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 10, "output_tokens": 0},
+                    },
+                },
+                {"type": "content_block_start", "index": 0, "content_block": block},
+                {"type": "content_block_delta", "index": 0, "delta": delta},
+                {"type": "content_block_stop", "index": 0},
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": stop, "stop_sequence": None},
+                    "usage": {"output_tokens": 2},
+                },
+                {"type": "message_stop"},
+            ]
+            self.reply(
+                "".join(
+                    f"event: {event['type']}\ndata: {json.dumps(event)}\n\n"
+                    for event in events
+                ).encode(),
+                "text/event-stream",
+            )
+
+        def reply(self, data, content_type):
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    home = tmp_path / "home"
+    home.mkdir()
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    subprocess.run(["git", "init", "--quiet", str(workspace)], check=True)
+    env = {
+        "PATH": os.environ["PATH"],
+        "HOME": str(home),
+        "CLAUDE_CONFIG_DIR": str(home / ".claude"),
+        "ANTHROPIC_API_KEY": "fixture-not-a-real-key",
+        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-flash",
+    }
+    if cap_disabled:
+        env["CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP"] = "1"
+    try:
+        result = subprocess.run(
+            [
+                claude_binary(),
+                "-p",
+                "--model",
+                "deepseek-flash",
+                "--output-format",
+                "json",
+                "--dangerously-skip-permissions",
+                "--strict-mcp-config",
+                "--setting-sources",
+                "user",
+                "--mcp-config",
+                '{"mcpServers":{}}',
+                "--",
+                "Explore the workspace.",
+            ],
+            cwd=workspace,
+            env=env,
+            capture_output=True,
+            timeout=60,
+        )
+        assert result.returncode == 0, result.stderr.decode()
+    finally:
+        server.shutdown()
+        server.server_close()
+    assert child_models, "Explore never sent a request"
+    if cap_disabled:
+        assert set(child_models) == {"deepseek-flash"}
+    else:
+        assert all(m.startswith("claude-opus") for m in child_models), child_models
