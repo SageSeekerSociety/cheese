@@ -790,43 +790,32 @@ class Ledger:
         )
         return await self.charge(payer, credits)
 
-    async def record_platform(
+    async def record_project_call(
         self,
+        project_id: uuid.UUID,
         *,
         kind: str,
         model: str,
         input_tokens: int,
         output_tokens: int,
         cost_usd: float,
-        cache_read_tokens: int = 0,
-        cache_write_tokens: int = 0,
-        project_id: uuid.UUID | None = None,
         topic_id: uuid.UUID | None = None,
-        turn_id: uuid.UUID | None = None,
-        metered: bool = True,
-        route: str = "gateway",
-        calls: int = 1,
-    ) -> None:
-        """Write the usage row of a call the platform made on its own (naming a
-        room, sorting old memories, consolidating a project's memory). The
-        platform pays: the row names no team or person and costs no credits,
-        so no balance, time window or usage page counts it (#2233). Work done
-        inside a project keeps the project, so its own records can still find
-        it."""
-        await UsageRepository(self._session).add(
-            project_id=project_id,
-            conversation_id=topic_id,
+    ) -> float:
+        """Write and charge one model call the platform made for a project on
+        its own (naming a task, moving the project's old memories, reading why
+        its environment failed). The gateway priced it in the response, and
+        the project's team pays it like a room turn's spend, under ``kind`` so
+        the call stays apart in the records. Returns the credits deducted."""
+        return await self.record(
+            await payer_for_project(self._session, project_id),
+            credits=spend_to_credits(cost_usd),
             model=model,
             input_tokens=input_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
             output_tokens=output_tokens,
             cost_usd=cost_usd,
+            route="gateway",
             kind=kind,
-            metered=metered,
-            route=route,
-            turn_id=turn_id,
-            calls=calls,
+            topic_id=topic_id,
         )
 
     # ---- issuing -----------------------------------------------------------

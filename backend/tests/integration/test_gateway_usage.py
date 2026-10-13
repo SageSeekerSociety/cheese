@@ -84,7 +84,7 @@ class FakeGateway:
         # flat total is what swallowed mimo into the default model's row.
         self.days: dict[str, dict[str, tuple[int, int, float]]] = {}
 
-    async def mint_project_key(self, project_id):
+    async def mint_project_key(self, project_id, *, purpose=None):
         self.minted.append(project_id)
         return f"sk-virt-{len(self.minted)}"
 
@@ -114,7 +114,7 @@ class FakeGateway:
 
 
 class FailingMintGateway(FakeGateway):
-    async def mint_project_key(self, project_id):
+    async def mint_project_key(self, project_id, *, purpose=None):
         self.minted.append(project_id)
         return None
 

@@ -279,7 +279,6 @@ class ModelOptions(Protocol):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
-        platform: bool = False,
     ) -> tuple[dict, str]: ...
 
 

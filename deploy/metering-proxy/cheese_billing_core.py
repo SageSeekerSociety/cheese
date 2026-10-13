@@ -310,7 +310,9 @@ class Meter:
             used = sum(t for _, t in self._events)
             return used + self._inflight_tokens(now) >= cap
 
-    def record(self, project_id: str, topic_id: str, usage: dict, model: str) -> None:
+    def record(
+        self, project_id: str, topic_id: str, usage: dict, model: str, kind: str = ""
+    ) -> None:
         total = (
             int(usage.get("input_tokens", 0))
             + int(usage.get("output_tokens", 0))
@@ -332,6 +334,10 @@ class Meter:
             "total_tokens": total,
             "provider": "subscription",
         }
+        if kind:
+            # What admission said the call was for, when it was not a room
+            # turn (`Verdict.usage_kind`); the backend's ingest keeps it.
+            rec["kind"] = kind
         split = usage.get("cache_creation")
         if isinstance(split, dict):
             # Written only when the response split its cache writes by
@@ -390,6 +396,10 @@ class Verdict:
     # When a budget refusal stops applying, in Unix seconds; None when nothing
     # will change it on its own (the credits are spent, not a window full).
     reopens_at: int | None = None
+    # What the call is for when it is not a room turn: "memory_dream" while
+    # the project's memory is being consolidated. Written on the usage line so
+    # the backend books the call under it; empty for a room turn.
+    usage_kind: str = ""
     # True = NOBODY ANSWERED. This verdict was manufactured here — admission is
     # unconfigured, the project is unknown, or the backend could not be reached
     # — so every field on it is a default, `pool` included. Defaults to True so
@@ -438,6 +448,7 @@ def _post_admission(
     model = supply.get("model")
     kind = data.get("reason_kind")
     reopens_at = data.get("reopens_at")
+    usage_kind = supply.get("kind")
     return Verdict(
         allow=bool(data.get("allow", True)),
         reason=str(data.get("reason", "")),
@@ -446,6 +457,7 @@ def _post_admission(
         key=supply.get("key") or None,
         model=model if isinstance(model, str) else "",
         reopens_at=reopens_at if isinstance(reopens_at, int) else None,
+        usage_kind=usage_kind if isinstance(usage_kind, str) else "",
         # The backend answered; `pool` below is its word, not a default.
         fail_open=False,
     )
