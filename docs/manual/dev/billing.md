@@ -54,12 +54,12 @@ covers:
 - 题目页的芝士不自己算：每个人有一把自己的网关虚拟 key，芝士的每次模型调用都走它，而且只在这个人的一个问题正在回答时才放行。每次提问后读这把 key 上新增的花费（和项目 key 一样按天、按模型读累计差值，只消费一次），直接按网关算出的美元扣（[个人芝士](/dev/assistant#ask)）。
 - 每次调用写一行 `resource_usage`：`project_id` 为空，`user_id` 是发起的人。平台看板的项目额度燃尽不算方案包。
 
-## 平台自己发起的调用 {#platform}
+## 平台替项目发起的调用 {#platform}
 
-任务命名、旧记忆搬迁和记忆整理（dream）是平台自己要做的事，不扣任何团队或个人的额度。每次调用由 `Ledger.record_platform` 写一行 `resource_usage`：`team_id`、`user_id` 为空，`credits` 为 0，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`memory_dream`）。团队和个人的用量页、时间窗口和余额都按 `team_id` 读，所以这些行不会算到任何人头上，平台看板的总量里照常计入。
+任务命名、旧记忆搬迁、环境准备失败时的「让芝士看看」和记忆整理（dream）都是平台为某个项目做的事，和项目里的其他调用一样记到项目上、扣项目所在团队的额度，团队的用量页把它们算进「协作」。每一行带 `project_id` 和团队，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`environment_diagnosis`、`memory_dream`）。
 
-- 任务命名和旧记忆搬迁不在任何项目里，`project_id` 也为空，各走一把自带预算的网关 key，`cost_usd` 取网关在响应头里给的价格。
-- 记忆整理在项目里跑，行上保留 `project_id`，整理的触发阈值靠它和 `kind` 把整理自己的花费剔掉。它不用项目付钱的那把网关 key，而是项目的第二把 key（`project.settings["llm_gateway_platform_key"]`，不设预算）；一轮结束后单独结算这把 key 的新增花费（检查点在 `llm_gateway_platform_usage_ckpt`），所以整理的花费不会混进项目的 key、被下一轮对话结算到团队头上。走订阅的整理没有这把 key，它的用量由计量代理按项目记到团队上；订阅只开给 Reserve 团队，不扣额度。
+- 任务命名、旧记忆搬迁和「让芝士看看」各走平台的一把服务 key（各带一份平台设的预算），`cost_usd` 取网关在响应头里给的价格，由 `Ledger.record_project_call` 按项目的付款方写一行并扣额度。
+- 记忆整理在项目里跑一轮会话，用的就是这个项目的模型通路：走网关的用项目自己的 key，一轮结束后当场把这把 key 的新增花费按 `memory_dream` 收下（读不到时 20 秒后再读一次），不留给下一轮对话当成它自己的花费收走；什么都没收到时写一行 `memory_dream:unmetered`，说明这一轮跑过。会话自报的用量不计，否则同一批调用会被网关和自报各算一次。走订阅的整理由计量代理按项目记到团队上，和那里的对话一样记成 `chat`。整理的触发阈值按 `kind` 把整理自己的花费剔掉。
 
 ## 三处计量 {#metering}
 

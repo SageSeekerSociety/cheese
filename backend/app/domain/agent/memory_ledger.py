@@ -97,8 +97,6 @@ class _MemoryHost(Protocol):
         project_id: uuid.UUID,
         provider: RoomSessions | None,
         topic_id: uuid.UUID | None = None,
-        *,
-        platform: bool = False,
     ) -> tuple[dict, str]: ...
 
 
@@ -375,11 +373,9 @@ class MemoryLedger:
         failed = False
         try:
             async with self._live.lock_for(root_topic_id):
-                model_kwargs = (
-                    await self._host._model_kwargs(
-                        project_id, runtime, root_topic_id, platform=True
-                    )
-                )[0]
+                model_kwargs, route = await self._host._model_kwargs(
+                    project_id, runtime, root_topic_id
+                )
                 dreamer = SessionRef(
                     project_id,
                     root_topic_id,
@@ -428,6 +424,16 @@ class MemoryLedger:
             # 按「删多了就整轮作废」处理。
             self._dreams.discard(root_topic_id)
         refusal = self._refusals.pop(root_topic_id, None)
+        # 这一轮花的钱在项目的 key 上：当场按 dream 记下，不留给下一轮对话当成
+        # 它自己的花费收走。
+        drained = await drain_dream_spend(
+            self._sessions,
+            self._gateway,
+            self._gateway_lock,
+            project_id,
+            root_topic_id,
+            run_id,
+        )
 
         async with self._sessions() as session:
             after = await read_tree(session, project_id, scopes)
@@ -475,6 +481,8 @@ class MemoryLedger:
                 root_topic_id=root_topic_id,
                 usage=usage,
                 turn_id=run_id,
+                route=route,
+                drained=bool(drained),
             )
             await session.commit()
         logger.info(
@@ -482,14 +490,6 @@ class MemoryLedger:
             status.value,
             project_id,
             len(changed),
-        )
-        await drain_dream_spend(
-            self._sessions,
-            self._gateway,
-            self._gateway_lock,
-            project_id,
-            root_topic_id,
-            run_id,
         )
         team_changed = [path for path in changed if path.startswith("team/")]
         if status is MemoryDreamRunStatus.completed and team_changed:

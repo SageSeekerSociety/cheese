@@ -65,11 +65,6 @@ logger = logging.getLogger(__name__)
 _GW_KEY = "llm_gateway_key"
 _GW_CKPT = "llm_gateway_usage_ckpt"
 _GW_BUDGET = "llm_gateway_budget_usd"
-#: 平台自己在项目里干活（记忆整理）用的第二把 key 和它的检查点。这把 key 的花
-#: 费是平台的，不进项目付钱的那把 key，所以结算时不会算到团队头上（#2233）；它
-#: 也不带预算：平台的活不受团队额度约束。
-_GW_PLATFORM_KEY = "llm_gateway_platform_key"
-_GW_PLATFORM_CKPT = "llm_gateway_platform_usage_ckpt"
 
 
 class _GatewayUsage(Protocol):
@@ -191,13 +186,8 @@ async def _model_kwargs(
     *,
     agent: ResolvedAgent | None = None,
     acting_agent: str | None = None,
-    platform: bool = False,
 ) -> tuple[dict, str]:
     """Resolve a turn's model, model environment and usage route.
-
-    ``platform`` is a turn the platform runs for itself (memory
-    consolidation): it runs on the project's platform key, whose spend
-    `ProjectGatewayKey(platform=True)` charges to the platform.
 
     Which model comes from the binding of the work this turn belongs to —
     and a room's main thread is not a piece of work, so it always gets the
@@ -363,7 +353,7 @@ async def _model_kwargs(
         # L1/L2: the sandbox runs on the project's VIRTUAL gateway key — never
         # the master key (containment), attributable + budget-capped.
         override = await _gateway_project_env(
-            service, sessions, gateway, gateway_lock, project_id, platform=platform
+            service, sessions, gateway, gateway_lock, project_id
         )
         if not override:
             raise GatewayUnavailableError(
@@ -397,8 +387,6 @@ async def _gateway_project_env(
     gateway: LlmGateway | None,
     gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
-    *,
-    platform: bool = False,
 ) -> dict | None:
     """Env override for a gateway-routed turn: mint (once) and return the
     project's virtual key, and keep its L2 max_budget in step with the
@@ -417,12 +405,7 @@ async def _gateway_project_env(
     minted, no budget drift to apply — still fanned out into a 5.8 s tail.
     Nothing about answering that request is exclusive, so it is answered
     before the lock is reached.
-
-    ``platform`` answers with the project's platform key instead: minted once
-    the same way, never budget-capped.
     """
-    if platform:
-        return await _gateway_platform_env(sessions, gateway, gateway_lock, project_id)
     try:
         # Read path: the key exists and is in step → nothing to write.
         async with sessions() as session:
@@ -473,55 +456,13 @@ async def _gateway_project_env(
         return None
 
 
-async def _gateway_platform_env(
-    sessions: async_sessionmaker,
-    gateway: LlmGateway | None,
-    gateway_lock: asyncio.Lock,
-    project_id: uuid.UUID,
-) -> dict | None:
-    """The project's platform key as a turn env, minted on first use."""
-    try:
-        async with sessions() as session:
-            project = await ProjectRepository(session).get(project_id)
-            if project is None or gateway is None:
-                return None
-            key = (project.settings or {}).get(_GW_PLATFORM_KEY)
-            if isinstance(key, str) and key:
-                return {"ANTHROPIC_AUTH_TOKEN": key}
-        async with gateway_lock:
-            async with sessions() as session:
-                repo = ProjectRepository(session)
-                project = await repo.get(project_id)
-                if project is None:
-                    return None
-                await repo.lock_settings(project)
-                key = (project.settings or {}).get(_GW_PLATFORM_KEY)
-                if not isinstance(key, str) or not key:
-                    key = await gateway.mint_project_key(project_id, platform=True)
-                    if not key:
-                        return None
-                    await repo.merge_settings(project, {_GW_PLATFORM_KEY: key})
-                    await session.commit()
-        return {"ANTHROPIC_AUTH_TOKEN": key}
-    except Exception:  # noqa: BLE001 — never fail a turn on admin plumbing
-        logger.exception("gateway platform-env failed for %s", project_id)
-        return None
-
-
 @dataclass(frozen=True)
 class ProjectGatewayKey:
-    """A project's key on the gateway, or with ``platform`` the platform's own
-    key inside the project, whose spend the platform pays (#2233). Both live in
-    the project's settings beside their checkpoints."""
+    """A project's key on the gateway, kept in the project's settings beside
+    its checkpoint. Everything spent on it is the project's: room turns, and
+    the platform's own work inside the project (memory consolidation)."""
 
     project_id: uuid.UUID
-    platform: bool = False
-
-    @property
-    def _fields(self) -> tuple[str, str]:
-        if self.platform:
-            return _GW_PLATFORM_KEY, _GW_PLATFORM_CKPT
-        return _GW_KEY, _GW_CKPT
 
     async def read(
         self, session: AsyncSession, *, for_update: bool = False
@@ -532,23 +473,20 @@ class ProjectGatewayKey:
         if for_update:
             # Another backend process can charge during a rollout.
             await session.refresh(project, with_for_update=True)
-        key_field, ckpt_field = self._fields
         s = project.settings or {}
-        key = s.get(key_field)
+        key = s.get(_GW_KEY)
         if not isinstance(key, str) or not key:
             return None  # nothing ever routed → nothing to meter
-        ckpt = s.get(ckpt_field)
+        ckpt = s.get(_GW_CKPT)
         return key, ckpt if isinstance(ckpt, dict) else None
 
     async def advance(self, session: AsyncSession, checkpoint: dict) -> None:
         repo = ProjectRepository(session)
         project = await repo.get(self.project_id)
         assert project is not None
-        await repo.merge_settings(project, {self._fields[1]: checkpoint})
+        await repo.merge_settings(project, {_GW_CKPT: checkpoint})
 
-    async def payer(self, session: AsyncSession) -> Payer | None:
-        if self.platform:
-            return None
+    async def payer(self, session: AsyncSession) -> Payer:
         return await payer_for_project(session, self.project_id)
 
 
@@ -575,7 +513,6 @@ async def charge_turn_spend(
         ProjectGatewayKey(project_id),
         Charge(
             model=settings.agent_model,
-            project_id=project_id,
             topic_id=topic_id,
             turn_id=turn_id,
         ),
