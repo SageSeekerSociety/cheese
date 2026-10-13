@@ -33,6 +33,7 @@ import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { dayStamp } from '@/lib/dateText'
+import { memberFacesOf } from '@/lib/memberFaces'
 import { refRoute } from '@/lib/refDirectory'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
@@ -538,6 +539,8 @@ const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
   ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
 }))
+// 名册来的身份（头像 id、是不是队友）：往下传给按 handle 画人的地方，免得它们拿名字反查。
+const memberFaces = computed(() => memberFacesOf(store.members))
 // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
 // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
 // 等于对每一条支线都白打一次会 404 的请求。
@@ -817,6 +820,7 @@ void openPlace()
                 :tasks="channelOverview.tasks.value"
                 :can-pin="canPin"
                 :member-names="memberNames"
+                :faces="memberFaces"
                 :agent-name="store.agentName"
                 :save-description="(text: string) => store.describe(topicId, text)"
                 @unpin="channelOverview.unpin"
@@ -835,6 +839,7 @@ void openPlace()
                 :loading="channelThreads.loading.value"
                 :error="channelThreads.error.value"
                 :refs="{ mentionNames: memberNames, topicTitles: {} }"
+                :faces="memberFaces"
                 :name-of="(handle: string) => memberNames[handle] || handle"
                 :fmt-time="threadTime"
                 @open="showThread"

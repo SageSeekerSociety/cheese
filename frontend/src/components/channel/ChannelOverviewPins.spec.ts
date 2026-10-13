@@ -39,9 +39,12 @@ const PIN = {
   },
 } as unknown as ChannelPin
 
-function mount(canPin: boolean) {
+/** 名册给的身份：头像 id + 是不是队友。没给时视图退回 handle + 彩色首字母。 */
+const FACES = { alice: { name: '爱丽丝', avatarId: 7, agent: false } }
+
+function mount(canPin: boolean, faces?: typeof FACES, memberNames: Record<string, string> = {}) {
   return render(ChannelOverviewPins as unknown as Component, {
-    props: { pins: [PIN], canPin, memberNames: {}, refs: { mentionNames: {}, topicTitles: {} } },
+    props: { pins: [PIN], canPin, memberNames, faces, refs: { mentionNames: {}, topicTitles: {} } },
     global: { plugins: [vuetify, i18n] },
   })
 }
@@ -57,5 +60,25 @@ describe('置顶的操作', () => {
     const ui = mount(false)
     expect(ui.getByRole('button', { name: '跳到原消息' })).toBeTruthy()
     expect(ui.queryByRole('button', { name: '取消置顶' })).toBeNull()
+  })
+})
+
+describe('置顶那一行里的人', () => {
+  it('名册给了身份时，置顶的人画成头像 + 名字', () => {
+    // PIN 说的是 alice：名册这一行给的是「爱丽丝」和她自己挑的头像 7。
+    const ui = mount(false, FACES)
+    const said = ui.container.querySelector('.pin__said')!.previousElementSibling!
+    expect(said.textContent).toContain('爱丽丝')
+    expect(said.querySelector('.identity-view')).not.toBeNull()
+    expect(said.querySelector('img')?.getAttribute('src')).toContain('/avatars/7')
+  })
+
+  it('名册没给身份时退回名字，仍是一颗可认的人 chip', () => {
+    const ui = mount(false, undefined, { alice: '爱丽丝' })
+    const said = ui.container.querySelector('.pin__said')!.previousElementSibling!
+    expect(said.textContent).toContain('爱丽丝')
+    // 没有头像素材就画按名字派生的彩色首字母，不去取全站默认那张脸。
+    expect(said.querySelector('img')).toBeNull()
+    expect(said.querySelector('.user-avatar-char')?.textContent?.trim()).toBe('爱')
   })
 })

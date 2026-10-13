@@ -2,21 +2,28 @@
 // 频道概览里的「置顶」：主线上钉住的消息和文件，后钉的在前。点一条回到它在主线上的
 // 位置；⋯ 里取消置顶。没有置顶就整段不画。
 import type { MenuAction } from '@/components/common/menuAction'
+import type { MemberFace, MemberFaces } from '@/lib/memberFaces'
 import type { RefNames } from '@/lib/refChip'
 import type { ChannelPin } from '@/types/channels'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
 import { relTime } from '@/lib/relTime'
 
-const props = defineProps<{
-  pins: ChannelPin[]
-  canPin: boolean
-  memberNames: Record<string, string>
-  refs: RefNames
-}>()
+const props = withDefaults(
+  defineProps<{
+    pins: ChannelPin[]
+    canPin: boolean
+    memberNames: Record<string, string>
+    refs: RefNames
+    /** 名册来的身份（头像 id、队友身份）。有它就不用拿名字反查；没有时退回 handle + 彩色首字母。 */
+    faces?: MemberFaces
+  }>(),
+  { faces: () => ({}) }
+)
 
 const emit = defineEmits<{
   (e: 'unpin', blockId: string): void
@@ -24,6 +31,13 @@ const emit = defineEmits<{
 }>()
 
 const nameOf = (handle: string) => props.memberNames[handle] || handle
+/** 要画的那个人：名册有这一行就用它，否则 null（视图退回 handle + 彩色首字母）。 */
+function faceOf(handle: string): MemberFace | null {
+  return props.faces[handle] ?? null
+}
+function faceName(handle: string): string {
+  return faceOf(handle)?.name ?? nameOf(handle)
+}
 
 function isFile(pin: ChannelPin): boolean {
   return pin.block.kind !== 'message'
@@ -60,15 +74,31 @@ function actions(pin: ChannelPin): MenuAction[] {
           <v-icon size="16" class="pin__icon">mdi-paperclip</v-icon>
           <span class="pin__text">
             <span class="t-body pin__name">{{ fileName(pin.block.content) }}</span>
-            <span class="t-meta c-faint">{{
-              t('work.channel.pins.pinnedBy', { name: nameOf(pin.pinned_by), when: relTime(pin.pinned_at) })
-            }}</span>
+            <i18n-t keypath="work.channel.pins.pinnedBy" scope="global" tag="span" class="t-meta c-faint">
+              <template #name>
+                <UserRef
+                  :handle="pin.pinned_by"
+                  :name="faceName(pin.pinned_by)"
+                  :avatar-id="faceOf(pin.pinned_by)?.avatarId"
+                  :agent="faceOf(pin.pinned_by)?.agent"
+                />
+              </template>
+              <template #when>{{ relTime(pin.pinned_at) }}</template>
+            </i18n-t>
           </span>
         </template>
         <span v-else class="pin__text">
-          <span class="t-meta c-faint">{{
-            t('work.channel.pins.said', { name: nameOf(pin.block.author), when: relTime(pin.block.created_at) })
-          }}</span>
+          <i18n-t keypath="work.channel.pins.said" scope="global" tag="span" class="t-meta c-faint">
+            <template #name>
+              <UserRef
+                :handle="pin.block.author"
+                :name="faceName(pin.block.author)"
+                :avatar-id="faceOf(pin.block.author)?.avatarId"
+                :agent="faceOf(pin.block.author)?.agent"
+              />
+            </template>
+            <template #when>{{ relTime(pin.block.created_at) }}</template>
+          </i18n-t>
           <span class="t-body pin__said">{{ replySnippet(pin.block, refs, 200) }}</span>
         </span>
       </button>

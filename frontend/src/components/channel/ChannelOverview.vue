@@ -4,6 +4,7 @@
 // 东西钉在置顶里，要做成的事是任务。
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask, Topic } from '@/cx_types'
+import type { MemberFace, MemberFaces } from '@/lib/memberFaces'
 import type { ChannelPin } from '@/types/channels'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -11,6 +12,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
 import { columnDotStyle, taskPhraseLabel } from '@/lib/board'
@@ -34,6 +36,8 @@ const props = defineProps<{
   /** 能不能取消置顶：在主线说得上话的人。 */
   canPin: boolean
   memberNames: Record<string, string>
+  /** 名册来的身份（头像 id、队友身份）。有它就不用拿名字反查；没有时退回 handle + 彩色首字母。 */
+  faces?: MemberFaces
   agentName: string
   saveDescription: (text: string) => Promise<boolean>
 }>()
@@ -54,6 +58,13 @@ const LIVELY_MAX = 6
 
 const refs = computed(() => ({ mentionNames: props.memberNames, topicTitles: {} }))
 const nameOf = (handle: string) => props.memberNames[handle] || handle
+/** 要画的那个人：名册有这一行就用它，否则 null（视图退回 handle + 彩色首字母）。 */
+function faceOf(handle: string): MemberFace | null {
+  return props.faces?.[handle] ?? null
+}
+function faceName(handle: string): string {
+  return faceOf(handle)?.name ?? nameOf(handle)
+}
 
 const running = computed(() =>
   props.tasks.filter((task) => task.status === 'open' && task.presentation.column !== 'done')
@@ -73,10 +84,13 @@ const recentDone = computed(() =>
     .slice(0, RECENT_DONE)
 )
 
-function latest(task: RoomTask): string | null {
-  const block = task.last_message
-  if (!block) return null
-  return t('work.channel.overview.latest', { name: nameOf(block.author), text: replySnippet(block, refs.value, 80) })
+/** 这个任务最后说的一句是谁说的；没说过的返回 null（那一行就不画）。 */
+function latestAuthor(task: RoomTask): string | null {
+  return task.last_message ? task.last_message.author : null
+}
+/** 最后说的那句本身（@ 的人、话题都读成名字，和对话里一样）。 */
+function latestText(task: RoomTask): string {
+  return task.last_message ? replySnippet(task.last_message, refs.value, 80) : ''
 }
 
 // ---- 项目总览：只读的开头，放不下才给「展开全文」 ----
@@ -218,6 +232,7 @@ async function save() {
       :pins="pins"
       :can-pin="canPin"
       :member-names="memberNames"
+      :faces="faces"
       :refs="refs"
       @unpin="emit('unpin', $event)"
       @jump="emit('jump', $event)"
@@ -241,13 +256,34 @@ async function save() {
             {{ taskPhraseLabel(task, ME) }}
           </span>
         </span>
-        <span v-if="latest(task)" class="co-task__latest t-meta">{{ latest(task) }}</span>
-        <span class="co-task__meta t-meta c-faint">{{
-          t('work.channel.overview.owner', {
-            name: nameOf(task.owner_handle ?? ''),
-            when: relTime(movedAt(task)),
-          })
-        }}</span>
+        <i18n-t
+          v-if="latestAuthor(task)"
+          keypath="work.channel.overview.latest"
+          scope="global"
+          tag="span"
+          class="co-task__latest t-meta"
+        >
+          <template #name>
+            <UserRef
+              :handle="latestAuthor(task)"
+              :name="faceName(latestAuthor(task) ?? '')"
+              :avatar-id="faceOf(latestAuthor(task) ?? '')?.avatarId"
+              :agent="faceOf(latestAuthor(task) ?? '')?.agent"
+            />
+          </template>
+          <template #text>{{ latestText(task) }}</template>
+        </i18n-t>
+        <i18n-t keypath="work.channel.overview.owner" scope="global" tag="span" class="co-task__meta t-meta c-faint">
+          <template #name>
+            <UserRef
+              :handle="task.owner_handle"
+              :name="faceName(task.owner_handle ?? '')"
+              :avatar-id="faceOf(task.owner_handle ?? '')?.avatarId"
+              :agent="faceOf(task.owner_handle ?? '')?.agent"
+            />
+          </template>
+          <template #when>{{ relTime(movedAt(task)) }}</template>
+        </i18n-t>
       </button>
       <button
         v-if="running.length > lively.length"
