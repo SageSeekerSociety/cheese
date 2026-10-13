@@ -84,6 +84,17 @@ registered the same way). `cch` hashes the request body, so it changes on every
 request; at the head of the prompt it makes a prefix cache such as RUC's miss
 the whole conversation. Requests bound for Anthropic keep it.
 
+Claude Code's WebSearch asks the upstream to run the search (the server tool
+`web_search_20250305`). DeepSeek's API runs it; RUC's vLLM does not, and
+answers with the model's text alone, which Claude Code shows the agent as a
+search that found nothing. So a deployment that cannot search says
+`supports_web_search: false` under `model_info`, a request whose tools include
+web search is not routed to it (`web_search.py`, registered the same way), and
+an answer to a search-only request that comes back without a `server_tool_use`
+block reaches the client as an error, logged as `cheese web_search not run`
+with the model group and deployment. Mark a new deployment only after
+measuring it.
+
 The box's `backend/.env` must contain:
 
 ```
