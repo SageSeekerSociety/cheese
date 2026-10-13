@@ -67,6 +67,32 @@ _GW_CKPT = "llm_gateway_usage_ckpt"
 _GW_BUDGET = "llm_gateway_budget_usd"
 
 
+@dataclass(frozen=True)
+class _KeySlot:
+    """Where one of a project's gateway keys lives in its settings: the key,
+    its usage checkpoint, the budget last set on it, and what the key is for
+    (the suffix of its alias on the gateway; None for the room key)."""
+
+    key: str
+    ckpt: str
+    budget: str
+    purpose: str | None
+
+
+#: The key the project's rooms run on.
+_ROOM_SLOT = _KeySlot(_GW_KEY, _GW_CKPT, _GW_BUDGET, None)
+#: The key the project's memory consolidation (dream) runs on. The project pays
+#: for both; the dream has its own so its spend is read as the dream's, whatever
+#: room turn ends while it runs (a key's spend is read per key and day, never
+#: per request).
+_DREAM_SLOT = _KeySlot(
+    "llm_gateway_dream_key",
+    "llm_gateway_dream_usage_ckpt",
+    "llm_gateway_dream_budget_usd",
+    "dream",
+)
+
+
 class _GatewayUsage(Protocol):
     """这条路的收件人：``ChatService`` 上留在原地的那三个问题。
 
@@ -370,13 +396,21 @@ async def project_gateway_key(
     gateway: LlmGateway | None,
     gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
+    *,
+    dream: bool = False,
 ) -> str | None:
     """The project's virtual gateway key, minted on first use — the same one
-    a local sandbox turn runs on. Public because the remote-machine LLM proxy
+    a local sandbox turn runs on, or with ``dream`` the key its memory
+    consolidation runs on. Public because the remote-machine LLM proxy
     (routes/llm_proxy.py) has to swap it in per request: a machine off the box
     never receives a provider credential, only its own scoped cheese token."""
     env = await _gateway_project_env(
-        service, sessions, gateway, gateway_lock, project_id
+        service,
+        sessions,
+        gateway,
+        gateway_lock,
+        project_id,
+        slot=_DREAM_SLOT if dream else _ROOM_SLOT,
     )
     return (env or {}).get("ANTHROPIC_AUTH_TOKEN")
 
@@ -387,10 +421,12 @@ async def _gateway_project_env(
     gateway: LlmGateway | None,
     gateway_lock: asyncio.Lock,
     project_id: uuid.UUID,
+    *,
+    slot: _KeySlot = _ROOM_SLOT,
 ) -> dict | None:
     """Env override for a gateway-routed turn: mint (once) and return the
-    project's virtual key, and keep its L2 max_budget in step with the
-    project's grants. Returns None on any gateway/admin failure; the caller
+    project's virtual key in ``slot``, and keep its L2 max_budget in step with
+    the project's grants. Returns None on any gateway/admin failure; the caller
     must refuse the turn rather than expose default pool credentials.
 
     **Answering a project that needs nothing written takes no lock at all.**
@@ -413,10 +449,10 @@ async def _gateway_project_env(
             if project is None or gateway is None:
                 return None
             s = dict(project.settings or {})
-            key = s.get(_GW_KEY)
+            key = s.get(slot.key)
             if isinstance(key, str) and key:
                 target = await service._gateway_budget_target(session, project_id)
-                if s.get(_GW_BUDGET) == target:
+                if s.get(slot.budget) == target:
                     return {"ANTHROPIC_AUTH_TOKEN": key}
 
         # Write path: something must be minted or re-priced. Serialised, and the
@@ -430,23 +466,25 @@ async def _gateway_project_env(
                     return None
                 await repo.lock_settings(project)
                 s = project.settings or {}
-                key = s.get(_GW_KEY)
+                key = s.get(slot.key)
                 patch: dict[str, object] = {}
                 remove: tuple[str, ...] = ()
                 if not isinstance(key, str) or not key:
-                    key = await gateway.mint_project_key(project_id)
+                    key = await gateway.mint_project_key(
+                        project_id, purpose=slot.purpose
+                    )
                     if not key:
                         return None
-                    patch[_GW_KEY] = key
+                    patch[slot.key] = key
                 target = await service._gateway_budget_target(session, project_id)
                 # No target clears the brake: a budget left on the key from
                 # before would refuse calls the platform now admits.
-                if s.get(_GW_BUDGET) != target:
+                if s.get(slot.budget) != target:
                     if await gateway.set_key_budget(key, target):
                         if target is None:
-                            remove = (_GW_BUDGET,)
+                            remove = (slot.budget,)
                         else:
-                            patch[_GW_BUDGET] = target
+                            patch[slot.budget] = target
                 if patch or remove:
                     await repo.merge_settings(project, patch, remove=remove)
                     await session.commit()
@@ -459,10 +497,15 @@ async def _gateway_project_env(
 @dataclass(frozen=True)
 class ProjectGatewayKey:
     """A project's key on the gateway, kept in the project's settings beside
-    its checkpoint. Everything spent on it is the project's: room turns, and
-    the platform's own work inside the project (memory consolidation)."""
+    its checkpoint: the rooms' key, or with ``dream`` the memory
+    consolidation's. The project pays for what either spends."""
 
     project_id: uuid.UUID
+    dream: bool = False
+
+    @property
+    def _slot(self) -> _KeySlot:
+        return _DREAM_SLOT if self.dream else _ROOM_SLOT
 
     async def read(
         self, session: AsyncSession, *, for_update: bool = False
@@ -474,17 +517,17 @@ class ProjectGatewayKey:
             # Another backend process can charge during a rollout.
             await session.refresh(project, with_for_update=True)
         s = project.settings or {}
-        key = s.get(_GW_KEY)
+        key = s.get(self._slot.key)
         if not isinstance(key, str) or not key:
             return None  # nothing ever routed → nothing to meter
-        ckpt = s.get(_GW_CKPT)
+        ckpt = s.get(self._slot.ckpt)
         return key, ckpt if isinstance(ckpt, dict) else None
 
     async def advance(self, session: AsyncSession, checkpoint: dict) -> None:
         repo = ProjectRepository(session)
         project = await repo.get(self.project_id)
         assert project is not None
-        await repo.merge_settings(project, {_GW_CKPT: checkpoint})
+        await repo.merge_settings(project, {self._slot.ckpt: checkpoint})
 
     async def payer(self, session: AsyncSession) -> Payer:
         return await payer_for_project(session, self.project_id)

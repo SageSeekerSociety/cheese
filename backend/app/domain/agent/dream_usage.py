@@ -1,16 +1,17 @@
 """What a memory consolidation (dream) turn spent, charged to its project.
 
 Consolidating a project's memory is work inside the project, so the project's
-team pays for it like any other turn there. The turn runs on the room's
-default channel (`ComputePool.platform_work`), so its model calls go where
-the project's other calls go: on the gateway, through the project's key; on
-the subscription, through the metering proxy, which lands them for the
-project (`usage/subscription_ingest`).
+team pays for it like any other turn there, and its usage says it was the
+dream. The turn runs as a turn of the project's overview room, and each of its
+model calls is told apart where it is admitted (`routes/llm_proxy.py`, by
+`memory.dream.dreaming`): on the gateway it runs on the project's dream key,
+not the rooms' one, and on the subscription the metering proxy writes the
+dream's kind on its usage line, which `usage/subscription_ingest` keeps.
 
-Right after the turn, the project key's new spend is drained and labelled as
-the dream's (`DREAM_KIND`), so it is not left for the next room turn to drain
-as its own. The consolidation trigger leaves that kind out of "this project
-wrote a lot" (`memory/dream.py`). What the session reports of itself is not
+Right after the turn, the dream key's new spend is drained as the dream's
+(`DREAM_KIND`). No room turn reads that key, so none can take the dream's
+spend as its own. The consolidation trigger leaves that kind out of "this
+project wrote a lot" (`memory/dream.py`). What the session reports of itself is not
 charged: the gateway or the proxy already measured the same calls, and
 counting the report too would charge them twice (`turn/intake/completion.py`,
 `reported_usage`).
@@ -42,14 +43,14 @@ async def drain_dream_spend(
     topic_id: uuid.UUID,
     turn_id: uuid.UUID,
 ) -> list[AgentUsage] | None:
-    """Charge what the project's key spent during the dream to the project,
-    as the dream's. Read once more after `LATE_S` if the gateway has not
-    logged it yet: nobody waits on a dream, and spend left on the key would be
-    drained by the next room turn under that turn's kind."""
+    """Charge what the project's dream key spent to the project, as the
+    dream's. Read once more after `LATE_S` if the gateway has not logged it
+    yet: nobody waits on a dream, and what is still unread is charged by the
+    next dream's drain."""
     return await settle(
         sessions,
         gateway,
-        ProjectGatewayKey(project_id),
+        ProjectGatewayKey(project_id, dream=True),
         Charge(
             model=settings.agent_model,
             kind=dream.DREAM_KIND,

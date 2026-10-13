@@ -341,6 +341,31 @@ async def close_run(
     await session.flush()
 
 
+async def dreaming(
+    session: AsyncSession, project_id: uuid.UUID, *, now: datetime | None = None
+) -> bool:
+    """Whether the project's memory is being consolidated now.
+
+    A dream runs as a turn of the project's overview room and holds that
+    room's turn lock for as long as it runs (`agent/memory_ledger.py`), so
+    while a run is open every model call the overview makes is the dream's;
+    the caller compares the call's place with the overview. A run still open
+    past `CLAIM_TTL` is one whose process went away, and is not counted: the
+    claim it held has expired too.
+    """
+    now = now or datetime.now(UTC)
+    run = await session.scalar(
+        select(MemoryDreamRun.id)
+        .where(
+            MemoryDreamRun.project_id == project_id,
+            MemoryDreamRun.status == MemoryDreamRunStatus.running.value,
+            MemoryDreamRun.started_at > now - CLAIM_TTL,
+        )
+        .limit(1)
+    )
+    return run is not None
+
+
 __all__ = [
     "CLAIM_TTL",
     "DEFAULT_MIN_INTERVAL",
@@ -358,6 +383,7 @@ __all__ = [
     "briefing",
     "claim",
     "clip",
+    "dreaming",
     "close_run",
     "dream_settings",
     "due_decision",
