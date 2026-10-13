@@ -45,7 +45,11 @@ from app.domain.platform_stats.usage_detail import (
 )
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.services import UsageService
-from app.domain.user.services import AccountService, chosen_avatars_by_handle
+from app.domain.user.services import (
+    AccountService,
+    chosen_avatars_by_handle,
+    faces_by_handle,
+)
 
 #: 用量柱状图上画几根。有上界是这个查询的一部分而不是优化：窗口收时间范围、`limit`
 #: 收行数，两个都少一个都会让这个读在全平台最长的表上无界。
@@ -299,12 +303,35 @@ class PlatformStatsService:
         这是产品自己的主链（「AI 干活、人验收」），也是看板上第一次有它的数字。
         口径的三条硬事实（闸门已退役 / `void` 不是状态 / `decided_at` 会被覆写）写在
         `pipeline.py` 的模块 docstring 里，页面上的注脚对应的是它们。
+
+        `stuck_cards` 每一行的验收人除了 `reviewer_handle` 还带 `reviewer_name` /
+        `reviewer_avatar_id` / `reviewer_is_agent` —— 一列裸 handle 在滚动时读不出是
+        谁，这一屏里这一格正是「这堆卡堵在谁手上」。
         """
         since, until, _ = utc_day_window(days)
+        stuck = await self._pipeline.stuck_cards()
+        # 卡住了的卡上「验收人是谁」也要画脸和名：名和头像是 user 域的事实
+        # （`faces_by_handle` 一次 join 给两样），「是不是队友」是 identity 域的事实
+        # （`agents_among`），和用量那一屏同一套，别在这里另写判据。没人验收的行
+        # （`reviewer_handle` 空）不画人 —— 那一行是「这张卡没写验收人」，
+        # 不是「验收人叫 null」。
+        faces = await faces_by_handle(
+            self._session,
+            [row["reviewer_handle"] for row in stuck if row.get("reviewer_handle")],
+        )
+        reviewer_agents = await IdentityService(self._session).agents_among(list(faces))
+        for row in stuck:
+            handle = row["reviewer_handle"]
+            name, avatar_id = (
+                faces.get(handle, (None, None)) if handle else (None, None)
+            )
+            row["reviewer_name"] = name
+            row["reviewer_avatar_id"] = avatar_id
+            row["reviewer_is_agent"] = handle in reviewer_agents if handle else None
         return {
             "days": days,
             "backlog": await self._pipeline.backlog(),
-            "stuck_cards": await self._pipeline.stuck_cards(),
+            "stuck_cards": stuck,
             "dwell": await self._pipeline.dwell(since=since, until=until),
             "needs_you": await self._pipeline.needs_you(),
             "turn_failures": await self._pipeline.turn_failures(

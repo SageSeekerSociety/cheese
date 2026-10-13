@@ -149,7 +149,17 @@ const stuckRows = computed(() =>
   (pipeline.value?.stuck_cards ?? []).map((row) => ({
     id: row.card_id,
     title: row.change_subject || row.topic_title,
-    subtitle: `${row.note_code ?? ''} ${row.reviewer_handle}`,
+    // 卡住的码单独写；验收人交给 `who`，画成脸 + 名 —— 一列裸 handle 在滚动里
+    // 读不出是谁，而这一格正是「这堆卡堵在谁手上」。
+    subtitle: row.note_code ?? '',
+    who: row.reviewer_handle
+      ? {
+          handle: row.reviewer_handle,
+          name: row.reviewer_name,
+          avatarId: row.reviewer_avatar_id,
+          agent: row.reviewer_is_agent,
+        }
+      : undefined,
     statusLabel: row.status,
     tone: 'warn' as const,
     age: ageText(row.age_seconds),
