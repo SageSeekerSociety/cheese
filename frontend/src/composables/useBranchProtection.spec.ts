@@ -94,6 +94,7 @@ describe('调度座位的候选人名单', () => {
   it('停用的不出现在名单里，在用的照旧出现', async () => {
     vi.mocked(listProjectAgents).mockResolvedValue({
       data: [agent(), agent({ id: 'a2', seat_handle: 'cheese-off', display_name: '停用的', is_active: false })],
+      total: 2,
     })
 
     const bp = await loaded()
