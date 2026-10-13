@@ -7,9 +7,12 @@ export function still(): boolean {
   return document.documentElement.dataset.mode === 'shot' || matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
+/** `--dur-base` in milliseconds; the token is written in seconds (`.22s`). */
 export function duration(): number {
-  const ms = parseFloat(token('dur-base'))
-  return Number.isFinite(ms) ? ms : 220
+  const raw = token('dur-base').trim()
+  const n = parseFloat(raw)
+  if (!Number.isFinite(n)) return 220
+  return raw.endsWith('ms') ? n : raw.endsWith('s') ? n * 1000 : n
 }
 
 /** The standard curve's shape, near enough for a frame-by-frame tween. */
