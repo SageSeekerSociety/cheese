@@ -58,6 +58,7 @@
   "changeSummaryFiles": "{head}\n{files}",
   "changeSummaryFilesMore": "{head}\n{files} · …{rest} more",
   "ciFailed": "{stage} checks failed on PR #{pr}",
+  "ciPassed": "All checks passed on PR #{pr}",
   "cliModelLimitReached": "This model's quota is used up",
   "cliModelLimitReachedHint": "Switch to another model, or wait for the quota to reset. Retrying will not help.",
   "ownLimitWaiting": "Usage limit reached. It resets in about {minutes} min, and the work continues then",

@@ -58,6 +58,7 @@
   "changeSummaryFiles": "{head}\n{files}",
   "changeSummaryFilesMore": "{head}\n{files} · …另 {rest} 个",
   "ciFailed": "PR #{pr} 的 {stage} 检查没通过",
+  "ciPassed": "PR #{pr} 的检查全部通过",
   "cliModelLimitReached": "这个模型的额度已用完",
   "cliModelLimitReachedHint": "需要换一个模型，或者等额度恢复。重试没有作用。",
   "ownLimitWaiting": "用量已达上限，约 {minutes} 分钟后恢复，届时自动继续",
