@@ -23,7 +23,11 @@ import { onThemeChange, posOf, token } from './viewKit'
 import { t } from '@/i18n'
 
 /** Hands a stretch of the document to the AI teammate; null while there is none. */
-export type AgentHook = () => { name: string; run: (editor: Editor, from: number, to: number) => void } | null
+export type AgentHook = () => {
+  name: string
+  /** Open the AI teammate's box on `from`–`to`; with `request`, say it there at once. */
+  run: (editor: Editor, from: number, to: number, request?: string) => void
+} | null
 
 type Mermaid = typeof import('mermaid').default
 

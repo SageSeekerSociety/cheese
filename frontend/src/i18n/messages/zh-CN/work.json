@@ -938,6 +938,7 @@
           "restore": "恢复成这一版",
           "failedTitle": "小程序运行出错，文档其他部分不受影响",
           "fix": "让{name}修",
+          "fixRequest": "这个小程序（{app}，第 {n} 版）运行出错：{message}\n把它修好。",
           "backTo": "退回第 {n} 版",
           "sourceTitle": "{title} · 第 {n} 版源码",
           "sourceNote": "样式和组件由平台提供，这里只有这个小程序自己的代码",

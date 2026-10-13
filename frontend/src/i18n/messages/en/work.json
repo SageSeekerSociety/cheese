@@ -938,6 +938,7 @@
           "restore": "Restore this version",
           "failedTitle": "The mini-app failed; the rest of the document is unaffected",
           "fix": "Ask {name} to fix",
+          "fixRequest": "This mini-app ({app}, version {n}) failed when run: {message}\nPlease fix it.",
           "backTo": "Go back to version {n}",
           "sourceTitle": "{title} · version {n} source",
           "sourceNote": "Styles and components come from the platform; this is the mini-app's own code",

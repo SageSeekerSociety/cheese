@@ -48,8 +48,9 @@ export interface AppAttrs {
 export interface AppBlockOptions {
   /** Change the version the document shows (恢复成这一版, 退回): an edit. */
   setVersion?: (version: number) => void
-  /** Hand the app to the AI teammate, when there is one. */
-  agent?: { name: string; run: () => void } | null
+  /** Hand the app to the AI teammate, when there is one; `request` is said for
+   *  the reader, as if typed into its box. */
+  agent?: { name: string; run: (request?: string) => void } | null
 }
 
 export interface AppBlock {
@@ -278,7 +279,7 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
     if (opts.agent) {
       const agent = opts.agent
       const fix = textButton('doc-app__button doc-app__button--primary', label('fix', { name: agent.name }))
-      fix.addEventListener('click', () => agent.run())
+      fix.addEventListener('click', () => agent.run(label('fixRequest', { app: attrs.app, n: shown, message })))
       row.append(fix)
     }
     box.append(words, detail, row)
@@ -584,9 +585,9 @@ export function appNodeView(agent: AgentHook) {
       agent: hook
         ? {
             name: hook.name,
-            run: () => {
+            run: (request) => {
               const pos = posOf(getPos)
-              if (pos !== null) hook.run(editor, pos, pos + current.nodeSize)
+              if (pos !== null) hook.run(editor, pos, pos + current.nodeSize, request)
             },
           }
         : null,
