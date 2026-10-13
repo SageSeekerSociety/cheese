@@ -6,6 +6,14 @@ one, which is what Required CI's draft job does (see ci-fast.md).
 Direct Python invocation defaults to the legacy static tier (no tests/types).
 --tier extended gives the quick selection 900s without expanding its coverage.
 --types additionally runs the full Pyright/frontend-typecheck manual hooks.
+--pre-push is the entry point the platform's task-worktree pre-push hook calls
+(one report per push, for a reader who did not choose to run this): it leaves
+out the hooks that spawn the node toolchain — those get killed on a small box,
+and a report that calls a killed check red is worse than no report — reports
+what it left out as not run, and closes with the command that reproduces each
+item that did not pass. It never blocks the push: the hook that calls it
+swallows the exit code (a push refused here is a commit the platform has not
+delivered, and the checkout it lives in does not survive long).
 Use --title for a proposed PR title; otherwise read the actual PR title from
 --pull-request FILE (a `gh api repos/OWNER/REPO/pulls/N` payload, or the event
 JSON, which nests it under "pull_request"), falling back to `gh pr view`. A
@@ -68,6 +76,13 @@ TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
 # their own per-check timeout reports them unknown if the budget really is gone.
 JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
 MERGE_BASE_HOOKS = {"file-size", "migration-fork"}
+# Every hook this tool can select that spawns the node toolchain: the three
+# above, and the frontend type check next to pyright, which runs
+# `pnpm run typecheck`. The preflight blocks a run whose selection needs
+# frontend/node_modules; these are the hooks it needs it for, so a selection
+# that holds none of them (the pre-push entry point's, once its three have
+# left) is not blocked by a checkout that never ran `task fe:install`.
+NODE_HOOKS = JS_RUNTIME_HOOKS | {"frontend-typecheck"}
 # Prose, in any of the forms this repo keeps it: contents that cannot be the
 # code a product suite covers, so a diff of only these is unknown-path widening
 # that proves nothing about backend or frontend. The shared path map already
@@ -110,8 +125,74 @@ def load_select():
     return module.select, module.PATHS
 
 
-def configured_hook_ids():
-    return set(re.findall(r"-\s+id:\s+(\S+)", Path(REPO_ROOT, ".pre-commit-config.yaml").read_text()))
+def read_hook_ids():
+    """The hook ids the config defines, or None when it cannot be read.
+
+    None and not an exception, because both callers have to survive a config
+    that is missing or is not text: the footer prints on every path out of
+    `run()`, and the drift check turns the None into its own blocked verdict
+    with a reason a reader can act on. A config holding one raw high byte
+    raises `UnicodeDecodeError`, which is a `ValueError` and not an
+    `OSError` (reported 2026-10-12), so the `except OSError` that looks like
+    it covers this does not.
+    """
+    try:
+        text = Path(REPO_ROOT, ".pre-commit-config.yaml").read_text()
+    except (OSError, ValueError):
+        return None
+    return set(re.findall(r"-\s+id:\s+(\S+)", text))
+
+
+def precommit_command():
+    """The pre-commit invocation to spawn, which is also the one to print.
+
+    `CI_FAST_PRECOMMIT` wins when the caller set it (both workflows pass
+    `uvx pre-commit`). The default adds an interpreter pin to that same
+    command: `uvx` builds its tool venv around an interpreter of its own and
+    puts that venv's `bin` first on the hooks' PATH, so a `language: system`
+    hook whose entry says `python3` runs under it rather than under the one
+    running this script. Measured 2026-10-12 on the agent work image: 3.9.25
+    there against this script's 3.13.5, which made `migration-fork` (3.10+
+    annotations in .claude/scripts/check-migration-fork.py) report fail on
+    every backend-scoped run. Pinning the spawn and the printed command to one
+    source keeps the footer's reproduce line repeating what the run did.
+    """
+    return os.environ.get("CI_FAST_PRECOMMIT") or f"uvx --python {shlex.quote(sys.executable)} pre-commit"
+
+
+def reproduce(row, precommit, hook_ids):
+    """The command that repeats one non-passing row outside the hook.
+
+    A hook is repeated through pre-commit. The rest of `ran` are checks this
+    tool runs itself — `commit-title` invoked directly, and the plan's
+    `backend-pure` / `frontend-unit` / `frontend-i18n` /
+    `frontend-typecheck-changed`, none of which is a hook: `pre-commit run
+    <id>` for one of those exits with "No hook with id ..." (reported
+    2026-10-12). They name the command that actually ran, or the input they
+    were missing.
+
+    What a row is comes from the row (`hook`), not from the config: with an
+    unreadable config there is no id list to consult, and a self-run check
+    may not be dressed as a hook there either. A self-run check is printed
+    with the directory and the environment it ran in, because the plan
+    spawns those checks in their own tree (`backend/`, `frontend/`) under
+    their own variables: `uv run pytest` from the repository root does not
+    find the runner, and the same argv in the right tree without
+    `PYTHONPATH` cannot import the plugin it is told to load (both reported
+    2026-10-12).
+    """
+    if not row.get("hook", True):
+        if not row.get("command"):
+            return row.get("reason") or "未记录命令"
+        parts = []
+        if row.get("cwd"):
+            parts.append(f"cd {shlex.quote(row['cwd'])} &&")
+        parts += [f"{key}={shlex.quote(value)}" for key, value in sorted((row.get("env") or {}).items())]
+        parts.append(shlex.join(row["command"]))
+        return " ".join(parts)
+    if hook_ids is None or row["id"] in hook_ids:
+        return f"{precommit} run {row['id']} --all-files --hook-stage manual"
+    return row.get("reason") or "未记录命令"
 
 
 def collect_changes(base_ref):
@@ -155,6 +236,10 @@ def main(argv):
     parser.add_argument("--pull-request", metavar="FILE",
                         help="PR JSON to read the title (and draft flag) from"
                              " (gh api repos/O/R/pulls/N, or the event JSON)")
+    parser.add_argument("--pre-push", action="store_true",
+                        help="the platform's task-worktree pre-push entry point: leave out"
+                             " the hooks that spawn the node toolchain, and close with how to"
+                             " reproduce each item that did not pass")
     parser.add_argument("--report", default=str(Path(GIT_DIR, "ci-fast-report.json")))
     parser.add_argument("--timeout", type=float, default=900, help="per-check seconds")
     parser.add_argument("--budget", type=float, help="whole tier seconds (quick/static 180; extended 900)")
@@ -168,6 +253,7 @@ def main(argv):
     started = time.monotonic()
     report_path = Path(args.report)
     report = {"version": 2, "status": "unknown", "exit": UNKNOWN, "tier": args.tier,
+              "pre_push": args.pre_push,
               "budget_seconds": args.budget, "memory_limit_mib": args.memory_mib,
               "memory_measurement": "sampled process-group RSS, not address-space enforcement",
               "reasons": [], "fallback": False, "unknown_paths": [], "ran": [], "not_run": []}
@@ -188,6 +274,30 @@ def main(argv):
             print(f"  {reason}")
         for item in report["not_run"]:
             print(f"  未执行 {item['id']}: {item['reason']}")
+        if args.pre_push:
+            # The reader did not ask for this run and is about to push anyway,
+            # so the report has to be actionable as it stands: every item this
+            # entry point did not judge names the command that runs it outside
+            # the hook — the ones that failed, and the ones it left out.
+            precommit = precommit_command()
+            flagged = [row for row in report["ran"] if row["result"] not in ("pass", "not_applicable")]
+            # Only the pre-push filter can put a JS hook in not_run: it is the
+            # one place that removes them from the selection before they run.
+            dropped = [item for item in report["not_run"] if item["id"] in JS_RUNTIME_HOOKS]
+            print("ci:fast: 推前自检只报告，不挡推送。")
+            # Read rather than reuse the drift check's answer: this footer also
+            # prints on the paths that never reached that check (a base that
+            # does not resolve, a missing directory), where the config was
+            # never read. It may not raise on any of them, and a config nobody
+            # can read leaves every row naming its hook form — the one thing
+            # this footer cannot decide from the row alone is whether an id in
+            # a config it cannot see is a hook.
+            hook_ids = read_hook_ids()
+            for row in flagged:
+                print(f"  复现 {row['id']}（{row['result']}）: {reproduce(row, precommit, hook_ids)}")
+            for item in dropped:
+                print(f"  推前没跑 {item['id']}（想知道就跑）:"
+                      f" {precommit} run {item['id']} --all-files --hook-stage manual")
         return code
 
     try:
@@ -222,7 +332,16 @@ def run(args, report, finish, started):
         out = ANSI_RE.sub("", result.get("output", ""))
         if identifier.startswith("hook:") and result["result"] == "pass" and re.search(r"\.{4}[^\n]*Skipped[ \t]*$", out, re.M):
             result["result"] = "not_applicable" if "no files to check" in out else "skipped"
-        row = {"id": identifier.removeprefix("hook:"), **{k: v for k, v in result.items() if k != "output"}}
+        row = {"id": identifier.removeprefix("hook:"), "hook": identifier.startswith("hook:"),
+               **{k: v for k, v in result.items() if k != "output"}}
+        if not row["hook"]:
+            # Kept on the row so the footer can print a line that runs: the
+            # plan's checks are spawned in their own directory, under their
+            # own variables, and neither is in the argv.
+            if cwd != REPO_ROOT:
+                row["cwd"] = str(cwd)
+            if env:
+                row["env"] = {key: str(value) for key, value in env.items()}
         if row["result"] in ("budget", "not_applicable"):
             report["not_run"].append({"id": row["id"], "reason": "无相关文件" if row["result"] == "not_applicable" else "超时/预算耗尽"})
         if row["result"] != "not_applicable":
@@ -361,7 +480,7 @@ def run(args, report, finish, started):
             else:
                 invoke("commit-title", [sys.executable, str(Path(__file__).with_name("check-commit-title.py")), title])
 
-    precommit = shlex.split(os.environ.get("CI_FAST_PRECOMMIT", "uvx pre-commit"))
+    precommit = shlex.split(precommit_command())
     ready = execute([*precommit, "--version"], REPO_ROOT,
                     min(10, max(0, deadline - time.monotonic())), args.memory_mib)
     if ready["result"] != "pass":
@@ -371,11 +490,43 @@ def run(args, report, finish, started):
     hooks = [h for suite, ids in FAST_HOOKS.items() if scope.get(suite) for h in ids]
     if args.types:
         hooks += [h for suite, ids in TYPES_HOOKS.items() if scope.get(suite) for h in ids]
-    missing = sorted(set(hooks) - configured_hook_ids())
+    hook_ids = read_hook_ids()
+    if hook_ids is None:
+        reason = "cannot read .pre-commit-config.yaml"
+        report["reasons"].append(reason)
+        print(f"ci:fast: blocked — {reason}")
+        return finish("blocked", BLOCKED)
+    missing = sorted(set(hooks) - hook_ids)
     if missing:
         report["reasons"].append(f"hook ids missing from config: {missing}")
         return finish("unknown", UNKNOWN)
-    missing_deps = dependencies(REPO_ROOT, scope)
+    if args.pre_push:
+        # Not a silent narrowing: what leaves the selection is named in
+        # not_run, so a report that could not judge lint says so instead of
+        # reading as a pass that covered it. The drift check above still sees
+        # the whole set, so a config that lost one of these is still unknown.
+        dropped = [h for h in hooks if h in JS_RUNTIME_HOOKS]
+        hooks = [h for h in hooks if h not in JS_RUNTIME_HOOKS]
+        report["not_run"].extend(
+            {"id": h, "reason": "pre-push entry point: this one spawns the node toolchain, "
+                               "which a small box kills"}
+            for h in dropped
+        )
+    # The preflight follows what this run will spawn, not the raw scope:
+    # frontend/node_modules is what the node hooks need, and on the static
+    # pre-push path the three of them have already left the selection, so a
+    # frontend-scoped push from a checkout that never ran `task fe:install` is
+    # judged by the guards and the two python ratchets instead of coming back
+    # blocked with nothing run — which is the case that narrowing exists for.
+    # The filter drops the three JS hooks on every tier, so what keeps a
+    # non-static run gated on node_modules under --pre-push is the tier: its
+    # plan mounts the node toolchain (`frontend-unit`, the typecheck) whoever
+    # it lost from the hook selection. On the static tier only
+    # `frontend-typecheck` (added by `--types`) can survive the filter, and
+    # that one needs the tree too — which is why the question is asked of the
+    # selection rather than of the flag.
+    needs_node = args.tier != "static" or any(h in NODE_HOOKS for h in hooks)
+    missing_deps = dependencies(REPO_ROOT, {**scope, "frontend": bool(scope.get("frontend")) and needs_node})
     if missing_deps:
         report["reasons"].extend(missing_deps)
         print("\n".join(missing_deps))

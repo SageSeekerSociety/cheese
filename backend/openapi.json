@@ -29388,6 +29388,77 @@
         }
       }
     },
+    "/run-records/turns": {
+      "get": {
+        "tags": [
+          "run-records"
+        ],
+        "summary": "Run Records Turns",
+        "description": "一轮一行，按窗口。运行记录答不了「分母」，这一条答的就是分母 —— 口径写在\n`app.domain.run_record.turns` 的模块 docstring 上。",
+        "operationId": "run_records_turns_run_records_turns_get",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "type": "string",
+              "default": "24h",
+              "title": "Window"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnListOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/run-records/detail": {
       "get": {
         "tags": [
@@ -65887,6 +65958,142 @@
           "content"
         ],
         "title": "Turn"
+      },
+      "TurnListOut": {
+        "properties": {
+          "window": {
+            "type": "string",
+            "title": "Window"
+          },
+          "since": {
+            "type": "string",
+            "title": "Since"
+          },
+          "now": {
+            "type": "string",
+            "title": "Now"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/TurnOut"
+            },
+            "type": "array",
+            "title": "Turns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "window",
+          "since",
+          "now",
+          "limit",
+          "total",
+          "turns"
+        ],
+        "title": "TurnListOut"
+      },
+      "TurnListOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TurnListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TurnListOutEnvelope"
+      },
+      "TurnOut": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "title": "Turn Id"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "stopped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped At"
+          },
+          "failure_event": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Event"
+          },
+          "prompt_attempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Attempts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id",
+          "conversation_id",
+          "started_at",
+          "stopped_at",
+          "failure_event"
+        ],
+        "title": "TurnOut",
+        "description": "一轮一行。"
       },
       "UpdateCard": {
         "properties": {

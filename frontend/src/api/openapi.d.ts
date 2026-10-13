@@ -8057,6 +8057,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/run-records/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run Records Turns
+         * @description 一轮一行，按窗口。运行记录答不了「分母」，这一条答的就是分母 —— 口径写在
+         *     `app.domain.run_record.turns` 的模块 docstring 上。
+         */
+        get: operations["run_records_turns_run_records_turns_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/run-records/detail": {
         parameters: {
             query?: never;
@@ -18017,6 +18038,55 @@ export interface components {
             role: "user" | "assistant";
             /** Content */
             content: string;
+        };
+        /** TurnListOut */
+        TurnListOut: {
+            /** Window */
+            window: string;
+            /** Since */
+            since: string;
+            /** Now */
+            now: string;
+            /** Limit */
+            limit: number;
+            /** Total */
+            total: number;
+            /** Turns */
+            turns: components["schemas"]["TurnOut"][];
+        };
+        /** TurnListOutEnvelope */
+        TurnListOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["TurnListOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * TurnOut
+         * @description 一轮一行。
+         */
+        TurnOut: {
+            /** Turn Id */
+            turn_id: string;
+            /** Conversation Id */
+            conversation_id: string;
+            /** Started At */
+            started_at: string;
+            /** Stopped At */
+            stopped_at: string | null;
+            /** Failure Event */
+            failure_event: string | null;
+            /** Prompt Attempts */
+            prompt_attempts?: number | null;
         };
         /** UpdateCard */
         UpdateCard: {
@@ -35034,6 +35104,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_records_turns_run_records_turns_get: {
+        parameters: {
+            query: {
+                topic: string;
+                window?: "24h" | "7d" | "30d";
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TurnListOutEnvelope"];
                 };
             };
             /** @description Validation Error */

@@ -440,7 +440,6 @@ ignore_imports =
     app.domain.usage.ledger -> app.domain.project.services
     app.domain.usage.repositories -> app.domain.project.models
     app.domain.usage.subscription_ingest -> app.domain.project.repositories
-    app.domain.user.realname_services -> app.domain.space.services
     app.domain.user.repositories -> app.domain.identity.models
     app.domain.user.repositories -> app.domain.team.models
     app.domain.user.services -> app.domain.identity.handles
@@ -742,5 +741,4 @@ ignore_imports =
     app.domain.topic_membership.services -> app.domain.thread.models
     app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.subscription_ingest -> app.domain.block.models
-    app.domain.user.realname_services -> app.domain.space.services
     app.domain.webhook.service -> app.domain.agent.announce

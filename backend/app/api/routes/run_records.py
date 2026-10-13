@@ -13,11 +13,12 @@ from fastapi import APIRouter, Query
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.feedback.claims import is_platform_project
-from app.domain.run_record import admin
+from app.domain.run_record import admin, turns
+from app.domain.run_record.turns import TurnListOut
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/run-records", tags=["run-records"])
@@ -51,6 +52,20 @@ async def run_records_overview(
 ) -> dict:
     await _from_platform_room(db, resolver, topic)
     return ok(await admin.overview(db, window=window, group=group, query=q))
+
+
+@router.get("/turns", **typed_response(TurnListOut))
+async def run_records_turns(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    topic: uuid.UUID,
+    window: Window = "24h",
+    limit: int = Query(turns.DEFAULT_LIMIT, ge=1, le=turns.MAX_LIMIT),
+) -> dict:
+    """一轮一行，按窗口。运行记录答不了「分母」，这一条答的就是分母 —— 口径写在
+    `app.domain.run_record.turns` 的模块 docstring 上。"""
+    await _from_platform_room(db, resolver, topic)
+    return ok(await turns.in_window(db, window=window, limit=limit))
 
 
 @router.get("/detail")
