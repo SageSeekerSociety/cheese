@@ -863,9 +863,16 @@ def self_test() -> int:
             not report_ran(holder / "absent.json"),
         )
         made = report_path("case")
+        # The pid in the name is what lets a later run tell this run's report
+        # from one a killed run left, and the sweep turns on it; nothing else
+        # reads it, so a name carrying any live pid satisfies every other case.
+        fields = made.name[len(WORKTREE_PREFIX) : -len(".json")].split("-")
         tally.case(
-            "a report path is reserved but not created",
-            not made.exists() and made.parent == Path(tempfile.gettempdir()),
+            "a report path is reserved but not created, and names this run's pid",
+            not made.exists()
+            and made.parent == Path(tempfile.gettempdir())
+            and fields[0] == "case"
+            and fields[1] == str(os.getpid()),
         )
         made.unlink(missing_ok=True)
 
@@ -917,10 +924,19 @@ def self_test() -> int:
             (full / relative).mkdir(parents=True)
         every = holder / "every"
         every.mkdir()
+        linked_all = relink_dependencies(full, every)
+        # The list it hands back is what the --keep note quotes, and linking is
+        # what the halves run on; a case that reads only the list stays green
+        # while three of the four directories are never linked at all.
         tally.case(
             "all four dependency directories are linked, not just backend/.venv",
-            relink_dependencies(full, every)
-            == ["backend/.venv", "frontend/node_modules", "node_modules", ".venv"],
+            linked_all
+            == ["backend/.venv", "frontend/node_modules", "node_modules", ".venv"]
+            and all(
+                (every / relative).is_symlink()
+                and (every / relative).resolve() == (full / relative).resolve()
+                for relative in linked_all
+            ),
         )
 
     with tempfile.TemporaryDirectory() as scratch:
@@ -1618,13 +1634,25 @@ def self_test() -> int:
         def gone(path: Path) -> bool:
             return not path.exists() and not _registered(repo, path)
 
-        # A pid that could exist and does not, found rather than assumed: the
-        # self-test must not rest on 999999 being free on this machine. Nothing
-        # is forked between the probe and the use, so it stays free.
-        free = 999_999
-        while _alive(free):
-            free += 1
-        dead = plant(free)
+        def unused_pid() -> int:
+            """A pid that is dead whenever it is read, and cannot become live.
+
+            One past the largest number this kernel hands out, because a number
+            found from below is one a later subprocess can be given: between a
+            plant and the sweep that judges it this case forks dozens of them,
+            which is what the probe that used to stand here assumed away. Above
+            `pid_max` the kernel never allocates the number, so `_alive` reads
+            it as gone whenever the sweep asks.
+            """
+            try:
+                top = int(
+                    Path("/proc/sys/kernel/pid_max").read_text(encoding="utf-8")
+                )
+            except (OSError, ValueError):
+                top = 999_999
+            return min(top + 1, 2**31 - 1)
+
+        dead = plant(unused_pid())
         live = plant(os.getpid())
         # A pid that is alive and belongs to something else entirely — what a
         # dead run's number looks like after the kernel hands it out again. Only
@@ -1676,11 +1704,15 @@ def self_test() -> int:
             swept = True
         except Exception:
             swept = False
+        # Read before the test-side cleanup below, which would otherwise make
+        # this true whatever the sweep did — and the title says reclaimed, so a
+        # sweep that merely declined to raise on these names has not done it.
+        gone = [not _registered(repo, path) for path in odd]
         for path in odd:
             remove_worktree(repo, path)
         tally.case(
             "a worktree whose name is not a pid is reclaimed, not raised on",
-            swept,
+            swept and all(gone),
         )
 
         # The number the reclaim rule turns on. An hour would take a worktree
@@ -1725,7 +1757,10 @@ def self_test() -> int:
         # the sweep over the temp directory is the only thing that collects a
         # killed run's half. Its name carries the pid for exactly this: the
         # report of a live run is not litter.
-        leaked = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}before-{free}-leak.json"
+        leaked = (
+            Path(tempfile.gettempdir())
+            / f"{WORKTREE_PREFIX}before-{unused_pid()}-leak.json"
+        )
         leaked.write_text('{"numTotalTests": 1}', encoding="utf-8")
         mine = report_path("after")
         mine.write_text('{"numTotalTests": 1}', encoding="utf-8")
@@ -1766,11 +1801,51 @@ def self_test() -> int:
             swept and all(left),
         )
 
+        # The two guards that decide the name's shape at all: the report suffix
+        # and the three fields. Each is load-bearing and neither implies the
+        # other — without the suffix guard a `.txt` neighbour still slices into
+        # three fields, and without the field-count guard a fourth field still
+        # leaves the pid in the middle where the rule reads it. So each gets a
+        # name only it rejects, aged and carrying this run's pid, which is what
+        # puts it one glint away from being collected.
+        shaped = []
+        for name in (
+            f"{WORKTREE_PREFIX}before-{os.getpid()}-aaaa.txt",
+            f"{WORKTREE_PREFIX}before-{os.getpid()}-aa-bb.json",
+        ):
+            path = Path(tempfile.gettempdir()) / name
+            path.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(path, (when, when))
+            shaped.append(path)
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            left = [path.exists() for path in shaped]
+            for path in shaped:
+                path.unlink(missing_ok=True)
+        tally.case(
+            "a name of the wrong shape is left where it is",
+            swept and all(left),
+        )
+
         # Looking at an entry can fail on its own — the file removed between the
         # listing and the look, a mount that stops answering. The sweep is not
         # the place to say so, and an entry it could not read is not one it has
         # read as litter.
-        unreadable = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}before-7-aaaa.json"
+        # This run's own pid, so a concurrent run of this suite — which sweeps
+        # the same shared temp directory — reads it as live and fresh and leaves
+        # it alone. A pid that is not alive would be collected by that other
+        # run's sweep, and the case would fail on the competition rather than on
+        # the guard.
+        unreadable = (
+            Path(tempfile.gettempdir())
+            / f"{WORKTREE_PREFIX}before-{os.getpid()}-aaaa.json"
+        )
         unreadable.write_text('{"numTotalTests": 1}', encoding="utf-8")
         real_is_file = Path.is_file
 
@@ -1798,29 +1873,39 @@ def self_test() -> int:
         # And the removal itself can be refused — a sticky /tmp where the file
         # belongs to someone else, a directory that appeared where a report was.
         # Left where it is, and the sweep goes on: a raise here is exit 1, NOT
-        # PROVEN, out of a run that judged nothing.
-        stuck = report_path("after")
-        stuck.write_text('{"numTotalTests": 1}', encoding="utf-8")
-        when = time.time() - STALE_AFTER - 60
-        os.utime(stuck, (when, when))
-        real_unlink = Path.unlink
-
-        def refuse_unlink(self: Path, *args: object, **kwargs: object) -> None:
-            if self.name == stuck.name:
-                raise OSError("forced")
-            return real_unlink(self, *args, **kwargs)
-
-        Path.unlink = refuse_unlink  # type: ignore[method-assign]
+        # PROVEN, out of a run that judged nothing. Through a temp directory of
+        # this case's own: the report has to be one the sweep wants removed, so
+        # it is aged, and an aged report in the shared temp directory is one a
+        # concurrently running copy of this suite wants removed too — the case
+        # would then fail on the competition rather than on the guard.
+        was_temp = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "unremovable-temp")
+        Path(tempfile.tempdir).mkdir()
         try:
-            with _Muffle():
-                reclaim_stale(repo)
-            swept = True
-        except Exception:
-            swept = False
+            stuck = report_path("after")
+            stuck.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(stuck, (when, when))
+            real_unlink = Path.unlink
+
+            def refuse_unlink(self: Path, *args: object, **kwargs: object) -> None:
+                if self.name == stuck.name:
+                    raise OSError("forced")
+                return real_unlink(self, *args, **kwargs)
+
+            Path.unlink = refuse_unlink  # type: ignore[method-assign]
+            try:
+                with _Muffle():
+                    reclaim_stale(repo)
+                swept = True
+            except Exception:
+                swept = False
+            finally:
+                Path.unlink = real_unlink  # type: ignore[method-assign]
+                kept = stuck.exists()
+                stuck.unlink(missing_ok=True)
         finally:
-            Path.unlink = real_unlink  # type: ignore[method-assign]
-            kept = stuck.exists()
-            stuck.unlink(missing_ok=True)
+            tempfile.tempdir = was_temp
         tally.case(
             "a report that cannot be removed is left where it is, not raised on",
             swept and kept,
@@ -1846,22 +1931,35 @@ def self_test() -> int:
         # two free to drift apart, so the sweep would go on collecting nothing
         # with every case still green. Aged past the limit, because the pid in
         # the name is this run's and only the age takes it.
-        aged_report = report_path("after")
-        aged_report.write_text('{"numTotalTests": 1}', encoding="utf-8")
-        when = time.time() - STALE_AFTER - 60
-        os.utime(aged_report, (when, when))
-        with _Muffle():
-            reclaim_stale(repo)
+        # In a temp directory of its own, so that what removed it can only be
+        # this call: in the shared one a concurrent copy of this suite would
+        # also remove an aged report whose name is its own writer's, and the
+        # case would pass without this sweep having done anything.
+        was_temp = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "aged-temp")
+        Path(tempfile.tempdir).mkdir()
+        try:
+            aged_report = report_path("after")
+            aged_report.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(aged_report, (when, when))
+            with _Muffle():
+                reclaim_stale(repo)
+            reclaimed = not aged_report.exists()
+        finally:
+            tempfile.tempdir = was_temp
         tally.case(
             "a report report_path wrote is reclaimed once it ages out",
-            not aged_report.exists(),
+            reclaimed,
         )
 
         # A registration whose directory was cleared away — the same reboot out
         # of /tmp — makes the next `worktree add` fail with "missing but already
         # registered", so the add is preceded by a remove. The checkout has to
         # survive a state the fixture above never reaches.
-        stranded = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}stranded-{free}"
+        stranded = (
+            Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}stranded-{unused_pid()}"
+        )
         git("worktree", "remove", "--force", str(stranded), cwd=repo)
         shutil.rmtree(stranded, ignore_errors=True)
         subprocess.run(
