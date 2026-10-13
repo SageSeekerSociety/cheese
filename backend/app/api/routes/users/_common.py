@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     TRUST_COOKIE,
 )
 from app.common.auth import (

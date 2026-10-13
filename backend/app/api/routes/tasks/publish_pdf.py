@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, File, Form, UploadFile
 
 from app.api.routes.tasks._common import (
     ConfirmTaskPublishFromPdfRequest,
-    _attachment_service,
     _create_task_entity,
+)
+from app.api.task_deps import (
+    _attachment_service,
     _task_attachment_service,
     get_task_pdf_draft_service,
 )

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Path, Query
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
-from app.api.routes.tasks._common import (
+from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
     get_team_service,

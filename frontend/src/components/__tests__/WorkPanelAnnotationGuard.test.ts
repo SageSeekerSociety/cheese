@@ -68,7 +68,9 @@ beforeAll(() => {
   vuetify = createVuetify({ components, directives })
 })
 
-const changes = { openFile: vi.fn() }
+// 桩要替真身答一句「这一支里有没有这份文件」：开到了才回 true，`WorkPanel.openFile`
+// 拿它判断是留在「改动」这一格，还是退到「项目当前版本」那一格。
+const changes = { openFile: vi.fn<(path: string) => Promise<boolean>>(async () => true) }
 
 const PanelChangesStub = defineComponent({
   name: 'PanelChanges',

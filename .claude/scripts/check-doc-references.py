@@ -12,10 +12,15 @@ whose whole job is to be obeyed.
 The live example this check was built against: `.claude/skills/
 cheese-py-code-review/SKILL.md` told every reviewer to check a diff against
 "AGENTS.md's **Architecture / Python Conventions / API Design / Datetime /
-Security** sections". The root instructions never had a section by any of those
-five names, and the file had been renamed `CLAUDE.md` → `AGENTS.md` by a script
-that swapped the filename without ever reading the headings. Five broken
-pointers, years old, in the file a reviewer is told to trust.
+Security** sections" (quoted as it reads today; it named `CLAUDE.md` when
+written). The sentence was correct then: `1c83ebdf` (2026-08-10, #208) added it
+while `CLAUDE.md` really did carry all five of those headings. What killed it
+was `1b9dc3f7` (#518, 2026-08-18), which cut that file from 363 lines to 55 and
+deleted the five sections without touching the sentence pointing at them. The
+later rename to `AGENTS.md`
+(`40709ff1`, 2026-10-11, #3394) only followed the moved filename in the same
+sentence — it is not the cause. So the pointer was dead for 55 days, in the file
+a reviewer is told to trust, and nothing noticed.
 
 What is deliberately NOT here:
 

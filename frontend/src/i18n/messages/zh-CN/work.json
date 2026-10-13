@@ -429,6 +429,7 @@
     },
     "message": {
       "copy": "复制",
+      "copySelection": "复制选中文字",
       "copied": "已复制",
       "copyLink": "复制链接",
       "linkCopied": "已复制链接",
@@ -470,7 +471,7 @@
       "placeholderDm": "给{name}发消息",
       "placeholder": "输入消息，{'@'}{name} 交给它处理",
       "attachFiles": "上传文件（每个最大 10MB）",
-      "sendPhotos": "发送照片",
+      "sendPhotos": "发送照片或视频",
       "more": "更多操作",
       "send": "发送",
       "sendUploading": "附件上传中，传完再发",
@@ -578,7 +579,6 @@
       "sourceUnavailable": "无法打开这个任务，换一个来源查看",
       "noRepo": "暂无代码仓库",
       "switchToCommitted": "切换到已提交版本",
-      "missingInTask": "{path} 不在这个任务里",
       "conflict": "你编辑期间，这个文件已被修改，直接保存会覆盖这些修改",
       "reloadLatest": "载入最新版本",
       "saveAnyway": "仍要保存",
@@ -748,6 +748,7 @@
       "source": {
         "baseline": "最初的样子",
         "upload": "上传",
+        "template": "从模板新建",
         "ai": "AI 队友修改",
         "editor": "在线编辑保存",
         "restore": "恢复",
@@ -847,7 +848,8 @@
         "math": "公式",
         "chart": "图表",
         "diagram": "流程图",
-        "status": "状态标签"
+        "status": "状态标签",
+        "canvas": "画布"
       },
       "selectionToolbar": "选区操作",
       "copy": "复制",
@@ -973,6 +975,31 @@
           "video": "视频"
         }
       },
+      "canvas": {
+        "untitled": "未命名画布",
+        "title": "画布标题",
+        "about": "画布说明",
+        "full": "全屏查看",
+        "exitFull": "退出全屏",
+        "saveFailed": "保存失败",
+        "loadFailed": "无法读取这块画布",
+        "notMade": "暂无画布",
+        "make": "新建画布",
+        "elsewhere": "这里不显示画布内容",
+        "height": "拖动调整高度",
+        "empty": "暂无格子",
+        "addCard": "添加格子",
+        "zoomIn": "放大",
+        "zoomOut": "缩小",
+        "fit": "显示全部",
+        "openTask": "打开任务",
+        "taskHidden": "你看不到这个任务",
+        "cardText": "格子内容",
+        "emptyCard": "空格子",
+        "removeCard": "删除格子",
+        "lineLabel": "连线上的字",
+        "removeLine": "删除连线"
+      },
       "historyView": "右边显示",
       "historyDiff": "与上一版比较",
       "historyFull": "这一版全文",
@@ -1042,7 +1069,9 @@
       "waitingConnection": "等待连接",
       "today": "今天",
       "yesterday": "昨天",
-      "topicFallback": "频道",
+      "refThread": "支线：{title}",
+      "refMissing": "引用不存在",
+      "refMissingHint": "这里引用的频道、任务或支线不存在，或者你看不到它",
       "timelineLabel": "对话记录",
       "liveNew": "{name}：{text}",
       "messageLabel": "{name}，{time}：{text}",
@@ -1111,6 +1140,14 @@
       "ci": "等待检查",
       "human": "待审阅",
       "platform": "平台处理中"
+    },
+    "video": {
+      "label": "视频：{name}",
+      "open": "打开视频",
+      "loading": "视频加载中",
+      "retry": "重新加载",
+      "loadFailed": "无法读取视频，可以重新加载或下载",
+      "playFailed": "浏览器无法播放这个视频，可以下载后观看"
     },
     "attachments": {
       "imageSnippet": "[图片]",
@@ -1438,8 +1475,16 @@
     "expand": "展开",
     "expandStalled": "展开：里面有成员卡住了",
     "expandAwaits": "展开：里面有待处理的事项",
+    "expandWorking": "展开：里面有活在往前走",
+    "expandQuiet": "展开：里面有活显示在跑，但没动静了",
+    "expandDelivered": "展开：里面有刚交付完、你还没看过的",
     "turnFailed": "{agent}最近一轮报错了",
-    "awaitsTip": "有待处理的事项",
+    "light": {
+      "red": "显示在跑，但五分钟没动静",
+      "yellow": "有事等你",
+      "moving": "有活在往前走",
+      "delivered": "做完了，你还没看过"
+    },
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子频道 {count} 条新消息",
     "moreActions": "更多操作",
@@ -1449,10 +1494,7 @@
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
     "workingTip": "{name}正在这里工作",
-    "expandWorking": "展开：里面有队友在工作",
     "moreMembers": "+{count}",
-    "taskNeedsYou": "需要你处理",
-    "taskRunning": "运行中",
     "allTasks": "全部任务",
     "moreTasks": "展开其余 {count} 个",
     "fewerTasks": "收起",
@@ -1726,6 +1768,12 @@
       "online": "在线",
       "offline": "离线",
       "empty": "暂无已接入的 Claude Code",
+      "callersLabel": "谁可以叫它",
+      "callersOwner": "只有我",
+      "callersProject": "项目成员",
+      "callersDetail": "项目成员叫它时，用的是你在自己电脑上配置的模型账号，费用和账号条款由你自己负责。",
+      "callersOwnerTag": "只有主人能叫",
+      "callersProjectTag": "项目成员都能叫",
       "readOnly": "仅项目管理员可修改",
       "loadFailed": "加载成员自己的 Claude Code 失败",
       "saveFailed": "保存设置失败"
@@ -2133,7 +2181,10 @@
   },
   "image": {
     "alt": "图片",
-    "failed": "图片加载失败"
+    "close": "关闭",
+    "failed": "图片加载失败",
+    "open": "查看大图：{name}",
+    "zoomHint": "滚轮或双指缩放，按住拖动"
   },
   "agentAvatar": {
     "defaultName": "芝士",
@@ -2177,8 +2228,6 @@
     "leaveCollaboration": "退出协作",
     "start": "开始",
     "startFailed": "未能开始，稍后重试",
-    "reviewer": "审阅人",
-    "reviewerNone": "选择审阅人",
     "startedLine": "{who} {when}开始",
     "compare": "与开始时相比",
     "compareBack": "返回文档",

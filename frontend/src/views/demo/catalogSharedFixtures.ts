@@ -12,6 +12,7 @@
  */
 import type { JSONContent } from '@tiptap/core'
 import type { ArtifactVersion } from '@/api'
+import type { AgentType } from '@/cx_types'
 import type { Team, User } from '@/types'
 
 // ---- 富文本（TipTapEditor）---------------------------------------------------
@@ -56,6 +57,35 @@ export function attachmentImageViewProps(
     HTMLAttributes: {},
   }
 }
+
+// ---- 默认队友（DefaultTeammatePicker）---------------------------------------
+
+/** 平台预设的一项：`/agent-types` 给的就是这个形状，没写的字段照平台的默认补。 */
+function agentType(over: Partial<AgentType> & Pick<AgentType, 'name' | 'title'>): AgentType {
+  return {
+    description: '',
+    body: '',
+    skills: [],
+    mcp_servers: [],
+    builtin: true,
+    ...over,
+  }
+}
+
+/** 两个平台预设：一个有技能清单（副标题列它），一个没有（退回说明那一句）。 */
+export const AGENT_TYPES: AgentType[] = [
+  agentType({
+    name: 'claude-code',
+    title: 'Claude Code',
+    description: '动手改代码的那一位',
+    skills: ['wolfram', 'docx'],
+  }),
+  agentType({
+    name: 'code-reviewer',
+    title: '代码审查',
+    description: '只看不改，逐条说清哪里不对。',
+  }),
+]
 
 // ---- 产物版本（ArtifactVersionList）-----------------------------------------
 

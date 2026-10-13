@@ -607,8 +607,10 @@ def build_session_opening(
             "频道，含 archived 的名字和 id）：\n"
             '`platform_request(method="GET", '
             'path="/topics?project_id=<本项目 id>")`\n'
-            "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。\n"
-            + lines
+            "拿到 id 后用 `<#id>` 就能精确引用任何一个频道（包括没列在下面的）。"
+            "任务和支线也这样引用：`<#任务的 id>`、`<#支线的 id>`，读的人看到的是"
+            "能点开的「#任务名」「#支线：开头那句」。别的 id 写进去，读的人只看到"
+            "一个打不开的引用。\n" + lines
         )
     if artifacts is not None:
         # 产物清单进开场，是为了让下一次交付点得准名字。怎么点名、about 怎么写，
@@ -705,21 +707,29 @@ def task_opening_prompt(
     source: str,
     materials: str = "",
     started: bool = False,
+    reviewer: str | None = None,
 ) -> str:
     """What a new task's agent is told first: where the task came from, what
     was put on the table there, and to draft the task's document from it
     before anything else. A task started as it was created goes on to the work
-    once the document is drafted."""
+    once the document is drafted, and is told who accepts its deliveries when
+    that is not the owner."""
     who = f"负责人是 @{owner}。" if owner else ""
     put = (
         f"{materials}\n整理时读一读它们，文档里写明依据的是哪一份。\n\n"
         if materials
         else ""
     )
+    accepted = (
+        f"这次交付由 @{reviewer} 验收。\n\n"
+        if started and reviewer and reviewer != owner
+        else ""
+    )
     return (
         f"这里是任务「{title}」，{who}它从频道里的讨论中创建：\n\n"
         f"---\n{source}\n---\n\n"
         f"{put}"
+        f"{accepted}"
         "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入。怎么组织你来"
         "判断：最要紧的一两句放在最上面，细节缩进到下面；讨论里否掉的做法也记下来，"
         "写明没采用和原因。"

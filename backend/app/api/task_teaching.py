@@ -12,7 +12,7 @@ materials（引用校验）,所以它按 `ensure_teaching_references` 交代的�
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.spaces import TeachingRequest, teaching_to_api
+from app.api.space_payloads import TeachingRequest, teaching_to_api
 from app.core.errors import BadRequestError
 from app.domain.knowledge.services import KnowledgeService
 from app.domain.materials.services import MaterialService

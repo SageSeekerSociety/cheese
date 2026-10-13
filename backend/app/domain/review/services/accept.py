@@ -9,13 +9,15 @@ from typing import TYPE_CHECKING, NoReturn
 
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
 from app.domain.review import (
     archive,
     merge_state,
     notes,
     pr_publish,
+    pr_signals,
+    pr_text,
 )
 from app.domain.review import forge as forge_mod
 from app.domain.review.merge_state import MergeVerdict, Who, whose_move
@@ -41,11 +43,13 @@ from app.domain.review.services._shared import (
     EVENT_ACCEPT_DISMISSED,
     EVENT_ACCEPT_DONE,
     EVENT_ACCEPT_STOPPED,
+    EVENT_MERGE_REFUSED,
     EVENT_PR_CLOSED,
     SEVERITY_ERROR,
     SEVERITY_INFO,
     SEVERITY_WARN,
     VOIDED_PREFIX,
+    WHO_CHEESE,
     WHO_HUMAN,
     WHO_PLATFORM,
     _GitHubCredentials,
@@ -602,6 +606,68 @@ async def _stop_accept_pr_unavailable(
     await self._session.rollback()
     await self._note_outside_accept_txn(card_id, notes.NoteCode.accept_pr_stalled, note)
     raise ValidationError(say("acceptPrNotMerged", why=why))
+
+
+async def _stop_accept_title_disagrees(
+    self: pkg.AcceptService, card: AcceptCard, topic: Topic, pr_title: str
+) -> NoReturn:
+    """GitHub 上的 PR 标题和这张卡不是同一行：采纳停下，并把卡交给执行者。
+
+    一个字符串三个读者：平台按卡片的 subject 写 PR 标题、按同一行落 squash 提交
+    标题，而**仓库自己的检查评判的是 PR 上那个标题**（编辑 PR 会让它重跑自己的
+    `pull_request` 工作流）。两行分家时平台再合下去，写进项目历史的是一行仓库从
+    没检查过的字 —— 2026-10-12 的 PR #3496 就是这么在 main 上留下一个中文标题、
+    把必需的标题检查点红的。所以这里不是「顺带一提」，是采纳必须停下的理由
+    （判据在 `pr_text.pr_title_matches_subject`，轮询那条路用的是同一个）。
+
+    平台不判断哪一行才对：标题该怎么写是仓库自己的规矩，它的 CI 说了算。平台只
+    看这两个读者是不是在读同一个字符串，也**不**把 PR 标题改回卡片那行 ——
+    卡片仍是落地的唯一源头，绕过它等于让一个外部可改的字段对永久历史有发言权。
+
+    `_notify_merge_result` 走自己的会话（模块级的 factory）且点名任务，所以回滚
+    不会带走它，执行者照样被叫起来改卡片。它是唯一该醒的人：`cheese_describe`
+    会同时把 GitHub 上的 PR 标题改成新的一行，仓库的检查按新标题重跑。
+
+    Same rollback-first dance as `_stop_accept_pr_unavailable`: the note is
+    written on its own connection and must never queue behind a row lock this
+    doomed transaction still holds. The subject and the live title are read
+    while the instances are live, before the rollback expires them."""
+    number = card.pr_number
+    card_id = card.id
+    subject = pr_text.change_subject(card, topic)
+    # PR 标题是仓库外的人能控制的字符串，而它要被贴进终端（`sanitize_external`）。
+    live = pr_signals.sanitize_external(pr_title).strip()
+    shown = live or "（此刻读不出来）"
+    self._notify_merge_result(
+        topic,
+        say("acceptStoppedTitleDisagrees", pr=number),
+        task_id=card.task_id,
+        meta=notice(
+            # 复用 `merge_refused`：标题分家就是「这次不能这样合并」，语义够用，
+            # 也就不必为一个新事件码重建 `CHECKS_FOR_THE_AGENT` 那个部分索引。
+            EVENT_MERGE_REFUSED,
+            severity=SEVERITY_ERROR,
+            who=WHO_CHEESE,
+            detail=say(
+                "acceptTitleDisagreesDetail",
+                pr_title=shown,
+                subject=subject,
+            ),
+            detail_label=say("labelReason"),
+        ),
+    )
+    note = (
+        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和卡片标题"
+        f"（{subject}）不是同一行。平台按卡片标题落 squash 提交标题，而仓库自己的"
+        "检查评判的是 PR 上那个标题；合下去会往历史里写一行没人检查过的字，所以"
+        "停下了。用 cheese_describe 把这张卡的标题改成该落的那一行（平台会同时"
+        "改掉 PR 标题，检查会按新标题重跑），绿了之后重新采纳。"
+    )
+    await self._session.rollback()
+    await self._note_outside_accept_txn(
+        card_id, notes.NoteCode.pr_title_disagrees, note
+    )
+    raise UnprocessableEntityError(say("acceptTitleDisagrees", pr=number))
 
 
 async def _stop_accept_no_branch(

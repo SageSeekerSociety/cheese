@@ -54,7 +54,6 @@ const props = defineProps<{
   refreshing: boolean
   errorMsg: string | null
   noRepo: boolean
-  missing: string | null
   fileDiffs: FileDiff[]
   diffByPath: Map<string, FileDiff>
   /** 树上列的文件：这一支改到的那些。 */
@@ -366,17 +365,6 @@ const fileRows = computed(() =>
       </v-alert>
     </div>
     <div v-else class="file-tool">
-      <!-- chip 指来的文件不在这件任务里。列表照常显示：读者可以在树上挑别的文件。 -->
-      <v-alert
-        v-if="props.missing"
-        type="info"
-        variant="tonal"
-        density="compact"
-        class="ma-2"
-        data-testid="missing-file"
-      >
-        {{ t('work.room.changes.missingInTask', { path: props.missing }) }}
-      </v-alert>
       <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
          human choose — a silent winner is how edits vanished. -->
       <ReviewMergePicker
@@ -527,7 +515,7 @@ const fileRows = computed(() =>
                       v-if="props.fileToolReady"
                       kind="ghost"
                       size="sm"
-                      prepend-icon="mdi-file-search-outline"
+                      prepend-icon="mdi-magnify"
                       @click="pickerOpen = true"
                     >
                       {{ t('work.room.changes.openOther') }}

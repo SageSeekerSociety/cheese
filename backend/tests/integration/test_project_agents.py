@@ -434,7 +434,7 @@ def test_a_project_credential_is_refused_where_its_agent_has_no_seat(client):
 
     pid = _project(client)
     room = _topic(client, pid)
-    task = open_task(client, room, owner="u", start=False)["id"]
+    task = open_task(client, room, owner="u")["id"]
     seat = next(a for a in _agents(client, pid) if a["is_default"])["seat_handle"]
     dropped = client.delete(
         f"/topics/{room}/members/{seat}", headers=session_auth_headers("u")

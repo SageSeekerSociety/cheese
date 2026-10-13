@@ -429,6 +429,7 @@
     },
     "message": {
       "copy": "Copy",
+      "copySelection": "Copy selected text",
       "copied": "Copied",
       "copyLink": "Copy link",
       "linkCopied": "Link copied",
@@ -470,7 +471,7 @@
       "placeholderDm": "Message {name}",
       "placeholder": "Type a message, or {'@'}{name} to hand it over",
       "attachFiles": "Upload files (up to 10 MB each)",
-      "sendPhotos": "Send photos",
+      "sendPhotos": "Send photos or videos",
       "more": "More actions",
       "send": "Send",
       "sendUploading": "Uploading attachments — send once they finish",
@@ -578,7 +579,6 @@
       "sourceUnavailable": "Couldn't open this task. View another source",
       "noRepo": "No code repository",
       "switchToCommitted": "Switch to the committed version",
-      "missingInTask": "{path} is not in this task",
       "conflict": "This file changed while you were editing. Saving now overwrites those changes",
       "reloadLatest": "Load the latest version",
       "saveAnyway": "Save anyway",
@@ -748,6 +748,7 @@
       "source": {
         "baseline": "Original",
         "upload": "Upload",
+        "template": "New from a template",
         "ai": "Edited by an AI teammate",
         "editor": "Saved from the online editor",
         "restore": "Restore",
@@ -847,7 +848,8 @@
         "math": "Formula",
         "chart": "Chart",
         "diagram": "Diagram",
-        "status": "Status tag"
+        "status": "Status tag",
+        "canvas": "Canvas"
       },
       "selectionToolbar": "Selection actions",
       "copy": "Copy",
@@ -973,6 +975,31 @@
           "video": "Video"
         }
       },
+      "canvas": {
+        "untitled": "Untitled canvas",
+        "title": "Canvas title",
+        "about": "What the canvas shows",
+        "full": "Full screen",
+        "exitFull": "Exit full screen",
+        "saveFailed": "Couldn't save",
+        "loadFailed": "Can't read this canvas",
+        "notMade": "No canvas yet",
+        "make": "New canvas",
+        "elsewhere": "The canvas isn't shown here",
+        "height": "Drag to resize",
+        "empty": "No cards yet",
+        "addCard": "Add card",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out",
+        "fit": "Fit to view",
+        "openTask": "Open task",
+        "taskHidden": "You can't see this task",
+        "cardText": "Card text",
+        "emptyCard": "Empty card",
+        "removeCard": "Delete card",
+        "lineLabel": "Line label",
+        "removeLine": "Delete line"
+      },
       "historyView": "Show",
       "historyDiff": "Compare with previous",
       "historyFull": "Full text",
@@ -1042,7 +1069,9 @@
       "waitingConnection": "Waiting for connection",
       "today": "Today",
       "yesterday": "Yesterday",
-      "topicFallback": "Channel",
+      "refThread": "Thread: {title}",
+      "refMissing": "missing reference",
+      "refMissingHint": "The channel, task or thread referenced here doesn't exist, or you can't see it",
       "timelineLabel": "Conversation",
       "liveNew": "{name}: {text}",
       "messageLabel": "{name}, {time}: {text}",
@@ -1111,6 +1140,14 @@
       "ci": "Waiting for checks",
       "human": "Waiting for review",
       "platform": "Platform is on it"
+    },
+    "video": {
+      "label": "Video: {name}",
+      "open": "Open video",
+      "loading": "Loading video",
+      "retry": "Reload",
+      "loadFailed": "Unable to load this video. Reload or download it",
+      "playFailed": "This browser cannot play the video. Download it to watch"
     },
     "attachments": {
       "imageSnippet": "[Image]",
@@ -1438,8 +1475,16 @@
     "expand": "Expand",
     "expandStalled": "Expand: someone in here is stuck",
     "expandAwaits": "Expand: something in here needs you",
+    "expandWorking": "Expand: work in here is moving",
+    "expandQuiet": "Expand: something in here says it's running but has gone quiet",
+    "expandDelivered": "Expand: something in here just finished and you haven't looked",
     "turnFailed": "{agent}'s last run failed",
-    "awaitsTip": "Something needs you",
+    "light": {
+      "red": "Says it's running, but nothing for five minutes",
+      "yellow": "Waiting on you",
+      "moving": "Work moving",
+      "delivered": "Done and unread"
+    },
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
     "moreActions": "More actions",
@@ -1449,10 +1494,7 @@
     "chooseProjectFirst": "Choose a project first",
     "topics": "Channels",
     "workingTip": "{name} is working here",
-    "expandWorking": "Expand: a teammate is working in here",
     "moreMembers": "+{count}",
-    "taskNeedsYou": "Needs you",
-    "taskRunning": "Running",
     "allTasks": "All tasks",
     "moreTasks": "Show 1 more | Show {count} more",
     "fewerTasks": "Show fewer",
@@ -1726,6 +1768,12 @@
       "online": "online",
       "offline": "offline",
       "empty": "No member has connected their Claude Code",
+      "callersLabel": "Who can call it",
+      "callersOwner": "Only me",
+      "callersProject": "Project members",
+      "callersDetail": "When project members call it, it uses the model account you set up on your own computer. You pay for it and answer for that account's terms.",
+      "callersOwnerTag": "only its owner can call it",
+      "callersProjectTag": "any project member can call it",
       "readOnly": "Only project admins can change this",
       "loadFailed": "Couldn't load members' own Claude Code",
       "saveFailed": "Couldn't save the setting"
@@ -2133,7 +2181,10 @@
   },
   "image": {
     "alt": "Image",
-    "failed": "Couldn't load the image"
+    "close": "Close",
+    "failed": "Couldn't load the image",
+    "open": "View full size: {name}",
+    "zoomHint": "Scroll or pinch to zoom, drag to move"
   },
   "agentAvatar": {
     "defaultName": "Cheese",
@@ -2177,8 +2228,6 @@
     "leaveCollaboration": "Leave",
     "start": "Start",
     "startFailed": "Couldn't start. Try again later",
-    "reviewer": "Reviewer",
-    "reviewerNone": "Choose a reviewer",
     "startedLine": "{who} started {when}",
     "compare": "Compare with the start",
     "compareBack": "Back to the document",

@@ -5,10 +5,10 @@
 //
 // 进行中的整份读（和侧栏、项目总览同一份）；已关闭的只会越积越多，一页一页读，换筛选
 // 就从第一页重读。
-import type { TaskFilter } from '@/api/tasks'
+import type { TaskDeliveryFilter, TaskFilter } from '@/api/tasks'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useInfiniteQuery, useQuery } from '@tanstack/vue-query'
 
@@ -41,12 +41,37 @@ const loading = computed(() => openRead.isPending.value && !openRead.isError.val
 const channelId = computed(() => (typeof route.query.channel === 'string' ? route.query.channel : null))
 
 // ---- 已关闭的，一页一页 ----
-const closed = ref(false)
-const whose = ref<TaskFilter>('all')
+// All three filters live in the address: returning from a task keeps the selection.
+function pickFilter(key: string, value: string, fallback: string) {
+  const query = { ...route.query }
+  if (value === fallback) delete query[key]
+  else query[key] = value
+  void router.replace({ query })
+}
+const status = computed<'all' | 'open' | 'closed'>({
+  get: () => (route.query.status === 'all' || route.query.status === 'closed' ? route.query.status : 'open'),
+  set: (value) => pickFilter('status', value, 'open'),
+})
+const whose = computed<TaskFilter>({
+  get: () => {
+    const value = route.query.whose
+    return value === 'mine' || value === 'helping' || value === 'others' ? value : 'all'
+  },
+  set: (value) => pickFilter('whose', value, 'all'),
+})
+const delivery = computed<TaskDeliveryFilter>({
+  get: () => (route.query.delivery === 'accepted' ? 'accepted' : 'all'),
+  set: (value) => pickFilter('delivery', value, 'all'),
+})
+const includesClosed = computed(() => status.value !== 'open')
 const closedRead = useInfiniteQuery(
   computed(() => ({
-    ...closedProjectTasksQuery(props.projectId, { channel: channelId.value, whose: whose.value }),
-    enabled: closed.value,
+    ...closedProjectTasksQuery(props.projectId, {
+      channel: channelId.value,
+      whose: whose.value,
+      delivery: delivery.value,
+    }),
+    enabled: includesClosed.value,
   })),
   queryClient
 )
@@ -61,13 +86,17 @@ const closedFailed = computed(() => closedRead.isError.value)
 const denied = (e: Error | null) => !!e && store.noteAccess(e)
 watch(() => openRead.error.value, denied)
 watch(() => closedRead.error.value, denied)
-const failed = computed(() => openRead.isError.value && !store.accessDenied)
+const failed = computed(() => status.value !== 'closed' && openRead.isError.value && !store.accessDenied)
 
 // 下一页没读成时，「重试」就是再读一次这一页。
 function moreClosed() {
-  if (closedRead.isFetchingNextPage.value) return
+  if (closedRead.isFetching.value) return
   if (closedRead.isError.value && !closedRead.data.value) void closedRead.refetch()
   else void closedRead.fetchNextPage()
+}
+function retry() {
+  if (status.value !== 'closed' && openRead.isError.value) void openRead.refetch()
+  if (includesClosed.value && closedFailed.value) moreClosed()
 }
 function pickChannel(id: string | null) {
   const query = { ...route.query }
@@ -114,7 +143,8 @@ function create() {
 
 <template>
   <ProjectTasksView
-    v-model:closed="closed"
+    v-model:status="status"
+    v-model:delivery="delivery"
     v-model:whose="whose"
     :tasks="live"
     :channels="channels"
@@ -122,8 +152,8 @@ function create() {
     :names="names"
     :avatars="avatars"
     :me="myHandle()"
-    :loading="loading || (closed && closedCounts === null && !closedFailed)"
-    :failed="failed || (closed && closedFailed && !closedTasks.length && !store.accessDenied)"
+    :loading="(status !== 'closed' && loading) || (includesClosed && closedCounts === null && !closedFailed)"
+    :failed="failed || (status === 'closed' && closedFailed && !closedTasks.length && !store.accessDenied)"
     :closed-tasks="closedTasks"
     :closed-counts="closedCounts"
     :closed-has-more="closedHasMore"
@@ -131,7 +161,7 @@ function create() {
     :closed-failed="closedFailed"
     @open-task="openTask"
     @new-task="create"
-    @retry="closed ? moreClosed() : openRead.refetch()"
+    @retry="retry"
     @pick-channel="pickChannel"
     @more="moreClosed"
   />

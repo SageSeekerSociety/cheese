@@ -11,7 +11,17 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { AGENT_NAME, CHAT_ROWS, CHAT_TOPIC, chatTimelineProps } from './catalogFixtures'
+import {
+  AGENT_NAME,
+  CHAT_ROWS,
+  CHAT_ROWS_FULL,
+  CHAT_TOPIC,
+  chatTimelineProps,
+  isMineWang,
+  ROOM_MENTION_POOL,
+  WANG_CLOSING,
+  WANG_EDITING_ROW,
+} from './catalogFixtures'
 
 import ChatErrorToast from '@/components/chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from '@/components/chat/ChatNewMessagesPill.vue'
@@ -34,6 +44,9 @@ const HEADER_BASE = {
   titleOverride: null as string | null,
   backLabel: null as string | null,
 }
+
+/** 整段对话，收尾那一句换成「正在改」的那一版（末尾敲了一个 `@`）。 */
+const EDIT_ROWS = CHAT_ROWS_FULL.map((r) => (r.block.id === WANG_CLOSING.block.id ? WANG_EDITING_ROW : r))
 
 // ---- 对话栏（ChatPanel）拆出来的那一组「只管画」的件 -------------------------
 //
@@ -129,6 +142,18 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
         note: '整段由 props 摆出来：行、每行的分组关系、日期线都在外面算好。这一格是预览站里唯一能看到「一整屏对话」长什么样的地方。',
         props: chatTimelineProps(),
         expect: '王长鑫',
+      },
+      {
+        name: '正在改一条消息：@ 候选开着',
+        note: '改自己刚发的那一条，框里已经敲下一个 `@`：候选从框的上边弹出**这一行**，所以打开这一格就该看见一整块菜单，而不是贴着框沿的一条。框自己按折行长高，字号和消息正文同一档。',
+        props: chatTimelineProps({
+          rows: EDIT_ROWS,
+          editingId: WANG_CLOSING.block.id,
+          isMine: isMineWang,
+          mentionPool: ROOM_MENTION_POOL,
+        }),
+        expect: '所有人',
+        expectSelector: '.mention-menu',
       },
       {
         name: '空房间',

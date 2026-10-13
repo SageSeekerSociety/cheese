@@ -46,6 +46,8 @@
   "cheeseDocEdit": "修改文档",
   "cheeseDocNew": "新建文档",
   "cheeseDocList": "查看资料库文档",
+  "cheeseCanvasGet": "读取画布",
+  "cheeseCanvasEdit": "修改画布",
   "cheeseDocCommentReply": "回复文档评论",
   "cheeseTask": "创建任务",
   "cheeseWorktree": "准备工作目录",

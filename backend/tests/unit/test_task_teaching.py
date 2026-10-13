@@ -458,7 +458,7 @@ def test_private_guidance_reaches_the_agent_prompt_under_its_own_heading() -> No
 def test_private_guidance_is_omitted_from_the_response_unless_asked() -> None:
     """`teaching_to_api` 默认不带 `privatePrompt` —— 学生那条读就看不到它；
     出题人/管理员那条读传 `include_private=True` 才带。"""
-    from app.api.routes.spaces import teaching_to_api
+    from app.api.space_payloads import teaching_to_api
 
     teaching = Teaching(private_prompt="参考答案是 42")
 

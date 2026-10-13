@@ -8,13 +8,53 @@ commands and turns each command's report into a verdict nobody can fake:
     ran. An empty selection, a skipped test, a missing report, a selected file
     with no executed case, or a process that died by signal is unknown (exit 2),
     never a pass. Running only the always-on guards never proves a changed
-    module has coverage — its consumer files must appear in the report.
+    module has coverage — its consumer files must appear in the report: the
+    specs that read the tree off disk run whatever changed, so passing only them
+    is an empty selection wearing their exit code.
   * The report decides pass/fail for suites; the exit code only widens it to
     unknown (pytest 2/3/4/5, Vitest --no-passWithNoTests on an empty graph).
-  * Frontend scope with no changed source root, a deleted/config/.github edit or
-    an unknown path falls back to the full Vitest run; the related graph is only
-    trusted when it has real roots to seed it, and the full run must show both
-    i18n guard specs actually executed.
+  * Frontend scope only falls back to the full Vitest run when the change
+    cannot be narrowed — an edit to one of the frontend config files this
+    module watches (FRONTEND_META: the two package manifests, the vite and
+    tsconfig files, .pre-commit-config.yaml), a .github/ edit, a test-harness
+    source or an unknown scope. A config outside that list does not widen by
+    itself: beside a changed source root the related run keeps it narrowed,
+    and alone it seeds no root and widens like any other runtime file. A style
+    edit, a prose change, a types-only input or a deletion whose
+    references went with it keeps the related run seeded by the surviving roots.
+    A deletion something surviving still imports widens: the run is seeded
+    from the changed files, so the spec of an unchanged file that imports the
+    deleted one is never selected, and the typecheck is no fallback — the app
+    declares `*.vue`, Vite declares `*.css` and every other kind it serves, so
+    vue-tsc resolves an import of a file that is gone, and the narrow project
+    holds only the changed files. A change under src/
+    that seeds no root — a locale catalog, a ratchet baseline, an asset —
+    widens: `related` is seeded from the changed source files, and a file a spec
+    reads off disk rather than imports creates no edge to that spec
+    (styles/docBlocks.spec.ts reads its stylesheet with readFileSync; main.ts and
+    the doc blocks import it, that spec does not), so the guards alone would
+    pass the tier with the test that answers for the edit never run — measured:
+    6px -> 8px on the padding-left of .doc-status[data-status] left both i18n
+    guards green and only docBlocks.spec.ts red. A seedless change that leaves
+    the suite nothing to judge — prose, a declaration file, a types-only input
+    like backend/openapi.json — runs the guards alone and reports frontend-unit
+    as not run rather than expanding to it. A full run must show both i18n guard
+    specs actually executed. Whether a change carries frontend runtime content
+    is read from the paths the path map routed into frontend scope, not from
+    every changed path: a backend change that regenerates backend/openapi.json
+    carries frontend scope with it, and reading its own .py files as content
+    this suite must execute would run the whole Vitest suite for a document no
+    test can load — the sole reader of it writes types-only.
+  * The read-off-disk spec gets the same treatment without widening: a narrowed
+    run is seeded with the changed roots *and* every spec that judges a
+    frontend file by reading it (OFF_DISK_SPECS), because those are the specs
+    the graph cannot reach. The report must show each of them ran, so a
+    selection that quietly drops one is unknown rather than green. That covers
+    the read that a surviving root used to hide: a component whose template a
+    spec reads, a stylesheet edited beside a changed component. A deletion is a
+    read only where a spec reads it, and an import is not a read: the spec that
+    imports the deleted file is reached by neither the seeds nor this list, so
+    that case widens instead of being seeded here.
   * The frontend's parallelism is derived from the memory ceiling the caller
     passed (vitest_workers), not pinned: a run given a ceiling that backs
     several forks gets several, and the local default still gets one.
@@ -23,17 +63,71 @@ commands and turns each command's report into a verdict nobody can fake:
 import json
 import os
 from pathlib import Path
+import re
 import xml.etree.ElementTree as ET
 
-from ci_fast_backend import select_backend
+from ci_fast_backend import pinned_harness_gap, select_backend
 
 I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
+# Specs that judge a frontend file by reading it with `node:fs` — a component's
+# markup, a stylesheet, a whole directory — instead of importing it. The import
+# graph has no edge for a read, so `vitest related` never selects one for the
+# file it answers for: measured, a broken rule in styles/docBlocks.css left both
+# i18n guards green and only styles/docBlocks.spec.ts red, and `related` on
+# components/settings/BranchProtectionSection.vue does not select the spec that
+# reads that component's template. They run on every frontend change that
+# reaches the suite, beside the related selection, and the report must show they
+# did. This is every spec under frontend/src importing `node:fs` at the time of
+# writing (catalog.spec.ts is already an i18n guard; collab/ has its own config);
+# a new spec that reads the tree this way belongs in this tuple. `?raw` is left
+# out: it was measured once as drawing no `related` edge either, and the run
+# that would confirm it cannot run here — it is killed on the work machine's
+# 1.5 GiB. The two mistakes are not equal: seeding a spec that does have an edge
+# turns an empty selection green, while leaving one out only ever reads unknown,
+# so this tuple errs that way. test_ci_fast.py holds it against the tree.
+OFF_DISK_SPECS = (
+    "src/branchProtectionSection.spec.ts",
+    "src/components/ChatPanel.mentionMenu.spec.ts",
+    "src/components/CheeseAvatar.spec.ts",
+    "src/components/admin/AdminGrid.spec.ts",
+    "src/components/base/BaseButton.spec.ts",
+    "src/components/base/SettingsRow.spec.ts",
+    # Reads BottomAppBar.vue off disk to hold the overlay fix in place. Added in
+    # #3521 (be7a1d36, 2026-10-12 16:38) without a tuple entry; that commit's
+    # cifast check was skipped, so this list's own test was the first to notice.
+    "src/components/common/Navigation/BottomAppBar.spec.ts",
+    "src/githubSettingsSections.spec.ts",
+    "src/offScreenSkipping.spec.ts",
+    "src/styles/docBlocks.spec.ts",
+    "src/vShowDisplayUtilities.spec.ts",
+    "src/views/demo/DemoTokensPage.spec.ts",
+    "src/views/demo/demoTokens.spec.ts",
+    "src/views/demo/demoTransitions.spec.ts",
+    "src/views/feedback/scroll.spec.ts",
+    "src/views/home/Landing.spec.ts",
+)
 # Config whose change invalidates the narrow type project and the related graph.
 FRONTEND_META = {
     "frontend/package.json", "frontend/pnpm-lock.yaml", "frontend/vite.config.ts",
     "frontend/tsconfig.json", "frontend/tsconfig.app.json", "frontend/tsconfig.node.json",
-    "backend/openapi.json", ".pre-commit-config.yaml",
+    ".pre-commit-config.yaml",
 }
+# Types-only inputs: nothing under frontend/ reads these at runtime — the sole
+# reader of backend/openapi.json is scripts/gen-api-types.mjs, whose output
+# (src/api/openapi.d.ts) the generator writes types-only. So they widen the type
+# check, never the test run: a backend route change used to run all 700+ specs
+# for a document no test can load.
+FRONTEND_TYPES_META = {"backend/openapi.json"}
+# What the dangling-import scan reads: every file kind that can hold a module
+# specifier.
+SCAN_SUFFIXES = (".ts", ".tsx", ".vue", ".js", ".jsx", ".mjs", ".cjs",
+                 ".css", ".scss", ".sass", ".less", ".html")
+# What a specifier written without an extension can resolve to: the module
+# kinds this frontend imports, the same set Vite tries for it.
+SPECIFIER_SUFFIXES = (".ts", ".tsx", ".vue", ".js", ".jsx", ".mjs", ".cjs",
+                      ".css", ".scss", ".sass", ".less", ".json")
+#: A quoted string, the only place a module specifier appears.
+SPECIFIER = re.compile(r"""["']([^"'\n]+)["']""")
 VITEST_FLAGS = ["--no-passWithNoTests", "--no-allowOnly"]
 # Sampled group RSS one Vitest fork is allowed. frontend/vite.config.ts sizes
 # its own pool the same way ("a fork peaks at 1.7-2.1 GB": happy-dom plus its
@@ -106,47 +200,194 @@ def _narrow_config(root, tmp, ts_files):
     return config
 
 
-def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
+def _resolves_to(specifier, importer, frontend):
+    """The file a module specifier names, or None if it names no local file.
+
+    Vite's own rules for the ones this repository uses: ``@/`` is frontend/src,
+    a leading ``/`` is the frontend root, and ``./``/``../`` are relative to the
+    importer. A bare name is a package, with one exception: a bare name carrying
+    one of the module suffixes this frontend imports is read as relative to the
+    importer, because that is the shape a stylesheet writes a local file in
+    (``@import "theme.css"``). An extension-less bare name is left unresolved:
+    no stylesheet here writes ``@import "theme"``, and taking any bare word as a
+    path would read package CSS as an importer of a deleted file.
+    """
+    specifier = specifier.split("?")[0].split("#")[0]
+    if specifier.startswith("@/"):
+        base, rest = frontend / "src", specifier[2:]
+    elif specifier.startswith("/"):
+        base, rest = frontend, specifier[1:]
+    elif specifier.startswith("."):
+        base, rest = importer.parent, specifier
+    elif "/" not in specifier and Path(specifier).suffix in SPECIFIER_SUFFIXES:
+        base, rest = importer.parent, specifier
+    else:
+        return None
+    try:
+        return (base / rest).resolve()
+    except OSError:
+        return None
+
+
+def _candidates(target):
+    """What a specifier can resolve to, plus the file it names itself.
+
+    A specifier that ends in a module kind this frontend imports is that file.
+    One that ends in anything else — no extension at all, or an extension the
+    resolver does not know — still gets the known kinds appended, because a
+    dot in a specifier says nothing about where the file name ends:
+    ``./x.spec.helper`` names ``x.spec.helper.ts``, and reading ``.helper`` as
+    the whole name matched no file at all.
+    """
+    yield target
+    if target.suffix in SPECIFIER_SUFFIXES:
+        return
+    for suffix in SPECIFIER_SUFFIXES:
+        yield Path(str(target) + suffix)
+    for suffix in SPECIFIER_SUFFIXES:
+        yield target / f"index{suffix}"
+
+
+def _imports_a_deleted_path(root, deleted):
+    """Whether a file that survived still imports one of the ``deleted`` paths.
+
+    A narrowed run is seeded from the changed roots, so it selects the specs
+    that reach a root — never the spec of an unchanged file that imports a
+    deleted one. Nothing else judges that import either: the app declares
+    ``*.vue`` and Vite declares ``*.css`` and every asset kind it serves, so a
+    module that is gone still resolves for vue-tsc, and the changed-files
+    project holds only what the change set names.
+
+    Only a specifier that resolves to the deleted file counts. A basename
+    somewhere in the text does not: this tree talks about its own files in
+    comments constantly ("see ./index.ts", "plugins/index.ts"), and reading
+    those as references would run the whole suite for a rename nobody left
+    dangling. Deletions that took their references with them — a component
+    deleted beside its spec, a rename — resolve to nothing here and keep the run
+    narrowed. What this cannot see is a reference the graph itself cannot see:
+    a computed specifier, or a file a glob picks up (`import.meta.glob` in
+    commands/palette/sources.ts and views/demo/scenes/index.ts, neither of which
+    matches a module kind either of them is handed).
+    """
+    if not deleted:
+        return False
+    frontend = root / "frontend"
+    gone = {(root / p).resolve() for p in deleted}
+    for directory, dirnames, filenames in os.walk(frontend):
+        dirnames[:] = [d for d in dirnames if d != "node_modules"]
+        for name in filenames:
+            if not name.endswith(SCAN_SUFFIXES):
+                continue
+            importer = Path(directory) / name
+            try:
+                text = importer.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            # No substring pre-filter on the basename: the common specifier
+            # drops the extension (`'@/stores/workspace'` for workspace.ts), so
+            # the basename of a deleted module often appears in no importer at
+            # all — filtering on it would miss exactly the imports this exists
+            # to find.
+            for specifier in SPECIFIER.findall(text):
+                target = _resolves_to(specifier, importer, frontend)
+                if target and any(candidate in gone for candidate in _candidates(target)):
+                    return True
+    return False
+
+
+def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, frontend_scope=None):
     plan, omissions = [], []
     flags = vitest_flags(memory_mib)
     if scope.get("frontend"):
         frontend_paths = [p for p in changed if p.startswith("frontend/")]
-        roots = [p.removeprefix("frontend/") for p in frontend_paths
-                 if p.startswith("frontend/src/") and p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
-                 and (root / p).is_file()]
+        surviving = [p for p in frontend_paths if (root / p).is_file()]
         deleted = [p for p in frontend_paths if not (root / p).is_file()]
-        # A narrowed run is trusted only when a changed source root seeds the
-        # related graph. Anything else — no root, a meta/config/.github edit, a
-        # deleted path, an unknown/no-base scope — runs everything.
-        full = (conservative
-                or any(p in FRONTEND_META for p in changed)
-                or any(p.startswith(".github/") for p in changed)
-                or bool(deleted)
-                or any(p.startswith(("frontend/src/test/", "frontend/scripts/")) for p in frontend_paths)
-                or not roots)
+        # A declaration file seeds nothing: it compiles to no module, so the
+        # related graph has no edge to follow from it. Passing one as a root
+        # would select no test file at all and turn the run unknown; it still
+        # counts for types, below.
+        roots = [p.removeprefix("frontend/") for p in surviving
+                 if p.startswith("frontend/src/") and p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
+                 and not p.endswith(".d.ts")]
+        # A frontend change with no surviving source root cannot be narrowed
+        # when it carries runtime content: `related` is seeded from the changed
+        # source files, and a file the suite reads off disk rather than imports
+        # has no edge to the spec that reads it — catalog.spec.ts scans the
+        # locale JSON with readFileSync, styles/docBlocks.spec.ts reads its
+        # stylesheet the same way. The guards do not stand in for it either:
+        # measured, a broken rule in docBlocks.css (padding-left 6px -> 8px on
+        # .doc-status[data-status]) left both i18n guards green and only
+        # docBlocks.spec.ts red. Prose is judged by the doc checks, and a
+        # declaration file or a types-only input compiles to no runtime, so those
+        # may leave the suite nothing to judge. Anything else is runtime content
+        # wherever it sits: a path outside frontend/ can still be routed into
+        # frontend scope (a site stylesheet, a ratchet script) and is still
+        # content the suite would have to read.
+        # Which paths carry that content is the caller's answer when it has one:
+        # the paths the path map routed into frontend scope. A backend change
+        # rides into this branch through a regenerated backend/openapi.json, and
+        # its own .py files are not content this suite can execute — the sole
+        # reader of the document writes types-only (FRONTEND_TYPES_META).
+        carries_runtime = any(not p.endswith((".md", ".d.ts"))
+                              and p not in FRONTEND_TYPES_META
+                              for p in (changed if frontend_scope is None else frontend_scope))
+        # Config, ambient hooks, test-harness sources and unknown scopes cannot
+        # be narrowed: nothing tells the related graph what they affect.
+        unjudgeable = (conservative
+                       or any(p in FRONTEND_META for p in changed)
+                       or any(p.startswith(".github/") for p in changed)
+                       or any(p.startswith(("frontend/src/test/", "frontend/scripts/")) for p in frontend_paths)
+                       or (carries_runtime and not roots)
+                       # Last: the scan reads the frontend tree, so it runs only
+                       # for a deletion nothing above has already widened.
+                       or _imports_a_deleted_path(root, deleted))
         output = tmp / "vitest.json"
-        command = ["pnpm", "exec", "vitest"]
-        command += ["run"] if full else ["related", "--run", *roots]
-        command += [*flags, "--reporter=json", "--outputFile", str(output)]
-        evidence = {"kind": "vitest", "path": str(output), "mode": "full" if full else "related", "roots": roots}
-        if full:
+        i18n_output = tmp / "i18n.json"
+        i18n_check = {"id": "frontend-i18n", "cwd": root / "frontend",
+                      "command": ["pnpm", "exec", "vitest", "run", *I18N_SPECS, *flags,
+                                  "--reporter=json", "--outputFile", str(i18n_output)],
+                      "evidence": {"kind": "vitest", "path": str(i18n_output), "required_files": list(I18N_SPECS)}}
+        if unjudgeable:
             # The full run must be shown to have executed the i18n guards, not
             # merely to have matched them: require both by name.
-            evidence["required_files"] = list(I18N_SPECS)
-        plan.append({"id": "frontend-unit", "command": command, "cwd": root / "frontend", "evidence": evidence})
-        if not full:
-            # Filesystem scans are not edges in Vitest's related graph, so run
-            # the i18n guard specs explicitly instead of assuming related has them.
-            i18n_output = tmp / "i18n.json"
-            plan.append({"id": "frontend-i18n", "cwd": root / "frontend",
-                         "command": ["pnpm", "exec", "vitest", "run", *I18N_SPECS, *flags,
-                                     "--reporter=json", "--outputFile", str(i18n_output)],
-                         "evidence": {"kind": "vitest", "path": str(i18n_output), "required_files": list(I18N_SPECS)}})
-        ts_files = [p for p in frontend_paths if p.endswith((".ts", ".tsx", ".vue")) and (root / p).is_file()]
+            plan.append({"id": "frontend-unit", "cwd": root / "frontend",
+                         "command": ["pnpm", "exec", "vitest", "run", *flags,
+                                     "--reporter=json", "--outputFile", str(output)],
+                         "evidence": {"kind": "vitest", "path": str(output), "mode": "full",
+                                      "required_files": list(I18N_SPECS)}})
+        else:
+            # A deletion, a locale/style edit or a prose change does not widen
+            # the graph: a changed src root still seeds the related run, and
+            # whatever cannot seed it runs nothing (frontend-unit is reported as
+            # an omission) instead of the whole suite. Filesystem scans are not
+            # edges in that graph, so the specs that judge a file by reading it
+            # (OFF_DISK_SPECS) and the i18n guards run explicitly alongside the
+            # related selection rather than being assumed into it.
+            off_disk = [p for p in OFF_DISK_SPECS if (root / "frontend" / p).is_file()]
+            if roots:
+                plan.append({"id": "frontend-unit", "cwd": root / "frontend",
+                             "command": ["pnpm", "exec", "vitest", "related", "--run", *roots, *off_disk, *flags,
+                                         "--reporter=json", "--outputFile", str(output)],
+                             "evidence": {"kind": "vitest", "path": str(output), "mode": "related",
+                                          "required_files": off_disk,
+                                          "roots": roots}})
+            else:
+                omissions.append({"id": "frontend-unit",
+                                  "reason": "no changed frontend source seeds the related graph; i18n guards only"})
+            plan.append(i18n_check)
+        ts_files = [p for p in surviving if p.endswith((".ts", ".tsx", ".vue"))]
+        # Only a deleted module can leave importers dangling project-wide; a
+        # deleted spec or asset cannot, and the narrow project judges the rest.
+        # A spec is judged by the name it ends with, not by the substring: a
+        # helper module called x.spec.helper.ts is a module other files import,
+        # and reading it as a spec would skip the one check that sees them.
+        deleted_sources = [p for p in deleted
+                           if p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
+                           and not re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", p)]
         full_types = (conservative
-                      or any(p in FRONTEND_META or p.endswith(".d.ts") for p in changed)
-                      or bool(deleted)
-                      or any(p.startswith(".github/") for p in changed))
+                      or any(p in FRONTEND_META or p in FRONTEND_TYPES_META or p.endswith(".d.ts") for p in changed)
+                      or any(p.startswith(".github/") for p in changed)
+                      or bool(deleted_sources))
         if full_types:
             # Config/ambient/deletion cannot be judged by a project built from a
             # file list, so fall back to the repository's own typecheck.
@@ -162,7 +403,17 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072):
             omissions.append({"id": "frontend-typecheck-changed",
                               "reason": "no changed TS/Vue files; types not applicable"})
     if scope.get("backend"):
-        selected, reason, targets = select_backend(root, changed, conservative)
+        # A tier that has no pinned harness builds must not judge the tests that
+        # need one: without them they fail rather than skip. They are named in
+        # not_run and left in required, so a green run still means the change's
+        # pinpointed consumers ran.
+        selected, reason, targets, omitted = select_backend(
+            root, changed, conservative, pinned_harness_gap())
+        if omitted:
+            omissions.append({"id": "backend-pure:pinned-harness",
+                              "reason": f"{len(omitted)} test files need the pinned Claude Code/"
+                                        f"Codex/pi builds, which this tier does not install: "
+                                        + ", ".join(omitted)})
         output = tmp / "pytest.xml"
         nodes = tmp / "pytest-nodes.json"
         # The audit plugin sits beside the runner; pytest imports it by module
@@ -249,6 +500,26 @@ def _audit(evidence, details):
     return "pass", ""
 
 
+def _picked_for_the_change(evidence, files):
+    """Whether the narrowed run selected a test file for the changed roots.
+
+    A related run is seeded with the specs that read the tree off disk
+    (`required_files`) as well as with the changed roots, and a seed runs
+    whatever changed. A report holding nothing but seeded files is therefore an
+    empty selection carrying the seeds' exit code — the pass main never gave it.
+    A seeded file the change itself names is its own selection: a changed spec
+    is reached by running it.
+    """
+    seeds = evidence.get("required_files", [])
+    roots = evidence.get("roots", [])
+    for name in files:
+        if any(name.endswith("/" + p) for p in roots):
+            return True
+        if not any(name.endswith("/" + p) for p in seeds):
+            return True
+    return False
+
+
 def validate_evidence(evidence):
     """Judge one report file alone. Types are decided by the exit code, in resolve()."""
     kind = evidence["kind"]
@@ -274,6 +545,10 @@ def validate_evidence(evidence):
     details.update(passed=passed, skipped=skipped, errors=errors, missing=missing)
     if errors:
         return {"result": "fail", "reason": "test report contains errors/failures", "evidence": details}
+    if kind == "vitest" and evidence.get("mode") == "related" and not _picked_for_the_change(evidence, files):
+        return {"result": "unknown",
+                "reason": "the changed roots selected no test file; the always-on seeds ran alone",
+                "evidence": details}
     if evidence.get("nodes"):
         # The run left its own account of the selection; trust that over the
         # report file, which cannot show what a filter removed.

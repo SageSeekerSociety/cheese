@@ -33,6 +33,12 @@
 .cv-measure .im-row {
   content-visibility: visible;
 }
+/* 正在改的那一行：@ 候选菜单从框的上边弹出这一行，被上面那条的 paint containment 裁掉，
+   人只看见贴着框沿的一小条。这一行本来就在眼前，省它一次不值得，抬掉 containment 就
+   是上面注释里说的那条路。改完（或取消）这一类就没了，别处的行照旧离屏不渲染。 */
+.im-row--editing {
+  content-visibility: visible;
+}
 /* continuation rows of the same author sit tight under the first */
 .im-row--cont {
   margin-top: 0;

@@ -24,6 +24,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     room_socket,
     session_auth_headers,
+    teammate_task,
 )
 
 #: How many ping round trips to wait for a frame before calling it not sent.
@@ -102,9 +103,11 @@ def test_the_task_page_hears_the_task_close_once_its_summary_is_done(client):
 
 
 def test_starting_a_task_is_heard_on_its_page_and_in_its_channel(client):
+    """等得到「开始」这一下的只剩停着的活（芝士自己想的那些）：人建的活建出来
+    即已开始，那一下发生在建它的时候，早于这两页开始听。"""
     project = new_project(client, owner="alice")
     room = project["root_topic_id"]
-    task = open_task(client, room, owner="alice", start=False)["id"]
+    task = teammate_task(client, room, owner="alice")["id"]
 
     with (
         room_socket(client, task, "alice") as task_page,
@@ -130,7 +133,7 @@ def test_a_question_asked_in_a_task_is_heard_in_its_channel(
     待回答 like the task does, not 讨论中 until someone reloads."""
     project = new_project(client, owner="alice")
     room = project["root_topic_id"]
-    task = open_task(client, room, owner="alice", start=False)["id"]
+    task = open_task(client, room, owner="alice")["id"]
 
     with room_socket(client, room, "alice") as channel:
         _drain(channel)

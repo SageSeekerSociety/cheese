@@ -23,7 +23,7 @@ def _channel_and_task(client) -> tuple[str, str, str, str]:
     project = post_project(client, {"name": "Sessions"}, owner="alice").json()["data"]
     room = project["root_topic_id"]
     seat = room_agent_seat(client, room)
-    task = open_task(client, room, "查一个问题", owner="alice", start=False)
+    task = open_task(client, room, "查一个问题", owner="alice")
     return project["id"], room, task["id"], seat
 
 

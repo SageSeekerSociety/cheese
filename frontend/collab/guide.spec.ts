@@ -17,9 +17,9 @@ const GUIDE = ['doc_writing.md', 'doc_blocks.md', 'doc_form.md']
   .map((name) => readFileSync(resolve(LIBRARY, name), 'utf8'))
   .join('\n')
 
-/** Every fenced sample: a plain fence holds Markdown; a mermaid fence is itself the sample. */
+/** Every fenced sample: a plain fence holds Markdown; a fence with a language (mermaid, python) is itself the sample, a code block in the document. */
 const samples = [...GUIDE.matchAll(/^```(\w*)\n([\s\S]*?)^```$/gm)].map(([whole, lang, body]) =>
-  lang === 'mermaid' ? whole : body.replace(/\n$/, '')
+  lang ? whole : body.replace(/\n$/, '')
 )
 
 describe('the samples in the writing guide', () => {

@@ -11,6 +11,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const getTranscript = vi.fn()
 
+const CHANNEL = 'abc12345-0000-4000-8000-000000000000'
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -121,10 +122,10 @@ describe('现场里芝士说的话', () => {
   })
 
   it('话题 token 点了开那个话题', async () => {
-    const { container, emitted } = await openSite([say('1', '接着 <#abc12345> 往下做')])
+    const { container, emitted } = await openSite([say('1', `接着 <#${CHANNEL}> 往下做`)])
 
-    await fireEvent.click(container.querySelector<HTMLElement>('.topic-ref[data-topic="abc12345"]')!)
-    expect(emitted()['open-topic']).toEqual([['abc12345']])
+    await fireEvent.click(container.querySelector<HTMLElement>(`.topic-ref[data-topic="${CHANNEL}"]`)!)
+    expect(emitted()['open-topic']).toEqual([[CHANNEL]])
   })
 
   it('没点 chip 的点击什么都不发', async () => {

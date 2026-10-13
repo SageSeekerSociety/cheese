@@ -46,7 +46,7 @@ def _task(client) -> str:
         json={"project_id": project["id"], "title": "失物招领"},
         headers=session_auth_headers(OWNER),
     ).json()["data"]["id"]
-    task = open_task(client, room, "认领按钮", owner=OWNER, start=False)["id"]
+    task = open_task(client, room, "认领按钮", owner=OWNER)["id"]
 
     async def lay(session):
         store = MemoryFileStore(session)

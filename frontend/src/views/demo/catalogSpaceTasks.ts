@@ -14,6 +14,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
   DOMAIN_GROUP,
   PUBLISH_DRAFT_MANY,
@@ -104,6 +105,10 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       drafts: PUBLISH_DRAFT_ONE,
       teaching: {},
       teachingOwn: false,
+      // 这道题指定的默认队友（#944）：发题页没有原始值，起手就是「继承」。
+      defaultRole: '',
+      agentTypes: AGENT_TYPES,
+      agentTypesFailed: false,
     },
     states: [
       {

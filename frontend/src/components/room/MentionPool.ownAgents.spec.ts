@@ -1,5 +1,6 @@
-/** 成员自己的 Claude Code 只有主人叫得动（#2991）：@ 候选里只有自己的那一个，别人的
- * 不出现——就算它坐在这个频道里。自己的还没坐进来也列出，第一次 @ 它就入座。
+/** 成员自己的 Claude Code 只有它答应的人叫得动（#2991）：主人，以及主人放开给项目时
+ * 项目里的人。叫不动的不出现——就算它坐在这个频道里。叫得动的还没坐进来也列出，第一次
+ * @ 它就入座。
  */
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
@@ -36,10 +37,10 @@ const MEMBERS: ProjectMemberRow[] = [
   { user_handle: 'cheese-alices', name: 'Alice的 Claude Code', agent: true, owner_handle: 'alice' },
 ] as ProjectMemberRow[]
 
-async function poolFor(author: string): Promise<string[]> {
+async function poolFor(author: string, members: ProjectMemberRow[] = MEMBERS): Promise<string[]> {
   const r = useRoomRoster({
     topic: () => ({ id: 't1' }) as Topic,
-    members: () => MEMBERS,
+    members: () => members,
     author,
     onError: () => {},
   })
@@ -50,6 +51,11 @@ async function poolFor(author: string): Promise<string[]> {
 describe('@ 候选里成员自己的 Claude Code', () => {
   it('别人的不出现，哪怕它坐在这个频道里', async () => {
     expect(await poolFor('alice')).not.toContain('cheese-bobs')
+  })
+
+  it('主人放开给项目的，项目里的人都看得到', async () => {
+    const opened = MEMBERS.map((m) => (m.user_handle === 'cheese-bobs' ? { ...m, callers: 'project' as const } : m))
+    expect(await poolFor('alice', opened)).toContain('cheese-bobs')
   })
 
   it('自己的出现，哪怕还没坐进这个频道', async () => {

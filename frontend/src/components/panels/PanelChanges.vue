@@ -46,7 +46,6 @@ const {
   refreshing,
   errorMsg,
   noRepo,
-  missing,
   fileDiffs,
   diffByPath,
   treeFiles,
@@ -143,7 +142,6 @@ defineExpose({ openFile })
     :refreshing="refreshing"
     :error-msg="errorMsg"
     :no-repo="noRepo"
-    :missing="missing"
     :file-diffs="fileDiffs"
     :diff-by-path="diffByPath"
     :tree-files="treeFiles"

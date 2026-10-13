@@ -28,12 +28,13 @@ from app.domain.room_task.services import TaskService
 from app.domain.task_quiet.sweep import remind_quiet_tasks
 from app.domain.topic.models import Topic, TopicStatus
 from tests.ask_fixtures import active_ask, wait_turn_idle
-from tests.conftest import seed_user
+from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
     join_project_team,
     open_task,
     post_project,
     session_auth_headers,
+    teammate_task,
 )
 
 
@@ -211,6 +212,44 @@ def test_a_decision_asked_on_a_card_comes_back_to_the_card(client):
     main_line = client.get(f"/topics/{channel}/blocks").json()["data"]["data"]
     assert all("【决策】" not in b["content"] for b in main_line)
     assert _mine(client, "alice") == []
+
+
+def test_an_alert_about_a_closed_task_still_names_the_task(client):
+    """关了的活自己不再等任何人（它落「已结束」那一列，下一步在平台手上），但写给
+    我的、关于它的提醒照样要读 —— 清单上那一行仍旧认得出它的标题和频道。
+
+    「待我处理」为了不替早就结束的活付钱，判据只对还开着的活跑；通知指到的活另取。
+    这里钉的是「另取」没漏：关了的活仍能被认回来。"""
+    project = _project(client)
+    channel = _channel(client, project)
+    card = _task(client, channel, started=True)
+    r = client.post(
+        f"/topics/{card}/close",
+        json={"conclusion": "做完了"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    # 关了的活自己不在清单上。
+    assert _mine(client, "alice") == []
+
+    r = client.post(
+        f"/projects/{project}/alerts",
+        json={
+            "level": "light",
+            "kind": "change_alert",
+            "title": "收尾时改了 README",
+            "body": "补了一节安装说明",
+            "target_handle": "alice",
+            "topic_id": str(card),
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    (item,) = _mine(client, "alice")
+    assert item["reason"] == "read"
+    assert item["taskId"] == str(card)
+    assert item["taskTitle"]
+    assert item["topicId"] == channel
 
 
 def test_a_change_alert_waits_until_i_read_it(client):
@@ -426,15 +465,18 @@ def _shown(client, task: str) -> dict:
 def test_starting_a_task_with_its_questions_unanswered_starts_it(
     client, stub_hooks, monkeypatch
 ):
-    """芝士的题还没答，负责人选好审阅人点了「开始」：任务就是开始了。
+    """芝士的题还没答，负责人点了「开始」：任务就是开始了。
 
     页头、频道的任务卡、项目的任务列表写的都是进行中那一列，不是「待回答」；题也不再
-    挂在负责人的待办上。
+    挂在负责人的待办上。这一下只能落在停着的活上（芝士自己想的），人建的活建出来
+    即已开始，没有题挂着的时候。
     """
     project = _project(client)
     channel = _channel(client, project)
-    task = open_task(client, channel, owner="alice", start=False)["id"]
+    task = teammate_task(client, channel, owner="alice")["id"]
     _ask(client, stub_hooks, monkeypatch, task)
+    # 问完等初稿那一段跑完：还在跑的时候这一格是「运行中」，不是「待开始」。
+    wait_work_idle()
     assert _shown(client, task)["phrase"] == NeedsYou.awaiting_answer
 
     r = client.post(
@@ -458,7 +500,7 @@ def test_a_question_asked_after_the_start_still_waits_for_its_answer(
 ):
     project = _project(client)
     channel = _channel(client, project)
-    task = open_task(client, channel, owner="alice", reviewer="alice")["id"]
+    task = open_task(client, channel, owner="alice")["id"]
     wait_turn_idle(client, task)
 
     _ask(client, stub_hooks, monkeypatch, task)

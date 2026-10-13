@@ -1,16 +1,16 @@
-"""tasks 路由包共用的依赖提供者、请求模型与构造辅助。
+"""tasks 路由包共用的请求模型与构造辅助。
 
-从原来的单文件 tasks.py 头部原样搬来，逐行未改。
+从原来的单文件 tasks.py 头部搬来；依赖提供者（``get_task_service`` 那一组）后来
+搬去了 ``app/api/task_deps.py`` —— 那道装配不只题目路由在用（见那个模块的说明）。
 """
 
 from datetime import UTC, datetime
 
-from fastapi import Depends
 from pydantic import BaseModel, ConfigDict, Field
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
-from app.api.routes.spaces import TeachingRequest
+from app.api.space_payloads import TeachingRequest
 from app.api.task_teaching import (
     apply_task_default_role,
     apply_task_teaching,
@@ -21,83 +21,20 @@ from app.auth.space_access import may_publish_in_space
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
-    NotFoundError,
 )
-from app.core.storage import get_storage_backend
-from app.db.session import get_db
-from app.domain.attachment.services import AttachmentService
-from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
-    SpaceUserRankRepository,
-)
-from app.domain.task.attachment_service import (
-    TaskAttachmentService,
 )
 from app.domain.task.inputs import (
     map_submitter_type,
 )
 from app.domain.task.services import (
-    TaskMembershipService,
     TaskService,
-    TaskSubmissionReviewService,
-    TaskSubmissionService,
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
-from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
-from app.domain.team.repositories import TeamRepository
-from app.domain.team.repositories import TeamRepository as _TeamRepo
-from app.domain.team.services import TeamService
-from app.domain.usage import pricing
-from app.domain.user.repositories import (
-    UserRealNameRepository,
-)
-
-
-async def get_task_service(db=Depends(get_db)) -> TaskService:
-    return TaskService.of(db)
-
-
-async def get_task_membership_service(db=Depends(get_db)) -> TaskMembershipService:
-    # 跨域的仓库（user/space/team）路由自己 new 再传进去；本域的成员仓库由 service
-    # 自己在内部拼 —— 那几笔跨域豁免留着，题目域内的这一笔不再从路由伸进 repositories。
-    return TaskMembershipService.of(
-        db,
-        realname_repo=UserRealNameRepository(session=db),
-        space_repo=SpaceRepository(session=db),
-        space_rank_repo=SpaceUserRankRepository(session=db),
-        team_repo=_TeamRepo(session=db),
-    )
-
-
-async def get_task_submission_service(db=Depends(get_db)) -> TaskSubmissionService:
-    return TaskSubmissionService.of(
-        db,
-        attachments=AttachmentService.from_session(
-            session=db, storage=get_storage_backend()
-        ),
-    )
-
-
-async def get_task_submission_review_service(
-    db=Depends(get_db),
-) -> TaskSubmissionReviewService:
-    space_repo = SpaceRepository(session=db)
-    rank_repo = SpaceUserRankRepository(session=db)
-    rank_service = SpaceRankService(space_repo=space_repo, rank_repo=rank_repo)
-    return TaskSubmissionReviewService.of(db, rank_service=rank_service)
-
-
-async def get_team_service(db=Depends(get_db)) -> TeamService:
-    repo = TeamRepository(session=db)
-    return TeamService(repo)
-
-
-async def get_task_pdf_draft_service(db=Depends(get_db)) -> TaskPdfDraftService:
-    return await TaskPdfDraftService.on_gateway(db, await pricing.model_rates())
 
 
 class ConfirmTaskPublishFromPdfRequest(BaseModel):
@@ -481,24 +418,4 @@ async def _create_task_entity(
     if submission_schema:
         await task_service.replace_submission_schema(task.id, submission_schema)
 
-    return task
-
-
-def _task_attachment_service(db) -> TaskAttachmentService:
-    return TaskAttachmentService(session=db, storage=get_storage_backend())
-
-
-def _attachment_service(db) -> AttachmentService:
-    """还没挂到题上的文件那一层（``POST /attachments`` 用的同一个服务）。
-
-    ``from_session`` 而不是自己造它的 repository：这里在题目这一域的地盘上，
-    摸附件那一域的 repository 正是 ``test_domain_import_guard.py`` 拦的那一条。
-    """
-    return AttachmentService.from_session(session=db, storage=get_storage_backend())
-
-
-async def _require_task(db, task_id: int):
-    task = await TaskService.of(db).get_task(task_id)
-    if task is None:
-        raise NotFoundError("Task not found")
     return task

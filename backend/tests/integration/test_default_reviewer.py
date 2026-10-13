@@ -1,16 +1,18 @@
-"""任务默认 reviewer (#718 设置表)：开始任务时定下，递卡时沿用，显式指定优先。
+"""任务由谁验收：提这件事的人（#718 设置表的兜底退到最后一档）。
 
-The setting existed and nothing read it, so a project could configure a default
-reviewer and every card still had to be routed by hand. These go through the
-real doors — `POST /topics/{task}/start` and
-`POST /topics/{task}/accept-card` — and read the answer off the
-card, because the interesting part is precisely that a value travels from one
-door to the other.
+提的人自己就能验收时就是他自己 —— 项目设置里那位默认审阅人不从提的人手里
+抢走一张卡。设置仍在，仍在阶梯的最后一档：提的人自己验收不了（AI 队友提的活，
+或没人可指）时才是它。
 
 Who resolves it, and when, is the load-bearing decision: the reviewer is written
 onto the TASK when it is started, not read out of the project setting when the
 card is filed. A setting is a policy that can change; who a piece of work was
 handed to is a fact about the moment it was handed over.
+
+These go through the real doors — `POST /topics/{task}/start` and
+`POST /topics/{task}/accept-card` — and read the answer off the card, because
+the interesting part is precisely that a value travels from one door to the
+other.
 """
 
 import itertools
@@ -23,6 +25,7 @@ from tests.integration.conftest import (
     open_task,
     post_project,
     session_auth_headers,
+    teammate_task,
 )
 from tests.machine_work import declare_task, machine_commits
 
@@ -36,7 +39,7 @@ def _project(client) -> str:
     pid = r.json()["data"]["id"]
     # 2026-09-27: 递卡与改派那道门现在先问「这个人在不在房间里」
     # (`_require_reviewer_in_room`)。这里的 bob / carol / dave 是「被指派的审阅
-    # 人」—— 让他们像真实参与者一样在项目里，量到的才是默认审阅人那条梯子本身。
+    # 人」—— 让他们像真实参与者一样在项目里，量到的才是审阅人那条梯子本身。
     for handle in ("bob", "carol", "dave"):
         join_project_team(client, pid, handle)
     return pid
@@ -59,11 +62,25 @@ def _room(client, pid: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _started(client, room: str, title: str, reviewer: str | None = None) -> dict:
-    """alice creates a task and starts it, naming ``reviewer`` or nobody."""
-    task = open_task(client, room, title, reviewer=reviewer)
+def _started(client, room: str, title: str, *, owner: str = "alice") -> dict:
+    """``owner`` makes a task: making it starts it, and what it delivers comes
+    back to them."""
+    task = open_task(client, room, title, owner=owner)
     wait_work_idle()
     return task
+
+
+def _start_naming(client, room: str, title: str, reviewer: str) -> dict:
+    """芝士自己想的活停在讨论中，负责人开始它时点名由谁验收。"""
+    task = teammate_task(client, room, title)
+    wait_work_idle()
+    r = client.post(
+        f"/topics/{task['id']}/start",
+        json={"reviewer_handle": reviewer},
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
 
 
 def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
@@ -83,22 +100,24 @@ def _file(client, pid: str, room: str, task_id: str, subject: str, **kw):
 # --- 开始 -----------------------------------------------------------------
 
 
-def test_starting_a_task_without_naming_anybody_uses_the_project_default(client):
+def test_the_person_who_asked_for_the_work_reviews_it(client):
+    """提这件事的人自己就能验收，项目设置里那位默认审阅人不抢。"""
     pid = _project(client)
     _default_reviewer(client, pid, "bob")
     room = _room(client, pid)
 
     task = _started(client, room, "一条活")
 
-    assert task["reviewer_handle"] == "bob"
+    assert task["reviewer_handle"] == "alice"
 
 
 def test_naming_a_reviewer_when_starting_beats_the_project_default(client):
+    """开始的时候点了名就听点名的，设置仍然排在后面。"""
     pid = _project(client)
     _default_reviewer(client, pid, "bob")
     room = _room(client, pid)
 
-    task = _started(client, room, "这条给别人验", reviewer="carol")
+    task = _start_naming(client, room, "这条给别人验", "carol")
 
     assert task["reviewer_handle"] == "carol"
 
@@ -115,7 +134,7 @@ def test_the_card_goes_to_whoever_the_task_was_started_with(client):
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
 
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["reviewer_handle"] == "bob"
+    assert r.json()["data"]["reviewer_handle"] == "alice"
 
 
 def test_naming_a_reviewer_on_the_card_beats_the_one_the_work_carries(client):
@@ -147,23 +166,23 @@ def test_the_card_keeps_the_reviewer_the_work_got_when_the_setting_changes(clien
     pid = _project(client)
     _default_reviewer(client, pid, "bob")
     room = _room(client, pid)
-    task = _started(client, room, "一条活")
+    task = _start_naming(client, room, "一条活", "dave")
     _default_reviewer(client, pid, "erin")
 
     r = _file(client, pid, room, task["id"], "feat(x): deliver it")
 
-    assert r.json()["data"]["reviewer_handle"] == "bob"
+    assert r.json()["data"]["reviewer_handle"] == "dave"
 
 
 def test_independent_tasks_keep_their_different_reviewers(client):
     pid = _project(client)
     room = _room(client, pid)
-    mine = _started(client, room, "Mine", reviewer="bob")
-    theirs = _started(client, room, "Theirs", reviewer="carol")
+    mine = _started(client, room, "Mine")
+    theirs = _started(client, room, "Theirs", owner="bob")
     first = _file(client, pid, room, mine["id"], "feat: first task")
     second = _file(client, pid, room, theirs["id"], "feat: second task")
     assert first.status_code == second.status_code == 200
-    assert first.json()["data"]["reviewer_handle"] == "bob"
-    assert second.json()["data"]["reviewer_handle"] == "carol"
+    assert first.json()["data"]["reviewer_handle"] == "alice"
+    assert second.json()["data"]["reviewer_handle"] == "bob"
     assert first.json()["data"]["task_id"] == mine["id"]
     assert second.json()["data"]["task_id"] == theirs["id"]

@@ -38,6 +38,8 @@ export function listProjectTasks(
 export type Whose = 'mine' | 'helping' | 'others'
 /** 「全部任务」那一排筛选：全部，或其中一种谁的。 */
 export type TaskFilter = 'all' | Whose
+/** 「全部任务」里的交付筛选：全部，或只看有已采纳交付的任务。 */
+export type TaskDeliveryFilter = 'all' | 'accepted'
 
 export interface ProjectTaskPage extends ListPayload<RoomTask> {
   has_more: boolean
@@ -57,12 +59,14 @@ export function pageProjectTasks(
     before?: string | null
     channel?: string | null
     whose?: Whose | null
+    accepted?: boolean | null
   }
 ): Promise<ProjectTaskPage> {
   const q = new URLSearchParams({ status: opts.status, limit: String(opts.limit) })
   if (opts.before) q.set('before', opts.before)
   if (opts.channel) q.set('channel', opts.channel)
   if (opts.whose) q.set('whose', opts.whose)
+  if (opts.accepted != null) q.set('accepted', String(opts.accepted))
   return request<ProjectTaskPage>(`/projects/${encodeURIComponent(projectId)}/tasks?${q.toString()}`).then(remembered)
 }
 
@@ -111,11 +115,11 @@ export function createRoomTask(roomId: string, title?: string): Promise<RoomTask
   })
 }
 
-/** 开始：负责人确认讨论清楚了。项目没有默认审阅人时要指定一位。 */
-export function startTask(taskId: string, reviewerHandle?: string | null): Promise<RoomTask> {
+/** 开始：负责人确认讨论清楚了。审阅人由后端按档定，先是负责人自己。 */
+export function startTask(taskId: string): Promise<RoomTask> {
   return request<RoomTask>(`${taskPath(taskId)}/start`, {
     method: 'POST',
-    body: JSON.stringify(reviewerHandle ? { reviewer_handle: reviewerHandle } : {}),
+    body: JSON.stringify({}),
   })
 }
 

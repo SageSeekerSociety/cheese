@@ -3,7 +3,7 @@ title: 平台管理员
 kind: 参考
 summary: 后台管理的入口与名单。
 covers:
-  - backend/app/api/routes/admin_common.py
+  - backend/app/api/admin_deps.py
   - backend/app/domain/admin/
   - frontend/src/views/admin/
   - frontend/src/router/feedback.ts
@@ -22,7 +22,7 @@ covers:
 1. **根名单**：环境变量 `PLATFORM_ADMIN_HANDLES`，JSON 数组，例如 `["alice","bob"]`。它不能从界面上删，否则管理员可以把自己锁在门外。部署环境要求它不为空，否则启动失败；本地开发和测试可以为空。
 2. **界面名单**：后台「成员管理」里添加的，存在 `platform_admins` 表，可以在界面上移除。
 
-接口用 `require_platform_admin`（`backend/app/api/routes/admin_common.py`）拦截非管理员。
+接口用 `require_platform_admin`（`backend/app/api/admin_deps.py`）拦截非管理员。
 
 ## 反馈管理员是另一份名单 {#feedback-admins}
 

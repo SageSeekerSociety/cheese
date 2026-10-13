@@ -354,6 +354,18 @@ def test_a_write_back_says_what_does_not_read_like_state():
     assert "正文 9000 字" in said
 
 
+def test_a_read_says_what_the_document_points_at_that_is_not_there():
+    """A reference that names nothing is said when the document is read, not
+    only when it was written: whoever reads it next is about to write it."""
+    warning = "`<#9f8e>` 指不到这个项目里的任何频道、任务或支线。"
+    host = _doc_host(envelope={"warnings": [warning]})
+
+    said = run("cheese_doc_get", {}, host)
+
+    assert said.startswith("# 现在的文档")
+    assert warning in said
+
+
 def test_a_clean_write_back_carries_no_warning():
     host = _doc_host()
 

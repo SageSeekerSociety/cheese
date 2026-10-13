@@ -46,6 +46,8 @@
   "cheeseDocEdit": "Edit the doc",
   "cheeseDocNew": "Create a doc",
   "cheeseDocList": "List library docs",
+  "cheeseCanvasGet": "Read the canvas",
+  "cheeseCanvasEdit": "Edit the canvas",
   "cheeseDocCommentReply": "Reply to a doc comment",
   "cheeseTask": "Create a task",
   "cheeseWorktree": "Prepare the working directory",

@@ -18,6 +18,8 @@
   "acceptStoppedPrStalled": "PR #{pr} cannot move forward right now",
   "acceptStoppedPrUnavailable": "Accept not completed: the PR could not be merged",
   "acceptStoppedPrUnavailableDetail": "{why}.\nA project bound to GitHub is accepted only by merging its PR; the platform will not bypass the PR and push upstream directly. Retry the accept once this is sorted out.",
+  "acceptStoppedTitleDisagrees": "PR #{pr}: the title on GitHub and the card's title are not the same line; the accept is paused",
+  "acceptTitleDisagreesDetail": "Title on GitHub's PR: {pr_title}\nTitle on the card: {subject}\nHow a title should read is the repository's own rule, and the platform does not guess which line is right — it only checks that the line it would land is the one the repository's checks judged. To merge, use cheese_describe to set this card's title to the line that should land (the platform changes the PR title with it, and the repository's checks re-run against the new title).",
   "acceptStoppedStatusUnread": "Could not read the status of PR #{pr}: {error}",
   "actionDecision": "{actor} recorded a decision",
   "actionMilestone": "{actor} added a milestone",
@@ -211,6 +213,8 @@
   "mentionFused": "AI teammates reached this hour's limit on mentioning each other; this one did not wake anyone",
   "mentionFusedDetail": "In one channel, AI teammates' mentions can start at most {limit} turns an hour, so they cannot keep mentioning each other forever. Not woken this time: {names}. Mentions by people are not limited.",
   "mentionUnknownMember": "Could not notify {member}: not a member of this project",
+  "mergeQueueLeft": "PR #{pr} left the merge queue without merging",
+  "refUnknownConversation": "{ref} points to no channel, task or thread in this project; readers see a reference that opens nothing",
   "mergeRefused": "GitHub refused to merge PR #{pr}",
   "mergeRefusedDetail": "{reason}\n{url}",
   "mergeRefusedOnAccept": "Accept not completed: GitHub refused to merge PR #{pr}",
@@ -244,6 +248,7 @@
   "prNoLink": "No link",
   "prReview": "PR #{pr}: {head}",
   "prReviewCapped": "Review on PR #{pr} has gone back and forth {limit} times; a person needs to step in",
+  "prTitleDisagrees": "PR #{pr}: the title on GitHub and the card's title are not the same line; the merge is paused",
   "prReviewChangesRequested": "someone requested changes",
   "prReviewCommented": "someone left review comments",
   "promptReplayed": "These messages ({count}) have now gone into a turn {attempt} times, and the earlier attempts did not finish{oldest}.",
@@ -418,5 +423,6 @@
   "mainChecksFailed": "Checks failed after merge: {checks}. {agent} will fix them in this step",
   "mainChecksFailedReopened": "Checks failed after merge: {checks}. The task is reopened for {agent} to fix",
   "deployedTo": "Deployed to {environment}",
-  "deployFailedTo": "Deploying to {environment} failed"
+  "deployFailedTo": "Deploying to {environment} failed",
+  "cloudHostGivenUp": "Cloud host {host} was given up: {lost} working sandboxes were lost with it, and {replaced} sandboxes being prepared moved to another host"
 }
