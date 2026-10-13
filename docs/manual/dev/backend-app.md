@@ -137,7 +137,7 @@ covers:
 
 ## 周期任务清单 {#periodic}
 
-`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 32 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
+`app/periodic_jobs.py` 的 `periodic_jobs()` 装配平台全部 34 项常驻巡检，`lifespan` 起的就是它。各领域登记自己的回调和间隔；应用层注入 chat、runner 和数据库会话，并保留完整的名称与顺序清单。`core/background.py` 只提供登记器和通用运行机制，不导入业务入口。
 
 登记名称重复、清单缺项或出现未列出的任务都会报错，防止巡检漏接后静默缺席。
 
@@ -163,6 +163,7 @@ covers:
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |
 | task deadline sweep | `task_deadline_sweep_interval_s` | 任务截止 |
 | memory dream | `memory_dream_sweep_interval_s` | 记忆整理 |
+| wake watch | `wake_watch_interval_s` | 盯叫醒链上那两拍（定时器每拍一条消息、看门狗原地改一条心跳），静满 60 分钟记一条运行记录（影子期只记不补跳） |
 
 `spawn()` 是不留句柄的那一类：任务可能被 GC 掉，所以平台持一个强引用集合 `_INFLIGHT`；`hold()` 给需要留句柄以便关停时取消的工作。两者的崩溃都记 ERROR 而不是 WARNING（告警只捡 ERROR）。
 
