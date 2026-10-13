@@ -399,11 +399,7 @@ ignore_imports =
     app.domain.usage.repositories -> app.domain.project.models
     app.domain.usage.subscription_ingest -> app.domain.project.repositories
     app.domain.user.realname_services -> app.domain.space.services
-    app.domain.user.repositories -> app.domain.answers.models
     app.domain.user.repositories -> app.domain.identity.models
-    app.domain.user.repositories -> app.domain.knowledge.models
-    app.domain.user.repositories -> app.domain.questions.models
-    app.domain.user.repositories -> app.domain.task.models
     app.domain.user.repositories -> app.domain.team.models
     app.domain.user.services -> app.domain.identity.handles
     app.domain.webhook.service -> app.domain.agent.announce
@@ -535,8 +531,8 @@ ignore_imports =
 # exists only because the hole did.
 #
 # The 64 upward package edges measured under `app.domain` on 2026-10-12 (140
-# import statements) are frozen below, one module pair per line, and paid down
-# from there; this block only shrinks. Two packages were placed by this first
+# import statements) were frozen below, one module pair per line, and are paid
+# down from there; this block only shrinks. Two packages were placed by this first
 # version, and the doc's table now carries them: `onboarding` at layer 7 — it
 # reads lower layers and nothing imports it, which is that layer's whole
 # definition — and `canvas` at layer 4, where `living_doc` is (whose models it
@@ -694,8 +690,4 @@ ignore_imports =
     app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.subscription_ingest -> app.domain.block.models
     app.domain.user.realname_services -> app.domain.space.services
-    app.domain.user.repositories -> app.domain.answers.models
-    app.domain.user.repositories -> app.domain.knowledge.models
-    app.domain.user.repositories -> app.domain.questions.models
-    app.domain.user.repositories -> app.domain.task.models
     app.domain.webhook.service -> app.domain.agent.announce
