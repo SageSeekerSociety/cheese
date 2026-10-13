@@ -729,8 +729,6 @@ class BlockRepository:
                         func.to_jsonb(cast(reply.author, Text))
                     ),
                     cast(Block.meta, JSONB)["asked"] == cast("[]", JSONB),
-                    func.jsonb_typeof(cast(Block.meta, JSONB)["asked"]).in_(["null"]),
-                    cast(Block.meta, JSONB)["asked"].is_(None),
                 ),
                 Block.meta["answered"].as_string().is_(None),
                 Block.id != reply.id,
