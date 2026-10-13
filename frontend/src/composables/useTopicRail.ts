@@ -19,12 +19,13 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { agentIdentities, agentNames } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { waitStalled, waitText } from '../lib/replyWait'
-import { lightOf as lightFor } from '../lib/roomLight'
+import { lightOf as lightFor, OTHERS_LIGHT } from '../lib/roomLight'
 import { ancestorPathIds, inferTopicKind, loadExpandedTopics, saveExpandedTopics, visibleRows } from '../lib/topicTree'
 import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 import { getAvatarUrl } from '../utils/materials'
 
 import { t } from '@/i18n'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** 侧栏要画的东西全在父级的这几个 props 里；这一层不自己取数。 */
@@ -177,11 +178,18 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   })
 
   // ---- 灯 ----
-  // 四盏灯的判据只写在 `lib/roomLight.ts` 一处；这一层只把后端给的事实凑齐，再带上
-  // 这只钟。频道行和任务行凑的是同样四样，所以两边的灯说的是同一件事。
+  // 状态那几盏的判据只写在 `lib/roomLight.ts` 一处；这一层只把后端给的事实凑齐，再带
+  // 上这只钟。频道行和任务行凑的是同样四样，所以两边的灯说的是同一件事。
   //
   // 「点开过就灭」的长绿不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
   // 点开时 `stores/workspace` 先把本地那一份灭掉）。
+  //
+  // 蓝灯（别人的活）是这一层唯一自己下的判断：它不看状态，只看这条活归谁。
+  /** 这条活是不是别人负责的。没有主的算我这边的：没主的活频道里谁都能接，不是「别人的」。 */
+  function isOthers(task: { owner_handle?: string | null }): boolean {
+    const owner = task.owner_handle
+    return !!owner && owner !== myHandle()
+  }
   function lightOf(id: string): RowLight | null {
     const topic = topicById.value.get(id)
     if (!topic) return null
@@ -196,8 +204,10 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     )
   }
 
-  /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份。 */
+  /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份 ——
+   *  除了别人的活：那一条不画状态，画蓝灯（蓝压过一切）。 */
   function taskLight(task: RailTask): RowLight | null {
+    if (isOthers(task)) return OTHERS_LIGHT
     return lightFor(
       {
         awaitsMe: task.awaits_me === true,
