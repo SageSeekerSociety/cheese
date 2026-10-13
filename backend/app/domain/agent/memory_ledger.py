@@ -36,13 +36,6 @@ from app.domain.agent.dream_usage import drain_dream_spend, record_dream_usage
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import build_session_opening, build_system_prompt
-from app.domain.agent.platform_notices import (
-    EVENT_MEMORY_CHANGED,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-    notice,
-)
 from app.domain.agent.queries import (
     _agent_handle,
     _dream_refusal_phrase,
@@ -61,6 +54,13 @@ from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.files_store import memory_index, private_owners
 from app.domain.memory.models import MemoryDreamRunStatus
 from app.domain.memory.session import apply_tree, read_tree
+from app.domain.notice_meta import (
+    EVENT_MEMORY_CHANGED,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.project.forge import binding_for_project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.run_record.service import record as keep_record

@@ -260,16 +260,18 @@ unmatched_ignore_imports_alerting = warn
 # leaves (I11) — the same two edges `team.membership_services` already has for
 # team invitations.
 #
-# 下面多一条 `app.domain.review.nudges -> app.domain.agent.platform_notices`：三条
-# 待发（CI 挂了、有人评审、和目标分支冲突）搬去 `review/nudges.py` 时，它们写的
-# `EVENT_*` 常量跟着搬了，review -> agent.platform_notices 这条边换了导入方。
-# services 那条仍在（它自己还发别的通知）——同一份债挪了地方，不是新欠的。
+# `app.domain.review.nudges -> app.domain.agent.platform_notices`：三条待发（CI 挂
+# 了、有人评审、和目标分支冲突）搬去 `review/nudges.py` 时，它们写的 `EVENT_*` 常量
+# 跟着搬了，这条边换了导入方。services 那条仍在（它自己还发别的通知）——同一份债挪
+# 了地方，不是新欠的。**2026-10-13**：码表下沉到第 1 层的 `notice_meta` 之后，这批
+# 边都不在了（nudges、room_notices、services._shared 各一条）。
 #
 # 同理，第二片 `app.domain.review/room_notices.py`（一件事做完之后怎么说出去）
 # 带走两条边：`review -> agent.announce` 换了导入方（services 那句 `announce(...)`
 # 全在这一片里，所以 services 那条**随之消失**，不是被还掉），
 # `review -> agent.platform_notices` 又多一个导入方（room_notices 自己写
-# `EVENT_*` 与 `notice()`，services 那条仍在）。两条都是同一份债挪了地方。
+# `EVENT_*` 与 `notice()`）。两条都是同一份债挪了地方；`platform_notices` 那条在
+# 2026-10-13 随码表下沉消失，只剩 `review -> agent.announce`。
 #
 # 再到 `app.domain.room_task.naming -> app.domain.agent.staleness`：房间改名之后
 # 要告诉这个房间「侧栏里你那一行变了」的 `announce_stale`，原本住在
@@ -312,7 +314,6 @@ ignore_imports =
     app.domain.delivery.agent -> app.domain.topic.models
     app.domain.delivery.note -> app.domain.agent.chat
     app.domain.delivery.note -> app.domain.topic.services
-    app.domain.delivery.timer -> app.domain.agent.platform_notices
     app.domain.delivery.timer -> app.domain.topic.models
     app.domain.device.owner_reads -> app.domain.project.models
     app.domain.device.owner_reads -> app.domain.topic.models
@@ -327,7 +328,6 @@ ignore_imports =
     app.domain.membership.services -> app.domain.delivery.addressing
     app.domain.membership.services -> app.domain.delivery.ledger
     app.domain.memory.migration_service -> app.domain.agent.announce
-    app.domain.memory.migration_service -> app.domain.agent.platform_notices
     app.domain.memory.migration_service -> app.domain.identity.handles
     app.domain.memory.migration_service -> app.domain.membership.roster
     app.domain.memory.migration_service -> app.domain.project.services
@@ -354,7 +354,6 @@ ignore_imports =
     app.domain.platform_stats.product -> app.domain.review.notes
     app.domain.platform_stats.repositories -> app.domain.machine.models
     app.domain.policy.proposals -> app.domain.agent.announce
-    app.domain.policy.proposals -> app.domain.agent.platform_notices
     app.domain.policy.proposals -> app.domain.delivery.addressing
     app.domain.policy.proposals -> app.domain.room_task.place
     app.domain.project.artifacts -> app.domain.review.models
@@ -366,7 +365,6 @@ ignore_imports =
     app.domain.project.forge -> app.domain.review.forgejo_pr
     app.domain.project.forge -> app.domain.review.github_pr
     app.domain.project.room_files -> app.domain.agent.announce
-    app.domain.project.room_files -> app.domain.agent.platform_notices
     app.domain.project.services -> app.domain.membership.services
     app.domain.project.services -> app.domain.topic.models
     app.domain.project.services -> app.domain.topic.repositories
@@ -381,20 +379,13 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.identity -> app.domain.topic.models
     app.domain.repository.service -> app.domain.agent.platform_failures
-    app.domain.review.archive -> app.domain.agent.platform_notices
     app.domain.review.forge -> app.domain.review.services
-    app.domain.review.gate_sweep -> app.domain.agent.platform_notices
     app.domain.review.github_pr -> app.domain.agent.github_app
-    app.domain.review.nudges -> app.domain.agent.platform_notices
     app.domain.review.pr_poll -> app.domain.agent.announce
     app.domain.review.pr_poll -> app.domain.agent.chat
-    app.domain.review.pr_poll -> app.domain.agent.platform_notices
     app.domain.review.pr_publish -> app.domain.agent.announce
-    app.domain.review.pr_publish -> app.domain.agent.platform_notices
     app.domain.review.pr_publish -> app.domain.review.services
     app.domain.review.room_notices -> app.domain.agent.announce
-    app.domain.review.room_notices -> app.domain.agent.platform_notices
-    app.domain.review.services._shared -> app.domain.agent.platform_notices
     app.domain.room_task.binding -> app.domain.agent.market
     app.domain.room_task.binding -> app.domain.agent.supply
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
@@ -435,7 +426,6 @@ ignore_imports =
     app.domain.topic_membership.services -> app.domain.project.repositories
     app.domain.topic_membership.services -> app.domain.topic.models
     app.domain.topic_membership.services -> app.domain.topic.repositories
-    app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.ledger -> app.domain.project.services
     app.domain.usage.repositories -> app.domain.project.models
     app.domain.usage.subscription_ingest -> app.domain.project.repositories
@@ -584,6 +574,14 @@ unmatched_ignore_imports_alerting = warn
 # reads lower layers and nothing imports it, which is that layer's whole
 # definition — and `canvas` at layer 4, where `living_doc` is (whose models it
 # reads) and where `room_task` is (which reads it).
+#
+# `notice_meta` joined at layer 1 beside `skill_library` (2026-10-13), for the
+# same reason that one did: the platform-notice codes (`SEVERITY_*`, `WHO_*`,
+# `EVENT_*`) and the `notice()` that shapes their `meta` were read from every
+# layer, but lived in the layer-5 `agent.platform_notices`, so each reader
+# climbed four layers for a handful of strings. The codes and `notice()` moved
+# down; `agent.platform_notices` keeps the sentences it says to people, which
+# need block's row key and the memory tree's paths and so stay at layer 5.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
@@ -593,7 +591,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library
+    common : day_windows : conversation : idempotency : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta
 containers =
     app.domain
 exhaustive = true
@@ -608,7 +606,6 @@ ignore_imports =
     app.domain.block.editing -> app.domain.delivery.ledger
     app.domain.discussion.services -> app.domain.delivery.addressing
     app.domain.discussion.services -> app.domain.delivery.ledger
-    app.domain.frontend_log -> app.domain.agent.platform_notices
     app.domain.integration.service -> app.domain.library.service
     app.domain.membership.roster -> app.domain.agent_instance.own
     app.domain.membership.roster -> app.domain.agent_instance.services
@@ -616,7 +613,6 @@ ignore_imports =
     app.domain.membership.services -> app.domain.delivery.ledger
     app.domain.membership.services -> app.domain.notification.models
     app.domain.memory.migration_service -> app.domain.agent.announce
-    app.domain.memory.migration_service -> app.domain.agent.platform_notices
     app.domain.memory.redundant -> app.domain.agent.execution
     app.domain.memory.redundant -> app.domain.agent_session.services
     app.domain.notification.digest -> app.domain.delivery.models
@@ -626,7 +622,6 @@ ignore_imports =
     app.domain.notification.services -> app.domain.block.repositories
     app.domain.notification.services -> app.domain.block.schemas
     app.domain.policy.proposals -> app.domain.agent.announce
-    app.domain.policy.proposals -> app.domain.agent.platform_notices
     app.domain.policy.proposals -> app.domain.block.models
     app.domain.policy.proposals -> app.domain.delivery.addressing
     app.domain.policy.proposals -> app.domain.room_task.place
@@ -646,7 +641,6 @@ ignore_imports =
     app.domain.project.forge -> app.domain.review.github_pr
     app.domain.project.repositories -> app.domain.task.models
     app.domain.project.room_files -> app.domain.agent.announce
-    app.domain.project.room_files -> app.domain.agent.platform_notices
     app.domain.project.room_files -> app.domain.library.records
     app.domain.project.room_files -> app.domain.library.service
     app.domain.project.room_files -> app.domain.preview.office
@@ -665,31 +659,23 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.repository.service -> app.domain.project_skill.service
-    app.domain.review.archive -> app.domain.agent.platform_notices
-    app.domain.review.gate_sweep -> app.domain.agent.platform_notices
     app.domain.review.github_pr -> app.domain.agent.github_app
     app.domain.review.landing_watch -> app.domain.agent.announce
     app.domain.review.landing_watch -> app.domain.agent.harness.prompt
-    app.domain.review.landing_watch -> app.domain.agent.platform_notices
     app.domain.review.landing_watch -> app.domain.agent_instance.services
     app.domain.review.landing_watch -> app.domain.delivery.addressing
     app.domain.review.live -> app.domain.agent.realtime.broker
-    app.domain.review.nudges -> app.domain.agent.platform_notices
     app.domain.review.periodic -> app.domain.agent.chat
     app.domain.review.pr_poll -> app.domain.agent.announce
     app.domain.review.pr_poll -> app.domain.agent.chat
-    app.domain.review.pr_poll -> app.domain.agent.platform_notices
     app.domain.review.pr_poll -> app.domain.delivery.agent
     app.domain.review.pr_publish -> app.domain.agent.announce
-    app.domain.review.pr_publish -> app.domain.agent.platform_notices
     app.domain.review.pr_publish -> app.domain.delivery.agent
     app.domain.review.pr_publish -> app.domain.delivery.ledger
     app.domain.review.room_notices -> app.domain.agent.announce
-    app.domain.review.room_notices -> app.domain.agent.platform_notices
     app.domain.review.room_notices -> app.domain.delivery.addressing
     app.domain.review.room_notices -> app.domain.delivery.agent
     app.domain.review.room_notices -> app.domain.delivery.ledger
-    app.domain.review.services._shared -> app.domain.agent.platform_notices
     app.domain.review.task_landing -> app.domain.agent.harness.prompt
     app.domain.review.task_landing -> app.domain.agent_instance.services
     app.domain.review.task_landing -> app.domain.delivery.agent
@@ -730,6 +716,5 @@ ignore_imports =
     app.domain.topic.services -> app.domain.room_task.services
     app.domain.topic.services -> app.domain.thread.models
     app.domain.topic_membership.services -> app.domain.agent_instance.services
-    app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.subscription_ingest -> app.domain.block.models
     app.domain.webhook.service -> app.domain.agent.announce

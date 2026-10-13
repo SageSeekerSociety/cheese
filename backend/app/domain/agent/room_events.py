@@ -31,12 +31,12 @@ from app.domain.agent.event_lines import (
     _diff_file_stats,
 )
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.platform_notices import RUN_RECORD_EVENTS
 from app.domain.agent.queries import _block_payload
 from app.domain.agent.run_records import record_now
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
+from app.domain.notice_meta import RUN_RECORD_EVENTS
 
 logger = logging.getLogger(__name__)
 

@@ -27,15 +27,6 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sentences import exception_text, listing, say, with_keys
-from app.domain.agent.platform_notices import (
-    EVENT_MAIL_DRAFTED,
-    EVENT_MAIL_RESULT,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_CHEESE,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor
@@ -49,6 +40,15 @@ from app.domain.integration.service import (
     feishu_settings_for,
     keep_feishu_tokens,
     public,
+)
+from app.domain.notice_meta import (
+    EVENT_MAIL_DRAFTED,
+    EVENT_MAIL_RESULT,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    notice,
 )
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
