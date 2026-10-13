@@ -15,7 +15,10 @@ chat 和 runner —— 判的人不碰「它跑起来没有」，那一问归投
   一遍，看多少遍、进程重启多少次，账上都只有一条。也正因为只补一条，那一条必须是真
   送得出去的：注定会被派发判失败的一条不记（线关了、房间归档了、那一侧没有活着的座
   位）—— 记下的那行会占住这一次停摆的去重键，而那一拍不重新走起来就一直是同一次，
-  这一跳就再也补不上了。
+  这一跳就再也补不上了。同一个位置也是这么用的：那一行后来死在半路上（座位一直空不
+  出来，投递那一侧过了半个小时把它放弃掉）时，下一遍把它重新排上。判失败的每一条都
+  发生在发送之前，所以「账上有一行」和「这一跳送到了座位上」不是一回事，而这两件事
+  只有行自己的状态分得开。
 - **座位上还有没处理完的输入就不补。** 那个座位这一遍收不下新的一条：平台的入场闸本来
   就会把它挂住（`delivery/input_holds.py` 的 `seat_has_unfinished_input`，也是
   `agent/pending_messages.py` 和 `agent/initial_admission.py` 用的同一句话），挂住的投递
@@ -46,7 +49,7 @@ from app.core.sentences import say
 from app.domain.agent.platform_notices import EVENT_WAKE_MISSED, SEVERITY_WARN
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.delivery.agent import record_agent
+from app.domain.delivery.agent import now, record_agent
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
@@ -82,8 +85,9 @@ async def summon(
 ) -> str | None:
     """给这条线上现在坐着的座位点一条补跳。
 
-    返回补给了谁；这一遍不补（这一次已经补过、线不在了、座位忙着）返回 ``None``，
-    所以调用方唯一能拿它做的事就是记一笔「补给了谁」—— 判据不在这个返回值里。
+    返回补给了谁；这一遍不补（这一次已经补到座位上了、线不在了、座位忙着）返回
+    ``None``，所以调用方唯一能拿它做的事就是记一笔「补给了谁」—— 判据不在这个返回值
+    里。半路上死掉的那一条重新排上，也是补给了谁：这一跳的收件人就是那一位。
 
     只做一件事：往账本上写一条点名。跑不跑得起来由平台的投递派发决定，这一层不碰
     「有没有在跑」这类状态，也就不可能和别处抢着起轮。
@@ -91,10 +95,10 @@ async def summon(
     window = stall_record_id(beat, ticking.at)
     minutes = int(since.total_seconds() // 60)
     async with sessions() as session:
-        already = await session.scalar(
-            select(Delivery.id).where(Delivery.event_id == window)
+        recorded = list(
+            await session.scalars(select(Delivery).where(Delivery.event_id == window))
         )
-        if already is not None:
+        if any(row.state != "failed" for row in recorded):
             # 这一次停摆补过了。按事件 id 查，不按「谁补的」查：一次停摆只补一跳，
             # 中途那条线上换了座位也算补过了 —— 那一刻该叫的人已经叫了。
             return None
@@ -147,6 +151,36 @@ async def summon(
                 seat,
             )
             return None
+        dead = next(
+            (row for row in recorded if row.recipient_handle == seat),
+            None,
+        )
+        if dead is not None:
+            # 上一次那一跳没送到座位上：账上那一行是 `failed`，而派发判它失败、投递
+            # 那一侧放弃它（`delivery/timer.py` 的 `give_up_stale`），都发生在**发送
+            # 之前** —— 判成失败就是没送到，这一闪不该算补过了。这次停摆还在，把它从
+            # 死信里捞回来重新排上：不另记一条，去重键跟着事件走，同一次停摆只该有一
+            # 行；不捞的话，那一行会把这一次停摆的地址永久占住，而那一拍不重新走起来
+            # 就一直是同一次，这一跳再也不会来了（判失败不往那条线上说话，见上面）。
+            dead.state = "pending"
+            dead.attempts = 0
+            dead.recorded_at = now()
+            dead.last_error = None
+            dead.lease_until = None
+            dead.attempt_id = None
+            dead.retry_at = None
+            dead.payload = {
+                **dead.payload,
+                "content": _words(beat, ticking, at, minutes),
+            }
+            await session.commit()
+            logger.warning(
+                "wake watch: %s 静了 %s 分钟，上一跳没送到座位上，重新排给 %s",
+                beat.name,
+                minutes,
+                seat,
+            )
+            return seat
         await record_agent(
             session,
             DeliveryEvent(

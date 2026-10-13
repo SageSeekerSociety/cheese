@@ -14,15 +14,16 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.agent.platform_notices import EVENT_WAKE_MISSED
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.models import Delivery, NativeInput
-from app.domain.delivery.timer import deliver_due
+from app.domain.delivery.timer import deliver_due, give_up_stale
 from app.domain.notification.models import NotificationType
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.run_record.models import RunRecord
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.wake_watch import beats, catchup
-from app.domain.wake_watch.beats import Beat, stall_record_id
+from app.domain.wake_watch.beats import Beat, Ticking, stall_record_id
 from app.domain.wake_watch.observe import watch
 from tests.integration.test_same_handle_note_and_timed_delivery import (
     _project,
@@ -446,6 +447,139 @@ def test_an_archived_line_is_never_handed_a_catch_up(client, line):
     assert "catch_up_seat" not in line.record()
 
 
+def test_a_seat_with_no_one_behind_it_is_not_called(client, line):
+    """那一侧没有活着的座位：不点名，也不留一条注定失败的投递。
+
+    这一条支路值得单独测：`AgentInstanceService` 解析座位时**不看** `is_active`
+    （`agent_instance/repositories.py` 的 `list_for_project` 不过滤），所以被停用的
+    座位照样解析得出来 —— 那位已经不在项目里了，记下的那一条会被派发判失败，而失败的
+    那一行占住这一次停摆的去重键（理由同上面归档那条）。
+    """
+    _stalled(line)
+
+    async def deactivate() -> None:
+        async with client.test_factory() as session:
+            instances = await session.scalars(
+                select(AgentInstance).where(
+                    AgentInstance.project_id == uuid.UUID(line.project)
+                )
+            )
+            for instance in instances:
+                instance.is_active = False
+            await session.commit()
+
+    client.portal.call(deactivate)
+
+    assert line.look(STALLED) == {"stalled": 1}
+    assert line.deliveries() == []
+    assert "catch_up_seat" not in line.record()
+
+
+def test_a_line_that_is_not_there_is_not_called(client, line, monkeypatch):
+    """`#1343` 那条线整个找不到了：不点名，也不炸。
+
+    找得到的那一条（任务行、房间、项目）是这条路上最前面的一次查找，四样里少一样都
+    没地方落脚。这里把线指到一个不存在的对话上：少的是任务那一行，和真删掉它的效果
+    一样，但不用去动库里的行。直接调 `summon`（不经过 `watch` 那一层 `_call_summon`
+    的兜底）才测得到这一条：不加守卫那一下是抛属性错误，而守卫抛出来的错会被兜底吞
+    掉、外面看起来一模一样。
+    """
+    _stalled(line)
+    monkeypatch.setattr(catchup, "LINE", uuid.uuid4())
+
+    assert (
+        client.portal.call(
+            functools.partial(
+                catchup.summon,
+                client.test_request_factory,
+                line.beat,
+                Ticking(at=AT, block_at=AT),
+                timedelta(minutes=61),
+                STALLED,
+            )
+        )
+        is None
+    )
+    assert line.deliveries() == []
+    # 判据照记：这一拍是真停了，找不到落脚的地方是另一回事。
+    assert line.look(STALLED) == {"stalled": 1}
+    assert line.record()["stalled_minutes"] == 61
+
+
+def test_a_catch_up_that_never_reached_the_seat_is_handed_again(client, line):
+    """半路死掉的那一条不算补过：下一遍把它重新排上，而不是永远补不上。
+
+    派发判失败的每一条都在发送之前，投递那一侧放弃它（`delivery/timer.py` 的
+    `give_up_stale`：「半个小时没起来」）也在发送之前 —— 判成失败就是没送到。可这次
+    停摆的去重键由「哪一拍、停在哪一刻」算出，那一拍不重新走起来就一直是同一个：留下
+    那行 `failed` 就等于把这一次停摆的地址永久占住，谁也不再补，而它是平台的指令，判
+    失败不往那条线上说话 —— 连「没补成」都没人知道。
+    """
+    _stalled(line)
+    line.look(STALLED)
+
+    # 走一遍真实的那条死路：派发认领过它（`attempts` 是判超时的门槛），半个小时没
+    # 起来，投递那一侧把它放弃掉。
+    async def never_started() -> None:
+        async with client.test_factory() as session:
+            row = (await session.scalars(select(Delivery))).one()
+            row.recorded_at = row.recorded_at - timedelta(hours=1)
+            row.attempts = 1
+            await session.commit()
+        await give_up_stale(client.test_request_factory, chat=object())
+
+    client.portal.call(never_started)
+    (dead,) = line.deliveries()
+    assert dead.state == "failed"
+
+    # 停摆还在：下一遍又补一次 —— 排的是同一行，不是又记一条。运行记录那一条早就
+    # 在（判据那一半记过了），所以这一遍不新记，只有补跳这一半有动作。
+    assert line.look(STALLED + timedelta(hours=2)) == {}
+    (again,) = line.deliveries()
+    assert again.id == dead.id
+    assert again.state == "pending"
+    assert again.attempts == 0
+    assert again.recipient_handle == line.seat
+    assert again.dedup_key == f"{stall_record_id(line.beat, AT)}:{line.seat}"
+    # 话跟着这一遍的时刻重写：那一句里的分钟数是判的时候算出来的。
+    assert "181" in again.payload["content"].splitlines()[0]
+
+
+def test_a_catch_up_that_a_different_seat_gave_up_on_is_recorded_anew(client, line):
+    """死信是补给**别人**的：这一遍照样点现在坐着的那位。
+
+    座位中途换了人就是这个样子。那一行不能捞回来接着用 —— 收件人写死在行上，捞回来
+    等于把这一跳又发给已经不在那条线上的那位；也不该被它挡住。
+    """
+    _stalled(line)
+    window = stall_record_id(line.beat, AT)
+
+    async def gave_up() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                Delivery(
+                    event_id=window,
+                    recipient_handle="cheese-who-left",
+                    conversation_id=line.task_id,
+                    dedup_key=f"{window}:cheese-who-left",
+                    type="ROOM_NOTICE",
+                    payload={"content": "【补跳】平台侧观察者：…"},
+                    event_at=AT,
+                    recorded_at=AT,
+                    state="failed",
+                    attempts=1,
+                )
+            )
+            await session.commit()
+
+    client.portal.call(gave_up)
+
+    assert line.look(STALLED) == {"stalled": 1}
+    rows = line.deliveries()
+    assert len(rows) == 2, "死信那一行不在，或者又记重了"
+    assert {row.recipient_handle for row in rows} == {"cheese-who-left", line.seat}
+
+
 def test_the_shipped_default_keeps_the_catch_up_on():
     """出厂就是开着的：影子期只判不补，这一半是判完之后真的补。
 
@@ -520,11 +654,12 @@ def test_the_catch_up_records_the_moment_the_stall_became_true(client, line):
     """投递上的时刻是「判出停摆的那一刻」，不是这一遍看它的时刻。
 
     这一笔是补一笔早就该发生的事：按巡检这一遍的时刻记，事后对时间线时，它会比真实
-    那一次晚一整个巡检周期（甚至更多）。
+    那一次晚一整个巡检周期（甚至更多）。写死 60 分钟，不写 `beat.stall_after`：拿
+    那个属性来比，比的是「有没有跟着这一拍走」，比不出 60 这个数本身。
     """
     _stalled(line)
 
     line.look(STALLED + timedelta(hours=3))
 
     (delivery,) = line.deliveries()
-    assert delivery.event_at == AT + line.beat.stall_after
+    assert delivery.event_at == AT + timedelta(minutes=60)
