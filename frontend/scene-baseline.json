@@ -91,7 +91,6 @@
     "src/views/account/signup/StartView.vue",
     "src/views/account/signup/VerifyEmailView.vue",
     "src/views/admin/AdminCreditsPageView.vue",
-    "src/views/admin/AdminExternalProblemPageView.vue",
     "src/views/admin/AdminIntegrationsPageView.vue",
     "src/views/admin/AdminMachinesPageView.vue",
     "src/views/admin/AdminMembersPageView.vue",

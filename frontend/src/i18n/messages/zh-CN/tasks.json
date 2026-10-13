@@ -153,14 +153,6 @@
     "topicsPlaceholder": "选择话题",
     "noCategories": "暂无分类",
     "noTopics": "暂无话题",
-    "externalProblem": {
-      "title": "外站题",
-      "label": "YOJ 题号",
-      "placeholder": "例如 1001",
-      "hint": "填上之后，平台按学号去 YOJ 核对每个领取者过没过这道题；结果在「领取者」页签，在那里也能随时重新同步。",
-      "onlyDigits": "题号只能填数字",
-      "tooLong": "题号最多 32 位"
-    },
     "more": {
       "title": "更多设置",
       "summaryAll": "全部成员可领取",
@@ -300,7 +292,6 @@
       "claimedAt": "领取于",
       "status": "状态",
       "latest": "最新提交",
-      "external": "YOJ",
       "deadline": "截止",
       "ops": "操作"
     },
@@ -338,21 +329,6 @@
     "rejectFailed": "拒绝失败，稍后重试",
     "deadlineSaved": "截止时间已更新",
     "deadlineFailed": "截止时间设置失败",
-    "external": {
-      "sync": "同步",
-      "synced": "YOJ 成绩已更新",
-      "syncFailed": "这次没同步成，下面还是上一次的数",
-      "neverSynced": "还没同步过",
-      "lastSynced": "上次同步 {when}",
-      "lastFailed": "上次同步 {when} 没成功，下面是上一次的数",
-      "passed": "已过",
-      "notPassed": "未过",
-      "openAccepted": "看是什么时候过的",
-      "acceptedTitle": "过题时间",
-      "acceptedLead": "{name} 在这道题上",
-      "studentNo": "学号",
-      "acceptedAt": "AC 时间"
-    },
     "unknownUser": "未知用户",
     "unknownTeam": "未知团队",
     "memberWithId": "{name}（{id}）",
@@ -362,7 +338,6 @@
     "saveChanges": "保存更改",
     "saveAndResubmit": "保存并提交审核",
     "resubmitted": "重新提交审核成功，等待管理员审核",
-    "externalProblemUnavailable": "外站题号这次没读出来，这一格先不显示；题目本身照常改。刷新一次通常就有了。",
     "crumb": "编辑"
   },
   "loadError": {

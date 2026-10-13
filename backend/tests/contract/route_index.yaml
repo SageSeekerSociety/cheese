@@ -33,7 +33,6 @@ auth_entries:
   project.owner: "projects._project_owner: require_verified_caller, project.owner_handle equality; members who are not owners are refused and outsiders get NotFound. Does not use authorize_project, so the one permitted unarchive write can cross the archive guard. Source: app/api/routes/projects.py."
   project.create: "projects.create_project requires an authenticated caller, who becomes the owner (the body has no owner field), checks _require_team_membership and _require_claim before attaching team/task. These association checks are independent of the topic-access kill switch. Source: app/api/routes/projects.py and its two helpers."
   project.list: "projects.list_projects resolves/rejects failed credentials; handles caller-visible project listing or authorize_team for a team filter and require_verified_caller for the self filter. Source: app/api/routes/projects.py. Different query branches are intentional, not a universal public listing."
-  task.teach: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); the task's creator OR its board's owner/admin via may_teach_task — the same gate the participant roster and the participant PATCH use. Source: app/api/routes/tasks/external_problem.py, app/auth/checker.py:142, app/auth/space_access.py:54."
   task.visibility: "ActorResolver.resolve then authorize_task delegates visibility to domain/task/TaskVisibilityService, subject to authz_enforce_topic_access; nonexistent task returns the unchanged empty result. Source: app/api/auth.py and projects.projects_for_task."
   team.access: "ActorResolver.resolve then authorize_team requires verified team membership when authz_enforce_topic_access is enabled. Source: app/api/auth.py; cited handler."
   artifact.keeper: "projects_artifacts._artifact_keeper: ProjectService.get_or_404, ActorResolver.require_verified_caller(project_id), authorize_project. Index records those concrete checks; the helper human-only comment is not treated as a separate implemented policy. Source: app/api/routes/projects_artifacts.py."
@@ -362,7 +361,6 @@ owners:
   space.publishing: "Learning board member publishing history; domain/space/member_publishing_service.py."
   space.organization: "Learning board categories/groups/management roles; domain/space/SpaceService and tags_service."
   tag: "Content classification labels; domain/tag/TagService."
-  external_problem: "A task's number on an external judge (YOJ), each participant's result there, and the teacher account the platform syncs with; domain/external_problem."
   task: "External learning-task publication/participation/submission/review; domain/task services. Distinct from domain/room_task."
   team: "Team discovery/membership/shared resources; domain/team/TeamService and membership services."
   user: "Account registration/sign-in/profile/security; domain/user services, composed with OAuth/legal/invite by user route."
@@ -424,8 +422,6 @@ routes:
   # app.api.routes.admin_integrations
   - {protocol: "http", method: "GET", path: "/admin/integrations/feishu", auth: "platform.admin", owner: "integration"}
   - {protocol: "http", method: "PUT", path: "/admin/integrations/feishu", auth: "platform.admin", owner: "integration"}
-  - {protocol: "http", method: "GET", path: "/admin/integrations/external-problem", auth: "platform.admin", owner: "external_problem"}
-  - {protocol: "http", method: "PUT", path: "/admin/integrations/external-problem", auth: "platform.admin", owner: "external_problem"}
   # app.api.routes.admin_members
   - {protocol: "http", method: "GET", path: "/admin/admins", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "GET", path: "/admin/users", auth: "platform.admin", owner: "admin"}
@@ -1084,11 +1080,6 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "PUT", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
-  # app.api.routes.tasks.external_problem（后加的一段，排在 include 顺序末尾）
-  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/external-problem", auth: "task.teach", owner: "external_problem"}
-  - {protocol: "http", method: "PUT", path: "/tasks/{taskId}/external-problem", auth: "task.teach", owner: "external_problem"}
-  - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/external-problem", auth: "task.teach", owner: "external_problem"}
-  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/external-problem/sync", auth: "task.teach", owner: "external_problem"}
   # app.api.routes.teams
   - {protocol: "http", method: "GET", path: "/teams", auth: "legacy.teams.get_teams", owner: "team"}
   - {protocol: "http", method: "GET", path: "/teams/my-teams", auth: "legacy.teams.get_my_teams", owner: "team"}

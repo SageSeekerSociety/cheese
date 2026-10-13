@@ -18,7 +18,6 @@ from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.block.services import last_block_at
 from app.domain.delivery import periodic as delivery_periodic
 from app.domain.docs_site import periodic as docs_periodic
-from app.domain.external_problem import periodic as external_problem_periodic
 from app.domain.machine import periodic as machine_periodic
 from app.domain.notification import periodic as notification_periodic
 from app.domain.project import periodic as project_periodic
@@ -27,7 +26,6 @@ from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
 from app.domain.task import periodic as task_periodic
-from app.domain.task.external_roster import student_roster
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.topic_membership.services import addressable_seat
 from app.domain.usage import periodic as usage_periodic
@@ -66,7 +64,6 @@ PERIODIC_JOB_NAMES = (
     "task deadline sweep",
     "memory dream",
     "ratchet ingest",
-    "external problem sync",
     "wake watch",
 )
 
@@ -161,10 +158,6 @@ def periodic_jobs(
         jobs, sessions=sessions, chat=chat, get_runner=get_runner
     )
     task_periodic.register_periodic_jobs(jobs, sessions=sessions)
-    # 名单由这里递给它：外站那个域不认识题目域和用户域，这一份是两者之间那条边。
-    external_problem_periodic.register_periodic_jobs(
-        jobs, sessions=sessions, student_roster=student_roster
-    )
     ratchet_periodic.register_periodic_jobs(jobs, sessions=sessions)
     wake_watch_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
