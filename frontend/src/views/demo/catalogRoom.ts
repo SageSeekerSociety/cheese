@@ -487,6 +487,16 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
         props: {
           block: askBlock([]),
           names: {},
+          viewer: 'alice',
+        },
+      },
+      {
+        name: '问的是别人',
+        note: '题问的是 @alice，看的人不在被问的人里：选项和「其他」都灰着、点不动，也没有跳过的 ✕；上面那行「问 @alice」说明在等谁。',
+        props: {
+          block: askBlock([]),
+          names: { alice: 'Alice' },
+          viewer: 'bob',
         },
       },
       {
