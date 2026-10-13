@@ -8,9 +8,9 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
-import UserRef from '@/components/common/UserRef.vue'
 import { taskState } from '@/utils/tasks'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { splitOrigin } from '@/views/spaces/model'
 
 const props = defineProps<{
@@ -53,11 +53,7 @@ const deadline = computed(() =>
         <span>
           <i18n-t keypath="spaces.detail.tasks.row.by" scope="global" tag="span">
             <template #name>
-              <UserRef
-                :handle="task.creator.username"
-                :name="publisher"
-                :avatar-id="task.creator.avatarId"
-              />
+              <UserRef :handle="task.creator.username" :name="publisher" :avatar-id="task.creator.avatarId" />
             </template>
           </i18n-t>
         </span>

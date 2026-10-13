@@ -50,11 +50,7 @@ const facts = computed(() => {
           <span>
             <i18n-t keypath="spaces.detail.auditTasks.by" scope="global" tag="span">
               <template #name>
-                <UserRef
-                  :handle="task.creator.username"
-                  :name="publisher"
-                  :avatar-id="task.creator.avatarId"
-                />
+                <UserRef :handle="task.creator.username" :name="publisher" :avatar-id="task.creator.avatarId" />
               </template>
             </i18n-t>
           </span>
