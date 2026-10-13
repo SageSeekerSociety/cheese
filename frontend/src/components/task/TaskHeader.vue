@@ -83,13 +83,33 @@ function avatarOf(handle: string | null | undefined): string {
   const chosen = props.people.find((m) => m.member_handle === handle)?.avatar_id
   return chosen ? getAvatarUrl(chosen) : ''
 }
+/** 身份字段跟着下拉行走：这一行是 `{handle, name, avatarId}` 就画脸 + 名字，画的是谁一处说了算。
+ * 还没挑（模型是 `null`）时 Vuetify 根本不调「选中」那个插槽，占位提示照常露出；但模型里
+ * 若是一串没匹配上任何一行的裸 handle（比如这个人已经退出名册），`raw` 就是那串字符串 ——
+ * 这时交回 null，让调用处把那串 handle 原样写出来：别画一张认不出是谁的空脸，也别把身份丢掉。 */
+function identityOf(item: { raw?: unknown }): { handle: string; name: string; avatarId: number | null } | null {
+  const raw = item.raw
+  if (raw && typeof raw === 'object' && 'handle' in raw) {
+    const row = raw as { handle?: unknown; name?: unknown; avatarId?: unknown }
+    if (typeof row.handle === 'string' && row.handle) {
+      return {
+        handle: row.handle,
+        name: typeof row.name === 'string' ? row.name : row.handle,
+        avatarId: typeof row.avatarId === 'number' ? row.avatarId : null,
+      }
+    }
+  }
+  return null
+}
 // 还能拉进来的人：名册上的人，除了负责人和已经在协作的。
 const addable = computed(() =>
   props.people.filter(
     (m) => m.member_handle !== props.task?.owner_handle && !collaborators.value.includes(m.member_handle)
   )
 )
-const adding = ref('')
+// 还没挑人时是 `null`，不是 `''`：`''` 会被 Vuetify 当成一个「有值但没匹配上任何一行」
+// 的选中项，占位提示藏起来、格子里画一张空脸。`null` 才是不挑。
+const adding = ref<string | null>(null)
 /** 下拉里的每一行：身份字段跟着走，画头像 + 名字靠一处 IdentityView。 */
 const addableItems = computed(() =>
   addable.value.map((m) => ({
@@ -101,8 +121,9 @@ const addableItems = computed(() =>
   }))
 )
 async function addCollaborator() {
-  if (!adding.value) return
-  if (await props.setCollaborators([...collaborators.value, adding.value])) adding.value = ''
+  const picked = adding.value
+  if (!picked) return
+  if (await props.setCollaborators([...collaborators.value, picked])) adding.value = null
 }
 function removeCollaborator(handle: string) {
   void props.setCollaborators(collaborators.value.filter((h) => h !== handle))
@@ -183,7 +204,8 @@ async function confirmRename() {
 
 const handOverOpen = ref(false)
 const handingOver = ref(false)
-const nextOwner = ref('')
+// 同 `adding`：没挑人是 `null`，不是 `''` —— 见上面那段的理由。
+const nextOwner = ref<string | null>(null)
 /** 转交下拉的每一行，同 `addableItems`：身份字段跟着走，画脸靠 IdentityView。 */
 const handOverItems = computed(() =>
   otherPeople.value.map((m) => ({
@@ -195,9 +217,11 @@ const handOverItems = computed(() =>
   }))
 )
 async function confirmHandOver() {
+  const picked = nextOwner.value
+  if (!picked) return
   handingOver.value = true
   try {
-    if (await props.handOver(nextOwner.value)) handOverOpen.value = false
+    if (await props.handOver(picked)) handOverOpen.value = false
   } finally {
     handingOver.value = false
   }
@@ -275,6 +299,7 @@ async function confirmHandOver() {
                     density="compact"
                     variant="outlined"
                     hide-details
+                    autocomplete="off"
                     :aria-label="t('work.task.addCollaborator')"
                     :placeholder="t('work.task.addCollaborator')"
                     :items="addableItems"
@@ -291,12 +316,8 @@ async function confirmHandOver() {
                       </v-list-item>
                     </template>
                     <template #selection="{ item }">
-                      <IdentityView
-                        :handle="item.raw.handle"
-                        :name="item.raw.name"
-                        :avatar-id="item.raw.avatarId"
-                        :size="18"
-                      />
+                      <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="18" />
+                      <template v-else>{{ item.raw }}</template>
                     </template>
                   </v-select>
                   <button v-if="adding" type="button" class="task-details__retry" @click="addCollaborator">
@@ -519,6 +540,7 @@ async function confirmHandOver() {
       density="compact"
       variant="outlined"
       hide-details
+      autocomplete="off"
       :aria-label="t('work.task.handOverTo')"
       :placeholder="t('work.task.handOverTo')"
       :items="handOverItems"
@@ -535,7 +557,8 @@ async function confirmHandOver() {
         </v-list-item>
       </template>
       <template #selection="{ item }">
-        <IdentityView :handle="item.raw.handle" :name="item.raw.name" :avatar-id="item.raw.avatarId" :size="18" />
+        <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="18" />
+        <template v-else>{{ item.raw }}</template>
       </template>
     </v-select>
   </ConfirmDialog>
