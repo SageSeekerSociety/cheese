@@ -59,8 +59,6 @@ const ARG_KEY: Record<string, string> = {
   cheese_task: 'title',
   cheese_close_task: 'conclusion',
   cheese_fetch: 'url',
-  cheese_lock: 'kind',
-  cheese_unlock: 'kind',
   cheese_decision: 'text',
   cheese_title: 'text',
   cheese_notify: 'title',

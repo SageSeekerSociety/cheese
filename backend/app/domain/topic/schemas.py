@@ -157,15 +157,6 @@ class CheckResultIn(BaseModel):
     detail: str = ""
 
 
-class LockIn(BaseModel):
-    """Acquire or release the room's heavy-operation lane."""
-
-    kind: str = Field(pattern="^heavy$")
-    #: The task holding it. Implied when the lock is asked for in a task.
-    task_id: uuid.UUID | None = None
-    resource: str = Field(default="", max_length=0)
-
-
 class ConclusionIn(BaseModel):
     """收卡. Empty means "the worker's last word stands" — the platform already
     wrote it on the card, so the room usually has nothing to add."""
