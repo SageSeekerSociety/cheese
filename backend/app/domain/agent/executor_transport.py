@@ -129,7 +129,9 @@ def _dead_credential(error) -> bool:
         return False
     if not isinstance(body, dict) or body.get("retryable") is True:
         return False
-    detail = body.get("error") if isinstance(body.get("error"), dict) else {}
+    detail = body.get("error")
+    if not isinstance(detail, dict):
+        detail = {}
     message = f"{body.get('message', '')} {detail.get('message', '')}"
     return any(text in message for text in _DEAD_CREDENTIAL)
 
