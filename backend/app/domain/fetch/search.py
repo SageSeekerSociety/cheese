@@ -47,6 +47,7 @@ async def search(query: str, endpoint: str, *, limit: int = 8) -> list[Result]:
     except httpx.HTTPError as exc:
         raise SearchUnavailable(type(exc).__name__) from exc
     if r.status_code != 200:
+        # i18n-exempt: a status code; the route words it through say()
         raise SearchUnavailable(f"HTTP {r.status_code}")
     found: list[Result] = []
     seen: set[str] = set()

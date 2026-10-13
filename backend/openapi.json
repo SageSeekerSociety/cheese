@@ -11705,6 +11705,97 @@
         }
       }
     },
+    "/web-search": {
+      "get": {
+        "tags": [
+          "fetch"
+        ],
+        "summary": "Search the web for an agent",
+        "description": "Results (title, URL, snippet) from the deployment's search service.\n\nThe same caller rule as `/fetch`: a signed-in person or an agent's scoped\ntoken, which verifies only against the room it names.",
+        "operationId": "web_search_web_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400,
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20,
+              "minimum": 1,
+              "default": 8,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "topic",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Topic"
+            }
+          },
+          {
+            "name": "project",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebSearchOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/page-check": {
       "post": {
         "tags": [
@@ -66447,6 +66538,81 @@
         ],
         "title": "WebRegionQuoteIn",
         "description": "网页上框选的一块区域：只记网址和位置，不记页面内容。\n\n这类引用来自没有注入运行时的网页应用（隧道托管的 `cheese serve`），宿主读不到\n里面的元素和文字，能说的只有「在这张网页的这个位置框了一块」。所以它不带文件\n身份（`path`/`source`/`version`）：应用预览本就没有版本可言，网址就是它的身份。"
+      },
+      "WebSearchOut": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/WebSearchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results"
+        ],
+        "title": "WebSearchOut"
+      },
+      "WebSearchOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WebSearchOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WebSearchOutEnvelope"
+      },
+      "WebSearchResult": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "snippet": {
+            "type": "string",
+            "title": "Snippet"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title",
+          "url",
+          "snippet"
+        ],
+        "title": "WebSearchResult"
       },
       "WebTextQuoteIn": {
         "properties": {

@@ -65,7 +65,7 @@ async def test_a_deployment_without_search_refuses_plainly(monkeypatch):
     """No service configured is an answer the agent can act on, not an empty list
     that reads as "nothing on the web"."""
     monkeypatch.setattr(fetch_route.settings, "fetch_search_endpoint", None)
-    with pytest.raises(SystemBusyError, match="No web search service"):
+    with pytest.raises(SystemBusyError, match="没有配置网页搜索服务"):
         await fetch_route.web_search(
             SimpleNamespace(require_verified_caller=AsyncMock()), q="anything"
         )

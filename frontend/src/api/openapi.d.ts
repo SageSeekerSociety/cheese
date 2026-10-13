@@ -3724,6 +3724,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/web-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search the web for an agent
+         * @description Results (title, URL, snippet) from the deployment's search service.
+         *
+         *     The same caller rule as `/fetch`: a signed-in person or an agent's scoped
+         *     token, which verifies only against the room it names.
+         */
+        get: operations["web_search_web_search_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/page-check": {
         parameters: {
             query?: never;
@@ -18241,6 +18264,36 @@ export interface components {
             rect: components["schemas"]["WebRectIn"];
             viewport: components["schemas"]["WebViewportIn"];
         };
+        /** WebSearchOut */
+        WebSearchOut: {
+            /** Results */
+            results: components["schemas"]["WebSearchResult"][];
+        };
+        /** WebSearchOutEnvelope */
+        WebSearchOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["WebSearchOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** WebSearchResult */
+        WebSearchResult: {
+            /** Title */
+            title: string;
+            /** Url */
+            url: string;
+            /** Snippet */
+            snippet: string;
+        };
         /**
          * WebTextQuoteIn
          * @description 网页里选中一段文字：形状同 `WebElementQuoteIn`，另带两侧的文字。
@@ -25215,6 +25268,40 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    web_search_web_search_get: {
+        parameters: {
+            query: {
+                q: string;
+                limit?: number;
+                topic?: string | null;
+                project?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebSearchOutEnvelope"];
                 };
             };
             /** @description Validation Error */

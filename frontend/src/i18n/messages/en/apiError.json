@@ -868,6 +868,8 @@
   "workComputerPreparing": "The environment is still being prepared. Chat and platform tools are still available",
   "atMustBeIso": "at must be an ISO-8601 time",
   "docAgentAskUnavailable": "Can't ask right now. Try again later",
+  "webSearchNotConfigured": "No web search service is configured on this deployment",
+  "webSearchUnavailable": "The web search service did not answer ({reason})",
   "docAgentPresetNotFound": "This option doesn't exist",
   "docAgentPresetNeedsSelection": "Select some text to use this option",
   "docAgentNoAnswerToComment": "There's no answer to put in a comment this time",

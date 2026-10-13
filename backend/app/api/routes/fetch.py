@@ -20,9 +20,10 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.core.config import settings
 from app.core.errors import SystemBusyError
+from app.core.sentences import say
 from app.domain.fetch.search import SearchUnavailable
 from app.domain.fetch.search import search as search_web
 from app.domain.fetch.service import fetch as fetch_url
@@ -93,7 +94,21 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
     )
 
 
-@router.get("/web-search", summary="Search the web for an agent")
+class WebSearchResult(BaseModel):
+    title: str
+    url: str
+    snippet: str
+
+
+class WebSearchOut(BaseModel):
+    results: list[WebSearchResult]
+
+
+@router.get(
+    "/web-search",
+    summary="Search the web for an agent",
+    **typed_response(WebSearchOut),
+)
 async def web_search(
     actor: ActorResolverDep,
     q: Annotated[str, Query(min_length=1, max_length=400)],
@@ -109,11 +124,11 @@ async def web_search(
     await actor.require_verified_caller(topic_id=topic, project_id=project)
     endpoint = settings.fetch_search_endpoint
     if not endpoint:
-        raise SystemBusyError("No web search service is configured on this deployment")
+        raise SystemBusyError(say("webSearchNotConfigured"))
     try:
         found = await search_web(q, endpoint, limit=limit)
     except SearchUnavailable as exc:
-        raise SystemBusyError(f"The web search service did not answer ({exc})") from exc
+        raise SystemBusyError(say("webSearchUnavailable", reason=str(exc))) from exc
     return ok({"results": [vars(r) for r in found]})
 
 
