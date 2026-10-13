@@ -63,7 +63,7 @@ test('把第一个项目拖到最后一格下半边，它成为新的最后一�
 
   const source = (await tiles.first().boundingBox())!;
   const tail = (await tiles.nth(before.length - 1).boundingBox())!;
-  const line = page.locator(`.app-rail-item--drop-after[aria-label="${before[before.length - 1]}"]`);
+  const line = page.locator(`.app-rail-item--drop-after[data-project-id="${before[before.length - 1]}"]`);
 
   await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
   await page.mouse.down();
