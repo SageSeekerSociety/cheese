@@ -366,6 +366,8 @@
   "taskLandedNoPr": "“{title}” accepted",
   "taskStepLanded": "This delivery of “{title}” was accepted · PR #{pr}; the task goes on",
   "taskStepLandedNoPr": "This delivery of “{title}” was accepted; the task goes on",
+  "taskClosedUndelivered": "“{title}” was accepted, but work still going on in it had not finished past the deadline: the task is closed, and that work was stopped without being delivered",
+  "taskClosedUndeliveredDetail": "Work not delivered:\n{items}",
   "taskReopened": "{actor} reopened the task “{title}”",
   "threadArchivedWithRoom": "Archived along with its channel “{room}”",
   "timedDelivery": "You asked the platform to hand you this at this time",

@@ -46,6 +46,7 @@ from app.domain.project.models import Project
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import Check, ForgeUnavailable, LandingReads
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
+from app.domain.review.room_notices import tell_room_undelivered
 from app.domain.review.task_landing import go_on_while_working, tell_agent
 from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.models import Task, TaskStatus
@@ -64,9 +65,11 @@ async def watch_landings(chat) -> dict:
     whose AI teammate has gone on working, and the overdue closings."""
 
     sessions = chat.session_factory
+    gone_on = await go_on_while_working(sessions)
     async with sessions() as session:
-        gone_on = await go_on_while_working(session)
         closed = await close_overdue(session, chat)
+        for overdue in closed:
+            await tell_room_undelivered(session, overdue)
         await session.commit()
         ids = list(
             await session.scalars(

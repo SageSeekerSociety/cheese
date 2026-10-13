@@ -498,7 +498,7 @@ async def test_a_page_of_what_the_room_shows_skips_the_steps_by_index(db_factory
 async def test_the_waiting_messages_come_back_and_are_read_by_their_index(db_factory):
     """The pending-message scan runs on a clock, so it must read its few rows
     from `ix_blocks_queued_messages`, not the table of everything ever said."""
-    from app.domain.agent.pending_messages import queued_messages
+    from app.domain.block.queries import queued_messages
 
     async with db_factory() as session:
         seeded = await _seed(session)
