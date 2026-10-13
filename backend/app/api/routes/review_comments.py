@@ -4,18 +4,23 @@
 its lines are in the version now under review. Writing, editing and deleting a
 draft are a person's acts; 芝士 answers comments by what it reports when it
 hands the task over again, not through these routes.
+
+The rows the `GET` answers with are `app.api.review_comment_rows`, not this
+module's: a task's room snapshot embeds the same ones and is not a route, so the
+builder lives under `app.api` where both may ask for it (C4
+`routes-independent`).
 """
 
 import uuid
 
 from fastapi import APIRouter
 from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
+from app.api.review_comment_rows import review_comment_rows
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import AuthenticationRequiredError, ForbiddenError, NotFoundError
 from app.core.sentences import say
@@ -138,16 +143,6 @@ async def list_review_comments(
 ) -> dict:
     _place, actor, task = await task_conversation(db, resolver, task_id)
     return ok(await review_comment_rows(db, task, actor.handle or ""))
-
-
-async def review_comment_rows(db: AsyncSession, task, viewer: str) -> dict:
-    """A task's review comments as `viewer` reads them; also the
-    `review_comments` of a task's room snapshot. The caller has authorised the
-    reader."""
-    svc = ReviewCommentService(db)
-    rows = await svc.comments(task.id, viewer)
-    anchor = await svc.anchors(task, rows)
-    return {"comments": [describe(row, anchor) for row in rows]}
 
 
 @router.get(

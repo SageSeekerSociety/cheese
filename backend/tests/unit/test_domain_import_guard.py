@@ -77,6 +77,17 @@ _SCANNED_MODULES = (
     "app/api/teams_deps.py",
     "app/api/topics_file_sources.py",
     "app/api/ws_pipe.py",
+    # 2026-10 的第三轮（最后一轮）：把经过 `app.api` 助手绕出来的名字也挪走。
+    # 前四个是新的行构造模块——`topic_member_rows`、`topic_pin_rows`、
+    # `review_comment_rows`、`project_skill_rows`，`room_snapshot` 原先是回它们各自
+    # 的路由里去拿的；`preview_relay` 装预览隧道浏览端的那半边和两端共用的 hub。
+    # 判据不变：从 `routes/` 里出来的就点名。`preview_host`、`preview_runtime`、
+    # `room_snapshot` 这些不点，因为它们在这轮之前就生在 `app/api/` 下。
+    "app/api/preview_relay.py",
+    "app/api/project_skill_rows.py",
+    "app/api/review_comment_rows.py",
+    "app/api/topic_member_rows.py",
+    "app/api/topic_pin_rows.py",
 )
 
 #: 路由那棵树的「领域」。它不是领域包，这个值只用来让路由发出的每一条 repository
@@ -321,8 +332,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # `routes/teams.py` 自己留着 `UserRealNameRepository` 那条（它没搬）。
         ("app.api.routes.teams", "app.domain.user.repositories"),
         ("app.api.teams_deps", "app.domain.user.repositories"),
-        ("app.api.routes.topic_members", "app.domain.identity.repositories"),
-        ("app.api.routes.topic_members", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
@@ -381,6 +390,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.topics_deps", "app.domain.block.repositories"),
         ("app.api.topics_deps", "app.domain.project.repositories"),
         ("app.api.topics_deps", "app.domain.usage.repositories"),
+        # --- topic_member_rows --- 2026-10 的第三轮：`room_snapshot` 要的房间成员
+        # 那一段原先住在 `routes/topic_members.py` 里，而 `room_snapshot` 不是路由、
+        # 却要 import 它，正是 C4 不许的形状。`roster_rows` 连同它那两个 repository
+        # （identity 的 `AgentBindingRepository`、user 的 `UserRepository`）搬到
+        # `app/api/topic_member_rows.py`，发起方从 `routes/topic_members` 换成新模块。
+        # 被摸的 repository 一个没多，所以按同一笔债入账，只是换了个名字。
+        ("app.api.topic_member_rows", "app.domain.identity.repositories"),
+        ("app.api.topic_member_rows", "app.domain.user.repositories"),
     }
 )
 

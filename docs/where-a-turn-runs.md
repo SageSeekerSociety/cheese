@@ -226,7 +226,8 @@ Installation and storage configuration are described in
 - `backend/app/domain/machine/toolchain_dist.py` — 文档工具钉在哪个版本、哪个 digest
 - `backend/app/domain/agent/machine_launcher.py` — 把它们放到机器上的那一段
 - `backend/app/domain/agent/preview_tunnel.py` — 运行环境预览：机器那一半（发到机器上跑的那份）
-- `backend/app/api/routes/app_preview.py` — 运行环境预览：平台这一半，两端都在里面
+- `backend/app/api/routes/app_preview.py` — 运行环境预览：平台这一半，机器的那端在这里
+- `backend/app/api/preview_relay.py` — 运行环境预览：平台这一半，浏览器的另一端和两端共用的 hub
 - `backend/app/domain/agent/market.py` — 菜单，以及默认值这一个答案
 - `backend/app/domain/device/supply.py` — 可见性两档与「哪档真能跑」
 - `docs/device-self-hosting.md` — 自托管设备那条路的完整说明
