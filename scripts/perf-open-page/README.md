@@ -38,9 +38,9 @@
 `measurements.json` 里的 `api_timeline` 去掉了查询串，同一路径、参数不同的两次读
 看起来像同一个请求打了两次；现在的 `measure.py` 保留查询串。
 
-### 那次报告里撤回的两条
+### 那次报告里更正的两条
 
-当时的结论（PR #3530 的描述）里有两条复核后不成立：
+当时的结论（PR #3530 的描述）里有两条复核后不成立或只对一部分：
 
 - **「频道页 blocks → read → environment 三段串行，改并发约省 300 毫秒」**：不成立。
   `read` 发出时不需要 `blocks` 的结果；`environment` 是频道名册（`TopicMembers.vue`）
