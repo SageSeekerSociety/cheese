@@ -27,6 +27,7 @@ import routines from './routines.json'
 import shell from './shell.json'
 import slides from './slides.json'
 import spaces from './spaces.json'
+import taskList from './taskList.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
 import toolLabels from './toolLabels.json'
@@ -58,6 +59,7 @@ export default {
   usage,
   users,
   welcome,
+  taskList,
   tasks,
   teams,
   spaces,

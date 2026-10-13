@@ -23,6 +23,7 @@ author_type=platform`，前端一行灰字）。另一条更糟：`runner.submit
 里，因为历史行带着它们，得渲染得出来。
 """
 
+from app.domain.review import github_pr
 from app.domain.review.services import _NUDGE_TAIL_LIMIT
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_task_id
@@ -30,7 +31,9 @@ from tests.delivery import delivery_task_id
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端
 # （房间里落下什么块），没有理由再造一套。
 from tests.integration.test_accept_pr import (
+    _accept,
     _arm,
+    _cards,
     _poll,
     _protect,
     _ready_card,
@@ -243,6 +246,89 @@ def test_merge_refused_lands_as_one_line_event(client, app_world):
     # GitHub 的原话原样收在展开区里，不是摘要。
     assert event["meta"]["detail"] == reason
     assert "405" not in event["content"]
+
+
+# --------------------------------------------------------------------------
+# 已采纳的 PR 离开合并队列但没合并
+# --------------------------------------------------------------------------
+
+
+def test_leaving_the_merge_queue_wakes_the_task_once(client, app_world, monkeypatch):
+    """PR #3496：出队后卡片仍写着「已采纳」，26 分钟没人发现。
+
+    出队是 GitHub 在队列里判了检查不过，或有人把这条取出。这和 GitHub 直接拒绝
+    合并一样，是「卡住了、芝士在任务目录里能动手」，所以任务对话里要出现一条
+    merge_refused 级别的通知；同一次出队只出现一条（60 秒一拍的轮询不能刷屏）。
+    """
+    fake = app_world["fake"]
+    _pid, tid, cid, number, head = _ready_card(client, app_world)
+    fake.check_state_by_sha[head] = ("success", "green")
+
+    async def enqueue(**kwargs):
+        return github_pr.MergeResult(queued=True)
+
+    async def not_in_queue(**kwargs):
+        return False
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "merge_queue_entry", not_in_queue, raising=False)
+    assert _accept(client, cid).status_code == 200
+    assert "等待队列检查" in _cards(client, tid)[0]["note"]
+
+    before = {b["id"] for b in _blocks(client, tid)}
+    _poll(client)
+    event = _wait_for_event(client, tid, "merge_refused")
+
+    # 卡本身没动：还在等，没被自动重新采纳，也没被算成已合并。
+    assert _cards(client, tid)[0]["status"] == "pending"
+    _assert_is_a_platform_notice(
+        event, event_type="merge_refused", severity="error", who="cheese"
+    )
+    assert f"#{number}" in event["content"]
+    fresh = [b for b in _blocks(client, tid) if b["id"] not in before]
+    assert [b for b in fresh if _by_a_person(b)] == [], "平台又伪装成人在房间里说话"
+
+    # 再轮询两拍：这次出队没有变，房间里仍只有那一条。
+    _poll(client)
+    _poll(client)
+    assert (
+        sum(
+            (b.get("meta") or {}).get("event_type") == "merge_refused"
+            for b in _blocks(client, tid)
+        )
+        == 1
+    )
+
+    # 任务被叫醒：完整指令落进任务自己的会话，说清出队和要做的事。
+    wait_work_idle()
+
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.domain.delivery.models import Delivery
+
+    task_id = str(delivery_task_id(client, tid))
+
+    async def recorded_instruction() -> str:
+        async with client.test_factory() as db:
+            rows = list(
+                await db.scalars(
+                    select(Delivery).where(
+                        Delivery.conversation_id == _uuid.UUID(task_id)
+                    )
+                )
+            )
+            matching = [row for row in rows if "离开合并队列" in row.payload["content"]]
+            assert len(matching) == 1
+            assert matching[0].agent_instance_id is not None
+            return matching[0].payload["content"]
+
+    prompt = client.portal.call(recorded_instruction)
+    assert f"cheese worktree {task_id}" in prompt
+    assert "cheese push-fix" in prompt
+    assert "重新入队" in prompt
+    assert "重新采纳" in prompt
 
 
 # --------------------------------------------------------------------------

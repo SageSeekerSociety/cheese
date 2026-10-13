@@ -74,7 +74,7 @@ async def test_a_loop_that_keeps_stalling_says_so_once_a_minute(caplog) -> None:
 
 @pytest.mark.anyio
 async def test_the_health_check_reports_the_lag_without_failing_readiness() -> None:
-    from app.api.routes.health import _check_event_loop
+    from app.core.health import _check_event_loop
 
     loop_lag._recent = 3.0
     loop_lag._worst = 4.0
@@ -82,6 +82,6 @@ async def test_the_health_check_reports_the_lag_without_failing_readiness() -> N
     assert reading == {"status": "stalling", "recent_ms": 3000.0, "worst_ms": 4000.0}
     # `event_loop` is not in the required set, so a stalling loop does not make
     # the process unready — it makes it visible.
-    from app.api.routes.health import _REQUIRED_CHECKS
+    from app.core.health import _REQUIRED_CHECKS
 
     assert "event_loop" not in _REQUIRED_CHECKS

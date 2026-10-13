@@ -21,7 +21,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
-from app.api.routes.spaces import (
+from app.api.space_deps import (
     _ensure_space_visible,
     get_space_member_publishing_service,
     require_reviewed_space,

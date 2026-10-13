@@ -492,6 +492,13 @@ _SEED = {
     "app/__init__.py": "",
     "app/api/__init__.py": "",
     "app/api/deps.py": "def get_db():\n    ...\n",
+    # C2 names the route-shared dependency modules as sources; the seed is the
+    # smallest tree every declaration holds on, so they have to exist here too.
+    "app/api/admin_deps.py": "",
+    "app/api/users_deps.py": "",
+    "app/api/space_deps.py": "",
+    "app/api/space_payloads.py": "",
+    "app/api/task_deps.py": "",
     "app/api/routes/__init__.py": "",
     "app/api/routes/demo.py": "from app.domain.bar.services import read_bar\n",
     "app/api/routes/other.py": "",
@@ -668,6 +675,13 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         OK,
         None,
         (),
+    ),
+    (
+        "a shared route dependency module reaching a model directly (C2)",
+        {"app/api/space_payloads.py": "from app.domain.bar.models import Bar\n"},
+        BROKEN,
+        "app.api.space_payloads is not allowed to import app.domain.bar.models",
+        ("routes-touch-no-models",),
     ),
 ]
 

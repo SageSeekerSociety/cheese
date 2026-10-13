@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_instance.models import OwnAgent, OwnCallers
 from app.domain.agent_instance.own import owned_in_project
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
@@ -77,9 +78,10 @@ class Member:
     # A teammate's ``name_source``: ``default`` while it still carries the name
     # it was born with, which a screen shows in its reader's language.
     name_source: str | None = None
-    # A member's own agent (#2991): who it belongs to. Only that person may call
-    # it, and it is not one of the project's teammates the others pick from.
+    # A member's own agent (#2991): who it belongs to, and who may call it —
+    # ``owner`` (that person alone) or ``project`` (any person here).
     owner_handle: str | None = None
+    callers: str | None = None
 
     def as_dict(self) -> dict:
         """读名册的调用方拿到的那一行。
@@ -111,6 +113,8 @@ class Member:
             row["name_source"] = self.name_source
         if self.owner_handle is not None:
             row["owner_handle"] = self.owner_handle
+        if self.callers is not None:
+            row["callers"] = self.callers
         return row
 
 
@@ -174,6 +178,7 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
         seat = agent_instance_handle(instance.id)
         name = instance.display_name or instance.handle
         name_source = AgentInstanceService.resolved(instance).name_source.value
+        own_owner, own_callers = owners.get(instance.id, (None, None))
         index = at.get(seat)
         if index is None:
             rows.append(
@@ -186,7 +191,8 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
                     source="agent",
                     instance_handle=instance.handle,
                     name_source=name_source,
-                    owner_handle=owners.get(instance.id),
+                    owner_handle=own_owner,
+                    callers=own_callers,
                 )
             )
             at[seat] = len(rows) - 1
@@ -208,15 +214,17 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
             created_at=held.created_at,
             instance_handle=instance.handle,
             name_source=name_source,
-            owner_handle=owners.get(instance.id),
+            owner_handle=own_owner,
+            callers=own_callers,
         )
     return tuple(rows)
 
 
 async def _owners_of_own_agents(
     session: AsyncSession, project_id: uuid.UUID
-) -> dict[uuid.UUID, str]:
-    """Which of the project's agents are members' own, and whose."""
+) -> dict[uuid.UUID, tuple[str, str]]:
+    """Which of the project's agents are members' own: whose, and who may call
+    each."""
 
     owned = await owned_in_project(session, project_id)
     if not owned:
@@ -225,7 +233,19 @@ async def _owners_of_own_agents(
         select(User.id, User.username).where(User.id.in_({o for _, o in owned}))
     )
     users: dict[int, str] = {user_id: name for user_id, name in rows.all()}
-    return {instance.id: users[owner] for instance, owner in owned if owner in users}
+    callers: dict[uuid.UUID, OwnCallers] = {
+        instance_id: who
+        for instance_id, who in await session.execute(
+            select(OwnAgent.instance_id, OwnAgent.callers).where(
+                OwnAgent.instance_id.in_([instance.id for instance, _ in owned])
+            )
+        )
+    }
+    return {
+        instance.id: (users[owner], callers[instance.id].value)
+        for instance, owner in owned
+        if owner in users and instance.id in callers
+    }
 
 
 async def roster_rows(session: AsyncSession, project_id: uuid.UUID) -> list[dict]:
@@ -235,9 +255,8 @@ async def roster_rows(session: AsyncSession, project_id: uuid.UUID) -> list[dict
     它们是**渲染**这张表，不是再读一次「项目里有谁」——所以这里只是同一次读的一个形
     状，不是第二个出处。
     """
-    # A member's own agent is not a teammate anyone else names or notifies: an
-    # agent reading this roster in its prompt would only learn a name it cannot
-    # call (#2991).
+    # No agent calls a member's own agent (#2991): one reading this roster in
+    # its prompt would only learn a name it cannot call.
     return [
         member.as_dict()
         for member in await roster(session, project_id)

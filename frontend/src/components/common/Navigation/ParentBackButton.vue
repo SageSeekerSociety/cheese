@@ -4,7 +4,7 @@ import type { NavTarget } from '@/lib/navTarget'
 import { computed } from 'vue'
 import { useDisplay } from 'vuetify'
 
-import { useNavigation } from '@/composables/useNavigation'
+import { type RouteSnapshot, useNavigation } from '@/composables/useNavigation'
 
 import { topBarBack } from '../topBarBack'
 
@@ -23,7 +23,7 @@ const workspace = useWorkspaceStore()
  * 地址；贴链接直接打开的第一页上它是 null，这时 `history.back()` 会把人踢出整个
  * 应用。
  *
- * 这只是**兜底**：上面那套层级声明得出父级时，← 交回层级（见 `target`）。
+ * 有来路就按来路走（见 `historyBack`），声明的父级只在没有来路时兜底。
  * 读 route 只为让它随每次跳转重算：history 的 state 不是响应式的。
  */
 const cameFrom = computed(() => {
@@ -31,29 +31,37 @@ const cameFrom = computed(() => {
   return typeof nav?.historyState?.back === 'string'
 })
 
+/** 一条地址的「上一层」：去哪儿、叫什么。`label` 是说得出口时的名字（小队名之类）。 */
+interface LevelTarget {
+  name: string
+  params: Record<string, string>
+  label: string
+}
+
 /**
- * 站在项目这个框的**根**上吗？根这一层没有「上一层」可声明。
+ * 这条地址站在项目这个框的**根**上吗？根这一层没有「上一层」可声明。
  *
  * 两端的根不是同一条路由，这不是漂移：`/projects/:projectId` 在桌面上一帧都不停，
  * WorkspaceEntry 当场 `router.replace` 去项目总览；所以桌面的根是总览，手机的根才是
  * 频道列表。总览在桌面上声明着 `backTo: 'workspace-project'`，点下去只会被弹回总览
  * 自己——一颗按了没反应的 ←。
+ *
+ * 收的是位置快照而不是当前这一页，是因为要问的也可能是**身后**那一页：它将来会落在
+ * 哪里，决定了这一页的 ← 能不能吃那条历史（见 `behindPointsHere`）。
  */
-const atProjectRoot = computed(() => {
-  const route = nav?.route
+function isProjectRootOf(route: RouteSnapshot | null | undefined): boolean {
   if (!route || projectFrameOf(route) === null) return false
   return route.name === (mdAndUp.value ? 'workspace-overview' : 'workspace-project')
-})
+}
 
 /**
  * 项目的根上退到项目所属的小队。后端本来就在 `ProjectOut` 里返回 `team_id`。
  * 小队页只要求登录、不要求是队员，所以这个地址对任何能打开这个项目的人都点得开。
  * `team_id` 为空的历史项目没有这一层，← 就不显示。
  */
-const owningTeam = computed(() => {
-  const route = nav?.route
+function owningTeamOf(route: RouteSnapshot | null | undefined): LevelTarget | null {
   const projectId = route ? projectFrameOf(route) : null
-  if (!projectId || !atProjectRoot.value) return null
+  if (!projectId || !isProjectRootOf(route)) return null
   const project = workspace.projects.find((p) => p.id === projectId)
   const handle = project?.team_handle
   if (!handle) return null
@@ -65,20 +73,29 @@ const owningTeam = computed(() => {
       : null
   }
   return { name: 'TeamsDetailDefault', params: { handle }, label: t('navigation.teams') }
-})
+}
 
 /** 框内那些真的层级关系（话题 → 话题列表、私聊 → 名册）。 */
-const declaredParent = computed(() => {
-  const meta = nav?.route?.meta
+function declaredParentOf(route: RouteSnapshot | null | undefined): LevelTarget | null {
+  const meta = route?.meta
   if (typeof meta?.backTo !== 'string') return null
   if (meta.backOnPhoneOnly && mdAndUp.value) return null
   return { name: meta.backTo, params: {}, label: '' }
-})
+}
 
-// 根这一层**不吃** `meta.backTo`：看板在桌面上声明的父级就是它自己会被弹回来的那
-// 个地址，落到它身上等于留一颗按了没反应的按钮。没有小队，诚实的答案是没有上一
-// 层——那就不显示。
-const target = computed(() => (atProjectRoot.value ? owningTeam.value : declaredParent.value))
+/**
+ * 这条地址的 ← 落在哪一层，与来路无关：根上退到所属小队，其余按声明。
+ *
+ * 根这一层**不吃** `meta.backTo`：看板在桌面上声明的父级就是它自己会被弹回来的那
+ * 个地址，落到它身上等于留一颗按了没反应的按钮。没有小队，诚实的答案是没有上一
+ * 层——那就不显示。
+ */
+function levelTargetOf(route: RouteSnapshot | null | undefined): LevelTarget | null {
+  return isProjectRootOf(route) ? owningTeamOf(route) : declaredParentOf(route)
+}
+
+/** 当前这一页的 ← 落在哪一层。来路优先，这里是没有来路时的答案。 */
+const target = computed(() => levelTargetOf(nav?.route))
 
 const to = computed<NavTarget | null>(() => {
   const parent = target.value
@@ -102,7 +119,7 @@ const label = computed(() =>
  * 最外层那一页：桌面上是待办，手机上是首页。两端各是顶端（侧栏、底栏）的落点，
  * 不再是谁的下一层——它自己不画 ←，别的页面绕不出圈时也退到它这儿。
  *
- * 和 `atProjectRoot` 一样，两端的答案不是同一条路由，这不是漂移：桌面上侧栏第一格
+ * 和 `isProjectRootOf` 一样，两端的答案不是同一条路由，这不是漂移：桌面上侧栏第一格
  * 就是待办，手机上是首页。
  */
 const homeRoot = computed(() =>
@@ -134,20 +151,24 @@ const behind = computed(() => {
 })
 
 /**
- * 身后那一页正把这里当它的上一层吗？
+ * 身后那一页的 ← 正落在这一页上吗？
  *
- * 两边互相指着对方就成了一个死圈：它声明着「上一层是这一页」，这一页的 ← 又退到
- * 它，点多少次都弹回原地。首页 ↔ 团队页（团队页声明 `backTo: 'HomeHub'`）、项目根
- * ↔ 频道页（频道页声明 `backTo: 'workspace-project'`）都是这么绕起来的。认出这一对
- * 就不吃这条历史。
+ * 两边互相指着对方就成了一个死圈：它的 ← 指向这一页，这一页的 ← 又退到它，点多少次
+ * 都弹回原地。首页 ↔ 团队页（团队页声明 `backTo: 'HomeHub'`）、项目根 ↔ 频道页（频道页
+ * 声明 `backTo: 'workspace-project'`）都是这么绕起来的。认出这一对就不吃这条历史。
+ *
+ * 问的是**它自己的 ← 会落在哪**（`levelTargetOf`），不是它声明的父级：项目根上的 ←
+ * 是「所属小队」而不是声明，只比 `meta.backTo` 就漏掉「小队页 ← 回项目根、项目根 ←
+ * 回小队页」这一对，两颗箭头能把人钉在原地上。
  */
 const behindPointsHere = computed(() => {
   const route = nav?.route
   const from = behind.value
-  const parent = from?.meta?.backTo
-  if (!route || !from || typeof parent !== 'string') return false
+  if (!route || !from) return false
+  const landsOn = levelTargetOf(from)
+  if (!landsOn) return false
   try {
-    // 按**它自己**的地址去解它声明的父级：声明的多半是个带参的路由名（
+    // 按**它自己**的地址去解它要去的那一层：目标多半是个带参的路由名（
     // `workspace-project` 要知道是哪个项目），站在这边解会把这一页的参数填进去，
     // 解出来的就不是它那颗 ← 真会去的地方了。`to` 那一处站在自己这一页，正好该用
     // 默认的当前路由。
@@ -155,11 +176,31 @@ const behindPointsHere = computed(() => {
     // 第二参是 vue-router 的 currentLocation：按名字解析时它只读 `params`，用来补
     // 目标路由缺的必填参数；但类型上它要求 `name` 非空，而 `resolve()` 的结果允许无名
     // 路由（`null`）。按住那一处的 `name` 重建一份，别的字段原样带过去。
-    return nav?.router.resolve({ name: parent, params: {} }, { ...from, name: from.name ?? '' }).path === route.path
+    return (
+      nav?.router.resolve({ name: landsOn.name, params: landsOn.params }, { ...from, name: from.name ?? '' }).path ===
+      route.path
+    )
   } catch {
     return false
   }
 })
+
+/**
+ * ← 这一下按浏览器的语义退一格吗？**有应用内来路就先回来处**，来处比路由声明的
+ * `meta.backTo` 优先。
+ *
+ * 声明的父级回答的是「这一层上面是谁」，可人问的是「我刚才在哪」：从看板点进一条
+ * 话题、从频道里点 @ 进人名页，← 该回到点进来的那一页，不是回到名册、话题列表这类
+ * 逻辑上的上一层——那正是「不是实际的返回，而是逻辑返回」这件事。
+ *
+ * 声明留着兜底：刷新后第一次打开、贴链接直接进来，历史里没有上一层，`router.
+ * back()` 会把人送出整个应用，这时才退到声明的父级（见 `to`）。
+ *
+ * 两个例外不吃这条历史：站在最外层那一页上（`atHomeRoot`，它是终点，退一格只会在
+ * 别的页面之间来回弹），以及身后那一页正把这里当它的上一层（`behindPointsHere`，
+ * 两颗箭头互指）。
+ */
+const historyBack = computed(() => cameFrom.value && !behindPointsHere.value && !atHomeRoot.value)
 
 // 页面接管了这一下（topBarBack.ts）：手机上话题里的非对话页签，← 先回到对话。
 const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
@@ -175,8 +216,19 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
     :title="override.label"
     @click="override.onBack()"
   />
-  <!-- 层级在历史之前：顶栏这一颗回答的是「这一层上面是谁」，浏览器那一颗才回答
-       「我刚才在哪」。声明了父级就按声明走，没声明才回退到来路（见下一条分支）。
+  <!-- 有来路就回来处，哪怕这一页声明了父级（见 `historyBack`）：顶栏这一颗先回答
+       「我刚才在哪」。声明了父级的页面在刷新后、贴链接进来时没有来路，才退到声明的
+       上一层（下一条分支）。 -->
+  <BaseButton
+    v-else-if="historyBack"
+    icon="mdi-arrow-left"
+    kind="ghost"
+    :size="mdAndUp ? 'sm' : 'lg'"
+    :aria-label="t('shell.back.previous')"
+    :title="t('shell.back.previous')"
+    @click="nav?.router.back()"
+  />
+  <!-- 没有来路：退到声明的上一层。
        `:active="false"` 不是样式偏好，是修一个 bug：这颗按钮指向的是**父**地址，
        而 vue-router 的非精确匹配认为「站在子路由上时父链接是激活的」，于是
        Vuetify 一直给它盖一层 12% 的实底遮罩——一颗永远处于按下态的返回键，在
@@ -204,17 +256,5 @@ const override = computed(() => (mdAndUp.value ? null : topBarBack.value))
     :size="mdAndUp ? 'sm' : 'lg'"
     :aria-label="t('shell.back.to', { label: homeRoot.label })"
     :title="t('shell.back.to', { label: homeRoot.label })"
-  />
-  <!-- 这一页没声明上一层（首页、反馈中心、各设置页签……），但身后确实有应用内来路，
-       按浏览器的语义退一格，好过什么都不画。最外层那一页不画：它就是根，没有可退
-       的上一层，退一格只会在别的页面之间来回弹。 -->
-  <BaseButton
-    v-else-if="cameFrom && !atHomeRoot"
-    icon="mdi-arrow-left"
-    kind="ghost"
-    :size="mdAndUp ? 'sm' : 'lg'"
-    :aria-label="t('shell.back.previous')"
-    :title="t('shell.back.previous')"
-    @click="nav?.router.back()"
   />
 </template>

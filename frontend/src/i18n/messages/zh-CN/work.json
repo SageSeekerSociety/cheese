@@ -429,6 +429,7 @@
     },
     "message": {
       "copy": "复制",
+      "copySelection": "复制选中文字",
       "copied": "已复制",
       "copyLink": "复制链接",
       "linkCopied": "已复制链接",
@@ -470,7 +471,7 @@
       "placeholderDm": "给{name}发消息",
       "placeholder": "输入消息，{'@'}{name} 交给它处理",
       "attachFiles": "上传文件（每个最大 10MB）",
-      "sendPhotos": "发送照片",
+      "sendPhotos": "发送照片或视频",
       "more": "更多操作",
       "send": "发送",
       "sendUploading": "附件上传中，传完再发",
@@ -1084,6 +1085,14 @@
       "human": "待审阅",
       "platform": "平台处理中"
     },
+    "video": {
+      "label": "视频：{name}",
+      "open": "打开视频",
+      "loading": "视频加载中",
+      "retry": "重新加载",
+      "loadFailed": "无法读取视频，可以重新加载或下载",
+      "playFailed": "浏览器无法播放这个视频，可以下载后观看"
+    },
     "attachments": {
       "imageSnippet": "[图片]",
       "fileSnippet": "[文件]",
@@ -1410,8 +1419,16 @@
     "expand": "展开",
     "expandStalled": "展开：里面有成员卡住了",
     "expandAwaits": "展开：里面有待处理的事项",
+    "expandWorking": "展开：里面有活在往前走",
+    "expandQuiet": "展开：里面有活显示在跑，但没动静了",
+    "expandDelivered": "展开：里面有刚交付完、你还没看过的",
     "turnFailed": "{agent}最近一轮报错了",
-    "awaitsTip": "有待处理的事项",
+    "light": {
+      "red": "显示在跑，但五分钟没动静",
+      "yellow": "有事等你",
+      "moving": "有活在往前走",
+      "delivered": "做完了，你还没看过"
+    },
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子频道 {count} 条新消息",
     "moreActions": "更多操作",
@@ -1421,10 +1438,7 @@
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
     "workingTip": "{name}正在这里工作",
-    "expandWorking": "展开：里面有队友在工作",
     "moreMembers": "+{count}",
-    "taskNeedsYou": "需要你处理",
-    "taskRunning": "运行中",
     "allTasks": "全部任务",
     "moreTasks": "展开其余 {count} 个",
     "fewerTasks": "收起",
@@ -1698,6 +1712,12 @@
       "online": "在线",
       "offline": "离线",
       "empty": "暂无已接入的 Claude Code",
+      "callersLabel": "谁可以叫它",
+      "callersOwner": "只有我",
+      "callersProject": "项目成员",
+      "callersDetail": "项目成员叫它时，用的是你在自己电脑上配置的模型账号，费用和账号条款由你自己负责。",
+      "callersOwnerTag": "只有主人能叫",
+      "callersProjectTag": "项目成员都能叫",
       "readOnly": "仅项目管理员可修改",
       "loadFailed": "加载成员自己的 Claude Code 失败",
       "saveFailed": "保存设置失败"

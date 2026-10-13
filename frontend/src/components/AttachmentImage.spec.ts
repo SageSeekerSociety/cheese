@@ -16,6 +16,7 @@ const attachmentImageUrl = vi.fn()
  *  做 App.vue 做的同一件事，接的还是上面那杆桩；要画文档的两条路这份测试用不着。 */
 const SOURCE = {
   imageUrl: (...args: unknown[]) => attachmentImageUrl(...args) as Promise<string>,
+  mediaUrl: () => Promise.reject(new Error('这一份测试不画视频')),
   documentPdf: () => Promise.reject(new Error('这一份测试不画文档')),
   fileBytes: () => Promise.reject(new Error('这一份测试不画文档')),
 }

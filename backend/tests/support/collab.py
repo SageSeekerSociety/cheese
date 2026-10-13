@@ -13,7 +13,11 @@ error it answers with.
 ``edit`` changes passages of that text the way the service's ``/edit`` does,
 as plain string replacement: each ``old`` must occur exactly once. A
 suggestion leaves the text alone and is kept here as pending, and every store
-reports what is pending, as the service does.
+reports what is pending, as the service does. A change that lands on a pending
+suggestion is refused like the service refuses it — unless the writer
+(``editor_is_agent``) and the suggestion's author (``agent_authors``) are both
+agent seats, when the suggestion is dropped; and a whole-document write
+(``replace``) is refused while a person's suggestion is still pending.
 
 ``told`` keeps what the backend told each document's open editors (``tell``),
 in order, so a test can read what an editor would have heard.
@@ -63,6 +67,14 @@ class FakeCollab:
             return httpx.Response(200, json={})
         if request.url.path.endswith("/edit"):
             return await self._edit(name, body)
+        # A whole-document write drops every pending suggestion; together with
+        # the service, it is refused while one a person left is still waiting.
+        agents = set(body.get("agent_authors") or [])
+        human = [s for s in self.pending.get(name, []) if s["author"] not in agents]
+        if human:
+            return httpx.Response(
+                409, json={"error": "suggestions", "count": len(human)}
+            )
         if body.get("check") and self.refuse_writes is not None:
             message, line = self.refuse_writes
             return httpx.Response(
@@ -87,9 +99,13 @@ class FakeCollab:
                     "content": body["content"],
                     "actors": [body["actor"]],
                     "operation": body["operation"],
-                    "suggestions": self.pending.get(name, []),
+                    # Rewriting the whole document from Markdown drops every
+                    # suggestion; only agent seats' ones were left to drop.
+                    "suggestions": [],
                 },
             )
+        if stored.status_code == 200:
+            self.pending.pop(name, None)
         if stored.status_code == 409:
             return httpx.Response(
                 409,
@@ -108,6 +124,8 @@ class FakeCollab:
                 "content"
             ]
             suggest = body["mode"] == "suggest"
+            agents = set(body.get("agent_authors") or [])
+            editor_is_agent = bool(body.get("editor_is_agent"))
             pending = list(self.pending.get(name, []))
             applied = []
             for index, edit in enumerate(body["edits"]):
@@ -117,6 +135,18 @@ class FakeCollab:
                     return httpx.Response(
                         422, json={"error": "edit", "index": index, "reason": reason}
                     )
+                # The change lands on a pending suggestion: an agent seat may
+                # drop one of theirs, but never a person's, and a person's
+                # change may drop neither.
+                hit = [s for s in pending if _touches(text, edit["old"], s["old"])]
+                if hit and not (
+                    editor_is_agent and all(s["author"] in agents for s in hit)
+                ):
+                    return httpx.Response(
+                        409,
+                        json={"error": "edit", "index": index, "reason": "suggested"},
+                    )
+                pending = [s for s in pending if s not in hit]
                 if suggest:
                     sid = f"{body['actor']}:{len(pending) + 1}"
                     pending.append({"id": sid, "author": body["actor"], **_pair(edit)})
@@ -189,6 +219,20 @@ class FakeCollab:
 
 def _pair(edit: dict) -> dict:
     return {"old": edit["old"], "new": edit["new"]}
+
+
+def _touches(text: str, edit_old: str, suggestion_old: str) -> bool:
+    """Whether an edit's ``old`` overlaps a suggestion's ``old`` in the text.
+    The service decides this on the suggestion's marks; here, on where the two
+    passages sit. A suggestion that removes nothing (an insertion) sits nowhere
+    this can see, and never blocks."""
+    if not edit_old or not suggestion_old:
+        return False
+    at = text.find(edit_old)
+    there = text.find(suggestion_old)
+    if at < 0 or there < 0:
+        return False
+    return at < there + len(suggestion_old) and there < at + len(edit_old)
 
 
 def _json(request: httpx.Request) -> dict:

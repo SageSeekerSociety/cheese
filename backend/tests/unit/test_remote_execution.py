@@ -1824,6 +1824,24 @@ class RemoteExecutionTests(unittest.TestCase):
         changed = runtime.request(self.state, "context_fs", {"operation": "tree"})
         self.assertNotEqual(changed["generation"], tree["generation"])
 
+    def test_context_fs_lists_instruction_links_and_skips_dependency_docs(self):
+        (self.workspace / "real").mkdir()
+        (self.workspace / "real/AGENTS.md").write_text("linked rules")
+        (self.workspace / "sub").symlink_to("real", target_is_directory=True)
+        (self.workspace / "AGENTS.md").symlink_to("sub/AGENTS.md")
+        dependency = self.workspace / "node_modules/pkg"
+        dependency.mkdir(parents=True)
+        (dependency / "AGENTS.md").write_text("dependency rules")
+
+        entries = runtime.request(self.state, "context_fs", {"operation": "tree"})[
+            "entries"
+        ]
+
+        self.assertEqual(entries["sub"]["kind"], "symlink")
+        self.assertEqual(entries["AGENTS.md"]["kind"], "symlink")
+        self.assertIn("real/AGENTS.md", entries)
+        self.assertNotIn("node_modules/pkg/AGENTS.md", entries)
+
     def test_project_workflow_save_reaches_executor_and_other_paths_stay_read_only(
         self,
     ):

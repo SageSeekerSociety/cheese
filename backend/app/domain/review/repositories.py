@@ -165,7 +165,13 @@ class AcceptCardRepository:
             return {}
         stmt = (
             select(AcceptCard)
-            .where(AcceptCard.task_id.in_(task_ids))
+            # 和 `approver_handles_by_card` 同一个写法：「待我处理」拿这里一问就是
+            # 几百条活，`in_()` 会把它们摊成同样多个绑定参数、每执行一次重拼一遍
+            # SQL；一个数组参数只编译一次，之后每次都由驱动直接复用。
+            .where(
+                AcceptCard.task_id
+                == any_(bindparam(None, list(task_ids), type_=ARRAY(Uuid)))
+            )
             .order_by(AcceptCard.created_at, AcceptCard.id)
         )
         latest: dict[uuid.UUID, AcceptCard] = {}
@@ -256,13 +262,13 @@ class AcceptCardRepository:
         """
         if not place_ids:
             return []
+        # 同一个数组参数在两把键上各用一次：见 `latest_by_task`，一串 id 摊成几百
+        # 个绑定参数是「待我处理」那类跨项目清单里最贵的一笔。
+        among = any_(bindparam(None, list(place_ids), type_=ARRAY(Uuid)))
         stmt = (
             select(AcceptCard)
             .where(
-                or_(
-                    AcceptCard.topic_id.in_(place_ids),
-                    AcceptCard.task_id.in_(place_ids),
-                ),
+                or_(AcceptCard.topic_id == among, AcceptCard.task_id == among),
                 AcceptCard.status.in_(statuses),
             )
             .order_by(AcceptCard.created_at)
