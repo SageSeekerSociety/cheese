@@ -552,8 +552,10 @@ class Monitors:
         `ValueError` with the reason when it is not started."""
         command = arguments.get("command")
         if not isinstance(command, str) or not command.strip():
+            # i18n-exempt: runner bundle: session host, stdlib only, no catalog
             raise ValueError("Monitor needs a command: each stdout line is an event")
         if arguments.get("ws"):
+            # i18n-exempt: runner bundle: session host, stdlib only, no catalog
             raise ValueError(
                 "Monitor's ws source is unavailable here; give it a command "
                 "instead (it runs on the work machine)."
@@ -600,6 +602,7 @@ class Monitors:
             },
         )
         if not answer.get("started"):
+            # i18n-exempt: runner bundle: session host, stdlib only, no catalog
             raise ValueError("The monitor's command was stopped before it started")
         monitor = Monitor(self, task, description, timeout_ms)
         self.running[task] = monitor

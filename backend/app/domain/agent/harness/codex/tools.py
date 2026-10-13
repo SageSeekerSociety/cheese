@@ -417,6 +417,7 @@ class RemoteTools:
             tools.append({"type": "function", **tool})
         if self.monitors is not None:
             if monitor.TOOL["name"] in routes:
+                # i18n-exempt: runner bundle: session host, stdlib only, no catalog
                 raise ValueError(f"Duplicate executor tool: {monitor.TOOL['name']}")
             routes[monitor.TOOL["name"]] = (MONITOR, monitor.TOOL["name"])
             tools.append({"type": "function", **monitor.TOOL})
