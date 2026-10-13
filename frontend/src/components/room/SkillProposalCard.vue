@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import type { ProjectSkill } from '@/lib/projectSkill'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
+import { memberFacesOf } from '@/lib/memberFaces'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 // 房间里请人保存技能的那张卡：芝士把一套做法整理成技能（或者提议改一份），
@@ -37,9 +39,8 @@ const emit = defineEmits<{
 const workspace = useWorkspaceStore()
 const expanded = ref<Set<string>>(new Set())
 
-function nameOf(handle: string): string {
-  return workspace.members.find((m) => m.user_handle === handle)?.name || handle
-}
+/** 名册 → handle 那张脸。提议那行的「谁提的」用它画头像 + 名字；名册上没有这一位时退回 handle。 */
+const faces = computed(() => memberFacesOf(workspace.members))
 
 function toggle(id: string) {
   const next = new Set(expanded.value)
@@ -62,11 +63,20 @@ function toggle(id: string) {
   <div v-for="s in proposals" :key="s.id" class="method-card mt-2">
     <div class="method-card__pad">
       <div class="t-meta-read mb-1">
-        {{
-          s.shipped_revision
-            ? t('work.skills.proposal.bylineEdit', { name: nameOf(s.proposed_by) })
-            : t('work.skills.proposal.byline', { name: nameOf(s.proposed_by) })
-        }}
+        <i18n-t
+          :keypath="s.shipped_revision ? 'work.skills.proposal.bylineEdit' : 'work.skills.proposal.byline'"
+          scope="global"
+          tag="span"
+        >
+          <template #name>
+            <UserRef
+              :handle="s.proposed_by"
+              :name="faces[s.proposed_by]?.name ?? s.proposed_by"
+              :avatar-id="faces[s.proposed_by]?.avatarId ?? null"
+              :agent="faces[s.proposed_by]?.agent ?? null"
+            />
+          </template>
+        </i18n-t>
       </div>
       <div class="t-title mb-1">{{ s.title }}</div>
       <div class="t-body method-card__text mb-3">{{ s.description }}</div>
