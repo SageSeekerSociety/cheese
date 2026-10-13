@@ -74,6 +74,7 @@ def sources():
         for name in (
             "client.py",
             "shell_stop.py",
+            "machine_paths.py",
             # Windows' locks, process trees and detached starts, which the two
             # above load from beside them there.
             "portable.py",

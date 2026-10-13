@@ -393,6 +393,7 @@ class Session:
                     "central_config": str(self.config),
                     "central_tmp": str(self.tmp),
                     "central_hooks": {},
+                    "target_file": str(root / "central" / "execution.json"),
                     **({"kind": kind} if kind else {}),
                 }
             )
@@ -465,6 +466,39 @@ def test_a_bash_command_runs_there_and_the_build_learns_its_directory(session, m
     assert session.cwd_file.read_text() == f"{machine.workspace}/only there\n"
     code, _ = session.run(session.wrapped("cd /"))
     assert session.cwd_file.read_text() == "/\n"
+
+
+def _task_output(session, name="b1x2y3z4w"):
+    """The file the build sends one command's output to, in its temporary
+    directory, which it keeps for a command it ran in the background."""
+    tasks = session.tmp / "claude-1000" / "-the-project" / "a-session" / "tasks"
+    tasks.mkdir(parents=True, exist_ok=True)
+    return tasks / f"{name}.output"
+
+
+def test_a_later_command_reads_a_kept_output_file_where_the_executor_holds_it(
+    session, machine
+):
+    session.output = _task_output(session)
+    code, output = session.run(session.wrapped("echo started; echo finished"))
+    assert (code, output) == (0, b"started\nfinished\n")
+    # A real executor cannot see this host's files. This one can, so the file
+    # is emptied here: a command that read it here would print nothing.
+    kept = session.output
+    kept.write_bytes(b"")
+    session.output = session.root / "output"
+    code, output = session.run(session.wrapped(f"tail -n 1 {kept}; cat '{kept}'"))
+    assert (code, output) == (0, b"finished\nstarted\nfinished\n")
+
+
+def test_the_executor_lets_go_of_an_output_file_the_build_deleted(session, machine):
+    session.output = _task_output(session)
+    assert session.run(session.wrapped("echo waited for"))[0] == 0
+    # The build took the output of a command it waited for and deleted it.
+    session.output.unlink()
+    session.output = session.root / "output"
+    assert session.run(session.wrapped("true"))[0] == 0
+    assert list((machine.state / "commands").iterdir()) == []
 
 
 def test_a_command_starts_in_the_sessions_directory(session, machine):

@@ -55,6 +55,13 @@ if __package__:
     from app.domain.agent.harness.claude_code.remote_execution.context_service import (
         serve,
     )
+    from app.domain.agent.harness.claude_code.remote_execution.machine_paths import (
+        dropped_outputs,
+        keep_output,
+        skill_paths,
+        task_output,
+        task_outputs,
+    )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         allow_native_tools,
         carry_conversation,
@@ -97,6 +104,13 @@ else:
     if str(Path(__file__).resolve().parent) not in sys.path:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
+    from machine_paths import (
+        dropped_outputs,
+        keep_output,
+        skill_paths,
+        task_output,
+        task_outputs,
+    )
     from release import (
         allow_native_tools,
         carry_conversation,
@@ -806,50 +820,18 @@ def shell(target_path, command):
     return run_on_the_machine(target, command)
 
 
-def skill_places(target):
-    """Where the executor holds each skill the session names by an entry that
-    is not the project's root skill of that name: a subdirectory's, and one
-    written without its `paths` (`release.SKILL_PLACES`)."""
-    path = Path(target.get("target_file", "")).parent / "skill-places.json"
-    try:
-        places = json.loads(path.read_text())["places"]
-    except (OSError, ValueError, KeyError):
-        return {}
-    return {name: place["place"] for name, place in places.items()}
-
-
-def skill_paths(target, text):
-    """`text` with each skill file named in the session's config dir named
-    where the executor holds it: a project skill in the project's
-    `.claude/skills`, one the platform shipped in the executor's config dir.
-    `proxy.js` `skillPath` is the same mapping, for the file tools."""
-    skills = target["central_config"] + "/skills/"
-    project = session_path(target["workspace"]) + "/.claude/skills/"
-    shipped = set(target.get("shipped_skills") or [])
-    executor = target.get("executor_config")
-    places = skill_places(target)
-
-    def place(match):
-        name = match.group(1)
-        if name in places:
-            return places[name]
-        if name in shipped:
-            return f"{executor}/skills/{name}" if executor else match.group(0)
-        return project + name
-
-    return re.sub(re.escape(skills) + r"([^/\s'\"`]+)", place, text)
-
-
 def run_on_the_machine(target, command):
     # The session sees the project at the executor's own path, so a command and
     # its directory need no respelling. Its skills are the one thing the build
     # reads from this host's config directory (`link_forwarded_user_context`),
     # where the executor has none: a command naming a skill's file names it in
-    # the project. A session in a directory of its own names the executor's.
+    # the project. So are the files it sends a command's output to, which a
+    # command names where the executor holds them (`machine_paths`). A session
+    # in a directory of its own names the executor's.
     def outward(text):
         seen = target.get("virtual_workspace")
         text = to_machine(text, seen, target["workspace"]) if seen else text
-        return skill_paths(target, text)
+        return task_outputs(target, skill_paths(target, text))
 
     cwd = os.getcwd()
     head, tail = _SNAPSHOT.match(command), _CWD_FILE.search(command)
@@ -859,9 +841,10 @@ def run_on_the_machine(target, command):
         # snapshot and cwd file. Its stdin is `/dev/null` by construction.
         body = command[head.end() if head else 0 : tail.start()]
         stdin = None
+        output = task_output(target)
     else:
         # A hook: its input arrives on stdin, spelled for this host.
-        body = command
+        body, output = command, None
         data = b""
         with os.fdopen(os.dup(0), "rb") as source:
             data = source.read(SHELL_INPUT_BYTES + 1)
@@ -909,9 +892,10 @@ def run_on_the_machine(target, command):
 
     # Started once, whatever it takes: the id makes a retried start the same start.
     deadline = time.monotonic() + SHELL_START_RETRY_S
+    drop = dropped_outputs(target)
     while True:
         try:
-            call(
+            started = call(
                 "start",
                 kind="bash" if bash else "sh",
                 body=outward(body),
@@ -919,6 +903,8 @@ def run_on_the_machine(target, command):
                 env=env,
                 merge=merge,
                 stdin=stdin,
+                keep=output is not None,
+                drop=drop,
             )
             break
         except MachineOutOfReach:
@@ -934,6 +920,8 @@ def run_on_the_machine(target, command):
                 sys.stderr.write(f"{exc}\n")
                 return 1
         time.sleep(1)
+    # Its record stays while the build keeps the output file it mirrors.
+    kept = bool(output) and keep_output(target, output, command_id, started)
     offsets = {"out": 0, "err": 0}
     written = 0
     failing_since, delay = None, SHELL_READ_RETRY_S[0]
@@ -978,8 +966,9 @@ def run_on_the_machine(target, command):
         os.write(watcher, b"done\n")
     if bash and "cwd" in answer:
         _report_directory(target, client, answer["cwd"], tail.group(1))
-    with contextlib.suppress(Exception):
-        call("forget")
+    if not kept:
+        with contextlib.suppress(Exception):
+            call("forget")
     code = answer["exit"]
     if code < 0 and sys.platform == "win32":
         # No signal to end with here: the shell's way of saying it, 128 + n.

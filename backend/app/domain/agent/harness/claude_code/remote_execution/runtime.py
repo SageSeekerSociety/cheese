@@ -68,6 +68,7 @@ _OWN = (
     "runtime",
     "portable",
     "darwin",
+    "process_tree",
     "mcp_process",
     "machine_files",
     "machine_git",
@@ -102,6 +103,10 @@ NATIVE_TOOLS = {
 # link drop a deploy of the device connection causes, which the prefix waits
 # out and then reattaches.
 COMMAND_ABANDONED_S = 600.0
+# The record of a command whose output the session keeps in a file of its own
+# (`keep`) holds the same bytes, which a later command reads here; it stays
+# until the session says it dropped that file, or this long after it ended.
+OUTPUT_KEPT_S = 86400.0
 # The stops a session's host sends, by their POSIX numbers: SIGHUP, SIGINT,
 # SIGKILL, SIGTERM. Not spelled through `signal`: Windows has no SIGHUP or
 # SIGKILL, so there every stop failed on the name before `signal_command`,
@@ -766,39 +771,6 @@ class Executor:
         with contextlib.suppress(OSError):
             self.log(command_id, "exited", exit_code=code)
 
-    def _tree(self, pid):
-        """The process and its descendants, parents first. A descendant that
-        left the group (`setsid`) is still one: the build's own stop kills the
-        tree, not the group."""
-        rows = []
-        if Path("/proc").is_dir():
-            # /proc rather than `ps`: the private execution image has no `ps`.
-            for entry in Path("/proc").iterdir():
-                if not entry.name.isdigit():
-                    continue
-                try:
-                    stat = (entry / "stat").read_text()
-                except OSError:
-                    continue
-                # The command name sits in parentheses and may hold spaces;
-                # the parent pid is the second field after it.
-                rows.append(
-                    (int(entry.name), int(stat[stat.rindex(")") + 2 :].split()[1]))
-                )
-        else:
-            # macOS, where not even `ps` runs in a room's sandbox.
-            rows = beside("darwin")["processes"]()
-        children = {}
-        for child, parent in rows:
-            children.setdefault(parent, []).append(child)
-        found, pending = [], [pid]
-        while pending:
-            current = pending.pop(0)
-            if current not in found:
-                found.append(current)
-                pending.extend(children.get(current, []))
-        return found
-
     def signal_command(self, command_id, number):
         """Send a signal to a running command's group and every descendant.
 
@@ -823,7 +795,7 @@ class Executor:
         if sys.platform == "win32":
             beside("portable")["terminate_tree"](pid)
             return {"running": True}
-        pids = self._tree(pid)
+        pids = beside("process_tree")["tree"](pid)
         with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(pid, number)
         for member in pids:
@@ -843,7 +815,11 @@ class Executor:
             # Taken once, before TERM: a descendant that ignores TERM outlives
             # the shell that parented it and is re-parented, so a second look
             # would not find it.
-            pids = [] if sys.platform == "win32" else self._tree(entry["process"].pid)
+            pids = (
+                []
+                if sys.platform == "win32"
+                else beside("process_tree")["tree"](entry["process"].pid)
+            )
             self.signal_command(command_id, signal.SIGTERM)
             time.sleep(0.3)
             for pid in pids:
@@ -943,8 +919,12 @@ class Executor:
         if operation == "start":
             inputs = {
                 key: params.get(key)
-                for key in ("kind", "body", "cwd", "env", "merge", "stdin")
+                for key in ("kind", "body", "cwd", "env", "merge", "stdin", "keep")
             }
+            held = {"held": str(record / "out")} if params.get("keep") else {}
+            for dropped in params.get("drop") or []:
+                with contextlib.suppress(ValueError):
+                    self.shell({"operation": "forget", "command_id": dropped})
             digest = hashlib.sha256(
                 json.dumps(inputs, sort_keys=True).encode()
             ).hexdigest()
@@ -959,7 +939,7 @@ class Executor:
                         raise ValueError(
                             "Command ID already belongs to different input"
                         )
-                    return {"started": True}
+                    return {"started": True, **held}
                 cwd = Path(native_path(params.get("cwd") or str(self.root)))
                 if not cwd.is_dir():
                     # Gone since the session last looked: its own reset.
@@ -993,9 +973,13 @@ class Executor:
                     merge=bool(params.get("merge")),
                     stdin=None if stdin is None else base64.b64decode(stdin),
                     watched=True,
-                    meta={"digest": digest, "command": params["body"][-2000:]},
+                    meta={
+                        "digest": digest,
+                        "command": params["body"][-2000:],
+                        "kept": bool(held),
+                    },
                 )
-            return {"started": True}
+            return {"started": True, **held}
         if operation == "read":
             return self.read_command(
                 command_id,
@@ -1040,7 +1024,8 @@ class Executor:
                 except (OSError, ValueError):
                     continue
                 last = max(finished, self.collected.get(record.name, 0))
-                if meta.get("watched") and time.time() - last > COMMAND_ABANDONED_S:
+                kept = OUTPUT_KEPT_S if meta.get("kept") else COMMAND_ABANDONED_S
+                if meta.get("watched") and time.time() - last > kept:
                     shutil.rmtree(record, ignore_errors=True)
 
     def bash(self, args, key=None):
