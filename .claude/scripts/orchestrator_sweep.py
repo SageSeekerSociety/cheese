@@ -239,9 +239,15 @@ _VERIFIED_LABEL_WORDS = _VERIFIED_WORDS + ("check",)
 #: 每一节按「名字有多直接」分档：第一档是它自己的叫法，第二档也点名了这一节、但没那么
 #: 直白。选标题时先看档、再看名字长短 —— 缺了这一层，`## Fixed` 比 `## What changed`
 #: 短，就会把「路上顺手修的那几条」当成整份改动摆出来。
+#:
+#: 改动那一节的第三档只有 `what` / `做了什么`：`## Why` + `## What` + `## Verification`
+#: 这种写法里，What 底下就是改动。它排在 Fix 这类之后，是因为 `## What was wrong`、
+#: `## What happened` 也以 what 开头，讲的却是出了什么事；同一档里先出现的那个赢，
+#: 于是 #2653 的改动段成了一小段死锁栈。只要有一节真的点名了改动，那一节就是改动。
 _SECTION_WORDS = {
     "changed": (("what chang", "change", "changes", "改动", "改了什么"),
-                ("fix", "behavio", "改法", "修改")),
+                ("fix", "behavio", "改法", "修改"),
+                ("what", "做了什么")),
     "verified": (_VERIFIED_HEADING_WORDS,),
 }
 _SECTION_WORDS_FLAT = {k: tuple(w for g in gs for w in g) for k, gs in _SECTION_WORDS.items()}
@@ -263,7 +269,11 @@ _LABEL = re.compile(
     r"^(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!\w{2,12}://)"
     r"(?:\*\*)?([^\n：:*`，。]{1,40}(?:[（(][^）\n]{0,80}[）)])?)"
     r"(?:\*\*)?[ \t]*[：:](?!//)[ \t]*", re.M)
-_HEADING = re.compile(r"^(#{1,4})\s+(.+?)\s*$", re.M)
+_HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
+#: 正文第一行的一级标题（`# feat(scope): …`）是这篇的题目，不是一节的名字：留着它，
+#: 改动的第一段会带上这行；当成标题，正文中间那种手误写成一级的提示行又会把一节切短
+#: （#2670）。所以在正文最开头把它去掉。
+_TITLE_LINE = re.compile(r"\A#[ \t]+[^\n]*\n+")
 #: A line that is nothing but the name of a section — `Verification`, `验证`, `Tests` —
 #: with no colon after it. The block below it is that section: a body puts the name on
 #: its own line when a list follows, rather than beside the first sentence. Three things
@@ -294,6 +304,17 @@ _LOG_STAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s?")
 #: A failed check's page names the Actions job whose log carries the case names.
 _JOB_IN_URL = re.compile(r"/actions/runs/\d+/job/(\d+)")
 _CASES_MAX = 6
+#: 标签行的名字要么点名这一节（`Verified on this machine:`、`Checks. Locally:`），要么短到
+#: 只能是个名字（`验证：`、`Tests:`）。只看长短不够：一句话折行、那行又正好起一段时
+#: （`Independent review at 2c3fb34a: three candidates raised…`）40 个字符也装得下，
+#: 而 `Verified on this machine:` 有 25 个字符 —— 后者点名了这一节，前者没有。
+_NAME_SHORT = 20
+#: 「这一行起不起一段」只看它上面两行就够，不用每次复制整个前缀：正文上限 64 KB，
+#: 标签行多的时候那是平方的（四万个标签行 8 秒）。
+_LOOK_BEHIND = 200
+#: 短名字那条路还要看整行有多长：`验证：全过` 是一行，`Not covered by a test: the wiring\nfrom …` 是一句
+#: 话了半行的话。点名这一节的那种标签不受这条限制（`Checks. Locally: \`pnpm install\`、eslint……`）。
+_LABEL_LINE_MAX = 60
 
 
 def _strip_comments(text):
@@ -358,16 +379,19 @@ def brief(desc, limit=400):
     if agent:
         text = text[agent.end():]
     text = text.strip()
+    title = _TITLE_LINE.match(text)
+    if title:
+        text = text[title.end():].strip()
     if not text:
         return "", ""
     heads = list(_HEADING.finditer(text))
     # 可能会切走一节的行，从早到晚：带冒号的标签行，和整行只有章节名的那些。
-    labels = sorted([m for m in _LABEL.finditer(text) if _starts_a_block(text, m)]
+    labels = sorted([m for m in _LABEL.finditer(text) if _is_label(text, m)]
                     + [m for m in _BARE_LABEL.finditer(text)
                        if _names_a_section(m) and _stands_alone(text, m)],
                     key=lambda m: m.start())
     ver = [m for m in labels if _mentions(m.group(1).lower(), _VERIFIED_LABEL_WORDS)]
-    verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels, heads)
+    verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels, heads, "verified")
     changed = _under_heading(text, heads, "changed", ver)
     if not changed:
         # 没有标题说「改了什么」时，正文开头到「验证」之前的那一段就是它 —— 前面是
@@ -383,7 +407,7 @@ def brief(desc, limit=400):
         else:
             begin = lead.end() if lead else 0
             stops = sorted(set([h.start() for h in heads] + [m.start() for m in ver]))
-            ends = [s for s in stops if s > begin]
+            ends = [s for s in stops if s >= begin]
             changed = text[begin:min(ends) if ends else len(text)].strip()
     return cut(changed, limit), cut(verified, limit)
 
@@ -413,9 +437,45 @@ def _under_heading(text, heads, want, also=()):
     # `also` 只在它前面真的还有本节内容时才切：紧贴标题的一行是本节自己的第一行，
     # 不是「本节到此为止」。
     stops = [h.start() for h in heads[i + 1:]] \
-        + [m.start() for m in also if m.start() > begin and text[begin:m.start()].strip()]
+        + [m.start() for m in also if m.start() > begin]
     end = min(stops) if stops else len(text)
     return text[begin:end].strip()
+
+
+def _is_label(text, m):
+    """Whether a line that matched the label pattern really names a section.
+
+    Two ways it does not, and both cut a section in half: the line is a sentence that
+    wrapped so that a colon landed within the name's length (#2772), or it starts a block
+    of its own the same way a label does but says nothing about either half — `Independent
+    review at 2c3fb34a: three candidates raised…` (#3618), `Not covered by a test: the
+    wiring from …` (#2733). Either the name names a section (`Verified on this machine:`,
+    `Checks. Locally:`), or it is short enough to be nothing but a name and its line is
+    too (`验证：全过`)."""
+    if not _starts_a_block(text, m):
+        return False
+    if _names_a_section(m):
+        return True
+    if len(_label_name(m)) > _NAME_SHORT:
+        return False
+    return len(_line_at(text, m)) <= _LABEL_LINE_MAX
+
+
+def _line_at(text, m):
+    """The whole line `m` matched, value included."""
+    start = text.rfind("\n", 0, m.start()) + 1
+    end = text.find("\n", m.end())
+    return text[start:end if end >= 0 else len(text)]
+
+
+def _label_name(m):
+    """A label line's name, without the one bracketed aside it may carry after it."""
+    name = m.group(1)
+    for op in "（(":
+        i = name.find(op)
+        if i > 0:
+            name = name[:i]
+    return name.strip()
 
 
 def _names_a_section(m):
@@ -435,14 +495,18 @@ def _negates(h):
 def _starts_a_block(text, m):
     """Whether the line `m` matched begins a block of its own.
 
-    A label line names a section, and a section starts after a blank line, after a
-    heading, or at the top. A sentence that merely wrapped onto a line whose text
-    happens to reach a colon within the name's length does not: reading one as a label
-    cut the section above it in half (PR #2772)."""
-    before = text[:m.start()].rstrip(" \t")
-    if not before.strip() or before.endswith("\n\n"):
+    A label line names a section, and a section starts at the top of the body, after a
+    blank line, or under a heading. A sentence that merely wrapped onto a line whose
+    text happens to reach a colon within the name's length does not: reading one as a
+    label cut the section above it in half (PR #2772)."""
+    before = text[max(0, m.start() - _LOOK_BEHIND):m.start()]
+    if not before.strip():
         return True
-    return before.rsplit("\n", 1)[-1].lstrip().startswith("#")
+    lines = before.rstrip(" \t").split("\n")
+    above = lines[-2] if len(lines) >= 2 else ""
+    if not lines[-1] and not above.strip():
+        return True
+    return not lines[-1] and above.lstrip().startswith("#")
 
 
 def _stands_alone(text, m):
@@ -451,17 +515,21 @@ def _stands_alone(text, m):
     A name on its own line has a blank line above it. A sentence that merely wrapped
     onto a short line does not, and taking one for a name cuts the section above it and
     hands the rest to the other half."""
-    before = text[:m.start()].rstrip(" \t")
+    before = text[max(0, m.start() - _LOOK_BEHIND):m.start()].rstrip(" \t")
     return not before.strip() or before.endswith("\n\n")
 
 
-def _under_label(text, hits, labels, heads):
-    """The first hit's body, stopping at the next labelled line of any kind and at the
-    next heading: a heading under a label starts what comes after that section, and a
-    body that runs past it hands the reader the next section's text as this one's."""
+def _under_label(text, hits, labels, heads, want):
+    """The first hit's body, stopping at the next heading and at the next labelled line
+    that names the other half: a heading under a label starts what comes after that
+    section, and a body that runs past it hands the reader the next section's text as
+    this one's. A label that names this same half — `Not covered by a test: …` — is one
+    more sentence of it, not the end of it (#2733)."""
     if not hits:
         return ""
-    after = [m.start() for m in labels + heads if m.start() > hits[0].start()]
+    after = [m.start() for m in heads if m.start() > hits[0].start()]
+    after += [m.start() for m in labels
+              if m.start() > hits[0].start() and _section_rank(m.group(1).lower(), want) is None]
     return text[hits[0].end():min(after) if after else len(text)].strip()
 
 
@@ -886,18 +954,56 @@ _SELF_TEST_BODIES = (
     ("标题只提了一句测试的清单不算验证节",
      "## 改动\n\n把 A 换成 B。\n\n## Checklist\n\n- [x] 各带自己的挂载测试\n\n## 验证方式\n\n绿了\n",
      "把 A 换成 B。", "绿了"),
-    ("标题说「没改的部分」时，改动读的是上面那一节",
-     "## What changed\n\n把 A 换成 B。\n\n## What did not change\n\nC 没动。\n",
+    ("标题说「没改的部分」时，改动读到的是另一节",
+     "## What did not change\n\nC 没动。\n\n## Fix\n\n把 A 换成 B。\n",
      "把 A 换成 B。", ""),
     ("标签名里带句点时它还是标签行",
      "改了 A。\n\nChecks. Locally: `pnpm install`, eslint 0 errors\n",
      "改了 A。", "`pnpm install`, eslint 0 errors"),
-    ("跟在句子中间的冒号不是标签行",
-     "read the file top to bottom in both renders; nothing\nelse stopped me. Higher layer: the pool\n",
-     "read the file top to bottom in both renders; nothing\nelse stopped me. Higher layer: the pool", ""),
+    ("折行出来的一行不算起一段，验证那一段不在这里断",
+     "Own checks: read dream_prompt.py top to bottom in both renders; nothing\n"
+     "else stopped me. Higher layer: CLAUDE.md says so.\n",
+     "", "read dream_prompt.py top to bottom in both renders; nothing\n"
+     "else stopped me. Higher layer: CLAUDE.md says so."),
+    ("折行出来的一行名字够短，也仍然不算标签行",
+     "改动：A。\n\n验证：读了两遍，没有别的问题\nHigher layer: the pool\n",
+     "改动：A。", "读了两遍，没有别的问题\nHigher layer: the pool"),
+    ("句子中间的一行只有章节名的样子，也不算标签行",
+     "改动：把 A 换成 B。\n\nthe same\ntests\npass in both.\n",
+     "改动：把 A 换成 B。\n\nthe same\ntests\npass in both.", ""),
+    ("标签行底下遇到标题就到此为止",
+     "改动：A。\n\n验证：绿了\n\n## 不能一起发的\n\n别的事。\n",
+     "改动：A。", "绿了"),
+    ("标签行贴在标题下面也算标签行",
+     "## 改动\n验证：ok\n",
+     "", "ok"),
+    ("同一节的标签行不切断这一节",
+     "验证：全过。\n\nNot covered by a test: the wiring needs a live box\n",
+     "", "全过。\n\nNot covered by a test: the wiring needs a live box"),
+    ("开头的一级标题是题目，不是改动",
+     "# feat(x): 一句话标题\n\n正文第一段。\n\n## 验证\n\n绿了\n",
+     "正文第一段。", "绿了"),
+    ("短名字的标签行整行是一句话时不算标签行",
+     "改了 A。\n\n本机跑过：`pytest -q` 全过，`ruff check` 0 error，改动那个文件上 `pyright` 也是 0 error\n",
+     "改了 A。\n\n本机跑过：`pytest -q` 全过，`ruff check` 0 error，改动那个文件上 `pyright` 也是 0 error", ""),
+    ("短名字的标签行只有名字和一小截值时还算标签行",
+     "改了 A。\n\n本机自测：全过\n",
+     "改了 A。", "全过"),
+    ("平台写的注释不算正文",
+     "<!-- board:start -->\n\n改动：A。\n\n验证：绿\n",
+     "改动：A。", "绿"),
     ("整行只有章节名时，它底下的块是那一节",
      "改动如下。\n\nVerification\n\n- pytest 全过\n",
      "改动如下。", "- pytest 全过"),
+    ("标题是 What 但名字在讲哪里错了时，改动读到 Fix 那一节",
+     "## What was wrong\n\n线上的报错来自 A。\n\n## Fix\n\n把 A 换成 B。\n",
+     "把 A 换成 B。", ""),
+    ("Why / What / Checks 三个标题里，What 底下是改动",
+     "## Why\n\n因为它慢。\n\n## What\n\n- 把 A 换成 B\n\n## Checks\n\n跑过了\n",
+     "- 把 A 换成 B", "跑过了"),
+    ("中文的 做了什么 也是改动那一节",
+     "## 背景\n\n以前会慢。\n\n## 做了什么\n\n- 把 A 换成 B\n\n## 验证\n\n绿了\n",
+     "- 把 A 换成 B", "绿了"),
 )
 _SELF_TEST_ROLLUPS = (
     ("FAILURE 的 CheckRun 算红", {"contexts": {"nodes": [
