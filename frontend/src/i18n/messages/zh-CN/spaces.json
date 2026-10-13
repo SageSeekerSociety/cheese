@@ -133,6 +133,7 @@
       "createFailed": "发布题目失败",
       "initializationFailed": "初始化失败",
       "attachmentsUploading": "附件还在上传，请稍候再发布",
+      "externalProblemFailed": "题目已发布，但外站题号没挂上，请到题目页再挂一次",
       "teaching": {
         "title": "AI 指导",
         "subtitle": "用于从本题创建的项目",

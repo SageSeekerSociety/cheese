@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Path, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.legal_deps import client_context
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError, UnprocessableEntityError
@@ -25,14 +26,6 @@ router = APIRouter(tags=["Legal"])
 #: The sentence that names each document, so a refusal names it in its
 #: reader's language: the titles in ``DOCUMENTS`` are the Chinese ones.
 _TITLE_SENTENCE = {"terms": "legalDocTerms", "privacy": "legalDocPrivacy"}
-
-
-def client_context(request: Request) -> tuple[str, str]:
-    """(ip, user agent) as a consent row records them. The address is the one
-    the server resolved through the proxies it trusts (FORWARDED_ALLOW_IPS),
-    never X-Forwarded-For as sent: its left part is whatever the client wrote."""
-    ip = request.client.host if request.client else ""
-    return ip, request.headers.get("user-agent", "")
 
 
 def _summary(doc: LegalDocument, version: LegalVersion) -> dict:

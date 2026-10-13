@@ -34,9 +34,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, WebSocket, WebSocketDisconnect
 
+from app.api.awaiting_deps import waiting_items
 from app.api.deps import get_chat_service
 from app.api.response import ok
-from app.api.routes.awaiting import waiting_items
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import (

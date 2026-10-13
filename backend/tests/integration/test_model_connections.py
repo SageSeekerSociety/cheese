@@ -13,15 +13,19 @@ import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
+import pytest
 from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.api.routes import connector
 from app.domain.agent import initial_admission
+from app.domain.agent.device_provider import DeviceChannel
+from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code import owner_login
+from app.domain.agent.owner_provider import OwnerChannel
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import Block
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -247,7 +251,8 @@ def _room(client):
     return uuid.UUID(project["id"]), uuid.UUID(room["id"]), uuid.UUID(message["id"])
 
 
-async def _own_agent(factory, project_id, topic_id):
+async def _own_agent(factory, project_id, topic_id, laptop):
+    """Alice's own agent, added with her laptop's connection; its handle."""
     async with factory() as db:
         alice = await db.scalar(select(User).where(User.username == "alice"))
         instance = AgentInstance(
@@ -260,13 +265,16 @@ async def _own_agent(factory, project_id, topic_id):
         await db.flush()
         db.add(
             OwnAgent(
-                instance_id=instance.id, owner_user_id=alice.id, harness="claude-code"
+                instance_id=instance.id,
+                owner_user_id=alice.id,
+                harness="claude-code",
+                device_id=laptop,
             )
         )
         seat = await AgentInstanceService(db).ensure_identity(instance)
         await TopicMemberService(db).ensure_agent_seat(topic_id, seat)
         await db.commit()
-        return instance.id
+        return instance.id, instance.handle
 
 
 async def _waits(chat, topic_id, block_id, instance_id) -> bool:
@@ -327,13 +335,17 @@ def test_a_removed_connection_starts_no_session(client, monkeypatch):
 
     async def run():
         factory = client.test_request_factory
-        instance_id = await _own_agent(factory, project_id, topic_id)
+        instance_id, handle = await _own_agent(factory, project_id, topic_id, laptop)
         chat = client.app.dependency_overrides[get_chat_service]()
-        assert await _waits(chat, topic_id, block_id, instance_id) is True
-        async with factory() as db:
-            blocks = await db.scalars(
-                select(Block).where(Block.conversation_id == topic_id)
+        # Not waiting for a machine: the connection is gone, so the turn is
+        # refused with the reason instead of starting there.
+        assert await _waits(chat, topic_id, block_id, instance_id) is False
+        channel = OwnerChannel(DeviceChannel(hub=machines, session_factory=factory))
+        with pytest.raises(ScreenSetupError) as refused:
+            await channel.precheck(
+                SessionRef(project_id, topic_id, handle, harness="claude-code"),
+                needs_place=False,
             )
-            assert [b for b in blocks if "电脑上线后自动继续" in (b.content or "")]
+        assert "模型连接已解除" in str(refused.value)
 
     client.portal.call(run)

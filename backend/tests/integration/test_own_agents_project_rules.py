@@ -4,10 +4,11 @@ A member's own Claude Code sends the project's content to a model through its
 owner's own account. So a project is closed to them until someone who manages
 it opens it; closing it again takes them out of the project, not merely out of
 reach. A manager may also allow only some kinds of model connection — a Claude
-subscription, an Anthropic API key, a custom model service — and an agent whose
-owner has only logins of other kinds is refused, with the reason said in the
+subscription, an Anthropic API key, a custom model service: a member adds
+their own only with a connection of an allowed kind, and one already added on
+a kind the manager then refuses is not called, with the reason said in the
 room. Everyone in the project sees whose agent each is and what kind of
-connection it uses; the machines it runs on are its owner's business alone.
+connection it uses; the machine it runs on is its owner's business alone.
 """
 
 import asyncio
@@ -29,8 +30,9 @@ from tests.integration.conftest import (
 SUBSCRIPTION = {"auth_method": "claude.ai", "subscription_type": "max"}
 
 
-def _log_in(client, handle: str, machine: str, **login) -> None:
-    """``handle`` has logged in their own Claude Code on ``machine``."""
+def _log_in(client, handle: str, machine: str, **login) -> str:
+    """``handle`` has logged in their own Claude Code on ``machine``: the
+    connection, named by the machine."""
 
     async def run():
         async with client.test_factory() as db:
@@ -50,8 +52,17 @@ def _log_in(client, handle: str, machine: str, **login) -> None:
                 )
             )
             await db.commit()
+            return device.device_id
 
-    asyncio.run(run())
+    return asyncio.run(run())
+
+
+def _add(client, project_id, handle, connection):
+    return client.post(
+        f"/projects/{project_id}/own-agents",
+        json={"connection_id": connection},
+        headers=session_auth_headers(handle),
+    )
 
 
 def _project(client):
@@ -101,14 +112,29 @@ def _room_handles(client, room_id, viewer):
 
 def test_a_project_is_closed_to_them_until_a_manager_opens_it(client):
     project_id, _room = _project(client)
-    _log_in(client, "alice", "alice-laptop")
+    laptop = _log_in(client, "alice", "alice-laptop")
 
     assert _settings(client, project_id, "alice")["allowed"] is False
+    assert _add(client, project_id, "alice", laptop).status_code == 403
     assert _own_row(client, project_id, "alice", "alice") is None
 
     _rules(client, project_id, allowed=True)
 
+    assert _add(client, project_id, "alice", laptop).status_code == 200
     assert _own_row(client, project_id, "alice", "alice") is not None
+
+
+def test_a_connection_of_a_refused_kind_is_not_added(client):
+    project_id, _room = _project(client)
+    laptop = _log_in(client, "alice", "alice-laptop", **SUBSCRIPTION)
+    _rules(client, project_id, allowed=True, kinds=["api_key"])
+
+    offered = _settings(client, project_id, "alice")["my_connections"]
+    refused = _add(client, project_id, "alice", laptop)
+
+    assert [(c["id"], c["allowed"]) for c in offered] == [(laptop, False)]
+    assert refused.status_code == 403, refused.text
+    assert _own_row(client, project_id, "alice", "alice") is None
 
 
 def test_only_a_manager_opens_it(client):
@@ -128,8 +154,10 @@ def test_an_agent_on_a_kind_the_project_refuses_is_not_called_and_its_owner_is_t
     client,
 ):
     project_id, room_id = _project(client)
-    _log_in(client, "alice", "alice-laptop", **SUBSCRIPTION)
-    _rules(client, project_id, allowed=True, kinds=["api_key", "model_service"])
+    laptop = _log_in(client, "alice", "alice-laptop", **SUBSCRIPTION)
+    _rules(client, project_id, allowed=True)
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+    _rules(client, project_id, kinds=["api_key", "model_service"])
     seat = _own_row(client, project_id, "alice", "alice")["handle"]
 
     called = post_message(client, room_id, "alice", {"content": f"<@{seat}> 看一下"})
@@ -148,8 +176,9 @@ def test_an_agent_on_a_kind_the_project_refuses_is_not_called_and_its_owner_is_t
 
 def test_an_agent_on_a_kind_the_project_allows_is_called(client):
     project_id, room_id = _project(client)
-    _log_in(client, "alice", "alice-laptop", **SUBSCRIPTION)
+    laptop = _log_in(client, "alice", "alice-laptop", **SUBSCRIPTION)
     _rules(client, project_id, allowed=True, kinds=["subscription"])
+    assert _add(client, project_id, "alice", laptop).status_code == 200
     seat = _own_row(client, project_id, "alice", "alice")["handle"]
 
     called = post_message(client, room_id, "alice", {"content": f"<@{seat}> 看一下"})
@@ -176,8 +205,9 @@ def test_a_manager_cannot_allow_no_kind_at_all(client):
 
 def test_closing_the_project_withdraws_them_and_opening_it_brings_them_back(client):
     project_id, room_id = _project(client)
-    _log_in(client, "alice", "alice-laptop")
+    laptop = _log_in(client, "alice", "alice-laptop")
     _rules(client, project_id, allowed=True)
+    assert _add(client, project_id, "alice", laptop).status_code == 200
     seat = _own_row(client, project_id, "alice", "alice")["handle"]
     post_message(client, room_id, "alice", {"content": f"<@{seat}> 你好"})
     assert seat in _room_handles(client, room_id, "alice")
@@ -196,10 +226,9 @@ def test_closing_the_project_withdraws_them_and_opening_it_brings_them_back(clie
 
 def test_everyone_sees_its_kind_and_only_its_owner_sees_its_machines(client):
     project_id, _room = _project(client)
-    _log_in(client, "bob", "bobs-secret-laptop", **SUBSCRIPTION)
+    laptop = _log_in(client, "bob", "bobs-secret-laptop", **SUBSCRIPTION)
     _rules(client, project_id, allowed=True)
-    # bob's agent is made the first time bob reads the roster.
-    assert _own_row(client, project_id, "bob", "bob") is not None
+    assert _add(client, project_id, "bob", laptop).status_code == 200
 
     def bobs(viewer):
         rows = _settings(client, project_id, viewer)["agents"]
@@ -210,8 +239,10 @@ def test_everyone_sees_its_kind_and_only_its_owner_sees_its_machines(client):
     seen_by_bob = bobs("bob")
 
     for row in (seen_by_alice, seen_by_bob):
-        assert row["connections"] == [
-            {"kind": "subscription", "plan": "max", "model": None}
-        ]
-    assert "bobs-secret-laptop" not in str(seen_by_alice)
-    assert [m["name"] for m in seen_by_bob["machines"]] == ["bobs-secret-laptop"]
+        assert row["connection"] == {
+            "kind": "subscription",
+            "plan": "max",
+            "model": None,
+        }
+    assert "bobs-secret-laptop" not in str(_settings(client, project_id, "alice"))
+    assert seen_by_bob["machine"]["name"] == "bobs-secret-laptop"

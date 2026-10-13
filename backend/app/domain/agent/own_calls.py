@@ -42,7 +42,11 @@ async def seat_if_named(
     owned = await session.scalars(
         select(AgentInstance.id)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
-        .where(AgentInstance.project_id == topic.project_id)
+        .where(
+            AgentInstance.project_id == topic.project_id,
+            # One its owner removed from the project is in no room of it.
+            AgentInstance.is_active.is_(True),
+        )
     )
     for own in owned.all():
         seat = agent_instance_handle(own)

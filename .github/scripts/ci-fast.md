@@ -10,6 +10,7 @@ the selected local checks really ran and passed, nothing more.
 task ci:fast                 # quick tier (default): 180s, static hooks + tests/types
 task ci:fast -- --types      # quick + the full pyright / vue-tsc manual hooks
 python3 .github/scripts/ci-fast.py --tier quick   # equivalent without `task`
+python3 .github/scripts/ci-fast.py --tier static --pre-push   # the push-time report
 ```
 
 The bare `python3 .github/scripts/ci-fast.py` (no `--tier`) is the **static**
@@ -39,6 +40,80 @@ tier: `--budget` and `--memory-mib` default to the work machine's own limits
 (the 3072 MiB default is literally its session cap), and a machine that can back
 more gets more. Required CI's draft job passes its own pair (below); `extended`
 raises only the budget.
+
+## The pre-push entry point
+
+`.cheese/pre-push` in the tree is what the platform's task-worktree `pre-push`
+hook runs on every push (`cheese worktree` writes that hook; the mechanism is
+described in `docs/workflows.md`). It calls this script as
+`--tier static --pre-push`.
+
+`--pre-push` is a modifier, not a tier, and it changes two things:
+
+- The three hooks that spawn the node toolchain (`eslint`, `stylelint`,
+  `boundary-check-frontend`) leave the selection and are recorded in `not_run`,
+  never silently dropped: a report from this entry point says it could not
+  judge lint rather than reading as a pass that covered it. A push runs on
+  whatever box the author has, and a check the machine killed is a red its
+  reader cannot act on. The config-drift check still reads the whole hook set,
+  so a config that lost one of the three is still unknown, not green. The
+  preflight follows the same selection: with no node hook left, a checkout that
+  never ran `task fe:install` is not blocked by a missing `frontend/node_modules`
+  — the guards and the two python ratchets still run on it.
+- Every item that did not pass closes with the command that reproduces it
+  outside the hook, and so does each of the three that were left out. The
+  reader did not choose to run this and is about to push anyway, so the report
+  has to be actionable as it stands. A hook is repeated through pre-commit in
+  the invocation this run used — `$CI_FAST_PRECOMMIT` when the caller set one,
+  otherwise the default with its interpreter pin (below) — so the repeat runs
+  on the interpreter the check ran on. A check that is not a hook — the plan's
+  `backend-pure` / `frontend-unit` / `frontend-i18n` /
+  `frontend-typecheck-changed`, and a directly invoked `commit-title` — is not
+  dressed up as one: it names the command that actually ran, or the input it
+  was missing, because `pre-commit run <id>` for one of those exits with `No
+  hook with id ...`. A plan check leads with the directory it was spawned in
+  and the variables it was spawned under, for the same reason: its argv does
+  not carry either, and `uv run pytest` from the repository root does not find
+  the runner. Which files are at fault comes from the hook's own output,
+  printed above as it runs — the report's rows record the check, its verdict,
+  its clock and its command, not its log; the reproduce command prints that
+  output again.
+
+The entry point also honours `CI_FAST_PRE_PUSH_REPORT`: when the caller sets it
+to a path, the ones of those runs that did not pass leave their output there,
+for the caller to carry to whoever asked for the push. The platform's own
+delivery push sets it (`backend/sandbox/cheese`), because that push is started
+by the `post-commit` hook on a commit an agent made: the report's reader is
+that agent, and by push time its terminal is gone, so the report has to be
+asked for by name instead of being printed at nobody. A run that passes still
+leaves nothing there — the passing report is for whoever ran it by hand, and a
+delivery push that reported every clean commit would be noise.
+
+The report carries `"pre_push": true`, and the exit code is unchanged — `1` for
+a real failure, `2`/`3` for unknown/blocked — which is what the reproduce
+commands and any direct run of the entry point read (a direct run cut by the
+entry point's own wall clock is `124`, the one status that is about the run
+rather than about a check). What does not read it is the push: that caller
+asked for the report by name, and the installed hook exits 0 whatever happens,
+because a push refused there is a commit the platform has never delivered and
+the checkout it lives in does not survive to retry. `--pre-push` stays honest
+about what it checked; blocking a merge remains CI's job, and it stays the
+hook's job not to lose the work it is reporting on.
+
+`uvx` puts its tool venv's `bin` first on the hooks' `PATH`, so a
+`language: system` hook whose entry says `python3` runs under whichever
+interpreter that venv was built from. Measured 2026-10-12 on the agent work
+image: 3.9.25 there against the 3.13.5 running this script, which made
+`migration-fork` — 3.10+ annotation syntax in
+`.claude/scripts/check-migration-fork.py` — report fail on every backend-scoped
+run, and made the reproduce line it printed repeat that instead of the check.
+The default pre-commit command therefore pins `uvx` to the interpreter running
+this script (`uvx --python <sys.executable> pre-commit`): the hooks' `python3`
+comes from a venv built on that same interpreter, which is the one the entry
+point started this run with. `CI_FAST_PRECOMMIT` replaces the command and the
+pin with it; both workflows set that variable to `uvx pre-commit`, so this
+default is what a caller that sets nothing — the entry point, `task ci:fast`, a
+plain `python3 .github/scripts/ci-fast.py` — runs.
 
 ## In Required CI (the draft tier)
 
@@ -88,9 +163,12 @@ in the run's `not_run`):
   consumer — it loads its routes that way — and drag most of the suite in.
 - **A run the tier could not finish.** As everywhere else in this tool, an
   exhausted budget or a check with no input is `unknown` (exit 2), never a red
-  it did not observe. What is different here is only what the workflow does with
-  that exit code: `1` (a real failure) fails the draft, `2`/`3` do not — they
-  are written into the step summary and a warning annotation instead. GitHub has
+  it did not observe. What is different here is only how the workflow reads
+  that exit: `1` (a real failure) reddens the draft, and so does an exit that
+  left no report behind — a run that never reached a verdict, which this step
+  must not dress as a pass. `2`/`3` redden it only where ci-fast's own report
+  says `unknown`/`blocked`; there they are written into the step summary and a
+  warning annotation instead. GitHub has
   no third conclusion, so the summary is where "not judged" is readable; the
   green of `CI required (draft quick)` is not a statement that everything ran.
   The merge queue's full run on the same commit is.

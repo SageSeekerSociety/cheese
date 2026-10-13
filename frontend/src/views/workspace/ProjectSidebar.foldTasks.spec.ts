@@ -8,7 +8,7 @@
  * 用的是真的项目框路由、真的 ProjectSidebar 和 TopicSidebar、真的 store 和缓存，只把
  * 接口换成替身。
  */
-import type { Topic } from '@/cx_types'
+import type { ProjectMemberRow, Topic } from '@/cx_types'
 
 import { defineComponent, h, ref } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
@@ -56,6 +56,7 @@ import { seedProject, seedProjects } from '@/test/seedQueries'
 // 地址里任务可以写编号或 UUID（`NUMBER_OR_ID`），'k1' 那样两样都不是，路由匹配不上。
 const K1 = '5c2d1e0f-1f22-4a33-9c44-000000000001'
 const K2 = '5c2d1e0f-1f22-4a33-9c44-000000000002'
+const K3 = '5c2d1e0f-1f22-4a33-9c44-000000000003'
 
 function task(id: string, title: string, room = 'topic-a', over: Record<string, unknown> = {}) {
   return {
@@ -86,9 +87,10 @@ async function settle() {
   for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-async function openProject(topics: Topic[]) {
+async function openProject(topics: Topic[], members: ProjectMemberRow[] = []) {
   seedProjects([])
-  seedProject('p', { topics, members: [], notifyLevels: {} })
+  // 登录的人有 handle，未读一并按它读：这里先摆好空的一份，别让它真的去请求（网络是封的）。
+  seedProject('p', { topics, members, notifyLevels: {}, unread: {}, privateUnread: {} })
   useWorkspaceStore().openProject('p')
   display.width = ref(1280)
   display.mdAndUp = ref(true)
@@ -109,6 +111,8 @@ const unfold = () => screen.getByRole('button', { name: "Expand this channel's t
 beforeEach(() => {
   setActivePinia(createPinia())
   api.listProjectTasks.mockReset()
+  // 蓝灯认的是「这条不是我负责的」，所以得有个登录的人。
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: '我' }))
 })
 
 describe('频道下面那一整块任务，收得起来', () => {
@@ -177,15 +181,35 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.getAllByRole('button', { name: "Collapse this channel's tasks" })).toHaveLength(1)
   })
 
-  it('凑够三条借来的那几条，行上说是补上来的', async () => {
+  it('别人的活画一盏蓝灯、盖过状态灯；我负责的和没主的都不画', async () => {
     await openProject([
-      channel('topic-a', [task(K1, '任务一'), task(K2, '任务二', 'topic-a', { filling_in: true })], 4),
+      channel(
+        'topic-a',
+        [
+          task(K1, '任务一', 'topic-a', { owner_handle: 'me' }),
+          // 这条在往前跑：它该画呼吸绿，但「不归我」压过「在跑」。
+          task(K2, '任务二', 'topic-a', { owner_handle: 'wang', filling_in: true, moving: true }),
+          task(K3, '任务三', 'topic-a'),
+        ],
+        4
+      ),
     ])
 
-    const chip = screen.getByText('Filled in')
-    // 补的那一条明确说是补的：不然会像一条你漏看了的活。
-    expect(chip.getAttribute('title')).toBe('Fewer than three of your own tasks are here; this row makes up the three')
-    // 和我有关的那些不挂这个签。
-    expect(screen.getAllByText('Filled in')).toHaveLength(1)
+    // 别人的那一条只有一盏灯，是蓝的：灯是给读屏用的图，名字就是它要说的事。
+    const theirs = screen.getByRole('button', { name: /任务二/ })
+    const lights = theirs.querySelectorAll('.row-light')
+    expect(lights).toHaveLength(1)
+    expect(lights[0]!.classList.contains('row-light--blue')).toBe(true)
+    // 灯是给读屏看的图，蓝灯又把状态灯盖掉了：它必须自己说得出这一行归谁。
+    expect(lights[0]!.getAttribute('aria-label')).toBeTruthy()
+
+    // 借来的那一条还靠悬浮说明说出它为什么在这儿：这个频道里我自己的不到三条。
+    // 断它必须说出的那件事，不整句比——整句比较只会在改文案时红一次
+    // （王长鑫 2026-10-12 审阅 #3498 提的，`.claude/rules` 之外的那条约定）。
+    expect(theirs.getAttribute('title')).toContain('Fewer than three')
+
+    // 我负责的那一条、还有没主的那一条，都只按状态画灯；没有状态就不画灯。
+    expect(screen.getByRole('button', { name: /任务一/ }).querySelector('.row-light')).toBeNull()
+    expect(screen.getByRole('button', { name: /任务三/ }).querySelector('.row-light')).toBeNull()
   })
 })

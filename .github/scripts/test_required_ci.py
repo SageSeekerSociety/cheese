@@ -199,8 +199,10 @@ class RequiredCITest(unittest.TestCase):
     def test_cifast_inputs_select_the_cifast_suite(self):
         # The complete input set of ci-fast: its script and tests, the shared
         # selector and path map it reuses, the hook command table it invokes,
-        # and the task entry that wires it.
+        # the task entry that wires it, and the entry point `--pre-push`
+        # documents and its tests execute.
         for path in (
+            ".cheese/pre-push",
             ".github/scripts/ci-fast.py",
             ".github/scripts/ci_fast_pytest_plugin.py",
             ".github/scripts/test_ci_fast.py",

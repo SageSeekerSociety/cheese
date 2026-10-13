@@ -8,6 +8,7 @@ covers:
   - backend/app/api/routes/dashboard.py
   - backend/app/api/routes/admin_stats.py
   - backend/app/api/routes/awaiting.py
+  - backend/app/api/awaiting_deps.py
 ---
 
 # 看板 {#boards}
@@ -39,7 +40,7 @@ covers:
 
 「全部任务」回答「这个项目现在有什么在等人」，「待我处理」（`GET /awaiting-me`）回答「**我**现在要处理什么」。两者读的是同一个 `presentation`、同一份收件人判据（`delivery/addressing.py` 的 `address()`），差别只有范围：从一个项目扩到我能看见的全部项目。
 
-`room_task/awaiting.py` 只给形状，不碰 I/O——拉哪些项目、房间、卡是路由那一层的事（`api/routes/awaiting.py`，要问六个地方，和项目任务列表那两份是同一个形状）。这有两个硬理由：
+`room_task/awaiting.py` 只给形状，不碰 I/O——拉哪些项目、房间、卡是 API 那一层的事（`api/awaiting_deps.py` 的 `waiting_items`，要问六个地方，和项目任务列表那两份是同一个形状）。这有两个硬理由：
 
 - **不能读通知表**。通知是一条条**事件记录**，不是状态：卡递上来发一条，之后它被驳回、作废、或者别人先处理掉了，那条记录还躺在表里，从它身上读不出它已经不作数了。「还没处理完的有哪些」必须从当下的事实重算。
 - **判据只有一份**。「点到的是谁」曾经在这里有一份、投递那侧另有一份，那个形状就是列表显示「待处理」而没有人被通知到。现在清单和投递都调 `address()`：通知负责把人叫回来，清单负责他回来之后不用自己翻。

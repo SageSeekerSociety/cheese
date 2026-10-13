@@ -18,6 +18,22 @@
     "configured": "Configured",
     "notConfigured": "Not configured",
     "updatedBy": "Last updated by {handle}",
-    "appIdRequired": "Enter the App ID first"
+    "appIdRequired": "Enter the App ID first",
+    "externalProblem": {
+      "sub": "The account the platform uses to read external problem results. Use the one the course staff gave you.",
+      "username": "Username",
+      "password": "Password",
+      "passwordHint": "Leave empty to keep the saved one",
+      "note": "The platform uses this account to read results on YOJ, so please use the account the course staff provided. It signs in once during a sync to fetch the numbers and does nothing else on its behalf.",
+      "save": "Save",
+      "saved": "Saved",
+      "saveFailed": "Could not save",
+      "loadFailed": "External problem account failed to load",
+      "retry": "Retry",
+      "configured": "Configured",
+      "notConfigured": "Not configured",
+      "updatedBy": "Last updated by {handle}",
+      "usernameRequired": "Enter the username first"
+    }
   }
 }

@@ -2,13 +2,13 @@
 // 侧栏里挂在频道下面的一个任务。比频道的字往里缩一点，左边一条竖线从频道的 # 下面
 // 一直连到「展开其余」那一行，说「这几条是那个频道里的」；字和频道一样大。
 //
-// 行尾是那颗灯（`light`，父级按 `lib/roomLight.ts` 的四条判据算好）：黄 = 有事等你，
-// 呼吸绿 = 正在往前走，长绿 = 交付完了你还没看过，红 = 显示在跑但五分钟没动静。
-// 不亮就不画。
+// 行尾是那颗灯（`light`，父级算好）：黄 = 有事等你，呼吸绿 = 正在往前走，长绿 = 交付
+// 完了你还没看过，红 = 显示在跑但五分钟没动静，蓝 = 这条不归我、是别人负责的。灯上
+// 只画一盏，蓝压过其余四盏——「不是我的活」比「它现在怎么了」先要知道。不亮就不画。
 //
 // 这一条不是和我有关的、是频道里别人的、被借来凑够三条的（`task.filling_in`）：整个
-// 标题淡一档、后面缀一个「补足」小签，说清它为什么在这儿 —— 不然侧栏里突然多出一条
-// 我没参与过的活，看起来像我漏看了什么。
+// 标题淡一档，鼠标停上去的那句说明写清它为什么在这儿 —— 不然侧栏里突然多出一条我没
+// 参与过的活，看起来像我漏看了什么。
 import type { RowLight } from '@/lib/roomLight'
 import type { RailTask } from './moreTasks'
 
@@ -52,6 +52,7 @@ const emit = defineEmits<{
     :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn }"
     :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
+    :title="fillingIn ? t('work.sidebar.fillInTip') : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
     @pointerdown="
       $event.pointerType === 'mouse' && $event.button === 0 && emit('press', { roomId: task.room_id, taskId: task.id })
@@ -64,9 +65,6 @@ const emit = defineEmits<{
       :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
       >{{ taskTitle(task) }}</span
     >
-    <span v-if="fillingIn" class="rail-task__fill" :title="t('work.sidebar.fillInTip')">{{
-      t('work.sidebar.fillIn')
-    }}</span>
     <TopicRailBadge v-if="unread > 0" :count="unread" />
     <TopicRailLight v-if="light" :light="light" />
   </button>
@@ -128,7 +126,7 @@ const emit = defineEmits<{
 .rail-task__title--unread {
   font-weight: 650;
 }
-/* 补足的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
+/* 借来凑数的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
    自己再抬一次——上面那两条改的是行盒的颜色，标题自己有颜色时继承不到。 */
 .rail-task--filled .rail-task__title {
   color: var(--muted);
@@ -136,15 +134,5 @@ const emit = defineEmits<{
 .rail-task--filled:hover .rail-task__title,
 .rail-task--filled.rail-task--selected .rail-task__title {
   color: var(--ink);
-}
-/* 「补足」小签：形态沿用频道行那颗计数丸，字更小、不抢眼。 */
-.rail-task__fill {
-  flex: none;
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--faint);
-  background: var(--fill);
-  border-radius: 8px;
-  padding: 0 6px;
 }
 </style>

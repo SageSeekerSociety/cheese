@@ -4,6 +4,7 @@ import { useEventListener } from '@vueuse/core'
 
 import { listAwaitingMe } from '@/api'
 import { onAwaitingChanged } from '@/api/awaitingChanged'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 
 /** 两次读之间至少隔这么久：换路由很频繁，而这个数字晚几十秒变不要紧。 */
 const MIN_INTERVAL_MS = 30_000
@@ -62,23 +63,46 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
     }
   }
 
+  // 登录之后的第一遍排到首帧之后（`lib/afterFirstPaint.ts`）：这条角标几秒后才有人看，
+  // 别在开页那一瞬间跟页面自己要的数据抢。之后的刷新照旧——换页面、窗口重新拿到焦点，
+  // 都还是当场问（`asked` 挡住的是首帧那个门开了之后重复排的那几遍）。
+  //
+  // 首帧之前一次都不问，包括「换页面」这条：冷开落在深链上（刷新、从别处点进来）时，
+  // 这一次跳转是 `main.ts` 挂载之后才落地的，`from` 是起始的 `/`，看着像人换了页，其实
+  // 就是这一次打开本身——放它过去就会在首帧之前读一遍，门开了再读一遍。门开那一次读的
+  // 已经是落地后的状态，不会漏。
+  let asked = false
   watch(
-    enabled,
-    (on) => {
-      if (on) void refresh(true)
-      else {
+    [enabled, firstPaintDone],
+    ([on, painted]) => {
+      if (!on) {
         latest += 1 // 退出登录前发出去的读，回来也不再写。
         count.value = 0
         byProject.value = {}
+        asked = false
+        return
       }
+      if (!painted || asked) return
+      asked = true
+      void refresh(true)
     },
     { immediate: true }
   )
   watch(
     () => route.path,
-    (_path, from) => void refresh(from === '/inbox')
+    (_path, from) => {
+      if (!firstPaintDone.value) return
+      void refresh(from === '/inbox')
+    }
   )
-  useEventListener(window, 'focus', () => void refresh())
+  // 首帧之前也不问：开机那一两秒里切走再切回来、或者点进一个后台开着的标签页，都会
+  // 来一次 `focus`。这儿不挡的话它会当场读一遍（`lastAt` 还是 0，节流挡不住），门开了
+  // 再读一遍——和上面「换页面」那条一模一样的双读。门开那一次读的就是当下的数。
+  useEventListener(window, 'focus', () => {
+    if (!firstPaintDone.value) return
+    void refresh()
+  })
+  // 人做成了一件会了结待办的事，端点自己会说一声，当场重读：这已经远在首帧之后。
   onScopeDispose(onAwaitingChanged(() => void refresh(true)))
 
   return count

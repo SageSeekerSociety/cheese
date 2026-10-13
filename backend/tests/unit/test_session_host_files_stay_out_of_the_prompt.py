@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness.claude_code.remote_execution import client, release
-from app.domain.agent.skills import native_skill_files
+from app.domain.skill_library import native_skill_files
 from tests.pinned_claude import claude_binary
 
 ROOT = Path(__file__).resolve().parents[3]

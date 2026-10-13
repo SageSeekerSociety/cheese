@@ -1469,7 +1469,8 @@
       "red": "Says it's running, but nothing for five minutes",
       "yellow": "Waiting on you",
       "moving": "Work moving",
-      "delivered": "Done and unread"
+      "delivered": "Done and unread",
+      "others": "Someone else's task"
     },
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
@@ -1488,8 +1489,7 @@
     "fewerTasks": "Show fewer",
     "tasksLoading": "Loading…",
     "tasksFailed": "Couldn't load them. Click to retry",
-    "fillIn": "Filled in",
-    "fillInTip": "Fewer than three of your own tasks are here; this row makes up the three",
+    "fillInTip": "Fewer than three of your own tasks are here; this one is someone else's, added to fill the three",
     "collapseTasks": "Collapse this channel's tasks",
     "expandTasks": "Expand this channel's tasks",
     "collapsedTasks": "{count} tasks under way"
@@ -1767,7 +1767,11 @@
       "kindModelService": "Custom model service",
       "kindModelServiceModel": "Custom model service ({model})",
       "kindNotAllowed": "not allowed here",
-      "empty": "No member has connected their Claude Code",
+      "empty": "No member has added their Claude Code",
+      "connectionGone": "model connection removed",
+      "remove": "Remove",
+      "addLabel": "Add my Claude Code",
+      "add": "Add",
       "callersLabel": "Who can call it",
       "callersOwner": "Only me",
       "callersProject": "Project members",

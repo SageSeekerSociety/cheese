@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>侧栏任务行：不是我负责的那几条，挂一盏蓝灯</title>
+<style>
+/* ---- token：照 frontend/src/style.css 的两套主题块抄下来 ---- */
+:root{
+  color-scheme:light;
+  --ink:#191a1c; --text:#36383c; --muted:#5a5e66; --faint:#747a82;
+  --line:#ecedef; --line-2:#e2e3e6; --fill:#f4f5f7; --fill-2:#eeeff1;
+  --canvas:#f7f8fa; --surface:#ffffff;
+  --accent:#f57f17; --accent-press:#d96e0a; --accent-ink:#9a5413; --accent-wash:#fdf1e2;
+  --ok:#1f9d55; --warn:#e8901c; --warn-ink:#8f5406; --warn-wash:#faf0dc;
+  --danger:#dc2626; --signal-yellow:#eab308; --signal-blue:#2563eb;
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'PingFang SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --shadow-1:0 1px 2px rgba(25,26,28,.06), 0 2px 8px rgba(25,26,28,.06);
+  --shadow-2:0 4px 12px rgba(25,26,28,.1), 0 12px 32px rgba(25,26,28,.1);
+  --focus-ring:#c2570a;
+  /* 批注标的颜色：墨色，刻意不用产品里的任何一档——这次改的就是蓝灯，
+     标记要是蓝的，看的人会把批注和那盏灯看成一回事。 */
+  --note:#191a1c; --note-ink:#ffffff; --note-press:#000000; --note-wash:#e6e7ea;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --ink:#f3f4f6; --text:#d3d6db; --muted:#aeb4bd; --faint:#888ea0;
+  --line:#2b2e33; --line-2:#3a3e45; --fill:#212429; --fill-2:#282c31;
+  --canvas:#141517; --surface:#1b1d20;
+  --accent:#ffa733; --accent-press:#ffbc5e; --accent-ink:#ffc670; --accent-wash:#2e2216;
+  --ok:#3fbf7f; --warn:#f0a94a; --warn-ink:#f7c078; --warn-wash:#2a2114;
+  --danger:#f0625c; --signal-yellow:#facc15; --signal-blue:#60a5fa;
+  --focus-ring:rgba(255,167,51,.65);
+  --shadow-1:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+  --shadow-2:0 4px 12px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
+  --note:#f3f4f6; --note-ink:#191a1c; --note-press:#ffffff; --note-wash:#2b2e33;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--canvas);color:var(--text);
+  font-family:var(--font-sans);font-size:14px;line-height:20px;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{margin:0;color:var(--ink);font-weight:600;text-wrap:balance}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px}
+.t-meta{font-size:12px;line-height:18px;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---- 页面外壳（不属于产品） ---- */
+.chrome{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;
+}
+.chrome__mark{
+  width:28px;height:28px;border-radius:var(--radius-md);background:var(--accent);
+  color:#fff;font-weight:700;display:grid;place-items:center;font-size:15px;flex:none;
+}
+.chrome__id{display:flex;align-items:center;gap:10px}
+.chrome__tools{margin-left:auto;display:flex;align-items:center;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;font-weight:600}
+.btn--secondary{background:var(--fill);color:var(--ink)}
+.btn--secondary:hover{background:var(--fill-2)}
+.btn--sm{height:28px;font-size:12px;padding:0 10px}
+.stage{padding:20px 24px 40px;max-width:1400px;margin:0 auto}
+.hint{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.segs{display:inline-flex;background:var(--fill);border-radius:var(--radius-md);padding:2px;gap:2px}
+.segs[hidden]{display:none}
+.segs button{padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;color:var(--muted);font-weight:600}
+.segs button.is-on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+.legend{font-size:12px;color:var(--muted)}
+.legend b{color:var(--ink)}
+.frame{
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);overflow:hidden;
+  background:var(--surface);box-shadow:var(--shadow-2);
+}
+.frame__bar{
+  display:flex;align-items:center;gap:6px;padding:0 12px;height:36px;
+  background:var(--fill);border-bottom:1px solid var(--line);
+}
+.frame__dot{width:9px;height:9px;border-radius:var(--radius-pill);background:var(--line-2)}
+.frame__url{flex:1;text-align:center;font-size:12px;color:var(--muted);font-family:var(--mono)}
+.frame__tag{font-size:11px;color:var(--warn-ink);background:var(--warn-wash);border-radius:var(--radius-sm);padding:2px 6px;font-weight:600}
+.frame__scroll{overflow-x:auto}
+/* 这份原型是给桌面看的：窄屏不重排，横向滚，免得把侧栏挤成一条 */
+.app{display:flex;height:680px;min-width:940px;background:var(--canvas)}
+
+/* ---- 最左那条图标栏 ---- */
+.railbar{
+  width:52px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;
+}
+.railbar button{width:34px;height:34px;border-radius:var(--radius-md);display:grid;place-items:center;color:var(--muted);font-size:14px}
+.railbar button.is-on{background:var(--ink);color:var(--surface)}
+.railbar button:hover{background:var(--fill-2)}
+
+/* ---- 频道侧栏：这一块就是被改的东西 ---- */
+.side{
+  width:304px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0;
+}
+.side__head{display:flex;align-items:center;gap:4px;height:48px;padding:0 8px 0 16px;border-bottom:1px solid var(--line);flex:none}
+.side__proj{font-weight:600;color:var(--ink);font-size:14px;flex:1;text-align:left}
+.side__label{display:flex;align-items:center;gap:6px;padding:14px 8px 4px 16px;font-size:12px;font-weight:600;color:var(--faint);flex:none}
+.side__label span{flex:1}
+.side__list{flex:1;min-height:0;overflow-y:auto;padding:0 8px 12px;display:flex;flex-direction:column;gap:1px}
+
+/* 频道行 */
+.ch{
+  position:relative;display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  min-height:32px;padding:0 6px 0 8px;border-radius:var(--radius-md);color:var(--text);font-size:14px;
+}
+.ch:hover{background:var(--fill)}
+.ch.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
+.ch__glyph{width:16px;flex:none;text-align:center;color:var(--faint);font-size:14px}
+.ch__name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch__tail{display:flex;align-items:center;gap:6px;flex:none}
+.ch__n{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--fill);border-radius:var(--radius-sm);padding:0 5px;border:1px solid var(--line)}
+.ch__more{opacity:0;color:var(--muted);font-size:14px;line-height:1;padding:2px 4px}
+.ch:hover .ch__more,.ch.is-on .ch__more{opacity:1}
+
+/* 行尾那盏灯：照 TopicRailLight.vue 抄——8px 实心圆，四个色相一个尺寸。
+   蓝 #2563eb 是这一版新加的 --signal-blue。 */
+.lg{width:8px;height:8px;border-radius:var(--radius-pill);display:block;flex:none}
+.lg--blue{background:var(--signal-blue)}
+.lg--red{background:var(--danger)}
+.lg--yellow{background:var(--signal-yellow)}
+.lg--green{background:var(--ok)}
+
+/* 任务行 */
+.tk{
+  position:relative;display:flex;align-items:center;gap:6px;width:100%;text-align:left;
+  min-height:32px;padding:0 6px 0 40px;border-radius:var(--radius-md);color:var(--text);font-size:14px;line-height:20px;
+}
+.tk:hover{background:var(--fill-2);color:var(--ink)}
+.tk.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
+.tk::before{content:'';position:absolute;left:16px;top:-3px;bottom:-3px;width:1px;background:var(--line-2)}
+.tk__t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk--help .tk__t{color:var(--text)}
+.tk--pad .tk__t{color:var(--muted)}
+.tk__tail{display:flex;align-items:center;gap:6px;flex:none}
+.tk__badge{min-width:16px;height:16px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;padding:0 4px;font-family:var(--mono)}
+/* 改前那枚签：形态照 TopicRailTaskRow.vue 的 .rail-task__fill 抄——
+   11px、--faint 字色、--fill 底、8px 圆角、左右各 6px 内边距。 */
+.tk__tag{font-size:11px;line-height:16px;color:var(--faint);background:var(--fill);border-radius:8px;padding:0 6px}
+
+/* 最后那行「展开其余 N 个」 */
+.more{
+  position:relative;display:flex;align-items:center;gap:6px;width:100%;min-height:32px;
+  padding:0 6px 0 40px;border-radius:var(--radius-md);color:var(--muted);font-size:14px;text-align:left;
+}
+.more:hover{background:var(--fill-2);color:var(--ink)}
+.more::before{content:'';position:absolute;left:16px;top:-3px;height:calc(50% + 3px);width:1px;background:var(--line-2)}
+.more__label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.more__chev{color:var(--faint);font-size:12px}
+
+/* ---- 主区 ---- */
+.view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--canvas);min-height:0}
+.vhead{display:flex;align-items:center;gap:10px;height:48px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.vhead h2{font-size:15px}
+.vhead__crumb{font-size:13px;color:var(--muted)}
+.vbody{flex:1;min-height:0;overflow-y:auto;padding:20px 24px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px;margin-bottom:12px;box-shadow:var(--shadow-1)}
+.card h3{font-size:15px;margin-bottom:6px}
+.chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;background:var(--fill);color:var(--muted)}
+.chip--warn{background:var(--warn-wash);color:var(--warn-ink)}
+.pair{display:grid;gap:8px;margin-top:10px}
+.pair__row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pair__k{width:52px;flex:none;font-size:12px;color:var(--faint)}
+.pair__demo{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px dashed var(--line-2);border-radius:var(--radius-md);background:var(--canvas)}
+.pair__demo .tk__t{max-width:15em}
+.pair--old{opacity:.75}
+.key{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.key__i{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+
+/* ---- 改动标记（墨色，跟产品里的灯分得开） ---- */
+.mk{
+  display:inline-grid;place-items:center;width:17px;height:17px;border-radius:var(--radius-pill);
+  background:var(--note);color:var(--note-ink);font-size:11px;font-weight:700;font-style:normal;
+  cursor:pointer;font-family:var(--mono);flex:none;box-shadow:0 0 0 2px var(--note-wash);
+}
+.mk:hover{background:var(--note-press)}
+.mk.is-seen{background:var(--muted);color:#fff;box-shadow:0 0 0 2px var(--fill)}
+
+/* ---- 说明卡 ---- */
+/* 靠右下角，不盖住左边那条侧栏（被改的就是它）；窄屏才铺开 */
+.sheet{
+  position:fixed;right:24px;bottom:20px;
+  width:min(820px,calc(100vw - 424px));background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);
+  z-index:60;overflow:hidden;
+}
+.sheet[hidden]{display:none}
+.sheet__head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.sheet__no{width:26px;height:26px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700;flex:none;font-family:var(--mono)}
+.sheet__head h3{font-size:15px;line-height:21px}
+.sheet__body{padding:12px 16px 16px;display:grid;gap:8px;max-height:52vh;overflow-y:auto}
+.sheet__row{display:flex;gap:10px;font-size:13px;line-height:20px}
+.sheet__k{width:60px;flex:none;color:var(--faint)}
+.sheet__v{flex:1;color:var(--text)}
+.sheet__v b{color:var(--ink)}
+.sheet__row--ask .sheet__v{color:var(--accent-ink)}
+.sheet__foot{display:flex;align-items:center;gap:8px;padding:0 12px 12px;font-size:12px;color:var(--faint)}
+.icon-btn{width:28px;height:28px;border-radius:var(--radius-md);display:grid;place-items:center;color:var(--muted);font-size:15px;line-height:1}
+.icon-btn:hover{background:var(--fill)}
+
+@media (max-width:940px){
+  .stage{padding:12px}
+  .chrome{padding:12px 16px}
+  .sheet{left:12px;right:12px;width:auto}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="chrome__id">
+    <span class="chrome__mark">知</span>
+    <div>
+      <h1>不是我负责的那几条，行尾挂一盏蓝灯</h1>
+      <p class="t-meta">caisongyang 2026-10-13：就不要显示文字了，标记为蓝灯 · 蓝灯优先级高于一切 · 界面上那些墨色标点一下，看这处改什么</p>
+    </div>
+  </div>
+  <div class="chrome__tools">
+    <span class="t-meta mono" id="seen">已看过 0 / 3</span>
+    <button class="btn btn--secondary btn--sm" id="themeBtn">深色</button>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="hint">
+    <div class="segs" id="modeSeg">
+      <button data-mode="before">改前：缀一枚「补足」小签</button>
+      <button data-mode="after" class="is-on">改后：别人的活挂蓝灯</button>
+    </div>
+    <div class="segs" id="langSeg">
+      <button data-lang="zh" class="is-on">中文</button>
+      <button data-lang="en">English</button>
+    </div>
+    <span class="legend">左边点着走：<b>点频道</b>打开它，<b>点任务</b>打开那条任务。鼠标停在<b>淡一档</b>的那几行上看说明。</span>
+  </div>
+
+  <div class="frame">
+    <div class="frame__bar">
+      <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+      <span class="frame__url">okcheese.com/workspace</span>
+      <span class="frame__tag">原型 · 不是线上</span>
+    </div>
+    <div class="frame__scroll">
+      <div class="app">
+
+        <nav class="railbar" aria-label="项目">
+          <button class="is-on" title="知是平台">知</button>
+          <button title="我的项目">我</button>
+        </nav>
+
+        <aside class="side">
+          <div class="side__head">
+            <button class="side__proj">知是平台</button>
+            <button class="icon-btn" title="项目菜单">▾</button>
+          </div>
+          <div class="side__label">
+            <span id="chLabel">频道</span>
+            <button class="icon-btn" title="新建频道" style="width:22px;height:22px;font-size:14px">＋</button>
+          </div>
+          <nav class="side__list" id="sideList"></nav>
+        </aside>
+
+        <section class="view">
+          <div class="vhead" id="vhead"></div>
+          <div class="vbody" id="vbody"></div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</main>
+
+<aside class="sheet" id="sheet" hidden>
+  <div class="sheet__head">
+    <span class="sheet__no" id="sheetNo">1</span>
+    <div style="flex:1">
+      <h3 id="sheetTitle"></h3>
+      <p class="t-meta" id="sheetSrc"></p>
+    </div>
+    <button class="icon-btn" id="sheetClose">×</button>
+  </div>
+  <div class="sheet__body">
+    <div class="sheet__row"><span class="sheet__k">现状</span><span class="sheet__v" id="sheetNow"></span></div>
+    <div class="sheet__row"><span class="sheet__k">这一版</span><span class="sheet__v" id="sheetFix"></span></div>
+    <div class="sheet__row sheet__row--ask" id="sheetAskRow" hidden><span class="sheet__k">要你定</span><span class="sheet__v" id="sheetAsk"></span></div>
+    <div class="sheet__row"><span class="sheet__k">要动哪里</span><span class="sheet__v" id="sheetWork"></span></div>
+  </div>
+  <div class="sheet__foot"><span>点别的标记换一张</span></div>
+</aside>
+
+<script>
+(function(){
+  'use strict';
+
+  // ------------------------------------------------------------------
+  // 假数据。照侧栏里那一块画的。
+  //   rel: 'own'  我负责的（后端 owner_handle 是我）
+  //        'help' 我协助的（别人负责）
+  //        'pad'  这个频道里别人的、被借来把这一块凑够三条的（后端 filling_in）
+  //   who = 那一条的负责人叫什么（项目名册上的名字）
+  //   lg  = 这一条**本来的状态灯**（red/yellow/green/不亮）。改后那一版里，
+  //         只要 owner 是别人（help、pad），它就被蓝灯顶掉——所以 la 里留着它，
+  //         好让你看见被顶掉的是什么颜色。
+  //   badge = 未读数
+  // ------------------------------------------------------------------
+  var DATA = [
+    {
+      id:'general', name:'综合', nameEn:'General', on:true, open:51,
+      rows:[
+        {t:'灯', rel:'own', lg:'green'},
+        {t:'电脑端待办入口位置', rel:'own', lg:'yellow', badge:2},
+        {t:'验收卡 merge_state 快照过期', rel:'own'},
+        {t:'空间重设计', rel:'own', lg:'green'},
+        {t:'新建频道入口设计', rel:'help', who:'王长鑫', lg:'green'}
+      ]
+    },
+    {
+      id:'design', name:'产品设计', nameEn:'Product design', on:false, open:6,
+      rows:[
+        {t:'出题改动原型', rel:'own', lg:'green'},
+        {t:'频道改动原型', rel:'own', lg:'yellow', badge:1},
+        {t:'全部频道页加搜索', rel:'pad', who:'林夏', lg:'yellow'}
+      ]
+    },
+    {
+      id:'test', name:'测试频道', nameEn:'Testing', on:false, open:3,
+      rows:[
+        {t:'冒烟测试补跑一遍', rel:'pad', who:'陈默', lg:'red'},
+        {t:'移动端宽度回归', rel:'pad', who:'王长鑫', lg:'green'},
+        {t:'合并队列卡住排查', rel:'pad', who:'林夏', lg:'yellow'}
+      ]
+    },
+    {
+      id:'duty', name:'客服值班', nameEn:'Support duty', on:false, open:4,
+      rows:[
+        {t:'值班表自动排班', rel:'own', lg:'green'},
+        {t:'工单标签规范化', rel:'pad', who:'陈默'},
+        {t:'常见问题库更新', rel:'pad', who:'林夏', lg:'green'}
+      ]
+    }
+  ];
+
+  var COPY = {
+    zh:{
+      fillIn:'补足',
+      tip:'这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿',
+      others:'别人的活',
+      channels:'频道', fold:'收起这个频道下面的任务', unfold:'展开这个频道下面的任务',
+      more:'展开其余 {n} 个', countTip:'这个频道里进行中的任务数',
+      lgBlue:'不是我负责的活', lgRed:'显示在跑，但五分钟没动静', lgYellow:'有事等你',
+      lgGreen:'有活在往前走 / 做完了你还没看过',
+      borrowedHint:'（淡一档的是不是和我有关的活）'
+    },
+    en:{
+      fillIn:'Filled in',
+      tip:"Fewer than three of your own tasks are here; this one is someone else's, added to fill the three",
+      others:"Someone else's task",
+      channels:'Channels', fold:"Collapse this channel's tasks", unfold:"Expand this channel's tasks",
+      more:'Show {n} more', countTip:'Tasks under way in this channel',
+      lgBlue:'Not yours', lgRed:"Says it's running, but nothing for five minutes", lgYellow:'Waiting on you',
+      lgGreen:'Work moving / done and unread',
+      borrowedHint:'(dimmed rows are work in this channel that is not mine)'
+    }
+  };
+
+  var ITEMS = {
+    1:{t:'别人的活不写文字，行尾挂一盏蓝灯',
+       s:'caisongyang 2026-10-13：就不要显示文字了，标记为蓝灯',
+       now:'借来的那几条缀一枚「补足」/ "Filled in" 小签——说的是「这一条是补上来的」这个动作，没说这活是谁的。我协助的那几条干脆什么都不挂。',
+       fix:'不是我负责的那几条（别人负责的、我协助的）行尾挂一盏<b>蓝灯</b>，签、名字、文字都不留。'
+         + '蓝灯只说一件事：<b>这条不归我</b>。上面切「改前」「改后」，看的就是行尾那一格。',
+       ask:'蓝灯压过状态灯：我自己协助的那条活要是「有事等你」，那盏黄灯也被蓝盖掉、看不见了。'
+         + '你要是想两样都留下，说一声——那就得换个画法（比如黄灯外面套一圈蓝）。',
+       work:'两份词表 <span class="mono">frontend/src/i18n/messages/zh-CN/work.json</span> 和 '
+         + '<span class="mono">en/work.json</span>：新增 <span class="mono">work.sidebar.light.others</span>'
+         + '（「别人的活」/"Someone else\'s task"，读屏和悬浮用），删掉 <span class="mono">work.sidebar.fillIn</span>。'
+         + '颜色新增 <span class="mono">--signal-blue</span>（浅色 #2563eb / 深色 #60a5fa）。'
+         + '判据写在 <span class="mono">composables/useTopicRail.ts</span> 的 <span class="mono">taskLight()</span>，'
+         + '画法在 <span class="mono">topic-sidebar/TopicRailLight.vue</span>。'},
+    2:{t:'整块都是别人的：红绿黄一个都不画',
+       s:'「蓝灯优先级高于一切」',
+       now:'「测试频道」我一条都没有，三行全是从这个频道借来的，都缀「补足」；三行行尾本来画着红、绿、黄三种状态灯。',
+       fix:'切到「改后」看三行：全是一盏蓝灯，红绿黄一个都不画了。这三件活分别出没出问题、在不在跑，侧栏不再说——'
+         + '要看清这些，点开那条任务。',
+       ask:'',
+       work:'不用另外改。这是同一条判据在别处的样子：蓝灯是行尾唯一的一盏，谁的活不归我，谁就是蓝的。'},
+    3:{t:'我负责的：一个标记都不加',
+       s:'你这次先说的一半',
+       now:'上一版我负责的那几条缀「我的」。',
+       fix:'我负责的只画状态灯，不挂蓝灯、不缀名字：「综合」底下四条都是我的，行尾只有绿黄两种状态灯。'
+         + '「新建频道入口设计」我协助、别人负责，所以它挂蓝灯。',
+       ask:'后端没写负责人（没有 owner_handle）的那几条，我按「我这边」算、不挂蓝灯。'
+         + '你要是想让它也标上，说一声。',
+       work:'还是 <span class="mono">useTopicRail.ts</span> 的 <span class="mono">taskLight()</span>：'
+         + '负责人是别人 → 直接返回蓝灯；是我、或者没有主 → 走原来那四条状态判据。'}
+  };
+
+  var seen = {}, mode = 'after', lang = 'zh';
+  var selTask = '电脑端待办入口位置', selChannel = 'general';
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
+
+  function S(){ return COPY[lang]; }
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];
+    });
+  }
+  function attr(s){ return esc(s).replace(/'/g, '&#39;'); }
+  function mk(n){ return '<i class="mk" data-item="'+n+'" title="这一处改什么">'+n+'</i>'; }
+  // 行尾那盏灯画哪一盏。
+  //   改后：不是我负责的（help、pad）一律蓝灯；我的走它本来的状态灯。
+  //   改前：没有蓝灯这一说，谁的活都只按状态画（借来的那几条另外缀一枚签）。
+  function lightOf(row){
+    var k = row.lg;
+    if (mode === 'after' && row.rel !== 'own') k = 'blue';
+    if (!k) return '';
+    var name = { blue:S().lgBlue, red:S().lgRed, yellow:S().lgYellow, green:S().lgGreen }[k];
+    return '<span class="lg lg--'+k+'" role="img" title="'+attr(name)+'"></span>';
+  }
+  // 改前那枚签挂在哪几条上：借来的那几条缀「补足」。
+  function chipOf(row){
+    return (mode === 'before' && row.rel === 'pad') ? S().fillIn : '';
+  }
+  // 借来的那几条为什么在这儿：改前那句话挂在签上，改后挂在整行上。
+  function tipOf(row){ return row.rel === 'pad' ? S().tip : ''; }
+
+  function renderSide(){
+    var parts = [];
+    DATA.forEach(function(ch){
+      parts.push('<div class="ch'+(ch.on?' is-on':'')+'" data-ch="'+ch.id+'">');
+      parts.push('<span class="ch__glyph">#</span>');
+      parts.push('<span class="ch__name">'+esc(lang === 'zh' ? ch.name : ch.nameEn)+'</span>');
+      parts.push('<span class="ch__tail">');
+      if (ch.open) parts.push('<span class="ch__n" title="'+attr(S().countTip)+'">'+ch.open+'</span>');
+      parts.push('<span class="ch__more" title="更多操作">⋯</span>');
+      if (ch.id === 'test') parts.push(mk(2));
+      if (ch.id === 'general') parts.push(mk(3));
+      parts.push('</span></div>');
+
+      ch.rows.forEach(function(row){
+        var on = row.t === selTask;
+        var cls = 'tk' + (on?' is-on':'') + (row.rel==='help'?' tk--help':'') + (row.rel==='pad'?' tk--pad':'');
+        // 淡一档的那几条，鼠标停上去说出它为什么在这儿；改前那句话挂在签上。
+        var tip = mode === 'before' ? '' : tipOf(row);
+        parts.push('<button class="'+cls+'" data-task="'+esc(row.t)+'" data-chid="'+ch.id+'"'
+          + (tip ? ' title="'+attr(tip)+'"' : '') + '>');
+        parts.push('<span class="tk__t">'+esc(row.t)+'</span>');
+        parts.push('<span class="tk__tail">');
+        var chip = chipOf(row);
+        if (chip) {
+          var chipTip = mode === 'before' ? tipOf(row) : '';
+          parts.push('<span class="tk__tag"'+(chipTip?' title="'+attr(chipTip)+'"':'')+'>'+esc(chip)+'</span>');
+        }
+        if (row.badge) parts.push('<span class="tk__badge">'+row.badge+'</span>');
+        parts.push(lightOf(row));
+        if (ch.id === 'design' && row.rel === 'pad') parts.push(mk(1));
+        parts.push('</span></button>');
+      });
+
+      var rest = Math.max(0, ch.open - ch.rows.length);
+      if (rest) {
+        parts.push('<span class="more"><span class="more__label">'
+          + esc(S().more.replace('{n}', rest)) + '</span>'
+          + '<span class="more__chev">⌄</span></span>');
+      }
+    });
+    $('#sideList').innerHTML = parts.join('');
+  }
+
+  function demoRow(title, rel, light){
+    var cls = 'pair__demo' + (rel==='pad'?' tk--pad':(rel==='help'?' tk--help':''));
+    var l = light ? '<span class="lg lg--'+light+'" role="img"></span>' : '';
+    return '<span class="'+cls+'"><span class="tk__t">'+esc(title)+'</span>'+l+'</span>';
+  }
+  function keyRow(){
+    var keys = ['blue','yellow','green','red'];
+    var names = { blue:S().lgBlue, yellow:S().lgYellow, green:S().lgGreen, red:S().lgRed };
+    return '<div class="key">' + keys.map(function(k){
+      return '<span class="key__i"><span class="lg lg--'+k+'"></span>'+esc(names[k])+'</span>';
+    }).join('') + '</div>';
+  }
+
+  function renderView(){
+    var ch = DATA.filter(function(c){ return c.id === selChannel; })[0] || DATA[0];
+    var title = selTask || (lang === 'zh' ? ch.name : ch.nameEn);
+    $('#vhead').innerHTML = '<span class="vhead__crumb">'+esc(lang==='zh'?ch.name:ch.nameEn)+' /</span>'
+      + '<h2>'+esc(title)+'</h2><span class="chip chip--warn">已开始</span>';
+
+    var tip = attr(S().tip);
+    var borrowed = '<span class="pair__demo tk--pad" title="'+tip+'"><span class="tk__t">全部频道页加搜索</span>';
+    $('#vbody').innerHTML =
+        '<div class="card"><h3>改的就是行尾那一格</h3>'
+      + '<p class="t-meta">同一个频道块，改前和这一版各画一遍。行高、颜色、后端那个 <span class="mono">filling_in</span> 字段都没动，动的是行尾挂什么。</p>'
+      + '<div class="pair">'
+      +   '<div class="pair__row pair--old"><span class="pair__k">改前</span>'
+      +     '<span class="pair__demo tk--pad"><span class="tk__t">全部频道页加搜索</span>'
+      +     '<span class="tk__tag" title="'+tip+'">'+esc(S().fillIn)+'</span>'
+      +     '<span class="lg lg--yellow"></span></span>'
+      +     demoRow('新建频道入口设计','help','green')
+      +   '</div>'
+      +   '<div class="pair__row"><span class="pair__k">这一版</span>'
+      +     borrowed + '<span class="lg lg--blue"></span></span>'
+      +     demoRow('新建频道入口设计','help','blue')
+      +     demoRow('出题改动原型','own','green')
+      +   '</div>'
+      + '</div>'
+      + '<p class="t-meta" style="margin-top:10px">第一格是借来的（这个频道里我自己的不到三条），第二格是我协助的：两格都是别人的活，'
+      +   '所以两格都是蓝灯——第二格本来画的是绿灯，被蓝顶掉了。第三格是我负责的，照旧只画状态灯。<br>'
+      +   '借来的那两条，鼠标停上去说：'+esc(S().tip)+'</p>'
+      + keyRow()
+      + '</div>'
+      + '<div class="card"><h3>'+esc(title)+'</h3>'
+      + '<p class="t-meta">这里是内容区，放它只为让左边点得动。这次改的是左边那条侧栏里的灯。'
+      + esc(S().borrowedHint)+'</p></div>';
+  }
+
+  function render(){
+    $('#chLabel').textContent = S().channels;
+    renderSide();
+    renderView();
+  }
+
+  function seenText(){ $('#seen').textContent = '已看过 ' + Object.keys(seen).length + ' / 3'; }
+
+  function openSheet(n){
+    var it = ITEMS[n]; if (!it) return;
+    seen[n] = 1;
+    $$('.mk').forEach(function(m){ if (m.dataset.item === String(n)) m.classList.add('is-seen'); });
+    seenText();
+    $('#sheetNo').textContent = n;
+    $('#sheetTitle').textContent = it.t;
+    $('#sheetSrc').textContent = it.s;
+    $('#sheetNow').innerHTML = it.now;
+    $('#sheetFix').innerHTML = it.fix;
+    $('#sheetWork').innerHTML = it.work;
+    if (it.ask) { $('#sheetAsk').innerHTML = it.ask; $('#sheetAskRow').hidden = false; }
+    else { $('#sheetAskRow').hidden = true; }
+    $('#sheet').hidden = false;
+  }
+
+  document.addEventListener('click', function(e){
+    var mkEl = e.target.closest('.mk');
+    if (mkEl) { e.stopPropagation(); openSheet(mkEl.dataset.item); return; }
+
+    var chRow = e.target.closest('.ch');
+    if (chRow) {
+      selChannel = chRow.dataset.ch; selTask = '';
+      DATA.forEach(function(c){ c.on = (c.id === selChannel); });
+      render(); return;
+    }
+    var tk = e.target.closest('.tk');
+    if (tk) {
+      selTask = tk.dataset.task; selChannel = tk.dataset.chid;
+      DATA.forEach(function(c){ c.on = (c.id === selChannel); });
+      render(); return;
+    }
+    var seg = e.target.closest('#modeSeg button');
+    if (seg) {
+      mode = seg.dataset.mode;
+      $$('#modeSeg button').forEach(function(b){ b.classList.toggle('is-on', b === seg); });
+      render(); return;
+    }
+    var lseg = e.target.closest('#langSeg button');
+    if (lseg) {
+      lang = lseg.dataset.lang;
+      $$('#langSeg button').forEach(function(b){ b.classList.toggle('is-on', b === lseg); });
+      render(); return;
+    }
+    if (e.target.closest('#sheetClose')) { $('#sheet').hidden = true; }
+  });
+
+  $('#themeBtn').addEventListener('click', function(){
+    var dark = document.documentElement.dataset.theme === 'dark';
+    document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+    this.textContent = dark ? '深色' : '浅色';
+  });
+
+  seenText();
+  render();
+})();
+</script>
+</body>
+</html>

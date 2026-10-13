@@ -14,7 +14,7 @@ import textwrap
 
 import pytest
 
-from app.domain.agent.skills import _NATIVE_SKILL_SRC
+from app.domain.skill_library import _NATIVE_SKILL_SRC
 
 READ = _NATIVE_SKILL_SRC / "documents" / "scripts" / "read.py"
 WITH = ["--with", "pdfplumber", "--with", "python-docx", "--with", "python-pptx"]

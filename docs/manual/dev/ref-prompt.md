@@ -7,7 +7,7 @@ covers:
   - backend/app/domain/memory/instructions.py
   - backend/app/domain/memory/files_store.py
   - backend/app/domain/agent/skills.py
-  - backend/app/domain/agent/skill_library/
+  - backend/app/domain/skill_library/
   - backend/app/domain/task/teaching.py
 ---
 

@@ -13,7 +13,7 @@ import { expect, test, type Page } from '@playwright/test';
 // platform's check reads; and the design tokens the guide tells 芝士 to draw
 // with exist in both themes.
 
-const GUIDE = fileURLToPath(new URL('../../backend/app/domain/agent/skill_library/doc_apps.md', import.meta.url));
+const GUIDE = fileURLToPath(new URL('../../backend/app/domain/skill_library/doc_apps.md', import.meta.url));
 const guide = readFileSync(GUIDE, 'utf8');
 const examples = [...guide.matchAll(/^```vue\n([\s\S]*?)^```$/gm)].map((m) => m[1]);
 // The design tokens the guide offers, by name: `--ink`, `--chart-1` 到 `--chart-8`.
