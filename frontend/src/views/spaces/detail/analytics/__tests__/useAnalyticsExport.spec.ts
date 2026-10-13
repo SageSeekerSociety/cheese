@@ -6,7 +6,7 @@
  * 这一层（画面要能只给 props 就挂起来），行为一行没改：地址、凭据、文件名、失败那句
  * 都和原来一样。这一份钉的就是「没改到」。
  */
-import type { SpaceAnalyticsQueryState } from '../../utils'
+import type { SpaceAnalyticsQueryState } from '../utils'
 
 import { defineComponent } from 'vue'
 import { cleanup, render } from '@testing-library/vue'
