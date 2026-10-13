@@ -8,16 +8,18 @@
 // platform's browser, checking a new version, writes the source into the page
 // instead.
 //
-// What an app can import is Vue and nothing else: the frame has no network,
-// and every other library it may use is an element of components.ts.
+// What an app can import is Vue and the platform's own modules
+// (`@platform/motion`), nothing else: the frame has no network, and every
+// other library it may use is an element of components.ts.
 import * as Vue from 'vue'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc/dist/compiler-sfc.esm-browser.js'
 import { transform } from 'sucrase'
 
+import * as motion from './platform/motion'
 import { requireFrom, start } from './runtime'
 import { miswired } from './wiring'
 
-const require = requireFrom({ vue: Vue })
+const require = requireFrom({ vue: Vue, '@platform/motion': motion })
 /** The platform's elements are elements, not Vue components to resolve. */
 const isCustomElement = (tag: string) => tag.startsWith('c-')
 

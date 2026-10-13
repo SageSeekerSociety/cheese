@@ -32,3 +32,14 @@ c-piece[data-picked] { border-color: var(--accent); background: var(--accent-was
 c-piece[data-dragging] { opacity: 0.35; }
 c-piece[data-ghost] { cursor: grabbing; }
 c-zone:focus-visible, c-piece:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* Ready-made transitions for Vue's <Transition> and <TransitionGroup>
+   (references/apps.md): name="c-fade" for something appearing or going,
+   name="c-list" for keyed items coming, going and changing places. */
+.c-fade-enter-active, .c-fade-leave-active, .c-list-enter-active, .c-list-leave-active { transition: opacity var(--dur-base) var(--ease-standard), transform var(--dur-base) var(--ease-standard); }
+.c-fade-enter-from, .c-fade-leave-to { opacity: 0; }
+.c-list-enter-from, .c-list-leave-to { opacity: 0; transform: translateY(6px); }
+.c-list-move { transition: transform var(--dur-base) var(--ease-standard); }
+@media (prefers-reduced-motion: reduce) {
+  .c-fade-enter-active, .c-fade-leave-active, .c-list-enter-active, .c-list-leave-active, .c-list-move { transition: none; }
+}

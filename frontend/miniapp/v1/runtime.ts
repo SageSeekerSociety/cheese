@@ -99,6 +99,6 @@ export function start(mount: (code: string, root: HTMLElement) => void) {
 export function requireFrom(modules: Record<string, unknown>) {
   return (name: string) => {
     if (name in modules) return modules[name]
-    throw new Error(`没有这个库：${name}。小程序只能用外壳自带的库。`)
+    throw new Error(`无法导入 ${name}：小程序只能导入 ${Object.keys(modules).join('、')}。`)
   }
 }

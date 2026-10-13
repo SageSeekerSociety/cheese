@@ -268,3 +268,30 @@ console.assert(price(0) === ${expected}, '不征税时均衡价应是 ${expected
   await expect(page.locator('#cheese-app')).toHaveText('24');
   expect(passed).toEqual([]);
 });
+
+test('a value from @platform/motion slides to a one-off change, and is there at once in the check’s pictures', async ({ page }) => {
+  const app = `<script setup>
+import { ref } from 'vue'
+import { tween } from '@platform/motion'
+const n = ref(0)
+const shown = tween(n)
+</script>
+<template><button id="go" @click="n = 100">go</button><p id="out">{{ Math.round(shown) }}</p></template>`;
+  const errors = await runApp(page, app);
+  await page.locator('#go').click();
+  await expect(page.locator('#out')).toHaveText('100');
+  await runApp(page, app);
+  await page.evaluate(() => (document.documentElement.dataset.mode = 'inline'));
+  const seen = await page.evaluate(async () => {
+    (document.getElementById('go') as HTMLButtonElement).click();
+    const values: number[] = [];
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
+      values.push(Number(document.getElementById('out')!.textContent));
+    }
+    return values;
+  });
+  expect(seen.some((v) => v > 0 && v < 100)).toBe(true);
+  expect(seen.at(-1)).toBe(100);
+  expect(errors).toEqual([]);
+});
