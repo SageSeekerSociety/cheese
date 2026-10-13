@@ -107,6 +107,16 @@ def failure_reason(code: str, text: str) -> str:
 #: minutes apart in practice).
 ROUND_GAP_SECONDS = 60
 
+#: How far before `since` the first-push candidate read starts. A push moves
+#: `updatedAt` with it, but CI can only start once the push is there: a PR whose
+#: first push is in the last seconds before `since` and whose first required
+#: round starts just after it is judged INSIDE the window while sitting before
+#: it by `updatedAt`. Read from `since` alone it would be missing from the
+#: candidate list, and `split_updated` would put it in neither the cohort nor
+#: the exclusion pool — the denominator short by one. Minutes would cover the CI
+#: queue delay; the margin is set far wider so the edge is not a story.
+CANDIDATE_MARGIN = timedelta(hours=1)
+
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 
 
@@ -230,12 +240,18 @@ def merged_prs(repo: str, since: datetime, until: datetime) -> list[dict]:
 
 
 def updated_prs(repo: str, since: datetime) -> list[dict]:
-    """Every PR with a change at or after `since`, whatever became of it.
+    """Every PR with a change at or after `since - CANDIDATE_MARGIN`.
 
-    `updated:>=since` is the search the first-push cohort is built on: a push
-    inside the window moves `updatedAt` with it, so a PR CI judged in the window
-    is always in this list, whether it merged, stayed open or was closed.
+    `updated:>=` is the search the first-push cohort is built on: a push moves
+    `updatedAt` with it, so a PR CI judged in the window is in this list,
+    whether it merged, stayed open or was closed. The read starts a margin
+    before `since` for the one case the push clock cannot cover — a first push
+    that lands just before the window and is first judged just inside it; see
+    `CANDIDATE_MARGIN`. What belongs to the window is still decided by
+    `judged_in_window`, on the check-run clock, so the margin only widens what
+    is read and never who is counted.
     """
+    start = since - CANDIDATE_MARGIN
     raw = _gh(
         [
             "pr",
@@ -247,7 +263,7 @@ def updated_prs(repo: str, since: datetime) -> list[dict]:
             "--limit",
             "1000",
             "--search",
-            f"updated:>={since.strftime('%Y-%m-%dT%H:%M:%S')}Z",
+            f"updated:>={start.strftime('%Y-%m-%dT%H:%M:%S')}Z",
             "--json",
             "number,title,mergedAt,headRefOid,mergeCommit,updatedAt,state",
         ]
@@ -261,7 +277,7 @@ def updated_prs(repo: str, since: datetime) -> list[dict]:
             "updated_prs: the updated:>= search hit its 1000-row cap; the "
             "candidate list may be truncated, and the rate with it\n"
         )
-    return [p for p in (raw or []) if p.get("updatedAt") and _iso(p["updatedAt"]) >= since]
+    return [p for p in (raw or []) if p.get("updatedAt") and _iso(p["updatedAt"]) >= start]
 
 
 def split_updated(rows: list[dict], merged: list[dict]) -> dict[str, list[dict]]:
@@ -858,11 +874,13 @@ def join_cards(cards: list[dict], reports: list[dict]) -> list[dict]:
     for card in cards:
         row = dict(card)
         green = green_of(by_pr.get(card.get("pr_number"), {}))
+        # Whether the card's PR is in the set at all shows up as a None wait, not
+        # as a key of its own: a card pointing at a PR that did not merge in this
+        # window has no green to wait on, and None is the difference between a
+        # blank and a mistake. The card's shape is deliberately left alone for
+        # this — the merged-口径 JSON has to stay diffable across the cohort's
+        # arrival, and a flag only this file's self-test reads would break that.
         row["green_at"] = green
-        # Whether the card's PR is in the set at all: a card pointing at a PR
-        # that did not merge in this window has no green to wait on, and saying
-        # so is the difference between a blank and a mistake.
-        row["in_window"] = card.get("pr_number") in by_pr
         filed = card.get("filed_at")
         to_green = _minutes(filed, green)
         row["wait_ci_minutes"] = None if to_green is None else max(0.0, to_green)
@@ -1340,11 +1358,14 @@ def build(repo: str, since: datetime, until: datetime, room: str | None, cohort:
         reports.sort(key=lambda r: _iso(first_judged_at(r)))
         # The ones the cohort drops, measured so the drop can be audited.
         dropped = closed_out_prs(repo, split["closed"], since, until)
-        # The platform half joins against the window's MERGED PRs, not against
+        # The platform half joins against the window's merged PRs, not against
         # the cohort: the cards belong to PRs merged in the window. Taking the
         # cohort's rows instead would drop the PR opened long ago and merged
         # today — merged in the window, but first judged before it, so not a
-        # cohort row — and report its card as if its PR never landed.
+        # cohort row — and report its card as if its PR never landed. Under this
+        # cohort that means a PR outside the window can carry a card; it reads
+        # as the None wait it is, and the 口径 is the same one the default
+        # cohort uses.
         numbers = {p["number"] for p in merged}
         window = [r for r in everything if r["number"] in numbers]
     else:
@@ -2155,21 +2176,26 @@ def self_test() -> int:
     check("--cohort 传到了 build，不是只在 argparse 里认了个名", seen.get("cohort"), "first-push")
     check("--room 也照样传下去", seen.get("room"), "r")
 
-    # updated_prs: the search index is minute-granular, so the answer past the
-    # window start is re-checked by the second. `gh` is faked, so this stays
-    # offline.
+    # updated_prs: the read starts one CANDIDATE_MARGIN before the window — a
+    # first push just before `since` can be first judged just inside it, and
+    # reading from `since` alone would drop that PR from both the cohort and the
+    # exclusion pool — and the search index is minute-granular, so the answer is
+    # re-checked by the second against that earlier bound. `gh` is faked, so
+    # this stays offline.
     real_gh_u = globals()["_gh"]
     probe = [
-        {"number": 41, "updatedAt": "2026-10-12T11:00:00Z"},  # exactly on the start: kept
-        {"number": 42, "updatedAt": "2026-10-12T10:59:59Z"},  # one second early: dropped
-        {"number": 43, "updatedAt": None},  # no stamp at all: dropped
+        {"number": 41, "updatedAt": "2026-10-12T10:00:00Z"},  # exactly on the margin: kept
+        {"number": 42, "updatedAt": "2026-10-12T10:59:59Z"},  # before since, inside the margin: kept
+        {"number": 43, "updatedAt": "2026-10-12T09:59:59Z"},  # one second before the margin: dropped
+        {"number": 44, "updatedAt": None},  # no stamp at all: dropped
     ]
     globals()["_gh"] = lambda args, attempts=4: probe
     try:
         kept_rows = updated_prs("r", _iso("2026-10-12T11:00:00"))
     finally:
         globals()["_gh"] = real_gh_u
-    check("按秒复核分钟粒度的搜索：边界那一秒留下", [p["number"] for p in kept_rows], [41])
+    check("候选读从窗口前一个 margin 起，按秒复核分钟粒度的搜索",
+          [p["number"] for p in kept_rows], [41, 42])
 
     # A capped candidate list is said out loud, not truncated into a better
     # rate: a PR dropped here leaves the denominator, not the numerator.
@@ -2293,8 +2319,12 @@ def self_test() -> int:
         globals()["_gh"], globals()["collect_platform"] = real_gh, real_collect
         globals()["token_from_env"] = real_token
     check("merged 口径只有合并窗口的 PR", [r["number"] for r in b_merged["prs"]], [2])
-    check("merge 口径不带 cohort 这个键，报告和从前逐字节一样",
+    check("merge 口径不带 cohort 这个键",
           ["cohort" in b_merged, "cohort" in b_merged["summary"]], [False, False])
+    check("merge 口径的卡键集和从前一样，没多出字段——报告要能跨这次改动逐字节对读",
+          sorted(b_merged["platform"]["cards"][0]),
+          ["decided_at", "filed_at", "green_at", "pr_number", "status", "task",
+           "wait_ci_minutes", "wait_scheduler_minutes"])
     check("first-push 口径的组是首次被判入窗的，含还开着的",
           [r["number"] for r in b_fp["prs"]], [5, 3])
     check("组里还开着的那个算 pending，不在 landed 里",
@@ -2304,10 +2334,13 @@ def self_test() -> int:
     check("被排除的关掉没合并的 PR 单列", b_fp["summary"]["dropped_closed"]["n"], 1)
     # The card's 等 CI 绿 is recomputed from the PR it joined (the fake's own 7.0
     # is discarded, and 0.0 is 递卡 after the green — the join, not the input),
-    # while the card whose PR is not in the window keeps the None discipline.
+    # while the card whose PR is not in the window keeps the None discipline:
+    # that None IS the signal that #3's PR is outside the merged window, and it
+    # is what moves if the platform half goes back to joining the cohort — #3
+    # would then find its own green and carry a number.
     check("平台那一半按合并窗口 join：#3 没合并，卡不算在窗，等 CI 绿是 None",
-          [(c["pr_number"], c["in_window"], c["wait_ci_minutes"]) for c in b_fp["platform"]["cards"]],
-          [(3, False, None), (2, True, 0.0)])
+          [(c["pr_number"], c["wait_ci_minutes"]) for c in b_fp["platform"]["cards"]],
+          [(3, None), (2, 0.0)])
     check("窗口内合并的 #2 照样进平台那一半，不被 cohort 挤掉",
           [row["merged_prs"] for row in b_fp["platform"]["lines"]], [[2]])
     check("候选 PR 列表只读一遍（读两遍中间状态一变就会既进分子又进被排除）",
