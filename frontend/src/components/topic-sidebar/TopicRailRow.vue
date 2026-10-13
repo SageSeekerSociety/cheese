@@ -30,6 +30,7 @@ import { computed, ref, watch } from 'vue'
 import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
 import TopicRailMembers from './TopicRailMembers.vue'
+import TopicRailTaskFold from './TopicRailTaskFold.vue'
 
 import { menuActionOf } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -63,6 +64,12 @@ const props = defineProps<{
   muted?: boolean
   /** 主线上有我没读过的新消息：名字加粗（数字按通知档位另算，可以是 0）。 */
   fresh?: boolean
+  /** 挂在它下面的那一块任务收起来了没有。没给就是不收——这个频道没挂任务。 */
+  tasksCollapsed?: boolean
+  /** 收起来的那一块里进行中的任务条数；不给就不画这个数。 */
+  taskCount?: number
+  /** 收起来的那一块该画的灯（父级带钟算好）；不亮是 null。 */
+  taskLight?: RowLight | null
 }>()
 
 const emit = defineEmits<{
@@ -76,6 +83,8 @@ const emit = defineEmits<{
   (e: 'commit-rename', draft: string): void
   (e: 'cancel-rename'): void
   (e: 'update:menu-open', open: boolean): void
+  /** 挂在它下面的那一整块任务收起来或展开（右边那个折叠加手）。 */
+  (e: 'toggle-tasks', id: string): void
 }>()
 
 /** 这一行自己的灯：props 里的可选值在模板里当「有或没有」用。 */
@@ -135,6 +144,7 @@ function onMenuToggle(open: boolean) {
     class="topic-row"
     :class="{
       'topic-row--hover-actions': !page,
+      'topic-row--tasks': !!taskCount,
       'is-active': selected,
       'is-sub': row.depth > 0,
       'is-menu-open': menuOpen,
@@ -241,6 +251,14 @@ function onMenuToggle(open: boolean) {
       />
       <!-- 这一行自己的那盏灯，摆在行尾最后——像一行上的指示灯。 -->
       <TopicRailLight v-if="rowLight" :light="rowLight" />
+      <!-- 挂在它下面的那一整块任务的把手：收起来时它自己顶上那一块的灯和条数。 -->
+      <TopicRailTaskFold
+        v-if="taskCount"
+        :collapsed="tasksCollapsed === true"
+        :count="taskCount"
+        :light="taskLight ?? null"
+        @toggle="emit('toggle-tasks', row.topic.id)"
+      />
       <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
            整页形态（手机）没有它：那里长按一行打开同一组操作。 -->
       <div v-if="!page" class="row-actions" @click.stop>
@@ -518,6 +536,12 @@ function onMenuToggle(open: boolean) {
 .topic-row--hover-actions:has(:focus-visible) .unread-badge,
 .topic-row.is-menu-open .unread-badge {
   opacity: 0;
+}
+/* 有折叠加手的行，那颗 ⋯ 往左让出一个把手的宽度：不让的话它正好压住把手，而把手是
+   那一块唯一的入口，压住就成了「看着有、点不着」。让出的宽度是定值（把手自己有多
+   宽见 TopicRailTaskFold.vue），所以 ⋯ 的位置不跟着「收起来了没有」跳。 */
+.topic-row--tasks .row-actions {
+  right: 45px;
 }
 /* 整页形态：手指点的地方至少 44px 高；改名的输入框 16px，iOS 聚焦时才不会整页放大。 */
 .topic-rail--page .topic-row {

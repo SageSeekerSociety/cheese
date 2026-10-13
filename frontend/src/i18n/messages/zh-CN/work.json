@@ -1443,7 +1443,13 @@
     "moreTasks": "展开其余 {count} 个",
     "fewerTasks": "收起",
     "tasksLoading": "正在读取…",
-    "tasksFailed": "没读出来，点一下重试"
+    "tasksFailed": "没读出来，点一下重试",
+    "fillIn": "补足",
+    "fillInTip": "这个频道里和你有关的不到三条，这一条是补上来的",
+    "collapseTasks": "收起这个频道下面的任务",
+    "expandTasks": "展开这个频道下面的任务",
+    "collapsedTasks": "{count} 个进行中的任务",
+    "collapsedHere": "你正打开的那条仍在下面"
   },
   "members": {
     "leave": "退出项目",

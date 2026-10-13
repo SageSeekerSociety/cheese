@@ -62,9 +62,10 @@ const hereChannelId = computed(
   () => activeTopicId.value ?? activeAllTasks.value ?? (activeTaskId.value ? ids.value.topicId ?? null : null)
 )
 
-// 每个频道里和我有关的几条任务，挂在频道那一行下面：频道清单的每一行自己带着
-// （`my_tasks`：最多几件和我有关的，加这个频道进行中的总数），侧栏不读整个项目的任务。
-// 任务变了，房间推来的帧会把那一行重读一次（query/changes）。
+// 每个频道里和我有关的任务，挂在频道那一行下面：频道清单的每一行自己带着
+// （`my_tasks`：和我有关的全部、不足三条时补上这个频道别人的几条，加这个频道进行中的
+// 总数），侧栏不读整个项目的任务。任务变了，房间推来的帧会把那一行重读一次
+// （query/changes）。
 const roomTasks = computed<Record<string, RoomTask[]>>(() =>
   Object.fromEntries(
     store.topics.filter((topic) => topic.my_tasks?.shown.length).map((topic) => [topic.id, topic.my_tasks!.shown])
@@ -106,6 +107,18 @@ function toggleTasks(channelId: string) {
   expandedChannels.value = expandedChannels.value.includes(channelId)
     ? expandedChannels.value.filter((id) => id !== channelId)
     : [...expandedChannels.value, channelId]
+}
+
+// 频道行右边那个把手：把挂在它下面的一整块任务收起来。收起的是画法，不是数据——正打开
+// 的那条任务照样留着（`TopicSidebar` 的 `pinnedRows`），这个频道里进行中的条数和那盏灯
+// 挪到频道行上。哪几个频道收着只是这一处的界面状态（没落盘），换项目就都展开。
+const foldedChannels = ref<Record<string, boolean>>({})
+watch(
+  () => props.projectId,
+  () => (foldedChannels.value = {})
+)
+function toggleTasksFold(channelId: string) {
+  foldedChannels.value = { ...foldedChannels.value, [channelId]: !foldedChannels.value[channelId] }
 }
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
@@ -209,6 +222,7 @@ useCommands(() => [
       :room-tasks="roomTasks"
       :room-task-totals="roomTaskTotals"
       :more-tasks="moreTasks"
+      :folded-channels="foldedChannels"
       :selected-task-id="activeTaskId"
       :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
@@ -221,6 +235,7 @@ useCommands(() => [
       @select-topic="openTopic"
       @select-task="openTask"
       @toggle-tasks="toggleTasks"
+      @toggle-tasks-fold="toggleTasksFold"
       @browse-channels="browseChannels"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
