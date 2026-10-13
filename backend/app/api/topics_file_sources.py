@@ -10,7 +10,9 @@
 这是路由层替视图接线的事。**规则**（哪种扩展名对应哪个 mime、路径合不合法）在
 `app.domain.project.room_files` 里，两边读的是同一份。
 
-本模块不定义 `APIRouter`：它不挂路由，只被挂路由的模块 import。
+本模块不定义 `APIRouter`：它不挂路由，只被挂路由的模块 import。它也因此不在
+`routes/` 里：三个视图模块都要它，而路由模块之间不互相 import（C4
+`routes-independent`）。
 """
 
 import uuid

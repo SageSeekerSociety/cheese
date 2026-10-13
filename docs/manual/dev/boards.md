@@ -8,6 +8,7 @@ covers:
   - backend/app/api/routes/dashboard.py
   - backend/app/api/routes/admin_stats.py
   - backend/app/api/routes/awaiting.py
+  - backend/app/api/awaiting_deps.py
 ---
 
 # 看板 {#boards}

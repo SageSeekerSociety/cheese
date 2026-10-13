@@ -8,6 +8,7 @@ covers:
   - backend/app/api/routes/topics_tasks.py
   - backend/app/api/task_instructions.py
   - backend/app/api/routes/awaiting.py
+  - backend/app/api/awaiting_deps.py
   - backend/app/api/routes/git_http.py
   - backend/app/domain/delivery/addressing.py
   - backend/app/domain/task/attachment_service.py
