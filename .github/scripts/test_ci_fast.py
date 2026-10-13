@@ -273,6 +273,69 @@ class CiFastTest(unittest.TestCase):
         not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
         self.assertIn("无相关文件", not_run["scene-ratchet"])
 
+    # --- the pre-push entry point (the platform's task-worktree hook calls
+    # --- this): the three hooks that spawn the node toolchain leave the
+    # --- selection and are NAMED as not run, so a report that could not judge
+    # --- lint never reads as a pass that covered it
+    def test_pre_push_leaves_out_the_node_hooks_and_says_so(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        ran = self.ran_hooks()
+        self.assertFalse({"eslint", "stylelint", "boundary-check-frontend"} & ran)
+        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)  # the rest of the tier
+        not_run = {item["id"]: item["reason"] for item in self.report()["not_run"]}
+        for hook_id in ("eslint", "stylelint", "boundary-check-frontend"):
+            self.assertIn(hook_id, not_run)
+            self.assertIn("node toolchain", not_run[hook_id])
+        self.assertTrue(self.report()["pre_push"])
+        self.assertIn("未执行 eslint", proc.stdout)
+
+    # --- and each of those names the command that runs it by hand: the reader
+    # --- did not ask for this report and is about to push either way, so a
+    # --- "not run" with no way to run it is a dead end
+    def test_pre_push_names_how_to_run_what_it_left_out(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        for hook_id in ("eslint", "stylelint", "boundary-check-frontend"):
+            self.assertRegex(proc.stdout, rf"推前没跑 {hook_id}.*run {hook_id} --all-files --hook-stage manual")
+
+    # --- what DID fail is reproduced too, and the script's own exit code still
+    # --- reports the failure — only the hook swallows it, and that is the
+    # --- hook's decision (a refused push is a commit the platform never got)
+    def test_pre_push_reproduces_failures_and_keeps_exit_1(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 1, proc.stdout)
+        self.assertIn("只报告，不挡推送", proc.stdout)
+        self.assertRegex(proc.stdout, r"复现 ruff（fail）.*run ruff --all-files --hook-stage manual")
+        self.assertEqual(self.report()["exit"], 1)
+
+    # --- leaving the node hooks out of the run is not a licence to lose them
+    # --- from the config: the drift check reads the whole set before the
+    # --- filter, so a config that no longer defines one is still unknown
+    def test_pre_push_still_catches_config_drift(self):
+        self.write_hooks(omit={"eslint"})
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertIn("eslint", proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+
+    # --- a plain run is untouched: the node hooks are selected and executed
+    # --- exactly as before (the narrowing belongs to the flag, not the tool)
+    def test_without_pre_push_the_node_hooks_still_run(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 0, proc.stdout)
+        self.assertTrue({"eslint", "stylelint", "boundary-check-frontend"} <= self.ran_hooks())
+        self.assertFalse(self.report()["pre_push"])
+
     # --- an unknown path widens the scope; it must not shrink to guards-only
     def test_unknown_path_widens_scope(self):
         self.write_hooks()

@@ -6,6 +6,14 @@ one, which is what Required CI's draft job does (see ci-fast.md).
 Direct Python invocation defaults to the legacy static tier (no tests/types).
 --tier extended gives the quick selection 900s without expanding its coverage.
 --types additionally runs the full Pyright/frontend-typecheck manual hooks.
+--pre-push is the entry point the platform's task-worktree pre-push hook calls
+(one report per push, for a reader who did not choose to run this): it leaves
+out the hooks that spawn the node toolchain — those get killed on a small box,
+and a report that calls a killed check red is worse than no report — reports
+what it left out as not run, and closes with the command that reproduces each
+item that did not pass. It never blocks the push: the hook that calls it
+swallows the exit code (a push refused here is a commit the platform has not
+delivered, and the checkout it lives in does not survive long).
 Use --title for a proposed PR title; otherwise read the actual PR title from
 --pull-request FILE (a `gh api repos/OWNER/REPO/pulls/N` payload, or the event
 JSON, which nests it under "pull_request"), falling back to `gh pr view`. A
@@ -155,6 +163,10 @@ def main(argv):
     parser.add_argument("--pull-request", metavar="FILE",
                         help="PR JSON to read the title (and draft flag) from"
                              " (gh api repos/O/R/pulls/N, or the event JSON)")
+    parser.add_argument("--pre-push", action="store_true",
+                        help="the platform's task-worktree pre-push entry point: leave out"
+                             " the hooks that spawn the node toolchain, and close with how to"
+                             " reproduce each item that did not pass")
     parser.add_argument("--report", default=str(Path(GIT_DIR, "ci-fast-report.json")))
     parser.add_argument("--timeout", type=float, default=900, help="per-check seconds")
     parser.add_argument("--budget", type=float, help="whole tier seconds (quick/static 180; extended 900)")
@@ -168,6 +180,7 @@ def main(argv):
     started = time.monotonic()
     report_path = Path(args.report)
     report = {"version": 2, "status": "unknown", "exit": UNKNOWN, "tier": args.tier,
+              "pre_push": args.pre_push,
               "budget_seconds": args.budget, "memory_limit_mib": args.memory_mib,
               "memory_measurement": "sampled process-group RSS, not address-space enforcement",
               "reasons": [], "fallback": False, "unknown_paths": [], "ran": [], "not_run": []}
@@ -188,6 +201,23 @@ def main(argv):
             print(f"  {reason}")
         for item in report["not_run"]:
             print(f"  未执行 {item['id']}: {item['reason']}")
+        if args.pre_push:
+            # The reader did not ask for this run and is about to push anyway,
+            # so the report has to be actionable as it stands: every item this
+            # entry point did not judge names the command that runs it outside
+            # the hook — the ones that failed, and the ones it left out.
+            precommit = os.environ.get("CI_FAST_PRECOMMIT", "uvx pre-commit")
+            flagged = [row for row in report["ran"] if row["result"] not in ("pass", "not_applicable")]
+            # Only the pre-push filter can put a JS hook in not_run: it is the
+            # one place that removes them from the selection before they run.
+            dropped = [item for item in report["not_run"] if item["id"] in JS_RUNTIME_HOOKS]
+            print("ci:fast: 推前自检只报告，不挡推送。")
+            for row in flagged:
+                print(f"  复现 {row['id']}（{row['result']}）:"
+                      f" {precommit} run {row['id']} --all-files --hook-stage manual")
+            for item in dropped:
+                print(f"  推前没跑 {item['id']}（想知道就跑）:"
+                      f" {precommit} run {item['id']} --all-files --hook-stage manual")
         return code
 
     try:
@@ -375,6 +405,18 @@ def run(args, report, finish, started):
     if missing:
         report["reasons"].append(f"hook ids missing from config: {missing}")
         return finish("unknown", UNKNOWN)
+    if args.pre_push:
+        # Not a silent narrowing: what leaves the selection is named in
+        # not_run, so a report that could not judge lint says so instead of
+        # reading as a pass that covered it. The drift check above still sees
+        # the whole set, so a config that lost one of these is still unknown.
+        dropped = [h for h in hooks if h in JS_RUNTIME_HOOKS]
+        hooks = [h for h in hooks if h not in JS_RUNTIME_HOOKS]
+        report["not_run"].extend(
+            {"id": h, "reason": "pre-push entry point: this one spawns the node toolchain, "
+                               "which a small box kills"}
+            for h in dropped
+        )
     missing_deps = dependencies(REPO_ROOT, scope)
     if missing_deps:
         report["reasons"].extend(missing_deps)

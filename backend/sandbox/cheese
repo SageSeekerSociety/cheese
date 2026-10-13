@@ -3511,6 +3511,29 @@ def _task_worktree(task_id: str) -> Path:
             "exec cheese sync\n"
         )
         hook.chmod(0o755)
+        # The project's own pre-push check, if it keeps one. What the check
+        # IS belongs to the project and not here: `cheese worktree` serves
+        # every project, and a project whose tree has no `.cheese/pre-push`
+        # must not pay for a rule it never wrote — it does one `[ -x ]` and
+        # nothing else.
+        #
+        # The hook runs the script and then exits 0 regardless of what it
+        # said. That is not politeness: a push refused here is a commit the
+        # platform has not delivered, and the checkout it lives in does not
+        # survive to be retried, so the report must not be able to lose the
+        # work it is reporting on. The script still owns its own exit code for
+        # whoever runs it directly; this just stops a project's mistake from
+        # turning a report into a gate. What must block a merge is CI, and
+        # that is where the decision belongs.
+        prepush = hooks / "pre-push"
+        prepush.write_text(
+            "#!/bin/sh\n"
+            'script="$(git rev-parse --show-toplevel)/.cheese/pre-push"\n'
+            '[ -x "$script" ] || exit 0\n'
+            '"$script"\n'
+            "exit 0\n"
+        )
+        prepush.chmod(0o755)
         _follow_task_branch(task_dir, data)
         # Before the environment is prepared: what comes back may change what
         # it installs.

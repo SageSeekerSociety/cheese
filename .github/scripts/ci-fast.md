@@ -10,6 +10,7 @@ the selected local checks really ran and passed, nothing more.
 task ci:fast                 # quick tier (default): 180s, static hooks + tests/types
 task ci:fast -- --types      # quick + the full pyright / vue-tsc manual hooks
 python3 .github/scripts/ci-fast.py --tier quick   # equivalent without `task`
+python3 .github/scripts/ci-fast.py --tier static --pre-push   # the push-time report
 ```
 
 The bare `python3 .github/scripts/ci-fast.py` (no `--tier`) is the **static**
@@ -39,6 +40,49 @@ tier: `--budget` and `--memory-mib` default to the work machine's own limits
 (the 3072 MiB default is literally its session cap), and a machine that can back
 more gets more. Required CI's draft job passes its own pair (below); `extended`
 raises only the budget.
+
+## The pre-push entry point
+
+`.cheese/pre-push` in the tree is what the platform's task-worktree `pre-push`
+hook runs on every push (`cheese worktree` writes that hook; the mechanism is
+described in `docs/workflows.md`). It calls this script as
+`--tier static --pre-push`.
+
+`--pre-push` is a modifier, not a tier, and it changes two things:
+
+- The three hooks that spawn the node toolchain (`eslint`, `stylelint`,
+  `boundary-check-frontend`) leave the selection and are recorded in `not_run`,
+  never silently dropped: a report from this entry point says it could not
+  judge lint rather than reading as a pass that covered it. A push runs on
+  whatever box the author has, and a check the machine killed is a red its
+  reader cannot act on. The config-drift check still reads the whole hook set,
+  so a config that lost one of the three is still unknown, not green.
+- Every item that did not pass closes with the command that reproduces it
+  outside the hook (`uvx pre-commit run <id> --all-files --hook-stage manual`),
+  and so does each of the three that were left out. The reader did not choose
+  to run this and is about to push anyway, so the report has to be actionable
+  as it stands. Which files are at fault comes from the hook's own output,
+  printed above as it runs — the report's rows record the check, its verdict,
+  its clock and its command, not its log; the reproduce command prints that
+  output again.
+
+The report carries `"pre_push": true`, and the exit code is unchanged — `1` for
+a real failure, `2`/`3` for unknown/blocked — which is what the reproduce
+commands and any direct run of the entry point read. What does not read it is
+the push: the installed hook runs the script and exits 0 regardless, because a
+push refused there is a commit the platform has never delivered and the
+checkout it lives in does not survive to retry. `--pre-push` stays honest about
+what it checked; blocking a merge remains CI's job, and it stays the hook's job
+not to lose the work it is reporting on.
+
+One machine-level caveat (measured 2026-10-12): `uvx` puts its tool venv's `bin`
+first on the hook's `PATH`, and on the agent work image that venv is built from
+Python 3.9, so a `language: system` hook whose entry says `python3` runs under
+3.9 there. `migration-fork`'s script uses 3.10+ annotation syntax and therefore
+reports fail on every backend-scoped push on that image, while the same hook
+passes under `uvx --python=3.13 pre-commit`. Its exit code is still 0 (nothing
+is blocked), and this is the machine the check runs on rather than the change;
+the fix is an interpreter for `uvx`, not a change to this tool.
 
 ## In Required CI (the draft tier)
 

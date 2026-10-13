@@ -1,0 +1,20 @@
+#!/bin/sh
+# 推前自检：一份报告，不是一道闸门。
+#
+# 平台给每个任务工作目录装一个 pre-push 钩子（backend/sandbox/cheese），推送
+# 时跑的就是仓库根上这一份；钩子自己也吞掉退出码。这份脚本同样永远以 0 退出：
+# 一次误判就会让这次提交上不去，而工作目录活得不久，没推上去的提交随时会丢，
+# 这个代价比少拦一个红大。红不红看输出，不看退出码。
+#
+# 选中的范围和 CI 的草稿档同一张表，但不跑吃 node 工具链的那三个（eslint、
+# stylelint、boundary-check-frontend）：小机器上它们会被杀，报告里出现一条假
+# 的红比没有报告更坏；没跑的项会写进报告，不会伪装成通过。
+#
+# 用法与边界见 .github/scripts/ci-fast.md。
+# 「永远 0」要挡住的不只是检查失败：还要挡住这一次跑不完。档位自己的预算管的是
+# 单个检查，管不了这个进程卡住（例如取 pre-commit 的机器没网），所以外面再套一层
+# 墙钟；墙钟、python 不在、脚本自己被杀，都落在下面那个无条件的 0 上。
+cd "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || exit 0
+timeout "${CI_FAST_PRE_PUSH_TIMEOUT:-240}" \
+    python3 .github/scripts/ci-fast.py --tier static --pre-push || true
+exit 0
