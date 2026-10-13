@@ -615,7 +615,6 @@ ignore_imports =
     app.domain.discussion.services -> app.domain.delivery.addressing
     app.domain.discussion.services -> app.domain.delivery.ledger
     app.domain.frontend_log -> app.domain.agent.platform_notices
-    app.domain.frontend_log -> app.domain.project.models
     app.domain.integration.service -> app.domain.library.service
     app.domain.membership.roster -> app.domain.agent_instance.own
     app.domain.membership.roster -> app.domain.agent_instance.services

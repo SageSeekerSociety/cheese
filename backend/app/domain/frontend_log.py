@@ -6,11 +6,13 @@ with the project and the conversation that was open. It belongs to no
 conversation — the people in a room are not who reads the platform's own
 errors.
 
-Guard rails live here, not in the route: a render-loop error can fire hundreds
-of times a second, so intake is deduped (same fingerprint within a window
-collapses to one record) and rate-limited per project. In-memory state
-matches the platform's single-process reality (same assumption as the
-per-topic chat locks).
+The guard rails against a render loop live here, not in the route: a bad error
+can fire hundreds of times a second, so intake is deduped (same fingerprint
+within a window collapses to one record) and rate-limited per project.
+In-memory state matches the platform's single-process reality (same assumption
+as the per-topic chat locks). Whether the project exists is not one of these:
+this module is in the bottom layer and reads no project table, so the route
+asks the project domain before the batch gets here.
 """
 
 import hashlib
@@ -21,10 +23,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerting
-from app.core.errors import NotFoundError
 from app.domain.agent.platform_notices import SEVERITY_ERROR, WHO_HUMAN
 from app.domain.conversation.models import Conversation
-from app.domain.project.models import Project
 from app.domain.run_record.service import keep as keep_record
 
 DEDUP_WINDOW_S = 600.0
@@ -111,13 +111,14 @@ def event_meta(err: FrontendErrorIn) -> dict:
 
 async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
     """Admit the batch and keep the survivors. A dropped duplicate still counts
-    as received: the reporting client never retries."""
+    as received: the reporting client never retries.
+
+    The caller has already answered whether the project exists — a batch for a
+    project that does not exist is refused with a 404 before it reaches here.
+    """
     conversation = await db.get(Conversation, body.topic_id) if body.topic_id else None
     if conversation is not None and conversation.project_id != body.project_id:
         conversation = None
-    project = await db.get(Project, body.project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
     accepted = 0
     for err in body.errors:
         if not intake.admit(str(body.project_id), fingerprint(err)):
@@ -127,7 +128,7 @@ async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
             meta["conversation"] = str(conversation.id)
         await keep_record(
             db,
-            project_id=project.id,
+            project_id=body.project_id,
             conversation_id=None,
             content=event_content(err),
             meta=meta,
@@ -141,7 +142,7 @@ async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
             [
                 f"页面：{err.page or '未知'}",
                 f"位置：{err.source or '未知'}",
-                f"项目：{project.id}",
+                f"项目：{body.project_id}",
             ],
         )
     return {"accepted": accepted, "dropped": len(body.errors) - accepted}
