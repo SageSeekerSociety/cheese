@@ -3,14 +3,17 @@
     :task-data="taskData"
     :participants="participants"
     :latest-by-participant="latestByParticipant"
+    :online-judge="onlineJudge"
     :loading="loading"
     :denied="denied"
     :failed="failed"
     :failure-reason="failureReason"
     :busy-id="busyId"
+    :syncing="syncing"
     @approve="approve"
     @reject="reject"
     @deadline="setDeadline"
+    @sync="syncNow"
     @retry="load"
     @review="events.emit('review-participant', $event)"
   />
@@ -21,6 +24,7 @@
 // 逐版评审那张对话框挂在题目详情那一层（它自己取数），这里只在总线上说要看谁的。
 // 这里批了、拒了、改了截止，或者那张对话框里判了一版，都在总线上发 `participation-changed`：
 // 这里听见了重读名单，题目页听见了重读我自己那一份（出题人也可能领了自己的题）。
+import type { TaskExternalProblem } from '@/api/externalProblem'
 import type { Task, TaskMembership } from '@/types'
 import type { Latest } from './RosterView.vue'
 
@@ -32,6 +36,7 @@ import dayjs from 'dayjs'
 
 import RosterView from './RosterView.vue'
 
+import { getTaskExternalProblem, syncTaskExternalProblem } from '@/api/externalProblem'
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
@@ -47,6 +52,15 @@ const events = useEvents()
 
 const participants = ref<TaskMembership[]>([])
 const latestByParticipant = ref(new Map<number, Latest>())
+/**
+ * 外站（YOJ）那一块：题号、上次同步、每个人的结论。`null` = 这道题没接外站
+ * （题号是空的），或者这一块这次没读到 —— 两种都不画那一列。
+ *
+ * 「没接」和「没读到」在这里不必分开：两种都没有结论可画。分开的是别处——「同步」
+ * 那个按钮在没接的时候不该亮，所以它看的是 `problemNo` 有没有。
+ */
+const onlineJudge = ref<TaskExternalProblem | null>(null)
+const syncing = ref(false)
 const loading = ref(true)
 /** 名单没读出来时的那个错。403 是「不给你看」，其余是「这次没读到」——在下面分开。 */
 const loadError = ref<unknown>(null)
@@ -82,6 +96,8 @@ async function load() {
       }
     }
     latestByParticipant.value = latest
+    // 外站那一块单独读、单独失败：它读不到只是少一列，名单本身还是能用的。
+    await loadOnlineJudge(task.id)
   } catch (error) {
     // 原来这里不看错是什么，一律画「只有出题人和管理员能看领取者」：接口 500 的时候，
     // 出题人会去查自己的权限 —— 方向就是错的。是「不给你看」还是「这次没读到」，
@@ -89,6 +105,39 @@ async function load() {
     loadError.value = error
   } finally {
     loading.value = false
+  }
+}
+
+/** 读外站那一块。读不到就当成「这道题没接外站」：少一列，别把整张名单换成一个错。 */
+async function loadOnlineJudge(taskId: number) {
+  try {
+    const data = await getTaskExternalProblem(taskId)
+    onlineJudge.value = data.problemNo ? data : null
+  } catch {
+    onlineJudge.value = null
+  }
+}
+
+/**
+ * 现在去外站看一眼。这一次请求在服务端把活干完才回，所以要等一会儿。
+ *
+ * 失败是 200 带 `status: 'failed'`（见 `api/externalProblem.ts`），所以「没同成」
+ * 也要说一句 —— 不说的话，屏幕上留着的是上一次的数，看着像是刚拿到的。
+ */
+async function syncNow() {
+  const task = props.taskData
+  if (!task || syncing.value) return
+  syncing.value = true
+  try {
+    const data = await syncTaskExternalProblem(task.id)
+    onlineJudge.value = data.problemNo ? data : null
+    if (data.status === 'failed') toast.error(t('tasks.roster.external.syncFailed'))
+    else toast.success(t('tasks.roster.external.synced'))
+  } catch {
+    // 走到这里的是请求本身没发成（断网、被拦），那一次同步**没有**发生。
+    toast.error(t('tasks.roster.external.syncFailed'))
+  } finally {
+    syncing.value = false
   }
 }
 
