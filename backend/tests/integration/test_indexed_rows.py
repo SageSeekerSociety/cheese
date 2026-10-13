@@ -344,11 +344,55 @@ async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factor
     conversation-scoped indexes the planner takes is its business (at fixture
     size it takes `ix_blocks_conversation_kind_created`, which also covers it);
     what must hold is that the time bound is part of what the scan cuts on.
+
+    The bound has to be the **oldest** question in the batch, not the newest,
+    so a place is seeded whose question is the oldest of the three and whose
+    asked person answers it after it was asked but before the other two asked
+    theirs. A tighter bound would cut that answer away and leave the place on
+    the list — the case the answer assertion reads, and the only one that tells
+    "oldest" apart from "newest" here.
     """
     async with db_factory() as session:
         seeded = await _seed(session)
+        hour = timedelta(hours=1)
+        spoken_since = Topic(
+            project_id=seeded["rooms"]["asks"].project_id,
+            title="spoken since",
+            kind=TopicKind.topic,
+        )
+        session.add(spoken_since)
+        await session.flush()
+        session.add_all(
+            [
+                Block(
+                    project_id=spoken_since.project_id,
+                    conversation_id=spoken_since.id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="u2",
+                    content="x",
+                    meta={"options": ["yes", "no"], "asked": "u1"},
+                    created_at=seeded["now"] - 3 * hour,
+                ),
+                Block(
+                    project_id=spoken_since.project_id,
+                    conversation_id=spoken_since.id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="u1",
+                    content="yes",
+                    meta={},
+                    created_at=seeded["now"] - 2 * hour,
+                ),
+            ]
+        )
+        await session.flush()
         rooms, tasks = seeded["rooms"], seeded["tasks"]
-        ids = [*(room.id for room in rooms.values()), *(t.id for t in tasks.values())]
+        ids = [
+            *(room.id for room in rooms.values()),
+            *(t.id for t in tasks.values()),
+            spoken_since.id,
+        ]
         # Every path is still open to the planner; this only makes reading the
         # whole table the last resort, so the plan says whether the index was
         # usable at all rather than whether it was cheapest today.
