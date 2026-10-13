@@ -48,6 +48,7 @@ from app.domain.agent.harness.launch import ExecutorPlan, MachinePlace, MachineP
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.place import (
     CHECKOUT_DIR,
+    OWN_KEY,
     SANDBOXES_DIR,
     footprint_root,
     launcher_path,
@@ -886,7 +887,11 @@ class DeviceChannel(Channel):
         home_dir = device_home_dir(project_id, resource_id)
         work_dir = self._work_dir(project_id, resource_id)
         api_base = await self._device_api_base(device_id)
-        own_login = (env or {}).get("CHEESE_OWN_LOGIN") == "1"
+        # A member's own Claude Code: on its owner's login on their machine, or
+        # on a connection its owner's account holds (`own_key`). Neither goes
+        # through the metering proxy, so neither has a tunnel to watch.
+        own_key = (env or {}).get(OWN_KEY) == "1"
+        own_login = (env or {}).get("CHEESE_OWN_LOGIN") == "1" or own_key
         model_env, ca_pem, credential_expires = screen_model_env(
             env,
             token=token,
@@ -920,7 +925,8 @@ class DeviceChannel(Channel):
             execution_target=execution_target,
             ca_pem=ca_pem,
             seat=seat,
-            own_login=own_login,
+            own_login=own_login and not own_key,
+            own_key=own_key,
         )
         settled_with = screen_identity.settled_with(
             agent_configuration=agent_configuration, place=place, token=token

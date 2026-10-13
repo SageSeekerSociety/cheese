@@ -119,6 +119,9 @@ onMounted(() => load().finally(releaseGate))
             · {{ a.machine.name }}
             <span class="c-muted">{{ onlineLabel(a.machine.online) }}</span>
           </span>
+          <span v-else-if="a.owner_handle === me && a.connection?.on_account" class="own-agents__machine c-muted">
+            · {{ t('work.projectSettings.ownAgents.runsOnPlatform') }}
+          </span>
           <template v-if="a.owner_handle === me">
             <div class="own-agents__mine">
               <v-select
@@ -155,7 +158,11 @@ onMounted(() => load().finally(releaseGate))
       <section v-if="state.allowed && addable.length" class="own-agents__add" data-testid="own-agents-add">
         <p class="t-body own-agents__kinds-label">{{ t('work.projectSettings.ownAgents.addLabel') }}</p>
         <div v-for="c in addable" :key="c.id" class="own-agents__row own-agents__offer" data-testid="own-agent-offer">
-          <span>
+          <span v-if="c.on_account">
+            {{ c.name ? `${c.name} · ${connectionLabel(c)}` : connectionLabel(c) }}
+            <span class="c-muted">· {{ t('work.projectSettings.ownAgents.onAccount') }}</span>
+          </span>
+          <span v-else>
             {{ connectionLabel(c) }} · {{ c.machine_name }}
             <span class="c-muted">{{ onlineLabel(c.online) }}</span>
           </span>

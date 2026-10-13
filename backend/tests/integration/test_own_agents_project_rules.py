@@ -243,6 +243,7 @@ def test_everyone_sees_its_kind_and_only_its_owner_sees_its_machines(client):
             "kind": "subscription",
             "plan": "max",
             "model": None,
+            "on_account": False,
         }
     assert "bobs-secret-laptop" not in str(_settings(client, project_id, "alice"))
     assert seen_by_bob["machine"]["name"] == "bobs-secret-laptop"
