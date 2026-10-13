@@ -206,6 +206,69 @@ def test_isolated_subagents_run_without_the_isolation_they_asked_for():
     """)
 
 
+def test_monitor_runs_a_command_under_the_bash_rules_and_never_a_websocket():
+    _run_proxy("""
+        import assert from 'node:assert/strict';
+        const url = 'data:text/javascript;base64,' + process.argv[1];
+        const {register} = await import(url);
+        const handlers = {};
+        register((event, handler) => {handlers[event] = handler});
+        const asked = [];
+        const $ = {
+          session: {id: async () => 'session'},
+          env: {get: async () => undefined},
+          mcp: {call: async (server, name, params) => {
+            asked.push({server, name, tool: params.tool, args: params.args});
+            const deny = params.args.command.includes('forbidden') ? 'not here' : null;
+            const text = JSON.stringify({deny});
+            return {isError: false, content: [{type: 'text', text}]};
+          }},
+        };
+        const socket = await handlers['tool.call']($, {
+          tool: 'Monitor', tool_use_id: 'm0', description: 'events',
+          ws: {url: 'wss://example.com'}, timeout_ms: 1000,
+        }, () => {throw new Error('opened a socket on the session host')});
+        assert.match(socket.deny, /give it a command/);
+        const refused = await handlers['tool.call']($, {
+          tool: 'Monitor', tool_use_id: 'm1', description: 'ticks',
+          command: 'forbidden', timeout_ms: 1000,
+        }, () => {throw new Error('ran a command the project refuses')});
+        assert.equal(refused.deny, 'not here');
+        const watched = await handlers['tool.call']($, {
+          tool: 'Monitor', tool_use_id: 'm2', description: 'ticks',
+          command: 'echo tick', timeout_ms: 1000,
+        }, (event) => ({watched: event.command}));
+        assert.deepEqual(watched, {watched: 'echo tick'});
+        assert.deepEqual(asked.map(a => [a.name, a.tool, a.args.command]), [
+          ['permission', 'Bash', 'forbidden'], ['permission', 'Bash', 'echo tick'],
+        ]);
+    """)
+
+
+def test_the_session_config_seeds_the_flags_the_build_cannot_fetch(tmp_path):
+    from app.domain.agent.harness.claude_code.remote_execution.client import prepare
+    from app.domain.agent.harness.claude_code.remote_execution.release import (
+        SEEDED_FLAGS,
+    )
+
+    config = tmp_path / "config"
+    config.mkdir()
+    # What the build left from an earlier start: its own cache and state.
+    (config / ".claude.json").write_text(
+        json.dumps({"userID": "kept", "cachedGrowthBookFeatures": {"fetched": 1}})
+    )
+    prepare(
+        tmp_path,
+        {"kind": "unavailable", "workspace": "/unavailable-project"},
+        claude=claude_binary(),
+        config_override=config,
+    )
+    saved = json.loads((config / ".claude.json").read_text())
+    assert saved["userID"] == "kept"
+    assert saved["cachedGrowthBookFeatures"] == {"fetched": 1, **SEEDED_FLAGS}
+    assert saved["hasCompletedOnboarding"] is True
+
+
 def test_offline_work_does_not_prevent_session_bootstrap(tmp_path):
     from app.domain.agent.executor_transport import MachineOutOfReach, RemoteClient
     from app.domain.agent.harness.claude_code.remote_execution.client import (

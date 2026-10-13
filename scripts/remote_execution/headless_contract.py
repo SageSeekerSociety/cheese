@@ -138,6 +138,67 @@ def results_since(session, mark):
     ]
 
 
+def remotemonitor(binary, root):
+    """Monitor, offered by the seeded flag, watching a command on the executor.
+
+    The build offers Monitor only when a remote flag says so, and a room's
+    session fetches no flags: `client.prepare` seeds the one it needs
+    (`SEEDED_FLAGS`). Its command is a Bash command to the build, so the shell
+    prefix carries it to the executor, and each line it prints comes back to
+    the model while the turn goes on.
+    """
+    # The fixture's DISABLE_TELEMETRY and DISABLE_NONESSENTIAL_TRAFFIC also
+    # stop the build reading its flag cache (DISABLE_TELEMETRY alone hides
+    # Monitor, measured on 2.1.282); a room's session sets neither.
+    session = remote(
+        binary,
+        root,
+        "remotemonitor",
+        DRIVER,
+        env={"DISABLE_TELEMETRY": "", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": ""},
+    )
+    try:
+        # The build announces its tools (init) once the first message is read.
+        mark = session.user(
+            do(
+                "Monitor",
+                # Built by printf, so the echoed directive cannot match them.
+                command="pwd -P > monitor-ran-here; printf 'MON_%s\\n' A; "
+                "sleep 1; printf 'MON_%s\\n' B",
+                description="contract ticks",
+                timeout_ms=30000,
+            )
+        )
+        _, init = session.wait(is_("system", "init"), 30, mark)
+        offered = "Monitor" in ((init or {}).get("tools") or [])
+        yield (
+            "the seeded flag offers Monitor in a room's session",
+            offered,
+            json.dumps(sorted((init or {}).get("tools") or []))[:300],
+        )
+        if not offered:
+            return
+        # Each line reaches the model as an event of its own, inside a later
+        # request; it is not echoed on stdout.
+        def reached(marker, timeout=60):
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if any(marker in json.dumps(r) for r in session.requests()):
+                    return True
+                time.sleep(0.2)
+            return False
+
+        got = {marker: reached(marker) for marker in ("MON_A", "MON_B")}
+        on_executor = (session.remote_workspace / "monitor-ran-here").exists()
+        yield (
+            "Monitor's command runs on the executor and each line reaches the model",
+            on_executor and all(got.values()),
+            json.dumps({"on_executor": on_executor, **got}),
+        )
+    finally:
+        stop_remote(session)
+
+
 def ran_in(path, marker):
     """Whether a transcript file holds a tool_result whose output has `marker`."""
     for line in path.read_text().splitlines():
@@ -1840,6 +1901,7 @@ SCENARIOS = {
     "partial": partial,
     "functionhooks": functionhooks,
     "remotebackground": remotebackground,
+    "remotemonitor": remotemonitor,
 }
 
 

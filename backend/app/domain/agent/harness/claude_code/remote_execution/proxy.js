@@ -375,6 +375,16 @@ export function register(on) {
       const denied = await refused($, tool_use_id, tool, args);
       if (denied) return denied;
     }
+    // Monitor's command is a Bash command to the build: the shell prefix sends
+    // it to the executor, and the project's rules for Bash are the rules for
+    // it. Its WebSocket source is opened by the build itself, on this host.
+    if (tool === "Monitor") {
+      if (args.ws) {
+        return { deny: "Monitor's ws source is unavailable here; give it a command instead (it runs on the work machine)." };
+      }
+      const denied = await refused($, tool_use_id, "Bash", { command: args.command });
+      if (denied) return denied;
+    }
     return next(e);
   });
 

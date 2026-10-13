@@ -64,6 +64,7 @@ if __package__:
         link_forwarded_user_context,
         platform_tool_names,
         touch_skills,
+        write_claude_state,
     )
     from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
         CAUGHT,
@@ -106,6 +107,7 @@ else:
         link_forwarded_user_context,
         platform_tool_names,
         touch_skills,
+        write_claude_state,
     )
     from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
 
@@ -491,20 +493,7 @@ def prepare(
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
-    gates = {
-        "hasCompletedOnboarding": True,
-        "autoUpdates": False,
-        "bypassPermissionsModeAccepted": True,
-        "projects": {
-            seen: {
-                "hasTrustDialogAccepted": True,
-                "hasCompletedProjectOnboarding": True,
-            }
-        },
-    }
-    gate_file = config / ".claude.json"
-    previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
-    gate_file.write_text(json.dumps({**previous, **gates}))
+    write_claude_state(config, seen)
     servers = {
         "native": {
             "type": "stdio",

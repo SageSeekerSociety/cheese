@@ -140,6 +140,42 @@ def allow_native_tools(settings: dict, platform_tools: list[str]) -> None:
             allowed.append(tool)
 
 
+# Remote flags the build would otherwise never see. It offers some tools only
+# when a GrowthBook flag says so, and it fetches those flags only for some
+# logins: a session started with an OAuth token in the environment, as every
+# session here is, fetches none, so Monitor was simply absent and agents waited
+# with `sleep N; tail` instead (2.1.282, measured on the central host: 0 flags
+# fetched; seeding this one entry offers Monitor and the build keeps it across
+# restarts). Monitor's command goes through the shell prefix like Bash, so it
+# runs on the executor. The flag name belongs to the pinned build: when the pin
+# moves, `headless_contract.py`'s `remotemonitor` says whether it still holds.
+SEEDED_FLAGS = {"tengu_amber_sentinel": True}
+
+
+def write_claude_state(config: Path, seen: str) -> None:
+    """The build's own state file, `.claude.json`, as a session needs it: no
+    first-run gate to answer, and the flags it would not fetch."""
+    gates = {
+        "hasCompletedOnboarding": True,
+        "autoUpdates": False,
+        "bypassPermissionsModeAccepted": True,
+        "projects": {
+            seen: {
+                "hasTrustDialogAccepted": True,
+                "hasCompletedProjectOnboarding": True,
+            }
+        },
+    }
+    gate_file = config / ".claude.json"
+    previous = json.loads(gate_file.read_text()) if gate_file.exists() else {}
+    # Into the build's own cache, beside whatever flags it did fetch.
+    gates["cachedGrowthBookFeatures"] = {
+        **previous.get("cachedGrowthBookFeatures", {}),
+        **SEEDED_FLAGS,
+    }
+    gate_file.write_text(json.dumps({**previous, **gates}))
+
+
 def launch_only(sources):
     """The helper sources a running session keeps as they were at launch."""
     return {name: text for name, text in sources.items() if name not in RESIDENT}
