@@ -137,7 +137,7 @@ onBeforeUnmount(() => {
         <router-link to="/legal/terms">{{ t('publicSite.terms') }}</router-link>
         <router-link to="/legal/privacy">{{ t('publicSite.privacy') }}</router-link>
         <span>{{ t('publicSite.copyright') }}</span>
-        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener">{{ ICP_FILING }}</a>
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" lang="zh-CN">{{ ICP_FILING }}</a>
       </nav>
     </footer>
   </main>
