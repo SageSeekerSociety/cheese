@@ -12,7 +12,9 @@
 #       Check DIR/result.json against the schema and the pinned commit,
 #       post it as a PR comment whose first line is
 #       `<!-- pr-review sha=SHA -->`, print it, and remove the review tree.
-#       --dry-run prints without posting or removing.
+#       --dry-run prints without posting or removing. Required CI's
+#       `review-pin` step reads the newest such comment: it must name the PR's
+#       head and list no [blocker] or [major], so post after the last push.
 #   .claude/scripts/pr-review.sh show PR [SHA]
 #       Print the newest review posted for SHA (default: the current head).
 #
@@ -24,7 +26,7 @@ HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(git -C "$HERE" rev-parse --show-toplevel) || exit 1
 METHOD=.claude/pr-review
 
-usage() { sed -n '5,18p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '5,20p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "pr-review: $*" >&2; exit 1; }
 
 head_of() { gh api "repos/$REPO/pulls/$1" -q .head.sha; }
