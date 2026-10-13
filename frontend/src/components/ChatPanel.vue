@@ -9,6 +9,7 @@
 // those pieces: header, timeline, new-message pill, error toast.
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
+import type { PersonIdentity } from '../lib/personIdentity'
 
 import { computed, ref, watch } from 'vue'
 
@@ -65,6 +66,9 @@ const props = withDefaults(
     // Header label override for a 私聊 whose stored title is a bookkeeping key
     // (e.g. a person DM's canonical "私聊 · a · b"): show the peer's name instead.
     titleOverride?: string | null
+    // 私聊顶栏上那个人：`titleOverride` 是名字，这里补上认人的 handle、头像与队友身份，
+    // 顶栏就画脸 + 名字。null = 标题不是一个人（本体、别的话题），只写一行字。
+    titlePeer?: PersonIdentity | null
     // 标题左边那颗 ←，以及它旁边的字。私聊是从名册点进来的，而名册页在桌面上
     // 不是侧栏的一行，所以没有这颗按钮就只能靠浏览器后退回去。null = 不画。
     backLabel?: string | null
@@ -97,6 +101,7 @@ const props = withDefaults(
     members: () => [],
     topicList: () => [],
     titleOverride: null,
+    titlePeer: null,
     backLabel: null,
     unreadOnOpen: 0,
     conversationId: null,
@@ -361,6 +366,7 @@ useComposerShortcut({
         :pr-short-id="prShortId"
         :pr-state="prState"
         :title-override="titleOverride"
+        :title-peer="titlePeer"
         :back-label="backLabel"
         @back="emit('back')"
       />

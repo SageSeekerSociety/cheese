@@ -167,4 +167,11 @@ describe('私聊的地址说的是跟谁', () => {
     const { findByText } = open('agent:reviewer')
     expect(await findByText('reviewer')).toBeTruthy()
   })
+
+  it('头上写的那位是画出来的脸 + 名字，不只是名字', async () => {
+    getPrivateChat.mockResolvedValue(dmTopic)
+    const { container, findByText } = open('agent:reviewer')
+    await findByText('评审')
+    expect(container.querySelector('.pr-header .identity-view'), '顶栏只写了名字，没画脸').not.toBeNull()
+  })
 })

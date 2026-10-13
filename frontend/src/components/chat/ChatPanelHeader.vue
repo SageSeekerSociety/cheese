@@ -4,21 +4,30 @@
 // decided by the props, and 工作台 passes hideHeader because it puts ONE topic
 // header above both columns (see TopicHeader.vue).
 import type { Topic } from '../../cx_types'
+import type { PersonIdentity } from '../../lib/personIdentity'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
 
-defineProps<{
-  topic: Topic
-  connected: boolean
-  prHeader: boolean
-  hideHeader: boolean
-  prShortId: string
-  prState: { cls: string; label: string }
-  titleOverride: string | null
-  backLabel: string | null
-}>()
+withDefaults(
+  defineProps<{
+    topic: Topic
+    connected: boolean
+    prHeader: boolean
+    hideHeader: boolean
+    prShortId: string
+    prState: { cls: string; label: string }
+    titleOverride: string | null
+    // 私聊顶栏上那个人的一张脸：`titleOverride` 是它的名字，这里补上认人的 handle、
+    // 自己挑过的头像和「是不是队友」。null = 这幅标题不是一个人（本体、其它话题），
+    // 照旧只写一行字。
+    titlePeer?: PersonIdentity | null
+    backLabel: string | null
+  }>(),
+  { titlePeer: null }
+)
 
 const emit = defineEmits<{
   // 标题左边那颗 ← 被按了。去哪儿由拥有这个地址的人决定，不是这里。
@@ -56,7 +65,18 @@ const emit = defineEmits<{
       >
         {{ backLabel }}
       </BaseButton>
-      <span class="t-title">{{ titleOverride || topicTitle(topic) }}</span>
+      <!-- The peer's face + name when this is a 私聊 (titlePeer), the plain title
+           otherwise. The name is NOT printed twice: IdentityView carries it. -->
+      <IdentityView
+        v-if="titlePeer"
+        class="pr-header__peer"
+        :handle="titlePeer.handle"
+        :name="titlePeer.name || titleOverride"
+        :avatar-id="titlePeer.avatarId"
+        :agent="titlePeer.agent"
+        :size="20"
+      />
+      <span v-else class="t-title">{{ titleOverride || topicTitle(topic) }}</span>
       <v-spacer />
       <span
         class="status-dot"
@@ -75,6 +95,17 @@ const emit = defineEmits<{
 }
 .pr-num {
   font-weight: 400;
+}
+/* 私聊顶栏上那一位：字号字重照 `.t-title` 那一档，但行高得跟着它走 ——
+   `identity-view__name` 自带一行 14px 行高，15px 的字会在那一行里被切掉。 */
+.pr-header__peer {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.pr-header__peer :deep(.identity-view__name) {
+  line-height: var(--lh-15);
 }
 /* PR state badge — semantic for Open, muted otherwise. */
 .pr-state {
