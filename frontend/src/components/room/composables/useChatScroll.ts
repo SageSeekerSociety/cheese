@@ -46,6 +46,8 @@ export interface ChatScroll {
   restoreScroll(topicId: string): void
   /** 这个话题再打开时会不会停在底部。 */
   restoresToBottom(topicId: string): boolean
+  /** 不再记这个话题停在哪：再打开时落到底部。 */
+  forgetScroll(topicId: string): void
 }
 
 export function useChatScroll(
@@ -177,13 +179,15 @@ export function useChatScroll(
   // 切走再回来时就会被放回一个指着别的内容的偏移——整段换过之后正是这样。
   function scrollToBottom() {
     pendingTop = null
+    // 叫的时候是哪个话题就记给哪个：同一拍里切了话题的话，nextTick 里读到的是新的那个，
+    // 把它记成「停在底部」会盖掉它自己记下的位置。
+    const id = topicId()
     void nextTick(() => {
       const el = scrollRef.value
       if (el) {
         place(el, el.scrollHeight)
         atBottom.value = true
       }
-      const id = topicId()
       if (id && showingNewest()) scrollMemory.set(id, { top: el?.scrollTop ?? 0, atBottom: true })
     })
   }
@@ -236,6 +240,11 @@ export function useChatScroll(
     })
   }
 
+  /** 不再记这个话题停在哪：再打开时落到底部。 */
+  function forgetScroll(topicId: string) {
+    scrollMemory.delete(topicId)
+  }
+
   /** 这个话题再打开时会不会停在底部：没记过，或者记下的就是底部。 */
   function restoresToBottom(topicId: string): boolean {
     const saved = scrollMemory.get(topicId)
@@ -260,5 +269,6 @@ export function useChatScroll(
     rememberScroll,
     restoreScroll,
     restoresToBottom,
+    forgetScroll,
   }
 }

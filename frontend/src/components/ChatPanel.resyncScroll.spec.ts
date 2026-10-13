@@ -1,14 +1,15 @@
-// 断线期间来了不止一页：重连回来，屏幕上那一段整个换成读回来的最新一页（两段之间
-// 有一截没读过，接不上）。换上来的块和原来那段一条都不重合，读的人刚才看的那条已经
-// 不在屏幕上——那就该落在最新那条上，而不是照旧的像素偏移停在新内容的某个中间；
-// 下次回到这个房间也一样。自己刚发的那条同理：发完紧接着整段一换，还是落在最底下。
+// 断线期间来了不止一页：重连回来读到的最新一页和屏幕上那段接不上（中间有一截没读过）。
+// 停在最新那条上的人整段换成这一页、还停在底部。往上翻着读历史的人还看着原来那段：
+// 那段原样留着，他读的那条还在原处，最新一页收在背后，「回到最新」带他过去；下次
+// 回到这个房间打开的是最新一页，落在底部，不是原来那段里的偏移。自己刚发的那条同理：
+// 发完紧接着整段一换，还是落在最底下。
 import type { Block, Topic } from '@/cx_types'
 
 import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render } from '@testing-library/vue'
+import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
@@ -197,16 +198,36 @@ function pageAfterOutage(roomId: string) {
 }
 
 describe('重连回来整段换成最新一页', () => {
-  it('往上翻着的人落在最新那条上，不停在新内容的中间', async () => {
+  it('往上翻着的人还看着原来那条，「回到最新」出现', async () => {
     const id = crypto.randomUUID()
     listBlocks.mockResolvedValue({ data: minutes(id, 1, 20), has_more: false })
-    const { pane } = await mountRoom(id)
+    const { view, pane } = await mountRoom(id)
     await readUp(pane)
 
     listBlocks.mockResolvedValue(pageAfterOutage(id))
     await dropLink()
 
+    expect(pane.querySelector(`[data-mid="${id}-m1"]`)).not.toBeNull()
+    expect(pane.textContent).not.toContain('message 59')
+    expect(pane.scrollTop).toBe(0)
+    expect(view.getByRole('button', { name: /Back to latest/ })).toBeTruthy()
+  })
+
+  it('点「回到最新」之后停在最新那条、在底部', async () => {
+    const id = crypto.randomUUID()
+    listBlocks.mockResolvedValue({ data: minutes(id, 1, 20), has_more: false })
+    const { view, pane } = await mountRoom(id)
+    await readUp(pane)
+
+    listBlocks.mockResolvedValue(pageAfterOutage(id))
+    await dropLink()
+
+    await fireEvent.click(view.getByRole('button', { name: /Back to latest/ }))
+    await flush()
+    relayout()
+
     expect(pane.textContent).toContain('message 59')
+    expect(pane.querySelector(`[data-mid="${id}-m1"]`)).toBeNull()
     expect(pane.scrollTop).toBe(bottomOf(pane))
   })
 
@@ -222,7 +243,7 @@ describe('重连回来整段换成最新一页', () => {
     expect(pane.scrollTop).toBe(bottomOf(pane))
   })
 
-  it('切走再回来，也回到最新那条，而不是换之前停的那个偏移', async () => {
+  it('往上翻着的人切走再回来，打开最新那条，而不是原来那段里的偏移', async () => {
     const id = crypto.randomUUID()
     const other = crypto.randomUUID()
     listBlocks.mockImplementation(async (roomId: string) =>
