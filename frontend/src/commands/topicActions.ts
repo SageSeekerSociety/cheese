@@ -19,6 +19,9 @@ import { useWorkspaceStore } from '@/stores/workspace'
 
 export interface TopicActionHandlers {
   rename: () => void
+  /** 「删除频道」（清单第 2 条）。没人接这一条就不画它——删除要走二次确认，而那张
+   *  确认框由调用的地方出。 */
+  remove?: () => void
 }
 
 export function topicActions(topic: Topic, router: Router, on: TopicActionHandlers): MenuCommand[] {
@@ -102,17 +105,30 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
       icon: 'mdi-login-variant',
       run: () => void store.setJoined(topic.id, true),
     })
-  // 改名、归档只给管这个频道的人：创建者和项目管理员。
+  // 改名、归档、删除只给管这个频道的人：创建者和项目管理员。
   if (!topic.can_manage) return actions
+  // 删除排在最后：它不可撤销，不该挨着上面随手点的那几件。已归档的也能删——归档只是
+  // 不上不下地搁着，删除才是让它真的走。
+  const remove: MenuCommand[] = on.remove
+    ? [
+        {
+          id: 'topic.delete',
+          title: t('work.room.menu.delete'),
+          icon: 'mdi-trash-can-outline',
+          danger: true,
+          run: on.remove,
+        },
+      ]
+    : []
   if (topic.status === 'archived') {
-    // 已归档的不再改名，只剩「取消归档」。
+    // 已归档的不再改名，只剩「取消归档」和「删除」。
     actions.push({
       id: 'topic.unarchive',
       title: t('work.room.menu.unarchive'),
       icon: 'mdi-archive-arrow-up-outline',
       run: () => void store.unarchive(topic.id),
     })
-    return actions
+    return [...actions, ...remove]
   }
   actions.push({ id: 'topic.rename', title: t('work.room.menu.rename'), icon: 'mdi-pencil-outline', run: on.rename })
   actions.push({
@@ -121,7 +137,7 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
     icon: 'mdi-archive-arrow-down-outline',
     run: () => void archiveTopic(topic, router),
   })
-  return actions
+  return [...actions, ...remove]
 }
 
 /** 新建任务：建的人就是负责人，建好就去任务页，在那里和 AI 队友说清楚要做什么。 */

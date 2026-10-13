@@ -314,6 +314,7 @@ class TopicRepository:
         stmt = select(Topic.id, Topic.status).where(
             Topic.project_id.in_(project_ids),
             Topic.is_private.is_(False),
+            Topic.deleted_at.is_(None),
             seen_by(viewer),
         )
         rows = (await self._session.execute(stmt)).all()
@@ -346,9 +347,13 @@ class TopicRepository:
         (``seen_by``); without it every channel is listed, for the platform's
         own use.
         """
-        # Private chats are not part of the topic tree.
+        # Private chats are not part of the topic tree. A deleted channel is in
+        # none of them: it is on its way out (`deleted_at`), and it disappears
+        # from every list the moment it is deleted.
         stmt = select(Topic).where(
-            Topic.project_id.in_(project_ids), Topic.is_private.is_(False)
+            Topic.project_id.in_(project_ids),
+            Topic.is_private.is_(False),
+            Topic.deleted_at.is_(None),
         )
         if seen is not None:
             stmt = stmt.where(seen)
@@ -511,6 +516,7 @@ class TopicRepository:
             .where(
                 Topic.project_id == project_id,
                 Topic.is_private.is_(False),
+                Topic.deleted_at.is_(None),
                 seen_by(viewer),
             )
         )

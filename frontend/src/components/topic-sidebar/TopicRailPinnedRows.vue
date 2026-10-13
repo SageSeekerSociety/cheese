@@ -1,5 +1,6 @@
 <script setup lang="ts">
-// 项目名下面那一行：总览和资料库。其余的页都在点项目名弹出的菜单里。
+// 项目名下面那一行：资料库。总览和其余的页都在点项目名弹出的菜单里（清单第 9 条，
+// 2026-10-12：总览不再自己占一行）。
 //
 // 这一行**不再加东西**：每加一格频道就往下挪，几个版本之后又是一摞入口
 // （.claude/rules/project-sidebar.md）。摆哪几格由 `lib/shell` 的 `projectPageLayout`
@@ -11,7 +12,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { t } from '@/i18n'
 
 const props = defineProps<{
-  /** 这一行的那几页（总览、资料库；壳不摆资料库时只有总览）。 */
+  /** 这一行的那几页（资料库；壳不摆资料库时为空）。 */
   pages: { key: string; label: string; icon: string }[]
   /** 当前页的名字，用来画选中态。 */
   routeName: string | null
@@ -42,7 +43,14 @@ const entries = computed(() =>
 
 <template>
   <!-- 和「# 综合」、频道行同一种行：同一个 16px 图标槽、同一条文字左缘。 -->
-  <v-list v-if="!page" density="compact" nav class="py-0" tabindex="-1" :aria-label="t('navigation.project.pages')">
+  <v-list
+    v-if="!page && entries.length"
+    density="compact"
+    nav
+    class="py-0"
+    tabindex="-1"
+    :aria-label="t('navigation.project.pages')"
+  >
     <v-list-item
       v-for="e in entries"
       :key="e.key"
