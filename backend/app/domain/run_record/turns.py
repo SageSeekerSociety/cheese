@@ -6,9 +6,10 @@
 （`agent.models.AgentTurn`），所以任何窗口问得出来。
 
 **失败的身份只在 `blocks.meta` 里。** 一轮失败时，平台在房间里落一条事件
-（`agent/platform_notices.py` 说的话，码在 `notice_meta`），`meta.event_type` 是该类别码，`blocks.turn_id` 是
-这一轮的号 —— 前提是调用方把轮次号传给了 `post_system_event`。所以「这一轮有没有
-失败」= 有没有一条 `turn_id` 指着它的终态事件。
+（话是 `agent/platform_notices.py` 说的，码在 `notice_meta`），`meta.event_type`
+是该类别码，`blocks.turn_id` 是这一轮的号 —— 前提是调用方把轮次号传给了
+`post_system_event`。所以「这一轮有没有失败」= 有没有一条 `turn_id` 指着它的
+终态事件。
 
 **类别码不是全部：`severity=info` 的那一条不是失败。** 平台把 `turn_failed` 这个码
 也用在几条「没事，只是要等」的提示上 —— 主人不在线（`initial_admission`）、这一轮
