@@ -235,10 +235,15 @@ def gh_queue_timeline(n):
 _VERIFIED_WORDS = ("验证", "怎么验", "测试", "自测", "verif", "valid", "test")
 _VERIFIED_HEADING_WORDS = _VERIFIED_WORDS + ("checks", "checked")
 _VERIFIED_LABEL_WORDS = _VERIFIED_WORDS + ("check",)
+#: 每一节按「名字有多直接」分档：第一档是它自己的叫法，第二档也点名了这一节、但没那么
+#: 直白。选标题时先看档、再看名字长短 —— 缺了这一层，`## Fixed` 比 `## What changed`
+#: 短，就会把「路上顺手修的那几条」当成整份改动摆出来。
 _SECTION_WORDS = {
-    "changed": ("what chang", "changes", "改动", "改了什么"),
-    "verified": _VERIFIED_HEADING_WORDS,
+    "changed": (("what chang", "change", "changes", "改动", "改了什么"),
+                ("fix", "改法", "修改")),
+    "verified": (_VERIFIED_HEADING_WORDS,),
 }
+_SECTION_WORDS_FLAT = {k: tuple(w for g in gs for w in g) for k, gs in _SECTION_WORDS.items()}
 #: A line that labels the part after it — `**验证**：…`, `验证：`, `## Tests` alike. How
 #: this repo actually writes the second half, far more often than as a heading.
 #: A list item and a URL line start the same way and are not labels: a section whose
@@ -250,8 +255,9 @@ _SECTION_WORDS = {
 #: is a label line, and reading it as one only through the first twenty characters would
 #: say that body never wrote the section.
 _LABEL = re.compile(
-    r"^[ \t]*(?![-•*+][ \t])(?!\d+[.)][ \t])(?!\w{2,12}://)"
-    r"(?:\*\*)?([^\n：:*]{1,20}(?:[（(][^）\n]{0,80}[）)])?)(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
+    r"^(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!\w{2,12}://)"
+    r"(?:\*\*)?([^\n：:*`，]{1,20}(?:[（(][^）\n]{0,80}[）)])?)"
+    r"(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
 _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
 #: A line that is nothing but the name of a section — `Verification`, `验证`, `Tests` —
 #: with no colon after it. The block below it is that section: a body puts the name on
@@ -263,12 +269,12 @@ _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
 #: a command in a code block all read as names otherwise. A list item is the section's
 #: body and not another name for one: the first item under `Verification` so often
 #: mentions a test that reading it as a name cut that whole section away.
-_BARE_LABEL = re.compile(r"^[ \t]*(?![-•*+][ \t])(?!\d+[.)][ \t])(?!#)"
+_BARE_LABEL = re.compile(r"^(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!#)"
                          r"(?:\*\*)?([^\n：:*|`]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 #: Everything from the first of these lines down is the platform's, not the author's.
 _TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
-                           r"|Reviewed-by|Reported-by):", re.M)
+                           r"|Reviewed-by|Reported-by|Fixes-feedback):", re.M | re.I)
 _AGENT_MARK = re.compile(r"^[ \t]*AGENT:[ \t]*$", re.M)
 #: The lines a runner prints to name a case that failed — pytest's summary, the
 #: `##[error]` line this repo's own harness adds around it, go test, vitest/jest.
@@ -283,6 +289,32 @@ _LOG_STAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s?")
 #: A failed check's page names the Actions job whose log carries the case names.
 _JOB_IN_URL = re.compile(r"/actions/runs/\d+/job/(\d+)")
 _CASES_MAX = 6
+
+
+def _section_rank(low, want):
+    """How directly `low` says it is `want`'s section: 0 for the name's own word for it,
+    1 for a word that names it less directly, None when it does not name it at all."""
+    for rank, group in enumerate(_SECTION_WORDS[want]):
+        if _mentions(low, group):
+            return rank
+    return None
+
+
+def _mentions(low, words):
+    """Whether `low` names a section with one of `words`.
+
+    A word in the Latin alphabet has to start somewhere, not merely sit inside a
+    longer one: `## Prefix handling` is not the change list, and the `change` inside
+    `exchange` is not the word. A word written in another script is matched as it
+    stands, because it has no letters to bound it.
+    """
+    for w in words:
+        if not w.isascii():
+            if w in low:
+                return True
+        elif re.search(r"\b%s" % re.escape(w), low):
+            return True
+    return False
 
 
 def brief(desc, limit=400):
@@ -309,8 +341,7 @@ def brief(desc, limit=400):
                     + [m for m in _BARE_LABEL.finditer(text)
                        if _names_a_section(m) and _stands_alone(text, m)],
                     key=lambda m: m.start())
-    ver = [m for m in labels
-           if any(w in m.group(1).lower() for w in _VERIFIED_LABEL_WORDS)]
+    ver = [m for m in labels if _mentions(m.group(1).lower(), _VERIFIED_LABEL_WORDS)]
     verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels, heads)
     changed = _under_heading(text, heads, "changed", ver)
     if not changed:
@@ -321,7 +352,7 @@ def brief(desc, limit=400):
         # 验证那一节（开头那行标题是它，或第一个标签行就在第一行）时没有那一段：它
         # 底下、它后面是验证，改动没写在这里。
         lead = heads[0] if heads and heads[0].start() == 0 else None
-        if (lead and any(w in lead.group(2).lower() for w in _SECTION_WORDS["verified"])) \
+        if (lead and _mentions(lead.group(2).lower(), _SECTION_WORDS_FLAT["verified"])) \
                 or (ver and not text[:ver[0].start()].strip()):
             changed = ""
         else:
@@ -347,11 +378,12 @@ def _under_heading(text, heads, want, also=()):
     `also` is where the section under this heading stops early: the verification half's
     label lines, so a `## 改动` does not read the `验证：` line that follows it as one
     more thing that changed."""
-    hits = [i for i, h in enumerate(heads)
-            if any(w in h.group(2).lower() for w in _SECTION_WORDS[want])]
+    hits = [(i, r) for i, h in enumerate(heads)
+            if (r := _section_rank(h.group(2).lower(), want)) is not None]
     if not hits:
         return ""
-    i = min(hits, key=lambda i: (_negates(heads[i]), len(heads[i].group(2)), heads[i].start()))
+    i = min(hits, key=lambda t: (_negates(heads[t[0]]), t[1],
+                                 len(heads[t[0]].group(2)), heads[t[0]].start()))[0]
     begin = heads[i].end()
     # `also` 只在它前面真的还有本节内容时才切：紧贴标题的一行是本节自己的第一行，
     # 不是「本节到此为止」。
@@ -363,8 +395,8 @@ def _under_heading(text, heads, want, also=()):
 
 def _names_a_section(m):
     """Whether a short unpunctuated line is one of the section names rather than prose."""
-    low = m.group(1).lower()
-    return any(w in low for w in _VERIFIED_LABEL_WORDS + _SECTION_WORDS["changed"])
+    lower = m.group(1).lower()
+    return _mentions(lower, _VERIFIED_LABEL_WORDS + _SECTION_WORDS_FLAT["changed"])
 
 
 def _negates(h):
