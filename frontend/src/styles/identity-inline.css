@@ -1,0 +1,22 @@
+/* 行内身份 chip（`IdentityView`）的**可收缩约束**。凡把 `UserRef` / `IdentityView` 放进
+   会截断或 nowrap 的一行（引文、标题、byline、参与者名单）的组件，加一个
+   `<style scoped src="@/styles/identity-inline.css">` 引它。
+
+   为什么要它：那颗 chip 是 inline-flex、名字又是 nowrap，它的 min-content 就是整条名字。
+   一行一旦按内容量宽（shrink-to-fit）或没有横向约束，就会被名字顶出容器 —— 窄屏横向
+   溢出、整页要横着滚。这里把 chip 压到所在行宽以内，名字自己走省略号；引用的文本、点击
+   都不动。
+
+   注意：它只管 chip 自己收得住。**装着它的一行本身也得有横向约束** —— flex 容器默认
+   `align-items: stretch` 就够；若那一行是 fit-content（如 `align-items: flex-start`）或
+   一个没被约束的 inline 盒，得先让那一行撑满容器（`width: 100%` / `align-items: stretch`），
+   否则 chip 没有可比的宽度。
+
+   24px = 那颗脸的宽度（`size` 16）加它和名字之间的间距（`gap` 8）。 */
+:deep(.identity-view) {
+  max-width: 100%;
+  vertical-align: middle;
+}
+:deep(.identity-view__text) {
+  max-width: calc(100% - 24px);
+}

@@ -96,6 +96,9 @@ const createdKey = computed(() =>
 .task-source {
   display: flex;
   flex-direction: column;
+  /* 每行撑满容器宽，而不是按内容 shrink-to-fit：名字那颗 chip 是 nowrap，按内容量宽会
+     让整行越过容器（窄屏横向溢出）。 */
+  align-items: stretch;
   gap: 2px;
   width: 100%;
   padding: 10px 16px;
@@ -113,6 +116,8 @@ button.task-source:hover {
 }
 .task-source__quote {
   display: -webkit-box;
+  /* 这一行 settle 到容器宽（配合 `.task-source` 的 stretch），名字那颗 chip 才收得住。 */
+  min-width: 0;
   overflow: hidden;
   -webkit-line-clamp: 3;
   line-clamp: 3;
@@ -121,3 +126,6 @@ button.task-source:hover {
   white-space: pre-wrap;
 }
 </style>
+
+<!-- 引文里那颗身份 chip 收得住（长名字省略号，不把这一行顶出容器）。见该文件里的说明。 -->
+<style scoped src="@/styles/identity-inline.css"></style>
