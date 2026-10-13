@@ -537,6 +537,9 @@ export const EXCERPTS: SpaceLearningExcerpt[] = [
     projectId: 'p1',
     student: 'alice',
     studentName: '爱丽丝',
+    // 自己挑过的头像 id（不是默认头像）；预览站里落成 `/api/avatars/5`。
+    studentAvatarId: 5,
+    studentIsAgent: false,
     topicTitle: '第 3 题：为什么天空是蓝的',
     createdAt: Date.parse('2026-09-28T09:12:00Z'),
     quote: '因为瑞利散射，短波长的光被散射得更多。',
@@ -548,6 +551,9 @@ export const EXCERPTS: SpaceLearningExcerpt[] = [
     projectId: 'p1',
     student: 'bob',
     studentName: '鲍勃',
+    // 没挑过头像：这一条正好把「没有头像」那一支画出来（彩色首字母）。
+    studentAvatarId: null,
+    studentIsAgent: false,
     topicTitle: '第 5 题：这道题我错在哪',
     createdAt: Date.parse('2026-09-28T10:31:00Z'),
     quote:

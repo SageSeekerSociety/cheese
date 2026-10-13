@@ -1,7 +1,7 @@
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import LearningView from './LearningView.vue'
@@ -101,10 +101,45 @@ describe('学习看板的独立画面', () => {
     expect(view.emitted()['update:knowledgePoint']).toEqual([[7]])
     await view.rerender({ student: 'alice', knowledgePoint: 7 })
     await view.rerender({ student: 'bob', knowledgePoint: null })
-    expect(view.container.querySelectorAll('.v-select__selection-text')[0]?.textContent).toBe('鲍勃')
-    expect(view.container.querySelectorAll('.v-select__selection-text')[1]?.textContent).toContain(
+    // 学生那一格画的是「脸 + 名字」：名字落在共用的身份视图里，不再是一段裸文字。
+    const cells = view.container.querySelectorAll('.an-bar .v-select')
+    expect(cells[0].querySelector('.identity-view__name')?.textContent).toBe('鲍勃')
+    expect(cells[1].querySelector('.v-select__selection-text')?.textContent).toContain(
       t('spaces.analytics.learning.allKnowledgePoints')
     )
+  })
+
+  it('学生下拉每一行都画成员的脸，选中的那一格也画', async () => {
+    const view = mount()
+    await fireEvent.mouseDown(view.getByRole('combobox', { name: t('spaces.analytics.learning.student') }))
+    const rows = await waitFor(() => {
+      const found = Array.from(document.querySelectorAll<HTMLElement>('.v-overlay--active .v-list-item'))
+      expect(found).toHaveLength(3)
+      return found
+    })
+    // 「全部成员」那一行背后没有具体的人，仍旧是纯文字。
+    expect(rows[0].querySelector('.identity-view')).toBeNull()
+    // 爱丽丝自己挑过头像（素材 id 5）→ 画的就是那张图，不是彩色首字母。
+    expect(rows[1].querySelector('.identity-view__face img')?.getAttribute('src')).toContain('/api/avatars/5')
+    // 鲍勃没挑过 → 退回按 handle 派生的彩色首字母，不是一张空白格。
+    expect(rows[2].querySelector('.user-avatar-char')?.textContent).toBe('鲍')
+    // 名字只画一次：抹掉 `title` 之后 Vuetify 自己那行标题不再叠在脸上。
+    expect(rows[1].textContent?.match(/爱丽丝/g)).toHaveLength(1)
+
+    await view.rerender({ student: 'alice' })
+    const cell = view.container.querySelectorAll('.an-bar .v-select')[0]
+    expect(cell.querySelector('.identity-view__name')?.textContent).toBe('爱丽丝')
+    expect(cell.querySelector('.identity-view__face img')?.getAttribute('src')).toContain('/api/avatars/5')
+  })
+
+  it('引用里那位学生也画脸，用的是他自己的素材 id 和 handle', () => {
+    const view = mount()
+    // 消息那一段的两条引用各来自一位学生：爱丽丝挑过头像，鲍勃没有 —— 两支降级都在这一屏里。
+    const students = view.container.querySelectorAll<HTMLElement>('.lr__quotes .quote-item__student')
+    expect(students[0].querySelector('.identity-view__name')?.textContent).toBe('爱丽丝')
+    expect(students[0].querySelector('.identity-view__face img')?.getAttribute('src')).toContain('/api/avatars/5')
+    expect(students[1].querySelector('.identity-view__name')?.textContent).toBe('鲍勃')
+    expect(students[1].querySelector('.user-avatar-char')?.textContent).toBe('鲍')
   })
 
   it('同一发言的两处勾选共用父级状态，清除和生成不自行修改数据', async () => {

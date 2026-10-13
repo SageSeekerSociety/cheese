@@ -1,9 +1,13 @@
 <template>
-  <!-- 形状（§3.14）：人是圆（`rounded="circle"`），团队、空间、项目是圆角方块。org 那一支
-       **不能写 `:rounded="false"`**：Vuetify 的 `false` 就是「方角」，它会挂上 `rounded-0`
-       ——`border-radius: 0 !important`——把下面 `shapeStyle` 里按边长算出来的圆角整条吃掉
-       （`.rounded-0` 的 !important 压得过内联样式），团队/空间/项目于是全变成直角。
-       传 `undefined` 是「这一层不表态」：圆角由 `squareRadius()` 一个人说。 -->
+  <!-- Shape (§3.14): a person is a circle (`rounded="circle"`); a team or a space is a rounded
+       square. The org branch **must not pass `:rounded="false"`**: in Vuetify `false` means
+       "square corners", so it adds `rounded-0` — `border-radius: 0 !important` — which wipes out
+       every radius `shapeStyle` computes below from the edge length (the `!important` on
+       `.rounded-0` outranks inline styles), turning teams/spaces into right angles altogether.
+       Passing `undefined` means "this layer has no opinion": `squareRadius()` alone decides.
+       Kept in English on purpose: Vitest keeps template comments in the DOM, and
+       `src/views/spaces/spaces.i18n.spec.ts` checks `innerHTML` for Chinese without stripping
+       comments (frontend/AGENTS.md, "Testing the rendered result"). -->
   <v-avatar
     :size="size"
     :rounded="kind === 'person' ? 'circle' : undefined"

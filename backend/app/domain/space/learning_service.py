@@ -44,12 +44,13 @@ from app.domain.block.authorship import participant_blocks
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import room_column
 from app.domain.identity.handles import agent_handle_column
+from app.domain.identity.services import IdentityService
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.topic.models import Topic
-from app.domain.user.models import User, UserProfile
+from app.domain.user.services import faces_by_handle
 
 # 一条「提问」在界面上占多少字。摘要是给人扫一眼的，完整的原文点回去看。
 QUOTE_LIMIT = 160
@@ -74,6 +75,8 @@ class _Question:
         "project_name",
         "student",
         "student_name",
+        "student_avatar_id",
+        "student_is_agent",
         "topic_title",
         "knowledge_point",
         "created_at",
@@ -87,6 +90,8 @@ class _Question:
         topic_id: uuid.UUID,
         project: Project,
         student_name: str,
+        student_avatar_id: int | None,
+        student_is_agent: bool,
         topic_title: str,
         knowledge_point: str | None,
         created_at: datetime,
@@ -98,6 +103,8 @@ class _Question:
         self.project_name = project.name
         self.student = project.owner_handle or ""
         self.student_name = student_name
+        self.student_avatar_id = student_avatar_id
+        self.student_is_agent = student_is_agent
         self.topic_title = topic_title
         self.knowledge_point = knowledge_point
         self.created_at = created_at
@@ -111,6 +118,8 @@ class _Question:
             "projectName": self.project_name,
             "student": self.student,
             "studentName": self.student_name,
+            "studentAvatarId": self.student_avatar_id,
+            "studentIsAgent": self.student_is_agent,
             "topicTitle": self.topic_title,
             "knowledgePoint": self.knowledge_point,
             "createdAt": int(self.created_at.timestamp() * 1000),
@@ -276,19 +285,29 @@ class SpaceLearningService:
         )
         return {block_id: room_id for block_id, room_id in rows}
 
-    async def _display_names(self, handles: set[str]) -> dict[str, str]:
-        """handle → 给人看的名字。名字在 profile 上，不在 user 上。"""
+    async def _student_faces(
+        self, handles: set[str]
+    ) -> dict[str, tuple[str, int | None, bool]]:
+        """handle → (名字, 自己挑过的头像 id, 是不是 AI 队友)。
+
+        这三件事是画一行学生要的全部（``identity`` 那套认人四要素里除了 handle 之外
+        的几项）。整张名单一次解析完，不逐行：名字和头像一起走 ``faces_by_handle``
+        （两次往返），「是不是队友」走 ``IdentityService.agents_among``（两次往返），
+        名单多长都是四次。
+
+        头像**只回他自己挑过的那个**：没挑过的是 None（前端画按 handle 派生的彩色
+        首字母），绝不退回全站默认头像 —— 那是所有没挑过的人共用的一张脸。判断「这
+        是不是真队友」认 agent-binding（``agents_among``），不按 handle 长相猜。
+        没起昵称就退回 handle，空白比 handle 更难认。
+        """
         if not handles:
             return {}
-        rows = (
-            await self._session.execute(
-                select(User.username, UserProfile.nickname)
-                .outerjoin(UserProfile, UserProfile.user_id == User.id)
-                .where(User.username.in_(handles))
-            )
-        ).all()
-        # 没起昵称就退回 handle —— 空白比 handle 更难认。
-        return {row[0]: (row[1] or row[0]) for row in rows}
+        faces = await faces_by_handle(self._session, handles)
+        agents = await IdentityService(self._session).agents_among(sorted(handles))
+        return {
+            handle: ((nickname or handle), avatar_id, handle in agents)
+            for handle, (nickname, avatar_id) in faces.items()
+        }
 
     async def _collect_questions(
         self,
@@ -338,7 +357,14 @@ class SpaceLearningService:
         ).all()
         titles_by_topic = {row[0]: row[1] for row in topic_rows}
 
-        names = await self._display_names({b.author for b in blocks})
+        # 只解析真的有发言的那几个项目的学生 —— 张榜的那些项目里，没发言的这次不画行。
+        faces = await self._student_faces(
+            {
+                projects[b.project_id].owner_handle
+                for b in blocks
+                if b.project_id in projects and projects[b.project_id].owner_handle
+            }
+        )
 
         result: list[_Question] = []
         for block in blocks:
@@ -348,14 +374,18 @@ class SpaceLearningService:
             name = _knowledge_point_name(
                 category_of_project, names_by_category, project.id
             )
+            owner = project.owner_handle or ""
+            student_name, student_avatar_id, student_is_agent = faces.get(
+                owner, (owner, None, False)
+            )
             result.append(
                 _Question(
                     block_id=block.id,
                     topic_id=rooms[block.id],
                     project=project,
-                    student_name=names.get(
-                        project.owner_handle or "", project.owner_handle or ""
-                    ),
+                    student_name=student_name,
+                    student_avatar_id=student_avatar_id,
+                    student_is_agent=student_is_agent,
                     topic_title=titles_by_topic.get(rooms[block.id], ""),
                     knowledge_point=name,
                     created_at=block.created_at,
@@ -374,10 +404,22 @@ class SpaceLearningService:
         projects = await self._load_projects(project_ids)
 
         owners = sorted({p.owner_handle for p in projects.values() if p.owner_handle})
-        names = await self._display_names(set(owners))
+        faces = await self._student_faces(set(owners))
+
+        students: list[dict[str, Any]] = []
+        for owner in owners:
+            name, avatar_id, is_agent = faces.get(owner, (owner, None, False))
+            students.append(
+                {
+                    "handle": owner,
+                    "name": name,
+                    "avatarId": avatar_id,
+                    "isAgent": is_agent,
+                }
+            )
 
         return {
-            "students": [{"handle": h, "name": names.get(h, h)} for h in owners],
+            "students": students,
             "knowledgePoints": await self._knowledge_point_options(space_id),
             "projectCount": len(projects),
         }
@@ -548,8 +590,12 @@ class SpaceLearningService:
             )
         ).all()
         titles_by_topic = {row[0]: row[1] for row in topic_rows}
-        names = await self._display_names(
-            {(projects[b.project_id].owner_handle or "") for b in readable}
+        faces = await self._student_faces(
+            {
+                projects[b.project_id].owner_handle
+                for b in readable
+                if projects[b.project_id].owner_handle
+            }
         )
 
         grouped: dict[str, list[Block]] = {}
@@ -565,13 +611,18 @@ class SpaceLearningService:
             for block in sorted(point_blocks, key=lambda b: b.created_at):
                 project = projects[block.project_id]
                 owner = project.owner_handle or ""
+                student_name, avatar_id, is_agent = faces.get(
+                    owner, (owner, None, False)
+                )
                 excerpts.append(
                     {
                         "blockId": str(block.id),
                         "topicId": str(rooms[block.id]),
                         "projectId": str(block.project_id),
                         "student": owner,
-                        "studentName": names.get(owner, owner),
+                        "studentName": student_name,
+                        "studentAvatarId": avatar_id,
+                        "studentIsAgent": is_agent,
                         "topicTitle": titles_by_topic.get(rooms[block.id], ""),
                         "createdAt": int(block.created_at.timestamp() * 1000),
                         "quote": _excerpt(block.content),

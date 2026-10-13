@@ -12,7 +12,7 @@
     <div class="quote-item__body">
       <p class="quote-item__quote">{{ excerpt.quote }}</p>
       <div class="quote-item__meta">
-        <span class="quote-item__student">{{ excerpt.studentName }}</span>
+        <IdentityView class="quote-item__student" v-bind="studentIdentity" :size="18" />
         <span v-if="excerpt.knowledgePoint" class="chip-neutral">{{ excerpt.knowledgePoint }}</span>
         <span v-if="excerpt.topicTitle">{{ excerpt.topicTitle }}</span>
         <span class="quote-item__time">{{ formatLearningTime(excerpt.createdAt) }}</span>
@@ -28,6 +28,7 @@
 <script setup lang="ts">
 import type { SpaceLearningExcerpt } from '@/types/apiSpaces'
 
+import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { useNavigation } from '@/composables/useNavigation'
@@ -35,6 +36,7 @@ import { useNavigation } from '@/composables/useNavigation'
 import { buildSourceLink, formatLearningTime } from '../helpers'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -45,6 +47,16 @@ const props = withDefaults(
 )
 
 const { t } = useI18n()
+
+/** 发言的学生是谁：handle、名字、自己挑过的头像、是不是队友。后端在这一条上给全了
+ *  四样（`student`/`studentName`/`studentAvatarId`/`studentIsAgent`），所以这里只把
+ *  它接上，不从正文反推。缺的字段交给 `IdentityView` 按 handle 兜底。 */
+const studentIdentity = computed(() => ({
+  handle: props.excerpt.student,
+  name: props.excerpt.studentName,
+  avatarId: props.excerpt.studentAvatarId ?? null,
+  agent: props.excerpt.studentIsAgent ?? null,
+}))
 
 const checked = defineModel<boolean>('checked', { default: false })
 
