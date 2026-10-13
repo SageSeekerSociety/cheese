@@ -71,7 +71,10 @@ func TestSessionCredentialsNeverOnACommandLine(t *testing.T) {
 		t.Fatalf("the session's program saw CHEESE_TOKEN=%q, want %q", seen, secret)
 	}
 
-	identity, _ := json.Marshal(map[string]any{"sid": "seat", "env": map[string]string{"CHEESE_TOKEN": secret}})
+	// No `$` in the identity: tmux 3.4 itself reads an option holding one back
+	// as `\$` (3.5 does not), however the value was set.
+	saved := strings.ReplaceAll(secret, "$", "")
+	identity, _ := json.Marshal(map[string]any{"sid": "seat", "env": map[string]string{"CHEESE_TOKEN": saved}})
 	if err := m.SaveIdentity("seat", "https://backend.test", string(identity)); err != nil {
 		t.Fatal(err)
 	}

@@ -188,14 +188,16 @@ func (m *Manager) SaveIdentity(name, owner, data string) error {
 	return nil
 }
 
-// tmuxQuote makes s one double-quoted word of tmux's command syntax that tmux
-// reads back as exactly s: a backslash, a quote, `$` (an environment
-// variable) and `~` (a home directory) are escaped, and so are line breaks,
-// which would otherwise end the command.
+// tmuxQuote makes s one word of tmux's command syntax that tmux reads back as
+// exactly s. Single quotes, because inside them tmux expands nothing (`$`, `~`
+// and `\` are taken literally by every tmux with this parser, while what a
+// backslash escape means inside double quotes differs between releases). The
+// characters single quotes cannot hold — a single quote, and a line break,
+// which would end the command — go in double-quoted pieces of the same word.
 func tmuxQuote(s string) string {
-	return `"` + strings.NewReplacer(
-		`\`, `\\`, `"`, `\"`, `$`, `\$`, `~`, `\~`, "\n", `\n`, "\r", `\r`,
-	).Replace(s) + `"`
+	return "'" + strings.NewReplacer(
+		"'", `'"'"'`, "\n", `'"\n"'`, "\r", `'"\r"'`,
+	).Replace(s) + "'"
 }
 
 func (m *Manager) Identities(owner string) (map[string]string, error) {
