@@ -102,7 +102,9 @@ describe('导出分析数据', () => {
   })
 
   it('接口不给文件时说一句，不当作已经存下', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }))
+    // 桩里带上 blob：真实的 Response 永远有它。少了它，删掉「非 2xx 当失败」那道判断后
+    // resp.blob() 会先抛 TypeError，照样落进同一个 catch，这条用例就分辨不出来了。
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500, blob: async () => new Blob(['oops']) }))
     const { saved } = watchDownload()
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
 

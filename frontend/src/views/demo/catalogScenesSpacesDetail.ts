@@ -71,9 +71,9 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '正在读取',
-        note: '候选正在获取时保留当前的全部选项。',
+        note: '候选正在获取时字段上多出一道加载条纹，当前选择不变。',
         props: { loading: true },
-        expectSelector: '[role="combobox"]',
+        expectSelector: '.v-field--loading',
       },
     ],
   },
