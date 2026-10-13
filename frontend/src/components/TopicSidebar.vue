@@ -81,8 +81,10 @@ const props = defineProps<{
   selectedTaskId?: string | null
   /** 正打开的东西在哪个频道里（见 `useTopicRail` 的同名字段）。 */
   hereChannelId?: string | null
-  /** 「浏览频道」那一页正开着。 */
+  /** 「全部频道」那一页正开着。 */
   browsingChannels?: boolean
+  /** 「全部任务」那一页正开着（底部「进行中的任务」那一行跟着亮起来）。 */
+  tasksOpen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -90,14 +92,16 @@ const emit = defineEmits<{
   (e: 'select-task', task: { roomId: string; taskId: string }): void
   // 频道下面最后那一行：展开或收起这个频道其余进行中的任务（读失败时是再读一次）。
   (e: 'toggle-tasks', channelId: string): void
-  // 「浏览频道」：去看这个项目的全部频道（侧栏只列加入了的）。
+  // 「全部频道」：去看这个项目的全部频道（侧栏只列加入了的）。
   (e: 'browse-channels'): void
+  // 「进行中的任务」：去看这个项目的全部任务（那一页里也有已经结束的）。
+  (e: 'open-tasks'): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
-  // 同上，按下去就先下代码：总览/资料库那一行和任务行（见 TopicRailPinnedRows、
+  // 同上，按下去就先下代码：资料库那一行和任务行（见 TopicRailPinnedRows、
   // TopicRailTaskRow 各自的 `press`）。
   (e: 'press-page', key: string): void
   (e: 'press-task', task: { roomId: string; taskId: string }): void
@@ -147,6 +151,10 @@ const {
 function hiddenTasks(channelId: string): number {
   return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - (props.roomTasks?.[channelId]?.length ?? 0))
 }
+
+// 清单第 14 条：底部那一颗数字、项目总览、频道卡片上写的都叫「进行中的任务」，都按
+// 同一个判据数（`underway_counts`：还开着、也没在合并后的收尾窗口里）。
+const underwayCount = computed(() => Object.values(props.roomTaskTotals ?? {}).reduce((sum, n) => sum + n, 0))
 function moreTaskRows(channelId: string) {
   const more = props.moreTasks?.[channelId]
   return more?.state === 'ready' ? more.rows : []
@@ -173,8 +181,9 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
   { rename: (topic) => (renamingTopicId.value = topic.id) }
 )
 
-// 项目级页面：总览和资料库摆在项目名下那一行，其余几页（全部任务在内）、项目文档、
-// 项目设置、转让或退出都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
+// 项目级页面：只有资料库摆在项目名下那一行，其余几页（总览、全部任务、项目文档、
+// 项目设置、转让或退出）都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，
+// 只换内容区。
 //
 // 「转让项目」两处都有（菜单里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
 // 或这个项目的团队管理员」，项目行自己就带着这个答案。
@@ -185,7 +194,7 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
 // 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
 // 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
 const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
-  // 总览是首页，项目名下那一行的第一格。
+  // 总览是首页：它不进项目名下那一行，从点项目名弹出的菜单进（清单第 9 条）。
   'workspace-overview': { label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
   'project-tasks': { label: 'navigation.project.tasks', icon: 'mdi-format-list-checks' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
@@ -201,7 +210,7 @@ const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
 const terms = computed(() => termParams(shell.value))
 
-// 项目名下那一行只有总览和资料库，其余都进点项目名弹出的菜单（`projectPageLayout`）。
+// 项目名下那一行只有资料库，其余（含总览）都进点项目名弹出的菜单（`projectPageLayout`）。
 // 那一行**不再加东西**，见 .claude/rules/project-sidebar.md。
 const layout = computed(() => projectPageLayout(shell.value, KNOWN_PROJECT_PAGES))
 
@@ -431,7 +440,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
-      <!-- 手机上的项目菜单。项目名下那一行（总览、资料库）在手机上也收进这里：列表只留
+      <!-- 手机上的项目菜单。项目名下那一行（资料库）在手机上也收进这里：列表只留
            频道。换项目也只能在这里——一个项目
            一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
       <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
@@ -469,7 +478,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         <template v-else>
           <!-- 列表顶上由外面填的一行（手机上是去项目总览的那一行，见 ProjectSidebar）。 -->
           <slot name="top" />
-          <!-- 项目名下面一行：总览和资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
+          <!-- 项目名下面一行：只有资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
           <TopicRailPinnedRows
             :pages="barPages"
             :route-name="routeName"
@@ -481,7 +490,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @cancel-prefetch="cancelPrefetch()"
           />
 
-          <!-- 新建频道在「浏览频道」那一页，这里不放「＋」：频道少而稳定，新建是一年几次
+          <!-- 新建频道在「全部频道」那一页，这里不放「＋」：频道少而稳定，新建是一年几次
                的事。 -->
           <div class="t-eyebrow side-subhead">{{ t('work.sidebar.topics') }}</div>
 
@@ -642,8 +651,20 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
             <TopicRailBrowseRow
               :label="t('work.channel.browse')"
+              icon="mdi-magnify"
               :selected="browsingChannels === true"
               @select="emit('browse-channels')"
+            />
+            <!-- 进行中的任务：项目和总览那两个入口在项目名那一行／项目菜单里（清单第 9
+                 条把总览从这一栏搬走了），但是「我手上还有多少活在跑」这一件事值得常驻
+                 一栏，所以这一行留着。数字的口径见 underwayCount。 -->
+            <TopicRailBrowseRow
+              :label="t('work.sidebar.underway')"
+              icon="mdi-progress-clock"
+              :selected="tasksOpen === true"
+              :count="underwayCount"
+              :hint="t('work.sidebar.underwayHint')"
+              @select="emit('open-tasks')"
             />
           </template>
         </template>

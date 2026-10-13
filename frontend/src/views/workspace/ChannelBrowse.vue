@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 「浏览频道」这一页（`/projects/:projectId/channels`）：取项目的频道列表，加入、退出、
+// 「全部频道」这一页（`/projects/:projectId/channels`）：取项目的频道列表，加入、退出、
 // 新建交给工作区 store，画法在 `ChannelBrowseView`。
 import type { ChannelEntry } from '@/types/channelDirectory'
 

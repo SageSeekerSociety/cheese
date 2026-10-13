@@ -236,11 +236,6 @@ class TaskService:
             accepted=accepted,
         )
 
-    async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-        """How many open tasks each of these rooms has; a room with none is
-        absent."""
-        return await self._repo.open_counts(room_ids)
-
     async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many tasks each of these rooms has underway (open, and not being
         written up after its last merge); a room with none is absent."""

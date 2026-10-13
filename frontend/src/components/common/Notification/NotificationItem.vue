@@ -15,10 +15,14 @@
 
       <div class="flex-grow-1 d-flex flex-column">
         <div class="d-flex flex-row justify-space-between align-center notification-item__top">
+          <!-- 这一条属于哪一档（需我处理 / 仅通知 / 系统提醒）。正文自己不知道自己在
+               哪一档，由列表按事由算好递进来。 -->
+          <span v-if="categoryLabel" class="chip-neutral me-2 flex-shrink-0">{{ categoryLabel }}</span>
           <component
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
+            class="flex-grow-1"
             @update-notification="onUpdateNotification"
           />
           <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
@@ -80,10 +84,14 @@
 
       <div class="flex-grow-1 d-flex flex-column">
         <div class="d-flex flex-row justify-space-between align-center notification-item__top">
+          <!-- 这一条属于哪一档（需我处理 / 仅通知 / 系统提醒）。正文自己不知道自己在
+               哪一档，由列表按事由算好递进来。 -->
+          <span v-if="categoryLabel" class="chip-neutral me-2 flex-shrink-0">{{ categoryLabel }}</span>
           <component
             :is="contentComponent"
             ref="contentRef"
             :notification="notification"
+            class="flex-grow-1"
             @update-notification="onUpdateNotification"
           />
           <span class="notification-item__time text-caption text-medium-emphasis">{{ formattedTime }}</span>
@@ -167,6 +175,8 @@ import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 
 const props = defineProps<{
   notification: Notification
+  // 这一条属于哪一档，已经译好；列表按事由算好递进来，行自己不做这个判断。
+  categoryLabel?: string
   onMarkAsRead: (notificationId: number) => void
   onDelete: (notificationId: number) => void
 }>()
