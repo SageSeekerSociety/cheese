@@ -966,6 +966,7 @@ def remember_for_media(response: Response, request: Request) -> None:
             path=f"{GATEWAY_MOUNT}{request.url.path}",
             max_age=settings.access_token_expires_seconds,
             httponly=True,
+            secure=settings.environment not in ("development", "test"),
             samesite="lax",
         )
 

@@ -103,7 +103,12 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
  *  at once and seeking reads only the part it lands on. */
 export async function attachmentMediaUrl(topicId: string, path: string): Promise<string> {
   const url = attachmentRawUrl(topicId, path)
-  const res = await fetch(url, { headers: { ...authHeaders(), Range: 'bytes=0-0' } })
+  // no-store: a cached answer would skip the response that renews the cookie,
+  // and once the old one expires the player's own range requests get 401.
+  const res = await fetch(url, {
+    headers: { ...authHeaders(), Range: 'bytes=0-0' },
+    cache: 'no-store',
+  })
   if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
   await res.body?.cancel()
   return url
