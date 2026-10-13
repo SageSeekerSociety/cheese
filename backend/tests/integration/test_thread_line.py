@@ -183,3 +183,67 @@ def test_a_thread_the_credits_refused_says_so_on_the_main_line(client):
 
     assert line["failed"] is True
     assert line["failed_code"] == "credits_exhausted"
+
+
+def _said(client, thread_id, author, content, meta):
+    """A message written straight into a 支线, the way an older version of the
+    platform wrote it."""
+
+    async def _write() -> None:
+        async with client.test_factory() as s:
+            thread = await s.get(Thread, uuid.UUID(thread_id))
+            assert thread is not None
+            s.add(
+                Block(
+                    project_id=thread.project_id,
+                    conversation_id=thread.id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author=author,
+                    content=content,
+                    meta=meta,
+                )
+            )
+            await s.commit()
+
+    client.portal.call(_write)
+
+
+def test_an_old_checklist_reply_is_still_known_as_a_checklist(client):
+    """Checklists written before their steps were stored as a structure carry
+    only a mark that they are one; their text is one marked step per line. The
+    line under the message has to be told, or it shows the steps folded into a
+    row of marks."""
+    tid = _channel(client)
+    root = post_message(client, tid, "alice", {"content": "照着赛题要求列出要做的几步"})
+    thread = _thread(client, root["id"], "alice")
+    _said(client, thread, "cheese", "✓ 读赛题\n✱ 列步骤\n○ 回结论", {"checklist": True})
+
+    line = _line_under(client, tid, root["id"])
+
+    assert line["last_reply"]["checklist"] is True
+
+
+def test_a_listed_thread_says_whether_its_message_was_cut(client):
+    """The list of a channel's 支线 carries a preview of each opening message.
+    Whoever draws the message itself from it must know when the preview is
+    not all of it."""
+    tid = _channel(client)
+    short = post_message(client, tid, "alice", {"content": "微信里打不开预览"})
+    long = post_message(client, tid, "alice", {"content": "长" * 500})
+    for root in (short, long):
+        post_message(
+            client, _thread(client, root["id"], "bob"), "bob", {"content": "收到"}
+        )
+
+    listed = client.get(
+        f"/topics/{tid}/threads", headers=session_auth_headers("alice")
+    ).json()["data"]
+    rows = listed["data"] if isinstance(listed, dict) else listed
+    roots = {r["root_block_id"]: r["root"] for r in rows}
+
+    assert roots[short["id"]]["truncated"] is False
+    assert roots[short["id"]]["content"] == "微信里打不开预览"
+    assert roots[short["id"]]["kind"] == "message"
+    assert roots[short["id"]]["author_type"] == "participant"
+    assert roots[long["id"]]["truncated"] is True

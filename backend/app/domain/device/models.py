@@ -180,7 +180,7 @@ class DeviceClaudeLoginRow(Base):
     # What `claude auth status` names: `claude.ai` for a subscription login, or
     # the API key kind, and for a subscription its plan (`max`, `pro`, …). A
     # machine whose owner set another model service is `model_service`
-    # (`owner_login.MODEL_SERVICE`), with the model it calls there.
+    # (`login_kind.MODEL_SERVICE`), with the model it calls there.
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)

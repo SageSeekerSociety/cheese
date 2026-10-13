@@ -690,7 +690,7 @@ PLATFORM_TOOLS = ToolTable(
                 "options": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "决策选项，配 decision_request",
+                    "description": "决策选项，decision_request 必带，至少两项",
                 },
             },
             ["title"],
@@ -737,7 +737,8 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_ask",
             "在房间里问人：每个问题是一条带快捷回复按钮的普通消息。问完就结束这一轮，"
             "不要等、不要轮询：人点一个选项或直接打字回复，那句回复会作为新消息开启你的"
-            "下一轮。选项只是快捷回复，人也可以说别的。",
+            "下一轮。界面总会在你给的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
+            "再放「其他」「都不是」「我自己说」这类兜底项，只写真正的候选。",
             {
                 "questions": {
                     "type": "array",
@@ -5326,6 +5327,9 @@ def main() -> None:
             )
             sys.exit(1)
         _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
+        if (res.get("data") or {}).get("already_shown"):
+            print(f"{rel} 和刚摆出来的那一份一样，对话里已经有这张卡，没有再摆一张。")
+            return
         brought = f"，连同它加载的 {len(assets)} 个文件" if assets else ""
         print(f"已把 {rel} 摆出来给对话里的人看（{kind}）{brought}。")
     elif a.cmd == "template":

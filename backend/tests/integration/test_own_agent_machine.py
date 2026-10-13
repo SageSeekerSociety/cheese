@@ -30,6 +30,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
+from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
@@ -237,6 +238,38 @@ async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):
     )
 
     assert placement.machine == own.bobs_laptop
+
+
+async def test_an_own_agents_session_does_not_start_on_a_kind_the_project_refuses(
+    client,
+):
+    # Bob's laptop signs in with his Claude subscription; the project allows
+    # only API keys.
+    own = await _own_session(client, environment_on="alice")
+    async with client.test_factory() as db:
+        login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
+        login.auth_method, login.subscription_type = "claude.ai", "max"
+        project = await db.get(Project, own.project_id)
+        project.settings = {
+            **(project.settings or {}),
+            "allow_own_agents": True,
+            "own_agent_kinds": ["api_key"],
+        }
+        await db.commit()
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+
+    with pytest.raises(ScreenSetupError) as refused:
+        client.portal.call(
+            lambda: channel.precheck(
+                SessionRef(
+                    own.project_id, own.topic_id, own.handle, harness="claude-code"
+                ),
+                needs_place=False,
+            )
+        )
+    assert "Claude 订阅" in str(refused.value), "the room is told which kind"
 
 
 async def test_another_members_machine_is_never_an_own_agents_session_host(client):

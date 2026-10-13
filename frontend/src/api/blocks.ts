@@ -2,6 +2,7 @@ import type { Block, ListPayload, ReactionAgg } from '../cx_types'
 
 import { rememberNumbered } from '../lib/addresses'
 
+import { changesAwaiting } from './awaitingChanged'
 import { request } from './http'
 
 // 机构看板 / Space 看板 (eval F3).
@@ -82,7 +83,9 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
 // the question as the room now records it, which every client also gets as a
 // `block_updated` frame.
 export function withdrawAnswer(questionId: string): Promise<Block> {
-  return request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
-    method: 'DELETE',
-  })
+  return changesAwaiting(
+    request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
+      method: 'DELETE',
+    })
+  )
 }

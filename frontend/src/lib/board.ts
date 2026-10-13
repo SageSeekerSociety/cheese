@@ -59,7 +59,7 @@ export function columnDotStyle(column: BoardColumn): Record<string, string> {
  *
  *  任务不归档，频道归档：一个频道收了尾，里面没走完的任务后端照样按它自己的状态落在
  *  未开始 / 进行中 / 检查中 / 待处理里，可频道归档了就没人会再去动它们——全部任务答的
- *  是「接下来谁要动什么」，它们不该在上面。已完成不筛：那是交付过的东西。 */
+ *  是「接下来谁要动什么」，它们不该在上面。已关闭的不筛：那是收了尾的东西。 */
 export function liveTasks<T extends { room_id: string; presentation: { column: BoardColumn } }>(
   tasks: readonly T[],
   archivedRoomIds: ReadonlySet<string>

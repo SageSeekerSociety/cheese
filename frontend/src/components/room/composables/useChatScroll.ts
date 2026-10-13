@@ -46,6 +46,8 @@ export interface ChatScroll {
   restoreScroll(topicId: string): void
   /** 这个话题再打开时会不会停在底部。 */
   restoresToBottom(topicId: string): boolean
+  /** 不再记这个话题停在哪：再打开时落到底部。 */
+  forgetScroll(topicId: string): void
 }
 
 export function useChatScroll(
@@ -55,9 +57,12 @@ export function useChatScroll(
      * 底部：不钉底、不跟新消息，位置也不记（回来时显示的是最新的一段）。
      */
     showingNewest?: () => boolean
+    /** 此刻这一栏是哪个话题：落到底部时替它记下「停在底部」。 */
+    topicId?: () => string | undefined
   } = {}
 ): ChatScroll {
   const showingNewest = options.showingNewest ?? (() => true)
+  const topicId = options.topicId ?? (() => undefined)
   const scrollRef = ref<HTMLElement | null>(null)
   const contentRef = ref<HTMLElement | null>(null)
 
@@ -169,13 +174,21 @@ export function useChatScroll(
     }, CATCH_UP_IDLE_MS)
   }
 
+  // 要的是最新那条，就连同「藏起来时停在哪」和记下的位置一起改掉：这一栏藏着时
+  // `place` 写不进去（见 `pendingTop`），滚动事件也不来，留着旧的那两份，露出来、或者
+  // 切走再回来时就会被放回一个指着别的内容的偏移——整段换过之后正是这样。
   function scrollToBottom() {
+    pendingTop = null
+    // 叫的时候是哪个话题就记给哪个：同一拍里切了话题的话，nextTick 里读到的是新的那个，
+    // 把它记成「停在底部」会盖掉它自己记下的位置。
+    const id = topicId()
     void nextTick(() => {
       const el = scrollRef.value
       if (el) {
         place(el, el.scrollHeight)
         atBottom.value = true
       }
+      if (id && showingNewest()) scrollMemory.set(id, { top: el?.scrollTop ?? 0, atBottom: true })
     })
   }
 
@@ -227,6 +240,11 @@ export function useChatScroll(
     })
   }
 
+  /** 不再记这个话题停在哪：再打开时落到底部。 */
+  function forgetScroll(topicId: string) {
+    scrollMemory.delete(topicId)
+  }
+
   /** 这个话题再打开时会不会停在底部：没记过，或者记下的就是底部。 */
   function restoresToBottom(topicId: string): boolean {
     const saved = scrollMemory.get(topicId)
@@ -251,5 +269,6 @@ export function useChatScroll(
     rememberScroll,
     restoreScroll,
     restoresToBottom,
+    forgetScroll,
   }
 }

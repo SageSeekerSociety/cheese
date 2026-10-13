@@ -300,6 +300,27 @@ describe('点一个文件，落在它真的在的那一格', () => {
     expect(readFile).not.toHaveBeenCalledWith('p1', '归档/老稿.docx', 'topic-A', 'task-new', 'live')
   })
 
+  it('这件任务的文件清单取不到 → 也退到项目当前版本，不停在开不出它的「改动」上', async () => {
+    listFiles.mockRejectedValue(new Error('upstream unavailable'))
+    readFile.mockResolvedValue({
+      path: 'src/b.ts',
+      content: 'export const b = 1\n',
+      version: 'v1',
+      bytes: 19,
+      binary: false,
+      too_large: false,
+    })
+    docSays('详见 <&src/b.ts>\n')
+
+    const { container } = mountPanel()
+    await flush()
+    await clickChip(container, 'src/b.ts')
+
+    expect(visible(container, '.panel-changes')).toBe(false)
+    expect(selectedTab(container)).toBe('b.ts')
+    expect(container.querySelector('[data-testid="project-file"]')).toBeTruthy()
+  })
+
   it('仓库树里的 .html 去「改动」：那是源码，不是房间里的那一份', async () => {
     // 这一支的工作副本里有它：.html 在那边是源码，该开在改动那格看 diff，不是当网页画。
     listFiles.mockResolvedValue({ data: [{ path: 'site/index.html', bytes: 40 }], total: 1 })

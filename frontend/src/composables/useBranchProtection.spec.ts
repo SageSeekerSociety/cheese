@@ -1,5 +1,6 @@
 // 分支保护的设置开关是乐观的：一翻就过去，服务端那份回来覆盖，失败弹回原值。
 import type { BranchProtection, BranchProtectionRules } from '@/branchProtection'
+import type { ProjectAgent } from '@/cx_types'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -13,7 +14,7 @@ vi.mock('@/api', async () => ({
 
 import { useBranchProtection } from './useBranchProtection'
 
-import { getBranchProtection, setBranchProtection } from '@/api'
+import { getBranchProtection, listProjectAgents, setBranchProtection } from '@/api'
 
 const rules = (over: Partial<BranchProtectionRules> = {}): BranchProtection => ({
   required_checks: [],
@@ -71,5 +72,34 @@ describe('分支保护开关的乐观更新', () => {
     await bp.saveBranchProtection({ auto_merge_allowed: false }, 'auto_merge_allowed')
     expect(bp.bp.value?.auto_merge_allowed).toBe(true)
     expect(bp.bp.value?.dismiss_stale).toBe(false)
+  })
+})
+
+// 调度座位那一栏填的是 AI 队友的席位，选的是「以后的活交给谁」；停用的队友
+// （`is_active: false`）不该出现，它已经待着的房间不受影响。
+describe('调度座位的候选人名单', () => {
+  const agent = (over: Partial<ProjectAgent> = {}): ProjectAgent => ({
+    configuration: { body: '', skills: [] },
+    id: 'a1',
+    project_id: 'p',
+    handle: 'h1',
+    seat_handle: 'cheese-live',
+    type_name: null,
+    display_name: '在用的',
+    is_default: false,
+    is_active: true,
+    ...over,
+  })
+
+  it('停用的不出现在名单里，在用的照旧出现', async () => {
+    vi.mocked(listProjectAgents).mockResolvedValue({
+      data: [agent(), agent({ id: 'a2', seat_handle: 'cheese-off', display_name: '停用的', is_active: false })],
+      total: 2,
+    })
+
+    const bp = await loaded()
+    // 第一项是「不指派」（空值），后面才是队友。
+    expect(bp.bpDispatchItems.value.map((i) => i.value)).toEqual(['', 'cheese-live'])
+    expect(bp.bpDispatchItems.value.map((i) => i.title)).not.toContain('停用的')
   })
 })

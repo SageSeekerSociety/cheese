@@ -9,9 +9,9 @@
 """
 
 import asyncio
-import hashlib
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 from sqlalchemy import delete, func, literal, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
@@ -32,18 +32,19 @@ async def _bytes_of(row: LibraryFileRecord) -> bytes:
 def _new_row(
     project_id: uuid.UUID,
     name: str,
-    data: bytes,
+    measured: tuple[int, str],
     *,
     added_by: str | None,
     room_id: uuid.UUID | None,
 ) -> LibraryFileRecord:
     record_id = uuid.uuid4()
+    size, sha256 = measured
     return LibraryFileRecord(
         id=record_id,
         project_id=project_id,
         name=name,
-        bytes=len(data),
-        sha256=hashlib.sha256(data).hexdigest(),
+        bytes=size,
+        sha256=sha256,
         added_by=added_by,
         room_id=room_id,
         location=blobs.LOCAL,
@@ -51,9 +52,9 @@ def _new_row(
     )
 
 
-async def _put(row: LibraryFileRecord, data: bytes) -> None:
-    # 资料库的字节都从这里落地，上限与房间文件是同一个（`service.MAX_FILE_BYTES`）。
-    service.refuse_oversize(data)
+async def _put(row: LibraryFileRecord, data: service.Content) -> None:
+    # 资料库的字节都从这里落地，上限与房间文件是同一条（`service.refuse_oversize`）。
+    service.refuse_oversize(row.bytes, row.name)
     await asyncio.to_thread(blobs.store(row.location).put, row.blob_key, data)
 
 
@@ -127,6 +128,18 @@ async def read_attachment(
     return await asyncio.to_thread(service.read_room_file, project_id, room_id, path)
 
 
+async def attachment_file(
+    session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
+) -> Path:
+    """一个附件的字节在磁盘上的位置，给按段读它的人：播放器拖进度条只要那一段，
+    两百兆的录屏不该为了一段整份读进内存。"""
+    name = service.library_name(path)
+    if name is not None:
+        row = await _current_or_404(session, project_id, name)
+        return await asyncio.to_thread(blobs.store(row.location).file, row.blob_key)
+    return await asyncio.to_thread(service.room_file_path, project_id, room_id, path)
+
+
 async def attachment_exists(
     session: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID, path: str
 ) -> bool:
@@ -166,7 +179,7 @@ async def add(
     session: AsyncSession,
     project_id: uuid.UUID,
     filename: str,
-    data: bytes,
+    data: service.Content,
     added_by: str | None,
     room_id: uuid.UUID | None,
 ) -> str:
@@ -174,11 +187,12 @@ async def add(
 
     `filename` 可以带文件夹（`合同/报价.xlsx`），编号加在最后一层上。占名字就是插
     入那一行：同一时刻两份同名的上传，唯一索引让后到的那一份去拿下一个号。"""
+    measured = await asyncio.to_thread(service.measure, data)
     for attempt in range(1, 1000):
         name = service.next_name(filename, attempt)
         if await _taken(session, project_id, name):
             continue
-        row = _new_row(project_id, name, data, added_by=added_by, room_id=room_id)
+        row = _new_row(project_id, name, measured, added_by=added_by, room_id=room_id)
         try:
             async with session.begin_nested():
                 session.add(row)
@@ -194,7 +208,7 @@ async def replace(
     *,
     project_id: uuid.UUID,
     name: str,
-    data: bytes,
+    data: service.Content,
     by: str,
 ) -> None:
     """把这个名字下的那一份换成新的字节。旧的那一份留着，不是删掉。
@@ -211,10 +225,11 @@ async def replace(
         {"key": f"library-file:{project_id}:{name}"},
     )
     current = await _current_or_404(session, project_id, name)
+    measured = await asyncio.to_thread(service.measure, data)
     try:
         current.superseded_at = datetime.now(UTC)
         await session.flush()
-        row = _new_row(project_id, name, data, added_by=by, room_id=None)
+        row = _new_row(project_id, name, measured, added_by=by, room_id=None)
         session.add(row)
         await session.flush()
     except IntegrityError:

@@ -51,6 +51,8 @@ const props = defineProps<{
   threadable?: boolean
   /** 这条消息的支线里谁正在回复（还没有回复时）；没有人时为 null。 */
   replyingFor?: (m: Block) => string | null
+  /** 那几位队友的 handle：支线那一行的头像里要有它们。 */
+  replyingSeatsFor?: (m: Block) => string[]
   /** 那位队友此刻在等什么（排队、重试……）；没有就是 null。 */
   threadStatusFor?: (m: Block) => string | null
   /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
@@ -580,6 +582,7 @@ const rowLabels = computed(() =>
                 v-guide-anchor="replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'"
                 :summary="m.thread ?? null"
                 :replying="replyingFor?.(m) ?? null"
+                :replying-seats="replyingSeatsFor?.(m) ?? []"
                 :status="threadStatusFor?.(m) ?? null"
                 :refs="refs"
                 :name-of="nameOf ?? String"

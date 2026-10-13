@@ -29,7 +29,9 @@ import {
   mentionsAgent as containsAgentMention,
   withAgentMention as addAgentMention,
 } from '../../lib/composerMentions'
+import { mentionSpans } from '../../lib/expandMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
+import { mentionWordKey } from '../../lib/mentionWordKeys'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
@@ -304,7 +306,19 @@ const coarse = typeof window !== 'undefined' ? window.matchMedia?.('(hover: none
 const enterSends = ref(!coarse?.matches)
 coarse?.addEventListener?.('change', (e: MediaQueryListEvent) => (enterSends.value = !e.matches))
 
+// 按词跳/选/删时，`@某某` 算一个词。认的是发送时会展开成提及的那几种写法——和
+// `expandMentions` 同一份名单，所以「这算不算一个提及」在输入框里只有一个答案。
+function draftMentionSpans(text: string) {
+  const seat = props.agentSeat
+  return mentionSpans(
+    text,
+    seat ? [seat, ...props.mentionPool] : props.mentionPool,
+    props.topicList.filter((t) => t.kind !== 'root')
+  )
+}
+
 function onComposerKey(e: KeyboardEvent) {
+  mentionWordKey(e, draftMentionSpans)
   // 翻进资料库之后，Esc 是退回一级的那一步（而不是把整个菜单关掉——@ 还在正文里）。
   // ← 也是；`@` 后面什么都没打时的退格也是——那一下要是删掉了 `@`，整个菜单就没了，
   // 人只是想回上一级。输入法选字时这几个键是给输入法的。
