@@ -84,7 +84,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     id: 'topic-rail-light',
     title: 'TopicRailLight',
     about:
-      '行尾那盏灯：一个 8px 的点，说这一行自己的状态。画哪一盏由 `lib/roomLight.ts` 的四条判据算好递进来，这一件只管画。',
+      '行尾那盏灯：一个 8px 的点。四盏说这一行自己的状态，判据在 `lib/roomLight.ts`；第五盏是蓝的，说的是「这条不归我」，由父级按归谁盖上（`useTopicRail.taskLight`），压过那四盏。这一件只管画。',
     file: 'src/components/topic-sidebar/TopicRailLight.vue',
     component: TopicRailLight,
     // `lightTitle` 要读词表（无障碍名字和 hover 那句话），所以得多装一个 i18n。
@@ -113,6 +113,12 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         note: '不闪。点开看过就灭，之后再有新活它回到呼吸绿。',
         props: { light: { kind: 'green', breathe: false } },
         expectSelector: '.row-light--green:not(.row-light--breathe)',
+      },
+      {
+        name: '蓝：这条不归我',
+        note: '别人负责的任务行用它，压过上面那四盏——这条活是别人的，先看清这个，再看它在跑还是卡住。它自己一个色相：红黄绿说的是状态，蓝说的是归谁。频道行没有蓝灯（频道不归谁）。',
+        props: { light: { kind: 'blue', breathe: false } },
+        expectSelector: '.row-light--blue',
       },
     ],
   },
@@ -153,7 +159,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '显示在跑、但没动静了（红灯）',
-        note: '五分钟没有输出。这一盏压过其余三盏——同时成立时只画它。',
+        note: '五分钟没有输出。这一盏压过黄和绿——同时成立时只画它。',
         props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'red', breathe: false } }),
         expectSelector: '.row-light--red',
       },
