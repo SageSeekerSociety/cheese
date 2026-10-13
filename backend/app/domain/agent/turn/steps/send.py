@@ -16,13 +16,7 @@ from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import SessionOpening, opening_changes
 from app.domain.agent.nonce import new_nonce
 from app.domain.agent.platform_notices import (
-    EVENT_PROMPT_REPLAYED,
-    EVENT_TURN_QUEUED,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
     delivery_checking_notice,
-    notice,
 )
 from app.domain.agent.service import AgentEvent, AgentResult
 from app.domain.agent.turn.state.live import HookWorkState, LiveWork
@@ -37,6 +31,14 @@ from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
     InputRegistrar,
+)
+from app.domain.notice_meta import (
+    EVENT_PROMPT_REPLAYED,
+    EVENT_TURN_QUEUED,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
 )
 
 logger = logging.getLogger(__name__)

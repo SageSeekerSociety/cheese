@@ -21,7 +21,7 @@ from redis.asyncio import Redis
 
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.notice_meta import (
     EVENT_TURN_QUEUED,
     SEVERITY_INFO,
     WHO_PLATFORM,
