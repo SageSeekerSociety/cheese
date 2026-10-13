@@ -387,6 +387,25 @@ def central_transport(executor, tmp_path):
         log.close()
 
 
+def test_a_platform_tool_call_that_breaks_is_not_answered_with_a_bare_key(
+    central_transport,
+):
+    """A checklist call that reached the transport without the build's call id
+    (FB-91) came back as the single word ``'id'``: the agent read it as the
+    tool's answer, not as the transport failing."""
+    process, _, _, _ = central_transport
+    with pytest.raises(RuntimeError) as failure:
+        process.call(
+            "tools/call",
+            {
+                "name": "todo_write",
+                "arguments": {"todos": [{"content": "补测试", "status": "pending"}]},
+            },
+        )
+    assert str(failure.value) != "'id'"
+    assert "KeyError" in str(failure.value)
+
+
 def test_platform_mcp_posts_literal_json_without_executor_invocation(central_transport):
     process, clients, _, work = central_transport
     tool = next(

@@ -128,13 +128,19 @@ def _reply(block: Block | None) -> dict | None:
         return None
     return {
         "author": block.author,
+        "author_type": block.author_type,
+        "kind": block.kind,
         "content": block.content[:LAST_REPLY_CHARS],
+        # A cut text is a preview, never the message: a reader drawing the
+        # whole message from it (the 支线 header before its read returns) must
+        # be able to tell.
+        "truncated": len(block.content) > LAST_REPLY_CHARS,
         "created_at": block.created_at.isoformat(),
         "checklist": _checklist(block),
     }
 
 
-def _checklist(block: Block) -> dict | None:
+def _checklist(block: Block) -> dict | bool | None:
     """The step checklist this message carries, or None when it carries none.
 
     The line under a message in the main line shows one step of the last
@@ -142,9 +148,12 @@ def _checklist(block: Block) -> dict | None:
     tell one step from the next are folded away on the way here, and the text
     is cut at ``LAST_REPLY_CHARS``. So the structure rides along with it — the
     same ``{"items", "result"}`` a block's ``meta.checklist`` holds. Messages
-    written before that structure existed carry a bare ``true``: they are
-    drawn as ordinary messages, and get no checklist here either."""
+    written before that structure existed carry a bare ``true``, passed on as
+    it is: their text is one marked step per line, and the line has to know
+    that to read a step out of it rather than show the row of marks."""
     checklist = (block.meta or {}).get(CHECKLIST_META_KEY)
+    if checklist is True:
+        return True
     if not isinstance(checklist, dict) or not isinstance(checklist.get("items"), list):
         return None
     return checklist

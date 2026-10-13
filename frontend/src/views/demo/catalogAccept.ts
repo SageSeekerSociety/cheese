@@ -242,7 +242,8 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
   {
     id: 'accept-delivering-face',
     title: 'AcceptDeliveringFace',
-    about: '「已采纳，但合并没走完」那张兜底脸：只读、不转圈，念一句后端写在卡上的故障，再挂上真 PR 和它的 CI。',
+    about:
+      '「采纳了，但那一版没合并进主线」那张兜底脸：只读、不转圈，念一句后端写在卡上的故障，再挂上真 PR 和它的 CI。',
     file: 'src/components/accept/AcceptDeliveringFace.vue',
     component: AcceptDeliveringFace,
     needs: ['vuetify', 'i18n'],
@@ -251,7 +252,7 @@ export const ACCEPT_ENTRIES: CatalogEntry[] = [
         name: '只是没合完',
         note: '采纳即合并（#718）之后这个状态也不会再有新卡进来（存量已经迁回待采纳），所以这里一个动作都不给：它只说明卡停在哪。',
         props: { card: ACCEPT_DELIVERING_ONE, checks: ACCEPT_CHECKS, note: null },
-        expect: '已采纳，但合并未完成',
+        expect: '采纳的这一版没合并进主线',
       },
       {
         name: '后端还写了句故障',

@@ -20,8 +20,7 @@ from dataclasses import dataclass, replace
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_instance.models import OwnAgent, OwnCallers
-from app.domain.agent_instance.own import owned_in_project
+from app.domain.agent_instance.own import allows_own_agents, owned_in_project
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.identity.services import IdentityService
@@ -174,7 +173,12 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     ]
     at = {row.handle: index for index, row in enumerate(rows)}
     owners = await _owners_of_own_agents(session, project_id)
+    # A project closed to members' own agents has withdrawn them: they are not
+    # in it, not merely uncallable. Opened again, they are back.
+    withdrawn = not allows_own_agents(project.settings if project else None)
     for instance in await AgentInstanceService(session).list_for_project(project_id):
+        if withdrawn and instance.id in owners:
+            continue
         seat = agent_instance_handle(instance.id)
         name = instance.display_name or instance.handle
         name_source = AgentInstanceService.resolved(instance).name_source.value
@@ -230,21 +234,17 @@ async def _owners_of_own_agents(
     if not owned:
         return {}
     rows = await session.execute(
-        select(User.id, User.username).where(User.id.in_({o for _, o in owned}))
+        select(User.id, User.username).where(
+            User.id.in_({owner for _, owner, _ in owned})
+        )
     )
     users: dict[int, str] = {user_id: name for user_id, name in rows.all()}
-    callers: dict[uuid.UUID, OwnCallers] = {
-        instance_id: who
-        for instance_id, who in await session.execute(
-            select(OwnAgent.instance_id, OwnAgent.callers).where(
-                OwnAgent.instance_id.in_([instance.id for instance, _ in owned])
-            )
-        )
-    }
+    # 谁可以叫它随行读出来：``OwnAgent`` 那一行是 ``agent_instance`` 的，读它的
+    # 地方在 ``own``（C5 分层：membership 在第 2 层，够不到第 5 层的 models）。
     return {
-        instance.id: (users[owner], callers[instance.id].value)
-        for instance, owner in owned
-        if owner in users and instance.id in callers
+        instance.id: (users[owner], callers.value)
+        for instance, owner, callers in owned
+        if owner in users
     }
 
 

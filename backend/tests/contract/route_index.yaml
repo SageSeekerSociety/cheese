@@ -7,6 +7,13 @@
 # 不再停在上面的快照上。同理：_create_task_entity 的签名随这轮搬家从
 # routes/tasks/_common.py 往下挪，仍指该文件，行号改成挪完后的 181；任务详情那两道闸
 # （ensure_task_readable）从来不在 _common.py 里，改指 app/domain/task/services.py。
+# 同一轮的下一片把 routes/topics.py 的共用件搬进了 app/api/topics_deps.py：
+# _actor_in_place 与 _parse_moment 现在是那边的函数（下文两处 actor.topic /
+# address.reader 的口径随之改写），routes/topics.py 也不再转发 Block / BlockKind /
+# BlockOut / BlockRepository / ProjectRepository / UsageRepository——各 topics_*
+# 改从 app/api/topics_deps.py 取。TopicRow / CardRow 两个行协议不在那一批里：#3545
+# 把 routes/topics_rows.py 整个挪成了 app/api/topics_rows.py，topics.py 改从那里取。
+# 没有 cite 指向上面这几个文件，例外只涉及这两处文字口径。
 # 上面这份快照之后的漂移不在这条例外之内，其余行号维持快照口径。
 # Addresses cover the real regenerated profiled snapshot in scripts/route_index.json.
 # Each address is explicit. Catalog ids only share explanatory text; the app never reads this sidecar.
@@ -18,7 +25,7 @@ auth_entries:
   platform.admin: "PlatformAdminDep -> admin_deps.require_platform_admin: ActorResolver.resolve, authz.policy.refuse_management_action (including agent binding), then AdminService.require_admin. Configured root admins and platform_admins are the allow-list. Source: app/api/admin_deps.py."
   feedback.admin: "FeedbackAdminDep -> admin_feedback.require_feedback_admin: resolve caller, refuse_management_action with IdentityService agent binding, then FeedbackService.require_admin. Source: app/api/routes/admin_feedback.py."
   actor.project: "ActorResolver.resolve(project_id=...) then authorize_project; app/api/auth.py checks project membership when authz_enforce_topic_access is enabled, with its explicit global sandbox development override. An agent per-turn credential reads (not writes) instead through its own conversation: seated in that room, and nobody the room shows things to is outside the project (auth.project_access.outsiders_reading). The setting is a real limit, not an unconditional login claim."
-  actor.topic: "ActorResolver.resolve in the actual room/project then authorize_topic, directly or through topics._actor_in_place / room_files._in_room. app/api/auth.py applies the roster policy when authz_enforce_topic_access is enabled; ordinary calls do not force that setting. The actor comes from the credential only; no body or query field names it."
+  actor.topic: "ActorResolver.resolve in the actual room/project then authorize_topic, directly or through topics_deps._actor_in_place / room_files._in_room. app/api/auth.py applies the roster policy when authz_enforce_topic_access is enabled; ordinary calls do not force that setting. The actor comes from the credential only; no body or query field names it."
   actor.topic.enforced: "ActorResolver.resolve in the actual room/project then authorize_topic(enforce=True); ignores the topic-access kill switch, retaining the resolver global sandbox development override. Source: app/api/auth.py and the cited handler."
   actor.topic.verified: "Room-context ActorResolver.resolve + authorize_topic, plus an explicit authenticated-caller check or require_verified_caller in the cited handler/helper. Topic membership retains the authz_enforce_topic_access setting unless enforce=True is specified there."
   project.manager: "ActorResolver resolves/authorizes project and MemberService.require_manager decides management access. This is the membership service seam, not an admin router-name convention. Source: app/domain/membership/services.py and cited handler."
@@ -26,6 +33,7 @@ auth_entries:
   project.owner: "projects._project_owner: require_verified_caller, project.owner_handle equality; members who are not owners are refused and outsiders get NotFound. Does not use authorize_project, so the one permitted unarchive write can cross the archive guard. Source: app/api/routes/projects.py."
   project.create: "projects.create_project requires an authenticated caller, who becomes the owner (the body has no owner field), checks _require_team_membership and _require_claim before attaching team/task. These association checks are independent of the topic-access kill switch. Source: app/api/routes/projects.py and its two helpers."
   project.list: "projects.list_projects resolves/rejects failed credentials; handles caller-visible project listing or authorize_team for a team filter and require_verified_caller for the self filter. Source: app/api/routes/projects.py. Different query branches are intentional, not a universal public listing."
+  task.teach: "authenticated(require_auth_user rejects guest user_id=0; numeric-account identity comes through get_auth_user); the task's creator OR its board's owner/admin via may_teach_task — the same gate the participant roster and the participant PATCH use. Source: app/api/routes/tasks/external_problem.py, app/auth/checker.py:142, app/auth/space_access.py:54."
   task.visibility: "ActorResolver.resolve then authorize_task delegates visibility to domain/task/TaskVisibilityService, subject to authz_enforce_topic_access; nonexistent task returns the unchanged empty result. Source: app/api/auth.py and projects.projects_for_task."
   team.access: "ActorResolver.resolve then authorize_team requires verified team membership when authz_enforce_topic_access is enabled. Source: app/api/auth.py; cited handler."
   artifact.keeper: "projects_artifacts._artifact_keeper: ProjectService.get_or_404, ActorResolver.require_verified_caller(project_id), authorize_project. Index records those concrete checks; the helper human-only comment is not treated as a separate implemented policy. Source: app/api/routes/projects_artifacts.py."
@@ -92,7 +100,7 @@ auth_entries:
   delegated.self: "ActorResolver.resolve(); the caller must be authenticated with a user id: a person's login, or a delegated credential (sandbox_auth.DelegatedClaims, cxdg_ prefix) that api.auth.DELEGATED_ROUTES admits here and resolves to the person the 芝士 answers for. Lists only that person's own rows. Source: app/api/routes/tasks/participation.py; app/api/auth.py."
   document.human: "document_agent._asker uses api/doc_access.reach(enforce=True) and doc_identity.human_operation_actor (verified human, not agent identity); a box conversation is held in Valkey with its asker and document, and only that person on that document may go on with it, stop it, or put its answer into a thread they started. Source: app/api/routes/document_agent.py; app/domain/agent/document/box.py; app/api/doc_identity.py."
   collab.service: "living_docs._service: the bearer derived from COLLAB_SECRET (living_doc.collab.verify_service); only the collaboration service holds it. Identity in a store comes from the actors it carries, which the service took from backend-signed tickets or from the backend's own replace call. Source: app/api/routes/living_docs.py."
-  address.reader: "addresses._readable_project resolves the project a slug, former slug or id names, then ActorResolver.resolve(read_only) and authorize_project; a refusal is answered as NotFound so an address reveals no project. A numbered task or channel is then held to its room through topics._actor_in_place, a document through api/doc_access.reach, again refused as NotFound. Source: app/api/routes/addresses.py."
+  address.reader: "addresses._readable_project resolves the project a slug, former slug or id names, then ActorResolver.resolve(read_only) and authorize_project; a refusal is answered as NotFound so an address reveals no project. A numbered task or channel is then held to its room through topics_deps._actor_in_place, a document through api/doc_access.reach, again refused as NotFound. Source: app/api/routes/addresses.py."
   address.refs: "addresses.resolve_refs answers each id by the project it is in: ActorResolver.resolve(project_id, read_only) then readable_topic_ids over the rooms the ids are in; an id in a room the caller may not read is left out of the answer, as one that names nothing is. Source: app/api/routes/addresses.py."
   project.documents: "living_docs project routes resolve in the project then api/doc_access.authorize_in_project: a member (authorize_project), or 芝士 with its session credential naming one of the project's rooms, refused once taken off that room (refuse_unseated_agent). Creating also requires an authenticated actor and refuses an archived project. Source: app/api/routes/living_docs.py; app/api/doc_access.py."
   document.app.writer: "doc_apps: api/doc_access.reach(enforce=True) on the app's own document, then doc_access.require_writable; the writer must be 芝士 — its own credential, or a document 芝士's delegated one (api.auth.DELEGATED_ROUTES) — and a person's session is refused (doc_apps._writer). Source: app/api/routes/doc_apps.py; app/api/doc_access.py."
@@ -116,7 +124,7 @@ auth_entries:
   app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
   notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
   topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService.require_manager admits the channel's creator and whoever manages the project. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
-  topic.archive: "topics archive/unarchive resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler. Source: app/api/routes/topics.py onward."
+  topic.archive: "topics archive/unarchive/delete resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler, and delete refuses the project's own overview in the service. Source: app/api/routes/topics_lifecycle.py onward."
   topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
   topic.channel.manage: "topics_channel description goes through TopicMemberService.require_manager (creator or project manager) after authorize_topic. Source: app/api/routes/topics_channel.py."
   topic.names: "topics.list_topic_names resolves/rejects failed credential and limits names to caller visible project IDs; not a raw global room directory. Source: app/api/routes/topics.py."
@@ -354,6 +362,7 @@ owners:
   space.publishing: "Learning board member publishing history; domain/space/member_publishing_service.py."
   space.organization: "Learning board categories/groups/management roles; domain/space/SpaceService and tags_service."
   tag: "Content classification labels; domain/tag/TagService."
+  external_problem: "A task's number on an external judge (YOJ), each participant's result there, and the teacher account the platform syncs with; domain/external_problem."
   task: "External learning-task publication/participation/submission/review; domain/task services. Distinct from domain/room_task."
   team: "Team discovery/membership/shared resources; domain/team/TeamService and membership services."
   user: "Account registration/sign-in/profile/security; domain/user services, composed with OAuth/legal/invite by user route."
@@ -415,6 +424,8 @@ routes:
   # app.api.routes.admin_integrations
   - {protocol: "http", method: "GET", path: "/admin/integrations/feishu", auth: "platform.admin", owner: "integration"}
   - {protocol: "http", method: "PUT", path: "/admin/integrations/feishu", auth: "platform.admin", owner: "integration"}
+  - {protocol: "http", method: "GET", path: "/admin/integrations/external-problem", auth: "platform.admin", owner: "external_problem"}
+  - {protocol: "http", method: "PUT", path: "/admin/integrations/external-problem", auth: "platform.admin", owner: "external_problem"}
   # app.api.routes.admin_members
   - {protocol: "http", method: "GET", path: "/admin/admins", auth: "platform.admin", owner: "admin"}
   - {protocol: "http", method: "GET", path: "/admin/users", auth: "platform.admin", owner: "admin"}
@@ -557,7 +568,10 @@ routes:
   - {protocol: "ws", method: "WS", path: "/connector/agent", auth: "device.agent.ws", owner: "device"}
   - {protocol: "ws", method: "WS", path: "/connector/session/{sid}/screen", auth: "device.viewer.ws", owner: "device"}
   - {protocol: "http", method: "GET", path: "/connector/my/devices", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "GET", path: "/connector/my/model-connections", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "PUT", path: "/connector/my/devices/{device_id}/claude-code/model-service", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/sandbox", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "PATCH", path: "/connector/my/devices/{device_id}", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}", auth: "device.user", owner: "device"}
@@ -1061,6 +1075,11 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "PUT", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
   - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/participants/{participantId}/submissions/{submissionId}/review", auth: "legacy.tasks.post_task_submission_review", owner: "task"}
+  # app.api.routes.tasks.external_problem（后加的一段，排在 include 顺序末尾）
+  - {protocol: "http", method: "GET", path: "/tasks/{taskId}/external-problem", auth: "task.teach", owner: "external_problem"}
+  - {protocol: "http", method: "PUT", path: "/tasks/{taskId}/external-problem", auth: "task.teach", owner: "external_problem"}
+  - {protocol: "http", method: "DELETE", path: "/tasks/{taskId}/external-problem", auth: "task.teach", owner: "external_problem"}
+  - {protocol: "http", method: "POST", path: "/tasks/{taskId}/external-problem/sync", auth: "task.teach", owner: "external_problem"}
   # app.api.routes.teams
   - {protocol: "http", method: "GET", path: "/teams", auth: "legacy.teams.get_teams", owner: "team"}
   - {protocol: "http", method: "GET", path: "/teams/my-teams", auth: "legacy.teams.get_my_teams", owner: "team"}
@@ -1114,6 +1133,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/archive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/cleanup", auth: "actor.topic.enforced", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
+  - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/check-result", auth: "actor.topic", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/clone-from", auth: "actor.topic", owner: "topic"}
   # app.api.routes.topics_attachments
@@ -1196,6 +1216,7 @@ routes:
   - {protocol: "http", method: "PATCH", path: "/topics/{topic_id}/task", auth: "actor.topic", owner: "room_task"}
   # app.api.routes.topics_threads
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/threads", auth: "actor.topic", owner: "thread"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/thread", auth: "actor.topic", owner: "thread"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/thread", auth: "actor.topic", owner: "thread"}
   # app.api.routes.topics_title

@@ -112,12 +112,17 @@ async def record_agent(
 
 async def record_task_instruction(
     session, event: DeliveryEvent, *, task: Task, content: str
-):
+) -> uuid.UUID | None:
     """Keep an instruction for a task's own session until it is delivered.
 
     Addressed to the conversation, not the room: ``conversation_id`` is the task's
     id, which is what the runner runs a turn in, and the agent is the one working
     the task (its own pick, else its room's) — the one that answers there.
+
+    Returns the instance it addressed, or ``None`` when the task's project or
+    room is gone and nothing was recorded. A caller that also addresses a
+    configured seat compares against it: one event must not start two turns of
+    the same agent (``review.room_notices._tell_the_dispatch_seat``).
     """
     # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
@@ -125,7 +130,7 @@ async def record_task_instruction(
     project = await session.get(Project, task.project_id)
     room = await session.get(Topic, task.room_id)
     if project is None or room is None:
-        return
+        return None
     agent = await AgentInstanceService(session).for_task(
         project, room, task.agent_handle
     )
@@ -147,6 +152,7 @@ async def record_task_instruction(
         )
         .on_conflict_do_nothing(index_elements=["dedup_key"])
     )
+    return agent.instance_id
 
 
 async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
@@ -198,6 +204,12 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 ):
                     row.state = "failed"
                     row.last_error = "The task is no longer open"
+                    continue
+                if (row.payload or {}).get(CLOSES_TASK) and task.closing_since is None:
+                    # The write-up of a task that went on instead of closing
+                    # (`review.task_landing`): it has nothing to write up.
+                    row.state = "failed"
+                    row.last_error = "The task went on instead of closing"
                     continue
             else:
                 # A room's own line, or one of its 支线: the roster is the room's.

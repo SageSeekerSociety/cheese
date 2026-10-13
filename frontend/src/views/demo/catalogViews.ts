@@ -47,7 +47,7 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
   // 自己那一册里，展开进来。
   ...VIEW_SPACE_TASKS_ENTRIES,
   // 账号设置的那几屏（通用、通知、资料、实名、密码与安全、这台设备）和项目工作台的那几
-  // 屏（浏览频道、全部任务、项目总览）也在自己那一册里，展开进来。
+  // 屏（全部频道、全部任务、项目总览）也在自己那一册里，展开进来。
   ...VIEW_SETTINGS_WORKSPACE_ENTRIES,
   {
     id: 'artifact-version-list',

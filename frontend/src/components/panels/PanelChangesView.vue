@@ -214,7 +214,7 @@ function dirOf(path: string): string {
   return cut < 0 ? '' : path.slice(0, cut + 1)
 }
 
-// 顶部那块和文件清单滚出去以后，这一列顶上留一条细栏：现在读到哪个文件、第几个，以及
+// 顶部那块和文件清单滚出去以后，这一列顶上留一条细栏：现在读到第几个文件，以及
 // 「打开其他文件」和 ⋯。没有顶部那块（没有待审阅的卡）时它一直在。
 const scroller = ref<HTMLElement | null>(null)
 const summaryEl = ref<HTMLElement | null>(null)
@@ -249,7 +249,6 @@ function onScroll() {
   })
   currentIndex.value = at
 }
-const currentDiff = computed(() => listDiffs.value[currentIndex.value] ?? null)
 
 // 全部改动那一面说一共改了多少。
 const totals = computed(() =>
@@ -570,14 +569,12 @@ const fileRows = computed(() =>
                 @remove-comment="(id) => void props.review?.remove(id)"
               />
             </div>
-            <!-- 滚过顶部之后的那条细栏：读到哪个文件、第几个。 -->
+            <!-- 滚过顶部之后的那条细栏：读到第几个文件。是哪个文件不在这里说——那个文件的
+                 段头贴在这条栏正下方（ChangesDiffList 的 sticky 段头），已经写着完整路径。 -->
             <div v-if="floatShown && props.fileToolReady" class="changes-float">
-              <span class="changes-float__path" :title="currentDiff?.path">{{
-                currentDiff ? currentDiff.path.split('/').slice(-2).join('/') : ''
+              <span v-if="listDiffs.length" class="changes-float__count">{{
+                t('work.room.changes.fileOfTotal', { current: currentIndex + 1, total: listDiffs.length })
               }}</span>
-              <span v-if="listDiffs.length" class="changes-float__count"
-                >{{ currentIndex + 1 }} / {{ listDiffs.length }}</span
-              >
               <v-spacer />
               <BaseButton kind="ghost" size="sm" prepend-icon="mdi-magnify" @click="pickerOpen = true">
                 {{ t('work.room.changes.openOther') }}
@@ -799,21 +796,11 @@ const fileRows = computed(() =>
   border-bottom: 1px solid var(--line);
   background: var(--surface);
 }
-.changes-float__path {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ink);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: var(--lh-12);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .changes-float__count {
   flex: none;
-  color: var(--faint);
-  font-size: 12px;
-  line-height: var(--lh-12);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
   font-variant-numeric: tabular-nums;
 }
 

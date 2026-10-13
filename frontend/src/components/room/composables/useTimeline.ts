@@ -209,6 +209,19 @@ export function useTimeline(options: TimelineOptions = {}) {
     oldestId = middle.blocks[0]?.id ?? null
   }
 
+  /**
+   * 最新的一段整个换成这一页，显示的这一段原样不动：读的人正停在别处（往上翻着，或者
+   * 本来就停在历史中间），换上来的又和屏幕上这段接不上（断线期间来了不止一页）。这一段
+   * 于是成了「历史中间的一段」，新的那页收在背后——「回到最新」直接换上来，往下翻时
+   * 按重合的那条接上。
+   */
+  function holdNewest(fresh: BlockWindow) {
+    newestHeld = { blocks: fresh.blocks.filter(renders), hasMore: fresh.hasMore }
+    hasNewer.value = true
+    newestSeen = null
+    seen(fresh.blocks.at(-1))
+  }
+
   /** 往下翻到的那一页接到显示的这一段末尾；接上最新的一段就合成一段。 */
   function appendNewer(page: Block[], reachedNewest: boolean) {
     if (!newestHeld) return
@@ -253,6 +266,7 @@ export function useTimeline(options: TimelineOptions = {}) {
     prepend,
     capNewest,
     showMiddle,
+    holdNewest,
     appendNewer,
     backToNewest,
   }

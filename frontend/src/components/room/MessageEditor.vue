@@ -14,8 +14,12 @@ import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { Topic } from '../../cx_types'
 
 import { nextTick, onMounted, ref, watch } from 'vue'
+import { useResizeObserver } from '@vueuse/core'
 
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
+
+import { mentionSpans } from '../../lib/expandMentions'
+import { mentionWordKey } from '../../lib/mentionWordKeys'
 
 import MentionMenu from './MentionMenu.vue'
 
@@ -39,9 +43,6 @@ const emit = defineEmits<{
 
 const draft = ref(props.text)
 const input = ref<HTMLTextAreaElement | null>(null)
-// 框长到 12 行封顶，再长就在框里滚，不把这一条撑满整屏。`rows` 只数硬换行，一段长的
-// 正文折了行它也不长，所以高度得量：12 × 24px 行高 + 上下各 6px 留白 + 上下各 1px 边。
-const MAX_HEIGHT = 302
 
 const mentionMenu = ref<InstanceType<typeof MentionMenu> | null>(null)
 const picker = useRoomMentionPicker({
@@ -64,6 +65,8 @@ function isImeKey(e: KeyboardEvent) {
   return e.isComposing || e.keyCode === 229
 }
 
+// 框跟着正文长高。`rows` 只数硬换行，一段长的正文折了行它也不长，所以高度得量；
+// 封顶（12 行）写在样式的 `max-height` 上，按行高算，再长就在框里滚。
 function grow() {
   const box = input.value
   if (!box) return
@@ -72,7 +75,7 @@ function grow() {
   // `scrollHeight` 是内容加留白、不含边框，而高度是 border-box：差的这 2px 不加回来，
   // 量出的框永远比内容矮一点，里面会挂一条用不着的滚条。
   const border = box.offsetHeight - box.clientHeight
-  box.style.height = `${Math.min(box.scrollHeight + border, MAX_HEIGHT)}px`
+  box.style.height = `${box.scrollHeight + border}px`
 }
 
 onMounted(async () => {
@@ -86,9 +89,24 @@ onMounted(async () => {
 
 // 打字、粘贴、删行都会改正文，长度跟着变。
 watch(draft, () => void nextTick(grow))
+// 框变窄（拖窄侧栏、缩窗口）时同一段字折成更多行，正文没变也得重量一次。只看宽度：
+// grow 自己改的是高度，跟着高度再量一遍只会原地打转。
+let measuredWidth = -1
+useResizeObserver(input, (entries) => {
+  const width = entries[0]?.contentRect.width ?? -1
+  if (width === measuredWidth) return
+  measuredWidth = width
+  grow()
+})
+
+// 按词跳/选/删时，`@某某` 算一个词——和发消息的输入区同一套。
+function editMentionSpans(text: string) {
+  return mentionSpans(text, props.mentionPool ?? [], props.topicList ?? [])
+}
 
 function onKey(e: KeyboardEvent) {
   if (isImeKey(e)) return
+  mentionWordKey(e, editMentionSpans)
   // 和发消息的输入区同一套：↑/↓ 换高亮（输入法选字时让给输入法）；Esc 收起候选、
   // `@` 还留在正文里；有候选时 Enter 挑人，没有则照旧保存这条编辑。
   const arrow = e.key === 'ArrowDown' || e.key === 'ArrowUp'
@@ -159,6 +177,9 @@ function onKey(e: KeyboardEvent) {
 }
 .msg-edit__input {
   width: 100%;
+  /* 长到 12 行封顶，再长就在框里滚，不把这一条撑满整屏：12 行行高，加上下留白和
+     上下边（框是 border-box）。 */
+  max-height: calc(12 * var(--lh-15-reading) + 2 * 6px + 2px);
   padding: 6px 10px;
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);

@@ -19,13 +19,14 @@ from app.domain.agent.turn.store.human import (
     HumanPreparation,
     persist_human_message,
 )
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.delivery.mention import record_mentions
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
 from app.domain.room_task.place import Place
-from app.domain.thread.services import answered_in
+from app.domain.thread.services import answered_in, thread_teammate
 from app.domain.topic_membership.services import TopicMemberService
 
 
@@ -45,6 +46,8 @@ async def prepare_human(
         if _is_dm(topic)
         else None
     )
+    if place.thread is not None:
+        agent = await _thread_agent(session, place, project) or agent
     recipient = {
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
@@ -61,6 +64,21 @@ async def prepare_human(
         },
         recipient=recipient,
     )
+
+
+async def _thread_agent(session: AsyncSession, place: Place, project):
+    """Who a 支线's message is for when it calls nobody: the teammate the 支线
+    is talking with (`thread_teammate`), while it still sits in the channel.
+    Handed to the channel's default instead, it reached no one: the default
+    has no turn there to hear it, and the next turn of the teammate that does
+    leaves out a message addressed to somebody else."""
+    assert place.thread is not None
+    seat = await thread_teammate(session, place.thread)
+    if seat is None or seat not in await TopicMemberService(session).agent_handles(
+        place.room_id
+    ):
+        return None
+    return await AgentInstanceService(session).for_seat_handle(project, seat)
 
 
 async def refuse_call(

@@ -180,12 +180,22 @@ class DeviceClaudeLoginRow(Base):
     # What `claude auth status` names: `claude.ai` for a subscription login, or
     # the API key kind, and for a subscription its plan (`max`, `pro`, …). A
     # machine whose owner set another model service is `model_service`
-    # (`owner_login.MODEL_SERVICE`), with the model it calls there.
+    # (`login_kind.MODEL_SERVICE`), with the model it calls there.
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The host of that model service (never its key), for its owner to tell
+    # one service from another; None for a Claude account.
+    service_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    # When its owner removed this login from a browser while the machine was
+    # away. Until the machine has logged it out — the next time it connects —
+    # the login counts as logged out (``logged_in`` stays false whatever the
+    # machine says), so nothing starts on it; None once that is done.
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 

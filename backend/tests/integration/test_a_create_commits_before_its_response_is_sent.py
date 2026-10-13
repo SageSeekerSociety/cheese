@@ -524,6 +524,7 @@ def _an_alert(asgi: _Asgi, handle: str, token: str, kind: str) -> tuple[str, int
             "title": "A reminder",
             "body": "Read once, then gone.",
             "target_handle": handle,
+            "payload": {"options": ["yes", "no"]} if kind == "decision_request" else {},
         },
         token=token,
     )

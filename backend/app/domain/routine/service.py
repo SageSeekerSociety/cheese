@@ -96,7 +96,7 @@ EVENT_TRIGGERS = frozenset(
 TRIGGER_LABELS = {
     RoutineTrigger.schedule: "定时",
     RoutineTrigger.library_file_added: "资料库新增文件",
-    RoutineTrigger.task_closed: "任务完成",
+    RoutineTrigger.task_closed: "任务关闭",
     RoutineTrigger.card_accepted: "成果被采纳",
 }
 
@@ -781,7 +781,7 @@ async def _events_for(
             found.append(
                 (
                     f"task:{task.id}",
-                    f"任务《{task.title}》（{task.id}）已完成。",
+                    f"任务《{task.title}》（{task.id}）已关闭。",
                     task.closed_at,
                 )
             )

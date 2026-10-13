@@ -9,6 +9,7 @@
 import type { Ref } from 'vue'
 
 import { nextTick, onScopeDispose, ref, watch } from 'vue'
+import { useEventListener, useMutationObserver } from '@vueuse/core'
 
 /**
  * 每个话题停在哪，放在模块作用域，这样组件卸载再挂回来（比如去了别的页面再回来）
@@ -25,6 +26,12 @@ const BOTTOM_THRESHOLD = 80
 
 /** 重放静默多久算这一阵过去了（ms）。 */
 const CATCH_UP_IDLE_MS = 200
+
+/** 读的人上一次动滚轮、触屏、键盘之后多久内，滚动还算他滚的（ms）。触控板松手后的惯性一直在发 wheel。 */
+const READER_INPUT_MS = 500
+
+/** 时间线内容改写之后多久内，没人动却往上挪的那一下算改写挪的（ms）。 */
+const REWRITE_MS = 500
 
 export interface ChatScroll {
   /** 绑在可滚动的那个容器上。 */
@@ -46,6 +53,8 @@ export interface ChatScroll {
   restoreScroll(topicId: string): void
   /** 这个话题再打开时会不会停在底部。 */
   restoresToBottom(topicId: string): boolean
+  /** 不再记这个话题停在哪：再打开时落到底部。 */
+  forgetScroll(topicId: string): void
 }
 
 export function useChatScroll(
@@ -55,9 +64,12 @@ export function useChatScroll(
      * 底部：不钉底、不跟新消息，位置也不记（回来时显示的是最新的一段）。
      */
     showingNewest?: () => boolean
+    /** 此刻这一栏是哪个话题：落到底部时替它记下「停在底部」。 */
+    topicId?: () => string | undefined
   } = {}
 ): ChatScroll {
   const showingNewest = options.showingNewest ?? (() => true)
+  const topicId = options.topicId ?? (() => undefined)
   const scrollRef = ref<HTMLElement | null>(null)
   const contentRef = ref<HTMLElement | null>(null)
 
@@ -87,8 +99,45 @@ export function useChatScroll(
   // growing. So an upward move counts as the reader only when the content height did
   // not change in that same frame — the shrink and the growth move scrollTop, the
   // reader does not.
+  //
+  // A third way, with the height back where it was by the time the event arrives:
+  // the timeline's rows are rewritten in place (every message's body is redrawn when
+  // the room's topic titles are refreshed). Newly inserted blocks carry
+  // content-visibility and are laid out at their estimate first, so the content is
+  // briefly shorter and the browser clamps scrollTop to that shorter bottom; then
+  // the real heights come back. The resize observer sees no change and the scroll
+  // event finds the same height it last saw, so neither rule above catches it — the
+  // pane was left hundreds of pixels up with 「回到最新」 showing, in WebKit (the
+  // desktop app) every time a task in the project changed. So an upward move also
+  // does not count when the reader gave no scrolling input and the content was just
+  // rewritten; a move up with input, or with nothing rewritten (find in page), still
+  // does.
   let lastTop = 0
   let lastHeight = 0
+  let readerInputAt = -Infinity
+  let pointerHeld = false
+  let rewrittenAt = -Infinity
+  const touched = () => (readerInputAt = performance.now())
+  for (const type of ['wheel', 'touchmove'] as const) useEventListener(scrollRef, type, touched, { passive: true })
+  useEventListener(scrollRef, 'pointerdown', () => {
+    pointerHeld = true
+    touched()
+  })
+  useEventListener(window, ['pointerup', 'pointercancel'], () => {
+    if (!pointerHeld) return
+    pointerHeld = false
+    touched()
+  })
+  useEventListener(window, 'keydown', touched)
+  useMutationObserver(contentRef, () => (rewrittenAt = performance.now()), {
+    childList: true,
+    subtree: true,
+    characterData: true,
+  })
+  function layoutMoved(now: number): boolean {
+    const reader = pointerHeld || now - readerInputAt < READER_INPUT_MS
+    return !reader && now - rewrittenAt < REWRITE_MS
+  }
 
   function place(el: HTMLElement, top: number) {
     el.scrollTop = top
@@ -169,13 +218,21 @@ export function useChatScroll(
     }, CATCH_UP_IDLE_MS)
   }
 
+  // 要的是最新那条，就连同「藏起来时停在哪」和记下的位置一起改掉：这一栏藏着时
+  // `place` 写不进去（见 `pendingTop`），滚动事件也不来，留着旧的那两份，露出来、或者
+  // 切走再回来时就会被放回一个指着别的内容的偏移——整段换过之后正是这样。
   function scrollToBottom() {
+    pendingTop = null
+    // 叫的时候是哪个话题就记给哪个：同一拍里切了话题的话，nextTick 里读到的是新的那个，
+    // 把它记成「停在底部」会盖掉它自己记下的位置。
+    const id = topicId()
     void nextTick(() => {
       const el = scrollRef.value
       if (el) {
         place(el, el.scrollHeight)
         atBottom.value = true
       }
+      if (id && showingNewest()) scrollMemory.set(id, { top: el?.scrollTop ?? 0, atBottom: true })
     })
   }
 
@@ -192,13 +249,15 @@ export function useChatScroll(
     if (!el || !topicId || !el.clientHeight) return
     const movedUp = el.scrollTop < lastTop
     const relaid = el.scrollHeight !== lastHeight
+    const clamped = movedUp && layoutMoved(performance.now())
     lastTop = el.scrollTop
     lastHeight = el.scrollHeight
     // Pinned and not scrolled up: still pinned, however far the content grew below
     // (see `lastTop`). The resize observer follows it to the new bottom. An upward move
     // in a frame where the content height moved is the browser's anchoring, not the
-    // reader.
-    atBottom.value = isAtBottom(el) || (atBottom.value && !(movedUp && !relaid))
+    // reader; nor is one left by a rewrite, which no resize follows, so go back now.
+    atBottom.value = isAtBottom(el) || (atBottom.value && (!(movedUp && !relaid) || clamped))
+    if (clamped && atBottom.value && showingNewest() && !isAtBottom(el)) place(el, el.scrollHeight)
     if (!showingNewest()) return
     scrollMemory.set(topicId, { top: el.scrollTop, atBottom: atBottom.value })
   }
@@ -227,6 +286,11 @@ export function useChatScroll(
     })
   }
 
+  /** 不再记这个话题停在哪：再打开时落到底部。 */
+  function forgetScroll(topicId: string) {
+    scrollMemory.delete(topicId)
+  }
+
   /** 这个话题再打开时会不会停在底部：没记过，或者记下的就是底部。 */
   function restoresToBottom(topicId: string): boolean {
     const saved = scrollMemory.get(topicId)
@@ -251,5 +315,6 @@ export function useChatScroll(
     rememberScroll,
     restoreScroll,
     restoresToBottom,
+    forgetScroll,
   }
 }

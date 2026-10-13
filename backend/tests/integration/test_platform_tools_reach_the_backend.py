@@ -8,6 +8,7 @@ the refused write, the card — not a request someone expected to be sent.
 
 import importlib.util
 import json
+import re
 import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -373,3 +374,32 @@ def test_a_new_version_of_a_mini_app_is_what_the_document_then_shows(
     shown = cheese.run_platform_tool("cheese_doc_get", {}, host)
     assert f":::app {key}@2 试算" in shown
     assert f"{key}@1" not in shown
+
+
+def test_a_refused_edit_that_named_no_document_says_it_searched_this_ones(client, task):
+    """Without `document` the edit goes to the conversation's own document. An
+    agent that meant a library document reads 「原文找不到」 as a fault in the
+    one it meant unless the refusal says which document was searched."""
+    project, _ = task
+    host = BackendHost(client, *task)
+    cheese.run_platform_tool("cheese_doc_get", {}, host)
+    cheese.run_platform_tool("cheese_doc_set", {"content": "本周交初稿。\n"}, host)
+    made = cheese.run_platform_tool(
+        "cheese_doc_new", {"title": "处置表", "content": "PR #2996。\n"}, host
+    )
+    library = re.search(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}", made).group(0)
+
+    with pytest.raises(cheese.PlatformToolError) as unnamed:
+        cheese.run_platform_tool(
+            "cheese_doc_edit", {"edits": [{"old": "PR #2996。", "new": "已合。"}]}, host
+        )
+    assert "没给 document" in str(unnamed.value)
+    assert "实况文档" in str(unnamed.value)
+
+    with pytest.raises(cheese.PlatformToolError) as named:
+        cheese.run_platform_tool(
+            "cheese_doc_edit",
+            {"document": library, "edits": [{"old": "不在文里", "new": "x"}]},
+            host,
+        )
+    assert "没给 document" not in str(named.value)

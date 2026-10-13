@@ -1,7 +1,7 @@
 ---
 title: 架构指标
 kind: 参考
-summary: 一张能持续看的架构看板：组件 A/B/C/D 分级、后端八条契约的冻结条目、超标文件和两端热点，每个数怎么算、现在是多少、该往哪边走，以及怎么和另一个版本比。
+summary: 一张能持续看的架构看板：组件 A/B/C/D 分级、后端九条契约的冻结条目、超标文件和两端热点，每个数怎么算、现在是多少、该往哪边走，以及怎么和另一个版本比。
 covers:
   - .claude/scripts/arch-metrics.py
   - .github/workflows/arch-metrics.yml
@@ -13,7 +13,7 @@ covers:
 
 # 架构指标 {#arch-metrics}
 
-三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的八条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道都拿一个冻结的基线做棘轮，所以它们会一直绿——绿到看不出一棵树是不是在变好。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
+三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的九条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道都拿一个冻结的基线做棘轮，所以它们会一直绿——绿到看不出一棵树是不是在变好。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
 
 > 讲：有哪些数字、每个数怎么算、现在是多少、要往哪个方向走，以及怎么和另一个版本比。不讲：三道闸各自的规则和为什么那样定（见仓库里的 `.claude/rules/architecture.md`），CI 的整体设计（见 [CI 设计](/dev/ci#required)）。
 
@@ -46,7 +46,7 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `frontend.grade_counts.grades` / `grade_pct` | A/B/C/D 各多少个、占几成 | 见下面的分级方法 | A 升，D 降 |
 | `frontend.grade_counts.grade_lines` | 每一级的行数 | 同级组件的行数之和 | A 升 |
 | `frontend.boundary.violations` | 组件直接取数 / 读路由的处数 | 直接读 `frontend/import-boundary-baseline.json`，不重算 | 只降 |
-| `backend.contracts.per_contract` | 八条契约各自冻结了多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条 | 只降 |
+| `backend.contracts.per_contract` | 九条契约各自冻结了多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条 | 只降 |
 | `backend.deferred_imports` | 函数内导入的条数 | `ast` 遍历 `backend/app`，只数词法上落在函数体里的 `import` / `from ... import`（嵌套函数算一次，模块级的 `if TYPE_CHECKING:` 不算） | 只降 |
 | `backend.files.files_over_1000` | 后端超过 1000 行的文件数 | `backend/app/**/*.py` 的行数分布 | 只降 |
 | `backend.files.files_over_1500` | 超过上限（1500 行）的 | 同上 | 只降 |
