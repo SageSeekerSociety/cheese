@@ -18,7 +18,12 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.core.errors import ConflictError, ForbiddenError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    ForbiddenError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -154,7 +159,7 @@ def skip_question(question: Block, *, by: str) -> Block:
     """
     meta = dict(question.meta or {})
     if not meta.get("options"):
-        raise ValidationError(say("askNotAQuestion"))
+        raise UnprocessableEntityError(say("askNotAQuestion"))
     if not waits_on(question, by):
         raise ForbiddenError(say("askSkipNotYours"))
     if meta.get("answer_log") or meta.get("answered"):
