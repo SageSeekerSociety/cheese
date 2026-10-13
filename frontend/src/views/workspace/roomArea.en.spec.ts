@@ -78,8 +78,7 @@ describe('topic and room surfaces in English', () => {
       hiddenCount: 3,
       hiddenUnread: 2,
       unreadTotal: 2,
-      hiddenWorking: true,
-      hiddenAwaits: false,
+      hiddenLight: { kind: 'green', breathe: true },
       hiddenStalled: false,
     } as unknown as VisibleRow<Topic>
     mount(TopicRailRow, {

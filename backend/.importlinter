@@ -192,7 +192,6 @@ ignore_imports =
     app.api.routes.routines -> app.domain.routine.models
     app.api.routes.tasks.publish_pdf -> app.domain.task.models
     app.api.routes.topics -> app.domain.block.models
-    app.api.routes.topics -> app.domain.room_task.models
     app.api.routes.users._common -> app.domain.user.models
     app.api.routes.users.account -> app.domain.passkey.models
     app.api.routes.workspace -> app.domain.room_task.models
@@ -495,7 +494,6 @@ ignore_imports =
     app.api.routes.preview_sessions -> app.api.preview_host
     app.api.routes.recruitment -> app.api.routes.teams
     app.api.routes.topics -> app.api.routes.projects
-    app.api.routes.topics -> app.api.routes.topics_rows
     app.api.routes.topics_asks -> app.api.routes.topics
     app.api.routes.topics_attachments -> app.api.routes.topics_file_sources
     app.api.routes.topics_compute -> app.api.routes.topics

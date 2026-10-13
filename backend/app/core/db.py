@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool, QueuePool
 
 from app.core.config import settings
@@ -262,3 +263,36 @@ async def release_read_session(session: AsyncSession) -> None:
     if session.new or session.dirty or session.deleted:
         raise RuntimeError("Remote read attempted with pending database writes")
     await session.close()
+
+
+def after_own_commit(
+    session: AsyncSession, run: Callable[[], None], *, once: bool = True
+) -> None:
+    """Run ``run`` once ``session``'s own transaction commits — and not before.
+
+    ``after_commit`` fires for a released ``begin_nested()`` savepoint too: SQLAlchemy
+    dispatches it from ``SessionTransaction.commit`` whenever the transaction being
+    committed has no parent *or* is a savepoint. Releasing a savepoint commits nothing
+    — another connection still reads the rows as they were — so work that opens its own
+    session to look at what this commit wrote would read the state from before it.
+    A request does release savepoints: ``review.task_landing.tell_origin`` wraps the
+    line it says in one so that a courtesy line cannot take a landing back with it.
+    An event fired while a savepoint is still open is therefore left to the commit
+    that ends ``session``'s transaction.
+
+    ``once`` runs ``run`` for that one commit, the way ``event.listen(..., once=True)``
+    would; otherwise a session that commits more than once runs it each time.
+    """
+    done = False
+
+    def committed(_session: Session) -> None:
+        nonlocal done
+        if _session.in_nested_transaction():
+            return
+        if once:
+            if done:
+                return
+            done = True
+        run()
+
+    event.listen(session.sync_session, "after_commit", committed)

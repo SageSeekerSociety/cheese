@@ -3,10 +3,14 @@
 // 只是固定排在第一位、不能归档；挂在它下面的任务由父级填进 slot。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Topic } from '@/cx_types'
+import type { RowLight } from '@/lib/roomLight'
+
+import { computed } from 'vue'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import TopicRailBadge from './TopicRailBadge.vue'
+import TopicRailLight from './TopicRailLight.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
@@ -15,7 +19,7 @@ import { topicTitle } from '@/lib/topicState'
 /** 一列图标，一列文字：每条行的左侧都是「8px 起 + 一个 16px 槽」。 */
 const ROW_INDENT = { paddingInlineStart: '8px' }
 
-defineProps<{
+const props = defineProps<{
   rootTopic: Topic | null
   selectedTopicId: string | null
   page: boolean
@@ -24,9 +28,15 @@ defineProps<{
   freshOf?: (id: string) => boolean
   /** 我静音了的频道：名字变灰，行尾画一个静音标记。 */
   mutedOf?: (id: string) => boolean
+  /** 「综合」这一行画哪盏灯（和频道行同一个算法，父级带钟算好）；不亮是 null。 */
+  lightOf?: (id: string) => RowLight | null
   /** 这一行的操作（和频道行 ⋯ 同一份），右键弹出来。 */
   rootActions?: MenuAction[]
 }>()
+
+/** 这一行自己的灯。父级还没读到「综合」这个话题时（`rootTopic` 为空）这一行不画，
+ *  也就没有灯。 */
+const rootLight = computed(() => (props.rootTopic ? props.lightOf?.(props.rootTopic.id) ?? null : null))
 
 // 和频道行一样：右键弹它的操作，弹在鼠标那一点上；手机上长按（父级那一个
 // useLongPress 认 data-row-actions）。
@@ -95,6 +105,7 @@ const emit = defineEmits<{
           :title="t('work.room.menu.muted')"
         />
         <TopicRailBadge v-if="unreadOf(rootTopic.id) > 0" :count="unreadOf(rootTopic.id)" />
+        <TopicRailLight v-if="rootLight" :light="rootLight" />
       </template>
     </v-list-item>
     <!-- 挂在这个房间下面的任务。 -->
@@ -188,5 +199,9 @@ const emit = defineEmits<{
 
 .row-muted {
   color: var(--faint);
+}
+/* 行尾那盏灯（`TopicRailLight` 自己画颜色和闪不闪），间距靠这里给。 */
+.nav-row .row-light {
+  margin-left: 6px;
 }
 </style>

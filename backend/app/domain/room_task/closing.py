@@ -25,6 +25,7 @@ from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import background
+from app.core.db import after_own_commit
 from app.domain.room_task.checkouts import after_close
 from app.domain.room_task.models import Task, TaskStatus
 
@@ -83,17 +84,22 @@ def _stop_after_commit(session: AsyncSession, task_id: uuid.UUID, work: StopsWor
     if pending is None:
         pending = session.info["closing_tasks"] = {}
 
-        def committed(_session) -> None:
+        def committed() -> None:
             for closed, stopper in list(pending.items()):
                 background.spawn(
                     stopper.stop_work(closed), name="stop a closed task's work"
                 )
             pending.clear()
 
-        def rolled_back(_session, _transaction) -> None:
+        def rolled_back(_session, transaction) -> None:
+            # Only the session's own rollback undoes the close. A savepoint
+            # rolled back on its own — a courtesy line that could not be said —
+            # leaves the close standing, and its commit still stops the work.
+            if transaction is not None and transaction.parent is not None:
+                return
             pending.clear()
 
-        event.listen(session.sync_session, "after_commit", committed)
+        after_own_commit(session, committed, once=False)
         event.listen(session.sync_session, "after_soft_rollback", rolled_back)
     pending[task_id] = work
 

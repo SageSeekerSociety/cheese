@@ -238,6 +238,19 @@ class TaskRepository:
             return helping
         return and_(Task.owner_handle.is_distinct_from(me), not_(helping))
 
+    @staticmethod
+    def takes_part(person: str):
+        """这个人沾过手的活：他负责的，或他在协作者名单里的。
+
+        `_whose` 正面的那两半合起来，单独起个名字是因为服务层也要按它筛 ——
+        `TaskService.unseen_deliveries` 那条跨域的查询读的是另一个域的表，所以它
+        在服务层（那里这个进口已经在契约的名单上），而这条判据只有这一份写法。
+        """
+        return or_(
+            TaskRepository._whose("mine", person),
+            TaskRepository._whose("helping", person),
+        )
+
     def _in_view(
         self,
         stmt,
@@ -334,6 +347,12 @@ class TaskRepository:
         整行实体之前先按它们收一次范围：本机 500 行实测，列投影 3.6ms，整行实体
         11.4ms，而一屏的代价本该跟着「点到我多少」走，不是「我看得见多少」。
 
+        `underway`（还开着）也在其中：关了的活落「已结束」那一列，那一列的下一步在
+        平台手上，它永远点不到任何人（`delivery.addressing.address`），而一个项目有
+        史以来派出去的活十之九都关了（dev 2026-10-12：1437 条里 1355 条），不先按它
+        收一次，后面每一步都在为早就结束的事付钱。给的是算好的一个布尔而不是状态
+        列本身：状态的词表是这个领域的，路由那边不认它。
+
         收出来的**只是候选**（题问到谁那一笔要多查一步，见调用点），所以只多不少；
         真正算数的还是 `delivery.addressing` 那份判据。
         """
@@ -343,6 +362,7 @@ class TaskRepository:
             select(
                 Task.id,
                 Task.room_id,
+                (Task.status == TaskStatus.open).label("underway"),
                 Task.reporter_handle,
                 Task.owner_handle,
                 Task.contributor_handles,
