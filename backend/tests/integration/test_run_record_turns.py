@@ -53,10 +53,11 @@ def platform_room(client, monkeypatch) -> tuple[str, str]:
 def _seed(client, project: str, room: str, specs: list[dict]) -> list[uuid.UUID]:
     """Turns, the terminal events they left, and the prompts that carried them.
 
-    A spec is `started_at`, optional `stopped_at`, `events` (terminal event types,
-    in the order the platform posted them) and `prompted` (extra `meta` for the
-    message blocks this turn's prompt batch was built from — the claim is filled
-    in, since a block fed to a turn is claimed by it).
+    A spec is `started_at`, optional `stopped_at`, `events` (the terminal events
+    the platform posted, in that order — a code, or `meta` to write verbatim)
+    and `prompted` (extra `meta` for the message blocks this turn's prompt batch
+    was built from — the claim is filled in, since a block fed to a turn is
+    claimed by it).
     """
     turn_ids: list[uuid.UUID] = []
 
@@ -78,6 +79,9 @@ def _seed(client, project: str, room: str, specs: list[dict]) -> list[uuid.UUID]
                     )
                 )
                 for i, event in enumerate(spec.get("events", [])):
+                    meta = (
+                        {"event_type": event} if isinstance(event, str) else dict(event)
+                    )
                     session.add(
                         Block(
                             project_id=uuid.UUID(project),
@@ -87,7 +91,7 @@ def _seed(client, project: str, room: str, specs: list[dict]) -> list[uuid.UUID]
                             kind=BlockKind.event,
                             content="",
                             turn_id=turn_id,
-                            meta={"event_type": event},
+                            meta=meta,
                             created_at=started + timedelta(seconds=i + 1),
                         )
                     )
@@ -171,6 +175,113 @@ def test_one_row_per_turn_with_its_terminal_event(client, platform_room):
     assert by_id[str(open_turn)]["stopped_at"] is None
     assert by_id[str(open_turn)]["failure_event"] is None
     assert all(t["conversation_id"] == room for t in data["turns"])
+
+
+def test_a_notice_that_borrows_the_failure_code_is_not_a_failure(client, platform_room):
+    """The platform reuses `turn_failed` for a few "nothing is wrong, it is just
+    waiting" notices, told apart only by `meta.severity`. Counting those would
+    report a healthy turn as broken and inflate the very denominator this reads.
+    """
+    project, room = platform_room
+    now = datetime.now(UTC)
+    notice, broke, quiet = _seed(
+        client,
+        project,
+        room,
+        [
+            # `own_calls.say_refused` / the waiting notice: a real turn, an info
+            # notice, no failure.
+            {
+                "started_at": now - timedelta(minutes=6),
+                "stopped_at": now - timedelta(minutes=5),
+                "events": [{"event_type": "turn_failed", "severity": "info"}],
+            },
+            {
+                "started_at": now - timedelta(minutes=16),
+                "stopped_at": now - timedelta(minutes=15),
+                "events": [{"event_type": "turn_failed", "severity": "error"}],
+            },
+            # A warning is not a notice: timeouts and deploy interruptions count.
+            {
+                "started_at": now - timedelta(minutes=26),
+                "stopped_at": now - timedelta(minutes=25),
+                "events": [{"event_type": "turn_timeout", "severity": "warn"}],
+            },
+        ],
+    )
+
+    by_id = {t["turn_id"]: t for t in _turns(client, room, window="24h")["turns"]}
+    assert by_id[str(notice)]["failure_event"] is None
+    assert by_id[str(broke)]["failure_event"] == "turn_failed"
+    assert by_id[str(quiet)]["failure_event"] == "turn_timeout"
+
+
+def test_the_last_terminal_event_is_the_one_reported(client, platform_room):
+    """One turn can leave two terminal events — a timeout, then the fault the
+    platform recognised afterwards. The later one is what it ended as."""
+    project, room = platform_room
+    now = datetime.now(UTC)
+    (turn_id,) = _seed(
+        client,
+        project,
+        room,
+        [
+            {
+                "started_at": now - timedelta(minutes=8),
+                "stopped_at": now - timedelta(minutes=7),
+                "events": [
+                    {"event_type": "turn_timeout", "severity": "warn"},
+                    {"event_type": "platform_error", "severity": "error"},
+                ],
+            }
+        ],
+    )
+
+    by_id = {t["turn_id"]: t for t in _turns(client, room, window="24h")["turns"]}
+    assert by_id[str(turn_id)]["failure_event"] == "platform_error"
+
+
+def test_a_block_that_claims_no_turn_is_not_read_into_the_count(client, platform_room):
+    """The prompt counts are grouped by the turn a block claims, so blocks that
+    claim none must never reach that group-by: the claim is the only thing
+    naming the turn, and without it the read is grouping by nothing."""
+    project, room = platform_room
+    now = datetime.now(UTC)
+    (carried,) = _seed(
+        client,
+        project,
+        room,
+        [
+            {
+                "started_at": now - timedelta(minutes=4),
+                "stopped_at": now - timedelta(minutes=3),
+                "prompted": [{"prompt_attempts": 2}],
+            }
+        ],
+    )
+
+    async def unclaimed() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                Block(
+                    project_id=uuid.UUID(project),
+                    conversation_id=uuid.UUID(room),
+                    author="alice",
+                    author_type=AuthorType.participant,
+                    kind=BlockKind.message,
+                    content="没人认领",
+                    meta={"prompt_attempts": 9},
+                    created_at=now - timedelta(minutes=4),
+                )
+            )
+            await session.commit()
+
+    client.portal.call(unclaimed)
+
+    data = _turns(client, room, window="24h")
+    by_id = {t["turn_id"]: t for t in data["turns"]}
+    assert by_id[str(carried)]["prompt_attempts"] == 2
+    assert data["total"] == 1
 
 
 def test_the_highest_count_of_the_batch_is_the_one_reported(client, platform_room):

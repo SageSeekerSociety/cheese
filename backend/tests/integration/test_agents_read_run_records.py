@@ -110,18 +110,24 @@ def test_an_agent_on_the_platform_reads_the_errors_and_one_of_them_whole(
 
 def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
     """`turns` reads the denominator the kind-per-line listing cannot: how many
-    turns ran in the window, and which of them left a terminal event."""
+    turns ran in the window, and which of them left a terminal event.
+
+    Every state the formatter branches on is seeded here, and the header's two
+    numbers are made to differ — otherwise "N 轮" passes on the page length
+    alone and the denominator, the point of the tool, goes unpinned."""
     platform, _ = projects
     topic = _room(client, platform)
     agent = AgentHost(client, platform, topic)
     now = datetime.now(UTC)
-    clean, failed = uuid.uuid4(), uuid.uuid4()
+    running, notice, failed, clean = (uuid.uuid4() for _ in range(4))
 
     async def seed() -> None:
         async with client.test_factory() as s:
-            for turn_id, started in (
-                (clean, now - timedelta(minutes=2)),
-                (failed, now - timedelta(minutes=5)),
+            for turn_id, started, stopped in (
+                (running, now - timedelta(minutes=1), None),
+                (notice, now - timedelta(minutes=4), now - timedelta(minutes=3)),
+                (failed, now - timedelta(minutes=7), now - timedelta(minutes=6)),
+                (clean, now - timedelta(minutes=10), now - timedelta(minutes=9)),
             ):
                 s.add(
                     AgentTurn(
@@ -130,7 +136,7 @@ def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
                         continuation_id=turn_id,
                         author="alice",
                         started_at=started,
-                        stopped_at=started + timedelta(minutes=1),
+                        stopped_at=stopped,
                     )
                 )
             s.add(
@@ -142,18 +148,49 @@ def test_the_agent_reads_one_row_per_turn_with_its_failure(client, projects):
                     kind=BlockKind.event,
                     content="",
                     turn_id=failed,
-                    meta={"event_type": "turn_failed"},
+                    meta={"event_type": "turn_failed", "severity": "error"},
+                )
+            )
+            # A notice borrowing the failure code: the room is waiting, nothing
+            # is wrong, so the line must not call this turn failed.
+            s.add(
+                Block(
+                    project_id=uuid.UUID(platform),
+                    conversation_id=uuid.UUID(topic),
+                    author="platform",
+                    author_type=AuthorType.platform,
+                    kind=BlockKind.event,
+                    content="",
+                    turn_id=notice,
+                    meta={"event_type": "turn_failed", "severity": "info"},
+                )
+            )
+            s.add(
+                Block(
+                    project_id=uuid.UUID(platform),
+                    conversation_id=uuid.UUID(topic),
+                    author="alice",
+                    author_type=AuthorType.participant,
+                    kind=BlockKind.message,
+                    content="做点事",
+                    meta={"prompted_turn": str(running), "prompt_attempts": 2},
                 )
             )
             await s.commit()
 
     client.portal.call(seed)
 
-    listed = agent.run(turns=True)
+    listed = agent.run(turns=True, limit=3)
     by_turn = {line.split("  ")[0]: line for line in listed.splitlines()}
-    assert "2 轮" in listed
-    assert "turn_failed" in by_turn[str(failed)]
-    assert "turn_failed" not in by_turn[str(clean)]
+    # Four turns in the window, three on the page: the two numbers are not the
+    # same one written twice.
+    assert "一共 4 轮，这是最近的 3 轮" in listed
+    assert "失败 turn_failed" in by_turn[str(failed)]
+    # Not failed, and not claimed to have succeeded either.
+    assert "没记过失败" in by_turn[str(notice)]
+    assert "还在跑" in by_turn[str(running)]
+    assert "投喂 2 次" in by_turn[str(running)]
+    assert str(clean) not in listed
     # 成功不写事件：这一行只能说明平台没为这一轮记过失败。
     assert "不是记了成功" in listed
 

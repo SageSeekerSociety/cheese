@@ -10,14 +10,22 @@
 这一轮的号 —— 前提是调用方把轮次号传给了 `post_system_event`。所以「这一轮有没有
 失败」= 有没有一条 `turn_id` 指着它的终态事件。
 
+**类别码不是全部：`severity=info` 的那一条不是失败。** 平台把 `turn_failed` 这个码
+也用在几条「没事，只是要等」的提示上 —— 主人不在线（`initial_admission`）、这一轮
+在等人（`turn/intake/completion` 的 waiting）、消息没送到任何人
+（`own_calls.say_refused`），它们和真正的失败共用一个类别码，只在 `meta.severity`
+上分得开。所以这一页跳过 `severity=info` 的事件：不跳，一条健康、还在跑的轮次会被
+报成失败，虚高这一页存在的理由（分母）。
+
 **「没有失败事件」是没记录，不是记了成功。** 成功不写事件。这个读法因此只能证明
 「平台没有为这一轮落过终态失败事件」，不能证明这一轮做了什么 —— 一个平台的提示
 没有说出真正的原因、调用方漏传轮次号、或者事件根本没落住（`post_system_event`
 的每个调用点都是 best-effort），都会让一轮看起来是干净的。
 
-已知有两类失败在本页读不到，因为它们落事件时没有轮次号可传：
+已知有几条失败在本页读不到，因为它们落事件时没有轮次号可传：
 
 * 卡死轮次的超时（`runtime._post_orphan_event`，一个房间一条，不给轮次号）；
+* 孤儿扫底认下的部署中断（同一个函数，同样不给轮次号）；
 * 投递彻底放弃（`delivery.timer` 的 `deliveryGaveUp`，同样只给房间）。
 
 这一页把它们算成没有失败事件。要数它们，去看 `run_records` 那一层。
@@ -78,8 +86,9 @@ _blocks = table(
 #: 了没有」，超时和部署中断当然没跑完 —— 少算它们，这一页就会把一问三不知的一轮
 #: 报成成功。
 #:
-#: 后两类今天都读不到（见模块 docstring）：它们的落点在孤儿扫底里，那里没有轮次号
-#: 可传。留着它们，是因为口径说的是「终态事件」而不是「今天恰好能对上的那几种」。
+#: 后两类多数读不到（见模块 docstring）：带轮次号的超时（一个字都没等到的）读得到，
+#: 孤儿扫底那几条代不进轮次号。留着这两个码，是因为口径说的是「终态事件」，不是
+#: 「今天恰好对得上的那几种」。
 TURN_FAILURE_EVENTS: tuple[str, ...] = (
     "turn_failed",
     "turn_timeout",
@@ -91,6 +100,11 @@ TURN_FAILURE_EVENTS: tuple[str, ...] = (
 #: `PROMPT_ATTEMPTS_META_KEY` 逐字相同。
 PROMPTED_TURN_META_KEY = "prompted_turn"
 PROMPT_ATTEMPTS_META_KEY = "prompt_attempts"
+
+#: `blocks.meta.severity` 的值之一，和 `agent.platform_notices` 的 `SEVERITY_INFO`
+#: 逐字相同。事件带这个 severity 时它是提示不是失败 —— 理由见模块 docstring。
+#: 没有这个键的老行照算失败：它们不是平台写的提示。
+NOT_A_FAILURE_SEVERITY = "info"
 
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 500
@@ -104,7 +118,8 @@ class TurnOut(BaseModel):
     started_at: str
     #: 空 = 这一轮还开着（`stopped_at IS NULL` 就是「在跑」），不是「不知道」。
     stopped_at: str | None
-    #: 这一轮的终态失败事件类别，或者空 —— 空是「没记录过失败」，见模块 docstring。
+    #: 这一轮的终态失败事件类别，或者空 —— 空是「没记录过失败」，或者这一轮只落了
+    #: 提示（`severity=info`），见模块 docstring。
     failure_event: str | None
     #: 这一轮的提示被投了几次，或者空。
     #:
@@ -134,6 +149,10 @@ def _event_type():
     return _blocks.c.meta["event_type"].as_string()
 
 
+def _severity():
+    return _blocks.c.meta["severity"].as_string()
+
+
 async def _failure_events(
     session: AsyncSession, turn_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, str]:
@@ -141,18 +160,26 @@ async def _failure_events(
 
     同一轮落两条是可能的（比如超时之后平台又认了一次故障），报最后一条：那是这一轮
     到结束时平台最后说的话。落在同一刻的按块 id 排，让两次读拿到同一个答案。
+
+    `severity=info` 的那几条不是失败，跳过（模块 docstring 说的共用类别码）；
+    排在它们前面的失败事件因此不会被它们盖掉。
     """
     if not turn_ids:
         return {}
     kind = _event_type()
+    severity = _severity()
     rows = (
         await session.execute(
-            select(_blocks.c.turn_id, kind)
+            select(_blocks.c.turn_id, kind, severity)
             .where(_blocks.c.turn_id.in_(turn_ids), kind.in_(TURN_FAILURE_EVENTS))
             .order_by(_blocks.c.created_at.asc(), _blocks.c.id.asc())
         )
     ).all()
-    return {turn_id: event for turn_id, event in rows}
+    return {
+        turn_id: event
+        for turn_id, event, level in rows
+        if level != NOT_A_FAILURE_SEVERITY
+    }
 
 
 async def _prompt_attempts(

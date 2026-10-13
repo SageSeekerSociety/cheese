@@ -2,10 +2,11 @@
 
 `run_record` sits at the bottom of `app.domain`'s seven layers and `agent` and
 `block` sit above it: importing either is the upward dependency C5 refuses. So
-`turns.py` spells the columns, the terminal failure codes and the two meta keys
-out by hand, the way `run_record.admin` already reads `projects`. Nothing goes
-red when the originals are renamed over there — the read keeps running and
-quietly answers wrong — so these hold the copies against their homes.
+`turns.py` spells the columns, the terminal failure codes, the two meta keys and
+the notice severity out by hand, the way `run_record.admin` already reads
+`projects`. Nothing goes red when the originals are renamed over there — the
+read keeps running and quietly answers wrong — so these hold the copies against
+their homes.
 """
 
 from app.domain.agent.models import AgentTurn
@@ -13,6 +14,7 @@ from app.domain.agent.platform_notices import (
     EVENT_DEPLOY_INTERRUPTED,
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
+    SEVERITY_INFO,
 )
 from app.domain.block.indexed_rows import FAILED_TURN_EVENTS
 from app.domain.block.models import (
@@ -34,6 +36,13 @@ def test_the_terminal_codes_cover_every_code_their_homes_name():
 def test_the_meta_keys_are_the_ones_the_prompt_writes():
     assert turns.PROMPTED_TURN_META_KEY == PROMPTED_TURN_META_KEY
     assert turns.PROMPT_ATTEMPTS_META_KEY == PROMPT_ATTEMPTS_META_KEY
+
+
+def test_the_notice_severity_is_the_one_its_home_names():
+    """The read tells a failure from a notice that borrowed the same code by
+    this one value. Misspell it and `turn_failed` notices are counted as failures
+    again — which is exactly what it is written here to stop."""
+    assert turns.NOT_A_FAILURE_SEVERITY == SEVERITY_INFO
 
 
 def test_the_columns_are_the_ones_the_models_declare():
