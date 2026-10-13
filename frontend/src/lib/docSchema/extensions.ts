@@ -4,7 +4,7 @@
 // Part of the document schema module (see ./index.ts): nothing here imports
 // the app.
 
-import type { AnyExtension } from '@tiptap/core'
+import type { AnyExtension, JSONContent } from '@tiptap/core'
 import type { ImageOptions } from '@tiptap/extension-image'
 import type { marked } from 'marked'
 
@@ -274,16 +274,35 @@ const DocComment = Node.create({
   },
 })
 
+// An item can open with an empty line and hold only a nested list (an editor
+// makes one by indenting the item below an empty bullet). Written as "- "
+// with its trailing space, marked reads that line as a paragraph saying "- "
+// and the nested list as a list of its own; written as a bare "-", it reads
+// the nested list as the item's, and an item read without its leading
+// paragraph gets the empty one back. Otherwise the Markdown of such a list
+// does not read back as the list, and no edit near it can be placed.
 const DocListItem = ListItem.extend({
-  renderMarkdown(node, helpers, context) {
-    if (context.parentType !== 'orderedList' || context.meta?.parentAttrs?.type) {
-      return ListItem.config.renderMarkdown!(node, helpers, context)
+  parseMarkdown(token, helpers) {
+    const item = ListItem.config.parseMarkdown!(token, helpers) as JSONContent
+    if (item?.type === 'listItem' && item.content?.[0]?.type !== 'paragraph') {
+      return { ...item, content: [{ type: 'paragraph', content: [] }, ...(item.content ?? [])] }
     }
-    // CommonMark nests beneath the content column: "1. " needs three spaces,
-    // "10. " needs four. The upstream helper always uses two and flattens it.
-    const start = Number(context.meta?.parentAttrs?.start ?? 1)
-    const width = `${start + (context.index ?? 0)}. `.length
-    return ListItem.config.renderMarkdown!(node, { ...helpers, indent: (text) => ' '.repeat(width) + text }, context)
+    return item
+  },
+  renderMarkdown(node, helpers, context) {
+    let out: string
+    if (context.parentType !== 'orderedList' || context.meta?.parentAttrs?.type) {
+      out = ListItem.config.renderMarkdown!(node, helpers, context)
+    } else {
+      // CommonMark nests beneath the content column: "1. " needs three spaces,
+      // "10. " needs four. The upstream helper always uses two and flattens it.
+      const start = Number(context.meta?.parentAttrs?.start ?? 1)
+      const width = `${start + (context.index ?? 0)}. `.length
+      out = ListItem.config.renderMarkdown!(node, { ...helpers, indent: (text) => ' '.repeat(width) + text }, context)
+    }
+    const [first, ...rest] = node.content ?? []
+    const opensEmpty = first?.type === 'paragraph' && !first.content?.length && rest.length > 0
+    return opensEmpty ? out.replace(/^([^\n]*?)[ \t]+\n/, '$1\n') : out
   },
 })
 

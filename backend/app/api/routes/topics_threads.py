@@ -8,8 +8,8 @@ one 支线 and the message it hangs under. Talking in a 支线 and reading it go
 through the same routes as a room's (`/messages`, `/blocks`, `/read`), with the
 支线's id.
 
-`_actor_in_place` and `DbSession` come from topics.py, as the other topics_*
-modules take them.
+`_actor_in_place` comes from `topics_deps.py` and `DbSession` from
+`request_deps.py`, as the other topics_* modules take them.
 """
 
 import uuid
@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.routes.topics import _actor_in_place
+from app.api.topics_deps import _actor_in_place
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say

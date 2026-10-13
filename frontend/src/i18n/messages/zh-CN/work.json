@@ -1844,6 +1844,8 @@
       "mergeMethodHint": "连接 GitHub 的项目沿用仓库设置，这里不可修改",
       "defaultReviewer": "默认审阅",
       "defaultReviewerHint": "任务没有指定由谁审阅时，由这个人审阅",
+      "dispatchSeat": "调度座位",
+      "dispatchSeatHint": "PR 可以合并、以及离开合并队列时，也叫这位 AI 队友一遍",
       "unassigned": "未指定",
       "saveFailed": "保存分支保护规则失败",
       "memberOption": "{name}（{handle}）",

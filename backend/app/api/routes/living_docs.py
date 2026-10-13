@@ -24,7 +24,7 @@ from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store, tell_origin_room
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import _actor_in_place
+from app.api.topics_deps import _actor_in_place
 from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,
