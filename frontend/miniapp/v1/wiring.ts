@@ -5,7 +5,8 @@
 // with the line and what to write instead, the way it refuses a broken one.
 //
 // Only what is certain is refused: a `v-model` on a name the script declares
-// as something nobody can write, `:v-model`, and a control nobody listens to.
+// as something nobody can write, `:v-model`, a control nobody listens to, and
+// a part of a plane or a board outside it, which nothing draws or moves.
 
 type Loc = { start: { line: number } }
 type Prop = {
@@ -39,6 +40,15 @@ const CONTROLS = new Set(['c-slider', 'c-select', 'c-segmented', 'c-number', 'c-
 /** Declared so that a `v-model` cannot write it. */
 const FIXED = new Set(['literal-const', 'setup-const', 'setup-reactive-const'])
 const IDENT = /^[A-Za-z_$][\w$]*$/
+/** The element each of these only works inside, at any depth. */
+const OWNER: Record<string, string> = {
+  'c-point': 'c-plane',
+  'c-curve': 'c-plane',
+  'c-line': 'c-plane',
+  'c-area': 'c-plane',
+  'c-zone': 'c-board',
+  'c-piece': 'c-zone',
+}
 
 /** Names declared as `const x = computed(() => …)`: computed with no setter. */
 function readonlyComputeds(script: Script): Set<string> {
@@ -81,9 +91,12 @@ export function miswired(template: Node | undefined, script: Script | null): str
   // Listening by hand (`ref` + addEventListener) is out of sight of the template.
   const byHand = /addEventListener/.test(script?.content ?? '')
 
-  const walk = (node: Node, heard: boolean): string | null => {
+  const walk = (node: Node, heard: boolean, inside: Set<string>): string | null => {
     if (node.type !== ELEMENT) return null
     const tag = node.tag ?? ''
+    const owner = OWNER[tag]
+    if (owner && !inside.has(owner))
+      return `第 ${node.loc.start.line} 行：<${tag}> 要放在 <${owner}> 内，否则不会显示，读者也无法操作。`
     const control = CONTROLS.has(tag) || (tag === 'c-point' && (has(node, 'drag') || has(node, 'on')))
     // A point nobody can drag never writes its v-model back; a page's own
     // <input> does.
@@ -103,14 +116,15 @@ export function miswired(template: Node | undefined, script: Script | null): str
     const hearing = heard || listens(node)
     if (control && !hearing && !byHand)
       return `第 ${node.loc.start.line} 行：读者可以操作这个 <${tag}>，但没有代码接收它的新值（它和外层元素上都没有 v-model、@input 或 @change），操作后画面不会变化。`
+    const within = tag.startsWith('c-') ? new Set([...inside, tag]) : inside
     for (const child of node.children ?? []) {
-      const found = walk(child, hearing)
+      const found = walk(child, hearing, within)
       if (found) return found
     }
     return null
   }
   for (const child of template.children ?? []) {
-    const found = walk(child, false)
+    const found = walk(child, false, new Set())
     if (found) return found
   }
   return null

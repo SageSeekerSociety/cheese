@@ -240,6 +240,7 @@ const K = 3
     '<c-point :v-model="[x, x * x]" />',
     '</c-plane><c-slider v-model="K" :min="0" :max="9" /><c-plane>',
     '<c-point :value="point" drag="x" />',
+    '</c-plane><c-zone name="a"><c-piece name="x">x</c-piece></c-zone><c-plane>',
   ]) {
     const errors = await runApp(page, wired(broken));
     await expect.poll(() => errors.length, broken).toBeGreaterThan(0);
