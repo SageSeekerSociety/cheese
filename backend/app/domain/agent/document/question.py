@@ -367,6 +367,7 @@ def system_prompt(
         load_skills(["cheese-docs"]),
         "## references/blocks.md\n\n" + load_skills(["doc-blocks"]),
         "## references/apps.md\n\n" + load_skills(["doc-apps"]),
+        "## references/live-doc.md\n\n" + load_skills(["doc-live"]),
     ]
     if goals:
         parts.append(f"## 项目目标\n<项目目标>\n{goals}\n</项目目标>")

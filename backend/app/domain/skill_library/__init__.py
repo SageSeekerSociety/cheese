@@ -1,12 +1,13 @@
 """The platform's skill guides, and what a session is shipped of them.
 
-The markdown next to this file is the platform's own prompt text, and three of
-them (`doc_writing.md`, `doc_blocks.md`, `doc_apps.md`) are also packed into a
-`cheese-docs` skill and sent to a session. The reader of that directory and
-the vocabulary of what travels are therefore the same thing, and both are read
-by packages further down than the one that writes prompts — `repository`
-builds a session directory, `project_skill` refuses a name the platform owns —
-which is why they sit here and not inside the agent layer that first needed them.
+The markdown next to this file is the platform's own prompt text, and four of
+them (`doc_writing.md`, `doc_blocks.md`, `doc_apps.md`, `doc_live.md`) are
+also packed into a `cheese-docs` skill and sent to a session. The reader of
+that directory and the vocabulary of what travels are therefore the same thing,
+and both are read by packages further down than the one that writes prompts —
+`repository` builds a session directory, `project_skill` refuses a name the
+platform owns — which is why they sit here and not inside the agent layer that
+first needed them.
 """
 
 import functools
@@ -120,4 +121,6 @@ def _native_skill_files() -> dict[str, str]:
     files["skills/cheese-docs/references/blocks.md"] = blocks + "\n"
     _, apps = parse_frontmatter(SKILL_DIR / "doc_apps.md")
     files["skills/cheese-docs/references/apps.md"] = apps + "\n"
+    _, live = parse_frontmatter(SKILL_DIR / "doc_live.md")
+    files["skills/cheese-docs/references/live-doc.md"] = live + "\n"
     return files
