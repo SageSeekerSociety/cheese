@@ -491,14 +491,14 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。',
+      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。选项之外永远多一颗「其他」：点开就地长出输入框，发的是他自己打的字，不是「其他」这两个字。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
     states: [
       {
         name: '刚问出来',
-        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。',
+        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。末尾那颗「其他」点开就地长出输入框——模型没给的答案从这儿写，发出去的仍然是他自己那句话。',
         props: {
           block: askBlock([]),
           names: {},

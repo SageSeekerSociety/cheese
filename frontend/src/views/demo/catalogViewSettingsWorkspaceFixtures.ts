@@ -354,6 +354,7 @@ export const STALLED_TASK: RoomTask = task({
 /** 一件已经关闭的活。 */
 export const CLOSED_TASK: RoomTask = task({
   id: 'task-closed',
+  accepted_at: ago(DAY),
   title: '把实验指导书发下去',
   column: 'done',
   phrase: 'accepted',

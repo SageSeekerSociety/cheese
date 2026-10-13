@@ -6,7 +6,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Path, UploadFile
 from fastapi.responses import Response
 
-from app.api.routes.tasks._common import (
+from app.api.task_deps import (
     _require_task,
     _task_attachment_service,
 )

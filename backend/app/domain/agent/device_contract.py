@@ -14,28 +14,36 @@ have to be able to open an HTTP call. A facade that imported the hub, while the
 hub picks its own facade at import time, is a cycle (``.importlinter``, C3).
 
 ``device_hub`` re-exports everything here, so importing a failure from there —
-where it was written down before — keeps working. ``offline_headers`` stays
-there rather than moving with its exceptions: its callers are the connection
-owner and ``core/errors.py``, and the latter reaching into a second
-``domain.agent`` module would trade one C1 entry for another, not remove one.
+where it was written down before — keeps working. The three failures clients
+answer with (``DeviceOffline``, ``LinkInterrupted``, ``DeviceCallError``) and
+``offline_headers`` are re-exported FROM ``app/core/device_failures.py``: what
+answers with them is the error tree, and the error tree is core, so the word a
+domain and core both need has to be owned below both (``.importlinter``, C1).
 """
 
 import uuid
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from app.core.device_failures import (
+    DeviceCallError,
+    DeviceOffline,
+    LinkInterrupted,
+    offline_headers,
+)
 
-class DeviceOffline(RuntimeError):
-    """The device has no live link, so a frame to it would go nowhere.
-
-    Raised by the awaited calls (``exec``) instead of letting them wait out
-    their timeout: ``HubDevice.send`` drops a frame to a device with no
-    transport, and a caller that then waits 35s and reports "the connector
-    did not answer" has described the opposite of what happened."""
-
-    def __init__(self, device_id: str) -> None:
-        super().__init__(f"device {device_id} is offline")
-        self.device_id = device_id
+__all__ = [
+    "DeviceCallError",
+    "DeviceNotReady",
+    "DeviceOffline",
+    "DeviceUnreachable",
+    "EXEC_REPLY_SLACK_S",
+    "HubScreen",
+    "LinkInterrupted",
+    "RECONNECT_GRACE_S",
+    "ViewerTransport",
+    "offline_headers",
+]
 
 
 class DeviceUnreachable(DeviceOffline):
@@ -49,37 +57,6 @@ class DeviceUnreachable(DeviceOffline):
     所以只有这一档能被记成 ``failed``「确定没发生」（``agent/dispatch_log.py``）。
     一个子类，因为除此之外它和链路不在是同一件事：所有 ``except DeviceOffline`` 照旧。
     """
-
-
-class LinkInterrupted(DeviceOffline):
-    """链路断在一次调用的半路：那一帧已经出去了，答复回不来了。
-
-    那台机器可能已经把这件事做完了，也可能没有，这一侧不知道。所以它不能像
-    ``DeviceUnreachable`` 那样被当成「确定没发生」，也不该说成「机器不在」：
-    链路断了的机器多半几秒后就回来（``RECONNECT_GRACE_S``），下一次调用照样
-    能用。告诉调用方的只有一件事 —— 这一次的结果不知道。
-    """
-
-
-class DeviceCallError(RuntimeError):
-    """The machine answered a call with a failure of its own.
-
-    「dial unix …sock: no such file」 is the connector saying the runner's
-    socket is not there yet; 「lstat …/.cheese/executor: no such file」 that the
-    home it was asked about is gone. Those are answers, and the message is the
-    whole of what the person in the room can act on. Raised as a bare
-    RuntimeError they were the owner's unhandled 500, the backend's unhandled
-    500 on top of it, and two alerts describing this server for every one the
-    machine sent — 17 alerts folding 29 more repeats on 2026-09-18 alone, with
-    the machine's words cut out of the ones that reached the room.
-
-    A subclass, so every ``except RuntimeError`` that already waits one of
-    these out keeps doing so.
-    """
-
-    def __init__(self, message: str, *, failure_code: str | None = None) -> None:
-        super().__init__(message)
-        self.failure_code = failure_code
 
 
 class DeviceNotReady(DeviceCallError):

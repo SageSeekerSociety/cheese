@@ -269,10 +269,6 @@ function splitTask(split: SplitLine): TaskLine {
           <div class="demo-seat-name">
             {{ names[s.who] ?? s.who }}
             <span v-if="s.who === defaultAgent && frame.seats.length > 1" class="demo-seat-tag">默认</span>
-            <span v-if="frame.lock === s.who" class="demo-seat-lock">
-              <v-icon icon="mdi-lock-outline" size="12" />
-              重资源锁
-            </span>
           </div>
           <div class="demo-seat-meta">
             <span v-if="s.dir">{{ s.dir }}</span>
@@ -471,8 +467,7 @@ function splitTask(split: SplitLine): TaskLine {
   color: var(--ink);
 }
 
-.demo-seat-tag,
-.demo-seat-lock {
+.demo-seat-tag {
   display: inline-flex;
   gap: 2px;
   align-items: center;
@@ -482,10 +477,6 @@ function splitTask(split: SplitLine): TaskLine {
   color: var(--muted);
   background: var(--fill-2);
   border-radius: var(--radius-sm);
-}
-
-.demo-seat-lock {
-  color: var(--ink);
 }
 
 .demo-seat-meta {

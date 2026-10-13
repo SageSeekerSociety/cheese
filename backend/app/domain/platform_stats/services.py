@@ -23,7 +23,7 @@ from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes import health as health_routes
+from app.core.health import health_report
 from app.core.metrics import registry
 from app.domain.admin.services import AdminService
 from app.domain.day_windows import dense_series, utc_day_window
@@ -369,7 +369,7 @@ async def _health_snapshot() -> dict:
     「degraded」，不是「多数票」—— 一个 down 的 Redis 不该被其余几项投成「healthy」。
     """
 
-    checks = await health_routes.health_report()
+    checks = await health_report()
     return {
         "overall": checks.get("status", "unknown"),
         "checks": {

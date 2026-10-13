@@ -59,14 +59,14 @@ async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) 
     an armed auto-merge card whose rules are satisfied
     (`AcceptService.advance_pr_card`). One DB transaction per card so one card's
     failure can't roll back another's progress."""
-    # deferred-import: tests replace this name on app.api.deps
-    from app.api.deps import get_work_runner
-
     # deferred-import: tests replace this name on app.domain.review.services
     from app.domain.review.services import AcceptService
 
     sessions = chat.session_factory
-    runner = get_work_runner()
+    # The runner comes off the chat service — the one the composition root
+    # assembled — instead of being imported from `app.api.deps`, which is a
+    # domain importing up into the API layer (`.importlinter`, C1).
+    runner = chat.work_runner
     checked = 0
     errors: list[str] = []
     async with sessions() as session:
@@ -294,10 +294,7 @@ async def open_draft_prs(chat: ChatService) -> dict:
 
 async def deliver_dependency_notices(chat: ChatService) -> None:
     """Dispatch committed task-parent intent through the delivery ledger."""
-    # deferred-import: tests replace this name on app.api.deps
-    from app.api.deps import get_work_runner
-
-    await dispatch_pending(chat.session_factory, chat=chat, runner=get_work_runner())
+    await dispatch_pending(chat.session_factory, chat=chat, runner=chat.work_runner)
 
 
 async def forge_repository_changed(

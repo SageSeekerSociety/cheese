@@ -13,7 +13,7 @@ import type { RefNames } from './refChip'
 
 import { isAgentBlock } from './authorship'
 import { docReadNow } from './docReadLoad'
-import { fileLabel } from './fileKind'
+import { fileLabel, videoMimeOf } from './fileKind'
 import { plainRefs } from './refChip'
 
 import { t } from '@/i18n'
@@ -21,6 +21,12 @@ import { t } from '@/i18n'
 /** 附件块里装的是不是一张图。图要直接画出来，别的给一个下载入口。 */
 export function isImageBlock(block: Block): boolean {
   return block.kind === 'attachment' && (block.mime_type || '').startsWith('image/')
+}
+
+// The raw endpoint only serves whitelisted suffixes. A video MIME can still
+// describe a download-only container such as AVI or MKV.
+export function isVideoBlock(block: Block): boolean {
+  return block.kind === 'attachment' && !!videoMimeOf(block.content)
 }
 
 /**

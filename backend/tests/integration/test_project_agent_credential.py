@@ -452,7 +452,7 @@ def test_a_per_turn_scoped_token_is_still_bound_to_its_own_topic(client):
     assert _write(client, other, per_turn).status_code == 403
 
 
-def test_a_tasks_own_session_takes_and_gives_back_the_heavy_lock(client):
+def test_a_tasks_own_session_passes_the_room_gate(client):
     """A task is a conversation of its own, and the session working it holds a
     token naming the task: the gate finds the task's project through its
     channel, as for any conversation inside one."""
@@ -465,15 +465,12 @@ def test_a_tasks_own_session_takes_and_gives_back_the_heavy_lock(client):
     ).json()["data"]["id"]
     session = mint_scoped_token(project_id=pid, topic_id=task)
 
-    taken = client.post(
-        f"/topics/{task}/lock", json={"kind": "heavy"}, headers=_cred(session)
+    # Past the gate the request reaches the route's own check of its body; a
+    # token the gate refused would be answered 401/403 before that.
+    noted = client.post(
+        f"/topics/{task}/note", json={"thread": "not-a-thread"}, headers=_cred(session)
     )
-    assert taken.status_code == 200, taken.text
-    assert taken.json()["data"]["acquired"] is True
-    given = client.post(
-        f"/topics/{task}/unlock", json={"kind": "heavy"}, headers=_cred(session)
-    )
-    assert given.status_code == 200, given.text
+    assert noted.status_code == 422, noted.text
 
 
 def test_a_project_wide_per_turn_token_still_does_not_author_in_a_topic(client):

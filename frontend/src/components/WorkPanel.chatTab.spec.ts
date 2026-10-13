@@ -6,10 +6,11 @@
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
+import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import i18n, { setLocale } from '@/i18n'
@@ -20,6 +21,9 @@ beforeEach(() => setLocale('zh-CN'))
 vi.mock('../api', () => ({
   getPreview: vi.fn(async () => null),
   getTopicWorkSummary: vi.fn(async () => ({ has_run: false, changed_files: [] })),
+  // 房间自己的文件（人传上来的那份预览）：`openFile` 先问它认不认这个路径，认了就在
+  // 自由区开一格，不去项目版本那一格。
+  readPreviewFile: vi.fn(async () => ({})),
 }))
 
 import WorkPanel from './WorkPanel.vue'
@@ -107,5 +111,76 @@ describe('对话作为工作面板的一格', () => {
     expect((await findByRole('tab', { name: /改动/ })).getAttribute('aria-selected')).toBe('true')
     await rerender({ tab: undefined })
     expect((await findByRole('tab', { name: /对话/ })).getAttribute('aria-selected')).toBe('true')
+  })
+})
+
+// 点开一份预览、再关掉：落回你点它之前待着的格子，不是「概览」。真机反馈
+// 2026-10-12：手机上关掉预览落到「概览」，得再点一下才能回到正在说的话里。
+describe('关掉自由区最后一份，回到来处', () => {
+  const flush = () => new Promise((r) => setTimeout(r, 0))
+
+  function selectedOf(container: Element): string {
+    return container.querySelector('[role="tab"][aria-selected="true"]')?.textContent?.trim() ?? ''
+  }
+
+  function mountOpenable(props: Record<string, unknown>) {
+    const panel = ref<{ openFile: (path: string) => Promise<void> } | null>(null)
+    const Host = defineComponent(() => () => h(Panel, { ref: panel, topic, activityTick: 0, ...props }))
+    const ui = render(Host, {
+      slots: { chat: '<div data-testid="chat-pane">对话内容</div>' },
+      global: {
+        plugins: [vuetify, i18n],
+        stubs: { PanelDocHost: true, PanelSiteHost: true, PanelChangesHost: true, PanelPreviewHost: true },
+      },
+    })
+    return { ...ui, panel }
+  }
+
+  async function openPreview(panel: { value: { openFile: (p: string) => Promise<void> } | null }) {
+    await panel.value!.openFile('library/repro.html')
+    await flush()
+  }
+
+  it('手机：从对话点开的，关掉回到对话', async () => {
+    const { container, panel } = mountOpenable({ withChat: true })
+    await flush()
+    await openPreview(panel)
+    expect(selectedOf(container)).toContain('repro.html')
+
+    await fireEvent.click(container.querySelector('.tabbar__close')!)
+    await flush()
+
+    expect(selectedOf(container)).toContain('对话')
+  })
+
+  it('桌面：从概览点开的，关掉回到概览', async () => {
+    const { container, panel } = mountOpenable({ withChat: false })
+    await flush()
+    await openPreview(panel)
+
+    await fireEvent.click(container.querySelector('.tabbar__close')!)
+    await flush()
+
+    expect(selectedOf(container)).toContain('概览')
+  })
+
+  it('开着两份：关掉正看着的那份，落到旁边那份，不来处', async () => {
+    const { container, panel } = mountOpenable({ withChat: true })
+    await flush()
+    await openPreview(panel)
+    // 钉住第一份：不钉的话第二份会占掉它那个临时位（自由区只有一格临时位）。
+    await fireEvent.dblClick(container.querySelector('.tabbar__file .tabbar__tab')!)
+    await flush()
+    await panel.value!.openFile('library/second.html')
+    await flush()
+    expect(selectedOf(container)).toContain('second.html')
+
+    const close = [...container.querySelectorAll('.tabbar__close')].find((b) =>
+      b.getAttribute('aria-label')?.includes('second.html')
+    )!
+    await fireEvent.click(close)
+    await flush()
+
+    expect(selectedOf(container)).toContain('repro.html')
   })
 })

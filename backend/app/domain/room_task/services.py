@@ -2,10 +2,11 @@
 
 import uuid
 from collections.abc import Collection
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
@@ -15,16 +16,13 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task.models import (
-    HEAVY_LOCK_TTL,
-    LockKind,
-    RoomLock,
     Task,
     TaskStatus,
     TaskTitle,
     TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicReadState, TopicStatus
 from app.domain.user.services import user_by_handle
 
 
@@ -155,7 +153,9 @@ class TaskService:
         if task is None or task.room_id != room_id or task.branch_name is None:
             raise NotFoundError("Task not found")
 
-    async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
+    async def list_in_project(
+        self, project_id: uuid.UUID, *, accepted: bool | None = None
+    ) -> list[Task]:
         """这个项目里的活，最老的在前。
 
         交出去的是 ORM 行，**暂留**：room_task 这一期还没有自己的窄读出口，项目
@@ -166,7 +166,7 @@ class TaskService:
         Callers authorize and own this session and its transaction. This read
         does not explicitly begin, commit or roll back.
         """
-        return await self._repo.list_for_project(project_id)
+        return await self._repo.list_for_project(project_id, accepted=accepted)
 
     async def list_open(self) -> list[Task]:
         """全平台还开着的任务，交出 ORM 行（同 `list_in_project`，**暂留**）。"""
@@ -199,6 +199,7 @@ class TaskService:
         me: str,
         limit: int,
         before: tuple[datetime, uuid.UUID] | None,
+        accepted: bool | None = None,
     ) -> tuple[list[tuple[Task, datetime]], bool]:
         """One page of the project's tasks, as `TaskRepository.page_for_project`
         reads it."""
@@ -211,6 +212,7 @@ class TaskService:
             me=me,
             limit=limit,
             before=before,
+            accepted=accepted,
         )
 
     async def counts_in_project(
@@ -221,11 +223,17 @@ class TaskService:
         status: str,
         channel: uuid.UUID | None,
         me: str,
+        accepted: bool | None = None,
     ) -> dict[str, int]:
         """The project's tasks counted by whose they are, as
         `TaskRepository.counts_for_project` counts them."""
         return await self._repo.counts_for_project(
-            project_id, rooms=rooms, status=status, channel=channel, me=me
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            me=me,
+            accepted=accepted,
         )
 
     async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -241,6 +249,74 @@ class TaskService:
     async def underway_with(self, room_ids: list[uuid.UUID], person: str) -> list[Task]:
         """The tasks underway in these rooms that ``person`` owns or helps on."""
         return await self._repo.underway_with(room_ids, person)
+
+    async def unseen_deliveries(
+        self, room_ids: list[uuid.UUID], person: str
+    ) -> set[uuid.UUID]:
+        """Which of these rooms hold a delivery ``person`` has not opened since:
+        the delivered task's conversation id and its room's, both in the set.
+
+        哪几件活「交付完了、而这个人从那以后还没点开看过」：那件活自己的交谈 id，
+        和它所在的房间 id，两个都在返回的这一堆里 —— 侧栏的灯问的就是这两种行
+        （`TopicOut.unseen_delivery` / `RoomTask.unseen_delivery`）。
+
+        交付完了 = 卡片被采纳过（`accepted_at`）。「点开看过」认这个人在这段对话上
+        的已读位那一行动没动过：点开会推已读位，那一行跟着写一次时间
+        （`TopicRepository.mark_read_many` 每次都把 `updated_at` 写成当下），所以它
+        最后被动过的时刻就是最后点开的时刻。
+
+        频道要问的是「我在这间房里看过没有」，不只「我看过那件活没有」——点开频道
+        这个动作落在房间的已读位上，点开那件活落在活自己的已读位上，两个都算看过。
+        所以取两个时刻里晚的那个（`greatest` 在 Postgres 里跳过 NULL，全空才是
+        空）。两处都没有 = 从来没点开过，那也是没看过。
+
+        只算这个人自己参与的活（负责人或协作者，`TaskRepository.takes_part`）：一
+        件与他无关的活交付了，不该在他的侧栏上亮灯 —— 和 `unread_counts` 给任务算
+        未读是同一条规矩。
+
+        这条查询读的是另一个域的表（已读位是 topic 域的），所以它在服务层：这个域
+        已经在读 `topic.models` 的那几个模块（`checkouts` / `place` / `presentation`
+        / `services`）在契约上都冻结过，仓库那一层再加一个进口就是新债。
+        """
+        if not room_ids:
+            return set()
+        task_read = aliased(TopicReadState)
+        room_read = aliased(TopicReadState)
+        stmt = (
+            select(
+                Task.id,
+                Task.room_id,
+                Task.accepted_at,
+                func.greatest(task_read.updated_at, room_read.updated_at),
+            )
+            .outerjoin(
+                task_read,
+                and_(
+                    task_read.topic_id == Task.id,
+                    task_read.user_handle == person,
+                ),
+            )
+            .outerjoin(
+                room_read,
+                and_(
+                    room_read.topic_id == Task.room_id,
+                    room_read.user_handle == person,
+                ),
+            )
+            .where(
+                Task.room_id.in_(room_ids),
+                Task.accepted_at.is_not(None),
+                TaskRepository.takes_part(person),
+            )
+        )
+        unseen: set[uuid.UUID] = set()
+        for task_id, room_id, accepted_at, looked_at in (
+            await self._session.execute(stmt)
+        ).all():
+            if looked_at is None or accepted_at > looked_at:
+                unseen.add(task_id)
+                unseen.add(room_id)
+        return unseen
 
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.
@@ -556,117 +632,6 @@ class TaskService:
             )
         )
         return [(task, conversations.get(task.id, [])) for task in tasks]
-
-
-class RoomLockService:
-    """整块覆盖一个文件、跑重活 —— 一次一个。
-
-    Narrow on purpose. It does not make concurrent writing safe in general: a
-    lock around a write cannot prevent a lost update, because the read that the
-    write is based on happened before the lock existed. It covers the two cases
-    that have no other defence — a whole-file overwrite (an `Edit` defends
-    itself; a `Write` cannot) and the things that fight over the machine rather
-    than the tree.
-    """
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-
-    async def acquire(
-        self,
-        *,
-        room_id: uuid.UUID,
-        kind: LockKind,
-        resource: str = "",
-        holder_task_id: uuid.UUID | None,
-    ) -> tuple[bool, str]:
-        """Take the lock, or say who has it.
-
-        Never waits. Blocking would spend a whole turn's compute sitting still,
-        and the caller has something better to do with the answer — write a
-        different file, use `Edit`, come back next turn.
-        """
-        now = datetime.now(UTC)
-        existing = (
-            await self._session.scalars(
-                select(RoomLock).where(
-                    RoomLock.room_id == room_id,
-                    RoomLock.kind == kind,
-                    RoomLock.resource == resource,
-                )
-            )
-        ).first()
-        if existing is not None:
-            if existing.expires_at > now:
-                if existing.holder_task_id == holder_task_id:
-                    existing.expires_at = now + self._ttl(kind)
-                    await self._session.flush()
-                    return True, ""
-                return False, await self._who(existing)
-            # Expired: whoever held it is not coming back.
-            await self._session.delete(existing)
-            await self._session.flush()
-        self._session.add(
-            RoomLock(
-                room_id=room_id,
-                kind=kind,
-                resource=resource,
-                holder_task_id=holder_task_id,
-                acquired_at=now,
-                expires_at=now + self._ttl(kind),
-            )
-        )
-        await self._session.flush()
-        return True, ""
-
-    async def release(
-        self,
-        *,
-        room_id: uuid.UUID,
-        kind: LockKind,
-        resource: str = "",
-        holder_task_id: uuid.UUID | None,
-    ) -> bool:
-        """Give it back. Releasing a lock somebody else holds does nothing."""
-        existing = (
-            await self._session.scalars(
-                select(RoomLock).where(
-                    RoomLock.room_id == room_id,
-                    RoomLock.kind == kind,
-                    RoomLock.resource == resource,
-                )
-            )
-        ).first()
-        if existing is None or existing.holder_task_id != holder_task_id:
-            return False
-        await self._session.delete(existing)
-        await self._session.flush()
-        return True
-
-    async def sweep_expired(self) -> int:
-        """Take back every lock whose holder never came home."""
-        stale = list(
-            (
-                await self._session.scalars(
-                    select(RoomLock).where(RoomLock.expires_at <= datetime.now(UTC))
-                )
-            ).all()
-        )
-        for lock in stale:
-            await self._session.delete(lock)
-        if stale:
-            await self._session.flush()
-        return len(stale)
-
-    @staticmethod
-    def _ttl(kind: LockKind) -> timedelta:
-        return HEAVY_LOCK_TTL
-
-    async def _who(self, lock: RoomLock) -> str:
-        if lock.holder_task_id is None:
-            return "这个房间自己正在改它"
-        task = await TaskRepository(self._session).get(lock.holder_task_id)
-        return f"「{task.title}」正在改它" if task else "另一条活正在改它"
 
 
 def _next_branch(task: Task) -> str:

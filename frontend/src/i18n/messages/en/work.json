@@ -429,6 +429,7 @@
     },
     "message": {
       "copy": "Copy",
+      "copySelection": "Copy selected text",
       "copied": "Copied",
       "copyLink": "Copy link",
       "linkCopied": "Link copied",
@@ -470,7 +471,7 @@
       "placeholderDm": "Message {name}",
       "placeholder": "Type a message, or {'@'}{name} to hand it over",
       "attachFiles": "Upload files (up to 10 MB each)",
-      "sendPhotos": "Send photos",
+      "sendPhotos": "Send photos or videos",
       "more": "More actions",
       "send": "Send",
       "sendUploading": "Uploading attachments — send once they finish",
@@ -1088,6 +1089,14 @@
       "human": "Waiting for review",
       "platform": "Platform is on it"
     },
+    "video": {
+      "label": "Video: {name}",
+      "open": "Open video",
+      "loading": "Loading video",
+      "retry": "Reload",
+      "loadFailed": "Unable to load this video. Reload or download it",
+      "playFailed": "This browser cannot play the video. Download it to watch"
+    },
     "attachments": {
       "imageSnippet": "[Image]",
       "fileSnippet": "[File]",
@@ -1414,8 +1423,16 @@
     "expand": "Expand",
     "expandStalled": "Expand: someone in here is stuck",
     "expandAwaits": "Expand: something in here needs you",
+    "expandWorking": "Expand: work in here is moving",
+    "expandQuiet": "Expand: something in here says it's running but has gone quiet",
+    "expandDelivered": "Expand: something in here just finished and you haven't looked",
     "turnFailed": "{agent}'s last run failed",
-    "awaitsTip": "Something needs you",
+    "light": {
+      "red": "Says it's running, but nothing for five minutes",
+      "yellow": "Waiting on you",
+      "moving": "Work moving",
+      "delivered": "Done and unread"
+    },
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
     "moreActions": "More actions",
@@ -1425,10 +1442,7 @@
     "chooseProjectFirst": "Choose a project first",
     "topics": "Channels",
     "workingTip": "{name} is working here",
-    "expandWorking": "Expand: a teammate is working in here",
     "moreMembers": "+{count}",
-    "taskNeedsYou": "Needs you",
-    "taskRunning": "Running",
     "allTasks": "All tasks",
     "moreTasks": "Show 1 more | Show {count} more",
     "fewerTasks": "Show fewer",
@@ -1702,6 +1716,12 @@
       "online": "online",
       "offline": "offline",
       "empty": "No member has connected their Claude Code",
+      "callersLabel": "Who can call it",
+      "callersOwner": "Only me",
+      "callersProject": "Project members",
+      "callersDetail": "When project members call it, it uses the model account you set up on your own computer. You pay for it and answer for that account's terms.",
+      "callersOwnerTag": "only its owner can call it",
+      "callersProjectTag": "any project member can call it",
       "readOnly": "Only project admins can change this",
       "loadFailed": "Couldn't load members' own Claude Code",
       "saveFailed": "Couldn't save the setting"

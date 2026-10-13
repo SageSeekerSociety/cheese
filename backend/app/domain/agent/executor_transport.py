@@ -145,6 +145,20 @@ MACHINE_PREPARING = (
 MACHINE_STILL_PREPARING = "执行环境仍在准备，对话和平台工具仍可用"
 
 
+def failure_text(exc: BaseException) -> str:
+    """What the agent reads when a tool call raised.
+
+    A refusal written for the agent (`PlatformToolError`, `PlatformHTTPError`,
+    `MachineOutOfReach`, a `ValueError` naming the problem) reads as written.
+    A lookup failure does not: ``str(KeyError("id"))`` is ``'id'``, and an
+    agent handed that bare word cannot tell it from an answer. Those, and an
+    exception with no text, are named by their type."""
+    text = str(exc)
+    if text and not isinstance(exc, LookupError):
+        return text
+    return f"Tool call failed with {type(exc).__name__}: {text or '(no message)'}"
+
+
 class MachineOutOfReach(RuntimeError):
     """够不着这件事，判得出来的那一种。
 
@@ -246,6 +260,18 @@ def session_path(path):
         rest = path[2:].replace("\\", "/").rstrip("/")
         return "/" + path[0].lower() + ("/" + rest.lstrip("/") if rest else "")
     return path
+
+
+def to_machine(text, seen, workspace):
+    """``text`` with the project's path as a session sees it from a directory
+    of its own (``seen``: the placeholder a session starts at before its
+    lease, or a member's own Claude Code's directory when its executor is on
+    another machine) spelled where the executor holds the project. A Windows
+    session host's shell spells that directory the Git Bash way, so both
+    spellings are."""
+    for spelled in {seen, session_path(seen)}:
+        text = text.replace(spelled, workspace)
+    return text
 
 
 def read_file_on_the_machine(invoke, path, request_id):
@@ -927,15 +953,15 @@ class RemoteClient:
                 for field in ("file_path", "path", "notebook_path", "command"):
                     value = params["args"].get(field)
                     if isinstance(value, str):
-                        params["args"][field] = value.replace(
-                            original_workspace, workspace
+                        params["args"][field] = to_machine(
+                            value, original_workspace, workspace
                         )
             if params and method == "control":
                 params = dict(params)
                 for field in ("body", "cwd", "path"):
                     if isinstance(params.get(field), str):
-                        params[field] = params[field].replace(
-                            original_workspace, workspace
+                        params[field] = to_machine(
+                            params[field], original_workspace, workspace
                         )
             target_file = self.config.get("target_file")
             if target_file and changed_lease:

@@ -639,7 +639,8 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       closedHasMore: false,
       closedLoading: false,
       closedFailed: false,
-      closed: false,
+      status: 'open',
+      delivery: 'all',
       whose: 'all',
     },
     states: [
@@ -693,7 +694,11 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.projectTasksView.s5.note')
         },
-        props: { closed: true, closedTasks: [CLOSED_TASK], closedCounts: { all: 1, mine: 1, helping: 0, others: 0 } },
+        props: {
+          status: 'closed',
+          closedTasks: [CLOSED_TASK],
+          closedCounts: { all: 1, mine: 1, helping: 0, others: 0 },
+        },
         expectSelector: '.tasks__group',
         expect: '把实验指导书发下去',
       },
@@ -717,8 +722,39 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         },
         props: { channelId: 'ch-lab' },
         expect: '实验课',
-        // 频道那条自己亮着（「看已关闭的」没亮）。
+        // The selected channel remains independent of lifecycle and delivery.
         expectSelector: '[data-testid="tasks-channel"].tasks__chip--on',
+      },
+      {
+        get name() {
+          return t('taskList.allStatuses')
+        },
+        get note() {
+          return t('taskList.catalogAllNote')
+        },
+        props: {
+          status: 'all',
+          closedTasks: [CLOSED_TASK],
+          closedCounts: { all: 1, mine: 1, helping: 0, others: 0 },
+        },
+        expect: '交付已采纳',
+        expectSelector: '.tasks__accepted',
+      },
+      {
+        get name() {
+          return t('taskList.acceptedDelivery')
+        },
+        get note() {
+          return t('taskList.catalogAcceptedNote')
+        },
+        props: {
+          delivery: 'accepted',
+          tasks: PROJECT_TASKS.map((task, index) =>
+            index === 1 ? { ...task, accepted_at: CLOSED_TASK.accepted_at } : task
+          ),
+        },
+        expect: '整理第二章的课件',
+        expectSelector: '.tasks__row',
       },
     ],
   },
