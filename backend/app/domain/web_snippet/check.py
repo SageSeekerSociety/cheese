@@ -21,6 +21,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.obs import get_logger
+from app.core.sentences import say
 
 _log = get_logger("cheesex.web_snippet")
 
@@ -42,7 +43,8 @@ class Ran:
 
 
 class Refused(Exception):
-    """The code ran and did not work; the message says how, for its writer."""
+    """The code ran and did not work; the message says how, for its writer:
+    the browser's own error text, or a sentence of the catalog."""
 
 
 async def shell_page(shell: int) -> str | None:
@@ -120,7 +122,7 @@ async def run(code: str, shell: int) -> Ran | None:
                 return None
             height = int(view["element_height"])
             if height <= 0:
-                raise Refused("运行后什么都没画出来：代码没有往页面里放任何内容。")
+                raise Refused(say("appDrewNothing"))
             ran.heights[view["width"]] = height
             ran.shots[f"{view['width']}-{theme}"] = base64.b64decode(view["png_b64"])
     return ran

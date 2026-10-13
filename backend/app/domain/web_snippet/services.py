@@ -96,6 +96,7 @@ class Snippets:
             except IntegrityError:
                 continue
             return snippet
+        # i18n-exempt: an invariant broken in the database, a 500 no reader is told
         raise RuntimeError("no free snippet key after five tries")
 
     async def add_version(

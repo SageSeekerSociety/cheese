@@ -22,7 +22,7 @@ from app.api.app_shell_host import shell_url
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.doc_access import Reached, reach, require_writable
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import Envelope, ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
@@ -35,6 +35,39 @@ router = APIRouter(tags=["documents"], dependencies=[ROUTE_DECIDES])
 #: Larger than this is not a snippet any more: a page that size belongs in the
 #: project as a website.
 MAX_CODE = 200_000
+
+
+class AppVersionOut(BaseModel):
+    """A version as the version menu and the tools show it."""
+
+    key: str
+    version: int
+    note: str
+    #: Who wrote it: always an AI teammate.
+    author: str
+    #: The person whose request it answered, when there was one.
+    requested_by: str | None
+    #: Whether the platform's browser ran it before it was kept.
+    checked: bool
+    created_at: str
+
+
+class AppOut(BaseModel):
+    key: str
+    document_id: str
+    document_title: str | None
+    versions: list[AppVersionOut]
+
+
+class AppVersionCodeOut(AppVersionOut):
+    code: str
+    shell: int
+    #: Where the shell is served; None when this deployment runs no mini-apps.
+    shell_url: str | None
+    #: Height in pixels by width, as the platform's browser measured it.
+    heights: dict[str, int]
+    #: The pictures kept of it, by "<width>-<theme>".
+    shots: list[str]
 
 
 class AppCodeIn(BaseModel):
@@ -71,10 +104,16 @@ async def _ran(db: DbSession, body: AppCodeIn) -> check.Ran | None:
     try:
         return await check.run(body.code, SHELL)
     except check.Refused as refused:
-        raise UnprocessableEntityError(say("appRunFailed", why=str(refused))) from None
+        raise UnprocessableEntityError(
+            say("appRunFailed", why=refused.args[0])
+        ) from None
 
 
-@router.get("/apps/{key}")
+@router.get(
+    "/apps/{key}",
+    response_model=Envelope[AppOut],
+    response_model_exclude_unset=True,
+)
 async def get_app(key: str, db: DbSession, resolver: ActorResolverDep) -> dict:
     """The app's document and every version it has, oldest first."""
     reached, snippet = await _snippet(db, resolver, key)
@@ -89,7 +128,11 @@ async def get_app(key: str, db: DbSession, resolver: ActorResolverDep) -> dict:
     )
 
 
-@router.get("/apps/{key}/versions/{version}")
+@router.get(
+    "/apps/{key}/versions/{version}",
+    response_model=Envelope[AppVersionCodeOut],
+    response_model_exclude_unset=True,
+)
 async def get_app_version(
     key: str, version: int, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -140,7 +183,11 @@ async def get_app_shot(
     )
 
 
-@router.post("/documents/{document_id}/apps")
+@router.post(
+    "/documents/{document_id}/apps",
+    response_model=Envelope[AppVersionOut],
+    response_model_exclude_unset=True,
+)
 async def create_app(
     document_id: uuid.UUID, body: AppCodeIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -165,7 +212,11 @@ async def create_app(
     return ok(Snippets.describe(snippet, version))
 
 
-@router.post("/apps/{key}/versions")
+@router.post(
+    "/apps/{key}/versions",
+    response_model=Envelope[AppVersionOut],
+    response_model_exclude_unset=True,
+)
 async def add_app_version(
     key: str, body: AppCodeIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

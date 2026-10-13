@@ -1043,6 +1043,7 @@
   "appCodeTooLarge": "小程序的代码超过了 {limit} KB。这么大的东西应该做成项目里的网站",
   "appRunFailed": "小程序运行出错，没有存下：{why}",
   "appShotMissing": "这一版没有这个宽度的截图",
+  "appDrewNothing": "运行后什么都没画出来：代码没有往页面里放任何内容",
   "externalProblemAccountRequired": "请填 YOJ 的账号",
   "externalProblemPasswordRequired": "请填 YOJ 账号的密码",
   "externalProblemNumberInvalid": "YOJ 题号只能填数字",

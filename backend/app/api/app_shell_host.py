@@ -26,7 +26,7 @@ from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.core.config import settings
-from app.core.errors import AppError, BaseError
+from app.core.errors import BaseError
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_host
 
 #: The label of the shell's host on the content domain. Not ``preview-…``: the
@@ -45,7 +45,7 @@ def shell_origin() -> str | None:
         return None
     try:
         return content_host(LABEL)
-    except (AppError, BaseError):
+    except BaseError:
         return None
 
 
