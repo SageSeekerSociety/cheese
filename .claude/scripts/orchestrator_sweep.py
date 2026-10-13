@@ -18,9 +18,14 @@ Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 
 The default output is that text list, unchanged. The same sweep in other shapes:
   --json       every class's rows — task, topic, seat, PR, head, CI state, the head its
-               review is pinned to, minutes waited, whom it waits on — plus that UTC
-               day's metrics. Fixed shape, for tools.
-  --render     the same data as Markdown, one line per signal, for a person to read.
+               review is pinned to, minutes waited, whom it waits on, the PR's two core
+               sections and its failed checks and cases — plus that UTC day's metrics.
+               Fixed shape, for tools.
+  --render     the same data as Markdown, one line per signal, for a person to read;
+               under the table, one block per task with what its PR changed, how it was
+               verified, and (when it is red) which checks are red and which cases the
+               logs name. A section the description never wrote says so rather than
+               being filled in.
   --sync-doc D write the rendered board into document D between <!-- board:start --> and
                <!-- board:end -->; when the markers are not there yet, append a marked
                section by naming a trailing passage and putting the board after it, and
@@ -41,7 +46,8 @@ BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
 REVIEW_MARK = re.compile(r"<!--\s*pr-review sha=([0-9a-f]{7,40})")
 CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑", "EXPECTED": "跑"}
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
-              "review_head", "waited_min", "waiting_on", "stage", "detail")
+              "review_head", "waited_min", "waiting_on", "stage", "detail",
+              "changed", "verified", "checks", "cases")
 #: PR -> its merge-queue timeline, filled once per run (see gh_queue_timeline).
 _TIMELINES = {}
 #: PRs this run could not read a timeline for at all. The day's numbers are short by those,
@@ -106,12 +112,18 @@ def said(m):
 
 def gh_pr(n, board=False):
     """One PR's queue state. `board` adds what only the board shows: the head, that
-    head's CI state, and the head the newest review is pinned to. Read-only, one call.
+    head's CI state, that head's per-check verdicts, the description, and the head the
+    newest review is pinned to. Read-only, one call.
 
     Those fields stay out of the text list's query — it asks for exactly what it
     always asked for, so a field the board wants can never be the reason the text
-    list reports "GitHub 未查"."""
-    extra = ('headRefOid commits(last:1){nodes{commit{statusCheckRollup{state}}}} '
+    list reports "GitHub 未查". The per-check verdicts are what the board reports a
+    red by: the names of the ones that did not pass, in GitHub's own order, the first
+    50 of them."""
+    extra = ('headRefOid body commits(last:1){nodes{commit{statusCheckRollup{state '
+             'contexts(first:50){nodes{__typename '
+             '... on CheckRun{name conclusion detailsUrl} '
+             '... on StatusContext{context state targetUrl}}}}}}} '
              'comments(last:100){nodes{body}} ') if board else ''
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){merged '
          + extra
@@ -144,8 +156,30 @@ def gh_pr(n, board=False):
         body["head"] = body.get("headRefOid")
         body["ci"] = rollup.get("state")
         body["review_head"] = pinned
+        body["desc"] = body.pop("body", None) or ""
+        body["checks"] = failed_checks(rollup)
         return body
     return {"error": err}
+
+
+#: The verdicts that mean a check did not pass. ACTION_REQUIRED is not something the
+#: code did, but it is not a pass either, so it is reported like the rest.
+_FAILED_VERDICT = frozenset({"FAILURE", "ERROR", "TIMED_OUT", "STARTUP_FAILURE",
+                             "ACTION_REQUIRED"})
+
+
+def failed_checks(rollup):
+    """The checks that did not pass, each as {name, url} — the name the board prints and
+    the page a log can be read from. Names only: what they mean is the reader's call,
+    and this file does not make it."""
+    out = []
+    for node in ((rollup.get("contexts") or {}).get("nodes") or []):
+        if node.get("__typename") == "CheckRun":
+            if node.get("conclusion") in _FAILED_VERDICT:
+                out.append({"name": node.get("name") or "?", "url": node.get("detailsUrl") or ""})
+        elif str(node.get("state") or "").upper() in ("FAILURE", "ERROR"):
+            out.append({"name": node.get("context") or "?", "url": node.get("targetUrl") or ""})
+    return out
 
 
 def gh_queue_timeline(n):
@@ -183,6 +217,122 @@ def gh_queue_timeline(n):
     # 一行一句：gh 的 stderr 常带换行，原样塞进指标那行会把看板拆成两行。
     _TIMELINE_ERRORS.append(f"#{n}（{' '.join(err.split()) or '查不到原因'}）")
     return None
+
+
+#: The PR-body headings a reader judges by: what the change is, and how it was checked.
+#: The template asks for `## What changed` and `## How it was verified`, but most bodies
+#: here carry neither — so the opening paragraphs answer for "what changed" when no
+#: heading claims them, and a plain `验证：` line answers for the other half.
+_SECTION_WORDS = {
+    "changed": ("what chang", "changes", "改动", "改了什么"),
+    "verified": ("verif", "valid", "test", "验证", "怎么验证"),
+}
+#: A line that labels the part after it — `**验证**：…`, `验证：`, `## Tests` alike. How
+#: this repo actually writes the second half, far more often than as a heading.
+_LABEL = re.compile(r"^[ \t]*(?:\*\*)?([^\n：:*]{1,20})(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
+_VERIFIED_LABEL = ("验证", "怎么验证", "测试", "自测", "verif", "valid", "test", "check")
+_HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
+_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+#: Everything from the first of these lines down is the platform's, not the author's.
+_TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
+                           r"|Reviewed-by|Reported-by):", re.M)
+_AGENT_MARK = re.compile(r"^[ \t]*AGENT:[ \t]*$", re.M)
+#: The lines a runner prints to name a case that failed — pytest's summary, the
+#: `##[error]` line this repo's own harness adds around it, go test, vitest/jest.
+#: The sweep takes the case name out of whichever one is there and says nothing else.
+_CASE_LINE = re.compile(
+    r"^(?:FAILED|ERROR)\s+(\S+)"
+    r"|^##\[error\](\S+::\S+)"
+    r"|^--- FAIL:\s*(\w+)"
+    r"|^[✕×✗●]\s+(\S.*)$")
+#: GitHub stamps every log line with an RFC3339 time and a space.
+_LOG_STAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s?")
+#: A failed check's page names the Actions job whose log carries the case names.
+_JOB_IN_URL = re.compile(r"/actions/runs/\d+/job/(\d+)")
+_CASES_MAX = 6
+
+
+def brief(desc, limit=400):
+    """The description's 改了什么 / 怎么验证的, each cut to `limit` characters. An empty
+    string means the description does not carry that section — the board says so
+    instead of filling it in.
+
+    Each half is read off the heading that names it; where no heading does, the
+    opening paragraphs answer for "what changed" and a plain label line answers for
+    the other half, which is how most bodies here are written."""
+    text = _HTML_COMMENT.sub("", desc or "")
+    trailer = _TRAILER_LINE.search(text)
+    if trailer:
+        text = text[:trailer.start()]
+    agent = _AGENT_MARK.search(text)
+    if agent:
+        text = text[agent.end():]
+    text = text.strip()
+    if not text:
+        return "", ""
+    heads = list(_HEADING.finditer(text))
+    all_labels = list(_LABEL.finditer(text))
+    ver = [m for m in all_labels
+           if any(w in m.group(1).lower() for w in _VERIFIED_LABEL)]
+    verified = _under_heading(text, heads, "verified") or _under_label(text, ver, all_labels)
+    changed = _under_heading(text, heads, "changed")
+    if not changed:
+        # 没有标题说「改了什么」时，正文开头到「验证」之前的那一段就是它 —— 前面是
+        # 背景，后面是验证，中间剩下的全是改动。
+        stops = [h.start() for h in heads] + [m.start() for m in ver] + [len(text)]
+        changed = text[:min(stops)].strip()
+    return cut(changed, limit), cut(verified, limit)
+
+
+def _under_heading(text, heads, want):
+    """The body of the first heading that names `want`, or "" when there is none."""
+    for i, h in enumerate(heads):
+        if any(w in h.group(2).lower() for w in _SECTION_WORDS[want]):
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+            return text[h.end():end].strip()
+    return ""
+
+
+def _under_label(text, hits, labels):
+    """The first hit's body, stopping at the next labelled line of any kind."""
+    if not hits:
+        return ""
+    after = [m.start() for m in labels if m.start() > hits[0].start()]
+    return text[hits[0].end():min(after) if after else len(text)].strip()
+
+
+def cut(text, limit):
+    """One section as the board prints it: runs of blank lines squeezed out, and the
+    whole thing cut to `limit` characters, saying so on the end when it was."""
+    lines = []
+    for ln in text.split("\n"):
+        ln = ln.rstrip()
+        if ln or (lines and lines[-1]):
+            lines.append(ln)
+    joined = "\n".join(lines).strip()
+    return joined if len(joined) <= limit else joined[:limit].rstrip() + " …（截断）"
+
+
+def failing_cases(checks, jobs=2):
+    """The case names the failed jobs print, read out of their logs and quoted as they
+    are — up to `_CASES_MAX` of them, and nothing about why they failed. A job whose
+    log cannot be read contributes nothing rather than stopping the sweep."""
+    out = []
+    for check in [c for c in checks if c.get("url")][:jobs]:
+        job = _JOB_IN_URL.search(check["url"])
+        if not job:
+            continue
+        r = subprocess.run(["gh", "api", f"repos/{REPO[0]}/{REPO[1]}/actions/jobs/"
+                                         f"{job.group(1)}/logs"],
+                           capture_output=True, text=True)
+        for raw in (r.stdout or "").splitlines()[-6000:]:
+            found = _CASE_LINE.match(_LOG_STAMP.sub("", raw).strip())
+            if not found:
+                continue
+            name = next((g for g in found.groups() if g), "").strip()[:200]
+            if name and name not in out:
+                out.append(name)
+    return out[:_CASES_MAX]
 
 
 def stage_of(card, pr, ready_at, last_ready, red_at, last_msg):
@@ -224,6 +374,7 @@ def waiting_of(t, kind):
 
 def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg):
     good = pr is not None and "error" not in pr
+    changed, verified = brief(pr.get("desc")) if good else ("", "")
     return {
         "kind": kind, "name": name, "task": t["number"], "title": t["title"], "topic": t["id"],
         "seat": t.get("agent_handle"),
@@ -235,6 +386,10 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "waiting_on": waiting or waiting_of(t, kind),
         "stage": stage_of(card, pr, ready_at, last_ready, red_at, last_msg),
         "detail": text,
+        "changed": changed,
+        "verified": verified,
+        "checks": [c["name"] for c in (pr.get("checks") or [])] if good else [],
+        "cases": (pr.get("cases") or []) if good else [],
     }
 
 
@@ -300,7 +455,15 @@ def sweep(tok, room, silent, skip, want_facts):
 
         if red and red[-1]["created_at"] > last_msg and age(red[-1]["created_at"]) >= 30:
             w = age(red[-1]["created_at"])
-            add("红了没人修", f"{red[-1]['content'][:50]}，{w:.0f} 分钟线上没新消息", w)
+            # 红在哪只进看板：文本清单照老样子一卡一查，看板的模式才去读每个检查的
+            # 判定，读日志拿用例名更贵，所以只在真的要摆出来的时候读。
+            where = ""
+            if want_facts and pr is not None and "error" not in pr:
+                if pr.get("cases") is None:
+                    pr["cases"] = failing_cases(pr.get("checks") or [])
+                names = [c["name"] for c in (pr.get("checks") or [])]
+                where = "，红的是 " + "、".join(names) if names else ""
+            add("红了没人修", f"{red[-1]['content'][:50]}{where}，{w:.0f} 分钟线上没新消息", w)
 
         if len(tail) >= 2 and all(meta(m)["event_type"] == "turn_failed" for m in tail[-2:]) and tail[-1]["created_at"] > last_msg:
             w = age(tail[-1]["created_at"])
@@ -337,7 +500,34 @@ def render(rows, metrics, silent, now, room):
             out.append(f"| {r['kind']} | #{r['task']} | {r['stage']} | {r['ci'] or '—'} "
                        f"| {rev} | {waited} | {r['waiting_on'] or '—'} |")
     out += ["", metrics_line(metrics)]
+    if rows:
+        out += ["", "### 每个待判 PR", ""] + details(rows)
     return "\n".join(out)
+
+
+def details(rows):
+    """每张待判的卡下面，把它 PR 正文里的那两段、和它红在哪个检查／哪些用例摆出来 ——
+    读完这一段就不用再开 PR 页面。同一个任务出现在多个类别里时只说一次。正文没写的
+    那截、GitHub 没说红在哪个检查的，都如实说没有，看板不替它们补话。"""
+    seen, out = set(), []
+    for r in rows:
+        if r["task"] in seen:
+            continue
+        seen.add(r["task"])
+        out += [f"**#{r['task']} {r['title']}**｜{r['kind']}｜{r['stage']}", ""]
+        for label, text in (("改了什么", r["changed"]), ("怎么验证的", r["verified"])):
+            if text:
+                out += [f"{label}："] + ["> " + ln if ln.strip() else ">" for ln in text.split("\n")]
+            else:
+                out.append(f"{label}：PR 正文里没写这一节")
+            out.append("")
+        if r["checks"]:
+            out.append("红的是：" + "、".join(r["checks"]))
+        if r["cases"]:
+            out += ["失败用例："] + ["> " + ln for ln in r["cases"]]
+        if r["checks"] or r["cases"]:
+            out.append("")
+    return out
 
 
 def metrics_line(m):
