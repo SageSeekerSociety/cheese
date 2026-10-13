@@ -71,7 +71,10 @@ describe('楼内回复指代', () => {
     const { container } = mountComment({ parent_id: 'c-0', reply_to_handle: 'andylizf' })
     const line = container.querySelector('.fb-ci__re')
     expect(line, '存了 reply_to_handle 却没画「回复 X」').not.toBeNull()
-    expect(line?.querySelector('.mention')?.textContent).toBe('@andylizf')
+    // 这颗 chip 现在坐着头像 + @名字（`UserRef` 画的共享身份视图）。整颗 chip 的
+    //  textContent 里还有头像降级时那个首字母，所以断言落在名字那一层上 ——
+    //  和 `ProjectOverviewView.spec` 同一处判据。
+    expect(line?.querySelector('.identity-view__name')?.textContent).toBe('@andylizf')
   })
 
   it('顶层评论一个字都不画', () => {
