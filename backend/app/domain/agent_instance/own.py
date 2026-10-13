@@ -41,6 +41,11 @@ SETTING = "allow_own_agents"
 #: own agents use, as a list. Absent, every kind is allowed.
 KINDS_SETTING = "own_agent_kinds"
 
+#: The model services a project lets its members' own agents call, as a list
+#: of hosts (the host of the service's address, ``api.moonshot.cn``). Absent or
+#: empty, any service is allowed; it says nothing about the other kinds.
+HOSTS_SETTING = "own_agent_service_hosts"
+
 #: How a room names each kind (catalog ``roomNotice``).
 _KIND_WORDS = {
     ConnectionKind.subscription: "ownAgentKindSubscription",
@@ -63,6 +68,15 @@ def allowed_kinds(
     return frozenset(ConnectionKind(v) for v in value if v in known)
 
 
+def allowed_hosts(project_settings: dict[str, Any] | None) -> list[str]:
+    """The model-service hosts a project allows, in the order its manager
+    listed them; empty when it allows any."""
+    value = (project_settings or {}).get(HOSTS_SETTING)
+    if not isinstance(value, list):
+        return []
+    return [v for v in value if isinstance(v, str)]
+
+
 @dataclass(frozen=True)
 class Login:
     """One of a person's model connections, and how it reaches a model: the
@@ -83,7 +97,7 @@ class Login:
     #: The machine holding it; None when its owner's account does.
     device_id: str | None = None
     device_name: str | None = None
-    #: What its owner named a connection their account holds.
+    #: What its owner named the connection.
     name: str | None = None
 
     @property
@@ -102,6 +116,7 @@ def _login(device_id: str, name: str, row: DeviceClaudeLoginRow) -> Login:
         plan=row.subscription_type if kind is ConnectionKind.subscription else None,
         model=row.model if service else None,
         service_host=row.service_host if service else None,
+        name=row.name,
     )
 
 
@@ -173,8 +188,8 @@ async def connection_of(db: AsyncSession, owned: "Owned") -> Login | None:
 
 def label(login: Login) -> str:
     """What tells one of a person's own agents from another in its name: the
-    name its owner gave a connection their account holds, else a
-    subscription's plan, a model service's model, or that it is an API key."""
+    name its owner gave the connection, else a subscription's plan, a model
+    service's model, or that it is an API key."""
     if login.name:
         return login.name
     if login.kind is ConnectionKind.subscription:
@@ -182,6 +197,26 @@ def label(login: Login) -> str:
     if login.kind is ConnectionKind.model_service:
         return login.model or login.service_host or "自定义模型"
     return "API"
+
+
+def host_refused(login: "Login", project_settings: dict[str, Any] | None) -> bool:
+    """Whether the project refuses this connection's model service: it lists
+    the hosts it allows, and this one is not among them. A service whose host
+    is unknown is not shown to be allowed, so it is refused too."""
+    hosts = allowed_hosts(project_settings)
+    return (
+        bool(hosts)
+        and login.kind is ConnectionKind.model_service
+        and login.service_host not in hosts
+    )
+
+
+def allows(login: "Login", project_settings: dict[str, Any] | None) -> bool:
+    """Whether the project lets its members' own agents use this connection:
+    of a kind it allows, and, for a model service, at a host it allows."""
+    return login.kind in allowed_kinds(project_settings) and not host_refused(
+        login, project_settings
+    )
 
 
 def kinds_refused_sentence(owner_name: str, kinds: list[ConnectionKind]) -> str:
@@ -199,8 +234,9 @@ async def unusable(
 ) -> str | None:
     """Why a member's own agent cannot work here even for someone it answers
     to, as the sentence the room is told: its connection is gone, or is of a
-    kind the project does not allow. None when it can (it may still have to
-    wait for its machine to come online)."""
+    kind the project does not allow, or calls a model service at a host the
+    project does not list. None when it can (it may still have to wait for its
+    machine to come online)."""
     login = await connection_of(db, owned)
     if login is None:
         instance = await db.get(AgentInstance, owned.instance_id)
@@ -213,6 +249,13 @@ async def unusable(
     if login.kind not in allowed_kinds(project_settings):
         owner = await owner_of(db, owned.instance_id)
         return kinds_refused_sentence(owner[1] if owner else "", [login.kind])
+    if host_refused(login, project_settings):
+        owner = await owner_of(db, owned.instance_id)
+        return say(
+            "ownAgentHostNotAllowed",
+            owner=owner[1] if owner else "",
+            host=login.service_host or say("ownAgentKindModelService"),
+        )
     return None
 
 
@@ -366,6 +409,10 @@ async def add(
         raise NotFoundError(say("ownAgentConnectionNotFound"))
     if login.kind not in allowed_kinds(project.settings):
         raise ForbiddenError(say("ownAgentConnectionKindRefused"))
+    if host_refused(login, project.settings):
+        raise ForbiddenError(
+            say("ownAgentServiceHostRefused", host=login.service_host or "")
+        )
     account_id = uuid.UUID(login.id) if login.on_account else None
     instance = await db.scalar(
         select(AgentInstance)
@@ -423,8 +470,9 @@ async def rename_for_connection(
     account_connection_id: uuid.UUID | None = None,
 ) -> None:
     """After a machine said what its login is, or an owner renamed a
-    connection their account holds, the own agents on that connection take
-    the name it now calls for, and their owner's current nickname."""
+    connection, the own agents on that connection take the name it now calls
+    for, and their owner's current nickname. A name its owner gave the
+    connection outlasts whatever its machine reports (`label`)."""
     on = (
         OwnAgent.device_id == device_id
         if device_id is not None
@@ -538,7 +586,7 @@ async def why_not(
     """Why ``caller`` may not set this agent to work, as the sentence the room
     is told; None when they may. A member's own agent is withheld in a project
     closed to them, from anyone it does not answer to, and when its connection
-    is gone or of a kind the project does not allow (``unusable``)."""
+    is gone or one the project does not allow (``unusable``)."""
     owned = await owned_instance(db, instance_id)
     if owned is None:
         return None
@@ -597,10 +645,15 @@ async def may_chat_with(
 
 
 async def listing(
-    db: AsyncSession, project_id: uuid.UUID, viewer_user_id: int | None, is_online
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    viewer_user_id: int | None,
+    is_online,
+    project_settings: dict[str, Any] | None,
 ) -> list[dict]:
     """The members' own agents a project has: whose each one is, who may call
-    it, and the model connection it runs on (None once that is gone). Everyone
+    it, and the model connection it runs on (None once that is gone) and
+    whether the project allows that connection. Everyone
     in the project reads that much; the machine holding the connection, and
     whether it is online, only its owner reads (``machine`` is None for
     everyone else)."""
@@ -633,6 +686,7 @@ async def listing(
                     "plan": login.plan,
                     "model": login.model,
                     "on_account": login.on_account,
+                    "allowed": allows(login, project_settings),
                 }
                 if login is not None
                 else None,
@@ -665,7 +719,6 @@ async def my_connections(
             )
         ).all()
     }
-    allowed = allowed_kinds(project_settings)
     return [
         {
             "id": login.id,
@@ -679,7 +732,7 @@ async def my_connections(
             # One the account holds runs on the platform's session host.
             "online": login.on_account or bool(is_online(login.device_id)),
             "added": login.id in here,
-            "allowed": login.kind in allowed,
+            "allowed": allows(login, project_settings),
         }
         for login in await logins(db, viewer_user_id)
     ]

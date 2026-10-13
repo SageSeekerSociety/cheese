@@ -56,6 +56,7 @@ beforeEach(() => {
   vi.mocked(ownAgents.getOwnAgents).mockResolvedValue({
     allowed: true,
     kinds: ['subscription', 'api_key', 'model_service'],
+    service_hosts: [],
     can_manage: false,
     agents: [],
     my_connections: [],

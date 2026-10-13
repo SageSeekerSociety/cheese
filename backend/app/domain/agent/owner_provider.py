@@ -19,9 +19,9 @@ there (`client.prepare`).
 Which machine runs the session: the one holding the model connection the
 agent was added with, and no other — a subscription's login never leaves the
 machine it was given on. While that machine is away the session waits for it.
-When the connection is gone (its owner removed or logged it out) or its kind
-is one the project does not allow, the session does not start, and the room is
-told why (`own.unusable`).
+When the connection is gone (its owner removed or logged it out), or its kind
+or its model service's host is one the project does not allow, the session
+does not start, and the room is told why (`own.unusable`).
 
 A connection its owner's account holds instead — an API key or a model
 service, kept sealed by the platform — is not tied to any machine, so its
@@ -142,8 +142,9 @@ class AccountChannel(CentralChannel):
     The key is opened here, as the session starts, and handed to that one
     process's environment; the execution environment is never given it.
 
-    When the connection is gone or of a kind the project does not allow, the
-    session does not start and the room is told why (`own.unusable`).
+    When the connection is gone, or of a kind or at a model-service host the
+    project does not allow, the session does not start and the room is told why
+    (`own.unusable`).
     """
 
     def __init__(self, executor):
@@ -216,8 +217,8 @@ class AccountChannel(CentralChannel):
 async def owner_is_away(db, instance_id, hub) -> bool:
     """Whether ``instance_id`` is a member's own agent whose connection's
     machine is not online: its turn has nowhere to run until it comes back.
-    Not when the connection is gone or of a kind the project refuses: that
-    turn starts, to be refused with the reason. Never one on a connection its
+    Not when the connection is gone or one the project refuses: that turn
+    starts, to be refused with the reason. Never one on a connection its
     owner's account holds, which runs on the session host."""
     owned = await owned_instance(db, instance_id)
     if owned is None or owned.on_account:

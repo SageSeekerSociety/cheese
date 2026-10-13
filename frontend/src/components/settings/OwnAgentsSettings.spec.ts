@@ -20,6 +20,7 @@ vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
 const SETTINGS: Settings = {
   allowed: true,
   kinds: ['subscription', 'api_key', 'model_service'],
+  service_hosts: [],
   can_manage: false,
   agents: [
     {
@@ -29,7 +30,7 @@ const SETTINGS: Settings = {
       callers: 'owner',
       owner_handle: 'alice',
       owner_name: 'alice',
-      connection: { kind: 'subscription', plan: 'max', model: null, on_account: false },
+      connection: { kind: 'subscription', plan: 'max', model: null, on_account: false, allowed: true },
       machine: { name: 'alice-laptop', online: true },
     },
     {
@@ -39,7 +40,7 @@ const SETTINGS: Settings = {
       callers: 'owner',
       owner_handle: 'bob',
       owner_name: 'bob',
-      connection: { kind: 'api_key', plan: null, model: null, on_account: true },
+      connection: { kind: 'api_key', plan: null, model: null, on_account: true, allowed: true },
       machine: null,
     },
   ],
@@ -138,6 +139,25 @@ describe('members’ own Claude Code in project settings', () => {
     await fireEvent.click(offer.querySelector('[data-testid="own-agent-add"]')!)
 
     expect(ownAgents.addOwnAgent).toHaveBeenCalledWith('project', '6f1c2b1e-account-key')
+  })
+
+  it('lets a manager allow a provider by its host name, and sends nothing that is not one', async () => {
+    const managed = { ...SETTINGS, can_manage: true }
+    vi.mocked(ownAgents.getOwnAgents).mockResolvedValue(managed)
+    vi.mocked(ownAgents.setOwnAgentsRules).mockResolvedValue({ ...managed, service_hosts: ['api.moonshot.cn'] })
+    await mountSettings()
+
+    const input = screen.getByTestId('own-agents-host-input').querySelector('input')!
+    const addButton = screen.getByTestId('own-agents-host-add')
+    await fireEvent.update(input, 'https://api.moonshot.cn/anthropic')
+    expect(addButton.hasAttribute('disabled')).toBe(true)
+    await fireEvent.click(addButton)
+    expect(ownAgents.setOwnAgentsRules).not.toHaveBeenCalled()
+
+    await fireEvent.update(input, ' API.Moonshot.cn ')
+    await fireEvent.click(addButton)
+
+    expect(ownAgents.setOwnAgentsRules).toHaveBeenCalledWith('project', { service_hosts: ['api.moonshot.cn'] })
   })
 
   it('removes my own agent, and offers no removal on anyone else’s', async () => {

@@ -763,6 +763,8 @@ class ClaudeCodeLoginOut(BaseModel):
     subscription_type: str | None
     model: str | None
     service_host: str | None
+    #: What its owner named the connection; None until they do.
+    name: str | None
     checked_at: str
     #: Removed while the machine was away; it logs out as it next connects.
     revoking: bool
@@ -853,7 +855,9 @@ class AccountConnectionIn(BaseModel):
     ) = None
 
 
-class AccountConnectionRename(BaseModel):
+class ConnectionRename(BaseModel):
+    """What its owner calls a model connection; empty takes the name away."""
+
     name: Annotated[str, StringConstraints(strip_whitespace=True, max_length=64)]
 
 
@@ -906,7 +910,7 @@ async def check_account_connection(
 @router.patch("/my/model-connections/{connection_id}", dependencies=[ROUTE_DECIDES])
 async def rename_account_connection(
     connection_id: uuid.UUID,
-    body: AccountConnectionRename,
+    body: ConnectionRename,
     resolver: ActorResolverDep,
     db: DbSession,
 ) -> AccountConnectionOut:
@@ -970,6 +974,25 @@ async def revoke_my_claude_code(
     await _my_self_hosted(device_id, resolver, service)
     await owner_login.revoke(db, device_hub, device_id)
     return _login_out(await owner_login.status(db, device_id))
+
+
+# The handler decides: only the machine's owner, a person, may name it.
+@router.patch("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
+async def rename_my_claude_code(
+    device_id: str,
+    body: ConnectionRename,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
+) -> ClaudeCodeLoginOut:
+    """Name the login the caller's own Claude Code has on one of their machines
+    (#2991); the own agents on it are named after it, whatever the machine
+    reports later. The machine need not be online."""
+    await _my_self_hosted(device_id, resolver, service)
+    if not await owner_login.rename(db, device_id, body.name):
+        raise NotFoundError(say("ownAgentConnectionNotFound"))
+    await db.commit()
+    return ClaudeCodeLoginOut.model_validate(await owner_login.status(db, device_id))
 
 
 class ModelServiceRequest(BaseModel):

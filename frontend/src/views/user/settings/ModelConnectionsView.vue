@@ -1,6 +1,6 @@
 <!--
   「模型连接」的画法（#2991）：你的 Claude Code 在各台设备上登录的账号或模型服务，每一份
-  保存在哪台设备、上次检查和上次使用的时间，以及重新检查、解除和使用自定义模型服务；
+  保存在哪台设备、上次检查和上次使用的时间，以及重新检查、改名、解除和使用自定义模型服务；
   还有保存在账号里的 API key 和模型服务，每一份的密钥后四位、服务地址、模型和上次检查，
   以及添加、测试、改名和解除。取数和动作在同目录的 ModelConnections.vue。
 -->
@@ -69,7 +69,7 @@
           <BaseButton kind="ghost" size="sm" :loading="busy === `${h.id}:check`" @click="emit('checkHeld', h.id)">
             {{ t('account.modelConnections.check') }}
           </BaseButton>
-          <BaseButton kind="ghost" size="sm" @click="openRename(h)">
+          <BaseButton kind="ghost" size="sm" @click="openRename(h.id, h.name, false)">
             {{ t('account.modelConnections.rename') }}
           </BaseButton>
           <BaseButton kind="ghost" size="sm" :loading="busy === `${h.id}:revoke`" @click="removingHeld = h">
@@ -81,7 +81,8 @@
       <div v-for="c in connections" :key="c.device_id" class="mc-row" :data-connection="c.device_id">
         <div class="mc-row__head">
           <div class="mc-row__id">
-            <div class="mc-row__name">{{ kindLabel(c) }}</div>
+            <div class="mc-row__name">{{ c.name || kindLabel(c) }}</div>
+            <div v-if="c.name" class="mc-row__sub">{{ kindLabel(c) }}</div>
             <div v-if="c.service_host" class="mc-row__sub">
               {{ t('account.modelConnections.serviceHost', { host: c.service_host }) }}
             </div>
@@ -118,6 +119,9 @@
             @click="emit('recheck', c.device_id)"
           >
             {{ t('account.modelConnections.recheck') }}
+          </BaseButton>
+          <BaseButton kind="ghost" size="sm" @click="openRename(c.device_id, c.name, true)">
+            {{ t('account.modelConnections.rename') }}
           </BaseButton>
           <BaseButton kind="ghost" size="sm" :loading="busy === `${c.device_id}:revoke`" @click="removing = c">
             {{ t('account.modelConnections.remove') }}
@@ -296,7 +300,8 @@ const props = defineProps<{
   held: AccountConnection[]
   /** 能改用自定义模型服务的设备：自己接入、此刻在线的。 */
   devices: ModelServiceDevice[]
-  /** 正在进行的动作：`<id>:check`、`<id>:revoke`、`<id>:rename`、`service` 或 `add`。 */
+  /** 正在进行的动作：`<id>:check`、`<id>:revoke`、`<id>:rename`（id 是账号里那一份的，或设备的）、
+   *  `service` 或 `add`。 */
   busy: string
   /** 表单保存成功了几次；变了就关上开着的表单。 */
   saved: number
@@ -309,6 +314,7 @@ const emit = defineEmits<{
   addHeld: [input: AccountConnectionInput]
   checkHeld: [id: string]
   renameHeld: [id: string, name: string]
+  renameDevice: [deviceId: string, name: string]
   removeHeld: [id: string]
 }>()
 
@@ -351,16 +357,20 @@ function saveHeld() {
   })
 }
 
-const renaming = ref<AccountConnection | null>(null)
+// 改名的是账号里的一份（id 是它的），或设备上的登录（id 是那台设备）。
+const renaming = ref<{ id: string; onDevice: boolean } | null>(null)
 const renameText = ref('')
 
-function openRename(h: AccountConnection) {
-  renameText.value = h.name ?? ''
-  renaming.value = h
+function openRename(id: string, name: string | null, onDevice: boolean) {
+  renameText.value = name ?? ''
+  renaming.value = { id, onDevice }
 }
 
 function saveRename() {
-  if (renaming.value) emit('renameHeld', renaming.value.id, renameText.value.trim())
+  if (!renaming.value) return
+  const name = renameText.value.trim()
+  if (renaming.value.onDevice) emit('renameDevice', renaming.value.id, name)
+  else emit('renameHeld', renaming.value.id, name)
 }
 
 // 订阅档位按厂商的写法首字母大写（max → Max）。

@@ -21,6 +21,7 @@ import {
   listModelConnections,
   removeAccountConnection,
   renameAccountConnection,
+  renameModelConnection,
   revokeModelConnection,
   setModelService,
 } from '@/api/modelConnections'
@@ -112,6 +113,14 @@ async function renameHeld(id: string, name: string) {
   }
 }
 
+async function renameDevice(deviceId: string, name: string) {
+  if (
+    await act(`${deviceId}:rename`, () => renameModelConnection(deviceId, name), t('account.modelConnections.renamed'))
+  ) {
+    saved.value += 1
+  }
+}
+
 function removeHeld(id: string) {
   void act(`${id}:revoke`, () => removeAccountConnection(id), t('account.modelConnections.removed'))
 }
@@ -134,6 +143,7 @@ onMounted(load)
     @add-held="addHeld"
     @check-held="checkHeld"
     @rename-held="renameHeld"
+    @rename-device="renameDevice"
     @remove-held="removeHeld"
   />
 </template>
