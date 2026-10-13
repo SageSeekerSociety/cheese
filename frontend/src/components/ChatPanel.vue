@@ -377,6 +377,7 @@ useComposerShortcut({
           :threadable="threadable"
           :processable="inThread"
           :replying-for="threadLines.replyingFor"
+          :replying-seats-for="threadLines.replyingSeats"
           :thread-status-for="threadLines.statusFor"
           :pinnable="pinnable"
           :pinned-ids="pins.pinnedIds.value"
