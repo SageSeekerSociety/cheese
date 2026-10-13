@@ -27,7 +27,11 @@ SKIPPED = "skipped"
 
 def asked_of(meta: dict | None) -> tuple[str, ...]:
     """The people a question asks; empty when it asks nobody in particular."""
-    return tuple((meta or {}).get("asked") or ())
+    asked = (meta or {}).get("asked") or ()
+    # A bare handle is what a backend from before the list wrote; blue/green
+    # deploys keep one running past the migration, so its questions land in
+    # this shape. tuple() of it would split the handle into letters.
+    return (asked,) if isinstance(asked, str) else tuple(asked)
 
 
 def asked_everyone(meta: dict | None) -> bool:
