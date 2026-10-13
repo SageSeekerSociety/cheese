@@ -3165,13 +3165,19 @@ def _git_task(
         text=True,
         timeout=300,
     )
-    if result.returncode:
-        raise RuntimeError(result.stderr.strip())
     if pre_push_report is not None:
+        # Read before the exit status is judged. Git runs the hook, and the
+        # entry point writes its report, before the push reaches the remote,
+        # so a push that then fails (a refusal, a cut connection) has produced
+        # the same report as one that lands — and on this path the file is the
+        # only copy, since the next attempt unlinks it before it runs. Kept
+        # for `_sync_task` to hand over whichever way the push went.
         try:
-            _keep_pre_push_report(pre_push_report.read_text().strip())
+            _keep_pre_push_report(pre_push_report, pre_push_report.read_text().strip())
         except OSError:
             pass
+    if result.returncode:
+        raise RuntimeError(result.stderr.strip())
     # Raw for NUL-separated paths: a file name may begin with a space.
     return result.stdout if raw else result.stdout.strip()
 
@@ -3187,16 +3193,38 @@ def _pre_push_report_path(worktree: Path) -> Path:
     return Path(git_dir) / "cheese-pre-push-report"
 
 
-# Reports read back from a delivery push, waiting for `_sync_task` to hand
-# them over. Kept: `_tell_room` can fail while the room is unreachable, and
-# the report is the entry point's only output on this path — it is not
-# re-derivable from the branch afterwards.
-_pending_pre_push_reports: list[str] = []
+# Reports read back from a delivery push, keyed by the checkout they came
+# from and waiting for `_sync_task` to hand them over. Keyed and not a list
+# because one sync can push the same checkout twice: `_once_more_if_transient`
+# retries a delivery, and both attempts read the file that attempt wrote.
+_pending_pre_push_reports: dict[str, str] = {}
 
 
-def _keep_pre_push_report(text: str) -> None:
+def _keep_pre_push_report(path: Path, text: str) -> None:
     if text:
-        _pending_pre_push_reports.append(text)
+        _pending_pre_push_reports[str(path)] = text
+
+
+class _RoomMessage:
+    """One thing to say, and the second reader to say it to.
+
+    The room is the reader that lasts, and stderr is the one that is still
+    there when the room cannot be reached: `cheese sync` runs from the
+    commit's own post-commit hook, whose stderr the committing command
+    shows. Both are handed the same text — a message composed for the room
+    and then composed again, slightly differently, for the fallback is how
+    two reports of one event start to disagree.
+    """
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def tell_room(self) -> None:
+        if not _tell_room(self.content):
+            self.tell_stderr()
+
+    def tell_stderr(self) -> None:
+        print(self.content, file=sys.stderr)
 
 
 def _flush_pre_push_reports() -> None:
@@ -3206,22 +3234,27 @@ def _flush_pre_push_reports() -> None:
     sync`), so on this path the report is produced, paid for, and captured
     with nobody to read it — the author of the commit is the reader it was
     written for, and this is how it reaches them.
+
+    Total on purpose: it runs in a `finally`, where raising would replace the
+    push's own failure with a failure to report it.
     """
-    if not (API and TOPIC and TOKEN):
-        return  # Nobody to tell: a checkout with no room has no author to reach.
     if not _pending_pre_push_reports:
         return
-    pending = list(_pending_pre_push_reports)
+    pending = list(_pending_pre_push_reports.values())
+    _pending_pre_push_reports.clear()
     content = (
-        "⚠️ 这次提交的推前自检没过（它只是报告，推送照常完成了）：\n\n"
+        "⚠️ 这次提交的推前自检没过（它只是报告，不挡推送）：\n\n"
         + "\n\n".join(pending)
     )
-    if _tell_room(content):
-        del _pending_pre_push_reports[:]
-    else:
-        # The next sync tries again: dropping it here would lose the report
-        # the way the captured pipe did.
-        _pending_pre_push_reports[:] = pending
+    try:
+        message = _RoomMessage(content)
+        if API and TOPIC and TOKEN:
+            message.tell_room()
+        else:
+            # Nobody to tell: a checkout with no room has no author to reach.
+            message.tell_stderr()
+    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+        pass
 
 
 def _git_credential(operation: str) -> None:
@@ -3977,15 +4010,20 @@ def _sync_task(task_id: str) -> list[str]:
                 found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
-            _once_more_if_transient(
-                lambda: _deliver_task_branch(
-                    worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+            try:
+                _once_more_if_transient(
+                    lambda: _deliver_task_branch(
+                        worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+                    )
                 )
-            )
-            # The report of the push that just ran, to the author of the
-            # commit that triggered it. Only a push produces one, so a sync
-            # that had nothing to deliver is silent here.
-            _flush_pre_push_reports()
+            finally:
+                # The report of the push that just ran, to the author of the
+                # commit that triggered it. Only a push produces one, so a
+                # sync that had nothing to deliver is silent here. In a
+                # `finally` because a push that failed still ran the entry
+                # point: its report is the reason to look, and the sync that
+                # would carry it forward is the one being abandoned here.
+                _flush_pre_push_reports()
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"

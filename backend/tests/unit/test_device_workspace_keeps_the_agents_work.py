@@ -66,6 +66,12 @@ def device(tmp_path, monkeypatch):
         def do_POST(self):
             payload = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             if self.path.startswith("/topics/"):
+                if (home / "reject-messages").exists():
+                    # A room that is there but will not take the message: the
+                    # machine has to have somewhere else to put it.
+                    self.send_response(500)
+                    self.end_headers()
+                    return
                 # What the room is told, kept where a test can read it.
                 with (home / "posted.jsonl").open("a") as posted:
                     posted.write(
@@ -477,19 +483,99 @@ def test_the_pre_push_report_of_a_commit_reaches_the_room(device):
     assert [text for text in _told_the_room(home) if "ruff 报了一个错" in text]
 
 
-def test_the_entry_point_says_nothing_in_the_room_when_it_passes(device):
+def test_a_push_the_forge_refuses_still_reports_its_pre_push(device):
+    """The report is written before the forge gets a say.
+
+    Git runs the pre-push hook, and the check writes its report, before the
+    remote can refuse the push. So the run whose red the author most needs is
+    exactly the one that a read-back taken only after the push returned would
+    throw away — and the sync that would carry it forward next time is the one
+    that just failed.
+    """
+    cli, tasks, remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    entry = work / ".cheese/pre-push"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(
+        "#!/bin/sh\n"
+        'echo "ruff 报了一个错"\n'
+        'echo "ruff 报了一个错" > "$CI_FAST_PRE_PUSH_REPORT"\n'
+        "exit 1\n"
+    )
+    entry.chmod(0o755)
+    (work / "work.txt").write_text("work\n")
+    git(work, "add", "work.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "feat: work")
+    reject = remote / "hooks/pre-receive"
+    reject.write_text("#!/bin/sh\nexit 1\n")
+    reject.chmod(0o755)
+
+    with pytest.raises(RuntimeError):
+        cli._sync_task(task)
+
+    assert [text for text in _told_the_room(home) if "ruff 报了一个错" in text]
+
+
+def test_a_report_is_not_repeated_by_the_next_push(device):
+    """A report belongs to the run that wrote it.
+
+    The file survives the sync that read it, so a later push that passes and
+    therefore writes nothing must not find the last one's findings still
+    sitting there — the room would be told twice, the second time about a
+    push that had no findings at all.
+    """
     cli, tasks, _remote, home = device
     task = next(iter(tasks))
     work = cli._task_worktree(task)
     entry = work / ".cheese/pre-push"
     entry.parent.mkdir(parents=True, exist_ok=True)
-    entry.write_text("#!/bin/sh\necho '推前自检都过了'\nexit 0\n")
+    entry.write_text(
+        "#!/bin/sh\n"
+        'echo "第一次没过"\n'
+        'echo "第一次没过" > "$CI_FAST_PRE_PUSH_REPORT"\n'
+        "exit 1\n"
+    )
     entry.chmod(0o755)
-    (work / "clean.txt").write_text("clean\n")
-    git(work, "add", "clean.txt")
-    git(work, "commit", "-m", "feat: clean")
+    (work / "one.txt").write_text("one\n")
+    git(work, "add", "one.txt")
+    git(work, "commit", "-m", "feat: one")
+    entry.write_text("#!/bin/sh\necho '这次都过了'\nexit 0\n")
+    (work / "two.txt").write_text("two\n")
+    git(work, "add", "two.txt")
+    git(work, "commit", "-m", "feat: two")
 
-    assert not [text for text in _told_the_room(home) if "推前自检都过了" in text]
+    assert len([t for t in _told_the_room(home) if "第一次没过" in t]) == 1
+
+
+def test_a_room_that_will_not_take_the_report_gets_it_on_stderr(device, capsys):
+    """The commit's own terminal is the reader that never goes away.
+
+    `cheese sync` is reached from the commit's post-commit hook, so its stderr
+    is what the person who made the commit sees. When the room cannot be told,
+    the report goes there instead of being dropped.
+    """
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    entry = work / ".cheese/pre-push"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(
+        "#!/bin/sh\n"
+        'echo "ruff 报了一个错"\n'
+        'echo "ruff 报了一个错" > "$CI_FAST_PRE_PUSH_REPORT"\n'
+        "exit 1\n"
+    )
+    entry.chmod(0o755)
+    (work / "work.txt").write_text("work\n")
+    git(work, "add", "work.txt")
+    git(work, "-c", "core.hooksPath=/dev/null", "commit", "-m", "feat: work")
+    (home / "reject-messages").write_text("")
+
+    cli._sync_task(task)
+
+    assert "ruff 报了一个错" in capsys.readouterr().err
+    assert not [t for t in _told_the_room(home) if "ruff 报了一个错" in t]
 
 
 def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):

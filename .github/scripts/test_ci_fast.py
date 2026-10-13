@@ -496,6 +496,13 @@ class CiFastTest(unittest.TestCase):
     # --- testing that a directory was found, and the report would run against
     # --- the caller's directory while still exiting 0.
     def test_the_entry_point_stays_out_of_the_way_outside_a_work_tree(self):
+        """Nothing runs when there is no work tree to check.
+
+        Pins the assignment's `|| exit 0`: outside a work tree `rev-parse`
+        fails, and its status is the assignment's. The `[ -n "$root" ]` line
+        under it guards `cd ""` returning 0 — a state this cannot reach, and
+        the guard stays anyway.
+        """
         entry = SCRIPT.parents[2] / ".cheese/pre-push"
         tools = self.tmp / "tools"
         tools.mkdir()
@@ -511,6 +518,48 @@ class CiFastTest(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertFalse(marker.exists(), "the report ran outside a work tree")
+
+    # --- a delivery push has no terminal: only what went wrong is worth a file
+    def test_the_entry_point_leaves_a_report_only_from_a_run_that_failed(self):
+        """The platform reads this file back and shows it in the room.
+
+        On a delivery push the script's stdout goes to a pipe nobody reads, so
+        the caller asks for the report by name instead. Only a run that did not
+        pass writes it: a passing run has nothing to act on, and a room told
+        about one would be told to look for a problem that is not there.
+        """
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        work = self.tmp / "work"
+        work.mkdir()
+        git(work, "init", "-b", "main")
+        report = self.tmp / "report.txt"
+        env = {
+            "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+            "CI_FAST_PRE_PUSH_REPORT": str(report),
+        }
+        python = tools / "python3"
+        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 0\n")
+        python.chmod(0o755)
+
+        passed = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(passed.returncode, 0, passed.stdout + passed.stderr)
+        self.assertIn("ruff 报了一个错", passed.stdout)
+        self.assertFalse(
+            report.exists(), "a passing run left a report for the room"
+        )
+
+        python.write_text("#!/bin/sh\necho 'ruff 报了一个错'\nexit 1\n")
+        failed = subprocess.run(
+            [str(entry)], cwd=work, capture_output=True, text=True, timeout=60,
+            env=env,
+        )
+        self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.assertEqual(report.read_text(), "ruff 报了一个错\n")
 
     # --- an unknown path widens the scope; it must not shrink to guards-only
     def test_unknown_path_widens_scope(self):
