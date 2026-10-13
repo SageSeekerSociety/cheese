@@ -100,6 +100,8 @@ function row(spec: {
   authorIsAgent?: boolean
   submittedBy?: string | null
   assignee?: string | null
+  /** 指派人是不是 AI 队友。默认 false —— 预览里领取反馈的都是真人账号。 */
+  assigneeIsAgent?: boolean
   tags?: string[]
   supports: number
   supported?: boolean
@@ -133,6 +135,10 @@ function row(spec: {
     author_avatar_id: avatarOf(spec.author),
     submitted_by_handle: spec.submittedBy ?? null,
     assignee_handle: spec.assignee ?? null,
+    // 没人指派时是 null（不是 0/默认头像）：界面据此根本不画头像，也不会把「没这个人」
+    // 画成别人。有人指派时头像同样只给真的挑过的那颗（`avatarOf` 的规矩）。
+    assignee_avatar_id: spec.assignee ? avatarOf(spec.assignee) : null,
+    assignee_is_agent: spec.assignee ? (spec.assigneeIsAgent ?? false) : null,
     tags: spec.tags ?? [],
     supports: spec.supports,
     comments: thread.length,
@@ -2548,7 +2554,12 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
       // 空串是**清掉**指派人（`services.patch_admin` 那句 `or None`）—— 提交框里把人
       // 删掉发的就是一个空串，`?? null` 那种写法会把它存成一个空 handle，界面上看着像
       // 「指派给了一个没有名字的人」。`undefined` 才是「这次请求里没提到它」。
-      item.assignee_handle = (payload.assignee_handle as string | null) || null
+      const next = (payload.assignee_handle as string | null) || null
+      item.assignee_handle = next
+      // 头像和「是不是队友」跟着指派人一起变：真实现里客户端下一次拿到的是服务端从
+      // 身份域问回来的答案。预览在这一刻把同一件事算好，界面换个人脸也跟着换。
+      item.assignee_avatar_id = next ? avatarOf(next) : null
+      item.assignee_is_agent = next ? false : null
     }
     if (payload.security !== undefined && Boolean(payload.security) !== item.security) {
       item.security = Boolean(payload.security)

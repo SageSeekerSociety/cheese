@@ -14402,6 +14402,10 @@ export interface components {
             submitted_by_handle: string | null;
             /** Assignee Handle */
             assignee_handle: string | null;
+            /** Assignee Avatar Id */
+            assignee_avatar_id: number | null;
+            /** Assignee Is Agent */
+            assignee_is_agent: boolean | null;
             /** Tags */
             tags: string[];
             /** Supports */
@@ -14541,6 +14545,10 @@ export interface components {
             submitted_by_handle: string | null;
             /** Assignee Handle */
             assignee_handle: string | null;
+            /** Assignee Avatar Id */
+            assignee_avatar_id: number | null;
+            /** Assignee Is Agent */
+            assignee_is_agent: boolean | null;
             /** Tags */
             tags: string[];
             /** Supports */

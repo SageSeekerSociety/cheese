@@ -490,6 +490,15 @@ class FeedbackService:
         """
         return await chosen_avatars_by_handle(self._session, handles)
 
+    async def agents_among(self, handles: Iterable[str]) -> set[str]:
+        """These handles 里哪些是 AI 队友 —— 卡片画指派人头像时要问这一句。
+
+        和 `chosen_avatars` 同一条路数：判据是身份域的事（带不带 agent-binding），
+        这里只把「一页上的人」一次问完。不从 handle 前缀猜 —— 领取反馈的 agent 未必
+        叫 `cheese`，而一个叫 `cheese` 的 handle 也可能是普通账号。
+        """
+        return await IdentityService(self._session).agents_among(list(handles))
+
     async def thread_page(
         self,
         feedback_id: uuid.UUID,
@@ -635,12 +644,19 @@ class FeedbackService:
         # One resolution pass for the report, every comment and every note. The
         # detail page draws all of them in one screen, so a per-author lookup
         # would be exactly the N+1 this method's callers avoid for counters.
-        avatars = await self.chosen_avatars(
-            [
-                row.author_handle,
-                *[c.author_handle for c in page.rows],
-                *[n.author_handle for n in notes],
-            ]
+        page_handles = [
+            row.author_handle,
+            *[c.author_handle for c in page.rows],
+            *[n.author_handle for n in notes],
+        ]
+        # The assignee is drawn on the card too (the queue list and the detail
+        # header both show who holds it), so their face and "is this an agent"
+        # come from the same page-wide pass — not a second lookup.
+        if row.assignee_handle:
+            page_handles.append(row.assignee_handle)
+        avatars = await self.chosen_avatars(page_handles)
+        agents = await self.agents_among(
+            [row.assignee_handle] if row.assignee_handle else []
         )
         return FeedbackDetail.from_row(
             row,
@@ -654,6 +670,7 @@ class FeedbackService:
             comments=(await self._repo.comment_counts([row.id])).get(row.id, 0),
             avatars=avatars,
             last_activity_at=activity.get(row.id),
+            agents=agents,
             # The page-wide map goes straight back in: the comment authors are a
             # subset of the handles resolved above, so this costs nothing.
             thread=await self.comments_out(

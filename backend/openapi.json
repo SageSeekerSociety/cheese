@@ -55716,6 +55716,28 @@
             ],
             "title": "Assignee Handle"
           },
+          "assignee_avatar_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Avatar Id"
+          },
+          "assignee_is_agent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Is Agent"
+          },
           "tags": {
             "items": {
               "type": "string"
@@ -55769,6 +55791,8 @@
           "author_avatar_id",
           "submitted_by_handle",
           "assignee_handle",
+          "assignee_avatar_id",
+          "assignee_is_agent",
           "tags",
           "supports",
           "comments",
@@ -56075,6 +56099,28 @@
             ],
             "title": "Assignee Handle"
           },
+          "assignee_avatar_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Avatar Id"
+          },
+          "assignee_is_agent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Is Agent"
+          },
           "tags": {
             "items": {
               "type": "string"
@@ -56291,6 +56337,8 @@
           "author_avatar_id",
           "submitted_by_handle",
           "assignee_handle",
+          "assignee_avatar_id",
+          "assignee_is_agent",
           "tags",
           "supports",
           "comments",

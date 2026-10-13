@@ -30,7 +30,7 @@ schema that accepted it would be a lie.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -330,6 +330,12 @@ class FeedbackCard(BaseModel):
     author_avatar_id: int | None
     submitted_by_handle: str | None
     assignee_handle: str | None
+    #: 指派人挑过的头像 id，判据同 `author_avatar_id`；没人指派时是 None。
+    assignee_avatar_id: int | None = None
+    #: 指派人是不是 AI 队友。**由 `agents` 名单问出来，不从名字前缀猜** —— 领这条
+    #: 反馈的可能是一个 agent-user，而 handle 长什么样不说明这一点。没人指派时是
+    #: None（不是 False）：客户端据此根本不画头像，也不会把「没这个人」画成「人」。
+    assignee_is_agent: bool | None = None
     tags: list[str]
     supports: int
     comments: int
@@ -347,6 +353,7 @@ class FeedbackCard(BaseModel):
         supported: bool,
         avatars: Mapping[str, int],
         last_activity_at: datetime | None = None,
+        agents: Set[str] = frozenset(),
     ) -> FeedbackCard:
         return cls(
             id=row.id,
@@ -363,6 +370,12 @@ class FeedbackCard(BaseModel):
             author_avatar_id=avatars.get(row.author_handle),
             submitted_by_handle=row.submitted_by_handle,
             assignee_handle=row.assignee_handle,
+            assignee_avatar_id=(
+                avatars.get(row.assignee_handle) if row.assignee_handle else None
+            ),
+            assignee_is_agent=(
+                row.assignee_handle in agents if row.assignee_handle else None
+            ),
             tags=list(row.tags or []),
             supports=supports,
             comments=comments,
@@ -417,6 +430,7 @@ class FeedbackDetail(FeedbackCard):
         supported: bool,
         avatars: Mapping[str, int],
         last_activity_at: datetime | None = None,
+        agents: Set[str] = frozenset(),
         timeline: list[FeedbackTimeline] | None = None,
         thread: list[CommentOut] | None = None,
         thread_next_cursor: str | None = None,
@@ -432,6 +446,7 @@ class FeedbackDetail(FeedbackCard):
             supported=supported,
             avatars=avatars,
             last_activity_at=last_activity_at,
+            agents=agents,
         )
         return cls(
             **card.model_dump(),

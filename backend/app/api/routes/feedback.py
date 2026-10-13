@@ -114,7 +114,12 @@ async def _cards(
     comments = await service.comment_counts(ids)
     supported = await service.supported_ids(ids, handle)
     activity = await service.last_activity(ids)
-    avatars = await service.chosen_avatars([r.author_handle for r in rows])
+    # The card draws the assignee's face and name too, so the page-wide pass
+    # covers both authors and whoever holds each row — a per-row lookup here is
+    # the N+1 this whole method exists to avoid.
+    assignees = [r.assignee_handle for r in rows if r.assignee_handle]
+    avatars = await service.chosen_avatars([r.author_handle for r in rows] + assignees)
+    agents = await service.agents_among(assignees)
     return [
         FeedbackCard.from_row(
             row,
@@ -123,6 +128,7 @@ async def _cards(
             supported=row.id in supported,
             avatars=avatars,
             last_activity_at=activity.get(row.id),
+            agents=agents,
         ).model_dump(mode="json")
         for row in rows
     ]

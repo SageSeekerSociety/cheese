@@ -5,6 +5,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import StatusRail from '@/components/admin/StatusRail.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { priorityMeta, statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 
@@ -132,7 +133,19 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
       <span class="qrow__alabel">{{ t('feedback.queue.col.assignee') }}</span>
       <!-- 值单独包一层：窄屏那个标签也是这一格的文字，读「指派给了谁」的地方（e2e 的
            feedback-flows 就是一处）要读的是这一层，不是整格。 -->
-      <span v-if="item.assignee_handle" class="qrow__avalue">{{ item.assignee_handle }}</span>
+      <span v-if="item.assignee_handle" class="qrow__avalue">
+        <!-- The person holding this row gets a face + handle (the card carries no
+             display name, so the shared view falls back to the handle). The avatar
+             comes from the server's `assignee_avatar_id` — only if they picked one,
+             else a coloured initial; `assignee_is_agent` is asked of the server,
+             never guessed from what the handle looks like. -->
+        <IdentityView
+          :handle="item.assignee_handle"
+          :avatar-id="item.assignee_avatar_id"
+          :agent="item.assignee_is_agent"
+          :size="18"
+        />
+      </span>
       <span v-else class="qrow__avalue qrow__dim">—</span>
     </span>
 
@@ -259,6 +272,16 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   line-height: var(--lh-13);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 指派那一格的值（没指派时是那个 `—`）。有人时里面是共享身份视图（脸 + handle），
+   所以这一层要是能收窄的 `inline-flex`：把格子的宽度（宽屏 116 / 窄屏吃中间那段）
+   让给里面的名字，长了才截得住。`vertical-align: middle` 让它在窄屏和行内标签同排。 */
+.qrow__avalue {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  vertical-align: middle;
 }
 
 .qrow__dim {

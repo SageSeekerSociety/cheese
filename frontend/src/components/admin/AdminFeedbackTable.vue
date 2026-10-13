@@ -4,6 +4,7 @@ import type { FeedbackCard } from '@/cx_types'
 import { computed, nextTick, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import IdentityView from '@/components/common/IdentityView.vue'
 import FeedbackStatusChip from '@/components/feedback/FeedbackStatusChip.vue'
 import { KIND_LABEL, priorityMeta, SOURCE_LABEL } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
@@ -263,7 +264,18 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
               <td class="aft__cell aft__num aft__mono t-meta-read t-num">{{ item.comments }}</td>
 
               <td class="aft__cell">
-                <template v-if="item.assignee_handle">{{ item.assignee_handle }}</template>
+                <!-- The person holding this row gets a face + handle (the card carries no
+                     display name, so the view falls back to the handle). Both the avatar
+                     and "is this an agent" come from the server: a face only if they
+                     picked one, else a coloured initial. -->
+                <IdentityView
+                  v-if="item.assignee_handle"
+                  class="aft__who"
+                  :handle="item.assignee_handle"
+                  :avatar-id="item.assignee_avatar_id"
+                  :agent="item.assignee_is_agent"
+                  :size="16"
+                />
                 <span v-else>—</span>
               </td>
 
@@ -375,6 +387,16 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
   text-overflow: ellipsis;
   vertical-align: middle;
   white-space: nowrap;
+}
+
+/* 指派格里的身份视图（脸 + handle）。`td` 自己的 `text-overflow` 只对直接文字生效，一个
+   内联 flex 子项不受它管；把格子的宽度让给它（`max-width: 100%`）之后，截断就落到它
+   内部那个名字上 —— 长 handle 出省略号，而不是被格子硬裁掉半截。
+   **不改 `td` 的 `display`**：那会把这一格从表格布局里摘出去，`table-layout: fixed` 的
+   列宽和列头会对不上。 */
+.aft__who {
+  max-width: 100%;
+  vertical-align: middle;
 }
 
 .aft__body > tr > .aft__cell:first-child {
