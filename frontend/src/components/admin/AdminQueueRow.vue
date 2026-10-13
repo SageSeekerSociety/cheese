@@ -116,7 +116,12 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
         </template>
         <span>{{ item.display_id }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
-        <span>{{ item.author_handle }}</span>
+        <!-- This cell is a run of same-size same-colour readings (priority, status,
+             id, author, time…); a face here would read as one person singled out. So
+             print the display name — the server provides `author_name` on the card,
+             falling back to the handle. The author's face and name live in the detail
+             view's facts cell (`AdminQueueDetail`). -->
+        <span>{{ item.author_name || item.author_handle }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
         <span>{{ createdAt }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
@@ -134,13 +139,13 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
       <!-- 值单独包一层：窄屏那个标签也是这一格的文字，读「指派给了谁」的地方（e2e 的
            feedback-flows 就是一处）要读的是这一层，不是整格。 -->
       <span v-if="item.assignee_handle" class="qrow__avalue">
-        <!-- The person holding this row gets a face + handle (the card carries no
-             display name, so the shared view falls back to the handle). The avatar
+        <!-- The person holding this row gets a face + display name. The avatar
              comes from the server's `assignee_avatar_id` — only if they picked one,
-             else a coloured initial; `assignee_is_agent` is asked of the server,
-             never guessed from what the handle looks like. -->
+             else a coloured initial; the name is `assignee_name`; `assignee_is_agent`
+             is asked of the server, never guessed from what the handle looks like. -->
         <IdentityView
           :handle="item.assignee_handle"
+          :name="item.assignee_name"
           :avatar-id="item.assignee_avatar_id"
           :agent="item.assignee_is_agent"
           :size="18"

@@ -247,7 +247,19 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
                 </button>
               </td>
 
-              <td class="aft__cell">{{ item.author_handle }}</td>
+              <td class="aft__cell">
+                <!-- The author cell is an identity like the assignee cell: face +
+                     display name, both from the server (`author_avatar_id` /
+                     `author_name`), falling back to the handle when unknown. -->
+                <IdentityView
+                  class="aft__who"
+                  :handle="item.author_handle"
+                  :name="item.author_name"
+                  :avatar-id="item.author_avatar_id"
+                  :agent="item.author_is_agent"
+                  :size="16"
+                />
+              </td>
 
               <td class="aft__cell">{{ SOURCE_LABEL[item.author_is_agent ? 'agent' : 'user'] }}</td>
 
@@ -264,14 +276,15 @@ const priLabel = (item: FeedbackCard) => (item.priority ? priorityMeta(item.prio
               <td class="aft__cell aft__num aft__mono t-meta-read t-num">{{ item.comments }}</td>
 
               <td class="aft__cell">
-                <!-- The person holding this row gets a face + handle (the card carries no
-                     display name, so the view falls back to the handle). Both the avatar
-                     and "is this an agent" come from the server: a face only if they
-                     picked one, else a coloured initial. -->
+                <!-- The person holding this row gets a face + display name. All three
+                     come from the server: the avatar only if they picked one (else a
+                     coloured initial), the name from `assignee_name`, and "is this an
+                     agent" asked of the server. -->
                 <IdentityView
                   v-if="item.assignee_handle"
                   class="aft__who"
                   :handle="item.assignee_handle"
+                  :name="item.assignee_name"
                   :avatar-id="item.assignee_avatar_id"
                   :agent="item.assignee_is_agent"
                   :size="16"

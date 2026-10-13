@@ -6,7 +6,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminAssigneeSelect from '@/components/admin/AdminAssigneeSelect.vue'
 import StatusRail from '@/components/admin/StatusRail.vue'
-import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { allStatuses, KIND_LABEL, PRIORITY_META, SOURCE_LABEL, statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 import { useFeedbackStore } from '@/stores/feedback'
@@ -95,7 +95,8 @@ const summary = computed(() => {
   if (!item) return ''
   return [
     status.value.label,
-    item.assignee_handle ?? t('feedback.queueDetail.unassigned'),
+    // 显示名优先，没有才退回 handle —— 服务端在卡片上给了 `assignee_name`。
+    item.assignee_name || item.assignee_handle || t('feedback.queueDetail.unassigned'),
     priority.value ? t('feedback.queueDetail.priorityValue', { label: priority.value.label }) : '',
   ]
     .filter(Boolean)
@@ -226,13 +227,32 @@ function onSecurity(v: unknown) {
             <div class="qdet__fact">
               <span class="t-meta-read">{{ t('feedback.queueDetail.author') }}</span>
               <span class="qdet__fact-value">
-                <FeedbackAuthorAvatar
+                <IdentityView
                   :handle="item.author_handle"
-                  :is-agent="item.author_is_agent"
+                  :name="item.author_name"
                   :avatar-id="item.author_avatar_id"
+                  :agent="item.author_is_agent"
                   :size="20"
                 />
-                {{ item.author_handle }}
+              </span>
+            </div>
+            <div class="qdet__fact">
+              <span class="t-meta-read">{{ t('feedback.queueDetail.assign') }}</span>
+              <span class="qdet__fact-value">
+                <!-- The assignee gets a face too: this same card already carries the
+                     assignee's own avatar (`assignee_avatar_id`) and agent flag
+                     (`assignee_is_agent`), so a bare handle here would demote the only
+                     spot on this page that answers "who is holding it". A collapsed
+                     triage summary is not an excuse. -->
+                <IdentityView
+                  v-if="item.assignee_handle"
+                  :handle="item.assignee_handle"
+                  :name="item.assignee_name"
+                  :avatar-id="item.assignee_avatar_id"
+                  :agent="item.assignee_is_agent"
+                  :size="20"
+                />
+                <span v-else class="t-meta-read">{{ t('feedback.queueDetail.unassigned') }}</span>
               </span>
             </div>
             <div class="qdet__fact">
@@ -271,11 +291,16 @@ function onSecurity(v: unknown) {
           <!-- 一行事实挤在一个 `<span>` 里（不是一堆 flex 项）：截断要生效，被截的必须
                是**一行文字**，而 flex 容器的文字会变成匿名 flex 项，`text-overflow`
                在它身上不生效。 -->
+          <!-- This line is a single text run: for `text-overflow` to work the clipped
+               thing must be one run of text (see the comment above). So it prints the
+               server's display name rather than an avatar chip — inserting a flex item
+               would stop `text-overflow` from applying to the whole line. The face
+               lives in the facts column. -->
           <span v-if="item" class="qdet__main-who">
-            {{ item.author_handle }} · {{ relTime(item.created_at) }} ·
+            {{ item.author_name || item.author_handle }} · {{ relTime(item.created_at) }} ·
             {{ t('feedback.queue.supports', { n: item.supports }) }} · {{ t('feedback.queueDetail.comments') }}
             {{ item.comments }} · {{ t('feedback.queueDetail.assign') }}
-            {{ item.assignee_handle ?? t('feedback.queueDetail.unassigned') }}
+            {{ item.assignee_name || item.assignee_handle || t('feedback.queueDetail.unassigned') }}
           </span>
         </div>
 
@@ -334,13 +359,14 @@ function onSecurity(v: unknown) {
               <p v-if="!item.thread.length" class="t-meta-read">{{ t('feedback.queueDetail.noReplies') }}</p>
               <div v-for="comment in item.thread" :key="comment.id" class="qdet__comment">
                 <div class="t-meta-read qdet__comment-head">
-                  <FeedbackAuthorAvatar
+                  <IdentityView
                     :handle="comment.author_handle"
-                    :is-agent="comment.author_is_agent"
+                    :name="comment.author_name"
                     :avatar-id="comment.author_avatar_id"
+                    :agent="comment.author_is_agent"
                     :size="20"
                   />
-                  <span>{{ comment.author_handle }} · {{ relTime(comment.created_at) }}</span>
+                  <span>{{ relTime(comment.created_at) }}</span>
                 </div>
                 <p class="t-body-readable qdet__text">{{ comment.body }}</p>
               </div>
@@ -371,8 +397,13 @@ function onSecurity(v: unknown) {
                 <!-- 备注恒为真人写的，所以这里不传 `is-agent`：管理端的五条写路由都先过
                      `_require_admin`，而它第一步就是拒绝 agent 身份。 -->
                 <div class="t-meta-read qdet__comment-head">
-                  <FeedbackAuthorAvatar :handle="note.author_handle" :avatar-id="note.author_avatar_id" :size="20" />
-                  <span>{{ note.author_handle }} · {{ relTime(note.created_at) }}</span>
+                  <IdentityView
+                    :handle="note.author_handle"
+                    :name="note.author_name"
+                    :avatar-id="note.author_avatar_id"
+                    :size="20"
+                  />
+                  <span>{{ relTime(note.created_at) }}</span>
                 </div>
                 <p class="t-body-readable qdet__text">{{ note.body }}</p>
               </div>

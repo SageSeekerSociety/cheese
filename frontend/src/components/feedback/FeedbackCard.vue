@@ -3,10 +3,10 @@ import type { FeedbackCard } from '@/cx_types'
 
 import { computed } from 'vue'
 
-import FeedbackAuthorAvatar from './FeedbackAuthorAvatar.vue'
 import { kindLabel } from './feedbackLabels'
 import FeedbackStatusChip from './FeedbackStatusChip.vue'
 
+import IdentityView from '@/components/common/IdentityView.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 import { isClosed } from '@/lib/feedbackMeta'
@@ -98,14 +98,15 @@ const to = computed(() => ({ name: 'FeedbackDetail', params: { id: props.item.id
          多少人参与」，右半边是「走到哪一步」和「我能做什么」。 -->
     <div class="fb-card__meta t-meta-read t-num">
       <span v-if="kind" class="chip-neutral fb-card__kind">{{ kind }}</span>
-      <FeedbackAuthorAvatar
+      <IdentityView
         class="fb-card__avatar"
         :handle="item.author_handle"
-        :is-agent="item.author_is_agent"
+        :name="item.author_name"
         :avatar-id="item.author_avatar_id"
+        :agent="item.author_is_agent"
         :size="18"
       />
-      <span class="fb-card__byline">{{ item.author_handle }} · {{ relTime(item.created_at) }}</span>
+      <span class="fb-card__byline">{{ relTime(item.created_at) }}</span>
       <span class="fb-card__stat t-num"> <v-icon size="13">mdi-comment-outline</v-icon>{{ item.comments }} </span>
       <!-- 私密 / 安全 / 来源 / 标签。挤不下时**先让这一块省略**，而不是把右边那两颗
            顶出去：状态是这一行里唯一一个每行都必须读到的字段。 -->
