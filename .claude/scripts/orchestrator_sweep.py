@@ -2,7 +2,7 @@
 """The orchestrator's patrol sweep: list what needs a decision across a channel's task lines.
 
 It reads the platform and GitHub and writes nothing, except under --sync-doc, which
-puts the rendered board into one document and only between that board's own markers.
+appends the rendered board to one document and never restates anything above it.
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
@@ -22,8 +22,10 @@ The default output is that text list, unchanged. The same sweep in other shapes:
                day's metrics. Fixed shape, for tools.
   --render     the same data as Markdown, one line per signal, for a person to read.
   --sync-doc D write the rendered board into document D between <!-- board:start --> and
-               <!-- board:end -->, appending a marked section while the markers are not
-               there yet. One of these three, not two at once.
+               <!-- board:end -->; when the markers are not there yet, append a marked
+               section by naming a trailing passage and putting the board after it, and
+               refuse when no such passage can be named. One of these three, not two at
+               once.
 """
 import json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
@@ -378,15 +380,28 @@ def board_json(rows, metrics, room, silent, skip, now):
             "skipped": sorted(skip), "classes": classes, "metrics": metrics}
 
 
+def occurrences(hay, needle):
+    """Every place needle starts in hay, overlaps counted — the count the platform
+    refuses on (collab/edit.ts steps with indexOf(needle, at + 1), which is what its
+    422 docEditOriginalAmbiguous reports). str.count steps past each match, so a
+    passage that repeats a short line counts 1 there and more than 1 here."""
+    n, at = 0, hay.find(needle)
+    while at >= 0:
+        n += 1
+        at = hay.find(needle, at + 1)
+    return n
+
+
 def unique_tail(content):
     """The shortest run of trailing lines that occurs exactly once, or None when the
     document has no such run. Appending needs a passage to name that is this text and
-    nowhere else; this keeps the passage as small as the document allows, so what is
-    submitted to be replaced is a tail rather than the whole document."""
+    nowhere else; this keeps the passage as small as the document allows. When the whole
+    document is the only trailing run that occurs once — every line of it repeats — the
+    passage is the whole document, and the board is still appended after it."""
     lines = content.split("\n")
     for start in range(len(lines) - 1, -1, -1):
         candidate = "\n".join(lines[start:])
-        if candidate.strip() and content.count(candidate) == 1:
+        if candidate.strip() and occurrences(content, candidate) == 1:
             return candidate
     return None
 
@@ -394,11 +409,12 @@ def unique_tail(content):
 def sync_doc(tok, document, board):
     """Put the board into the document, and touch nothing else. The document is read
     first. What is submitted to be replaced (POST /documents/{id}/edits) is the marked
-    span when the markers are there, and otherwise a trailing passage that occurs once
-    — so everything above it stays outside the edit and is never sent. The platform
-    applies the edit only while that passage occurs exactly once in the document as it
-    stands then, which is what refuses a passage that moved or was duplicated under us;
-    a change elsewhere in the document is neither a conflict nor touched.
+    span when the markers are there, and otherwise a trailing passage that occurs once.
+    The platform applies the edit only while that passage occurs exactly once in the
+    document as it stands then, and `new` keeps that passage as its first characters, so
+    every line above it survives verbatim whether or not the passage names it. A passage
+    that moved or was duplicated under us is refused rather than guessed at, and a change
+    elsewhere in the document is neither a conflict nor touched.
 
     An empty document takes the whole board (there is nothing to preserve). A marker
     pair that is not exactly one ordered pair is refused here rather than guessed at."""
@@ -425,8 +441,8 @@ def sync_doc(tok, document, board):
     else:
         raise SystemExit(f"文档 {document} 里的 board 标记不是恰好一对"
                          f"（board:start {marks[0]} 次、board:end {marks[1]} 次），不写")
-    if content.count(old) != 1:
-        raise SystemExit(f"文档 {document} 里要换的原文出现了 {content.count(old)} 次，不写（读到的是 v{version}）")
+    if occurrences(content, old) != 1:
+        raise SystemExit(f"文档 {document} 里要换的原文出现了 {occurrences(content, old)} 次，不写（读到的是 v{version}）")
     send(tok, "POST", f"/documents/{document}/edits",
          {"edits": [{"old": old, "new": new}], "mode": "direct"})
     return f"看板已同步进 {document}（读到的版本 v{version}）"
