@@ -7,9 +7,14 @@ its messages (`GET /topics/{id}/blocks`, `tasks`). The same rows from both, so a
 card under a message and the same task in the channel overview cannot disagree.
 Batched: each extra is one query for all the rows, never one per task.
 
-`project_task_rows` and `rail_tasks` moved here from `routes/projects.py` for the
-same reason the room's own rows already lived here — they are a page's view of a
-task, not a route's, and the topics list asks for the rail's rows too.
+`task_out` is the one-task half of that: what a route returns when it hands a
+single task back to its page (`GET|PATCH /topics/{task}/task`, and the title
+routes), so a deep link and the board cannot disagree either.
+
+`project_task_rows` and `rail_tasks` moved here from `routes/projects.py`, and
+`task_out` from `routes/topics_tasks.py`, for the same reason the room's own
+rows already lived here — they are a page's view of a task, not a route's, and
+more than one route module asks for them.
 """
 
 import uuid
@@ -29,11 +34,42 @@ from app.domain.identity.actor import Actor
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.services import AcceptService
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.models import Task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.usage.repositories import UsageRepository
+
+
+async def task_out(db, chat: ChatService, task, card=None) -> dict:
+    """The task with its board cell — what every route that hands a task back
+    to its page returns, so the page never holds one without it. The same
+    function the list uses, so a deep link and the board cannot disagree."""
+    if card is None:
+        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
+    running = await running_tasks(chat, db, [task])
+    asked = await BlockRepository(db).awaiting_an_answer([task.id])
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    shown = presentation.task_presentation(
+        presentation.facts_for_task(
+            task,
+            card,
+            running=task.id in running,
+            awaiting_answer=task.id in asked,
+        ),
+        now=datetime.now(UTC),
+    )
+    out["presentation"] = shown.as_dict()
+    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
+    out["waiting_on"] = presentation.waiting_on(
+        shown,
+        running=task.id in running,
+        owner=task.owner_handle,
+        reviewer=card.reviewer_handle if card is not None else None,
+        asked=asked.get(task.id),
+    )
+    return out
 
 
 async def task_rows(

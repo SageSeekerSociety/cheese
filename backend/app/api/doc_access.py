@@ -6,6 +6,11 @@ have to say about a task they say in the channel. A document of the project's
 own — the project's goals among them — is the project's members', and 芝士's
 wherever in the project it works. Every document route asks here, so they never
 disagree.
+
+`asked_of` is the one derivation the comment routes and the agent routes share:
+from the caller's reach, the question an agent asks about this document. It
+belongs with `Reached`, and the two modules that ask are route modules, which do
+not import each other (C4 `routes-independent`).
 """
 
 import uuid
@@ -16,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolver
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.agent.document.question import Asked
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
@@ -105,3 +111,14 @@ async def frozen(db: AsyncSession, reached: Reached) -> bool:
     except (ValidationError, ProjectArchivedError, ForbiddenError):
         return True
     return False
+
+
+def asked_of(reached: Reached) -> Asked:
+    """The question an agent-ask on this document is about: the document, the
+    project it belongs to, and the task whose living document it is, if any."""
+    doc = reached.doc
+    return Asked(
+        project_id=doc.project_id,
+        document_id=doc.id,
+        task_id=reached.task.id if reached.task is not None else None,
+    )

@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_consumptions, get_session_host
-from app.api.doc_access import Reached, reach, require_writable
+from app.api.doc_access import Reached, asked_of, reach, require_writable
 from app.api.doc_identity import operation_actor
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
@@ -26,7 +26,7 @@ from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.document import thread
-from app.domain.agent.document.question import Asked, answering
+from app.domain.agent.document.question import answering
 from app.domain.agent.document.thread import hand_to_agent, mentioned_seat
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
@@ -40,15 +40,6 @@ router = APIRouter(prefix="/documents", tags=["document-comments"])
 
 Chat = Annotated[ChatService, Depends(get_chat_service)]
 Questions = Annotated[Consumptions, Depends(get_consumptions)]
-
-
-def asked_of(reached: Reached) -> Asked:
-    doc = reached.doc
-    return Asked(
-        project_id=doc.project_id,
-        document_id=doc.id,
-        task_id=reached.task.id if reached.task is not None else None,
-    )
 
 
 @router.get("/{document_id}/nodes")

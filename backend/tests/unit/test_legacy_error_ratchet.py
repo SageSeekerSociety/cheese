@@ -136,7 +136,6 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/topics_attachments.py", "ValidationError"): 9,
     ("app/api/routes/topics_deliveries.py", "ValidationError"): 1,
     ("app/api/routes/topics_documents.py", "ValidationError"): 12,
-    ("app/api/routes/topics_file_sources.py", "ValidationError"): 1,
     ("app/api/routes/topics_messages.py", "ValidationError"): 5,
     ("app/api/routes/topics_shown.py", "ValidationError"): 5,
     ("app/api/routes/topics_title.py", "ValidationError"): 1,
@@ -146,6 +145,9 @@ _BASELINE: dict[tuple[str, str], int] = {
     # `_parse_moment` moved here from `routes/topics.py` with its body unchanged:
     # the same single use, one file further out. topics.py's own line drops with it.
     ("app/api/topics_deps.py", "ValidationError"): 1,
+    # The whole file moved from `routes/` to `app/api/`, body unchanged: the
+    # same single use, one directory further out.
+    ("app/api/topics_file_sources.py", "ValidationError"): 1,
     ("app/domain/agent/announce.py", "ValidationError"): 1,
     ("app/domain/agent/chat.py", "ValidationError"): 3,
     ("app/domain/agent/document/box.py", "ValidationError"): 1,

@@ -313,14 +313,16 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/topics_threads.py": 2,
     "app/api/routes/users/_common.py": 8,
     "app/api/routes/users/account.py": 11,
-    "app/api/routes/users/auth.py": 31,
+    "app/api/routes/users/auth.py": 29,
     "app/api/routes/users/connections.py": 3,
     "app/api/routes/users/directory.py": 5,
     "app/api/routes/users/oauth.py": 4,
     "app/api/routes/users/preferences.py": 2,
     "app/api/routes/users/registration.py": 8,
     "app/api/routes/users_2fa.py": 9,
-    "app/api/users_deps.py": 3,
+    # 2026-10: the origin gate (`_origin_of`, `_require_same_origin`) left
+    # `routes/users/auth.py` for here, carrying its two English refusals.
+    "app/api/users_deps.py": 5,
     "app/api/routes/users_identity.py": 5,
     "app/api/routes/users_language.py": 2,
     "app/api/routes/users_passkey.py": 10,

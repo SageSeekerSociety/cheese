@@ -14,7 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.routes.teams import get_team_service
+from app.api.teams_deps import get_team_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import get_optional_user_id
