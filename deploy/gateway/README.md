@@ -77,6 +77,12 @@ the `session_id` header (`chatgpt_session.py`, registered under
 `litellm_settings.callbacks`). The Codex backend keeps a conversation on one
 machine by that header, and without it the conversation's prompt cache misses.
 
+The Codex backend sometimes streams a function call without any argument
+deltas, sending the arguments only on the `done` events. The image patches
+LiteLLM's Responses-to-Messages stream adapter (`patch_responses_done_args.py`)
+to forward those arguments once when no delta came; without it such a tool call
+reaches Claude Code with an empty input.
+
 A request to a model whose upstreams are all something other than Anthropic's
 API arrives there without the block Claude Code opens its system prompt with,
 `x-anthropic-billing-header: ...; cch=<hash>; ...` (`system_billing_line.py`,
