@@ -205,6 +205,12 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     row.state = "failed"
                     row.last_error = "The task is no longer open"
                     continue
+                if (row.payload or {}).get(CLOSES_TASK) and task.closing_since is None:
+                    # The write-up of a task that went on instead of closing
+                    # (`review.task_landing`): it has nothing to write up.
+                    row.state = "failed"
+                    row.last_error = "The task went on instead of closing"
+                    continue
             else:
                 # A room's own line, or one of its 支线: the roster is the room's.
                 topic = await session.get(

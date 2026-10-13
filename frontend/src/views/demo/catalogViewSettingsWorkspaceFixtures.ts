@@ -16,6 +16,7 @@ import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, Ro
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { ChannelEntry } from '@/types/channelDirectory'
+import type { ModelConnection, ModelServiceDevice } from '@/types/modelConnections'
 import type { ProgressItem } from '@/types/projectProgress'
 import type { User } from '@/types/users'
 import type RealNameView from '@/views/user/settings/RealNameView.vue'
@@ -215,6 +216,60 @@ export const SECURITY_DIALOGS = {
 export const DEVICE_TEAMS: MyTeam[] = [
   { id: 1, handle: 'wangxiaoming', name: '王小明', personal: true },
   { id: 2, handle: 'data', name: '数据组' },
+]
+
+// ---- 模型连接（`ModelConnectionsView`）-------------------------------------
+
+/** 三种连接各一份：工作站上的 Claude 订阅、笔记本上的自定义模型服务、一台离线机器上的 API key。 */
+export const MODEL_CONNECTIONS: ModelConnection[] = [
+  {
+    device_id: 'dev-desk',
+    device_name: '工作站',
+    online: true,
+    installed: true,
+    logged_in: true,
+    auth_method: 'claude.ai',
+    subscription_type: 'max',
+    model: null,
+    service_host: null,
+    checked_at: ago(HOUR / 4),
+    last_used_at: ago(2 * HOUR),
+    revoking: false,
+  },
+  {
+    device_id: 'dev-laptop',
+    device_name: '王小明的 MacBook',
+    online: true,
+    installed: true,
+    logged_in: true,
+    auth_method: 'model_service',
+    subscription_type: null,
+    model: 'kimi-k2',
+    service_host: 'api.moonshot.cn',
+    checked_at: ago(HOUR),
+    last_used_at: null,
+    revoking: false,
+  },
+  {
+    device_id: 'dev-lab',
+    device_name: '实验室服务器',
+    online: false,
+    installed: true,
+    logged_in: true,
+    auth_method: 'console',
+    subscription_type: null,
+    model: null,
+    service_host: null,
+    checked_at: ago(3 * DAY),
+    last_used_at: ago(3 * DAY),
+    revoking: false,
+  },
+]
+
+/** 能改用自定义模型服务的设备：在线的那两台。 */
+export const MODEL_SERVICE_DEVICES: ModelServiceDevice[] = [
+  { device_id: 'dev-desk', name: '工作站' },
+  { device_id: 'dev-laptop', name: '王小明的 MacBook' },
 ]
 
 // ---- 全部频道（`ChannelBrowseView`）----------------------------------------

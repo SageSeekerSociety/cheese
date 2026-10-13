@@ -2569,6 +2569,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connector/my/model-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My Model Connections
+         * @description The caller's model connections across the machines they enrolled
+         *     (#2991): what each logs in with, where it is kept, its last check. Never a
+         *     key.
+         */
+        get: operations["my_model_connections_connector_my_model_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connector/my/devices/{device_id}/claude-code": {
         parameters: {
             query?: never;
@@ -2583,9 +2605,38 @@ export interface paths {
          * @description Ask one of the caller's machines again whether their own Claude Code is
          *     logged in there (#2991). They log in on the machine itself, which tells the
          *     server nothing; the page showing that machine asks, rather than leaving the
-         *     answer from its last connection standing.
+         *     answer from its last connection standing. A logout its owner asked for
+         *     while it was away is carried out first.
          */
         post: operations["check_my_claude_code_connector_my_devices__device_id__claude_code_post"];
+        /**
+         * Revoke My Claude Code
+         * @description Log the caller's own Claude Code out on one of their machines, from any
+         *     browser (#2991). Out of use at once; the machine logs out now when online,
+         *     else as it next connects.
+         */
+        delete: operations["revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/claude-code/model-service": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Use My Model Service
+         * @description Point the caller's own Claude Code on one of their machines at another
+         *     model service, from any browser (#2991). The key is handed to the machine,
+         *     which keeps it; it is not stored here. The machine has to be online.
+         */
+        put: operations["use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6823,12 +6874,43 @@ export interface paths {
         get: operations["get_own_agents_projects__project_id__own_agents_get"];
         /**
          * Set Own Agents
-         * @description Let members bring their own Claude Code into the project, or not. Turned
-         *     off, no member's own agent is called in it; turned on again, they are.
+         * @description Let members bring their own Claude Code into the project, or not, and
+         *     which kinds of model connection it may use. Turned off, members' own
+         *     agents leave the project: off its roster and out of its channels. Turned on
+         *     again, the ones their owners had added are back on the roster, and sit in a
+         *     channel again once someone they answer to names them there.
          */
         put: operations["set_own_agents_projects__project_id__own_agents_put"];
-        post?: never;
+        /**
+         * Add Own Agent
+         * @description Bring the caller's own Claude Code, with one of their model connections,
+         *     into the project. Only a person adds their own, and only one of their own
+         *     connections, of a kind the project allows; adding one already here
+         *     changes nothing.
+         */
+        post: operations["add_own_agent_projects__project_id__own_agents_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/own-agents/{handle}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Own Agent
+         * @description Take one of the caller's own agents out of the project: off its roster,
+         *     out of its channels and out of reach of ``@``. Only its owner removes it.
+         */
+        delete: operations["remove_own_agent_projects__project_id__own_agents__handle__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10348,6 +10430,12 @@ export interface paths {
         /**
          * Attachment Raw
          * @description Authorized raster images and video bytes, never executable HTML/SVG.
+         *
+         *     A room's own file is served from disk with byte ranges, so a player seeking
+         *     through a long recording reads only the part it shows. A video read with the
+         *     ``Authorization`` header leaves a cookie for this path behind
+         *     (``remember_for_media``): the ``<video>`` element's own range requests
+         *     cannot carry the header, and the cookie is how they prove the same viewer.
          */
         get: operations["attachment_raw_topics__topic_id__attachments_raw_get"];
         put?: never;
@@ -13686,6 +13774,28 @@ export interface components {
              */
             detail: string;
         };
+        /**
+         * ClaudeCodeLoginOut
+         * @description What a machine last said about its owner's Claude Code login.
+         */
+        ClaudeCodeLoginOut: {
+            /** Installed */
+            installed: boolean;
+            /** Logged In */
+            logged_in: boolean;
+            /** Auth Method */
+            auth_method: string | null;
+            /** Subscription Type */
+            subscription_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** Checked At */
+            checked_at: string;
+            /** Revoking */
+            revoking: boolean;
+        };
         /** CommentCreate */
         CommentCreate: {
             /** Body */
@@ -13946,6 +14056,11 @@ export interface components {
             /** Project Id */
             project_id?: string | null;
         };
+        /**
+         * ConnectionKind
+         * @enum {string}
+         */
+        ConnectionKind: "subscription" | "api_key" | "model_service";
         /** ControlIn */
         ControlIn: {
             /** Session Id */
@@ -15770,6 +15885,38 @@ export interface components {
             /** Mid Conversation System */
             mid_conversation_system?: boolean | null;
         };
+        /** ModelConnectionOut */
+        ModelConnectionOut: {
+            /** Installed */
+            installed: boolean;
+            /** Logged In */
+            logged_in: boolean;
+            /** Auth Method */
+            auth_method: string | null;
+            /** Subscription Type */
+            subscription_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** Checked At */
+            checked_at: string;
+            /** Revoking */
+            revoking: boolean;
+            /** Device Id */
+            device_id: string;
+            /** Device Name */
+            device_name: string;
+            /** Online */
+            online: boolean;
+            /** Last Used At */
+            last_used_at: string | null;
+        };
+        /** ModelConnectionsOut */
+        ModelConnectionsOut: {
+            /** Connections */
+            connections: components["schemas"]["ModelConnectionOut"][];
+        };
         /**
          * ModelCreate
          * @description `POST /admin/gateway/models` 的体 —— 新建一条运行时模型。
@@ -15820,6 +15967,15 @@ export interface components {
             cache_read?: number | null;
             /** Cache Creation */
             cache_creation?: number | null;
+        };
+        /** ModelServiceRequest */
+        ModelServiceRequest: {
+            /** Base Url */
+            base_url: string;
+            /** Token */
+            token: string;
+            /** Model */
+            model: string;
         };
         /**
          * ModelUpdate
@@ -15872,6 +16028,27 @@ export interface components {
             width?: number | null;
             /** Height */
             height?: number | null;
+        };
+        /**
+         * MyConnectionOut
+         * @description One of the reader's own connections, to add to this project.
+         */
+        MyConnectionOut: {
+            /** Id */
+            id: string;
+            kind: components["schemas"]["ConnectionKind"];
+            /** Plan */
+            plan: string | null;
+            /** Model */
+            model: string | null;
+            /** Machine Name */
+            machine_name: string;
+            /** Online */
+            online: boolean;
+            /** Added */
+            added: boolean;
+            /** Allowed */
+            allowed: boolean;
         };
         /** NoteCreate */
         NoteCreate: {
@@ -16049,9 +16226,22 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
+        /** OwnAgentAdd */
+        OwnAgentAdd: {
+            /** Connection Id */
+            connection_id: string;
+        };
         /** OwnAgentCallersUpdate */
         OwnAgentCallersUpdate: {
             callers: components["schemas"]["OwnCallers"];
+        };
+        /** OwnAgentConnectionOut */
+        OwnAgentConnectionOut: {
+            kind: components["schemas"]["ConnectionKind"];
+            /** Plan */
+            plan: string | null;
+            /** Model */
+            model: string | null;
         };
         /** OwnAgentMachineOut */
         OwnAgentMachineOut: {
@@ -16071,17 +16261,21 @@ export interface components {
             owner_handle: string | null;
             /** Owner Name */
             owner_name: string | null;
-            /** Machines */
-            machines: components["schemas"]["OwnAgentMachineOut"][];
+            connection: components["schemas"]["OwnAgentConnectionOut"] | null;
+            machine: components["schemas"]["OwnAgentMachineOut"] | null;
         };
         /** OwnAgentsOut */
         OwnAgentsOut: {
             /** Allowed */
             allowed: boolean;
+            /** Kinds */
+            kinds: components["schemas"]["ConnectionKind"][];
             /** Can Manage */
             can_manage: boolean;
             /** Agents */
             agents: components["schemas"]["OwnAgentOut"][];
+            /** My Connections */
+            my_connections: components["schemas"]["MyConnectionOut"][];
         };
         /** OwnAgentsOutEnvelope */
         OwnAgentsOutEnvelope: {
@@ -16099,10 +16293,15 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
-        /** OwnAgentsUpdate */
+        /**
+         * OwnAgentsUpdate
+         * @description What a manager changes; a field left out stays as it is.
+         */
         OwnAgentsUpdate: {
             /** Allowed */
-            allowed: boolean;
+            allowed?: boolean | null;
+            /** Kinds */
+            kinds?: components["schemas"]["ConnectionKind"][] | null;
         };
         /**
          * OwnCallers
@@ -23113,6 +23312,26 @@ export interface operations {
             };
         };
     };
+    my_model_connections_connector_my_model_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelConnectionsOut"];
+                };
+            };
+        };
+    };
     check_my_claude_code_connector_my_devices__device_id__claude_code_post: {
         parameters: {
             query?: never;
@@ -23133,6 +23352,72 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     } | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelServiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
                 };
             };
             /** @description Validation Error */
@@ -31891,9 +32176,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -31928,9 +32211,74 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_own_agent_projects__project_id__own_agents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnAgentAdd"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_own_agent_projects__project_id__own_agents__handle__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */

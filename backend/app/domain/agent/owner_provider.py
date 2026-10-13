@@ -16,26 +16,31 @@ directory of its own holding a copy of the project's instructions, skills,
 rules and agents, and its paths are rewritten to the executor's on their way
 there (`client.prepare`).
 
-Which machine runs the session: one of the owner's, online, with that login. The one the
-session already ran on comes first, so a conversation stays where its
-transcript is while that machine is there.
+Which machine runs the session: the one holding the model connection the
+agent was added with, and no other — a subscription's login never leaves the
+machine it was given on. While that machine is away the session waits for it.
+When the connection is gone (its owner removed or logged it out) or its kind
+is one the project does not allow, the session does not start, and the room is
+told why (`own.unusable`).
 """
 
 import hashlib
 import logging
 from contextlib import asynccontextmanager
 
-from sqlalchemy import select
-
 from app.core.db import async_session_factory
 from app.core.sentences import say
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent_instance.own import owned_by_session, owned_instance
-from app.domain.agent_session.services import AgentSessionService
-from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
-from app.domain.device.supply import Supply
+from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.own import (
+    owned_by_session,
+    owned_instance,
+    unusable,
+)
+from app.domain.device.models import DeviceClaudeLoginRow
+from app.domain.project.reads import load_project
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
@@ -59,20 +64,18 @@ class OwnerChannel(CentralChannel):
         owned = await owned_by_session(db, topic.project_id, session.agent_handle)
         if owned is None:
             raise ScreenSetupError(say("screenAgentIdentityMissing"))
-        place = await AgentSessionService(db).place(
-            session.topic_id, session.agent_handle, harness=session.harness
+        project = await load_project(db, topic.project_id)
+        reason = await unusable(
+            db, owned, project.settings if project is not None else None
         )
-        machines = await owners_machines(db, owned.owner_user_id)
-        online = [device for device in machines if self._hub.is_online(device)]
-        if place is not None and place.machine in online:
-            return place.machine
-        if online:
-            return online[0]
+        if reason is not None:
+            raise ScreenSetupError(reason)
+        if owned.device_id is not None and self._hub.is_online(owned.device_id):
+            return owned.device_id
         raise ScreenSetupError(say("ownerMachineOffline"))
 
     def _center(self, place, precheck: Placement) -> str | None:
-        # The owner's machine this turn resolved, not a recorded one that may
-        # have gone: a conversation moves with its owner between machines.
+        # The machine holding its connection, as this turn resolved it.
         return precheck.machine
 
     def _deferred_target(self, target: dict, *, apart: bool) -> dict:
@@ -109,32 +112,16 @@ class OwnerChannel(CentralChannel):
         return f"{row.auth_method or ''}:{row.model or ''}"
 
 
-async def owners_machines(db, owner_user_id: int) -> list[str]:
-    """The owner's own machines with the platform's login, most recently
-    confirmed first."""
-    rows = await db.execute(
-        select(DeviceRow.device_id)
-        .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
-        .join(
-            DeviceClaudeLoginRow,
-            DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
-        )
-        .where(
-            DeviceRow.owner_user_id == owner_user_id,
-            DeviceRow.supply == Supply.self_hosted,
-            DeviceClaudeLoginRow.logged_in.is_(True),
-        )
-        .order_by(DeviceClaudeLoginRow.checked_at.desc())
-    )
-    return [device_id for (device_id,) in rows]
-
-
 async def owner_is_away(db, instance_id, hub) -> bool:
-    """Whether ``instance_id`` is a member's own agent none of whose owner's
-    machines is online with its login: its turn has nowhere to run until one
-    comes back."""
+    """Whether ``instance_id`` is a member's own agent whose connection's
+    machine is not online: its turn has nowhere to run until it comes back.
+    Not when the connection is gone or of a kind the project refuses: that
+    turn starts, to be refused with the reason."""
     owned = await owned_instance(db, instance_id)
     if owned is None:
         return False
-    machines = await owners_machines(db, owned.owner_user_id)
-    return not any(hub.is_online(device) for device in machines)
+    instance = await db.get(AgentInstance, instance_id)
+    project = await load_project(db, instance.project_id) if instance else None
+    if await unusable(db, owned, project.settings if project is not None else None):
+        return False
+    return not hub.is_online(owned.device_id)

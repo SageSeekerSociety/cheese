@@ -22,7 +22,7 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.agent.platform_failures import WORKSPACE_VCS_PERMS_CODE
-from app.domain.agent.skills import RESERVED_SKILL_NAMES
+from app.domain.skill_library import RESERVED_SKILL_NAMES
 
 logger = logging.getLogger("cheesex.repository")
 

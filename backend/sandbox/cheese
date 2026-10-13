@@ -693,7 +693,7 @@ PLATFORM_TOOLS = ToolTable(
                 "options": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "决策选项，配 decision_request",
+                    "description": "决策选项，decision_request 必带，至少两项",
                 },
             },
             ["title"],

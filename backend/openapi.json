@@ -8537,13 +8537,35 @@
         }
       }
     },
+    "/connector/my/model-connections": {
+      "get": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "My Model Connections",
+        "description": "The caller's model connections across the machines they enrolled\n(#2991): what each logs in with, where it is kept, its last check. Never a\nkey.",
+        "operationId": "my_model_connections_connector_my_model_connections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConnectionsOut"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/connector/my/devices/{device_id}/claude-code": {
       "post": {
         "tags": [
           "connector"
         ],
         "summary": "Check My Claude Code",
-        "description": "Ask one of the caller's machines again whether their own Claude Code is\nlogged in there (#2991). They log in on the machine itself, which tells the\nserver nothing; the page showing that machine asks, rather than leaving the\nanswer from its last connection standing.",
+        "description": "Ask one of the caller's machines again whether their own Claude Code is\nlogged in there (#2991). They log in on the machine itself, which tells the\nserver nothing; the page showing that machine asks, rather than leaving the\nanswer from its last connection standing. A logout its owner asked for\nwhile it was away is carried out first.",
         "operationId": "check_my_claude_code_connector_my_devices__device_id__claude_code_post",
         "parameters": [
           {
@@ -8572,6 +8594,116 @@
                     }
                   ],
                   "title": "Response Check My Claude Code Connector My Devices  Device Id  Claude Code Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Revoke My Claude Code",
+        "description": "Log the caller's own Claude Code out on one of their machines, from any\nbrowser (#2991). Out of use at once; the machine logs out now when online,\nelse as it next connects.",
+        "operationId": "revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ClaudeCodeLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Revoke My Claude Code Connector My Devices  Device Id  Claude Code Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/claude-code/model-service": {
+      "put": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Use My Model Service",
+        "description": "Point the caller's own Claude Code on one of their machines at another\nmodel service, from any browser (#2991). The key is handed to the machine,\nwhich keeps it; it is not stored here. The machine has to be online.",
+        "operationId": "use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelServiceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ClaudeCodeLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Use My Model Service Connector My Devices  Device Id  Claude Code Model Service Put"
                 }
               }
             }
@@ -23909,9 +24041,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Own Agents Projects  Project Id  Own Agents Get"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -23933,7 +24063,7 @@
           "projects"
         ],
         "summary": "Set Own Agents",
-        "description": "Let members bring their own Claude Code into the project, or not. Turned\noff, no member's own agent is called in it; turned on again, they are.",
+        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use. Turned off, members' own\nagents leave the project: off its roster and out of its channels. Turned on\nagain, the ones their owners had added are back on the roster, and sit in a\nchannel again once someone they answer to names them there.",
         "operationId": "set_own_agents_projects__project_id__own_agents_put",
         "parameters": [
           {
@@ -23963,9 +24093,112 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Own Agents Projects  Project Id  Own Agents Put"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Add Own Agent",
+        "description": "Bring the caller's own Claude Code, with one of their model connections,\ninto the project. Only a person adds their own, and only one of their own\nconnections, of a kind the project allows; adding one already here\nchanges nothing.",
+        "operationId": "add_own_agent_projects__project_id__own_agents_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnAgentAdd"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/own-agents/{handle}": {
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Remove Own Agent",
+        "description": "Take one of the caller's own agents out of the project: off its roster,\nout of its channels and out of reach of ``@``. Only its owner removes it.",
+        "operationId": "remove_own_agent_projects__project_id__own_agents__handle__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handle"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -42922,7 +43155,7 @@
           "topics"
         ],
         "summary": "Attachment Raw",
-        "description": "Authorized raster images and video bytes, never executable HTML/SVG.",
+        "description": "Authorized raster images and video bytes, never executable HTML/SVG.\n\nA room's own file is served from disk with byte ranges, so a player seeking\nthrough a long recording reads only the part it shows. A video read with the\n``Authorization`` header leaves a cookie for this path behind\n(``remember_for_media``): the ``<video>`` element's own range requests\ncannot carry the header, and the cookie is how they prove the same viewer.",
         "operationId": "attachment_raw_topics__topic_id__attachments_raw_get",
         "parameters": [
           {
@@ -54072,6 +54305,83 @@
         "title": "CheckResultIn",
         "description": "What the quick check said (`cheese check`).\n\n`ok=False` covers a red check AND one that ran out of its time budget: the\nbudget is the point, so exceeding it is a result, not an absence of one."
       },
+      "ClaudeCodeLoginOut": {
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "logged_in": {
+            "type": "boolean",
+            "title": "Logged In"
+          },
+          "auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Method"
+          },
+          "subscription_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Type"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "revoking": {
+            "type": "boolean",
+            "title": "Revoking"
+          }
+        },
+        "type": "object",
+        "required": [
+          "installed",
+          "logged_in",
+          "auth_method",
+          "subscription_type",
+          "model",
+          "service_host",
+          "checked_at",
+          "revoking"
+        ],
+        "title": "ClaudeCodeLoginOut",
+        "description": "What a machine last said about its owner's Claude Code login."
+      },
       "CommentCreate": {
         "properties": {
           "body": {
@@ -54745,6 +55055,15 @@
           "device_code"
         ],
         "title": "ConnectRequest"
+      },
+      "ConnectionKind": {
+        "type": "string",
+        "enum": [
+          "subscription",
+          "api_key",
+          "model_service"
+        ],
+        "title": "ConnectionKind"
       },
       "ControlIn": {
         "properties": {
@@ -59468,6 +59787,125 @@
         "title": "ModelCapabilities",
         "description": "能勾的能力。页面认这几项；网关那套 `supports_*` 字段名不出这个包。\n\n`adaptive_thinking` 必须**声明在这里**，不能指望 pydantic 把它顺手留下：网关侧\n的 `supports_adaptive_thinking` 读写都认它（`gateway_admin` 的读路径会把它读回来\n显示），但一个没声明的键会被 pydantic 默认丢弃 —— 前端勾上、保存后请求体里根本\n没有它，写网关时什么都不会发生，而读回来却显示得出来。那是一个静默的空操作。"
       },
+      "ModelConnectionOut": {
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "logged_in": {
+            "type": "boolean",
+            "title": "Logged In"
+          },
+          "auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Method"
+          },
+          "subscription_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Type"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "revoking": {
+            "type": "boolean",
+            "title": "Revoking"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "device_name": {
+            "type": "string",
+            "title": "Device Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "installed",
+          "logged_in",
+          "auth_method",
+          "subscription_type",
+          "model",
+          "service_host",
+          "checked_at",
+          "revoking",
+          "device_id",
+          "device_name",
+          "online",
+          "last_used_at"
+        ],
+        "title": "ModelConnectionOut"
+      },
+      "ModelConnectionsOut": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ModelConnectionOut"
+            },
+            "type": "array",
+            "title": "Connections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connections"
+        ],
+        "title": "ModelConnectionsOut"
+      },
       "ModelCreate": {
         "properties": {
           "api_base": {
@@ -59621,6 +60059,32 @@
         "type": "object",
         "title": "ModelPrices",
         "description": "一条模型的四个单价。\n\n用 `None` 表示「没定」，不是 0：0 是「定成免费」，`None` 是「这一栏空着」，网关的写\n接口也按这个区分（`GatewayAdmin._price_params` 只传真数字，`None` 一个都不发）。\ncache_read / cache_creation 允许缺，是因为不少上游根本没给缓存计价。"
+      },
+      "ModelServiceRequest": {
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "pattern": "^https?://[^\\s/]+",
+            "title": "Base Url"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Token"
+          },
+          "model": {
+            "type": "string",
+            "pattern": "^\\S+$",
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "base_url",
+          "token",
+          "model"
+        ],
+        "title": "ModelServiceRequest"
       },
       "ModelUpdate": {
         "properties": {
@@ -59807,6 +60271,68 @@
           "y"
         ],
         "title": "MoveCard"
+      },
+      "MyConnectionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "machine_name": {
+            "type": "string",
+            "title": "Machine Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "added": {
+            "type": "boolean",
+            "title": "Added"
+          },
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "plan",
+          "model",
+          "machine_name",
+          "online",
+          "added",
+          "allowed"
+        ],
+        "title": "MyConnectionOut",
+        "description": "One of the reader's own connections, to add to this project."
       },
       "NoteCreate": {
         "properties": {
@@ -60317,6 +60843,21 @@
         ],
         "title": "OnboardingOutEnvelope"
       },
+      "OwnAgentAdd": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Connection Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id"
+        ],
+        "title": "OwnAgentAdd"
+      },
       "OwnAgentCallersUpdate": {
         "properties": {
           "callers": {
@@ -60328,6 +60869,42 @@
           "callers"
         ],
         "title": "OwnAgentCallersUpdate"
+      },
+      "OwnAgentConnectionOut": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "plan",
+          "model"
+        ],
+        "title": "OwnAgentConnectionOut"
       },
       "OwnAgentMachineOut": {
         "properties": {
@@ -60389,12 +60966,25 @@
             ],
             "title": "Owner Name"
           },
-          "machines": {
-            "items": {
-              "$ref": "#/components/schemas/OwnAgentMachineOut"
-            },
-            "type": "array",
-            "title": "Machines"
+          "connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnAgentConnectionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "machine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnAgentMachineOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -60404,7 +60994,8 @@
           "callers",
           "owner_handle",
           "owner_name",
-          "machines"
+          "connection",
+          "machine"
         ],
         "title": "OwnAgentOut"
       },
@@ -60413,6 +61004,13 @@
           "allowed": {
             "type": "boolean",
             "title": "Allowed"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionKind"
+            },
+            "type": "array",
+            "title": "Kinds"
           },
           "can_manage": {
             "type": "boolean",
@@ -60424,13 +61022,22 @@
             },
             "type": "array",
             "title": "Agents"
+          },
+          "my_connections": {
+            "items": {
+              "$ref": "#/components/schemas/MyConnectionOut"
+            },
+            "type": "array",
+            "title": "My Connections"
           }
         },
         "type": "object",
         "required": [
           "allowed",
+          "kinds",
           "can_manage",
-          "agents"
+          "agents",
+          "my_connections"
         ],
         "title": "OwnAgentsOut"
       },
@@ -60473,15 +61080,35 @@
       "OwnAgentsUpdate": {
         "properties": {
           "allowed": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Allowed"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionKind"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
           }
         },
         "type": "object",
-        "required": [
-          "allowed"
-        ],
-        "title": "OwnAgentsUpdate"
+        "title": "OwnAgentsUpdate",
+        "description": "What a manager changes; a field left out stays as it is."
       },
       "OwnCallers": {
         "type": "string",

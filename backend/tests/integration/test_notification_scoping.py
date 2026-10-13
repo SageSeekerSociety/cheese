@@ -46,6 +46,8 @@ def _notify(
             "kind": kind,
             "title": title,
             "target_handle": target,
+            # 决策请求不带选项就写不进来。
+            "payload": {"options": ["A", "B"]} if kind == "decision_request" else {},
         },
     )
     assert r.status_code == 200, r.text
@@ -427,7 +429,14 @@ def test_a_member_page_does_not_hand_out_that_members_mailbox(client):
     # reading *her* inbox and still look right, because the only thing she owns
     # here would be her row of the broadcast — which bob owns a copy of too.
     _notify(client, pid, "alice拍板", target="alice", kind="decision_request")
-    _broadcast(client, pid, "谁来都行", kind="decision_request", level="strong")
+    _broadcast(
+        client,
+        pid,
+        "谁来都行",
+        kind="decision_request",
+        level="strong",
+        payload={"options": ["A", "B"]},
+    )
 
     # Anonymous → 401, and nothing of bob's leaks.
     r = client.get(f"/projects/{pid}/members/bob/summary")
@@ -695,7 +704,13 @@ def test_deleting_a_notification_takes_it_out_of_the_project_side_too(client):
     tid = _topic(client, pid, "被@的房间")
     # 决策请求落在房间里：话题相关性的「在等我」数的是它，不是那条 @。
     decision = _notify_in_room(
-        client, pid, tid, "alice拍板", kind="decision_request", target_handle="alice"
+        client,
+        pid,
+        tid,
+        "alice拍板",
+        kind="decision_request",
+        target_handle="alice",
+        payload={"options": ["A", "B"]},
     )
     mention = _notify_in_room(
         client, pid, tid, "有人@你", kind="MENTION", target_handle="alice"

@@ -165,10 +165,10 @@ beforeEach(() => {
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
 })
 
-describe('项目名下只有资料库，总览和其余页都在点项目名弹出的菜单里', () => {
-  it('壳点名了更多页，项目名下也只有资料库', async () => {
+describe('项目名下只有总览和资料库，其余页在点项目名弹出的菜单里', () => {
+  it('壳点名了更多页，项目名下也只有总览和资料库', async () => {
     const { container, baseElement } = mount()
-    expect(pagesIn(container)).toEqual([t('navigation.project.library')])
+    expect(pagesIn(container)).toEqual([t('navigation.project.overview'), t('navigation.project.library')])
 
     const rows = await openProjectMenu(container, baseElement)
     for (const label of ['navigation.project.members', 'navigation.project.routines', 'navigation.project.docs'])
@@ -187,7 +187,7 @@ describe('项目名下只有资料库，总览和其余页都在点项目名弹�
     const { container, baseElement } = mount()
     await clickMenuItem(container, baseElement, t('navigation.project.routines'))
     await waitFor(() => expect(router.currentRoute.value.name).toBe('project-routines'))
-    expect(pagesIn(container)).toEqual([t('navigation.project.library')])
+    expect(pagesIn(container)).toEqual([t('navigation.project.overview'), t('navigation.project.library')])
   })
 
   it('壳比前端新（多了一个不认识的 key）：那一格不画，别处照旧，不白屏', async () => {
@@ -195,7 +195,7 @@ describe('项目名下只有资料库，总览和其余页都在点项目名弹�
     // 东西比不画更糟，所以它落在 `orderedNav` 那一步，哪里都不画。
     const shell = { ...COURSE_SHELL, nav: { ...COURSE_SHELL.nav, project: ['project-library', 'project-future'] } }
     const { container, baseElement } = mount({ projects: [project(shell)] })
-    expect(pagesIn(container)).toEqual([t('navigation.project.library')])
+    expect(pagesIn(container)).toEqual([t('navigation.project.overview'), t('navigation.project.library')])
 
     const rows = await openProjectMenu(container, baseElement)
     expect(rows.some((r) => r.includes('project-future'))).toBe(false)

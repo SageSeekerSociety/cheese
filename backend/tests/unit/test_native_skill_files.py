@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.domain.agent.skills import (
+from app.domain.skill_library import (
     _NATIVE_SKILL_SRC,
     _SHIPPED_NATIVE_SKILLS,
     SKILL_FILE_SUFFIXES,

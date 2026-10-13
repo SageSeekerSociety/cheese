@@ -276,7 +276,9 @@ async def _note_merge_stop_and_wake(
         content=f"{lead}{action if actionable else _CLOSED_TASK_ACTION}",
         headline=headline,
         meta=meta,
-        dispatch=dispatch,
+        # 任务已关闭时只留这条给房间看，不叫座位：那条指令它照做不了
+        # （`delivery.agent.dispatch_pending` 只会把它标成失败并留下一行误导的账）。
+        dispatch=dispatch if actionable else None,
     )
 
 

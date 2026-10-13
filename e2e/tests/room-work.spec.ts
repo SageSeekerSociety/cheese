@@ -56,7 +56,7 @@ test.describe("房间里的任务", () => {
     );
   });
 
-  test("侧栏的项目菜单里打开项目总览，别的频道里的任务也在上面", async ({
+  test("侧栏项目名下的那一行里打开项目总览，别的频道里的任务也在上面", async ({
     page,
   }) => {
     const projectId = await projectIdOf(page);
@@ -65,12 +65,11 @@ test.describe("房间里的任务", () => {
     await dispatch(page, roomId, `跨房间的活 ${stamp}`);
 
     // 从一个频道里出发，走侧栏找到它，而不是直接敲地址：这一条要钉的一半正是
-    // 「找得到」。总览不在项目名下那一行（2026-10-12 清单第 9 条把它挪走了），
-    // 它在点项目名弹出的菜单里。
+    // 「找得到」。总览就摆在项目名下面那一行的第一格（2026-10-13 用户定，见
+    // .claude/rules/project-sidebar.md），点它进去 —— 它不在项目名菜单里了。
     await page.goto(`/projects/${projectId}/topics/${roomId}`);
-    await page.getByRole('button', { name: '项目菜单', exact: true }).click();
     await page
-      .locator('.v-overlay-container')
+      .locator('[aria-label="项目页面"] .pinned-row')
       .getByText('总览', { exact: true })
       .click();
     await expect(page).toHaveURL(/\/projects\/[^/]+\/overview/);

@@ -140,6 +140,38 @@ async def test_closed_task_keeps_failure_notice_without_invalid_repair_command()
 
 
 @pytest.mark.anyio
+async def test_leaving_the_merge_queue_wakes_the_seat_only_while_the_task_is_open():
+    """出队这条的老账新账分开：任务还开着才把指令投到座位上。
+
+    `_note_left_merge_queue` 是这条尾巴里**唯一**一处自带 `dispatch` 的调用
+    （独立复核 #3569 第 2 条）。它以前不管任务关没关都投，座位那边照做不了
+    （`delivery.agent.dispatch_pending` 只会把这行标成失败），还留下一行理由
+    误导的账。房间和任务那份文字照旧 ---- 关了的活写的是「请由新任务承接」。
+    """
+    service, card, topic = _service_and_card()
+    closed = SimpleNamespace(status="closed")
+    with patch(
+        "app.domain.review.services.TaskService.get", new=AsyncMock(return_value=closed)
+    ):
+        await service._note_left_merge_queue(card=card, topic=topic)
+    call = service._record_task_nudge.call_args.kwargs
+    assert call["dispatch"] is None
+    assert "新任务" in call["content"]
+    assert "cheese worktree" not in call["content"]
+
+    # 还开着的活照旧点名，话也照旧是那份能照做的。
+    service, card, topic = _service_and_card()
+    opened = SimpleNamespace(status="open")
+    with patch(
+        "app.domain.review.services.TaskService.get", new=AsyncMock(return_value=opened)
+    ):
+        await service._note_left_merge_queue(card=card, topic=topic)
+    call = service._record_task_nudge.call_args.kwargs
+    assert "cheese worktree" in call["dispatch"]
+    assert call["dispatch"].endswith("需要人重新采纳。")
+
+
+@pytest.mark.anyio
 async def test_merge_refusal_does_not_claim_checks_are_green():
     service, card, topic = _service_and_card()
     runner = MagicMock()

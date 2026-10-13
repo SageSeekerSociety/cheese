@@ -1,8 +1,9 @@
 """A member's own Claude Code: its session on its owner's machine, its tools in
 its execution environment (#2991, #2320).
 
-Its session runs on one of its owner's computers, with the login the owner gave
-the platform there: no other member's computer is ever its session host. What
+Its session runs on the computer holding the model connection its owner added
+it with, with the login the owner gave the platform there: not on another of
+its owner's computers, and never on another member's. What
 it runs — the files, the commands — goes to the execution environment its
 conversation has, like any agent's, which is its owner's computer only when
 that is the environment.
@@ -30,6 +31,7 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
+from app.domain.project.models import Project
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
@@ -140,7 +142,10 @@ async def _own_session(client, *, environment_on):
         await db.flush()
         db.add(
             OwnAgent(
-                instance_id=instance.id, owner_user_id=bob.id, harness="claude-code"
+                instance_id=instance.id,
+                owner_user_id=bob.id,
+                harness="claude-code",
+                device_id=bobs_laptop,
             )
         )
         for machine in (bobs_laptop, alices_desk):
@@ -239,6 +244,38 @@ async def test_an_own_agents_conversation_starts_on_its_owners_machine(client):
     assert placement.machine == own.bobs_laptop
 
 
+async def test_an_own_agents_session_does_not_start_on_a_kind_the_project_refuses(
+    client,
+):
+    # Bob's laptop signs in with his Claude subscription; the project allows
+    # only API keys.
+    own = await _own_session(client, environment_on="alice")
+    async with client.test_factory() as db:
+        login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
+        login.auth_method, login.subscription_type = "claude.ai", "max"
+        project = await db.get(Project, own.project_id)
+        project.settings = {
+            **(project.settings or {}),
+            "allow_own_agents": True,
+            "own_agent_kinds": ["api_key"],
+        }
+        await db.commit()
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+
+    with pytest.raises(ScreenSetupError) as refused:
+        client.portal.call(
+            lambda: channel.precheck(
+                SessionRef(
+                    own.project_id, own.topic_id, own.handle, harness="claude-code"
+                ),
+                needs_place=False,
+            )
+        )
+    assert "Claude 订阅" in str(refused.value), "the room is told which kind"
+
+
 async def test_another_members_machine_is_never_an_own_agents_session_host(client):
     # Alice's computer is online, logged in to Claude Code, and the very one
     # the conversation's tools run on; Bob's laptop is away.
@@ -259,6 +296,67 @@ async def test_another_members_machine_is_never_an_own_agents_session_host(clien
                 needs_place=False,
             )
         )
+
+
+async def _bobs_desk(client, own) -> str:
+    """Bob's second computer, online with another connection of his: a custom
+    model service, which the project allows like any other."""
+    async with client.test_factory() as db:
+        desk = await _machine(
+            sql_device_service(db), "bobs-desk", await _user(db, "bob"), own.project_id
+        )
+        db.add(
+            DeviceClaudeLoginRow(
+                device_id=desk,
+                installed=True,
+                logged_in=True,
+                auth_method="model_service",
+                model="kimi-k2",
+                checked_at=datetime.now(UTC),
+            )
+        )
+        await db.commit()
+    return desk
+
+
+def _precheck(client, own, online):
+    channel = OwnerChannel(
+        DeviceChannel(
+            hub=_hub(online=online), session_factory=client.test_request_factory
+        )
+    )
+    return client.portal.call(
+        lambda: channel.precheck(
+            SessionRef(own.project_id, own.topic_id, own.handle, harness="claude-code"),
+            needs_place=False,
+        )
+    )
+
+
+async def test_an_own_agents_session_runs_only_where_its_connection_is(client):
+    # Bob added his agent with his laptop's login. The laptop is away; his desk
+    # is online with another of his connections.
+    own = await _own_session(client, environment_on="alice")
+    desk = await _bobs_desk(client, own)
+
+    with pytest.raises(ScreenSetupError):
+        _precheck(client, own, online=lambda device: device == desk)
+
+    placement = _precheck(client, own, online=lambda device: True)
+    assert placement.machine == own.bobs_laptop
+
+
+async def test_an_own_agent_whose_connection_was_removed_starts_nothing(client):
+    own = await _own_session(client, environment_on="alice")
+    desk = await _bobs_desk(client, own)
+    async with client.test_factory() as db:
+        login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
+        login.revoked_at, login.logged_in = datetime.now(UTC), False
+        await db.commit()
+
+    with pytest.raises(ScreenSetupError) as refused:
+        _precheck(client, own, online=lambda device: device in (own.bobs_laptop, desk))
+    assert "模型连接已解除" in str(refused.value), "the room is told why"
 
 
 async def _launch_target(client, own, *, leased_on):
