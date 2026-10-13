@@ -720,10 +720,17 @@ class BlockRepository:
             .where(
                 *place,
                 QUESTION_ROWS,
-                # `meta` is json, not jsonb: cast to ask "does the list hold him".
+                # `meta` is json, not jsonb: cast to ask "does it name him". `@>` of
+                # a string holds for a list containing it and for the bare handle a
+                # backend from before the list wrote (blue/green deploys keep one
+                # running past the migration); json_array_length would raise on it.
                 or_(
-                    cast(Block.meta, JSONB)["asked"].contains([reply.author]),
-                    func.json_array_length(Block.meta["asked"]) == 0,
+                    cast(Block.meta, JSONB)["asked"].op("@>")(
+                        func.to_jsonb(cast(reply.author, Text))
+                    ),
+                    cast(Block.meta, JSONB)["asked"] == cast("[]", JSONB),
+                    func.jsonb_typeof(cast(Block.meta, JSONB)["asked"]).in_(["null"]),
+                    cast(Block.meta, JSONB)["asked"].is_(None),
                 ),
                 Block.meta["answered"].as_string().is_(None),
                 Block.id != reply.id,

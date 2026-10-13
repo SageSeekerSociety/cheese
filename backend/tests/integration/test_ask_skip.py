@@ -333,3 +333,40 @@ def test_what_you_say_after_skipping_is_not_your_answer(
     shown = next(b for b in _blocks(client, room) if b["id"] == question["id"])
     assert [e["kind"] for e in shown["meta"]["answer_log"]] == ["skipped"]
     assert _waiting_questions(client, "bob") == [question["id"]]
+
+
+def test_a_question_naming_one_person_the_old_way_is_answered_by_his_words(
+    client, stub_hooks, monkeypatch
+):
+    """A backend from before the addressee list, still running past the
+    migration in a blue/green deploy, writes ``asked`` as a bare handle."""
+    import asyncio
+    import uuid
+
+    from sqlalchemy import update
+
+    from app.domain.block.models import Block
+
+    _, room, _ = _room(client)
+    question = _ask(client, stub_hooks, monkeypatch, room)
+
+    async def old_shape():
+        async with client.test_factory() as session:
+            row = await session.get(Block, uuid.UUID(question["id"]))
+            await session.execute(
+                update(Block)
+                .where(Block.id == row.id)
+                .values(meta={**row.meta, "asked": "alice"})
+            )
+            await session.commit()
+
+    asyncio.run(old_shape())
+    assert _waiting_questions(client, "alice") != []
+
+    with room_socket(client, room, "alice") as ws:
+        post_message(client, room, "alice", {"content": "按项目"})
+        while ws.receive_json()["type"] not in ("done", "error"):
+            pass
+    wait_turn_idle(client, room)
+
+    assert _waiting_questions(client, "alice") == []
