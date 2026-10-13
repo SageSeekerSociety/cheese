@@ -88,7 +88,8 @@ async function settle() {
 
 async function openProject(topics: Topic[]) {
   seedProjects([])
-  seedProject('p', { topics, members: [], notifyLevels: {} })
+  // 登录的人有 handle，未读一并按它读：这里先摆好空的一份，别让它真的去请求（网络是封的）。
+  seedProject('p', { topics, members: [], notifyLevels: {}, unread: {}, privateUnread: {} })
   useWorkspaceStore().openProject('p')
   display.width = ref(1280)
   display.mdAndUp = ref(true)
@@ -109,6 +110,8 @@ const unfold = () => screen.getByRole('button', { name: "Expand this channel's t
 beforeEach(() => {
   setActivePinia(createPinia())
   api.listProjectTasks.mockReset()
+  // 行上「我的」那颗签认的是 `owner_handle`，所以得有个登录的人。
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: '我' }))
 })
 
 describe('频道下面那一整块任务，收得起来', () => {
@@ -177,15 +180,26 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.getAllByRole('button', { name: "Collapse this channel's tasks" })).toHaveLength(1)
   })
 
-  it('凑够三条借来的那几条，行上说是补上来的', async () => {
+  it('借来的那几条不挂签、悬浮说明说清它为什么在这儿；我负责的缀一个「我的」', async () => {
     await openProject([
-      channel('topic-a', [task(K1, '任务一'), task(K2, '任务二', 'topic-a', { filling_in: true })], 4),
+      channel(
+        'topic-a',
+        [
+          task(K1, '任务一', 'topic-a', { owner_handle: 'me' }),
+          task(K2, '任务二', 'topic-a', { filling_in: true }),
+        ],
+        4
+      ),
     ])
 
-    const chip = screen.getByText('Filled in')
-    // 补的那一条明确说是补的：不然会像一条你漏看了的活。
-    expect(chip.getAttribute('title')).toBe('Fewer than three of your own tasks are here; this row makes up the three')
-    // 和我有关的那些不挂这个签。
-    expect(screen.getAllByText('Filled in')).toHaveLength(1)
+    // 借来的那一条行上没有签，靠悬浮说明说出它为什么在这儿：这个频道里我自己的不到三条。
+    // 断它必须说出的那件事，不整句比——整句比较只会在改文案时红一次
+    // （王长鑫 2026-10-12 审阅 #3498 提的，`.claude/rules` 之外的那条约定）。
+    const borrowed = screen.getByRole('button', { name: /任务二/ })
+    expect(borrowed.getAttribute('title')).toContain('Fewer than three')
+
+    // 我负责的那一条缀「我的」，借来的那条不缀。
+    expect(screen.getByRole('button', { name: /任务一/ }).textContent).toContain('Mine')
+    expect(screen.getAllByText('Mine')).toHaveLength(1)
   })
 })

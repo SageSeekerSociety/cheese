@@ -7,8 +7,11 @@
 // 不亮就不画。
 //
 // 这一条不是和我有关的、是频道里别人的、被借来凑够三条的（`task.filling_in`）：整个
-// 标题淡一档、后面缀一个「补足」小签，说清它为什么在这儿 —— 不然侧栏里突然多出一条
-// 我没参与过的活，看起来像我漏看了什么。
+// 标题淡一档，行上不挂签，鼠标停上去的那句说明写清它为什么在这儿 —— 不然侧栏里突然
+// 多出一条我没参与过的活，看起来像我漏看了什么。
+//
+// 反过来，我负责的那几条（`task.owner_handle` 是我）缀一个「我的」小签。借来的和我
+// 协助的都不缀：前者不是我的活，后者不是我在负责。
 import type { RowLight } from '@/lib/roomLight'
 import type { RailTask } from './moreTasks'
 
@@ -19,6 +22,7 @@ import TopicRailLight from './TopicRailLight.vue'
 
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
+import { myHandle } from '@/me'
 
 const props = withDefaults(
   defineProps<{
@@ -36,6 +40,13 @@ const props = withDefaults(
 
 const fillingIn = computed(() => props.task.filling_in === true)
 
+// 我负责的那一条：行尾缀一个「我的」。没登录时 `myHandle()` 是空串，谁的活都认不出来 ——
+// 那种情况下不挂签，不是「都是我的」。
+const mine = computed(() => {
+  const me = myHandle()
+  return !fillingIn.value && me !== '' && props.task.owner_handle === me
+})
+
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void
   // 鼠标左键按下去了：意图定了，不必再等指针停满 hover 那一百多毫秒（和频道行
@@ -52,6 +63,7 @@ const emit = defineEmits<{
     :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn }"
     :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
+    :title="fillingIn ? t('work.sidebar.fillInTip') : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
     @pointerdown="
       $event.pointerType === 'mouse' && $event.button === 0 && emit('press', { roomId: task.room_id, taskId: task.id })
@@ -64,9 +76,7 @@ const emit = defineEmits<{
       :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
       >{{ taskTitle(task) }}</span
     >
-    <span v-if="fillingIn" class="rail-task__fill" :title="t('work.sidebar.fillInTip')">{{
-      t('work.sidebar.fillIn')
-    }}</span>
+    <span v-if="mine" class="rail-task__mine">{{ t('work.sidebar.mine') }}</span>
     <TopicRailBadge v-if="unread > 0" :count="unread" />
     <TopicRailLight v-if="light" :light="light" />
   </button>
@@ -128,7 +138,7 @@ const emit = defineEmits<{
 .rail-task__title--unread {
   font-weight: 650;
 }
-/* 补足的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
+/* 借来凑数的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
    自己再抬一次——上面那两条改的是行盒的颜色，标题自己有颜色时继承不到。 */
 .rail-task--filled .rail-task__title {
   color: var(--muted);
@@ -137,8 +147,8 @@ const emit = defineEmits<{
 .rail-task--filled.rail-task--selected .rail-task__title {
   color: var(--ink);
 }
-/* 「补足」小签：形态沿用频道行那颗计数丸，字更小、不抢眼。 */
-.rail-task__fill {
+/* 「我的」小签：形态沿用频道行那颗计数丸，字更小、不抢眼。 */
+.rail-task__mine {
   flex: none;
   font-size: 11px;
   line-height: 16px;

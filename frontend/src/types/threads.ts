@@ -92,9 +92,9 @@ declare module '../cx_types' {
 }
 
 // 侧栏那一块里的一条：这一条不是和我有关的，是从这个频道里别人的活借来把这一块凑够三条
-// 的（`projects.rail_tasks`）。侧栏把它画淡一档、缀一个「补足」，读的人才知道这一条为什
-// 么会在这儿。只有 `my_tasks.shown` 这份行带它；别的调用方（项目级列表、频道里的全部任务）
-// 不带，读作 false——那是「和我无关」，不是「说不清」。
+// 的（`projects.rail_tasks`）。侧栏把它画淡一档，悬浮说明写清它为什么在这儿（我负责的那几
+// 条反过来缀一个「我的」）。只有 `my_tasks.shown` 这份行带它；别的调用方（项目级列表、频道
+// 里的全部任务）不带，读作 false——那是「和我无关」，不是「说不清」。
 declare module '../cx_types' {
   interface RoomTask {
     filling_in?: boolean
