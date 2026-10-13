@@ -540,6 +540,7 @@ routes:
   # app.api.routes.blocks
   - {protocol: "http", method: "PATCH", path: "/blocks/{block_id}", auth: "actor.topic.enforced", owner: "block"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/reactions", auth: "actor.topic.enforced", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/blocks/{block_id}/skip", auth: "actor.topic.enforced", owner: "block"}
   - {protocol: "http", method: "DELETE", path: "/blocks/{block_id}/answer", auth: "actor.topic.enforced", owner: "block"}
   # app.api.routes.canvases
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/canvases", auth: "canvas.writer", owner: "canvas"}

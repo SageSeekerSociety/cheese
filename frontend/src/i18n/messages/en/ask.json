@@ -12,6 +12,12 @@
     "withdrawAria": "Withdraw your answer “{text}”",
     "withdrawTitle": "Withdraw this answer?",
     "withdrawBody": "The question goes back to waiting for a reply, and anyone can pick again. The message you sent stays in the room.",
-    "withdrawFailed": "Could not withdraw it — try again"
+    "withdrawFailed": "Could not withdraw it — try again",
+    "skip": "Skip this question",
+    "skipped": "{name}: skipped",
+    "undoSkip": "Undo",
+    "undoSkipAria": "Undo the skip and answer this question",
+    "skipFailed": "Couldn't skip the question",
+    "asks": "Asks {people}"
   }
 }

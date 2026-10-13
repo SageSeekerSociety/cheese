@@ -126,7 +126,7 @@ async def _seed(session) -> dict[str, object]:
             created_at=now - ago,
         )
 
-    asked = {"options": ["yes", "no"], "asked": "u1"}
+    asked = {"options": ["yes", "no"], "asked": ["u1"]}
     hour = timedelta(hours=1)
     session.add_all(
         [
@@ -268,7 +268,10 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
             )
             waits = await MemberWaits(session).for_rooms(room_ids, now=seeded["now"])
 
-        assert asked == {rooms["asks"].id: "u1", tasks["asks"].id: "u1"}
+        assert {place: w.waiting() for place, w in asked.items()} == {
+            rooms["asks"].id: ("u1",),
+            tasks["asks"].id: ("u1",),
+        }
         assert {room: [w.reason for w in ws] for room, ws in waits.items()} == {
             rooms["failed"].id: ["failed"],
             rooms["machine"].id: ["device_waiting"],
@@ -371,7 +374,7 @@ async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factor
                     author_type=AuthorType.participant,
                     author="u2",
                     content="x",
-                    meta={"options": ["yes", "no"], "asked": "u1"},
+                    meta={"options": ["yes", "no"], "asked": ["u1"]},
                     created_at=seeded["now"] - 3 * hour,
                 ),
                 Block(
@@ -399,7 +402,10 @@ async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factor
         await session.execute(text("SET LOCAL enable_seqscan = off"))
         with statements(session) as seen:
             asked = await BlockRepository(session).awaiting_an_answer(ids)
-        assert asked == {rooms["asks"].id: "u1", tasks["asks"].id: "u1"}
+        assert {place: w.waiting() for place, w in asked.items()} == {
+            rooms["asks"].id: ("u1",),
+            tasks["asks"].id: ("u1",),
+        }
 
         conn = await session.connection()
         bounded = 0

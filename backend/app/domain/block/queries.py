@@ -26,6 +26,7 @@ from collections.abc import Iterable
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.block.asked import Awaited
 from app.domain.block.indexed_rows import QUEUED_MESSAGE_ROWS, SHOWN_ROWS
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -156,7 +157,7 @@ async def weeklies_for_project(
 
 async def awaiting_an_answer(
     db: AsyncSession, conversation_ids: Iterable[uuid.UUID]
-) -> dict[uuid.UUID, str | None]:
+) -> dict[uuid.UUID, Awaited]:
     """这些对话里，哪几段停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
     看板「待回答」那一格问的就是它：这是唯一一种会中断「运行中」的状态，所以它

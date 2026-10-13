@@ -7350,13 +7350,57 @@
         }
       }
     },
+    "/blocks/{block_id}/skip": {
+      "post": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Skip Question",
+        "description": "Skip a question asked with quick replies: you will not answer it.\n\nOnly someone the question waits on can — whoever may answer it\n(`block.questions.waits_on`); anyone else is refused, and so is a question\nthat already has its answer. Nothing is said in the room. The question stops\nwaiting, as an answer would make it: it leaves that person's 待你回答 list,\nand its notice is settled. The agent that asked runs another turn told that\nthe question was skipped, so it stops waiting for an answer that is not\ncoming. ``DELETE /blocks/{block_id}/answer`` undoes it.",
+        "operationId": "skip_question_blocks__block_id__skip_post",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawnAnswerEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/blocks/{block_id}/answer": {
       "delete": {
         "tags": [
           "blocks"
         ],
         "summary": "Withdraw Answer",
-        "description": "Take back your own answer to a question asked with quick replies, so the\nquestion is unanswered again and its options come back for everyone.\n\n``block_id`` is the question, not the answer: an answer is an ordinary\nmessage, and what is withdrawn is the line it left on the question\n(`domain/block/questions`). Only whoever answered it can — anyone else gets\na refusal, not a way to erase somebody's answer. The message the answerer\nsent stays in the room; its words are not what this changes.\n\nWhoever was watching gets the question as a `block_updated` frame, and the\nagent that asked it runs another turn, because the turn it had been going\non was decided on an answer that no longer counts.",
+        "description": "Take back your own answer to a question asked with quick replies, or\nyour skip of it, so the question is unanswered again and its options come\nback for everyone.\n\n``block_id`` is the question, not the answer: an answer is an ordinary\nmessage, and what is withdrawn is the line it left on the question\n(`domain/block/questions`). Only whoever answered it can — anyone else gets\na refusal, not a way to erase somebody's answer. The message the answerer\nsent stays in the room; its words are not what this changes.\n\nWhoever was watching gets the question as a `block_updated` frame, and the\nagent that asked it runs another turn, because the turn it had been going\non was decided on an answer that no longer counts.",
         "operationId": "withdraw_answer_blocks__block_id__answer_delete",
         "parameters": [
           {
@@ -66580,7 +66624,7 @@
           "id"
         ],
         "title": "WithdrawnAnswer",
-        "description": "撤回一道题的回答，回的是这道题撤回之后的样子。\n\n和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，\n不必再取一次。"
+        "description": "跳过一道题、或撤回对它的回答（跳过），回的是这道题改完之后的样子。\n\n和 `block_updated` 那条实时帧带的是同一份东西，发起的页面拿它直接替换这道题，\n不必再取一次。"
       },
       "WithdrawnAnswerEnvelope": {
         "properties": {

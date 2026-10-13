@@ -127,7 +127,7 @@ function askBlock(answerLog: Record<string, unknown>[]) {
         { text: '按部门 (Recommended)', explain: '和去年的报表对得上' },
         { text: '按项目', explain: '每个项目一张表' },
       ],
-      asked: 'alice',
+      asked: ['alice'],
       answer_log: answerLog,
     },
   }
