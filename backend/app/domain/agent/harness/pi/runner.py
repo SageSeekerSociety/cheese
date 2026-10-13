@@ -36,8 +36,9 @@ from app.domain.agent.executor_transport import (
     RemoteClient,
     failure_text,
 )
-from app.domain.agent.harness.driven import runner
+from app.domain.agent.harness.driven import monitor, runner
 from app.domain.agent.harness.driven.journal import PAGE
+from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart, socket_path
 from app.domain.agent.harness.pi import catalog, hooks
 from app.domain.agent.harness.pi.jobs import Jobs
@@ -112,6 +113,8 @@ class Runner(runner.Runner[Journal]):
         # project; `env` is pi's environment here.
         self.machine: Machine | None = None
         self.jobs: Jobs | None = None
+        # Commands whose every line is told to the session (`Monitor`).
+        self.monitors: Monitors | None = None
         self.workspace = ""
         self.cwd = ""
         self.env: dict[str, str] = {}
@@ -467,6 +470,10 @@ class Runner(runner.Runner[Journal]):
                     "workspace": self.workspace,
                     "jobs": "" if child or not hands else str(self.state / "bg"),
                     "subagents": hands and not child,
+                    # `Monitor`, as `driven/monitor.py` defines it: the
+                    # session's alone, as its background jobs are — what a
+                    # monitor prints is told to the session, never a subagent.
+                    "monitor": monitor.TOOL if hands and not child else None,
                     "tools": tools,
                     "unavailable": reason,
                     # The project's MCP servers' tools, listed when the session
@@ -673,10 +680,12 @@ class Runner(runner.Runner[Journal]):
             [self._stamped(entry, thread) for entry in entries], cursor=cursor
         )
 
-    async def tell_parent(self, text: str) -> None:
+    async def tell_parent(self, text: str, *, behavior: str = "followUp") -> None:
         """Say something to the session on the platform's behalf: after what it
         is doing if it is working, as a turn of its own if it is not — the way
-        Claude Code hears that a subagent it left in the background ended."""
+        Claude Code hears that a subagent it left in the background ended.
+        With `behavior` "steer" it is said at the session's next step instead,
+        as Claude Code tells a session what a monitor printed."""
         if self.client is None or self.client.closed:
             return
         if not self.working:
@@ -687,7 +696,7 @@ class Runner(runner.Runner[Journal]):
             await self.client.request(
                 "prompt",
                 message=f"{self.notice}\n{text}" if self.notice else text,
-                streamingBehavior="followUp",
+                streamingBehavior=behavior,
             )
         except Exception as error:  # noqa: BLE001 — the record is in the log
             print(f"could not tell the session: {error!r}", file=sys.stderr)
@@ -790,6 +799,14 @@ class Runner(runner.Runner[Journal]):
         ]
         self.jobs = Jobs(self.machine, self.state / "bg")
         self.jobs.resume()
+        machine = self.machine
+        self.monitors = Monitors(
+            machine.client.control,
+            lambda text: self.tell_parent(text, behavior="steer"),
+            cwd=lambda: machine.placed(self.workspace),
+            place=machine.placed,
+            take=machine.take,
+        )
         if extension is not None:
             await self.open_servers()
             home = self.write_extension(extension, notice)
@@ -976,6 +993,7 @@ class Runner(runner.Runner[Journal]):
             or (self.continuing is not None and not self.continuing.done())
             or any(not agent.ended.done() for agent in self.children.started.values())
             or (self.jobs is not None and self.jobs.running() > 0)
+            or (self.monitors is not None and self.monitors.count() > 0)
         )
 
     # --- the socket ----------------------------------------------------------
@@ -1048,6 +1066,16 @@ class Runner(runner.Runner[Journal]):
             assert self.jobs is not None
             await self.jobs.signal(params["id"], int(params["signal"]))
             return {}
+        if method == "monitor_start":
+            assert self.monitors is not None
+            return {
+                "text": await self.monitors.start(
+                    params.get("arguments") or {}, params.get("id") or str(uuid.uuid4())
+                )
+            }
+        if method == "monitor_stop":
+            assert self.monitors is not None
+            return {"text": await self.monitors.stop(str(params.get("task_id") or ""))}
         if method == "subagent_spawn":
             return await self.children.spawn(
                 params["prompt"],
@@ -1082,7 +1110,8 @@ class Runner(runner.Runner[Journal]):
                 "session_id": self.journal.recall("session_id"),
                 "working": self.working,
                 # Background jobs still running: a relaunch would end them.
-                "tasks": self.jobs.running() if self.jobs is not None else 0,
+                "tasks": (self.jobs.running() if self.jobs is not None else 0)
+                + (self.monitors.count() if self.monitors is not None else 0),
                 "work_id": owner.get("work_id"),
                 "alive": self.alive(),
                 "capabilities": list(self.capabilities),
@@ -1106,6 +1135,8 @@ class Runner(runner.Runner[Journal]):
         await self.children.stop_all()
         if self.jobs is not None:
             await self.jobs.close(end=True)
+        if self.monitors is not None:
+            await self.monitors.close()
         if self.refresher is not None:
             self.refresher.cancel()
             await asyncio.gather(self.refresher, return_exceptions=True)

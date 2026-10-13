@@ -173,3 +173,61 @@ async def test_work_ownership_precedes_ack_and_children_keep_original_work(tmp_p
         ]
     finally:
         await reopened.close()
+
+
+@pytest.mark.anyio
+async def test_a_turn_the_session_was_woken_into_is_its_own_work(tmp_path):
+    """A monitor's line said to an idle session starts a turn nobody sent:
+    the room opens the books for it when it speaks (`unsolicited`), and the
+    next turn the platform sends is the platform's work again."""
+    sent = []
+
+    async def send(text):
+        sent.append(text)
+        return "turn"
+
+    runner = Runner(tmp_path, AsyncMock())
+    runner.session = SimpleNamespace(
+        send=AsyncMock(side_effect=send),
+        thread_id="thread",
+        turn_id=None,
+        observe=lambda event: None,
+    )
+    try:
+        await runner.tell("<task-notification>line</task-notification>")
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "turn"}},
+            }
+        )
+        woken = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert woken["cheese"]["unsolicited"] is True
+        own_work = woken["cheese"]["work_id"]
+
+        await runner.send("input", "from the room", work_id="platform-work")
+        await runner.record(
+            {
+                "method": "turn/started",
+                "params": {"threadId": "thread", "turn": {"id": "next"}},
+            }
+        )
+        sent_turn = (await runner.dispatch("events", {}))["events"][-1]["record"]
+        assert sent_turn["cheese"]["work_id"] == "platform-work" != own_work
+        assert "unsolicited" not in sent_turn["cheese"]
+    finally:
+        await runner.close()
+
+
+@pytest.mark.anyio
+async def test_a_line_said_mid_turn_goes_into_that_turn(tmp_path):
+    runner = Runner(tmp_path, AsyncMock())
+    sender = AsyncMock(return_value="turn")
+    runner.session = SimpleNamespace(send=sender, thread_id="thread", turn_id="turn")
+    runner.journal.remember("work:thread", "platform-work")
+    try:
+        await runner.tell("<task-notification>line</task-notification>")
+        sender.assert_awaited_once()
+        assert runner.journal.recall("work:thread") == "platform-work"
+    finally:
+        await runner.close()

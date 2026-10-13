@@ -55,6 +55,9 @@ type Manifest = {
   mcp: ToolSpec[];
   notice: string;
   subagents: boolean;
+  // `Monitor`, defined by the runner (`driven/monitor.py`); null for a session
+  // whose monitors nobody would be told about.
+  monitor?: ToolSpec | null;
 };
 
 const HOME = process.env.CHEESE_PI_EXTENSION ?? "";
@@ -1152,7 +1155,7 @@ function registerSubagentTools(pi: any, spec: Manifest) {
 
   pi.registerTool({
     name: "TaskStop",
-    description: "Stop one subagent. Any others keep running.",
+    description: "Stop one subagent, or a monitor, by its id. Any others keep running.",
     parameters: {
       type: "object",
       properties: {
@@ -1161,8 +1164,58 @@ function registerSubagentTools(pi: any, spec: Manifest) {
       required: ["task_id"],
     },
     async execute(_id: string, params: any) {
+      if (isMonitor(params.task_id)) return stopMonitor(spec, params.task_id);
       const answer = await ask(spec.socket, "subagent_stop", { agent_id: params.task_id });
       return text(answer.stopped ? `${params.task_id} 已停下` : `${params.task_id} 已经结束了`);
+    },
+  });
+}
+
+// --- monitors ----------------------------------------------------------------
+//
+// Claude Code's `Monitor`: a command on the room's machine whose every stdout
+// line the session is told as it is printed. The runner follows the command and
+// says each line into the session (`driven/monitor.py`, which also defines the
+// tool), so all this does is hand the call over. `TaskStop` stops one by the id
+// it was started under, as Claude Code's does; where the session has subagents
+// that tool is theirs and passes a monitor's id on.
+
+const MONITOR_PREFIX = "monitor-";
+
+function isMonitor(id: unknown): boolean {
+  return typeof id === "string" && id.startsWith(MONITOR_PREFIX);
+}
+
+async function stopMonitor(spec: Manifest, id: string) {
+  const answer = await ask(spec.socket, "monitor_stop", { task_id: id });
+  return text(answer.text);
+}
+
+function registerMonitorTools(pi: any, spec: Manifest, tool: ToolSpec) {
+  pi.registerTool({
+    name: tool.name,
+    description: tool.description,
+    parameters: tool.inputSchema,
+    async execute(id: string, params: any) {
+      // A refusal is thrown, as `ask` rejects with it: pi marks a result as an
+      // error only when `execute` throws.
+      const answer = await ask(spec.socket, "monitor_start", { arguments: params ?? {}, id });
+      return text(answer.text);
+    },
+  });
+  if (spec.subagents) return;
+  pi.registerTool({
+    name: "TaskStop",
+    description: "Stop a monitor by the task id Monitor returned.",
+    parameters: {
+      type: "object",
+      properties: {
+        task_id: { type: "string", description: "The monitor's task id, as Monitor returned it" },
+      },
+      required: ["task_id"],
+    },
+    async execute(_id: string, params: any) {
+      return stopMonitor(spec, params.task_id);
     },
   });
 }
@@ -1261,6 +1314,7 @@ export default function (pi: any) {
   registerMachineTools(pi, spec);
   if (spec.socket) applyProjectHooks(pi, spec);
   if (spec.socket && spec.subagents) registerSubagentTools(pi, spec);
+  if (spec.socket && spec.monitor) registerMonitorTools(pi, spec, spec.monitor);
   if (spec.jobs) {
     registerBackgroundTools(pi, spec);
     announceExits(pi, spec);

@@ -83,6 +83,15 @@ def say(text: str) -> tuple[str, str]:
     return ("say", text)
 
 
+def monitor(command: str) -> tuple[str, str]:
+    """The model starts a `Monitor` on `command` (Codex and pi)."""
+    return ("monitor", command)
+
+
+def watching(command: str) -> dict:
+    return {"command": command, "description": "fixture watch"}
+
+
 class Backend:
     """The platform as a session reaches it: the room's message route, and
     the connector's relay to the room machine's executor."""
@@ -455,6 +464,8 @@ async def codex(tmp_path: Path, steps: list):
             [
                 {"tool": "Bash", "arguments": {"command": value}}
                 if kind == "shell"
+                else {"tool": "Monitor", "arguments": watching(value)}
+                if kind == "monitor"
                 else {"text": value}
                 if kind == "say"
                 else {"tool": "cheese_chat_list", "arguments": {}}
@@ -531,6 +542,8 @@ async def pi(tmp_path: Path, steps: list):
         [
             {"tool": "bash", "arguments": {"command": value}}
             if kind == "shell"
+            else {"tool": "Monitor", "arguments": watching(value)}
+            if kind == "monitor"
             else {"text": value}
             if kind == "say"
             else {"tool": "cheese_chat_list", "arguments": {}}

@@ -16,6 +16,7 @@ SHARED = (
     "domain/delivery/input_identity.py",
     "domain/agent/harness/__init__.py",
     "domain/agent/harness/driven/journal.py",
+    "domain/agent/harness/driven/monitor.py",
     "domain/agent/harness/driven/runner.py",
 )
 

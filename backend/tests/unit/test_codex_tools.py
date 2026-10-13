@@ -174,3 +174,39 @@ def test_the_runner_archive_carries_the_platform_tool_table(tmp_path):
     )
     assert process.returncode == 0, process.stderr
     assert "chat_send" in process.stdout
+
+
+@pytest.mark.anyio
+async def test_task_stop_stops_a_monitor_by_its_id_and_a_command_by_its_own(
+    monkeypatch,
+):
+    """`TaskStop` is the one way to stop either: a monitor's id is the
+    monitor's, and every other id is the executor's background command."""
+    tools = RemoteTools({})
+    tools.routes = {"TaskStop": ("native", "TaskStop")}
+    stopped, sent = [], []
+
+    class Monitors:
+        async def stop(self, task):
+            stopped.append(task)
+            return f"Monitor {task} stopped"
+
+    tools.monitors = Monitors()
+    monkeypatch.setattr(
+        tools.client,
+        "call",
+        lambda method, params, **_: sent.append(params) or {"value": "stopped"},
+    )
+    answer = await tools(
+        "item/tool/call",
+        {"tool": "TaskStop", "callId": "1", "arguments": {"task_id": "monitor-abc"}},
+    )
+    assert answer["success"] is True
+    assert stopped == ["monitor-abc"] and sent == []
+
+    await tools(
+        "item/tool/call",
+        {"tool": "TaskStop", "callId": "2", "arguments": {"task_id": "b7k2"}},
+    )
+    assert stopped == ["monitor-abc"]
+    assert [params["args"] for params in sent] == [{"task_id": "b7k2"}]

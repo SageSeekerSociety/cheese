@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import sys
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
@@ -13,6 +14,7 @@ from app.domain.agent.harness.codex.app_server import AppServer
 from app.domain.agent.harness.codex.journal import Journal
 from app.domain.agent.harness.codex.session import Session
 from app.domain.agent.harness.driven import runner
+from app.domain.agent.harness.driven.monitor import Monitors
 from app.domain.agent.harness.driven.runner import SessionStart
 
 # How long a new turn waits to see the project's skills as they are now before
@@ -45,6 +47,9 @@ class Runner(runner.Runner[Journal]):
         self.session: Session | None = None
         self.submit_lock = asyncio.Lock()
         self.continuing: asyncio.Future | None = None
+        # The session's monitors (`tools.RemoteTools.monitors`): what they
+        # print is said to the session through `tell`.
+        self.monitors: Monitors | None = None
 
     async def _catch_up(self) -> bool:
         """The project's skills as they are on the machine now; whether they
@@ -82,6 +87,10 @@ class Runner(runner.Runner[Journal]):
         owner = json.loads(self.journal.recall("owner") or "{}")
         if work:
             owner["work_id"] = work
+            if self.journal.recall(f"unsolicited:{work}"):
+                # A turn the session started for itself (`tell`): the room
+                # opens the books for it when it speaks.
+                owner["unsolicited"] = True
         if owner:
             event = {**event, "cheese": owner}
         ends = (
@@ -119,6 +128,20 @@ class Runner(runner.Runner[Journal]):
             print(f"could not hold the turn to a reply: {error!r}", file=sys.stderr)
             self.journal.append(ending)
             self.reply_settled()
+
+    async def tell(self, text: str) -> None:
+        """Say something to the session on the platform's behalf: into the
+        turn it is in (`turn/steer`), or as a turn of its own when it is idle —
+        the way Claude Code hears what a monitor it started printed."""
+        session = self.session
+        if session is None or session.thread_id is None:
+            return
+        async with self.submit_lock:
+            if session.turn_id is None:
+                work = str(uuid.uuid4())
+                self.journal.remember(f"unsolicited:{work}", "1")
+                self.journal.remember(f"work:{session.thread_id}", work)
+            await session.send(text)
 
     async def start(
         self,
@@ -244,7 +267,15 @@ class Runner(runner.Runner[Journal]):
         return bool(
             (self.session is not None and self.session.turn_id is not None)
             or (self.continuing is not None and not self.continuing.done())
+            # A watch still running is the session's own work: letting the
+            # session go would end it unheard.
+            or (self.monitors is not None and self.monitors.count() > 0)
         )
+
+    async def close(self) -> None:
+        if self.monitors is not None:
+            await self.monitors.close()
+        await super().close()
 
     async def dispatch(self, method: str, params: dict) -> dict:
         if method == "configure":

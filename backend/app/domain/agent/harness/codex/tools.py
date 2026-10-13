@@ -20,6 +20,7 @@ from app.domain.agent.executor_transport import (
     failure_text,
     session_path,
 )
+from app.domain.agent.harness.driven import monitor
 from app.domain.agent.harness.driven.runner import reply_owed
 
 # The executor implements these tools. The platform's own tools are not the
@@ -42,6 +43,10 @@ YIELD_POLL_S = 0.2
 
 #: The route a platform tool takes: not a server on the executor, the backend.
 PLATFORM = "platform"
+
+#: The route `Monitor` takes: this process, which follows the command on the
+#: machine and tells the session what it prints (`driven/monitor.py`).
+MONITOR = "monitor"
 
 #: Where Codex finds a repository's skills, relative to the project root: the
 #: `.agents/skills` directory and the `skills` folder of the project's `.codex`
@@ -111,6 +116,9 @@ class RemoteTools:
         self.reply_file = reply_file
         self.main_thread: str | None = None
         self.answered: str | None = None
+        # The session's monitors, once the runner that tells the session what
+        # they print exists (`entry.py`).
+        self.monitors: monitor.Monitors | None = None
 
     def skill_roots(self) -> list[str]:
         assert self.mirror is not None
@@ -407,6 +415,11 @@ class RemoteTools:
                 raise ValueError(f"Duplicate executor tool: {tool['name']}")
             routes[tool["name"]] = (PLATFORM, tool["name"])
             tools.append({"type": "function", **tool})
+        if self.monitors is not None:
+            if monitor.TOOL["name"] in routes:
+                raise ValueError(f"Duplicate executor tool: {monitor.TOOL['name']}")
+            routes[monitor.TOOL["name"]] = (MONITOR, monitor.TOOL["name"])
+            tools.append({"type": "function", **monitor.TOOL})
         self.routes = routes
         return tools
 
@@ -480,6 +493,8 @@ class RemoteTools:
                         "contentItems": [{"type": "inputText", "text": owed["reason"]}],
                     }
         server, tool = self.routes[params["tool"]]
+        if server == MONITOR or self._stops_a_monitor(server, tool, params):
+            return await self._monitor_call(tool, params, session_call)
         # What the platform said while this call waited for its machine. Codex
         # hears a call only once it has run, so the agent reads it at the head
         # of the call's result.
@@ -503,6 +518,41 @@ class RemoteTools:
                 *answer["contentItems"],
             ]
         return answer
+
+    def _stops_a_monitor(self, server: str, tool: str, params: dict) -> bool:
+        """`TaskStop` names a monitor as it names a background command: by
+        the task id it was started under."""
+        arguments = params.get("arguments") or {}
+        task = arguments.get("task_id") or arguments.get("shell_id")
+        return (
+            server == "native"
+            and tool == "TaskStop"
+            and isinstance(task, str)
+            and task.startswith(monitor.PREFIX)
+        )
+
+    async def _monitor_call(self, tool: str, params: dict, session_call: bool) -> dict:
+        assert self.monitors is not None
+        arguments = params.get("arguments") or {}
+        if tool == "TaskStop":
+            task = arguments.get("task_id") or arguments.get("shell_id")
+            text, success = await self.monitors.stop(task), True
+        elif not session_call:
+            # What a monitor prints is told to the room's session; a subagent
+            # would never hear it.
+            text, success = "Monitor is not available to a subagent", False
+        else:
+            try:
+                text = await self.monitors.start(arguments, params["callId"])
+                success = True
+            except MachineOutOfReach:
+                text, success = MACHINE_OUT_OF_REACH, False
+            except Exception as exc:  # noqa: BLE001 — the agent reads the reason
+                text, success = failure_text(exc), False
+        return {
+            "success": success,
+            "contentItems": [{"type": "inputText", "text": text}],
+        }
 
     async def _executor_call(
         self,
