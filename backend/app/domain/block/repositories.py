@@ -685,9 +685,10 @@ class BlockRepository:
         him, among others, of everyone in the channel, or of nobody in
         particular), that he has not skipped and that nobody has answered yet,
         but only when it is his first word since they were asked: what he says
-        after that is talk, not his answer. It is the same reading as `_awaiting_an_answer`'s "spoke
-        after it was asked". ``first_word_only=False`` drops that last
-        condition, for a message the caller knows is addressed to an asker.
+        after that is talk, not his answer. It is the same reading as
+        `_awaiting_an_answer`'s "spoke after it was asked".
+        ``first_word_only=False`` drops that last condition, for a message the
+        caller knows is addressed to an asker.
         Whom it names is the caller's to weigh.
         """
         place = (Block.conversation_id == reply.conversation_id,)

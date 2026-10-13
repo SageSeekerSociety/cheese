@@ -56,7 +56,12 @@ def _ask(client, stub_hooks, monkeypatch, room, *, to=None, platform_turn=False)
     ``platform_turn``, one the platform started); the turn ends."""
     body = QUESTION if to is None else {**QUESTION, "to": to}
     with active_ask(
-        client, stub_hooks, monkeypatch, room, actor="alice", platform_turn=platform_turn
+        client,
+        stub_hooks,
+        monkeypatch,
+        room,
+        actor="alice",
+        platform_turn=platform_turn,
     ) as headers:
         response = client.post(f"/topics/{room}/asks", json=body, headers=headers)
         assert response.status_code == 200, response.text
@@ -386,7 +391,11 @@ def _click(client, room, question_id, handle, text="按部门"):
     the way the browser sends it. Returns the response, refused or not."""
     response = client.post(
         f"/topics/{room}/messages",
-        json={"request_id": str(uuid.uuid4()), "content": text, "reply_to": question_id},
+        json={
+            "request_id": str(uuid.uuid4()),
+            "content": text,
+            "reply_to": question_id,
+        },
         headers=session_auth_headers(handle),
     )
     wait_turn_idle(client, room)

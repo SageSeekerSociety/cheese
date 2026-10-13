@@ -150,11 +150,11 @@ async def skip_question(
 
     Only someone who may answer it can (`block.asked.may_answer`, the rule an
     answer by option or in words is held to); anyone else is refused, and so
-    is a question that already has its answer. Nothing is said in the room. The question stops
-    waiting, as an answer would make it: it leaves that person's 待你回答 list,
-    and its notice is settled. The agent that asked runs another turn told that
-    the question was skipped, so it stops waiting for an answer that is not
-    coming. ``DELETE /blocks/{block_id}/answer`` undoes it."""
+    is a question that already has its answer. Nothing is said in the room.
+    The question stops waiting, as an answer would make it: it leaves that
+    person's 待你回答 list, and its notice is settled. The agent that asked
+    runs another turn told that the question was skipped, so it stops waiting
+    for an answer that is not coming. ``DELETE /blocks/{block_id}/answer`` undoes it."""
     return await _respond(block_id, db, resolver, broker, chat, runner, act=skip)
 
 

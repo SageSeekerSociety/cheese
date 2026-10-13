@@ -92,8 +92,7 @@ const mine = computed(() => props.viewer != null && answers.value.some((a) => a.
 // 就是频道里谁都行（名单是问出口那一刻的人，后来进频道的也算），没点名也是谁都行。
 // 和服务端 `block.asked.may_answer` 同一条。
 const canAnswer = computed(
-  () =>
-    !!props.viewer && (asked.value.length === 0 || askedAll.value || asked.value.includes(props.viewer))
+  () => !!props.viewer && (asked.value.length === 0 || askedAll.value || asked.value.includes(props.viewer))
 )
 const confirming = ref(false)
 
