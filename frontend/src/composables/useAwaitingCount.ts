@@ -1,4 +1,4 @@
-import { readonly, type Ref, ref, watch } from 'vue'
+import { onScopeDispose, readonly, type Ref, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
@@ -19,6 +19,17 @@ export function awaitingCount(): Readonly<Ref<number>> {
   return readonly(count)
 }
 
+// 取数的那一处（App 里的 `useAwaitingCount`）登记的强制重读；没登录、没挂上时为空。
+let recount: (() => Promise<void>) | null = null
+
+/**
+ * 人刚了结了一件（拍板、标为已读）：当场重读，不等节流。被动的刷新（换页面、窗口拿到
+ * 焦点）才压 30 秒；人自己的动作要立刻在角标上看到结果。
+ */
+export function recountAwaiting(): Promise<void> {
+  return recount ? recount() : Promise.resolve()
+}
+
 /** 每个项目待我处理的件数；没有的项目不在表里。rail 上项目格子的角标读它。 */
 export function awaitingCountByProject(): Readonly<Ref<Record<string, number>>> {
   return readonly(byProject)
@@ -29,8 +40,9 @@ export function awaitingCountByProject(): Readonly<Ref<Record<string, number>>> 
  *
  * 和待办页读同一个接口（`/awaiting-me`），所以角标上的数就是点进去看到的行数。
  * 没有推送通道告诉它「有新的一件」，于是在人**做了点什么**的时候再读：换页面、
- * 窗口重新拿到焦点。离开待办页那一下不受节流——人刚在那儿处理完事情，数字应该
- * 立刻跟上。读失败就保持原来的数，不把一次网络抖动画成「没有待办」。
+ * 窗口重新拿到焦点。离开待办页那一下、以及人在待办页上了结一件（`recountAwaiting`）
+ * 不受节流——人刚处理完事情，数字应该立刻跟上。读失败就保持原来的数，不把一次网络
+ * 抖动画成「没有待办」。
  */
 export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
   const route = useRoute()
@@ -68,6 +80,10 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
     (_path, from) => void refresh(from === '/inbox')
   )
   useEventListener(window, 'focus', () => void refresh())
+  recount = () => refresh(true)
+  onScopeDispose(() => {
+    recount = null
+  })
 
   return count
 }

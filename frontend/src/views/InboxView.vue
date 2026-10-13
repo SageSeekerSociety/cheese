@@ -3,6 +3,7 @@ import type { WaitingItem } from '@/cx_types'
 
 import { computed, onMounted, ref } from 'vue'
 
+import { recountAwaiting } from '@/composables/useAwaitingCount'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
@@ -129,6 +130,7 @@ async function settle(item: WaitingItem, send: (alertId: number) => Promise<unkn
   try {
     await send(item.alertId)
     items.value = items.value.filter((other) => other.alertId !== item.alertId)
+    void recountAwaiting()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('home.inbox.actionFailed')
   } finally {
@@ -136,6 +138,14 @@ async function settle(item: WaitingItem, send: (alertId: number) => Promise<unkn
   }
 }
 const decide = (item: WaitingItem, chosen: string) => settle(item, (id) => resolveAlert(id, chosen))
+
+// 没带选项的决策请求（现在写不进来了，库里还留着以前的）：拍板就是写一句话答复，
+// 后端对没有选项的那一条收任何一句。不给这条路，这一行一个按钮都没有，永远清不掉。
+const answers = ref<Record<number, string>>({})
+function answer(item: WaitingItem) {
+  const text = item.alertId == null ? '' : (answers.value[item.alertId] ?? '').trim()
+  if (text) void decide(item, text)
+}
 const dismiss = (item: WaitingItem) => settle(item, markRead)
 
 // 一个项目里攒了好几条变更提醒时，一下全部标为已读，不用一条一条点。
@@ -147,6 +157,7 @@ async function dismissAll(projectId: string) {
   try {
     await markAllAlertsRead(projectId)
     items.value = items.value.filter((item) => item.projectId !== projectId || item.reason !== 'read')
+    void recountAwaiting()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('home.inbox.actionFailed')
   } finally {
@@ -265,6 +276,30 @@ async function dismissAll(projectId: string) {
                 @click="decide(item, option)"
               >
                 {{ option }}
+              </BaseButton>
+            </div>
+            <div
+              v-else-if="item.reason === 'decide' && item.alertId != null"
+              class="inbox-item__options inbox-item__answer"
+            >
+              <v-text-field
+                v-model="answers[item.alertId]"
+                variant="outlined"
+                density="compact"
+                hide-details
+                autocomplete="off"
+                :aria-label="t('home.inbox.answerLabel')"
+                :placeholder="t('home.inbox.answerLabel')"
+                @keydown.enter.prevent="answer(item)"
+              />
+              <BaseButton
+                size="sm"
+                kind="secondary"
+                :disabled="!answers[item.alertId]?.trim()"
+                :loading="acting === item.alertId"
+                @click="answer(item)"
+              >
+                {{ t('home.inbox.answer') }}
               </BaseButton>
             </div>
             <div v-else-if="item.reason === 'read'" class="inbox-item__options">
@@ -448,5 +483,13 @@ async function dismissAll(projectId: string) {
   flex-wrap: wrap;
   gap: 8px;
   padding: 0 4px 14px;
+}
+.inbox-item__answer {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.inbox-item__answer .v-text-field {
+  flex: 1;
+  min-width: 0;
 }
 </style>
