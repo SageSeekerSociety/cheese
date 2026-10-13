@@ -2701,7 +2701,13 @@ export interface paths {
         delete: operations["revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Rename My Claude Code
+         * @description Name the login the caller's own Claude Code has on one of their machines
+         *     (#2991); the own agents on it are named after it, whatever the machine
+         *     reports later. The machine need not be online.
+         */
+        patch: operations["rename_my_claude_code_connector_my_devices__device_id__claude_code_patch"];
         trace?: never;
     };
     "/connector/my/devices/{device_id}/claude-code/model-service": {
@@ -6958,10 +6964,11 @@ export interface paths {
         /**
          * Set Own Agents
          * @description Let members bring their own Claude Code into the project, or not, and
-         *     which kinds of model connection it may use. Turned off, members' own
-         *     agents leave the project: off its roster and out of its channels. Turned on
-         *     again, the ones their owners had added are back on the roster, and sit in a
-         *     channel again once someone they answer to names them there.
+         *     which kinds of model connection it may use, and which model services.
+         *     Turned off, members' own agents leave the project: off its roster and out
+         *     of its channels. Turned on again, the ones their owners had added are back
+         *     on the roster, and sit in a channel again once someone they answer to names
+         *     them there.
          */
         put: operations["set_own_agents_projects__project_id__own_agents_put"];
         /**
@@ -13245,11 +13252,6 @@ export interface components {
             /** Created At */
             created_at: string;
         };
-        /** AccountConnectionRename */
-        AccountConnectionRename: {
-            /** Name */
-            name: string;
-        };
         /** AddCard */
         AddCard: {
             /**
@@ -13924,6 +13926,8 @@ export interface components {
             model: string | null;
             /** Service Host */
             service_host: string | null;
+            /** Name */
+            name: string | null;
             /** Checked At */
             checked_at: string;
             /** Revoking */
@@ -14194,6 +14198,14 @@ export interface components {
          * @enum {string}
          */
         ConnectionKind: "subscription" | "api_key" | "model_service";
+        /**
+         * ConnectionRename
+         * @description What its owner calls a model connection; empty takes the name away.
+         */
+        ConnectionRename: {
+            /** Name */
+            name: string;
+        };
         /** ControlIn */
         ControlIn: {
             /** Session Id */
@@ -16032,6 +16044,8 @@ export interface components {
             model: string | null;
             /** Service Host */
             service_host: string | null;
+            /** Name */
+            name: string | null;
             /** Checked At */
             checked_at: string;
             /** Revoking */
@@ -16385,6 +16399,8 @@ export interface components {
             model: string | null;
             /** On Account */
             on_account: boolean;
+            /** Allowed */
+            allowed: boolean;
         };
         /** OwnAgentMachineOut */
         OwnAgentMachineOut: {
@@ -16413,6 +16429,8 @@ export interface components {
             allowed: boolean;
             /** Kinds */
             kinds: components["schemas"]["ConnectionKind"][];
+            /** Service Hosts */
+            service_hosts: string[];
             /** Can Manage */
             can_manage: boolean;
             /** Agents */
@@ -16445,6 +16463,8 @@ export interface components {
             allowed?: boolean | null;
             /** Kinds */
             kinds?: components["schemas"]["ConnectionKind"][] | null;
+            /** Service Hosts */
+            service_hosts?: string[] | null;
         };
         /**
          * OwnCallers
@@ -23612,7 +23632,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["AccountConnectionRename"];
+                "application/json": components["schemas"]["ConnectionRename"];
             };
         };
         responses: {
@@ -23687,6 +23707,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_my_claude_code_connector_my_devices__device_id__claude_code_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionRename"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"];
                 };
             };
             /** @description Validation Error */
