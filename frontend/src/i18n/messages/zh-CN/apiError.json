@@ -772,6 +772,8 @@
   "alertKindNotFromInbox": "这一类通知不从项目收件箱写入",
   "alertRecipientOutside": "收件人不在这个项目或频道里",
   "deviceNotYours": "设备不存在或不属于你",
+  "modelServiceMachineOffline": "这台设备不在线。设备上线后再设置自定义模型服务",
+  "modelServiceRefused": "设备没有保存这个模型服务：{reason}",
   "deviceTeamMemberOnly": "你不是该团队成员，不能把设备注册给它",
   "notTeamMember": "你不是该团队成员",
   "deviceNotFound": "设备不存在",

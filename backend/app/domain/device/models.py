@@ -184,8 +184,18 @@ class DeviceClaudeLoginRow(Base):
     auth_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
     subscription_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # The host of that model service (never its key), for its owner to tell
+    # one service from another; None for a Claude account.
+    service_host: Mapped[str | None] = mapped_column(String(255), nullable=True)
     checked_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+    # When its owner removed this login from a browser while the machine was
+    # away. Until the machine has logged it out — the next time it connects —
+    # the login counts as logged out (``logged_in`` stays false whatever the
+    # machine says), so nothing starts on it; None once that is done.
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 
