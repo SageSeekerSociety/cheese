@@ -17,10 +17,12 @@
 2. 建库、上迁移：
 
        PGPASSWORD=cheesex createdb -h 127.0.0.1 -p 5433 -U cheesex cheese_perf
-       cd backend && TEST_PG_BASE=postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433 \
+       cd backend && DATABASE_URL=postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433/cheese_perf \
            uv run alembic upgrade head
 
-   库名换过就用 `PERF_DATABASE_URL`（造数）和 `PERF_DB_URL`（计时）指过去。
+   alembic 认 `DATABASE_URL`；`TEST_PG_BASE` 只有测试用例读，给它上迁移会跑到
+   别的库上。库名换过就用 `PERF_DATABASE_URL`（造数）和 `PERF_DB_URL`（计时）
+   指过去。
 
 3. 按 dev 行数造数（13 个项目、1917 条活、48 万条消息块、1572 张验收卡）：
 
@@ -51,7 +53,9 @@
    `after_cursor_execute` 给出驱动的往返，和叶子自己的 `process_time` 相减就是
    我们把行变成对象的钱；每条语句还报它取回多少行 —— 代价跟着行数走时，缩结果比
    缩计划有用。`probe_concurrency.py` 量 20 并发一批的墙钟和循环 CPU——就是那个
-   「4.1 秒」的场景。三个探针的 `PERF_ROUNDS`、`PERF_BATCHES` 都能用环境变量调。
+   「4.1 秒」的场景。采样轮数用 `PERF_ROUNDS` 调（`probe_brief.py`、
+   `probe_query_split.py`），批数和并发数用 `PERF_BATCHES`、`PERF_CONCURRENCY`
+   调（`probe_concurrency.py`）——没有哪个探针读全部三个。
 
 ## 读数的坑
 
