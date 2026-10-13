@@ -132,7 +132,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/remote_mcp.py", "ValidationError"): 2,
     ("app/api/routes/room_files.py", "ValidationError"): 4,
     ("app/api/routes/sandbox.py", "UnauthorizedError"): 1,
-    ("app/api/routes/topics.py", "ValidationError"): 11,
+    ("app/api/routes/topics.py", "ValidationError"): 10,
     ("app/api/routes/topics_attachments.py", "ValidationError"): 10,
     ("app/api/routes/topics_deliveries.py", "ValidationError"): 1,
     ("app/api/routes/topics_documents.py", "ValidationError"): 12,
@@ -143,6 +143,9 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/webhooks.py", "ValidationError"): 2,
     ("app/api/routes/workspace.py", "GatewayUnavailableError"): 1,
     ("app/api/routes/workspace.py", "ValidationError"): 4,
+    # `_parse_moment` moved here from `routes/topics.py` with its body unchanged:
+    # the same single use, one file further out. topics.py's own line drops with it.
+    ("app/api/topics_deps.py", "ValidationError"): 1,
     ("app/domain/agent/announce.py", "ValidationError"): 1,
     ("app/domain/agent/chat.py", "ValidationError"): 3,
     ("app/domain/agent/document/box.py", "ValidationError"): 1,

@@ -17,16 +17,19 @@ some (`output_bytes`) and this endpoint hands it over when somebody opens it.
 
 What stays behind, and why. `_actor_in_place` (identity, then the room's roster
 -- the shape every `topics_*` module imports it in), `Block`,
-`BlockKind`, `BlockOut` and `BlockRepository` are imported from topics.py rather
-than from `app.domain.block.*`. `BlockRepository` for the guard in
-`tests/unit/test_domain_import_guard.py`, which ratchets (route module,
-repository module) pairs: coming from the module that already owns that edge
-adds no exemption. `Block` and `BlockKind` for the C2 baseline in
-`.importlinter`, which ratchets `app.domain.block.models`: importing it here
-would add an edge. `without_output` is the one name topics.py read only for the
-transcript, so it leaves with the code and is imported from
-`app.domain.agent.step_output` directly. topics.py imports nothing from this
-module, so there is no cycle.
+`BlockKind`, `BlockOut` and `BlockRepository` are imported from
+`app.api.topics_deps.py` rather than from `app.domain.block.*`. That module is
+where the route-shared pieces of topics.py live now: importing a repository or a
+model through it adds no exemption to the guard in
+`tests/unit/test_domain_import_guard.py` (which ratchets (route module,
+repository module) pairs) and no edge to the C2 baseline in `.importlinter`
+(which ratchets `app.domain.block.models`) — one module carries that debt instead
+of every `topics_*` module carrying its own. Before it existed this file took all
+five names from `routes/topics.py`, which made one route another route's
+dependency; that is the shape C4 forbids. `without_output` is the one name
+topics.py read only for the transcript, so it leaves with the code and is
+imported from `app.domain.agent.step_output` directly. topics.py imports nothing
+from this module, so there is no cycle.
 
 Ordering. This module sorts after `topics.py` and after every other `topics_*`
 module (`_` > `.`, and `transcript` > `title`), so its two paths mount later in
@@ -50,7 +53,7 @@ from fastapi import APIRouter, Query
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.routes.topics import (
+from app.api.topics_deps import (
     Block,
     BlockKind,
     BlockOut,
