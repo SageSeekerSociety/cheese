@@ -16,6 +16,7 @@ import { RAIL_ACTIONS, RAIL_MARKS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_
 
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
+import TopicRailLight from '@/components/topic-sidebar/TopicRailLight.vue'
 import TopicRailMoreTasksRow from '@/components/topic-sidebar/TopicRailMoreTasksRow.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
@@ -32,6 +33,7 @@ function rowProps(over: Record<string, unknown> = {}): Record<string, unknown> {
     menuOpen: false,
     stalled: false,
     toggleTitle: '收起',
+    light: null,
     actions: () => RAIL_ACTIONS,
     ...over,
   }
@@ -78,13 +80,49 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'topic-rail-light',
+    title: 'TopicRailLight',
+    about:
+      '行尾那盏灯：一个 8px 的点，说这一行自己的状态。画哪一盏由 `lib/roomLight.ts` 的四条判据算好递进来，这一件只管画。',
+    file: 'src/components/topic-sidebar/TopicRailLight.vue',
+    component: TopicRailLight,
+    // `lightTitle` 要读词表（无障碍名字和 hover 那句话），所以得多装一个 i18n。
+    needs: ['i18n'],
+    states: [
+      {
+        name: '红：显示在跑，但没动静了',
+        note: '五分钟没有输出。跑着的轮次真卡住了，和那个进程已经没了，长的是同一盏。',
+        props: { light: { kind: 'red', breathe: false } },
+        expectSelector: '.row-light--red',
+      },
+      {
+        name: '黄：有事等你',
+        note: '有点名给你的验收卡、没答的决策请求，或者芝士停在一道只有你能回答的问题上。',
+        props: { light: { kind: 'yellow', breathe: false } },
+        expectSelector: '.row-light--yellow',
+      },
+      {
+        name: '呼吸绿：有活在往前走',
+        note: '它在闪：有一轮在跑，或者活已经走在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。系统设了「减少动态」时它停住，那圈常驻的光晕还在，和长绿仍然分得开。',
+        props: { light: { kind: 'green', breathe: true } },
+        expectSelector: '.row-light--breathe',
+      },
+      {
+        name: '长绿：做完了，你还没看过',
+        note: '不闪。点开看过就灭，之后再有新活它回到呼吸绿。',
+        props: { light: { kind: 'green', breathe: false } },
+        expectSelector: '.row-light--green:not(.row-light--breathe)',
+      },
+    ],
+  },
+  {
     id: 'topic-rail-row',
     title: 'TopicRailRow',
-    about: '话题列表里的一行：左边一个 16px 槽，右边在忙的成员、未读和 hover 才浮现的 ⋯。',
+    about: '话题列表里的一行：左边一个 16px 槽，行尾是这一行自己的灯、未读角标和 hover 才浮现的 ⋯。',
     file: 'src/components/topic-sidebar/TopicRailRow.vue',
     component: TopicRailRow,
     // 一行不认识路由、也不取数：状态、折叠、未读全在 props 里（`row` 是
-    // `lib/topicTree.ts` 的 `VisibleRow`，聚合已经在那边算完了）。
+    // `lib/topicTree.ts` 的 `VisibleRow`，灯是 `lib/roomLight.ts` 算的）。
     needs: UI,
     states: [
       {
@@ -94,10 +132,28 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expect: '写第 4 章的教案',
       },
       {
-        name: '等你拍板',
-        note: '琥珀点：有待处理的事项。未读的 @ 不点这颗灯（芝士汇报、递卡都 @人），未读有右边的数字。',
-        props: rowProps({ row: RAIL_ROWS.awaits }),
+        name: '有事等你（黄灯）',
+        note: '行尾一盏黄灯：有点名给你的验收卡、没答的决策请求，或者芝士停在一道只有你能回答的问题上。未读的 @ 不点这盏灯（芝士汇报、递卡都 @人），未读有右边的数字。',
+        props: rowProps({ row: RAIL_ROWS.awaits, light: { kind: 'yellow', breathe: false } }),
         expect: '决定这学期用哪本教材',
+      },
+      {
+        name: '有活在往前走（呼吸绿）',
+        note: '行尾那盏绿在闪：有一轮在跑，或者活已经走在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。',
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green', breathe: true } }),
+        expectSelector: '.row-light--breathe',
+      },
+      {
+        name: '做完了、你还没看过（长绿）',
+        note: '同样一盏绿，不闪：这里的活都交付完了，你还没点开看过。点开就灭。',
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green', breathe: false } }),
+        expectSelector: '.row-light--green:not(.row-light--breathe)',
+      },
+      {
+        name: '显示在跑、但没动静了（红灯）',
+        note: '五分钟没有输出。这一盏压过其余三盏——同时成立时只画它。',
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'red', breathe: false } }),
+        expectSelector: '.row-light--red',
       },
       {
         name: '一位成员卡住了',
@@ -107,7 +163,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '收起来的父话题',
-        note: '折叠开关顶掉状态点，所以它自己带聚合色（橙 = 里面有事等你）；右边是聚上来的未读，说的是「这里还有内容」。',
+        note: '折叠开关自己带一层聚合色，说的是收起来的那几行里有什么（黄 = 里面有事等你）；右边是聚上来的未读，说的是「这里还有内容」。开关只管收起来的东西，这一行自己的灯在行尾。',
         props: rowProps({ row: RAIL_ROWS.collapsed, toggleTitle: '展开：里面有待处理的事项' }),
         expect: '期末复习',
       },
@@ -175,6 +231,18 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
           unreadOf: (id: string) => (id === 't-root' ? 3 : 0),
         },
         expect: '综合',
+      },
+      {
+        name: '有活在往前走',
+        note: '行尾那盏灯和频道行、任务行是同一件（`TopicRailLight`），算它的判据也同一份。',
+        props: {
+          rootTopic: RAIL_ROOT_TOPIC,
+          selectedTopicId: null,
+          page: false,
+          unreadOf: () => 0,
+          lightOf: () => ({ kind: 'green', breathe: true }),
+        },
+        expectSelector: '.row-light--breathe',
       },
     ],
   },

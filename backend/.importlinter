@@ -495,7 +495,6 @@ ignore_imports =
     app.api.routes.preview_sessions -> app.api.preview_host
     app.api.routes.recruitment -> app.api.routes.teams
     app.api.routes.topics -> app.api.routes.projects
-    app.api.routes.topics -> app.api.routes.topics_rows
     app.api.routes.topics_asks -> app.api.routes.topics
     app.api.routes.topics_attachments -> app.api.routes.topics_file_sources
     app.api.routes.topics_compute -> app.api.routes.topics

@@ -1,4 +1,5 @@
-import type { FlatRow, TopicNodeLike } from './topicTree'
+import type { RowLight } from './roomLight'
+import type { FlatRow, TopicNodeLike, VisibleRowsOptions } from './topicTree'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
@@ -92,43 +93,41 @@ describe('话题树折叠', () => {
     expect(shown[0].unreadTotal).toBe(8)
   })
 
-  it('折叠后"芝士在跑"和"等你处理"也冒到父行上，不只是未读', () => {
-    const running = new Set(['a1x'])
-    const awaits = new Set(['a2'])
-    const opts = { workingOf: (id: string) => running.has(id), awaitsOf: (id: string) => awaits.has(id) }
+  it('折叠后藏起来的那几盏灯也冒到父行上，不只是未读', () => {
+    const lit: Record<string, RowLight> = {
+      a1x: { kind: 'green', breathe: true },
+      a2: { kind: 'yellow', breathe: false },
+    }
+    const opts: VisibleRowsOptions = { lightOf: (id) => lit[id] ?? null }
 
-    // 展开着的时候，父行不背任何人的状态——每一行自己说自己的。
+    // 展开着的时候，父行不背后代的灯——每一行自己说自己的。
     const open = visibleRows(rows, opts)
-    expect(open.map((r) => r.hiddenWorking)).toEqual([false, false, false, false, false])
-    expect(open.map((r) => r.hiddenAwaits)).toEqual([false, false, false, false, false])
+    expect(open.map((r) => r.hiddenLight)).toEqual([null, null, null, null, null])
 
-    // 收起来之后，藏起来的动静必须还看得见——这正是原先漏掉的那个 bug。
+    // 收起来之后，藏起来的灯必须还看得见，而且只画最亮的那一盏（黄压过呼吸绿）。
     const shown = visibleRows(rows, { ...opts, collapsed: new Set(['a']) })
     expect(idsOf(shown)).toEqual(['a', 'b'])
-    expect(shown[0].hiddenWorking).toBe(true)
-    expect(shown[0].hiddenAwaits).toBe(true)
+    expect(shown[0].hiddenLight).toEqual({ kind: 'yellow', breathe: false })
     // b 底下什么都没有，不能跟着一起亮。
-    expect(shown[1].hiddenWorking).toBe(false)
-    expect(shown[1].hiddenAwaits).toBe(false)
+    expect(shown[1].hiddenLight).toBeNull()
   })
 
-  it('状态是"有没有"不是计数：嵌套折叠时只归最近的可见祖先', () => {
-    const running = new Set(['a1x'])
+  it('灯不是计数：嵌套折叠时只归最近的可见祖先', () => {
     const shown = visibleRows(rows, {
       collapsed: new Set(['a', 'a1']),
       reveal: ancestorPathIds(topics, 'a1'),
-      workingOf: (id: string) => running.has(id),
+      lightOf: (id) => (id === 'a1x' ? { kind: 'green', breathe: true } : null),
     })
     expect(idsOf(shown)).toEqual(['a', 'a1', 'b'])
     // a1x 藏在 a1 底下，所以亮的是 a1；a 不该重复亮一次。
-    expect(shown[1].hiddenWorking).toBe(true)
-    expect(shown[0].hiddenWorking).toBe(false)
+    expect(shown[1].hiddenLight).toEqual({ kind: 'green', breathe: true })
+    expect(shown[0].hiddenLight).toBeNull()
   })
 
-  it('不传状态查询函数时一律当没有状态（老调用点不受影响）', () => {
+  it('不传灯的查询函数时一律当不亮（老调用点不受影响）', () => {
     const shown = visibleRows(rows, { collapsed: new Set(['a']) })
-    expect(shown[0].hiddenWorking).toBe(false)
-    expect(shown[0].hiddenAwaits).toBe(false)
+    expect(shown[0].hiddenLight).toBeNull()
+    expect(shown[0].hiddenStalled).toBe(false)
   })
 
   it('中间层缺席（父话题已归档、子话题还活着）时，孙子仍归最近的可见祖先管', () => {

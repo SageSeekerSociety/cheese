@@ -7,11 +7,11 @@
 // `composables/useTopicRailRoutes.ts`（我在哪、点一下去哪儿、行的 ⋯ 里有哪几项）——
 // 分这两半是为了让组件不认识 `vue-router`（.claude/rules/architecture.md），也让
 // 折叠记不记得住、红灯会不会自己亮这些事能离开「画」单独测。
-import type { Project, RoomTask, Topic } from '../cx_types'
+import type { Project, Topic } from '../cx_types'
 import type { TopicUnread } from '../types/channels'
 import type { MenuAction } from './common/menuAction'
 import type { VirtualListHandle } from './common/VirtualList.vue'
-import type { MoreTasks } from './topic-sidebar/moreTasks'
+import type { MoreTasks, RailTask } from './topic-sidebar/moreTasks'
 
 import { computed, ref, watch } from 'vue'
 
@@ -72,7 +72,7 @@ const props = defineProps<{
   // 所以项目名那一行留在这一栏自己的顶上，不填进顶栏。
   column?: boolean
   /** 每个房间里还开着的任务（房间 id → 任务），挂在房间那一行下面。 */
-  roomTasks?: Record<string, Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation'>[]>
+  roomTasks?: Record<string, RailTask[]>
   // 每个频道里一共还有几条任务在进行；侧栏只列其中和我有关的几条（`roomTasks`）。
   roomTaskTotals?: Record<string, number>
   /** 就地展开了的频道（频道 id → 它其余进行中的任务读到哪一步）；不在里面的就是收着的。 */
@@ -139,6 +139,8 @@ const {
   freshOf,
   privateUnreadTotal,
   stalledOf,
+  lightOf,
+  taskLight,
   memberMarks,
   toggleTitle,
   topicById,
@@ -502,6 +504,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :unread-of="unreadOf"
             :fresh-of="freshOf"
             :muted-of="mutedOf"
+            :light-of="lightOf"
             :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
@@ -515,6 +518,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 v-guide-anchor="i === 0 ? 'task-row' : ''"
                 :task="task"
                 :selected="task.id === selectedTaskId"
+                :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
@@ -524,6 +528,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :key="task.id"
                 :task="task"
                 :selected="task.id === selectedTaskId"
+                :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
@@ -593,6 +598,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :renaming="renamingTopicId === item.topic.id"
                         :menu-open="actionsMenuFor === item.topic.id"
                         :stalled="stalledOf(item.topic.id)"
+                        :light="lightOf(item.topic.id)"
                         :muted="mutedOf?.(item.topic.id) ?? false"
                         :fresh="freshOf(item.topic.id)"
                         :marks="memberMarks(item.topic)"
@@ -613,6 +619,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :task="task"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
+                        :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"
@@ -623,6 +630,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :task="task"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
+                        :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"

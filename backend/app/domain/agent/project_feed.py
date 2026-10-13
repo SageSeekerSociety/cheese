@@ -187,6 +187,8 @@ def _said(session: Session, _context) -> None:
 
 @event.listens_for(Session, "after_commit")
 def _tell_committed(session: Session) -> None:
+    if session.in_nested_transaction():
+        return  # a savepoint was released; the session has not committed
     told: set[tuple] = set()
     for conversation, resources, only, project_id in session.info.pop(
         _ONCE_COMMITTED, ()

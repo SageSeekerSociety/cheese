@@ -76,6 +76,8 @@ def _note_cards(session: Session, _context) -> None:
 
 @event.listens_for(Session, "after_commit")
 def _tell_pages(session: Session) -> None:
+    if session.in_nested_transaction():
+        return  # a savepoint was released; the session has not committed
     channels = session.info.pop(_PENDING, None)
     if not channels:
         return
