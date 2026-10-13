@@ -15,10 +15,10 @@ from app.domain.user.passwords import (
     hash_password,
     password_too_long,
 )
+from app.domain.user.ports import UserStatistics
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRepository,
-    UserStatisticsRepository,
 )
 from app.domain.user.srp_verifier import srp_password_matches
 
@@ -381,7 +381,7 @@ class UserAuthService:
         self,
         user_repo: UserRepository,
         profile_repo: UserProfileRepository,
-        stats_repo: UserStatisticsRepository,
+        stats_repo: UserStatistics,
     ) -> None:
         self._user_repo = user_repo
         self._profile_repo = profile_repo

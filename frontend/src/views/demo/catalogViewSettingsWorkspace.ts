@@ -1,6 +1,6 @@
 /**
  * 预览站里「账号设置与项目工作台那一组整页」：账号设置里的六屏（通用、通知、个人资料、
- * 实名信息、密码与安全、这台设备），和项目工作台的三屏（浏览频道、全部任务、项目总览）。
+ * 实名信息、密码与安全、这台设备），和项目工作台的三屏（全部频道、全部任务、项目总览）。
  *
  * 这些页面在应用里都由各自的容器取数（`settings/*.vue`、`workspace/*.vue` 那一批），
  * 容器碰接口层，预览站碰不得。好在它们都已经拆成「容器 → 只吃 props 的画面」：这里摆的
@@ -775,6 +775,8 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       progress: PROJECT_PROGRESS,
       progressFailed: false,
       tasks: PROJECT_TASKS,
+      // 「进行中的任务」那个数（清单第 14 条）和下面这几件对得上：四件都还没做完。
+      underway: 4,
       names: TASK_NAMES,
       faces: TASK_FACES,
       me: 'wangxiaoming',
@@ -833,7 +835,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.projectOverviewView.s5.note')
         },
-        props: { tasks: [] },
+        props: { tasks: [], underway: 0 },
         expect: '暂无进行中的任务',
         expectSelector: '[data-testid="overview-people"] p.ov-empty',
       },

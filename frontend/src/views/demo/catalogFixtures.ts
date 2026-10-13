@@ -675,11 +675,8 @@ export const RAIL_ROOT_TOPIC: Topic = {
   created_at: '2026-09-20T08:00:00Z',
 }
 
-/** 项目名下那两行（总览、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
-export const RAIL_PAGES = [
-  { key: 'workspace-overview', label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
-  { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
-]
+/** 项目名下那一行（资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。总览不在这里。 */
+export const RAIL_PAGES = [{ key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' }]
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */
 export const RAIL_TERMS = { project: '项目', topic: '话题' }

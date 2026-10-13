@@ -70,7 +70,9 @@ const loading = computed(() => roster.isPending.value && !roster.isError.value)
 const rosterLoaded = computed(() => roster.data.value !== undefined)
 const busy = ref(false)
 const error = ref('')
-const open = ref(false)
+// 名单开着没有，父组件可以管：频道详情的「设置」里也有一个入口，点它开的是这一份
+// （清单第 5 条），而不是在别处再造一份一样的名单。
+const open = defineModel<boolean>('open', { default: false })
 // 勾了谁（handle）。点「加入」之前一个请求都不发。
 const addHandles = ref<string[]>([])
 
@@ -361,8 +363,13 @@ async function onRemove(handle: string) {
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
 
-          <!-- 管这个频道的人标一个「管理者」：这个人和项目管理员一起管这个频道。 -->
+          <!-- 管这个频道的人标一个「管理者」：这个人和项目管理员一起管这个频道。
+               换人不在这个频道里做，只有项目设置那张频道表能换，所以在标记旁边直说去处
+               ——名单里找不到「更换管理员」那颗按钮，人得知道去哪儿找（清单第 5 条）。 -->
           <span v-if="m.role === 'owner' && !m.agent" class="roster__role">{{ t('work.room.roster.creator') }}</span>
+          <span v-if="m.role === 'owner' && !m.agent" class="roster__manager-hint">{{
+            t('work.room.roster.managerHint')
+          }}</span>
           <button
             v-if="removable(m)"
             type="button"
@@ -656,6 +663,12 @@ async function onRemove(handle: string) {
 .roster__role {
   font-size: 12px;
   color: var(--muted);
+  flex: none;
+}
+/* 「在项目设置的频道表里更换」：去处比标记本身还次要，所以更淡、更小。 */
+.roster__manager-hint {
+  font-size: 12px;
+  color: var(--faint);
   flex: none;
 }
 .roster__role--btn {

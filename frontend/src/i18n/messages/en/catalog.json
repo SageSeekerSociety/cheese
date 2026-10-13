@@ -1097,7 +1097,7 @@
     }
   },
   "channelBrowseView": {
-    "about": "The project's 'Browse channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
+    "about": "The project's 'All channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
     "s1": {
       "name": "List channels",
       "note": "Default cell: a search box, a row of filters (all / joined / archived, each with a count), one row per channel below — name, description, headcount, with 'Join' or 'Leave' on the right."

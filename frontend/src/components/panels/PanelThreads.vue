@@ -9,6 +9,7 @@ import type { ThreadReply, ThreadRow } from '../../types/threads'
 import { replyBlock, replySnippet } from '../../lib/blockDisplay'
 import LoadingSkeleton from '../common/LoadingSkeleton.vue'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
@@ -22,11 +23,16 @@ const props = defineProps<{
   fmtTime: (iso: string) => string
   /** 名册来的身份（头像 id、队友身份）。有它就不用拿名字反查；没有时退回 handle + 彩色首字母。 */
   faces?: MemberFaces
+  /** 我能不能在这个频道里开支线（外部协作者不能，见后端 `threadOpenedByPerson`）。 */
+  canCreate: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'open', threadId: string): void
   (e: 'open-task', taskId: string): void
+  // 两处「新建支线」点了都走这里（顶上常驻那一颗、空态里那一颗，清单第 4、12 条）：
+  // 这一格只画，开对话框、发请求由拿着这个频道的父级做。
+  (e: 'new'): void
 }>()
 
 /** 要画的那个人：名册有这一行就用它，否则 null（视图退回 handle + 彩色首字母）。 */
@@ -45,9 +51,24 @@ function replyText(reply: ThreadReply | null, max: number): string {
 
 <template>
   <div class="threads">
+    <!-- 顶上常驻那一颗「新建支线」（清单第 4 条）：支线页一进来就看得见它，不必先在
+         主线上找一条消息去「在支线中回复」。频道冻结了就没有这条——后端也会拒。 -->
+    <div v-if="canCreate" class="threads__head">
+      <BaseButton kind="secondary" size="sm" data-testid="new-thread" @click="emit('new')">
+        {{ t('work.room.thread.new') }}
+      </BaseButton>
+    </div>
     <LoadingSkeleton v-if="loading && !rows.length" variant="list" />
     <p v-else-if="error && !rows.length" class="threads__note t-meta" role="alert">{{ error }}</p>
-    <BaseEmptyState v-else-if="!rows.length" size="inline" class="threads__note" :title="t('work.room.thread.empty')" />
+    <BaseEmptyState
+      v-else-if="!rows.length"
+      size="compact"
+      class="threads__note"
+      :title="t('work.room.thread.empty')"
+      :desc="t('work.room.thread.emptyHint')"
+      :action="canCreate ? t('work.room.thread.new') : undefined"
+      @action="emit('new')"
+    />
     <template v-else>
       <p class="threads__caption t-meta">{{ t('work.room.thread.listCaption') }}</p>
       <ul class="threads__list">
@@ -129,6 +150,10 @@ function replyText(reply: ThreadReply | null, max: number): string {
   min-height: 0;
   height: 100%;
   overflow-y: auto;
+}
+.threads__head {
+  display: flex;
+  padding: 8px 16px 0;
 }
 .threads__note,
 .threads__caption {

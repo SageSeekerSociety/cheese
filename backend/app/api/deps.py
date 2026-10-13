@@ -28,6 +28,7 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.session_host.consumptions import Consumptions
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.dashboard.user_statistics import UserStatisticsRepository
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.oauth.repositories import OAuthConnectionRepository
@@ -40,7 +41,6 @@ from app.domain.user.repositories import (
     UserProfileRepository,
     UserRealNameRepository,
     UserRepository,
-    UserStatisticsRepository,
 )
 from app.domain.user.services import UserAuthService
 

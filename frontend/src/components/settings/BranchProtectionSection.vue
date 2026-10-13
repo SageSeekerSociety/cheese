@@ -1,6 +1,6 @@
 <script setup lang="ts">
+import type { BranchProtection, BranchProtectionPatch } from '@/branchProtection'
 import type { BranchProtectionLoadState, MergeMemberItem } from '@/composables/useBranchProtection'
-import type { BranchProtection, BranchProtectionPatch } from '@/cx_types'
 
 import { computed } from 'vue'
 
@@ -33,6 +33,8 @@ const props = defineProps<{
   memberItems: MergeMemberItem[]
   /** 任务默认 reviewer 的可选项（多一个「未指定」）。 */
   reviewerItems: MergeMemberItem[]
+  /** 调度座位的可选项（AI 队友的席位，多一个「未指定」）。 */
+  dispatchSeatItems: { title: string; value: string }[]
   /** 新检查的两个草稿：名字与路径范围。 */
   checkName: string
   checkPaths: string
@@ -337,6 +339,26 @@ function faceOf(input: unknown) {
               <template v-else>{{ item.title }}</template>
             </template>
           </v-select>
+        </div>
+
+        <!-- 9. dispatch_seat（平台自己的概念，不随 GitHub 灰掉） -->
+        <div class="bp-row">
+          <div class="bp-main">
+            <div class="bp-label">{{ t('work.projectSettings.merge.dispatchSeat') }}</div>
+            <div class="bp-hint c-faint">{{ t('work.projectSettings.merge.dispatchSeatHint') }}</div>
+          </div>
+          <v-select
+            autocomplete="off"
+            density="compact"
+            variant="outlined"
+            hide-details
+            style="max-width: 320px"
+            :items="dispatchSeatItems"
+            :model-value="bp.dispatch_seat"
+            :disabled="bpBusy"
+            :loading="saving === 'dispatch_seat'"
+            @update:model-value="emit('save', { dispatch_seat: $event ?? '' }, 'dispatch_seat')"
+          />
         </div>
       </template>
     </div>

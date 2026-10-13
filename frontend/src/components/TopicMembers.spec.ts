@@ -291,6 +291,16 @@ describe('成员名册', () => {
     expect(rowOf('bob').textContent).not.toContain('管理者')
   })
 
+  // 换管理者只有项目设置那张频道表能做（清单第 5 条）：名单里没有那颗按钮，人得知道
+  // 去哪儿找，所以这一行直说去处。
+  it('管理者那一行写着去哪儿换人', async () => {
+    await openRoster()
+    const rowOf = (handle: string) =>
+      Array.from(document.querySelectorAll('.roster__item')).find((r) => r.textContent?.includes(handle))!
+    expect(rowOf('alice').textContent).toContain('在项目设置的频道表里更换')
+    expect(rowOf('bob').textContent).not.toContain('在项目设置的频道表里更换')
+  })
+
   it('往外交出「管理者」时给的是一整个身份，不是一个名字', async () => {
     // 频道详情要画头像：名册出口必须带 handle/avatarId/agent，否则接的人只能写个名字。
     const utils = await openRoster()
@@ -423,6 +433,23 @@ describe('成员名册', () => {
     server.rosterHold.release()
     await settle()
   })
+})
+
+// 频道详情的「设置」里那一行「成员」开的就是这一份，不在别处再造一张一样的名单。
+it('外面叫它开，开的就是这一份名单', async () => {
+  render(Roster, {
+    props: {
+      topicId: 't1',
+      projectId: 'p1',
+      projectMembers: PROJECT_MEMBERS,
+      me: 'alice',
+      canManage: true,
+      open: true,
+    },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await settle()
+  expect(document.querySelector('.roster')).not.toBeNull()
 })
 
 it('按钮上是一份名册：人数含 AI 队友，头像堆里没有单挂的那一颗', async () => {

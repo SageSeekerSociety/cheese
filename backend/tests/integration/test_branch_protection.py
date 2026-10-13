@@ -33,6 +33,7 @@ _DEFAULTS = {
     "override_handles": None,
     "approvals_required": 1,
     "default_reviewer": "",
+    "dispatch_seat": "",
 }
 
 
@@ -119,6 +120,41 @@ def test_override_handles_and_default_reviewer_roundtrip_and_clear(client):
     data = _get(client, pid)
     assert data["override_handles"] is None
     assert data["default_reviewer"] == ""
+
+
+def test_dispatch_seat_roundtrips_and_clears(client):
+    """调度座位：项目设置里的一项，默认空（= 和以前一样，只叫当事的那条线）。"""
+    pid = _make_project(client)
+    assert _get(client, pid)["dispatch_seat"] == ""
+
+    r = _put(client, pid, {"dispatch_seat": "  cheese-ab12cd34ef56  "})
+    assert r.status_code == 200
+    assert _get(client, pid)["dispatch_seat"] == "cheese-ab12cd34ef56"
+
+    # 别的键照旧，动这一项不碰它们。
+    assert _put(client, pid, {"strict": True}).status_code == 200
+    assert _get(client, pid)["dispatch_seat"] == "cheese-ab12cd34ef56"
+
+    # 清空 = 回到「没设」；库里不留一个空串。
+    assert _put(client, pid, {"dispatch_seat": ""}).status_code == 200
+    assert _get(client, pid)["dispatch_seat"] == ""
+
+    from app.domain.project.models import Project
+
+    async def _settings() -> dict:
+        async with client.test_factory() as s:
+            project = await s.get(Project, uuid.UUID(pid))
+            assert project is not None
+            return dict((project.settings or {}).get("branch_protection") or {})
+
+    assert "dispatch_seat" not in asyncio.run(_settings())
+
+
+def test_rejects_a_bad_dispatch_seat(client):
+    pid = _make_project(client)
+    assert _put(client, pid, {"dispatch_seat": "x" * 100}).status_code == 422
+    assert _put(client, pid, {"dispatch_seat": "cheese\x00ab12"}).status_code == 422
+    assert _get(client, pid)["dispatch_seat"] == ""
 
 
 def test_dismiss_stale_can_be_opted_out_and_back(client):

@@ -379,7 +379,9 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     about: '频道概览里「支线」那一格：有人回过话的支线，最近有回复的在前，转成任务的写那件任务。',
     file: 'src/components/panels/PanelThreads.vue',
     component: PanelThreads,
-    needs: ['vuetify', 'i18n'],
+    // 顶上那颗「新建支线」（清单第 4 条）是 Vuetify 的按钮，得把 vuetify 装进来；
+    // 这一格里的文案（含空态）走 i18n，所以那一份也少不了。
+    needs: [...UI, 'i18n'],
     args: {
       rows: THREAD_ROWS,
       loading: false,
@@ -387,6 +389,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       refs: { mentionNames: PANEL_NAMES, topicTitles: {} },
       nameOf: (handle: string) => PANEL_NAMES[handle] ?? handle,
       fmtTime: threadTime,
+      canCreate: true,
     },
     states: [
       {
@@ -410,8 +413,14 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '还没有支线',
-        note: '这个频道里还没有人在一条消息下面回过话。',
+        note: '这个频道里还没有人回过话：空态给一个「新建支线」。',
         props: { rows: [] },
+        expect: '暂无支线',
+      },
+      {
+        name: '外部协作者看支线',
+        note: '开不了支线的人没有顶上那一颗，空态也不给动作。',
+        props: { rows: [], canCreate: false },
         expect: '暂无支线',
       },
     ],

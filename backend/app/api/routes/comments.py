@@ -8,11 +8,11 @@ from app.core.errors import BadRequestError, NotFoundError
 from app.db.session import get_db
 from app.domain.comments.repositories import CommentRepository
 from app.domain.comments.services import CommentService
+from app.domain.dashboard.user_statistics import UserStatisticsRepository
 from app.domain.questions.repositories import QuestionRepository
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRepository,
-    UserStatisticsRepository,
 )
 from app.domain.user.services import UserAuthService
 

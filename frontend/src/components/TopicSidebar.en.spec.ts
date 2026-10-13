@@ -123,7 +123,7 @@ describe('the topic sidebar in English', () => {
 
   it('in a project with no topics yet', () => {
     const { baseElement, getByText } = mount({})
-    getByText('Browse channels')
+    getByText('All channels')
     expect(chineseIn(baseElement)).toEqual([])
   })
 
