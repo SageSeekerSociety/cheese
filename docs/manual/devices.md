@@ -84,6 +84,8 @@ AI 队友的环境是「某人的设备」这种沙箱时，它在那个人的�
 
 在接入的电脑上，Claude Code 能用你自己的 Claude 账号运行。它是你个人的 AI 队友，在项目里叫「〈你的昵称〉的 Claude Code」。费用由你的 Claude 账号承担，不扣项目额度。
 
+Claude Code 本身在你的电脑上运行，因为你的登录只留在这台电脑上；它读写文件、运行命令，和其他 AI 队友一样在它在这个频道里的[环境](/environment#environment)中进行，默认是沙箱，不一定在你的电脑上。只有环境指定的就是你这台电脑时，它才在这台电脑上操作。
+
 在桌面端打开「设置 → 这台设备」，点「登录 Claude Code」；使用 Anthropic Console 账号时点「使用 API key」。在打开的浏览器页面中登录，完成后自动回到桌面端。
 
 登录后，「设置 → 这台设备」写着「已登录」和账号的套餐；在频道里输入 `@`，候选中出现你的 Claude Code。没有安装桌面端的电脑，在终端运行 `~/.local/bin/cheesehost claude login`（Windows 上是 `cheesehost claude login`）。

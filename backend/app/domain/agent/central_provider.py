@@ -126,9 +126,9 @@ class CentralChannel(DeviceChannel):
         else the deployment's session host."""
         return place.machine if place else settings.agent_session_device_id
 
-    def _deferred_target(self, target: dict) -> dict:
-        """The execution target a session starts with before its lease, as
-        this channel hands it on."""
+    def _deferred_target(self, target: dict, *, apart: bool) -> dict:
+        """The execution target a session starts with, as this channel hands
+        it on. ``apart``: it starts on a machine other than its session host."""
         return target
 
     async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
@@ -310,7 +310,12 @@ class CentralChannel(DeviceChannel):
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
-            target = self._deferred_target(target)
+            target = self._deferred_target(
+                target,
+                apart=target["workspace"] != DEFERRED_WORKSPACE
+                and leased is not None
+                and leased["device_id"] != center,
+            )
         else:
             target = private_chat.scratch_target(project_id, resource, device_id=center)
         # The project's remote MCP servers need no machine: the platform holds
