@@ -3,7 +3,7 @@
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
-      [--silent-min 60] [--skip 1443,1405]
+      [--silent-min 60] [--skip 1443,1405] [--json | --render | --sync-doc <document id>]
 
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
   出队          card pending, PR neither merged nor queued, last queue event is a removal
@@ -12,12 +12,35 @@ For every open, started task in the channel it reads platform facts and the PR's
   连续失败      last two system events are failed turns, no message since
   长时间无动静  last message older than --silent-min minutes
 Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
+
+The default output is that text list, unchanged. The same sweep in other shapes:
+  --json       every class's rows — task, topic, seat, PR, head, CI state, the head its
+               review is pinned to, minutes waited, whom it waits on — plus that UTC
+               day's metrics. Fixed shape, for tools.
+  --render     the same data as Markdown, one line per signal, for a person to read.
+  --sync-doc D write the rendered board into document D between <!-- board:start --> and
+               <!-- board:end -->, appending a marked section when the markers are not
+               there yet. Only that passage is submitted (POST /documents/{id}/edits):
+               the rest of the document is never sent, so it cannot be overwritten, and
+               a document that changed since it was read is refused rather than forced.
 """
-import json, os, subprocess, sys, urllib.request
+import json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
 
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/")
+
+#: The classes a row carries, in the order the text list prints them. "GitHub 未查"
+#: is not a decision to make — it is the sweep saying it could not look.
+CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
+BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
+#: The first line of the comment pr-review.sh posts on a PR, naming the head it reviewed.
+REVIEW_MARK = re.compile(r"<!--\s*pr-review sha=([0-9a-f]{7,40})")
+CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑", "EXPECTED": "跑"}
+ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
+              "review_head", "waited_min", "waiting_on", "stage", "detail")
+#: PR -> its merge-queue timeline, filled once per run (see gh_queue_timeline).
+_TIMELINES = {}
 
 
 def login():
@@ -31,6 +54,19 @@ def login():
 def get(tok, path):
     req = urllib.request.Request(API + path, headers={"Authorization": "Bearer " + tok})
     return json.load(urllib.request.urlopen(req, timeout=120))["data"]
+
+
+def send(tok, method, path, body):
+    """A write to the platform. A refusal (409 stale, 422 the passage is not there)
+    is the platform doing its job, so it is reported as such and the run stops."""
+    req = urllib.request.Request(API + path, data=json.dumps(body).encode(), method=method,
+                                 headers={"content-type": "application/json",
+                                          "Authorization": "Bearer " + tok})
+    try:
+        return json.load(urllib.request.urlopen(req, timeout=120)).get("data")
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"{method} {path} 被平台拒了：{e.code} "
+                         + e.read(400).decode("utf-8", "replace"))
 
 
 def events(tok, room, author, pages=50, since=None):
@@ -61,13 +97,20 @@ def said(m):
         return ""
 
 
-def gh_queue(n):
-    q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){merged mergeQueueEntry{state} '
-         'timelineItems(last:3,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT]){nodes{__typename '
-         '... on AddedToMergeQueueEvent{createdAt} ... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}' % tuple(REPO))
+def gh_pr(n):
+    """One PR's queue state, plus what the board needs: its head, that head's CI
+    state, and the head its newest review is pinned to. Read-only, one call."""
+    q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){merged '
+         'headRefOid mergeQueueEntry{state} '
+         'commits(last:1){nodes{commit{statusCheckRollup{state}}}} '
+         'comments(last:30){nodes{body}} '
+         'timelineItems(last:3,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT])'
+         '{nodes{__typename ... on AddedToMergeQueueEvent{createdAt} '
+         '... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}' % tuple(REPO))
     err = ""
     for _ in range(3):
-        r = subprocess.run(["gh", "api", "graphql", "-f", "query=" + q, "-F", f"n={n}"], capture_output=True, text=True)
+        r = subprocess.run(["gh", "api", "graphql", "-f", "query=" + q, "-F", f"n={n}"],
+                           capture_output=True, text=True)
         try:
             body = json.loads(r.stdout)["data"]["repository"]["pullRequest"]
         except (ValueError, KeyError, TypeError):
@@ -78,24 +121,112 @@ def gh_queue(n):
         # TypeError，整趟巡检断在这里。
         if body is None:
             return {"error": f"GitHub 上没有 PR #{n}"}
+        commits = (body.get("commits") or {}).get("nodes") or []
+        rollup = ((commits[0]["commit"].get("statusCheckRollup") if commits else None) or {})
+        pinned = None
+        for c in reversed((body.get("comments") or {}).get("nodes") or []):
+            found = REVIEW_MARK.search(c.get("body") or "")
+            if found:
+                pinned = found.group(1)
+                break
+        body["head"] = body.get("headRefOid")
+        body["ci"] = rollup.get("state")
+        body["review_head"] = pinned
         return body
     return {"error": err}
 
 
-def main():
-    room = sys.argv[1]
-    silent = int(sys.argv[sys.argv.index("--silent-min") + 1]) if "--silent-min" in sys.argv else 60
-    skip = set(sys.argv[sys.argv.index("--skip") + 1].split(",")) if "--skip" in sys.argv else set()
-    tok = login()
+def gh_queue_timeline(n):
+    """A PR's merge-queue timeline (first 50 events), or None when GitHub has no such PR.
+    Cached per run: one card can say "可以合并" several times and it is the same PR."""
+    if n in _TIMELINES:
+        return _TIMELINES[n]
+    q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){'
+         'timelineItems(first:50,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT])'
+         '{nodes{__typename ... on AddedToMergeQueueEvent{createdAt} '
+         '... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}' % tuple(REPO))
+    err = ""
+    for _ in range(3):
+        r = subprocess.run(["gh", "api", "graphql", "-f", "query=" + q, "-F", f"n={n}"],
+                           capture_output=True, text=True)
+        try:
+            body = json.loads(r.stdout)["data"]["repository"]["pullRequest"]
+        except (ValueError, KeyError, TypeError):
+            err = (r.stderr or r.stdout)[:150]
+            continue
+        nodes = None if body is None else body["timelineItems"]["nodes"]
+        _TIMELINES[n] = nodes
+        return nodes
+    raise SystemExit(f"GitHub 查 PR #{n} 的队列时间线失败：{err}")
+
+
+def stage_of(card, pr, ready_at, last_ready, red_at, last_msg):
+    """到哪一步了 — a phrase from facts already read, nothing invented. Finer than
+    this (实现中、在重钉) is not a field the platform has; it is in the line's last message.
+    `ready_at` is the card saying "可以合并" and nothing having replaced it since;
+    `last_ready` is the last time it said so, which is what a queue removal is dated against."""
+    if not card or not card.get("pr_number"):
+        return "在做未递卡"
+    if card.get("status") == "accepted":
+        return "已合并" if pr and pr.get("merged") else "已采纳等落主干"
+    if pr is None:
+        return "递卡后等 CI 审查"
+    if pr.get("error"):
+        return "GitHub 查不到"
+    if pr.get("merged"):
+        return "已合并"
+    if pr.get("mergeQueueEntry"):
+        return "在合并队列"
+    tl = pr["timelineItems"]["nodes"]
+    if tl and tl[-1]["__typename"] == "RemovedFromMergeQueueEvent" and (not last_ready or tl[-1]["createdAt"] > last_ready):
+        return "出队待修"
+    if ready_at:
+        return "可采纳未采纳"
+    if red_at and red_at > last_msg:
+        return "红了待修"
+    return "递卡后等 CI 审查"
+
+
+def waiting_of(t, kind):
+    """在等谁 — the platform's own field when it is set, otherwise the party the
+    class implies: an adoptable card waits on the reviewer, everything else on the line."""
+    if t.get("waiting_on"):
+        return t["waiting_on"]
+    if kind == "可采纳未采纳":
+        return t.get("reviewer_handle") or t.get("owner_handle")
+    return t.get("agent_handle")
+
+
+def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg):
+    good = pr is not None and "error" not in pr
+    return {
+        "kind": kind, "name": name, "task": t["number"], "title": t["title"], "topic": t["id"],
+        "seat": t.get("agent_handle"),
+        "pr": card.get("pr_number"),
+        "head": pr.get("head") if good else None,
+        "ci": CI_WORD.get(pr.get("ci"), "无") if good else None,
+        "review_head": pr.get("review_head") if good else None,
+        "waited_min": round(waited) if waited is not None else None,
+        "waiting_on": waiting or waiting_of(t, kind),
+        "stage": stage_of(card, pr, ready_at, last_ready, red_at, last_msg),
+        "detail": text,
+    }
+
+
+def sweep(tok, room, silent, skip, want_facts):
+    """The rows the text list prints, each also carrying the board's fields. GitHub
+    facts are read only for tasks that have a PR, and only when `want_facts` — the
+    text list must make exactly the calls it always made."""
     now = datetime.now(timezone.utc)
     age = lambda s: (now - ts(s)).total_seconds() / 60
     d = get(tok, f"/topics/{room}/tasks?status=open&limit=200")
     tasks = d.get("data", d) if isinstance(d, dict) else d
-    rows = []
+    rows, facts, idmap = [], {}, {}
     for t in tasks:
         if not t.get("started_at") or str(t["number"]) in skip:
             continue
         tid = t["id"]
+        idmap[tid] = t["number"]
         name = f"#{t['number']} {t['title'][:28]} @{t.get('agent_handle') or '-'}" + (f" 等:{t['waiting_on']}" if t.get("waiting_on") else "")
         msg = get(tok, f"/topics/{tid}/history?limit=1&kind=message")["data"]
         last_msg = msg[-1]["created_at"] if msg else t["started_at"]
@@ -103,38 +234,204 @@ def main():
         accev = get(tok, f"/topics/{tid}/history?limit=30&author=accept")["data"]
         sysev.sort(key=lambda m: m["created_at"])
         accev.sort(key=lambda m: m["created_at"])
-        add = lambda kind, text: rows.append((kind, name, text))
 
         card = t.get("card") or {}
         n = card.get("pr_number")
+        pr = None
+        if n and (card.get("status") == "pending" or want_facts):
+            if n not in facts:
+                facts[n] = gh_pr(n)
+            pr = facts[n]
+
+        ready = [m for m in accev if meta(m).get("event_type") == "accept_ready"]
+        last_ready = ready[-1]["created_at"] if ready else None
+        # 卡还在「可以合并」上，得是最后一条 accept 事件就是 accept_ready。中间插进来
+        # 的改审阅说明（card_redescribed）等于是把这份结论换掉了，不能再当可采纳。
+        ready_at = accev[-1]["created_at"] if accev and meta(accev[-1]).get("event_type") == "accept_ready" else None
+        red = [m for m in sysev if meta(m).get("event_type") in ("ci_failed", "pr_conflict", "main_checks_failed")]
+        red_at = red[-1]["created_at"] if red else None
+        tail = [m for m in sysev if meta(m).get("event_type")]
+
+        def add(kind, text, waited=None, waiting=None):
+            rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg))
+
         if card.get("status") == "pending" and n:
-            pr = gh_queue(n)
             if "error" in pr:
                 add("GitHub 未查", f"PR #{n}：{pr['error']}")
             elif not pr["merged"] and not pr["mergeQueueEntry"]:
                 tl = pr["timelineItems"]["nodes"]
-                ready = [m for m in accev if meta(m).get("event_type") == "accept_ready"]
-                if tl and tl[-1]["__typename"] == "RemovedFromMergeQueueEvent" and (not ready or tl[-1]["createdAt"] > ready[-1]["created_at"]):
-                    add("出队", f"PR #{n} {tl[-1]['createdAt'][11:16]} UTC 出队（{tl[-1]['reason']}），{age(tl[-1]['createdAt']):.0f} 分钟没回队列")
-                elif accev and meta(accev[-1]).get("event_type") == "accept_ready" and age(accev[-1]["created_at"]) >= 5:
-                    add("可采纳未采纳", f"PR #{n} 可以合并 {age(accev[-1]['created_at']):.0f} 分钟")
+                if tl and tl[-1]["__typename"] == "RemovedFromMergeQueueEvent" and (not last_ready or tl[-1]["createdAt"] > last_ready):
+                    w = age(tl[-1]["createdAt"])
+                    add("出队", f"PR #{n} {tl[-1]['createdAt'][11:16]} UTC 出队（{tl[-1]['reason']}），{w:.0f} 分钟没回队列", w)
+                elif ready_at and age(ready_at) >= 5:
+                    w = age(ready_at)
+                    add("可采纳未采纳", f"PR #{n} 可以合并 {w:.0f} 分钟", w)
 
-        red = [m for m in sysev if meta(m).get("event_type") in ("ci_failed", "pr_conflict", "main_checks_failed")]
         if red and red[-1]["created_at"] > last_msg and age(red[-1]["created_at"]) >= 30:
-            add("红了没人修", f"{red[-1]['content'][:50]}，{age(red[-1]['created_at']):.0f} 分钟线上没新消息")
+            w = age(red[-1]["created_at"])
+            add("红了没人修", f"{red[-1]['content'][:50]}，{w:.0f} 分钟线上没新消息", w)
 
-        tail = [m for m in sysev if meta(m).get("event_type")]
         if len(tail) >= 2 and all(meta(m)["event_type"] == "turn_failed" for m in tail[-2:]) and tail[-1]["created_at"] > last_msg:
-            add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}")
+            w = age(tail[-1]["created_at"])
+            add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}", w)
 
         if age(last_msg) >= silent:
-            add("长时间无动静", f"{age(last_msg):.0f} 分钟没消息")
+            w = age(last_msg)
+            add("长时间无动静", f"{w:.0f} 分钟没消息", w)
 
-    order = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
-    for kind, name, text in sorted(rows, key=lambda r: order.index(r[0])):
-        print(f"[{kind}] {name}｜{text}")
+    rows.sort(key=lambda r: CLASSES.index(r["kind"]))
+    return rows, idmap
+
+
+def text(rows):
     if not rows:
         print("各线无待处理信号")
+        return
+    for r in rows:
+        print(f"[{r['kind']}] {r['name']}｜{r['detail']}")
+
+
+def render(rows, metrics, silent, now, room):
+    out = ["## 调度看板", "",
+           f"UTC {now:%Y-%m-%d %H:%M}｜信号阈值 {silent} 分钟｜{len(rows)} 条｜频道 {room[:8]}", ""]
+    if not rows:
+        out.append("各线无待处理信号。")
+    else:
+        out += ["| 类别 | 任务 | 到哪一步 | CI | 审查钉 | 卡了 | 在等 |",
+                "| --- | --- | --- | --- | --- | --- | --- |"]
+        for r in rows:
+            rev = r["review_head"]
+            rev = "—" if rev is None else (rev[:8] + (" ✓" if rev == r["head"] else "（旧）"))
+            waited = "—" if r["waited_min"] is None else f"{r['waited_min']} 分"
+            out.append(f"| {r['kind']} | #{r['task']} | {r['stage']} | {r['ci'] or '—'} "
+                       f"| {rev} | {waited} | {r['waiting_on'] or '—'} |")
+    out += ["", metrics_line(metrics)]
+    return "\n".join(out)
+
+
+def metrics_line(m):
+    q, f = m["merge_to_queue"], m["failed_turns"]
+    med = "—" if q["median_min"] is None else f"{q['median_min']:.0f}"
+    late = "、".join(f"#{n} {w}分" for n, w in q["over_10_min_detail"]) or "无"
+    lines = "、".join(f"#{c} {k}" for c, k in list(f["by_line"].items())[:8]) or "无"
+    return (f"指标（{m['date']} UTC）：可合并→进队列 {q['samples']} 次，中位 {med} 分；"
+            f"超 10 分钟 {q['over_10_min_cards']} 张卡、{q['over_10_min']} 次（{late}）；"
+            f"失败轮次 {f['total']}（{lines}）")
+
+
+def day_metrics(tok, room, day, idmap):
+    """That UTC day's numbers, computed the way orchestrator_metrics.py defines them:
+    可合并→进队列 is accept_ready to the first AddedToMergeQueueEvent after it (accept_done
+    is sent after the merge and is never the acceptance time). Read fresh, stored nowhere."""
+    evs = [m for m in events(tok, room, "accept", pages=10) + events(tok, room, "system", pages=10)
+           if m["created_at"].startswith(day)]
+    evs.sort(key=lambda m: m["created_at"])
+    by = {}
+    for m in evs:
+        by.setdefault(m["conversation_id"], []).append(m)
+    waits, late, fails = [], [], {}
+    for c, ev in by.items():
+        for m in ev:
+            et = meta(m).get("event_type")
+            if et == "turn_failed":
+                fails[c] = fails.get(c, 0) + 1
+            if et == "accept_ready":
+                found = re.search(r"#(\d+)", m["content"] or "")
+                if not found:
+                    continue
+                nodes = gh_queue_timeline(int(found.group(1))) or []
+                add = next((x["createdAt"] for x in nodes if x["__typename"] == "AddedToMergeQueueEvent"
+                            and x["createdAt"] >= m["created_at"]), None)
+                if add:
+                    w = round((ts(add) - ts(m["created_at"])).total_seconds() / 60)
+                    waits.append(w)
+                    if w > 10:
+                        late.append((found.group(1), w))
+    waits.sort()
+    by_line = {str(idmap.get(c, c[:8])): k for c, k in sorted(fails.items(), key=lambda x: -x[1])[:8]}
+    return {
+        "date": day,
+        "merge_to_queue": {
+            "samples": len(waits),
+            "median_min": statistics.median(waits) if waits else None,
+            "p90_min": waits[min(len(waits) - 1, int(len(waits) * 0.9))] if waits else None,
+            "max_min": waits[-1] if waits else None,
+            # 卡数按 PR 去重：同一张卡退回队列又进去一次，是一条卡等了两次，不是两张卡。
+            "over_10_min_cards": len({n for n, _ in late}),
+            "over_10_min": len(set(late)),
+            "over_10_min_detail": sorted(set(late)),
+        },
+        "failed_turns": {"total": sum(fails.values()), "by_line": by_line},
+    }
+
+
+def board_json(rows, metrics, room, silent, skip, now):
+    classes = {k: [{f: r[f] for f in ROW_FIELDS} for r in rows if r["kind"] == k] for k in CLASSES}
+    return {"generated_at": now.isoformat(), "room": room, "signal_min": silent,
+            "skipped": sorted(skip), "classes": classes, "metrics": metrics}
+
+
+def sync_doc(tok, document, board):
+    """Write the board between the markers, and only there. The document is read
+    first; the passage handed to the platform is the marked one (or the whole text
+    when there is nothing marked yet, in which case the new section is only appended
+    to it). A document that changed under us makes the platform refuse the passage,
+    and a half-written marker pair is refused here instead of guessed at."""
+    try:
+        d = get(tok, f"/documents/{document}")
+    except urllib.error.HTTPError as e:
+        raise SystemExit(f"读不到文档 {document}：{e.code}")
+    version = (d or {}).get("doc_version", 0)
+    content = (d or {}).get("content") or ""
+    block = f"{BOARD_START}\n\n{board.strip()}\n\n{BOARD_END}"
+    if not content:
+        send(tok, "PUT", f"/documents/{document}", {"content": block, "expected_version": version})
+        return f"看板已写入 {document}（原文档为空，首版）"
+    marks = (content.count(BOARD_START), content.count(BOARD_END))
+    if marks == (1, 1) and content.index(BOARD_START) < content.index(BOARD_END):
+        i = content.index(BOARD_START)
+        j = content.index(BOARD_END) + len(BOARD_END)
+        old, new = content[i:j], block
+    elif marks == (0, 0):
+        tail = [ln for ln in content.split("\n") if ln.strip()]
+        anchor = tail[-1] if tail and content.count(tail[-1]) == 1 else content
+        old, new = anchor, f"{anchor}\n\n{block}"
+    elif marks == (1, 1):
+        raise SystemExit(f"文档 {document} 里 board:end 在 board:start 之前，不写")
+    else:
+        raise SystemExit(f"文档 {document} 里 board 标记只剩一半（{marks[0]}/{marks[1]}），不写")
+    if content.count(old) != 1:
+        raise SystemExit(f"文档 {document} 里要换的原文出现了 {content.count(old)} 次，不写（读到的是 v{version}）")
+    send(tok, "POST", f"/documents/{document}/edits",
+         {"edits": [{"old": old, "new": new}], "mode": "direct"})
+    return f"看板已同步进 {document}（读到的版本 v{version}）"
+
+
+def main():
+    argv = sys.argv
+    room = argv[1]
+    silent = int(argv[argv.index("--silent-min") + 1]) if "--silent-min" in argv else 60
+    skip = set(argv[argv.index("--skip") + 1].split(",")) if "--skip" in argv else set()
+    as_json = "--json" in argv
+    as_render = "--render" in argv
+    document = argv[argv.index("--sync-doc") + 1] if "--sync-doc" in argv else None
+    if as_json and as_render:
+        raise SystemExit("--json 和 --render 只能给一个")
+    tok = login()
+    now = datetime.now(timezone.utc)
+    rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document))
+    if as_json:
+        metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
+        print(json.dumps(board_json(rows, metrics, room, silent, skip, now), ensure_ascii=False, indent=2))
+        return
+    if as_render:
+        metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
+        print(render(rows, metrics, silent, now, room))
+        return
+    text(rows)
+    if document:
+        metrics = day_metrics(tok, room, now.date().isoformat(), idmap)
+        print(sync_doc(tok, document, render(rows, metrics, silent, now, room)))
 
 
 if __name__ == "__main__":
