@@ -17,6 +17,8 @@ pi runs it. A tool with no equivalent keeps its own name.
 
 import asyncio
 
+from app.domain.agent.pr_creation import REFUSAL, opens_pull_request
+
 
 class Denied(PermissionError):
     """A hook blocked the call. The message is the hook's reason."""
@@ -114,6 +116,14 @@ async def run(
     """Run the project's `event` hooks for one pi call to `tool` on the room's
     machine (`Machine.hooks`); return the arguments it proceeds with, in pi's
     shape. Raises `Denied` when a hook blocks it, or any part of it."""
+    # The platform's own rule, ahead of the project's hooks: it opens the
+    # task's PR itself (`pr_creation`).
+    if (
+        event == "PreToolUse"
+        and AS_CLAUDE_CODE.get(tool, ("",))[0] == "Bash"
+        and opens_pull_request(str(args.get("command") or ""))
+    ):
+        raise Denied(REFUSAL)
     if not machine.taken and tool not in REACH_THE_MACHINE:
         # The project's hooks are the machine's; a session that has not
         # needed it yet has none to run, as a Claude Code room before its

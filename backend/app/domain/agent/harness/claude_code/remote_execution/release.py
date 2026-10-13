@@ -66,7 +66,7 @@ def release_mount(path):
 
 def sources():
     # deferred-import: this file also runs on the machine, with no `app` package
-    from app.domain.agent import executor_transport
+    from app.domain.agent import executor_transport, pr_creation
 
     directory = Path(__file__).parent
     result = {
@@ -74,6 +74,7 @@ def sources():
         for name in (
             "client.py",
             "shell_stop.py",
+            "guard.py",
             # Windows' locks, process trees and detached starts, which the two
             # above load from beside them there.
             "portable.py",
@@ -96,6 +97,7 @@ def sources():
                 Path(__file__).resolve().parents[6] / "sandbox/cheese"
             ).read_text(),
             "executor_transport.py": Path(executor_transport.__file__).read_text(),
+            "pr_creation.py": Path(pr_creation.__file__).read_text(),
         }
     )
     return result
