@@ -30,7 +30,6 @@ covers:
 | 记录 | `cheese_title` |
 | 通知与拍板 | `cheese_notify`、`cheese_ask` |
 | 资料 | `cheese_fetch`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
-| 锁 | `cheese_lock`、`cheese_unlock` |
 | 房间状态 | `cheese_members`、`cheese_status` |
 | 执行环境与调度 | `cheese_environment`、`cheese_wait_environment`、`cheese_note`、`cheese_deliver_at` |
 | 定时与触发 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |

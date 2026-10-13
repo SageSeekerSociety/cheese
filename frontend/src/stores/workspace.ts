@@ -8,6 +8,7 @@ import { defineStore } from 'pinia'
 import {
   archiveTopic,
   createTopic,
+  deleteTopic,
   joinChannel,
   leaveChannel,
   markAllTopicsRead,
@@ -608,6 +609,22 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     return setStatus(topicId, 'active', () => unarchiveTopic(topicId), t('shell.workspaceErrors.unarchive'))
   }
 
+  /** 删掉一个频道（清单第 2 条）。和归档不一样，这里没有乐观的一步：删了就是没了，
+   *  本地那一行等它真的走完再摘。回来 true 表示行已经删掉了，调用方该离开这一页。 */
+  async function removeChannel(topicId: string): Promise<boolean> {
+    const topic = topics.value.find((row) => row.id === topicId)
+    try {
+      await deleteTopic(topicId)
+    } catch (e) {
+      reportError(e, t('shell.workspaceErrors.deleteChannel'))
+      return false
+    }
+    if (topic && lastPlaceByProject.value[topic.project_id]?.room === topicId) forgetPlace(topic.project_id)
+    await patchTopics(pid.value, (rows) => rows.filter((row) => row.id !== topicId))
+    void refreshTopics()
+    return true
+  }
+
   // The three ways a topic is born. Each returns the new topic so the caller can
   // navigate to it — creating a topic without opening it is never what was meant.
   // 房间是个群聊，建出来时坐着项目的默认队友；要请别的队友进来，和请人一样走
@@ -689,6 +706,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     renameTopic,
     archive,
     unarchive,
+    removeChannel,
     rememberPlace,
     placeFor,
     create,

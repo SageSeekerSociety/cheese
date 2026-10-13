@@ -113,7 +113,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | AI 创建任务 | `POST /api/topics/{支线}/teammate-tasks`（`cheese_task`） | ✅ 负责人是要这件事的人；有人让它做时建好就开始，它自己想到的停在讨论中 |
 | 开始 | `POST /api/topics/{task}/start` | ✅ 只有负责人；记下开始时间、开始的人、那一刻实况文档的版本；之前任务会话的改动留不下 |
 | 转交 | `PATCH /api/topics/{task}/task` | ✅ 负责人交给房间里另一个人，或换一位 AI 队友 |
-| 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带结论是已完成，不带是已关闭；房间里落一条平台消息 |
+| 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带不带结论都显示已关闭；房间里落一条平台消息（带结论的把结论写在后面） |
 | 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 只收负责人和任务自己的会话；其他人能读，在房间里说 |
 
 实现：`TopicService.create_task / upgrade_block_to_place`、`TaskService.start / hand_over`（`backend/app/domain/room_task/services.py`）、关闭任务的唯一入口 `room_task/closing.close_task`，路由在 `api/routes/topics_tasks.py`。任务是一段对话，地址就是任务的 id：和房间同一套 `/api/topics/{id}/…` 接口。任务有自己的会话（`agent_sessions.conversation_id` = 任务 id），平台对任务说的话经投递账本直接交给它。

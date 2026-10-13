@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useDisplay } from 'vuetify'
 
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
+import BaseButton from '@/components/base/BaseButton.vue'
+import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import NewChannelDialog from '@/components/channel/NewChannelDialog.vue'
 import { t } from '@/i18n'
 import { DEFAULT_SHELL, shellFor } from '@/lib/shell'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectSidebar from '@/views/workspace/ProjectSidebar.vue'
 
@@ -19,7 +22,6 @@ import ProjectSidebar from '@/views/workspace/ProjectSidebar.vue'
 defineOptions({ name: 'WorkspaceEntry' })
 
 const props = defineProps<{ projectId: string }>()
-const { mdAndUp } = useDisplay()
 const layout = useWorkspaceLayout()
 const route = useRoute()
 const router = useRouter()
@@ -27,6 +29,33 @@ const store = useWorkspaceStore()
 
 function openTopic(topicId: string) {
   void router.replace({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
+}
+
+// 两栏（平板）那一层右侧还没打开频道时给两条路（清单第 12 条）：开一个新频道，或者去
+// 「全部频道」挑一个。和「全部频道」那一页同一条判断——外部协作者开不了新频道，那一颗
+// 就不画，省得点下去撞 403。
+const canCreate = computed(() => !store.isExternal(myHandle()))
+const creatingOpen = ref(false)
+const creating = ref(false)
+
+function openBrowse() {
+  void router.push({ name: 'project-channels', params: { projectId: props.projectId } })
+}
+
+function openChannel(id: string) {
+  void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: id } })
+}
+
+async function createChannel(channel: { title: string; description: string; membersOnly: boolean }) {
+  creating.value = true
+  try {
+    const topic = await store.create(channel.title, channel.description, channel.membersOnly)
+    if (!topic) return
+    creatingOpen.value = false
+    openChannel(topic.id)
+  } finally {
+    creating.value = false
+  }
 }
 
 // 旧链接: ?topic=<id> is answered before anything else — the target is already
@@ -45,8 +74,8 @@ const shell = computed(() => shellFor(store.projects, props.projectId))
 const shellSettled = computed(() => shell.value !== null || store.projects.length > 0 || store.projectsSettled)
 
 watch(
-  [legacyTopic, mdAndUp, shellSettled],
-  ([wanted, desktop, settled]) => {
+  [legacyTopic, shellSettled],
+  ([wanted, settled]) => {
     if (route.name !== 'workspace-project') return
     if (wanted) {
       openTopic(wanted)
@@ -54,7 +83,7 @@ watch(
     }
     // 手机上这一层**就是**话题列表（页面栈：工作区 → 话题列表 → 话题页），所以
     // 不跳——跳了就永远看不到列表，也就没有"回上一层"可回。
-    if (!desktop) return
+    if (layout.value === 'phone') return
     // 桌面: 进项目的第一屏由壳指定，default 是**项目总览**。第一眼该答的是「这个
     // 项目怎么样了」，而落进「综合」答的是「这一个频道里最近说了什么」——那是一个
     // 频道的事。「综合」没有变远：它是常驻侧栏频道里的第一行，一次点击就到。
@@ -75,9 +104,20 @@ watch(
   <ProjectSidebar v-if="layout === 'phone'" :project-id="projectId" page />
   <!-- 两栏（平板）: 话题列表是左边那一栏（ProjectSidebar 常驻的那一份），这里是还
        没打开房间时的右边。 -->
-  <div v-else-if="layout === 'split'" class="workspace-unselected">
-    <span class="t-body c-muted">{{ t('work.room.unselected') }}</span>
-  </div>
+  <template v-else-if="layout === 'split'">
+    <div class="workspace-unselected">
+      <BaseEmptyState
+        :title="t('work.room.unselected')"
+        :action="canCreate ? t('work.projectSettings.channels.create') : undefined"
+        @action="creatingOpen = true"
+      >
+        <BaseButton kind="secondary" size="sm" class="workspace-unselected__browse" @click="openBrowse">
+          {{ t('work.channel.browse') }}
+        </BaseButton>
+      </BaseEmptyState>
+    </div>
+    <NewChannelDialog v-if="creatingOpen" v-model="creatingOpen" :busy="creating" @create="createChannel" />
+  </template>
 </template>
 
 <style scoped>
@@ -88,5 +128,8 @@ watch(
   justify-content: center;
   height: 100%;
   background: var(--surface);
+}
+.workspace-unselected__browse {
+  margin-top: 8px;
 }
 </style>

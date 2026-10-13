@@ -56,15 +56,17 @@ const Host = defineComponent({
   },
 })
 
-function mount() {
+function mount(over: Partial<Topic> = {}) {
   const onRenameTopic = vi.fn()
   const vuetify = createVuetify({ components, directives })
+  // 覆盖只落在频道上，「综合」保持原样（它不能改名，见下面那条）。
+  const rows = topics.map((row) => (row.kind === 'root' ? row : { ...row, ...over }))
   const utils = render(Host, {
     props: {
       inner: {
         projects: [{ id: 'p1', name: 'P1', created_at: '2026-08-10T00:00:00Z' }],
         selectedProjectId: 'p1',
-        topics,
+        topics: rows,
         selectedTopicId: null,
         loadingTopics: false,
         onRenameTopic,
@@ -73,6 +75,19 @@ function mount() {
     global: { plugins: [vuetify, router, createPinia()] },
   })
   return { ...utils, onRenameTopic }
+}
+
+/** 点开这一行的 ⋯，等菜单出来，返回菜单里每一行的字。 */
+async function menuOn(container: Element, baseElement: Element, title: string): Promise<string[]> {
+  const row = rowFor(container, title)
+  await fireEvent.click(row.querySelector('[title="更多操作"]') as HTMLElement)
+  return waitFor(() => {
+    const found = Array.from(baseElement.querySelectorAll('.v-overlay .v-list-item')).map((el) =>
+      el.textContent?.trim()
+    )
+    if (!found.length) throw new Error('菜单没出来')
+    return found
+  })
 }
 
 function rowFor(container: Element, title: string): HTMLElement {
@@ -201,5 +216,30 @@ describe('就地改名', () => {
     await fireEvent.keyUp(input, { key: 'Enter' })
 
     expect(onRenameTopic).toHaveBeenCalledWith({ id: 'a', title: '名字在中间' })
+  })
+
+  // 频道叫什么名字是这个频道自己的事，不归建它的人：不是管理者照样能改，后端同样只认
+  // 「你能进这个频道」（`topics_title.py`）。归档仍然只给管理者。
+  it('不是管理者也能改名', async () => {
+    const { container, baseElement, onRenameTopic } = mount({ can_manage: false })
+    const { input } = await startRenameOn(container, baseElement, 'a')
+    await fireEvent.update(input, '新名字')
+    await fireEvent.keyUp(input, { key: 'Enter' })
+
+    expect(onRenameTopic).toHaveBeenCalledWith({ id: 'a', title: '新名字' })
+  })
+
+  it('不是管理者：菜单里有「重命名」，没有「归档」', async () => {
+    const { container, baseElement } = mount({ can_manage: false })
+    const labels = await menuOn(container, baseElement, 'a')
+    expect(labels).toContain(t('work.room.menu.rename'))
+    expect(labels).not.toContain(t('work.room.menu.archive'))
+  })
+
+  it('管理者：两样都有', async () => {
+    const { container, baseElement } = mount()
+    const labels = await menuOn(container, baseElement, 'a')
+    expect(labels).toContain(t('work.room.menu.rename'))
+    expect(labels).toContain(t('work.room.menu.archive'))
   })
 })

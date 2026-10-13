@@ -41,6 +41,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Session
 
 from app.core.background import spawn
+from app.core.live_frames import drop_rolled_back, stage, take_committed
 from app.core.obs import get_logger
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.realtime.subscriber_queue import Frame
@@ -152,8 +153,9 @@ async def tell_project(
         await broker.publish(channel, frame)
 
 
-#: The `session.info` slot: (conversation, resources, only) to tell once the
-#: session commits.
+#: The `session.info` slot: (conversation, resources, only, project) to tell
+#: once the session commits. One bucket per savepoint (`core.live_frames`):
+#: a released savepoint is not a commit, and a rollback clears only its own.
 _ONCE_COMMITTED = "project_feed_once_committed"
 
 
@@ -164,8 +166,8 @@ def tell_project_once_committed(
     only: Collection[str] | None = None,
 ) -> None:
     """`tell_project`, once ``session`` commits; nothing if it rolls back."""
-    session.sync_session.info.setdefault(_ONCE_COMMITTED, []).append(
-        (conversation_id, resources, only, None)
+    stage(
+        session.sync_session, _ONCE_COMMITTED, (conversation_id, resources, only, None)
     )
 
 
@@ -180,18 +182,19 @@ def _said(session: Session, _context) -> None:
         if isinstance(block, Block) and block.kind == BlockKind.message
     }
     if said:
-        pending = session.info.setdefault(_ONCE_COMMITTED, [])
         for conversation, project_id in said:
-            pending.append((conversation, (TOPICS, UNREAD), None, project_id))
+            stage(
+                session,
+                _ONCE_COMMITTED,
+                (conversation, (TOPICS, UNREAD), None, project_id),
+            )
 
 
 @event.listens_for(Session, "after_commit")
 def _tell_committed(session: Session) -> None:
-    if session.in_nested_transaction():
-        return  # a savepoint was released; the session has not committed
     told: set[tuple] = set()
-    for conversation, resources, only, project_id in session.info.pop(
-        _ONCE_COMMITTED, ()
+    for conversation, resources, only, project_id in take_committed(
+        session, _ONCE_COMMITTED
     ):
         key = (conversation, resources, frozenset(only) if only is not None else None)
         if key in told:
@@ -205,7 +208,7 @@ def _tell_committed(session: Session) -> None:
 
 @event.listens_for(Session, "after_rollback")
 def _drop_rolled_back(session: Session) -> None:
-    session.info.pop(_ONCE_COMMITTED, None)
+    drop_rolled_back(session, _ONCE_COMMITTED)
 
 
 def _busy_changed(channel: str) -> None:

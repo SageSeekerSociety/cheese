@@ -110,23 +110,31 @@ def test_a_channel_row_carries_my_tasks_owned_first_and_how_many_are_underway(cl
     room = _room(client, project)
     other = _room(client, project, "别的频道")
     mine = open_task(client, room, "我的")
-    helping = open_task(client, room, "我帮忙的", owner="bob", contributors=["alice"])
+    open_task(client, room, "我帮忙的", owner="bob", contributors=["alice"])
     open_task(client, room, "别人的", owner="bob")
 
     rail = _sidebar(client, project, "alice")
 
-    assert [t["id"] for t in rail[room]["shown"]] == [mine["id"], helping["id"]]
+    # 我负责的在前，我协助的在后；两条凑不满三行，剩下的由这个频道别人的活补上
+    # （`filling_in`，侧栏把那一行画淡一档）。
+    assert [(t["title"], bool(t.get("filling_in"))) for t in rail[room]["shown"]] == [
+        ("我的", False),
+        ("我帮忙的", False),
+        ("别人的", True),
+    ]
     assert rail[room]["open"] == 3
     # A channel with nothing underway still has the field, empty.
     assert rail[other] == {"shown": [], "open": 0}
-    # Someone else sees their own under the same channel, not mine.
-    assert {t["title"] for t in _sidebar(client, project, "bob")[room]["shown"]} == {
-        "我帮忙的",
-        "别人的",
-    }
+    # Someone else sees their own under the same channel; mine is what got borrowed.
+    bob = _sidebar(client, project, "bob")[room]["shown"]
+    theirs = {t["title"] for t in bob if not t.get("filling_in")}
+    borrowed = [t["title"] for t in bob if t.get("filling_in")]
+    assert theirs == {"我帮忙的", "别人的"}
+    assert borrowed == ["我的"]
+    assert mine["id"] in [t["id"] for t in bob]
 
 
-def test_a_channel_row_shows_at_most_five_of_my_tasks_but_counts_them_all(client):
+def test_a_channel_row_carries_every_one_of_my_tasks_not_five(client):
     project = _project(client)
     room = _room(client, project)
     for n in range(7):
@@ -134,8 +142,25 @@ def test_a_channel_row_shows_at_most_five_of_my_tasks_but_counts_them_all(client
 
     rail = _sidebar(client, project, "alice")
 
-    assert len(rail[room]["shown"]) == 5
+    assert len(rail[room]["shown"]) == 7
     assert rail[room]["open"] == 7
+    assert not any(t.get("filling_in") for t in rail[room]["shown"])
+
+
+def test_a_channel_i_have_nothing_in_is_brought_up_to_three_anyway(client):
+    project = _project(client)
+    join_project_team(client, project, "bob")
+    room = _room(client, project, "别人的频道")
+    for n in range(4):
+        open_task(client, room, f"别人的第{n}件", owner="bob")
+
+    rail = _sidebar(client, project, "alice")
+
+    # 「我一条都没有」也算少于三条：照字面补到三条，全是别人的。（补的是哪三条按
+    # 「最近有动静」，和其余各行同一条顺序——那一条在别处钉着，这里只钉条数。）
+    assert len(rail[room]["shown"]) == 3
+    assert all(t.get("filling_in") for t in rail[room]["shown"])
+    assert rail[room]["open"] == 4
 
 
 def test_a_closed_task_leaves_the_channel_row(client):

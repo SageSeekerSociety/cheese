@@ -690,7 +690,7 @@ PLATFORM_TOOLS = ToolTable(
                 "options": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "决策选项，配 decision_request",
+                    "description": "决策选项，decision_request 必带，至少两项",
                 },
             },
             ["title"],
@@ -720,19 +720,6 @@ PLATFORM_TOOLS = ToolTable(
             ["page"],
         ),
         _tool(
-            "cheese_lock",
-            "为当前任务占用频道的重资源锁，装依赖、跑大型测试或起服务前用；"
-            "占不到时说谁占着，不等待。",
-            {"kind": {"type": "string", "enum": ["heavy"]}},
-            [],
-        ),
-        _tool(
-            "cheese_unlock",
-            "释放当前任务持有的重资源锁；锁 30 分钟后自动到期。",
-            {"kind": {"type": "string", "enum": ["heavy"]}},
-            [],
-        ),
-        _tool(
             "cheese_members",
             "列出当前频道可点名的成员和 handle。点名前核对写法：对不上的提醒不会送出。",
         ),
@@ -750,7 +737,8 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_ask",
             "在房间里问人：每个问题是一条带快捷回复按钮的普通消息。问完就结束这一轮，"
             "不要等、不要轮询：人点一个选项或直接打字回复，那句回复会作为新消息开启你的"
-            "下一轮。选项只是快捷回复，人也可以说别的。",
+            "下一轮。界面总会在你给的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
+            "再放「其他」「都不是」「我自己说」这类兜底项，只写真正的候选。",
             {
                 "questions": {
                     "type": "array",
@@ -1436,13 +1424,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
     if tool == "cheese_ready":
         return {"method": "POST", "path": here + "/ready"}
-    if tool in {"cheese_lock", "cheese_unlock"}:
-        verb = tool.removeprefix("cheese_")
-        return {
-            "method": "POST",
-            "path": f"{here}/{verb}",
-            "body": {"kind": args.get("kind") or "heavy"},
-        }
     if tool == "cheese_doc_list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
     if tool == "cheese_canvas_get":
@@ -1962,9 +1943,8 @@ def _document(host, args: dict | None = None) -> dict:
 
 
 def _doc_edit(args: dict, host) -> str:
-    plan = request_plan(
-        "cheese_doc_edit", args, {**host.environ, **_document(host, args)}
-    )
+    document = _document(host, args)
+    plan = request_plan("cheese_doc_edit", args, {**host.environ, **document})
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -1977,7 +1957,8 @@ def _doc_edit(args: dict, host) -> str:
             raise exc from None
         raise PlatformToolError(
             f"一处都没改，文档没有变：{why.rstrip('。')}。"
-            "先 cheese_doc_get 重读，照读到的原文改好再试。"
+            + _searched(args, host, document["CHEESE_DOCUMENT"])
+            + "先 cheese_doc_get 重读，照读到的原文改好再试。"
         ) from exc
     data = answer.get("data") or {}
     edits = data.get("edits") or []
@@ -1993,6 +1974,26 @@ def _doc_edit(args: dict, host) -> str:
     # 和 cheese_doc_set 一样：格式警告跟着这次写入回来，改的机会就是现在。
     lines += [f"⚠️ {warning}" for warning in answer.get("warnings") or []]
     return "\n".join(lines)
+
+
+def _searched(args: dict, host, document: str) -> str:
+    """A refused edit that named no document: which one it looked in. Without
+    `document` the edit goes to this conversation's own document, and an agent
+    that meant a library document cannot tell from 「原文找不到」 alone that it
+    searched another one."""
+    if str(args.get("document") or "").strip():
+        return ""
+    found = host.request({"method": "GET", "path": f"/documents/{document}"})
+    title = str((found.get("data") or {}).get("title") or "").strip()
+    named = f"《{title}》" if title else ""
+    if host.environ.get("CHEESE_DOCUMENT"):
+        where = f"这次会话对着的文档{named}"
+    else:
+        where = f"这里的实况文档{named}"
+    return (
+        f"这次没给 document，找的是{where}；要改项目资料库里的文档，"
+        "带上它的 document 编号（见 cheese_doc_list）。"
+    )
 
 
 def _made_canvases(answer: dict) -> list[str]:
@@ -2657,12 +2658,6 @@ def _say_task(args, data, env) -> str:
 
 
 
-def _say_lock(args, data, env) -> str:
-    if data.get("acquired"):
-        return f"占住了（{args.get('kind') or 'heavy'}）。"
-    raise PlatformToolError(f"没占到：{data.get('reason') or '别人占着'}")
-
-
 def _say_notify(args, data, env) -> str:
     # 一条通知落成几行、收件人是谁，由平台按名册算 —— 不填 to 不等于「所有人」：
     # 到的是这个房间名册上的人，不含芝士。把它当「所有人」转述，就是替平台许下
@@ -2930,10 +2925,6 @@ _SAY = {
         f"PR #{d.get('pr_number')} 已从 draft 翻成 ready：{d.get('pr_url') or ''}"
         if (d or {}).get("ready")
         else (d or {}).get("reason") or "没有可以翻的 PR。"
-    ),
-    "cheese_lock": _say_lock,
-    "cheese_unlock": lambda a, d, e: (
-        "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
     ),
     "cheese_title": lambda a, d, e: (
         f"标题已设为：{(d or {}).get('title') or a['text']}"
@@ -5336,6 +5327,9 @@ def main() -> None:
             )
             sys.exit(1)
         _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
+        if (res.get("data") or {}).get("already_shown"):
+            print(f"{rel} 和刚摆出来的那一份一样，对话里已经有这张卡，没有再摆一张。")
+            return
         brought = f"，连同它加载的 {len(assets)} 个文件" if assets else ""
         print(f"已把 {rel} 摆出来给对话里的人看（{kind}）{brought}。")
     elif a.cmd == "template":

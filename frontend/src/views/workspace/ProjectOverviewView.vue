@@ -46,6 +46,9 @@ const props = defineProps<{
   progressFailed: boolean
   /** 项目的任务；还没读到是 null。没读到之前不写「0」也不写「暂无」。 */
   tasks: RoomTask[] | null
+  /** 项目里进行中的任务有几个。和侧栏那一行的数字、频道卡片上是同一个数：由后端
+   *  `underway_counts` 数，不从 `tasks` 自己凑（清单第 14 条）。 */
+  underway: number
   names: Record<string, string>
   avatars: Record<string, string>
   me: string
@@ -233,8 +236,14 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
         <section class="ov-section" data-testid="overview-people">
           <div class="ov-head">
             <h2 class="ov-title">{{ t('work.overview.people') }}</h2>
-            <button type="button" class="ov-link" data-testid="overview-all-tasks" @click="emit('all-tasks')">
-              {{ tasks ? t('work.overview.allTasks', { count: going.length }) : t('navigation.project.tasks') }}
+            <button
+              type="button"
+              class="ov-link"
+              data-testid="overview-all-tasks"
+              :title="t('work.sidebar.underwayHint')"
+              @click="emit('all-tasks')"
+            >
+              {{ tasks ? t('work.overview.allTasks', { count: underway }) : t('navigation.project.tasks') }}
             </button>
           </div>
           <p v-if="tasks && !people.length" class="ov-empty t-body c-muted">{{ t('work.overview.nobody') }}</p>

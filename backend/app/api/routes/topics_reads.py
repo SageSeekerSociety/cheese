@@ -15,7 +15,7 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import _parse_moment
+from app.api.topics_deps import _parse_moment
 from app.domain.agent.project_feed import (
     NOTIFY_LEVELS,
     UNREAD,

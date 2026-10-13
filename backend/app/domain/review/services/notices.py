@@ -153,7 +153,7 @@ async def _note_needs_human(
 
 
 async def _record_task_nudge(
-    self: pkg.AcceptService, *, topic, task, content, headline, meta
+    self: pkg.AcceptService, *, topic, task, content, headline, meta, dispatch=None
 ):
     return await _record_task_nudge_from_room(
         self._session,
@@ -162,6 +162,7 @@ async def _record_task_nudge(
         content=content,
         headline=headline,
         meta=meta,
+        dispatch=dispatch,
     )
 
 
@@ -249,6 +250,7 @@ async def _note_merge_stop_and_wake(
     action: str,
     headline,
     meta,
+    dispatch=None,
 ) -> None:
     """Put `note` on the card and, when it is new, wake the task's 芝士.
 
@@ -274,6 +276,9 @@ async def _note_merge_stop_and_wake(
         content=f"{lead}{action if actionable else _CLOSED_TASK_ACTION}",
         headline=headline,
         meta=meta,
+        # 任务已关闭时只留这条给房间看，不叫座位：那条指令它照做不了
+        # （`delivery.agent.dispatch_pending` 只会把它标成失败并留下一行误导的账）。
+        dispatch=dispatch if actionable else None,
     )
 
 
@@ -294,6 +299,16 @@ async def _note_left_merge_queue(
     summons it the same way `_note_merge_blocked` does. The platform never
     re-enqueues the PR itself; a fix still needs a person to accept again.
     """
+    lead = (
+        f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
+        "已离开合并队列但尚未确认合并，可能是检查失败或被人取出：\n"
+    )
+    action = (
+        f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
+        "到 GitHub 上看 PR 为什么离开合并队列：若是检查失败，在任务目录里修好、"
+        "验证后提交，用 cheese push-fix 更新原 PR。"
+        "平台不会自动重新入队；修好后需要人重新采纳。"
+    )
     await _note_merge_stop_and_wake(
         self,
         card=card,
@@ -303,22 +318,15 @@ async def _note_left_merge_queue(
             "请检查 GitHub 后重新采纳。"
         ),
         log=f"PR left the merge queue unmerged for card {card.id}",
-        lead=(
-            f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
-            "已离开合并队列但尚未确认合并，可能是检查失败或被人取出：\n"
-        ),
-        action=(
-            f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
-            "到 GitHub 上看 PR 为什么离开合并队列：若是检查失败，在任务目录里修好、"
-            "验证后提交，用 cheese push-fix 更新原 PR。"
-            "平台不会自动重新入队；修好后需要人重新采纳。"
-        ),
+        lead=lead,
+        action=action,
         headline=say("mergeQueueLeft", pr=card.pr_number),
         meta=notice(
             EVENT_MERGE_REFUSED,
             severity=SEVERITY_ERROR,
             who=WHO_CHEESE,
         ),
+        dispatch=lead + action,
     )
 
 

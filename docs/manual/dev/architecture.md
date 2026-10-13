@@ -24,11 +24,11 @@ covers:
 
 ## 一屏看完 {#summary}
 
-六条线，每条都有一个终点和一道只许变好的检查。「今天」一列除领域分层外是 2026-10-07 在 `main@3d9039c7` 上量的；领域分层一行是 2026-10-12 补完 `__init__.py` 之后重量的。
+六条线，每条都有一个终点和一道只许变好的检查。「今天」一列除领域分层外是 2026-10-07 在 `main@3d9039c7` 上量的；领域分层一行是 2026-10-12 在 `canvas`、`onboarding` 进 main 之后重量的。
 
 | 线 | 今天 | 终点 | 看住它的检查 |
 |---|---|---|---|
-| [领域分层](#backend) | 77 个领域包有 428 条跨包边，36 个包在同一个环里，双向依赖 43 对 | 七层，跨层只向下；同层无环；「让高层去做事」只走事件 | `.importlinter` 的 C1–C3，加一条分层契约 |
+| [领域分层](#backend) | 80 个领域包有 435 条跨包边，33 个包在同一个环里，双向依赖 39 对；向上的包级边 60 条（136 条 import 语句）已冻结 | 七层，跨层只向下；同层无环；「让高层去做事」只走事件 | `.importlinter` 的 C1–C3、C5 分层契约 |
 | [函数内导入](#deferred-imports) | 850 条，没有一条写明原因 | 没写原因的为 0 | `backend/scripts/check_deferred_imports.py` |
 | [变更推送](#realtime) | 写入后手写通知（`announce_stale`、`tell_project`），只说哪样变了，前端重读；漏写没有检查 | 写入钩子按一张映射表在提交后推，没有手写的通知 | 「不许新增 `announce_stale`」守卫，之后是「面板读到的模型都有变更映射」 |
 | [工作租约与后台任务](#work) | 工作租约是一个 JSON 列，按各进程自己的时钟判过期；一把全局锁下跑 29 个周期任务 | 租约是一张表，四条带条件的 SQL 领取回收；周期任务按任务各自租；全局锁最后退役 | 租约写入只经一个模块；周期任务逐个迁出的清单 |
@@ -39,7 +39,7 @@ covers:
 
 后端的终点是七层领域，一个包只能依赖比它低的层；同一层里的依赖不能成环；低层要让高层去做一件事，只能发事件。
 
-今天的问题在依赖方向，不在目录。`app/domain` 下 77 个包有 428 条跨包边，36 个包落在同一个强连通分量里，双向依赖 43 对（2026-10-12 搬走时间窗口和计价、把服务密钥表挪出文档站、再把归档清理从 `topic` 挪到编排层之后的实测；搬之前是 75 个包、421 条边、44 个包、49 对双向依赖；2026-08 量的时候是 42 个包里的 26 个）。`answers`、`discussion`、`knowledge`、`questions` 四个包原来没有 `__init__.py`，依赖图看不见它们，2026-10-12 补上后才量进来：补之前是 71 个包、403 条边、40 个包成环。把只经 `models` 的 69 条边全部去掉，环里还剩 34 个包（2026-10-07 量的，补入口文件之前），所以环不是 ORM 关系一家造成的，业务调用本身在双向走：`agent` 依赖 31 个包，`project` 被 25 个包依赖，它们又互相依赖。[领域包解环](https://github.com/SageSeekerSociety/cheese/blob/main/docs/topics/领域包解环.md)量过，把 repository 调用改成 service 调用，包级的边一条不少。解环只能去掉依赖本身。
+今天的问题在依赖方向，不在目录。`app/domain` 下 80 个包有 435 条跨包边，33 个包落在同一个强连通分量里，双向依赖 39 对（2026-10-12 搬走时间窗口和计价、把服务密钥表挪出文档站、再把归档清理从 `topic` 挪到编排层之后的实测是 36 个包、43 对，2026-10-13 还掉 `user` 那四条向上的边之后收到 33 个包、39 对；搬之前是 75 个包、421 条边、44 个包、49 对双向依赖；2026-08 量的时候是 42 个包里的 26 个）。同一个口径在 `main@90f3803b` 上是 79 个包、428 条边（`onboarding` 那时已经在，`canvas` 还没有），到这一版是 80 个包、435 条边；`canvas` 和 `onboarding` 进来时环没变大。`answers`、`discussion`、`knowledge`、`questions` 四个包原来没有 `__init__.py`，依赖图看不见它们，2026-10-12 补上后才量进来：补之前是 71 个包、403 条边、40 个包成环。把只经 `models` 的 69 条边全部去掉，环里还剩 34 个包（2026-10-07 量的，补入口文件之前），所以环不是 ORM 关系一家造成的，业务调用本身在双向走：`agent` 依赖 31 个包，`project` 被 25 个包依赖，它们又互相依赖。[领域包解环](https://github.com/SageSeekerSociety/cheese/blob/main/docs/topics/领域包解环.md)量过，把 repository 调用改成 service 调用，包级的边一条不少。解环只能去掉依赖本身。
 
 ### 分层 {#backend-tiers}
 
@@ -49,11 +49,11 @@ covers:
 |---|---|---|
 | 1 底座 | 没有业务判断、被所有人用的记录和工具 | `common`、`day_windows`、`conversation`、`idempotency`、`run_record`、`attachment`、`avatars`、`textfile`、`service_keys`、`backend_log`、`frontend_log`、`tag`、`legal` |
 | 2 身份与归属 | 谁、属于哪个团队和项目、在哪个话题里、能做什么 | `identity`、`user`、`team`、`project`、`topic`、`membership`、`topic_membership`、`authz`、`policy`、`invite`、`passkey`、`oauth`、`agent_type`、`agent_credential`、`ratchet` |
-| 3 平台服务 | 被业务同步调用的能力：模型单次调用、额度与计量（含计价）、通知收件箱 | `repository`、`integration`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification` |
-| 4 协作内容 | 房间里的东西：消息、线程、任务、采纳、文档、记忆、反馈、题目 | `block`、`thread`、`pin`、`mentions`、`room_task`、`task`、`review`、`living_doc`、`documents`、`library`、`memory`、`feedback`、`space`、`groups`、`questions`、`answers`、`comments`、`discussion`、`knowledge`、`materials`、`project_skill`、`search`、`docs_site` |
+| 3 平台服务 | 被业务同步调用的能力：模型单次调用、额度与计量（含计价）、通知收件箱、外站题目成绩核对 | `repository`、`integration`、`external_problem`、`webhook`、`fetch`、`remote_mcp`、`gateway_chat`、`usage`、`notification` |
+| 4 协作内容 | 房间里的东西：消息、线程、任务、采纳、文档、记忆、反馈、题目 | `block`、`thread`、`pin`、`mentions`、`room_task`、`task`、`review`、`living_doc`、`documents`、`library`、`memory`、`feedback`、`space`、`groups`、`questions`、`answers`、`comments`、`discussion`、`knowledge`、`materials`、`project_skill`、`search`、`docs_site`、`canvas` |
 | 5 智能体执行 | 一轮怎么跑、在哪台机器上跑 | `agent` 拆出的各包（见[下文](#agent-split)）、`agent_session`、`agent_instance`、`machine`、`device`、`local_fs`、`shell`、`site`、`preview`、`assistant`、`delivery` |
 | 6 编排 | 到点或有事时决定唤起谁、清理什么 | `routine`、`task_quiet`、`admin`、`room_cleanup` |
-| 7 报表 | 只读汇总，没有任何包依赖它 | `platform_stats`、`feature_stats`、`dashboard`、`project_progress` |
+| 7 报表 | 只读汇总，没有任何包依赖它 | `platform_stats`、`feature_stats`、`dashboard`、`project_progress`、`onboarding` |
 
 分层之前先搬两组模块。它们住在高层的包里，却被低层引用；不搬的话，分层契约第一天就冻进「其实只是放错地方」的边。这两组已经搬完（2026-10-12）：
 
@@ -64,7 +64,7 @@ covers:
 
 另外三组（平台通知 `agent/announce.py`、`agent/platform_notices.py`；代码托管凭据 `agent/github_app.py`、`agent/forgejo_tokens.py`、`agent/forge_cli.py`；投递账本 `delivery/addressing.py`、`delivery/ledger.py`）不搬。2026-10-12 在补入口文件之前的依赖图上模拟：五组全搬，包间依赖从 403 条变成 425 条，最大环 40 → 39；只搬上面两组，最大环 40 → 36。三组的层位也还没定：第 2 层的 `membership`、`team`、`policy`、`project` 要用它们，放在第 3、4 层仍是向上依赖；平台通知还依赖第 5 层的 `agent_instance` 和 `delivery`，本身就在环上，放进哪一层都留向上依赖。先拆开这些依赖，再定层位。
 
-向上的包级边按上表在 2026-10-12 实测，归档清理挪到编排层之后是 64 条（搬家前 72 条，两组搬完 67 条，服务密钥表挪走后 66 条；向上的 import 语句 156 条降到 140 条），全部冻进分层契约，之后逐条还。归档清理原来在 `topic` 里，第 2 层直接调第 5 层的机器和会话，现在是编排层的 `room_cleanup`。大头是三类：`topic` 的服务直接调智能体执行层（第 2 层调第 5 层）；`project` 直接读 `review`、`task`、`library`（第 2 层调第 4 层）；`block`、`review`、`room_task` 直接调 `agent` 的 `chat` 和 `runtime` 去唤起一轮（第 4 层调第 5 层，12 条）。
+向上的包级边按上表在 2026-10-12 实测，归档清理挪到编排层之后是 64 条（搬家前 72 条，两组搬完 67 条，服务密钥表挪走后 66 条；向上的 import 语句 156 条降到 140 条），已全部冻进 C5 分层契约，之后逐条还：第一笔是 `user` 不再读 `task`、`knowledge`、`questions`、`answers` 的表去数档案上的计数，还掉后是 60 条 / 136 条语句（`user` 向上的边只剩 `→ space` 那条），环从 36 个包缩到 33 个、双向依赖从 43 对降到 39 对。`canvas` 定在第 4 层（读 `living_doc`，被同层的 `room_task` 读）、`onboarding` 定在第 7 层（只读下面的层，没有包读它）、`external_problem` 定在第 3 层（读第 1 层的 `common`，眼下没有包读它；和 `integration` 同类，是同步调外部站点，留在第 3 层也给将来读它结果的第 4 层 `task` 留了向下的路），三个包进来时按这个归属算，向上的边一条没多。归档清理原来在 `topic` 里，第 2 层直接调第 5 层的机器和会话，现在是编排层的 `room_cleanup`。大头是三类：`topic` 的服务直接调智能体执行层（第 2 层调第 5 层）；`project` 直接读 `review`、`task`、`library`（第 2 层调第 4 层）；`block`、`review`、`room_task` 直接调 `agent` 的 `chat` 和 `runtime` 去唤起一轮（第 4 层调第 5 层，12 条）。
 
 **哪些改成事件，哪些保留同步调用。** 只有「让高层去做一件事」改成事件：话题已归档、消息已写入、采纳卡已通过、任务已创建，由第 5、6 层订阅后决定唤起谁、清理什么。需要当场拿到结果的调用（拿 GitHub 令牌、查额度、写一条平台消息）保留同步，办法是把被调用方放到调用方下面（先把依赖拆开，再定它的层位）。
 
@@ -293,7 +293,7 @@ frontend/src/
 - **不可变更新**：本地写一律 `patchQuery(key, old => 新值)`：先作废正在路上的那次读，再改缓存。「改之前发出去的读把刚改的盖回去」靠它挡住，不再各处手写版本号。
 - **推送进缓存**：`state` 帧经一个入口（`query/changes.ts`）按键让对应几份再读一次；正在读的那次回来之后再读一次，一串帧只多读一次（`refreshQueries`）。缓存里没有的（采纳卡、提案卡、文档）由页面自己接。
 - **进房间不再逐块读**：房间连接上的 `subscribed` 帧带着订阅生效那一刻房间的样子（`room`：名册、任务、置顶、支线、提议卡；任务还有它自己、相关、审阅意见），每一块和它自己那个接口回的一样（后端 `api/room_snapshot.py`）。打开房间的导航出发时记下「快照要来」，这几格的读先等它（`query/snapshot.ts`）；之后的帧都比快照新。采纳卡和预览不在里面：读它们要等外部服务。
-- **侧栏不读整个项目的任务**：频道清单的每一行带着挂在它下面的任务（`my_tasks`：和我有关的几件，加进行中的总数），任务变了重读那一行。
+- **侧栏不读整个项目的任务**：频道清单的每一行带着挂在它下面的任务（`my_tasks`：和我有关的全部，不足三条时补上这个频道别人的几条（`filling_in`），加进行中的总数），任务变了重读那一行。
 - **KeepAlive 里的页面停下观察**：保活页面的查询把 `enabled` 绑到页面在不在屏幕上（`composables/usePageActive.ts`）。
 - **项目推送代替轮询**：项目外框在房间连接上订阅这个项目（`query/projectFeed.ts`），频道清单的哪一行、未读、私聊未读、提醒档位哪一样变了就重读哪一样；订上和每次重连时四样各读一次。频道清单那一行重读回来后按最后有动静的时刻挪到该在的位置。任务概览的清单由任务连接上的 `todo` 帧直接放进缓存。
 - **聊天时间线不迁**：双向翻页、跳到中间、实时追加、发送中的消息、按 id 合并，`useInfiniteQuery` 给不了；时间线留在 `useTimeline` / `useChatPaging`，只有每个房间最新那一段窗口在缓存里（`query/blocks.ts`），打开房间、预取、未读增加时的后台预取共用它。
@@ -328,7 +328,7 @@ frontend/src/
 | 2c | 已合并：工作区和应用外壳的服务端数据只经一个 QueryClient，手写缓存删掉；就地改数据改成 `patchQuery`；KeepAlive 页面的 `enabled`。反馈中心、管理后台、空间、资料库另作一步 | 1 |
 | 2d | 租约写入收口：10 处写入收进一个 `lease_store`，带状态转移表；`claim_until` 改用数据库 `now()`；守卫：写 `work_lease` 只许经过它 | 1 |
 | 2e | 交接（`hand_over()`）停周期任务前强制刷一次 backend error flush；`periodic_job_runs` 加 `run_by`、`run_until`，`PeriodicRunner` 加「只在持锁进程跑」的开关 | 1 |
-| 3a | 分层契约：每个包都分好层，越界的边冻结 | 2a |
+| 3a | 已合并：分层契约——每个包都分好层，向上的边冻结；`canvas` 归第 4 层、`onboarding` 归第 7 层 | 2a |
 | 3b | 写入钩子：`after_flush` 和 `do_orm_execute` 登记、`after_commit` 推，一张映射表，Core 写守卫；29 个 `announce_stale` 和项目推送的手写调用全部换成映射，守卫变成「面板读到的模型都有映射」 | 2b |
 | 3c | 已合并：`state` 帧经 `query/changes.ts` 按键失效 | 2c |
 | 3d | 建 `session_work_leases`，从 JSON 回填，双写，对账任务跑一周 | 2d |

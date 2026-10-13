@@ -2135,6 +2135,68 @@
         }
       }
     },
+    "/admin/integrations/external-problem": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Read External Problem Account",
+        "description": "配没配、配的是谁、谁配的。**没有密码。**\n\n``configured: false`` 是那个页面要问的第一件事：没人配过时同步一律失败\n（``service.py`` 里 ``no_account``），而那是「还没到那一步」，不是错误。",
+        "operationId": "read_external_problem_account_admin_integrations_external_problem_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalProblemAccountOutEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Save External Problem Account",
+        "description": "存下账号。密码留空 = 只改账号名，密码用原来那个。\n\n换账号名**不动**已经存下的密码：页面看不到它，管理员也无从重打，要求重打就等于\n逼他把口令找回来。要换密码就连密码一起填。",
+        "operationId": "save_external_problem_account_admin_integrations_external_problem_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalProblemAccountIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExternalProblemAccountOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/admin/admins": {
       "get": {
         "tags": [
@@ -23847,9 +23909,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Own Agents Projects  Project Id  Own Agents Get"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -23871,7 +23931,7 @@
           "projects"
         ],
         "summary": "Set Own Agents",
-        "description": "Let members bring their own Claude Code into the project, or not. Turned\noff, no member's own agent is called in it; turned on again, they are.",
+        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use. Turned off, members' own\nagents leave the project: off its roster and out of its channels. Turned on\nagain, they come back as their owners next look, and sit in a channel again\nonce someone they answer to names them there.",
         "operationId": "set_own_agents_projects__project_id__own_agents_put",
         "parameters": [
           {
@@ -23901,9 +23961,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Own Agents Projects  Project Id  Own Agents Put"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -38678,6 +38736,316 @@
         }
       }
     },
+    "/tasks/{taskId}/external-problem": {
+      "get": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Get External Problem Sync",
+        "description": "题号、上次同不成功、以及每个领取者的结论。\n\n没挂题号时也回 200，回的是一块空的（``problemNo: \"\"``）—— 「这道题还没接外站」\n是一个答案，和名单那条路上的「这道题还没有人报名」一样，不是错误。",
+        "operationId": "get_external_problem_tasks__taskId__external_problem_get",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Set External Problem Number",
+        "description": "挂上、或者换掉这道题在 YOJ 上的题号。返回换完之后的那一块。\n\n换成一个**另一个**题号会把上一次的结果删掉（``set_problem``）：那些数说的是另一\n道题，留着比空着更糟。同一个题号再挂一次是幂等的，结果原样留着。",
+        "operationId": "set_external_problem_tasks__taskId__external_problem_put",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExternalProblemIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Clear External Problem",
+        "description": "撤掉挂载：题号和结果一起没。\n\n只撤题号、把结果留成孤儿是更小的动作，但那种状态没人能修回来（没有题号就没法再\n同步一次），留着只是让一段读不懂的旧数据活着。",
+        "operationId": "clear_external_problem_tasks__taskId__external_problem_delete",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{taskId}/external-problem/sync": {
+      "post": {
+        "tags": [
+          "Tasks"
+        ],
+        "summary": "Sync External Problem Now",
+        "description": "现在去外站看一眼，返回看完之后的那一块。\n\n同步失败也是 200，回的那一块上 ``status: \"failed\"`` 带着原因 —— 失败的是「外站\n这一趟没去成」，不是「你这个请求不对」。上一次成功的结论**留着**（见\n``service.py`` 的取舍），所以界面要照着 ``status`` 说清这是几点的数。",
+        "operationId": "sync_external_problem_tasks__taskId__external_problem_sync_post",
+        "parameters": [
+          {
+            "name": "taskId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "title": "Taskid"
+            }
+          },
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/teams": {
       "get": {
         "tags": [
@@ -41184,7 +41552,7 @@
           "topics"
         ],
         "summary": "List Topics",
-        "description": "The project's topics.\n\n`sort=last_activity_at` orders by when something last HAPPENED in each topic\n(its newest block), and `active_since=<ISO instant>` keeps only the topics\nactive at or after it — \"最近活跃的话题\". Neither reads `updated_at`, which\nonly moves when the topic's own fields change.\n\nEvery row also carries what it is to the caller (`joined`/`awaits_me`) —\nthis is the endpoint the sidebar lists from — and the tasks the sidebar\nhangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never\nreads the whole project's tasks for the few that are the caller's.\n\n条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`\n命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的\n徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动\n`updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。\n没命中那条路仍然走 `ok()` 的信封，前端 `request()` 靠 `{code,message,data}` 解包。",
+        "description": "The project's topics.\n\n`sort=last_activity_at` orders by when something last HAPPENED in each topic\n(its newest block), and `active_since=<ISO instant>` keeps only the topics\nactive at or after it — \"最近活跃的话题\". Neither reads `updated_at`, which\nonly moves when the topic's own fields change.\n\nEvery row also carries what it is to the caller (`joined`/`awaits_me`) —\nthis is the endpoint the sidebar lists from — and the tasks the sidebar\nhangs under it (`my_tasks`, see `room_task_rows.rail_tasks`), so the sidebar\nnever reads the whole project's task list to find the few rows it draws.\n\n条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`\n命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的\n徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动\n`updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。\n没命中那条路仍然走 `ok()` 的信封，前端 `request()` 靠 `{code,message,data}` 解包。",
         "operationId": "list_topics_topics_get",
         "parameters": [
           {
@@ -41382,6 +41750,48 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Get Topic Topics  Topic Id  Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Delete Topic",
+        "description": "删除频道 (清单第 2 条): 频道连同消息、任务和文档一起走，不能恢复。\n\nIt goes the way archiving goes — session stopped, cards settled, machines\nfreed — and then does not come back: no list shows it, and 取消归档 is\nrefused for it.",
+        "operationId": "delete_topic_topics__topic_id__delete",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletedEnvelope"
                 }
               }
             }
@@ -42208,143 +42618,6 @@
         }
       }
     },
-    "/topics/{topic_id}/archive": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Archive Topic",
-        "description": "手动归档 (归档去向): explicit archive, independent of 采纳.",
-        "operationId": "archive_topic_topics__topic_id__archive_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Archive Topic Topics  Topic Id  Archive Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/cleanup": {
-      "get": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Cleanup Status",
-        "operationId": "cleanup_status_topics__topic_id__cleanup_get",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Cleanup Status Topics  Topic Id  Cleanup Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/unarchive": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Unarchive Topic",
-        "description": "取消归档: bring an archived topic back to active.",
-        "operationId": "unarchive_topic_topics__topic_id__unarchive_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Unarchive Topic Topics  Topic Id  Unarchive Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/topics/{topic_id}/check-result": {
       "post": {
         "tags": [
@@ -42384,117 +42657,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Record Check Result Topics  Topic Id  Check Result Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/lock": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Take Room Lock",
-        "description": "Take one of the room's two locks, or be told who has it.\n\nNever waits: blocking would spend a whole turn's compute standing still,\nand the caller has better answers available — write a different file, use\n`Edit` instead of a whole-file write, come back next turn.",
-        "operationId": "take_room_lock_topics__topic_id__lock_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LockIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Take Room Lock Topics  Topic Id  Lock Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/unlock": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Release Room Lock",
-        "operationId": "release_room_lock_topics__topic_id__unlock_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LockIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Release Room Lock Topics  Topic Id  Unlock Post"
                 }
               }
             }
@@ -42685,7 +42847,7 @@
           "topics"
         ],
         "summary": "Attachment Raw",
-        "description": "Authorized raster images and video bytes, never executable HTML/SVG.",
+        "description": "Authorized raster images and video bytes, never executable HTML/SVG.\n\nA room's own file is served from disk with byte ranges, so a player seeking\nthrough a long recording reads only the part it shows. A video read with the\n``Authorization`` header leaves a cookie for this path behind\n(``remember_for_media``): the ``<video>`` element's own range requests\ncannot carry the header, and the cookie is how they prove the same viewer.",
         "operationId": "attachment_raw_topics__topic_id__attachments_raw_get",
         "parameters": [
           {
@@ -43667,6 +43829,143 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Decide Document Revisions Topics  Topic Id  Documents Revisions Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/archive": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Archive Topic",
+        "description": "手动归档 (归档去向): explicit archive, independent of 采纳.",
+        "operationId": "archive_topic_topics__topic_id__archive_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Archive Topic Topics  Topic Id  Archive Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/cleanup": {
+      "get": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Cleanup Status",
+        "operationId": "cleanup_status_topics__topic_id__cleanup_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Cleanup Status Topics  Topic Id  Cleanup Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/unarchive": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Unarchive Topic",
+        "description": "取消归档: bring an archived topic back to active.",
+        "operationId": "unarchive_topic_topics__topic_id__unarchive_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Unarchive Topic Topics  Topic Id  Unarchive Post"
                 }
               }
             }
@@ -45281,6 +45580,58 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Create Thread",
+        "description": "新建支线 (清单第 4 条): a 支线 opened from a channel by a person, which\ntoday is not possible — a 支线 needs a message to hang under, and the only\nway to one was replying to a message that was already said.\n\nA person opens it, as with the other road into a 支线: 芝士 does not open\none by itself, and cats may not speak in a channel they have not joined.",
+        "operationId": "create_thread_topics__topic_id__threads_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadCreateIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/topics/{topic_id}/thread": {
@@ -45381,7 +45732,7 @@
           "topics"
         ],
         "summary": "Set Title",
-        "description": "给这个地方起/改标题: a person renaming a channel or a task, or a task's\nown session naming it (`cheese_title`, only where the platform cannot).\n\nA channel is renamed by whoever manages it (`TopicMemberService.manages`).\n\nA task's id names the task: a person taking part in it renames it, and that\ntitle is final; its own session's title the platform may still change\n(`room_task/naming.py`).",
+        "description": "给这个地方起/改标题: a person renaming a channel or a task, or a task's\nown session naming it (`cheese_title`, only where the platform cannot).\n\nA channel is renamed by anyone who can be in it: which channel is called what\nis the room's own business, not its creator's alone. Being able to reach the\nroom at all is settled above (`authorize_topic`), which is the same answer a\nreader of the channel gets — and an outsider to a private channel is still\ntold it does not exist.\n\nA task's id names the task: a person taking part in it renames it, and that\ntitle is final; its own session's title the platform may still change\n(`room_task/naming.py`).",
         "operationId": "set_title_topics__topic_id__title_post",
         "parameters": [
           {
@@ -54320,6 +54671,15 @@
         ],
         "title": "ConnectRequest"
       },
+      "ConnectionKind": {
+        "type": "string",
+        "enum": [
+          "subscription",
+          "api_key",
+          "model_service"
+        ],
+        "title": "ConnectionKind"
+      },
       "ControlIn": {
         "properties": {
           "session_id": {
@@ -55612,6 +55972,155 @@
         },
         "type": "object",
         "title": "EventChoiceIn"
+      },
+      "ExternalProblemAccountIn": {
+        "properties": {
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "password": {
+            "type": "string",
+            "title": "Password",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "username"
+        ],
+        "title": "ExternalProblemAccountIn",
+        "description": "账号名（对 YOJ 来说是学号或教师工号）。"
+      },
+      "ExternalProblemAccountOut": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "username": {
+            "type": "string",
+            "title": "Username"
+          },
+          "updated_by": {
+            "type": "string",
+            "title": "Updated By"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "source",
+          "username",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "ExternalProblemAccountOut",
+        "description": "管理员看的那一行凭据。**没有密码** —— 存进去就再也读不出来。"
+      },
+      "ExternalProblemAccountOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ExternalProblemAccountOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ExternalProblemAccountOutEnvelope"
+      },
+      "ExternalProblemIn": {
+        "properties": {
+          "problemNo": {
+            "type": "string",
+            "maxLength": 32,
+            "title": "Problemno"
+          }
+        },
+        "type": "object",
+        "required": [
+          "problemNo"
+        ],
+        "title": "ExternalProblemIn",
+        "description": "挂题号的请求体。**形状由服务判**（``service.PROBLEM_NO`` 只收数字），这里只封\n一个长度上界，免得把一兆的字符串送进去。"
+      },
+      "ExternalProblemResultOut": {
+        "properties": {
+          "participantId": {
+            "type": "integer",
+            "title": "Participantid"
+          },
+          "studentNo": {
+            "type": "string",
+            "title": "Studentno"
+          },
+          "solved": {
+            "type": "boolean",
+            "title": "Solved"
+          },
+          "acceptedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Acceptedat"
+          }
+        },
+        "type": "object",
+        "required": [
+          "participantId",
+          "studentNo",
+          "solved",
+          "acceptedAt"
+        ],
+        "title": "ExternalProblemResultOut",
+        "description": "一个领取者在这道题上的结论。``participantId`` 是 ``task_membership.id`` ——\n名单接口发出去的 ``participants[].id`` 就是它，前端按它把这一列贴回名单上。"
       },
       "FeedbackAdminCounts": {
         "properties": {
@@ -58053,39 +58562,6 @@
         "title": "LibraryRoom",
         "description": "一份资料是在哪个房间给出来的（`room_ref`）：房间的 id 和名字。"
       },
-      "LockIn": {
-        "properties": {
-          "kind": {
-            "type": "string",
-            "pattern": "^heavy$",
-            "title": "Kind"
-          },
-          "task_id": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "uuid"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Task Id"
-          },
-          "resource": {
-            "type": "string",
-            "maxLength": 0,
-            "title": "Resource",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "kind"
-        ],
-        "title": "LockIn",
-        "description": "Acquire or release the room's heavy-operation lane."
-      },
       "LoginRequest": {
         "properties": {
           "username": {
@@ -59787,6 +60263,42 @@
         ],
         "title": "OwnAgentCallersUpdate"
       },
+      "OwnAgentConnectionOut": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "plan",
+          "model"
+        ],
+        "title": "OwnAgentConnectionOut"
+      },
       "OwnAgentMachineOut": {
         "properties": {
           "name": {
@@ -59847,11 +60359,25 @@
             ],
             "title": "Owner Name"
           },
-          "machines": {
+          "connections": {
             "items": {
-              "$ref": "#/components/schemas/OwnAgentMachineOut"
+              "$ref": "#/components/schemas/OwnAgentConnectionOut"
             },
             "type": "array",
+            "title": "Connections"
+          },
+          "machines": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OwnAgentMachineOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Machines"
           }
         },
@@ -59862,6 +60388,7 @@
           "callers",
           "owner_handle",
           "owner_name",
+          "connections",
           "machines"
         ],
         "title": "OwnAgentOut"
@@ -59871,6 +60398,13 @@
           "allowed": {
             "type": "boolean",
             "title": "Allowed"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionKind"
+            },
+            "type": "array",
+            "title": "Kinds"
           },
           "can_manage": {
             "type": "boolean",
@@ -59887,6 +60421,7 @@
         "type": "object",
         "required": [
           "allowed",
+          "kinds",
           "can_manage",
           "agents"
         ],
@@ -59931,15 +60466,35 @@
       "OwnAgentsUpdate": {
         "properties": {
           "allowed": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Allowed"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionKind"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
           }
         },
         "type": "object",
-        "required": [
-          "allowed"
-        ],
-        "title": "OwnAgentsUpdate"
+        "title": "OwnAgentsUpdate",
+        "description": "What a manager changes; a field left out stays as it is."
       },
       "OwnCallers": {
         "type": "string",
@@ -63940,6 +64495,92 @@
         "type": "object",
         "title": "TaskCreateIn"
       },
+      "TaskExternalProblemOut": {
+        "properties": {
+          "problemNo": {
+            "type": "string",
+            "title": "Problemno"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "lastSyncedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Lastsyncedat"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/ExternalProblemResultOut"
+            },
+            "type": "array",
+            "title": "Results"
+          }
+        },
+        "type": "object",
+        "required": [
+          "problemNo",
+          "source",
+          "lastSyncedAt",
+          "status",
+          "error",
+          "results"
+        ],
+        "title": "TaskExternalProblemOut",
+        "description": "一道题的外站那一块：题号、上次同步、以及每个领取者的结论。\n\n``status`` 是 ``\"\"``（还没同步过）/ ``ok`` / ``failed``，取值在\n``service.STATUS_OK`` 与 ``STATUS_FAILED``。``error`` 是排查用的原文（``no_account``\n这种），**不是**给人看的句子 —— 界面按 ``status`` 自己说。"
+      },
+      "TaskExternalProblemOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TaskExternalProblemOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TaskExternalProblemOutEnvelope"
+      },
       "TaskParticipantRequest": {
         "properties": {
           "deadline": {
@@ -64274,6 +64915,21 @@
         "title": "TextRangeQuoteIn",
         "description": "A passage picked out of rendered document text.\n\nText has no page number to point at: editing one sentence reflows the file,\nso a line number stops holding. The location is the heading it sits under\n(None at the top of the file) plus the context on either side, which is what\ntells one occurrence of a sentence from another."
       },
+      "ThreadCreateIn": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "ThreadCreateIn"
+      },
       "ThreadMutation": {
         "properties": {
           "operation_id": {
@@ -64294,6 +64950,93 @@
           "expected_revision"
         ],
         "title": "ThreadMutation"
+      },
+      "ThreadOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "root_block_id": {
+            "type": "string",
+            "title": "Root Block Id"
+          },
+          "reply_count": {
+            "type": "integer",
+            "title": "Reply Count"
+          },
+          "last_reply_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Reply At"
+          },
+          "created_by": {
+            "type": "string",
+            "title": "Created By"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "room_id",
+          "root_block_id",
+          "reply_count",
+          "last_reply_at",
+          "created_by",
+          "created_at"
+        ],
+        "title": "ThreadOut",
+        "description": "A 支线 as the routes hand it back: enough for a list row, nothing more.\n\nIds are strings on the wire (they are ``uuid`` columns underneath), and\n``last_reply_at`` is null until someone replies."
+      },
+      "ThreadOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ThreadOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ThreadOutEnvelope"
       },
       "TimelineOut": {
         "properties": {

@@ -1,15 +1,26 @@
 """A member's own Claude Code, run on their own machine (#2991).
 
-The session works exactly as a central one does — the remote-execution client,
-the executor on the leased machine, its sandbox, the work lease, the platform
-tools — with both ends on the owner's machine: the process that talks to the
-model runs there, with the login its owner gave the platform
-(`cheesehost claude login`), and the hands are that same machine. Nothing runs
-on the platform's session host and nothing goes through the metering proxy.
+Only the process that talks to the model runs there, with the login its owner
+gave the platform (`cheesehost claude login`): a subscription's login stays on
+the machine it was given on. Its tools go to its execution environment like
+any session's (#2320) — the remote-execution client, the executor in that
+environment, its sandbox, the work lease and the platform tools are a central
+session's. Nothing runs on the platform's session host and nothing goes
+through the metering proxy.
 
-Which machine: one of the owner's, online, with that login. The one the
-session already ran on comes first, so a conversation stays where its
-transcript is while that machine is there.
+The owner's machine has no forwarded project view and no namespace of its own
+(both are Linux's, and the session host here may be a Mac or a Windows PC).
+So when the environment is on that same machine the session sees the project
+where the executor holds it; when it is elsewhere, the session works in a
+directory of its own holding a copy of the project's instructions, skills,
+rules and agents, and its paths are rewritten to the executor's on their way
+there (`client.prepare`).
+
+Which machine runs the session: one of the owner's, online, with that login,
+of a kind the project allows (`own.allowed_kinds`). The one the session already
+ran on comes first, so a conversation stays where its transcript is while that
+machine is there. When the project allows none of the owner's logins the
+session does not start, and the room is told why.
 """
 
 import hashlib
@@ -23,10 +34,20 @@ from app.core.sentences import say
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
-from app.domain.agent_instance.own import owned_by_session, owned_instance
+from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.own import (
+    allowed_kinds,
+    kinds_refused,
+    kinds_refused_sentence,
+    owned_by_session,
+    owned_instance,
+    owner_of,
+)
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.device.login_kind import ConnectionKind, connection_kind
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
 from app.domain.device.supply import Supply
+from app.domain.project.reads import load_project
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
@@ -50,10 +71,20 @@ class OwnerChannel(CentralChannel):
         owned = await owned_by_session(db, topic.project_id, session.agent_handle)
         if owned is None:
             raise ScreenSetupError(say("screenAgentIdentityMissing"))
+        project = await load_project(db, topic.project_id)
+        settings = project.settings if project is not None else None
+        refused = await kinds_refused(db, owned.owner_user_id, settings)
+        if refused:
+            owner = await owner_of(db, owned.instance_id)
+            raise ScreenSetupError(
+                kinds_refused_sentence(owner[1] if owner else "", refused)
+            )
         place = await AgentSessionService(db).place(
             session.topic_id, session.agent_handle, harness=session.harness
         )
-        machines = await owners_machines(db, owned.owner_user_id)
+        machines = await owners_machines(
+            db, owned.owner_user_id, allowed_kinds(settings)
+        )
         online = [device for device in machines if self._hub.is_online(device)]
         if place is not None and place.machine in online:
             return place.machine
@@ -66,10 +97,12 @@ class OwnerChannel(CentralChannel):
         # have gone: a conversation moves with its owner between machines.
         return precheck.machine
 
-    def _deferred_target(self, target: dict) -> dict:
-        # The hands are this same machine: the client sees the project at the
-        # executor's own path, with no forwarded view and no namespace.
-        return {**target, "local": True}
+    def _deferred_target(self, target: dict, *, apart: bool) -> dict:
+        # No forwarded view and no namespace on the owner's machine: the
+        # session sees the project at the executor's own path when the
+        # executor is on this machine, and in a directory of its own when it
+        # is on another (`apart`) or not yet leased.
+        return {**target, "local": True, **({"apart": True} if apart else {})}
 
     @asynccontextmanager
     async def prepare_session(self, **kwargs):
@@ -98,11 +131,17 @@ class OwnerChannel(CentralChannel):
         return f"{row.auth_method or ''}:{row.model or ''}"
 
 
-async def owners_machines(db, owner_user_id: int) -> list[str]:
-    """The owner's own machines with the platform's login, most recently
-    confirmed first."""
+async def owners_machines(
+    db, owner_user_id: int, kinds: frozenset[ConnectionKind]
+) -> list[str]:
+    """The owner's own machines with the platform's login of one of ``kinds``,
+    most recently confirmed first."""
     rows = await db.execute(
-        select(DeviceRow.device_id)
+        select(
+            DeviceRow.device_id,
+            DeviceClaudeLoginRow.auth_method,
+            DeviceClaudeLoginRow.subscription_type,
+        )
         .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
         .join(
             DeviceClaudeLoginRow,
@@ -115,15 +154,25 @@ async def owners_machines(db, owner_user_id: int) -> list[str]:
         )
         .order_by(DeviceClaudeLoginRow.checked_at.desc())
     )
-    return [device_id for (device_id,) in rows]
+    return [
+        device_id
+        for device_id, auth_method, subscription_type in rows
+        if connection_kind(auth_method, subscription_type) in kinds
+    ]
 
 
 async def owner_is_away(db, instance_id, hub) -> bool:
     """Whether ``instance_id`` is a member's own agent none of whose owner's
-    machines is online with its login: its turn has nowhere to run until one
-    comes back."""
+    machines is online with a login the project allows: its turn has nowhere
+    to run until one comes back. Not when the project allows none of the
+    owner's logins: that turn starts, to be refused with the reason."""
     owned = await owned_instance(db, instance_id)
     if owned is None:
         return False
-    machines = await owners_machines(db, owned.owner_user_id)
+    instance = await db.get(AgentInstance, instance_id)
+    project = await load_project(db, instance.project_id) if instance else None
+    settings = project.settings if project is not None else None
+    if await kinds_refused(db, owned.owner_user_id, settings):
+        return False
+    machines = await owners_machines(db, owned.owner_user_id, allowed_kinds(settings))
     return not any(hub.is_online(device) for device in machines)

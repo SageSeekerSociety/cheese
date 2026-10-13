@@ -220,7 +220,7 @@
   "guide": {
     "channels": {
       "title": "Channels",
-      "text": "Conversations in a project are split into channels. The general channel has everyone in the project; open another from Browse channels."
+      "text": "Conversations in a project are split into channels. The general channel has everyone in the project; open another from All channels."
     },
     "composer": {
       "title": "Message box",

@@ -25,10 +25,10 @@ from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.auth.project_access import may_read_project
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.staleness import announce_stale
-from app.domain.notification.models import Notification
+from app.domain.notification.models import Notification, NotificationType
 from app.domain.notification.schemas import (
     PROJECT_NOTIFICATION_KINDS,
     NotificationCreate,
@@ -39,6 +39,14 @@ from app.domain.notification.services import ProjectNotificationService
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="", tags=["alerts"])
+
+
+def _options(body: NotificationCreate) -> list[str]:
+    """决策请求摆出来的那几个选项：非空的字符串才算。"""
+    listed = body.payload.get("options")
+    if not isinstance(listed, list):
+        return []
+    return [o for o in listed if isinstance(o, str) and o.strip()]
 
 
 def _dump(row: Notification) -> dict:
@@ -80,6 +88,10 @@ async def create_notification(
     """
     if body.kind not in PROJECT_NOTIFICATION_KINDS:
         raise ValidationError(say("alertKindNotFromInbox"))
+    # 拍板就是从摆出来的选项里选一个：待办页那一行只给选项按钮，没有选项的决策
+    # 请求在那里一个按钮都没有，永远清不掉，角标就一直挂着它。
+    if body.kind == NotificationType.DECISION_REQUEST and len(_options(body)) < 2:
+        raise UnprocessableEntityError(say("decisionNeedsOptions"))
     actor = await resolver.require_verified_caller(
         project_id=project_id, topic_id=body.topic_id
     )
