@@ -12,10 +12,11 @@ export function getOwnAgents(projectId: string): Promise<OwnAgentsSettings> {
   return request<OwnAgentsSettings>(path(projectId))
 }
 
-/** 管理者改项目的规则：允不允许成员接入，允许哪几类连接。没给的那项不变。 */
+/** 管理者改项目的规则：允不允许成员接入，允许哪几类连接，允许哪几家自定义模型服务（按服务地址的
+ *  主机名，空列表是不限）。没给的那项不变。 */
 export function setOwnAgentsRules(
   projectId: string,
-  rules: { allowed?: boolean; kinds?: OwnAgentKind[] }
+  rules: { allowed?: boolean; kinds?: OwnAgentKind[]; service_hosts?: string[] }
 ): Promise<OwnAgentsSettings> {
   return request<OwnAgentsSettings>(path(projectId), {
     method: 'PUT',

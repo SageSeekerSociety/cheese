@@ -370,9 +370,10 @@ async def answer_questions(
 def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
     """Which open questions a message that replies to nothing answers.
 
+    ``questions`` are those its author may answer (`block.asked.may_answer`).
     It is said to one asker: the one it @-mentions, or else whoever asked most
-    recently among the questions that ask its author (alone, among others, or
-    as one of everyone in the channel). A question that waits on nobody in
+    recently among the questions that name someone (its author alone, among
+    others, or everyone in the channel). A question that waits on nobody in
     particular (asked in a turn the platform started) is answered only by a
     message that names its asker: people talking to each other in the room is
     not an answer to it.
@@ -381,7 +382,7 @@ def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
     if named:
         # Addressed to the one who asked, it answers whatever is open of his.
         return [q for q in questions if named == {q.author}]
-    questions = [q for q in questions if reply.author in asked_of(q.meta)]
+    questions = [q for q in questions if asked_of(q.meta)]
     if not questions:
         return []
     seat = questions[-1].author

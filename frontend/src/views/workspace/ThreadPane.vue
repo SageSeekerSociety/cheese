@@ -207,6 +207,7 @@ function toTask() {
         :composer-closed="room.status === 'archived' ? t('work.channel.archivedNotice') : null"
         :ask-closed="room.status === 'archived'"
         in-thread
+        :agent-handle="thread?.teammate ?? null"
         :members="members"
         :topic-list="topicList"
         @open-file="emit('open-file', $event)"

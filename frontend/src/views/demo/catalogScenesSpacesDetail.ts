@@ -8,9 +8,26 @@ import type { UserRefTarget } from '@/lib/userRef'
 import type { Task } from '@/types'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { announcement, memberRow, publishedTask, task, templateDraft } from './catalogScenesSpacesDetailFixtures'
+import { ANALYTICS_ALERTS } from './catalogScenesMisc2Fixtures'
+import {
+  ANALYTICS_PUBLISHER_OPTIONS,
+  analyticsOverview,
+  analyticsParticipants,
+  analyticsPublishers,
+  analyticsTask,
+  announcement,
+  memberRow,
+  publishedTask,
+  task,
+  templateDraft,
+} from './catalogScenesSpacesDetailFixtures'
 
+import AnalyticsExportButton from '@/views/spaces/detail/analytics/components/AnalyticsExportButton.vue'
 import AnalyticsPublisherSelect from '@/views/spaces/detail/analytics/components/AnalyticsPublisherSelect.vue'
+import OverviewView from '@/views/spaces/detail/analytics/OverviewView.vue'
+import ParticipantsView from '@/views/spaces/detail/analytics/ParticipantsView.vue'
+import PublishersView from '@/views/spaces/detail/analytics/PublishersView.vue'
+import AnalyticsTasksView from '@/views/spaces/detail/analytics/TasksView.vue'
 import AnnouncementsView from '@/views/spaces/detail/AnnouncementsView.vue'
 import MembersView from '@/views/spaces/detail/MembersView.vue'
 import TasksView from '@/views/spaces/detail/TasksView.vue'
@@ -54,9 +71,9 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '正在读取',
-        note: '候选正在获取时保留当前的全部选项。',
+        note: '候选正在获取时字段上多出一道加载条纹，当前选择不变。',
         props: { loading: true },
-        expectSelector: '[role="combobox"]',
+        expectSelector: '.v-field--loading',
       },
     ],
   },
@@ -226,6 +243,218 @@ export const SCENES_SPACES_DETAIL_ENTRIES: CatalogEntry[] = [
         note: '「我发布的」没读出来：错误替换掉这一格，不落进「暂无题目」—— 那会让失败看着像本来就还没发过。',
         props: { scope: 'publishing', publishedFailed: true, publishedError: '网络错误' },
         expect: '无法加载题目',
+      },
+    ],
+  },
+  {
+    id: 'analytics-export-button',
+    title: 'AnalyticsExportButton',
+    about:
+      '分析页每一格右上那颗「导出」：只画按钮、只报「点了导出」。拉 CSV 要带登录凭据，那是页面的事（`composables/useAnalyticsExport.ts`）。',
+    file: 'src/views/spaces/detail/analytics/components/AnalyticsExportButton.vue',
+    component: AnalyticsExportButton,
+    needs: UI,
+    args: { label: '导出题目清单', loading: false },
+    states: [
+      {
+        name: '默认',
+        note: '页面给什么字就写什么字，按一下报 `export`。',
+        props: {},
+        expect: '导出题目清单',
+      },
+      {
+        name: '正在导出',
+        note: '导出还没回来：按钮自己转起来。',
+        props: { loading: true },
+        expectSelector: '.v-btn__loader',
+      },
+    ],
+  },
+  {
+    id: 'overview-view',
+    title: 'OverviewView',
+    about:
+      '管理员看板「总览」那一格的画面：六个读数、按分类/审核/完成的分布、两条趋势，外加一组能点的待处理数。取数、跳转都在页面 `Overview.vue` 里，这里只吃数据、往上报动作。',
+    file: 'src/views/spaces/detail/analytics/OverviewView.vue',
+    component: OverviewView,
+    needs: UI,
+    args: {
+      loading: false,
+      failed: false,
+      errorDetail: null,
+      overview: analyticsOverview(),
+      alerts: ANALYTICS_ALERTS,
+      publishers: ANALYTICS_PUBLISHER_OPTIONS,
+      publishersLoading: false,
+      publisherId: null,
+      groupBy: 'week',
+    },
+    states: [
+      {
+        name: '一栏总览',
+        note: '读回来了：六个读数摆在最上，下面三张分布和两条趋势。',
+        props: {},
+        expect: '题目总数',
+      },
+      {
+        name: '正在读取',
+        note: '第一次还没读回来：一条进度条，不去画「暂无数据」。',
+        props: { loading: true, overview: null, alerts: null },
+        expectSelector: '.v-progress-linear',
+      },
+      {
+        name: '读失败',
+        note: '这一次没读到：换成错误那一块，服务端的原话摆出来 —— 不落进「暂无数据」。',
+        props: { failed: true, errorDetail: '统计接口 500', overview: null, alerts: null },
+        expect: '统计接口 500',
+      },
+      {
+        name: '一条数据都没有',
+        note: '读回来是空的：就地说一句「暂无总览数据」，不是一块空白。',
+        props: { overview: null, alerts: null },
+        expect: '暂无总览数据',
+      },
+    ],
+  },
+  {
+    id: 'participants-view',
+    title: 'ParticipantsView',
+    about:
+      '管理员看板「参与者」那一格的画面：几个读数、三条趋势、六张分布（审核、完成、实名、年级、专业、班级），右上那颗导出。取数与导出在页面 `Participants.vue` 里，这里只吃数据、往上报动作。',
+    file: 'src/views/spaces/detail/analytics/ParticipantsView.vue',
+    component: ParticipantsView,
+    needs: UI,
+    args: {
+      loading: false,
+      failed: false,
+      errorDetail: null,
+      participants: analyticsParticipants(),
+      publishers: ANALYTICS_PUBLISHER_OPTIONS,
+      publishersLoading: false,
+      exporting: false,
+      publisherId: null,
+      participationApproved: null,
+      completionStatus: null,
+      realName: 'all',
+      groupBy: 'week',
+    },
+    states: [
+      {
+        name: '一栏参与者数据',
+        note: '读回来了：读数、趋势和六张分布都摆出来。',
+        props: {},
+        expect: '报名主体数',
+      },
+      {
+        name: '正在读取',
+        note: '第一次还没读回来：一条进度条，不去画「暂无参与者数据」。',
+        props: { loading: true, participants: null },
+        expectSelector: '.v-progress-linear',
+      },
+      {
+        name: '读失败',
+        note: '这一次没读到：换成错误那一块，服务端的原话摆出来。',
+        props: { failed: true, errorDetail: '统计接口超时', participants: null },
+        expect: '统计接口超时',
+      },
+      {
+        name: '一条数据都没有',
+        note: '读回来是空的：就地说一句「暂无参与者数据」，不是一块空白。',
+        props: { participants: null },
+        expect: '暂无参与者数据',
+      },
+    ],
+  },
+  {
+    id: 'publishers-view',
+    title: 'PublishersView',
+    about:
+      '管理员看板「出题人」那一格的画面：三个榜首（发题最多、成功率最高、报名最多）加一张出题人明细表，右上那颗导出。取数与导出在页面 `Publishers.vue` 里，这里只吃数据、往上报动作。',
+    file: 'src/views/spaces/detail/analytics/PublishersView.vue',
+    component: PublishersView,
+    needs: UI,
+    args: {
+      loading: false,
+      failed: false,
+      errorDetail: null,
+      publishers: analyticsPublishers(),
+      exporting: false,
+      sortBy: 'taskCount',
+      sortOrder: 'desc',
+    },
+    states: [
+      {
+        name: '一栏出题人',
+        note: '读回来了：三张榜首在最上，下面是明细表，一行一个出题人。',
+        props: {},
+        expect: '李老师',
+      },
+      {
+        name: '正在读取',
+        note: '第一次还没读回来：表里先摆骨架行，不去画「暂无出题人」。',
+        props: { loading: true, publishers: [] },
+        expectSelector: '.agrid__bone',
+      },
+      {
+        name: '读失败',
+        note: '这一次没读到：换成错误那一块，服务端的原话摆出来。',
+        props: { failed: true, errorDetail: '统计接口超时', publishers: [] },
+        expect: '统计接口超时',
+      },
+      {
+        name: '一个出题人都没有',
+        note: '读回来是空的：表里写一句「暂无出题人」，不是一块空白。',
+        props: { publishers: [] },
+        expect: '暂无出题人',
+      },
+    ],
+  },
+  {
+    id: 'analytics-tasks-view',
+    title: 'TasksView',
+    about:
+      '管理员看板「题目」那一格的画面：一串筛选（出题人、排序、两个待办开关）加一张题目明细表，右上那颗导出。取数、导出、写回地址都在页面 `Tasks.vue` 里，这里只吃数据、往上报动作。',
+    file: 'src/views/spaces/detail/analytics/TasksView.vue',
+    component: AnalyticsTasksView,
+    needs: UI,
+    args: {
+      loading: false,
+      failed: false,
+      errorDetail: null,
+      tasks: [analyticsTask(), analyticsTask({ taskId: 102, taskName: '排课系统', pendingReviewCount: 0 })],
+      publishers: ANALYTICS_PUBLISHER_OPTIONS,
+      publishersLoading: false,
+      exporting: false,
+      publisherId: null,
+      sortBy: 'createdAt',
+      sortOrder: 'desc',
+      hasPendingApproval: false,
+      hasPendingReview: false,
+    },
+    states: [
+      {
+        name: '一栏题目',
+        note: '读回来了：筛选条在最上，下面一行一个题目，带审核状态和几个计数。',
+        props: {},
+        expect: '最短路径',
+      },
+      {
+        name: '翻上「只看待审核提交」',
+        note: '那颗开关是按下的：勾上，页面会把筛选写回地址再取一次。',
+        props: { hasPendingReview: true },
+        expectSelector: '.mdi-checkbox-marked',
+      },
+      {
+        name: '读失败',
+        note: '这一次没读到：换成错误那一块，服务端的原话摆出来。',
+        props: { failed: true, errorDetail: '统计接口超时', tasks: [] },
+        expect: '统计接口超时',
+      },
+      {
+        name: '一道题都没有',
+        note: '读回来是空的：表里写一句「暂无题目」，不是一块空白。',
+        props: { tasks: [] },
+        expect: '暂无题目',
       },
     ],
   },

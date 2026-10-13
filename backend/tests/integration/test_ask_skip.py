@@ -13,8 +13,15 @@ everyone is never settled by skips. Taking a skip back (`DELETE
 /blocks/{id}/answer`, the same undo an answer has) puts it back on that
 person's list.
 
+Answering by one of its options (or 「其他」, a reply to it in one's own words)
+is held to the same rule as typing an answer and skipping: only the people it
+names, anyone in the channel when it asks everyone, anyone when it names nobody
+in particular. Anyone else's reply to it is an ordinary message, not its answer.
+
 Real HTTP, PostgreSQL and the room's runner; the session is the scripted stub.
 """
+
+import uuid
 
 from tests.ask_fixtures import active_ask, wait_turn_idle
 from tests.conftest import seed_user, wait_work_idle
@@ -44,10 +51,18 @@ def _room(client) -> tuple[str, str, str]:
     return data["id"], in_thread(client, data["root_topic_id"], "alice"), token
 
 
-def _ask(client, stub_hooks, monkeypatch, room, *, to=None) -> dict:
-    """The agent asks inside the turn alice's message started; the turn ends."""
+def _ask(client, stub_hooks, monkeypatch, room, *, to=None, platform_turn=False):
+    """The agent asks inside the turn alice's message started (or, with
+    ``platform_turn``, one the platform started); the turn ends."""
     body = QUESTION if to is None else {**QUESTION, "to": to}
-    with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
+    with active_ask(
+        client,
+        stub_hooks,
+        monkeypatch,
+        room,
+        actor="alice",
+        platform_turn=platform_turn,
+    ) as headers:
         response = client.post(f"/topics/{room}/asks", json=body, headers=headers)
         assert response.status_code == 200, response.text
     wait_turn_idle(client, room)
@@ -341,7 +356,6 @@ def test_a_question_naming_one_person_the_old_way_is_answered_by_his_words(
     """A backend from before the addressee list, still running past the
     migration in a blue/green deploy, writes ``asked`` as a bare handle."""
     import asyncio
-    import uuid
 
     from sqlalchemy import update
 
@@ -370,3 +384,98 @@ def test_a_question_naming_one_person_the_old_way_is_answered_by_his_words(
     wait_turn_idle(client, room)
 
     assert _waiting_questions(client, "alice") == []
+
+
+def _click(client, room, question_id, handle, text="按部门"):
+    """``handle`` clicks an option: a message replying to the question, sent
+    the way the browser sends it."""
+    response = client.post(
+        f"/topics/{room}/messages",
+        json={
+            "request_id": str(uuid.uuid4()),
+            "content": text,
+            "reply_to": question_id,
+        },
+        headers=session_auth_headers(handle),
+    )
+    wait_turn_idle(client, room)
+    return response
+
+
+def _answer_log(client, room, question_id) -> list[tuple[str, str]]:
+    shown = next(b for b in _blocks(client, room) if b["id"] == question_id)
+    return [(e["kind"], e["by"]) for e in shown["meta"]["answer_log"]]
+
+
+def test_a_person_the_question_names_answers_it_by_an_option(
+    client, stub_hooks, monkeypatch
+):
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice", "bob"])
+
+    response = _click(client, room, question["id"], "bob")
+
+    assert response.status_code == 200, response.text
+    assert _answer_log(client, room, question["id"]) == [("option", "bob")]
+
+
+def test_a_reply_from_someone_the_question_does_not_name_is_talk_not_its_answer(
+    client, stub_hooks, monkeypatch
+):
+    """A teammate quoting the question to say which option he would pick is
+    posted like any other message; it just is not the answer."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["alice"])
+    prompts = _prompts(stub_hooks, monkeypatch)
+
+    reply = _click(client, room, question["id"], "bob", "我会选按部门")
+
+    assert reply.status_code == 200, reply.text
+    said = next(
+        b for b in _blocks(client, room) if b["id"] == reply.json()["data"]["id"]
+    )
+    assert said["content"] == "我会选按部门"
+    assert said["reply_to"] == question["id"]
+    # Not its answer: nothing on the question, it still waits on alice.
+    assert _answer_log(client, room, question["id"]) == []
+    assert _waiting_questions(client, "alice") == [question["id"]]
+    # The agent that asked is not handed it as an answer.
+    assert prompts == []
+    # Alice, whom it asks, still answers it.
+    assert _click(client, room, question["id"], "alice").status_code == 200
+    assert _answer_log(client, room, question["id"]) == [("option", "alice")]
+    assert _waiting_questions(client, "alice") == []
+
+
+def test_a_question_that_names_nobody_is_answered_by_an_option_from_anyone(
+    client, stub_hooks, monkeypatch
+):
+    """Asked in a turn the platform started, it names nobody in particular:
+    anyone may answer it by an option, as before addressees existed."""
+    _, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, platform_turn=True)
+    assert question["meta"]["asked"] == []
+
+    response = _click(client, room, question["id"], "bob")
+
+    assert response.status_code == 200, response.text
+    assert _answer_log(client, room, question["id"]) == [("option", "bob")]
+
+
+def test_a_question_asked_of_everyone_is_open_to_whoever_is_in_the_channel(
+    client, stub_hooks, monkeypatch
+):
+    """Including someone who joined after it was asked: it asks the channel,
+    not the list of who was there at that moment."""
+    pid, room = _with_bob(client)
+    question = _ask(client, stub_hooks, monkeypatch, room, to=["all"])
+    seed_user(client, "carol")
+    join_project_team(client, pid, "carol")
+    assert "carol" not in question["meta"]["asked"]
+
+    assert _skip(client, question["id"], by="carol").status_code == 200
+    assert _undo(client, question["id"], by="carol").status_code == 200
+    response = _click(client, room, question["id"], "carol")
+
+    assert response.status_code == 200, response.text
+    assert _answer_log(client, room, question["id"]) == [("option", "carol")]

@@ -66,6 +66,7 @@
   "ownAgentOwnerOnly": "这是{owner}的 Claude Code，只有{owner}能叫它",
   "ownAgentsClosed": "这个项目不允许使用成员自己的 Claude Code",
   "ownAgentKindNotAllowed": "{owner}的 Claude Code 使用的是{kinds}，这个项目不允许这类连接。换用项目允许的连接，或由项目管理员调整后再叫它",
+  "ownAgentHostNotAllowed": "{owner}的 Claude Code 使用的模型服务在 {host}，这个项目不允许这家服务商。换用项目允许的连接，或由项目管理员调整后再叫它",
   "ownAgentKindSubscription": "Claude 订阅",
   "ownAgentKindApiKey": "Anthropic API key",
   "ownAgentKindModelService": "自定义模型服务",

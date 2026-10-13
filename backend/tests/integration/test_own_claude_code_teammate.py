@@ -397,6 +397,103 @@ def test_it_carries_its_owners_current_name(client):
     assert own["name"] == "小艾的 Claude Code（Pro）"
 
 
+def _name_connection(client, device_id, name, as_whom="alice"):
+    return client.patch(
+        f"/connector/my/devices/{device_id}/claude-code",
+        json={"name": name},
+        headers=session_auth_headers(as_whom),
+    )
+
+
+def _machine_reports(client, device_id, **login):
+    """The machine says what its login is, as it does when it connects and
+    before a session starts there."""
+
+    async def report():
+        async with client.test_factory() as db:
+            await owner_login.remember(
+                db,
+                device_id,
+                owner_login.ClaudeLogin(installed=True, logged_in=True, **login),
+            )
+            await db.commit()
+
+    asyncio.run(report())
+
+
+def test_its_owner_names_a_machines_connection_and_it_carries_that_name(client):
+    project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+
+    named = _name_connection(client, laptop, "实验室的 Max")
+
+    assert named.status_code == 200, named.text
+    assert named.json()["name"] == "实验室的 Max"
+    own = _own_row(_members(client, project_id, "bob"), "alice")
+    assert own["name"] == "alice的 Claude Code（实验室的 Max）"
+
+    # The machine reports its login again, on another plan: the name stays.
+    _machine_reports(client, laptop, auth_method="claude.ai", subscription_type="pro")
+
+    own = _own_row(_members(client, project_id, "bob"), "alice")
+    assert own["name"] == "alice的 Claude Code（实验室的 Max）"
+    connections = client.get(
+        "/connector/my/model-connections", headers=session_auth_headers("alice")
+    ).json()["connections"]
+    assert [c["name"] for c in connections] == ["实验室的 Max"]
+
+
+def test_a_connection_whose_name_is_taken_away_is_named_after_its_plan_again(client):
+    project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+    assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
+
+    cleared = _name_connection(client, laptop, "")
+
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["name"] is None
+    own = _own_row(_members(client, project_id, "alice"), "alice")
+    assert own["name"] == "alice的 Claude Code（Max）"
+
+
+def test_a_removed_connection_takes_its_name_with_it(client):
+    _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _name_connection(client, laptop, "实验室的 Max").status_code == 200
+
+    removed = client.delete(
+        f"/connector/my/devices/{laptop}/claude-code",
+        headers=session_auth_headers("alice"),
+    )
+
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["name"] is None
+    # Nothing is left to name until the machine logs in again.
+    assert _name_connection(client, laptop, "又一个").status_code == 404
+
+
+def test_only_its_owner_names_a_machines_connection(client):
+    project_id, _room = _project_with_bob(client)
+    laptop = _log_in_claude_code(
+        client, "alice", auth_method="claude.ai", subscription_type="max"
+    )
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+
+    refused = _name_connection(client, laptop, "bob 起的名字", as_whom="bob")
+
+    assert refused.status_code == 404, refused.text
+    own = _own_row(_members(client, project_id, "alice"), "alice")
+    assert own["name"] == "alice的 Claude Code（Max）"
+
+
 def _open_to_project(client, project_id, seat, as_whom="alice"):
     return client.put(
         f"/projects/{project_id}/own-agents/{seat}/callers",

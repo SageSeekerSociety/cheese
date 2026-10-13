@@ -244,6 +244,115 @@ def test_everyone_sees_its_kind_and_only_its_owner_sees_its_machines(client):
             "plan": "max",
             "model": None,
             "on_account": False,
+            "allowed": True,
         }
     assert "bobs-secret-laptop" not in str(_settings(client, project_id, "alice"))
     assert seen_by_bob["machine"]["name"] == "bobs-secret-laptop"
+
+
+KIMI = {
+    "auth_method": "model_service",
+    "model": "kimi-k2",
+    "service_host": "api.moonshot.cn",
+}
+
+
+def test_a_model_service_at_a_host_the_project_does_not_list_is_not_added(client):
+    project_id, _room = _project(client)
+    kimi = _log_in(client, "alice", "alice-desk", **KIMI)
+    laptop = _log_in(client, "alice", "alice-laptop", **SUBSCRIPTION)
+    _rules(client, project_id, allowed=True, service_hosts=["api.deepseek.com"])
+
+    offered = {
+        c["id"]: c["allowed"]
+        for c in _settings(client, project_id, "alice")["my_connections"]
+    }
+    refused = _add(client, project_id, "alice", kimi)
+
+    assert offered == {kimi: False, laptop: True}
+    assert refused.status_code == 403, refused.text
+    assert "api.moonshot.cn" in refused.text
+    # The list names model services; it leaves a subscription alone.
+    assert _add(client, project_id, "alice", laptop).status_code == 200
+
+
+def test_a_model_service_at_a_listed_host_is_added(client):
+    project_id, _room = _project(client)
+    kimi = _log_in(client, "alice", "alice-desk", **KIMI)
+    _rules(
+        client,
+        project_id,
+        allowed=True,
+        service_hosts=["api.deepseek.com", "api.moonshot.cn"],
+    )
+
+    assert _add(client, project_id, "alice", kimi).status_code == 200
+
+
+def test_an_agent_on_a_service_no_longer_listed_is_not_called_and_the_room_names_it(
+    client,
+):
+    project_id, room_id = _project(client)
+    kimi = _log_in(client, "alice", "alice-desk", **KIMI)
+    _rules(client, project_id, allowed=True)
+    assert _add(client, project_id, "alice", kimi).status_code == 200
+    _rules(client, project_id, service_hosts=["api.deepseek.com"])
+    seat = _own_row(client, project_id, "alice", "alice")["handle"]
+
+    called = post_message(client, room_id, "alice", {"content": f"<@{seat}> 看一下"})
+
+    assert (called["meta"] or {})["agent_recipient"]["mentioned"] is False
+    blocks = client.get(
+        f"/topics/{room_id}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    told = [
+        b
+        for b in blocks
+        if b["kind"] == "event" and "api.moonshot.cn" in (b["content"] or "")
+    ]
+    assert told, "the room names the model service the project does not allow"
+    # Its row in the settings says the project refuses it, without its host.
+    (row,) = _settings(client, project_id, "bob")["agents"]
+    assert row["connection"]["allowed"] is False
+    assert "api.moonshot.cn" not in str(row)
+
+
+def test_a_manager_lists_hosts_and_only_hosts(client):
+    project_id, _room = _project(client)
+
+    listed = _rules(
+        client, project_id, service_hosts=[" API.Moonshot.cn ", "api.moonshot.cn"]
+    )
+    assert listed["service_hosts"] == ["api.moonshot.cn"]
+
+    for not_a_host in (
+        "https://api.moonshot.cn/anthropic",
+        "api.moonshot.cn:443",
+        "api moonshot.cn",
+        "localhost",
+    ):
+        r = client.put(
+            f"/projects/{project_id}/own-agents",
+            json={"service_hosts": [not_a_host]},
+            headers=session_auth_headers("alice"),
+        )
+        assert r.status_code == 400, (not_a_host, r.text)
+    assert _settings(client, project_id, "alice")["service_hosts"] == [
+        "api.moonshot.cn"
+    ]
+
+    # Empty lifts the restriction.
+    assert _rules(client, project_id, service_hosts=[])["service_hosts"] == []
+
+
+def test_only_a_manager_lists_hosts(client):
+    project_id, _room = _project(client)
+
+    r = client.put(
+        f"/projects/{project_id}/own-agents",
+        json={"service_hosts": ["api.moonshot.cn"]},
+        headers=session_auth_headers("bob"),
+    )
+
+    assert r.status_code == 403, r.text
+    assert _settings(client, project_id, "bob")["service_hosts"] == []
