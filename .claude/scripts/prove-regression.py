@@ -353,6 +353,20 @@ def _alive(pid: int) -> bool:
     return True
 
 
+def _pid_like(field: str) -> bool:
+    """Whether a name field is a process number this machine could have handed out.
+
+    Not `str.isdigit`, which is True for characters `int` refuses ('²' among
+    them), and not any all-digit run either: a field too large for `os.kill`
+    raises OverflowError out of it. Either would come out of the reclaim rule,
+    and a reclaim rule that raises ends the run on a traceback at exit 1 — the
+    code for NOT PROVEN — when nothing has been judged. A name in the shared
+    temp directory that merely looks like this tool's is not this tool's, so the
+    answer to a field like that is to leave it alone.
+    """
+    return field.isascii() and field.isdigit() and int(field) < 2**31
+
+
 def reclaim_stale(root: Path) -> None:
     """Clear worktrees and reports earlier runs left behind.
 
@@ -370,6 +384,12 @@ def reclaim_stale(root: Path) -> None:
     number belongs to some unrelated process, liveness reads the leftover as
     live and holds it. Nothing here lasts a day, so anything older than
     STALE_AFTER is taken as dead whatever its number says.
+
+    This runs before the halves do, on every run, so it is total by
+    construction: it reads the shared temp directory and a registration list
+    that other people's processes write to, and anything it cannot make sense of
+    is left where it is. A refusal here would be exit 1 — NOT PROVEN — from a
+    run that judged nothing.
     """
     git("worktree", "prune", cwd=root)
     now = time.time()
@@ -378,11 +398,17 @@ def reclaim_stale(root: Path) -> None:
         if not path.name.startswith(WORKTREE_PREFIX):
             continue
         pid = path.name.rsplit("-", 1)[-1]
-        if pid.isdigit() and _alive(int(pid)) and not _older_than(path, now):
+        if _pid_like(pid) and _alive(int(pid)) and not _older_than(path, now):
             continue
         remove_worktree(root, path)
     for leftover in _stale_reports(now):
-        leftover.unlink(missing_ok=True)
+        try:
+            leftover.unlink(missing_ok=True)
+        except OSError:
+            # Someone else's file in a sticky /tmp, or a directory that
+            # appeared where a report was. Not ours to remove, and not a
+            # reason to fail.
+            continue
 
 
 def _stale_reports(now: float) -> list[Path]:
@@ -394,14 +420,32 @@ def _stale_reports(now: float) -> list[Path]:
     under the worktree prefix, so the rule that decides a worktree is the same
     one that decides a report: a concurrent run's is fresh and its owner is
     alive; everything else is litter.
+
+    Anything the rule cannot read as one of this tool's reports is left where it
+    is — a name that is not the shape, a field that is not a pid, a temp
+    directory that has gone. This runs on every run, before either half, and a
+    raise here would be exit 1, the code for NOT PROVEN, out of a run that
+    judged nothing; the temp directory belongs to every process on the machine,
+    so a name it cannot read is the ordinary case, not the exceptional one.
     """
     stale: list[Path] = []
-    for entry in Path(tempfile.gettempdir()).iterdir():
+    try:
+        entries = list(Path(tempfile.gettempdir()).iterdir())
+    except OSError:
+        # The shared temp directory is gone from under us, or is not readable.
+        # Nothing to collect, and the sweep is not the place to say so.
+        return stale
+    for entry in entries:
         name = entry.name
         if not name.startswith(WORKTREE_PREFIX) or not name.endswith(".json"):
             continue
         parts = name[len(WORKTREE_PREFIX) : -len(".json")].split("-")
-        if len(parts) != 3 or not parts[1].isdigit() or not entry.is_file():
+        if len(parts) != 3 or not _pid_like(parts[1]):
+            continue
+        try:
+            if not entry.is_file():
+                continue
+        except OSError:
             continue
         pid = int(parts[1])
         # The rule the worktree loop uses, and the reason it is the same rule:
@@ -801,6 +845,10 @@ def self_test() -> int:
             "no test collected": '{"numTotalTests": 0, "numFailedTestSuites": 1}',
             "not an object": "[1, 2]",
             "no count at all": '{"success": false}',
+            # A count that is not a whole number is not a count of tests, and
+            # reading it as one is how a report the runner wrote for another
+            # reason gets counted as the test having run.
+            "a count that is not a whole number": '{"numTotalTests": 1.0}',
             "not json": "Tests  no tests\n",
         }
         for label, body in shapes.items():
@@ -1071,10 +1119,15 @@ def self_test() -> int:
         )
         # Checked before any later run gets the chance to reclaim it, so this is
         # the failing path itself leaving the worktree behind and not a cleanup
-        # that happened to run first.
+        # that happened to run first. The message is part of what is asserted:
+        # the guard below refuses an unreadable source with the same exit code,
+        # so without it this case passes with the not-a-file refusal deleted —
+        # which is what happened when the readability check was added above it.
+        refused = prove(without, runs, copy="nope.py")
         tally.case(
-            "end to end: a --copy path that is not a file is not judged",
-            prove(without, runs, copy="nope.py").returncode == 2
+            "end to end: a --copy path that is not a file is not judged, and says which",
+            refused.returncode == 2
+            and "is not a file" in refused.stderr
             and _extra_worktrees(repo) == [],
         )
         # The third kind of --copy source that cannot set the comparison up, and
@@ -1100,6 +1153,44 @@ def self_test() -> int:
                 and "is not readable" in unreadable.stderr
                 and "NOT PROVEN" not in unreadable.stdout
             ),
+        )
+        # The guards above refuse what can be seen coming. This is the copy
+        # failing for a reason no test can answer — a race, an ACL, a filesystem
+        # that will not take the write — which is why the copy is wrapped at all:
+        # an OSError out of it is the uncaught error that ends the run at exit 1,
+        # the code for NOT PROVEN. No source the fixture can build passes both
+        # guards and then fails to copy, so the failure is forced instead.
+        copy_tree = Path(scratch) / "copy-fails"
+        remove_worktree(repo, copy_tree)
+        shutil.rmtree(copy_tree, ignore_errors=True)
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(copy_tree), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        real_copy2 = shutil.copy2
+
+        def refuse_copy(*_args: object, **_kwargs: object) -> None:
+            raise OSError("forced")
+
+        shutil.copy2 = refuse_copy
+        try:
+            with _Captured() as said:
+                try:
+                    without_fix(repo, without, copy_tree, ["test_app.py"], False)
+                    code = 0
+                except SystemExit as exc:
+                    code = exc.code
+                except OSError:
+                    code = -1
+        finally:
+            shutil.copy2 = real_copy2
+            remove_worktree(repo, copy_tree)
+        tally.case(
+            "a copy that fails for any other reason is refused, not raised",
+            code == 2 and "could not be copied" in said.err.getvalue(),
         )
         # Refusing is only half the fix; the caller has to be told what to pass
         # instead, or the next thing they try is the same guess this avoids.
@@ -1560,6 +1651,38 @@ def self_test() -> int:
             other.kill()
             other.wait()
 
+        # The loop reads its pid out of the name too, and the same field can be
+        # one `int` or `os.kill` will not take — `'²'.isdigit()` is true, and an
+        # all-digit field can be past what `os.kill` accepts. A registration like
+        # that is this tool's own litter whatever its pid says, so it is removed,
+        # and either way the sweep must not raise: a raise here is exit 1, NOT
+        # PROVEN, out of a run that judged nothing.
+        odd = []
+        for suffix in ("²", "99999999999"):
+            path = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}odd-{suffix}"
+            git("worktree", "remove", "--force", str(path), cwd=repo)
+            shutil.rmtree(path, ignore_errors=True)
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "--detach", str(path), "HEAD"],
+                cwd=str(repo),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+            odd.append(path)
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        for path in odd:
+            remove_worktree(repo, path)
+        tally.case(
+            "a worktree whose name is not a pid is reclaimed, not raised on",
+            swept,
+        )
+
         # The number the reclaim rule turns on. An hour would take a worktree
         # out from under a run that is still using it, so the boundary is where
         # the value shows; only the age can settle a recycled pid, which is what
@@ -1614,6 +1737,126 @@ def self_test() -> int:
         )
         mine.unlink(missing_ok=True)
 
+        # The sweep reads the shared temp directory, which is every process's on
+        # the machine, so a name that only looks like this tool's has to be left
+        # where it is rather than read as a pid: `'²'.isdigit()` is true and
+        # `int` refuses it, and an all-digit field can be past what `os.kill`
+        # takes. Either one raises out of the sweep, and a raise here is exit 1
+        # — the code for NOT PROVEN — out of a run that judged nothing.
+        odd = []
+        for name in (
+            f"{WORKTREE_PREFIX}before-99999999999-aaaa.json",
+            f"{WORKTREE_PREFIX}before-²-x.json",
+        ):
+            path = Path(tempfile.gettempdir()) / name
+            path.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            odd.append(path)
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            left = [path.exists() for path in odd]
+            for path in odd:
+                path.unlink(missing_ok=True)
+        tally.case(
+            "a name that is not this tool's report does not stop the sweep",
+            swept and all(left),
+        )
+
+        # Looking at an entry can fail on its own — the file removed between the
+        # listing and the look, a mount that stops answering. The sweep is not
+        # the place to say so, and an entry it could not read is not one it has
+        # read as litter.
+        unreadable = Path(tempfile.gettempdir()) / f"{WORKTREE_PREFIX}before-7-aaaa.json"
+        unreadable.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        real_is_file = Path.is_file
+
+        def refuse_is_file(self: Path, *args: object, **kwargs: object) -> bool:
+            if self.name == unreadable.name:
+                raise OSError("forced")
+            return real_is_file(self, *args, **kwargs)
+
+        Path.is_file = refuse_is_file  # type: ignore[method-assign]
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            Path.is_file = real_is_file  # type: ignore[method-assign]
+            kept = unreadable.exists()
+            unreadable.unlink(missing_ok=True)
+        tally.case(
+            "an entry the sweep cannot look at is left where it is, not raised on",
+            swept and kept,
+        )
+
+        # And the removal itself can be refused — a sticky /tmp where the file
+        # belongs to someone else, a directory that appeared where a report was.
+        # Left where it is, and the sweep goes on: a raise here is exit 1, NOT
+        # PROVEN, out of a run that judged nothing.
+        stuck = report_path("after")
+        stuck.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        when = time.time() - STALE_AFTER - 60
+        os.utime(stuck, (when, when))
+        real_unlink = Path.unlink
+
+        def refuse_unlink(self: Path, *args: object, **kwargs: object) -> None:
+            if self.name == stuck.name:
+                raise OSError("forced")
+            return real_unlink(self, *args, **kwargs)
+
+        Path.unlink = refuse_unlink  # type: ignore[method-assign]
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            Path.unlink = real_unlink  # type: ignore[method-assign]
+            kept = stuck.exists()
+            stuck.unlink(missing_ok=True)
+        tally.case(
+            "a report that cannot be removed is left where it is, not raised on",
+            swept and kept,
+        )
+
+        # And the temp directory itself can be swept out from under a run — a
+        # container's /tmp, a cleaner, a machine that is being torn down. There
+        # is nothing to collect then, which is not a reason to fail.
+        was = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "no-such-temp-directory")
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            tempfile.tempdir = was
+        tally.case("a temp directory that is gone does not stop the sweep", swept)
+
+        # The sweep reclaims a name shape, and `report_path` is the only writer
+        # of that shape: a case that writes the leaked name by hand leaves the
+        # two free to drift apart, so the sweep would go on collecting nothing
+        # with every case still green. Aged past the limit, because the pid in
+        # the name is this run's and only the age takes it.
+        aged_report = report_path("after")
+        aged_report.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        when = time.time() - STALE_AFTER - 60
+        os.utime(aged_report, (when, when))
+        with _Muffle():
+            reclaim_stale(repo)
+        tally.case(
+            "a report report_path wrote is reclaimed once it ages out",
+            not aged_report.exists(),
+        )
+
         # A registration whose directory was cleared away — the same reboot out
         # of /tmp — makes the next `worktree add` fail with "missing but already
         # registered", so the add is preceded by a remove. The checkout has to
@@ -1643,6 +1886,39 @@ def self_test() -> int:
             ok,
         )
         remove_worktree(repo, stranded)
+
+        # The relink is what makes the two halves run under the same interpreter
+        # and the same packages, and it is a call inside `without_fix`. The
+        # fixture installs nothing, so without a case of its own the call can be
+        # dropped while every other case still passes, leaving each half to find
+        # its own — which is the state the tool exists to rule out.
+        deps = repo / "backend" / ".venv"
+        deps.mkdir(parents=True, exist_ok=True)
+        (deps / "marker").write_text("x", encoding="utf-8")
+        link_tree = Path(scratch) / "relink-tree"
+        remove_worktree(repo, link_tree)
+        shutil.rmtree(link_tree, ignore_errors=True)
+        try:
+            subprocess.run(
+                ["git", "worktree", "add", "-q", "--detach", str(link_tree), "HEAD"],
+                cwd=str(repo),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+            with _Muffle():
+                try:
+                    without_fix(repo, without, link_tree, ["test_app.py"], False)
+                    linked_in = (link_tree / "backend" / ".venv" / "marker").is_file()
+                except SystemExit:
+                    linked_in = False
+        finally:
+            remove_worktree(repo, link_tree)
+            shutil.rmtree(deps, ignore_errors=True)
+        tally.case(
+            "the without-the-fix checkout gets the repository's dependency directories",
+            linked_in,
+        )
 
         def relative_of(node: str) -> str | None:
             """`locate`'s answer, or None where it refuses — a case about which
