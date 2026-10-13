@@ -274,12 +274,24 @@ _LABEL = re.compile(
 #: A label line whose name is too long for `_LABEL` to read: `Verification at final SHA
 #: 47c36ab320e84053186d5d9e6acdfcfab7d0ee87:` is 66 characters, so the line was not a
 #: label, the verification half came out empty, and the board said that body never wrote
-#: it. Raising `_LABEL`'s 40 reads the wrapped sentences of #3618 again, so the long name
-#: gets a pattern of its own and two further conditions: the line is nothing but the name
-#: and its colon, and the name says which half it is near its start (§ `_name_head`). A
-#: sentence that ends a line on a colon and only mentions the word half a line in — `The
-#: dev deploy of 452e49f (run 38037133758) failed at "Release the verified metering
-#: image":` — opens on neither half's name and stays out.
+#: it. Raising `_LABEL`'s 40 instead reads #3379's opening sentence as a label: its name,
+#: `Follow-up to #3378, which did not fix the case it was written for. Checked on dev at
+#: 5cccef562`, is 94 characters, and it names a half (`Checked`) — the one way past every
+#: check `_is_label` has. The board then took the sentence for the verification half,
+#: emptied the change half and handed over the paragraph under it. So the long name gets a
+#: pattern of its own and two further conditions: the line is nothing but the name and its
+#: colon, and the name says which half it is near its start (§ `_name_head`). A sentence
+#: that ends a line on a colon and only mentions the word half a line in — `The dev deploy
+#: of 452e49f (run 38037133758) failed at "Release the verified metering image":` — opens on
+#: neither half's name and stays out.
+#:
+#: #3618's wrapped sentence is held back by a different rule, and not the 40: its name
+#: (`Independent review at 2c3fb34a`) is 30 characters, inside the 40 already, so raising
+#: the 40 never had anything to do with it — measured, at 120 over the 1000 bodies that
+#: body reads exactly as it does now, while #3379's change half goes 816 → 0 characters. It
+#: names no half, and `_NAME_SHORT` below turns it down on the name's length. A name of 41
+#: characters or more has room to say which half it is, which is what the two conditions
+#: above read for instead.
 _LABEL_HEADER = re.compile(
     r"^(?![ \t])(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!#)(?!\w{2,12}://)"
     r"(?:\*\*)?([^\n：:*`，。/]{41,120}?)(?:\*\*)?[ \t]*[：:](?!//)[ \t]*$", re.M)
@@ -320,8 +332,10 @@ _JOB_IN_URL = re.compile(r"/actions/runs/\d+/job/(\d+)")
 _CASES_MAX = 6
 #: 标签行的名字要么点名这一节（`Verified on this machine:`、`Checks. Locally:`），要么短到
 #: 只能是个名字（`验证：`、`Tests:`）。只看长短不够：一句话折行、那行又正好起一段时
-#: （`Independent review at 2c3fb34a: three candidates raised…`）40 个字符也装得下，
-#: 而 `Verified on this machine:` 有 25 个字符 —— 后者点名了这一节，前者没有。
+#: （`Independent review at 2c3fb34a: three candidates raised…`）名字有 30 个字符，也在
+#: `_LABEL` 的 40 以内 —— 它点名不了这一节，于是落到这里：30 > 20，挡住它的是这一条，
+#: 下面那条 `_LABEL_LINE_MAX`（整行 80 > 60）排在它后面；而 `Verified on this machine:`
+#: 有 25 个字符 —— 后者点名了这一节，这两条都管不着它。
 _NAME_SHORT = 20
 #: 名字长过 `_LABEL` 那条路（§ `_LABEL_HEADER`，41–120 个字符）时，还要看名字开头的几个词：
 #: `Verification at final SHA 47c36ab3…`、`Behaviour, checked in a prototype …` 一上来就说了
@@ -454,11 +468,13 @@ def _under_heading(text, heads, want, also=()):
     i = min(hits, key=lambda t: (_negates(heads[t[0]]), t[1],
                                  len(heads[t[0]].group(2)), heads[t[0]].start()))[0]
     begin = heads[i].end()
-    # `also` 只在它前面真的还有本节内容时才切：紧贴标题的一行是本节自己的第一行，
-    # 不是「本节到此为止」。
+    # 紧贴标题的一行是本节自己的第一行，不是「本节到此为止」—— 只在它不点名另一半时
+    # 才算本节内容：`## 改动` 底下的 `验证：ok` 一上来就点名（§ `_leads_with_a_half`），
+    # 它切；`## 改动` 底下的 `只改测试：…` 是本节自己的正文，`测试` 在名字中段（#2735）。
     stops = [h.start() for h in heads[i + 1:]] \
         + [m.start() for m in also
-           if m.start() > begin and text[begin:m.start()].strip()]
+           if m.start() > begin
+           and (text[begin:m.start()].strip() or _leads_with_a_half(m.group(1)))]
     end = min(stops) if stops else len(text)
     return text[begin:end].strip()
 
@@ -491,12 +507,7 @@ def _line_at(text, m):
 
 def _label_name(m):
     """A label line's name, without the one bracketed aside it may carry after it."""
-    name = m.group(1)
-    for op in "（(":
-        i = name.find(op)
-        if i > 0:
-            name = name[:i]
-    return name.strip()
+    return _label_name_ish(m.group(1))
 
 
 def _names_a_section(name):
@@ -504,9 +515,39 @@ def _names_a_section(name):
     return _mentions(name.lower(), _SECTION_NAME_WORDS)
 
 
+def _label_name_ish(name):
+    """A label line's name without its bracketed aside, from the name text alone
+    (§ `_label_name`, which takes the match)."""
+    for op in "（(":
+        i = name.find(op)
+        if i > 0:
+            name = name[:i]
+    return name.strip()
+
+
 def _name_head(name):
     """A name's first few words, lowercased: what a long name leads with (§ `_NAME_HEAD_WORDS`)."""
     return " ".join(name.split()[:_NAME_HEAD_WORDS]).lower()
+
+
+def _leads_with_a_half(name):
+    """Whether `name` names one of the halves near its start.
+
+    A label line tight against a heading is still a label when it says which half it is
+    first: `验证：ok`, `Verification: ran tests` and `Local checks: …` are the other half
+    starting, not the heading's own first line. `只改测试：…` is not — `测试` sits inside a
+    longer name — and is that heading's own first line (#2735). Written in another script
+    the word has to be the name's own first characters, because it has no letters to bound
+    it; a Latin word is read within the name's first few (§ `_NAME_HEAD_WORDS`)."""
+    low = _label_name_ish(name).lower()
+    head = _name_head(low)
+    for w in _SECTION_NAME_WORDS:
+        if not w.isascii():
+            if low.startswith(w):
+                return True
+        elif re.search(r"\b%s" % re.escape(w), head):
+            return True
+    return False
 
 
 def _opens_with_a_section_word(name):
@@ -1059,6 +1100,26 @@ _SELF_TEST_BODIES = (
     ("中文的 做了什么 也是改动那一节",
      "## 背景\n\n以前会慢。\n\n## 做了什么\n\n- 把 A 换成 B\n\n## 验证\n\n绿了\n",
      "- 把 A 换成 B", "绿了"),
+    ("验证标签紧贴改动标题时，改动不读这条标签",
+     "## 改动\n验证：ok\n",
+     "", "ok"),
+    ("验证节里一句半行的闲话不切走这一节（#3616）",
+     "改动：把 A 换成 B。\n\n验证：绿了。\n\nReview at 2c3fb34a: two findings kept, "
+     "neither of them blocking a merge.\n",
+     "改动：把 A 换成 B。",
+     "绿了。\n\nReview at 2c3fb34a: two findings kept, neither of them blocking a merge."),
+    ("名字长过二十、又不点名某一半的一句话不算标签行（#3618）",
+     "改动：把 A 换成 B。\n\n验证：绿了。\n\nFollow-up review at 2c3fb34a: two kept.\n",
+     "改动：把 A 换成 B。", "绿了。\n\nFollow-up review at 2c3fb34a: two kept."),
+    ("AGENT 标记之前的内容不算正文",
+     "先记一句给自己看的话。\n\nAGENT:\n\n改动：A。\n\n验证：绿了\n",
+     "改动：A。", "绿了"),
+    ("一个标题同时点名两半时，验证另有它自己那一节",
+     "## 改动和验证\n\n先改 A。\n\n## 验证\n\n绿了\n",
+     "先改 A。", "绿了"),
+    ("一个标题同时点名两半、又只有它一个时，两半读到同一段",
+     "## 改动和验证\n\n跑了测试\n",
+     "跑了测试", "跑了测试"),
 )
 _SELF_TEST_ROLLUPS = (
     ("FAILURE 的 CheckRun 算红", {"contexts": {"nodes": [
