@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""The orchestrator's patrol sweep: list what needs a decision across a channel's task lines. Read-only.
+"""The orchestrator's patrol sweep: list what needs a decision across a channel's task lines.
+
+It reads the platform and GitHub and writes nothing, except under --sync-doc, which
+puts the rendered board into one document and only between that board's own markers.
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
@@ -19,10 +22,8 @@ The default output is that text list, unchanged. The same sweep in other shapes:
                day's metrics. Fixed shape, for tools.
   --render     the same data as Markdown, one line per signal, for a person to read.
   --sync-doc D write the rendered board into document D between <!-- board:start --> and
-               <!-- board:end -->, appending a marked section when the markers are not
-               there yet. Only that passage is submitted (POST /documents/{id}/edits):
-               the rest of the document is never sent, so it cannot be overwritten, and
-               a document that changed since it was read is refused rather than forced.
+               <!-- board:end -->, appending a marked section while the markers are not
+               there yet. One of these three, not two at once.
 """
 import json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
 from datetime import datetime, timezone
@@ -97,16 +98,21 @@ def said(m):
         return ""
 
 
-def gh_pr(n):
-    """One PR's queue state, plus what the board needs: its head, that head's CI
-    state, and the head its newest review is pinned to. Read-only, one call."""
+def gh_pr(n, board=False):
+    """One PR's queue state. `board` adds what only the board shows: the head, that
+    head's CI state, and the head the newest review is pinned to. Read-only, one call.
+
+    Those fields stay out of the text list's query — it asks for exactly what it
+    always asked for, so a field the board wants can never be the reason the text
+    list reports "GitHub 未查"."""
+    extra = ('headRefOid commits(last:1){nodes{commit{statusCheckRollup{state}}}} '
+             'comments(last:100){nodes{body}} ') if board else ''
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){merged '
-         'headRefOid mergeQueueEntry{state} '
-         'commits(last:1){nodes{commit{statusCheckRollup{state}}}} '
-         'comments(last:30){nodes{body}} '
-         'timelineItems(last:3,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT])'
-         '{nodes{__typename ... on AddedToMergeQueueEvent{createdAt} '
-         '... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}' % tuple(REPO))
+         + extra
+         + 'mergeQueueEntry{state} '
+           'timelineItems(last:3,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT])'
+           '{nodes{__typename ... on AddedToMergeQueueEvent{createdAt} '
+           '... on RemovedFromMergeQueueEvent{createdAt reason}}}}}}') % tuple(REPO)
     err = ""
     for _ in range(3):
         r = subprocess.run(["gh", "api", "graphql", "-f", "query=" + q, "-F", f"n={n}"],
@@ -215,8 +221,9 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
 
 def sweep(tok, room, silent, skip, want_facts):
     """The rows the text list prints, each also carrying the board's fields. GitHub
-    facts are read only for tasks that have a PR, and only when `want_facts` — the
-    text list must make exactly the calls it always made."""
+    facts are read only for tasks that have a PR: for the pending ones always, and for
+    the rest only when `want_facts`, which is set by the flags that show the board — so
+    an invocation with no flag makes exactly the calls it always made."""
     now = datetime.now(timezone.utc)
     age = lambda s: (now - ts(s)).total_seconds() / 60
     d = get(tok, f"/topics/{room}/tasks?status=open&limit=200")
@@ -240,7 +247,7 @@ def sweep(tok, room, silent, skip, want_facts):
         pr = None
         if n and (card.get("status") == "pending" or want_facts):
             if n not in facts:
-                facts[n] = gh_pr(n)
+                facts[n] = gh_pr(n, board=want_facts)
             pr = facts[n]
 
         ready = [m for m in accev if meta(m).get("event_type") == "accept_ready"]
@@ -371,12 +378,30 @@ def board_json(rows, metrics, room, silent, skip, now):
             "skipped": sorted(skip), "classes": classes, "metrics": metrics}
 
 
+def unique_tail(content):
+    """The shortest run of trailing lines that occurs exactly once, or None when the
+    document has no such run. Appending needs a passage to name that is this text and
+    nowhere else; this keeps the passage as small as the document allows, so what is
+    submitted to be replaced is a tail rather than the whole document."""
+    lines = content.split("\n")
+    for start in range(len(lines) - 1, -1, -1):
+        candidate = "\n".join(lines[start:])
+        if candidate.strip() and content.count(candidate) == 1:
+            return candidate
+    return None
+
+
 def sync_doc(tok, document, board):
-    """Write the board between the markers, and only there. The document is read
-    first; the passage handed to the platform is the marked one (or the whole text
-    when there is nothing marked yet, in which case the new section is only appended
-    to it). A document that changed under us makes the platform refuse the passage,
-    and a half-written marker pair is refused here instead of guessed at."""
+    """Put the board into the document, and touch nothing else. The document is read
+    first. What is submitted to be replaced (POST /documents/{id}/edits) is the marked
+    span when the markers are there, and otherwise a trailing passage that occurs once
+    — so everything above it stays outside the edit and is never sent. The platform
+    applies the edit only while that passage occurs exactly once in the document as it
+    stands then, which is what refuses a passage that moved or was duplicated under us;
+    a change elsewhere in the document is neither a conflict nor touched.
+
+    An empty document takes the whole board (there is nothing to preserve). A marker
+    pair that is not exactly one ordered pair is refused here rather than guessed at."""
     try:
         d = get(tok, f"/documents/{document}")
     except urllib.error.HTTPError as e:
@@ -393,13 +418,13 @@ def sync_doc(tok, document, board):
         j = content.index(BOARD_END) + len(BOARD_END)
         old, new = content[i:j], block
     elif marks == (0, 0):
-        tail = [ln for ln in content.split("\n") if ln.strip()]
-        anchor = tail[-1] if tail and content.count(tail[-1]) == 1 else content
-        old, new = anchor, f"{anchor}\n\n{block}"
-    elif marks == (1, 1):
-        raise SystemExit(f"文档 {document} 里 board:end 在 board:start 之前，不写")
+        old = unique_tail(content)
+        if old is None:
+            raise SystemExit(f"文档 {document} 里没有一段只出现一次的结尾，加不了看板，先手工放一对 board 标记")
+        new = f"{old}\n\n{block}"
     else:
-        raise SystemExit(f"文档 {document} 里 board 标记只剩一半（{marks[0]}/{marks[1]}），不写")
+        raise SystemExit(f"文档 {document} 里的 board 标记不是恰好一对"
+                         f"（board:start {marks[0]} 次、board:end {marks[1]} 次），不写")
     if content.count(old) != 1:
         raise SystemExit(f"文档 {document} 里要换的原文出现了 {content.count(old)} 次，不写（读到的是 v{version}）")
     send(tok, "POST", f"/documents/{document}/edits",
@@ -407,16 +432,29 @@ def sync_doc(tok, document, board):
     return f"看板已同步进 {document}（读到的版本 v{version}）"
 
 
+def value_of(argv, flag):
+    """The value after a flag, or a plain error instead of an IndexError when the flag
+    was the last word on the line."""
+    if flag not in argv:
+        return None
+    i = argv.index(flag) + 1
+    if i >= len(argv) or argv[i].startswith("--"):
+        raise SystemExit(f"{flag} 后面要给一个值")
+    return argv[i]
+
+
 def main():
     argv = sys.argv
     room = argv[1]
-    silent = int(argv[argv.index("--silent-min") + 1]) if "--silent-min" in argv else 60
-    skip = set(argv[argv.index("--skip") + 1].split(",")) if "--skip" in argv else set()
+    silent = int(value_of(argv, "--silent-min") or 60)
+    skip = set((value_of(argv, "--skip") or "").split(",")) - {""}
     as_json = "--json" in argv
     as_render = "--render" in argv
-    document = argv[argv.index("--sync-doc") + 1] if "--sync-doc" in argv else None
-    if as_json and as_render:
-        raise SystemExit("--json 和 --render 只能给一个")
+    document = value_of(argv, "--sync-doc")
+    given = [name for name, on in (("--json", as_json), ("--render", as_render),
+                                   ("--sync-doc", bool(document))) if on]
+    if len(given) > 1:
+        raise SystemExit("、".join(given) + " 只能给一个")
     tok = login()
     now = datetime.now(timezone.utc)
     rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document))
