@@ -533,7 +533,7 @@ def merge_queue_exits(
 
 
 def pr_report(pr: dict, heads: list[dict], exits: list[dict]) -> dict:
-    """One merged PR's row, assembled from what `pr_reports` fetched.
+    """One PR's row, assembled from what `reports_of` fetched.
 
     Kept apart from the fetching so the 首推 wiring can be asserted without a
     network: `heads` is one entry per id `heads_of` found, in timeline order,
@@ -586,33 +586,18 @@ def reports_of(repo: str, prs: list[dict], since: datetime, until: datetime) -> 
     return reports
 
 
-def pr_reports(
-    repo: str, since: datetime, until: datetime, include_open: bool = False
+def closed_out_prs(
+    repo: str, rows: list[dict], since: datetime, until: datetime
 ) -> list[dict]:
-    """One record per PR in the requested set, every GitHub-side fact the retro
-    needs.
-
-    `include_open` adds the not-yet-merged PRs touched inside the window, for
-    the first-push cohort (`judged_in_window` drops those whose first judged
-    push is not in the window, and nothing else reads them).
-    """
-    prs = merged_prs(repo, since, until)
-    if include_open:
-        prs = prs + split_updated(updated_prs(repo, since), prs)["keep"]
-    return reports_of(repo, prs, since, until)
-
-
-def closed_out_prs(repo: str, since: datetime, until: datetime) -> list[dict]:
     """The reports of the PRs the first-push cohort drops for being closed
     without merging, limited to those CI first judged inside the window.
 
     They are not part of the rate — see `split_updated` — but their count and
     their colours are what says whether dropping them moved the number: a
     reader who cannot see them cannot tell an honest cohort from one that
-    quietly kept the reds out. `merged=[]` because a merged PR is not CLOSED,
-    so there is nothing of the merge window's list to subtract here.
+    quietly kept the reds out. `rows` comes from the caller's single read of
+    the candidate list, so they cannot be confused with the cohort's own.
     """
-    rows = split_updated(updated_prs(repo, since), [])["closed"]
     return judged_in_window(reports_of(repo, rows, since, until), since, until)
 
 
@@ -874,6 +859,10 @@ def join_cards(cards: list[dict], reports: list[dict]) -> list[dict]:
         row = dict(card)
         green = green_of(by_pr.get(card.get("pr_number"), {}))
         row["green_at"] = green
+        # Whether the card's PR is in the set at all: a card pointing at a PR
+        # that did not merge in this window has no green to wait on, and saying
+        # so is the difference between a blank and a mistake.
+        row["in_window"] = card.get("pr_number") in by_pr
         filed = card.get("filed_at")
         to_green = _minutes(filed, green)
         row["wait_ci_minutes"] = None if to_green is None else max(0.0, to_green)
@@ -1108,7 +1097,8 @@ def render_markdown(report: dict) -> str:
             ),
             "  首次被判 = 该 PR 第一个跑过必需 CI 的 head 上最早那一轮的 `started_at`。",
             f"  本窗口 {s['cohort_prs']['n']} 个：已合并 {s['cohort_prs']['landed']}、"
-            f"截至窗口末端还没合并 {s['cohort_prs']['pending']}。",
+            f"到跑这一版时还没合并 {s['cohort_prs']['pending']}。"
+            "「已合并」是跑这一版时的状态，含窗口之后才合并的——不是「窗口末端那一刻的落地」。",
             *dropped_note,
             (
                 "- **平台那一半仍按合并窗口**：下面「递卡→采纳」「各线表」「开工→首个 PR」用的是"
@@ -1122,6 +1112,14 @@ def render_markdown(report: dict) -> str:
                 "（搜索索引是分钟粒度、两端都含，边界靠秒级判定收口）。"
             )
         ]
+    # 严格 is the first ROUND green, 宽松 the first non-cancelled FULL round —
+    # so a draft-tier green counts as 严格 and not as 宽松, and a row can read
+    # ✓/✗. Counted rather than assumed away: the columns are read side by side.
+    strict_not_lenient = sum(
+        1
+        for r in report.get("prs") or []
+        if r["strict_first_pass"] and not r["lenient_first_pass"]
+    )
     lines = [
         f"# 复盘窗口 {report['since']} ~ {report['until']} UTC"
         + ("（按首次被判分组）" if first_push else ""),
@@ -1139,6 +1137,11 @@ def render_markdown(report: dict) -> str:
             "（`CI required (draft quick)`——那是草稿自己的检查，不是分支保护读的那个），第一个剩下的 full 轮"
             "是 `success` 才算过。第一个 head 的 full 检查被跳过（还在草稿）或只被 cancel 掉，就不算过——"
             "换个 head 才绿不计入，否则它就变成「最后过没过」了。"
+        ),
+        (
+            "  **两栏不是包含关系**：第一轮是 draft 层绿时严格算过、宽松不算（宽松只看 full 层），"
+            f"所以明细里会出现「严格 ✓、宽松 ✗」的行——本窗口 {strict_not_lenient} 行。"
+            "宽松多、严格少不一定是这个原因，多数是宽松把被顶掉的 `cancelled` 轮去掉了。"
         ),
         (
             "- **轮数（按推送）**：跑过必需 CI 的不同 head 数。`required-ci.yml` 在 `pull_request: synchronize` "
@@ -1317,20 +1320,26 @@ def build(repo: str, since: datetime, until: datetime, room: str | None, cohort:
 
     `cohort` picks the PR set: `merged` (merged inside the window) or
     `first-push` (first judged by CI inside it, merged or not)."""
-    include_open = cohort != "merged"
-    # `everything` is what the platform half joins against: the window's cards
-    # belong to PRs merged in it, whichever cohort the GitHub table reads, so
-    # that half keeps the merge-window set (plus the extra candidates, which
-    # match no card).
-    everything = pr_reports(repo, since, until, include_open=include_open)
+    merged = merged_prs(repo, since, until)
     dropped: list[dict] | None = None
-    if include_open:
-        reports = judged_in_window(everything, since, until)
+    if cohort != "merged":
+        # One read of the candidate list, split once: the cohort's rows and the
+        # dropped ones come out of the same answer, so no PR can land in both
+        # (or in neither) by being read twice with a state change in between.
+        split = split_updated(updated_prs(repo, since), merged)
+        reports = reports_of(repo, merged + split["keep"], since, until)
+        reports = judged_in_window(reports, since, until)
         reports.sort(key=lambda r: _iso(first_judged_at(r)))
         # The ones the cohort drops, measured so the drop can be audited.
-        dropped = closed_out_prs(repo, since, until)
+        dropped = closed_out_prs(repo, split["closed"], since, until)
     else:
-        reports = everything
+        reports = reports_of(repo, merged, since, until)
+    # The platform half joins against the window's merged PRs whichever cohort
+    # the GitHub table reads: the cards belong to PRs merged in the window, and
+    # a first-push cohort's extra rows (open, or merged later) match no card —
+    # handing them over would let one be reported as 合入 and give a card a CI
+    # wait off a PR that never landed.
+    window = [r for r in reports if r["number"] in {p["number"] for p in merged}]
     platform = None
     if room:
         token = token_from_env()
@@ -1341,11 +1350,11 @@ def build(repo: str, since: datetime, until: datetime, room: str | None, cohort:
         else:
             since_s, until_s = since.strftime("%Y-%m-%dT%H:%M:%S"), until.strftime("%Y-%m-%dT%H:%M:%S")
             raw = collect_platform(room, token, since_s, until_s)
-            joined = join_cards(raw["cards"], everything)
+            joined = join_cards(raw["cards"], window)
             platform = {
                 "cards": joined,
                 "first_pr_lag": first_pr_lag(raw["tasks"], raw["cards"], since_s, until_s),
-                "lines": lines_table(raw["tasks"], raw["cards"], everything),
+                "lines": lines_table(raw["tasks"], raw["cards"], window),
                 "turns_by_seat": turns_by_seat(raw["failed_turns"]),
             }
     cards = platform["cards"] if platform else None
@@ -2008,6 +2017,84 @@ def self_test() -> int:
     finally:
         globals()["build"] = real_build
 
+    # build's wiring: which PR set each half reads, and that the candidate list
+    # is read once. `_gh` is faked to answer the four reads build makes —
+    # offline, and the answer differs per cohort so the split is visible.
+    #
+    # The trap this pins: the platform half joins against the window's merged
+    # PRs, not the cohort's. #3 below is open, first judged inside the window
+    # and carries an accepted card — under first-push it is in the GitHub table,
+    # but a card pointing at it must not be reported as 合入 with a CI wait.
+    fakes = {
+        "merged:": [{"number": 2, "title": "m", "mergedAt": "2026-10-12T12:00:00Z",
+                     "headRefOid": "b", "mergeCommit": {"oid": "m"}}],
+        "updated:>=": [
+            {"number": 2, "title": "m", "mergedAt": "2026-10-12T12:00:00Z", "state": "MERGED",
+             "updatedAt": "2026-10-12T12:00:00Z"},
+            {"number": 3, "title": "o", "mergedAt": None, "state": "OPEN",
+             "updatedAt": "2026-10-12T13:00:00Z"},
+            {"number": 4, "title": "c", "mergedAt": None, "state": "CLOSED",
+             "updatedAt": "2026-10-12T13:30:00Z"},
+        ],
+        "actions/runs": {"workflow_runs": []},
+        "check-runs": {"check_runs": [
+            {"name": REQUIRED_FULL, "conclusion": "success",
+             "started_at": "2026-10-12T11:00:00Z", "completed_at": "2026-10-12T11:10:00Z"},
+        ]},
+    }
+    timelines = {
+        2: [{"event": "committed", "sha": "b"}],
+        3: [{"event": "committed", "sha": "c"}, {"event": "committed", "sha": "d"}],
+        4: [{"event": "committed", "sha": "e"}],
+    }
+    real_gh, real_collect = _gh, collect_platform
+    reads: list[str] = []
+
+    def fake_gh(args, attempts=4):
+        key = " ".join(args)
+        reads.append(key)
+        if "/issues/" in key and "/timeline" in key:
+            return timelines[int(key.split("/issues/")[1].split("/")[0])]
+        for marker, value in fakes.items():
+            if marker in key:
+                return value
+        return {}
+
+    def fake_collect(room, token, since_s, until_s):
+        return {
+            "cards": [{
+                "task": 9, "status": "accepted", "filed_at": "2026-10-12T12:00:00",
+                "decided_at": "2026-10-12T12:20:00", "pr_number": 3,
+                "wait_ci_minutes": 5.0, "wait_scheduler_minutes": 10.0,
+            }],
+            "tasks": [{"number": 9, "status": "open", "seat": "s1",
+                       "started_at": "2026-10-12T11:00:00"}],
+            "failed_turns": [],
+        }
+
+    lo_b, hi_b = _iso("2026-10-12T10:00:00"), _iso("2026-10-12T14:00:00")
+    real_token = token_from_env
+    globals()["_gh"], globals()["collect_platform"] = fake_gh, fake_collect
+    globals()["token_from_env"] = lambda: "t"
+    try:
+        b_merged = build("r", lo_b, hi_b, "room", "merged")
+        b_fp = build("r", lo_b, hi_b, "room", "first-push")
+    finally:
+        globals()["_gh"], globals()["collect_platform"] = real_gh, real_collect
+        globals()["token_from_env"] = real_token
+    check("merged 口径只有合并窗口的 PR", [r["number"] for r in b_merged["prs"]], [2])
+    check("first-push 口径的组是首次被判入窗的，含还开着的",
+          [r["number"] for r in b_fp["prs"]], [2, 3])
+    check("被排除的关掉没合并的 PR 单列", b_fp["summary"]["dropped_closed"]["n"], 1)
+    check("平台那一半仍按合并窗口 join：指向没合并 PR 的卡没有在窗的 PR",
+          [c["in_window"] for c in b_fp["platform"]["cards"]], [False])
+    check("指向没合并 PR 的卡算不出等 CI 绿，也不当成 0",
+          [c["wait_ci_minutes"] for c in b_fp["platform"]["cards"]], [None])
+    check("平台那一半的表也不把那个 PR 算成合入",
+          [row["merged_prs"] for row in b_fp["platform"]["lines"]], [[]])
+    check("候选 PR 列表只读一遍（读两遍中间状态一变就会既进分子又进被排除）",
+          sum(1 for k in reads if "updated:>=" in k), 1)
+
     # _gh: a failed call is not data. `gh` prints the API's error body — itself
     # JSON — on stdout, so an exit code nobody reads turns a rate-limited call
     # into an empty answer, and `--cache` freezes that answer on disk. `gh` is
@@ -2048,7 +2135,7 @@ def self_test() -> int:
 
 
 def strict_pass(push: dict) -> bool:
-    """The 严格 reading, named so the self-test and pr_reports agree on it: the
+    """The 严格 reading, named so the self-test and the cohort agree on it: the
     FIRST head's first round went green (a cancelled or red first round fails).
     `_lenient` above is the other reading, and the two are deliberately kept as
     separate functions rather than one function with a mode."""
