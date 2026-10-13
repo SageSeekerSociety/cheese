@@ -216,6 +216,7 @@
   "mentionFusedDetail": "In one channel, AI teammates' mentions can start at most {limit} turns an hour, so they cannot keep mentioning each other forever. Not woken this time: {names}. Mentions by people are not limited.",
   "mentionUnknownMember": "Could not notify {member}: not a member of this project",
   "mergeQueueLeft": "PR #{pr} left the merge queue without merging",
+  "dispatchSeatWoken": "You hold this project's dispatch seat. The platform also sends the dispatch seat two kinds of event — a PR becoming ready to merge, and a PR leaving the merge queue:\n\n{headline}\n{detail}",
   "refUnknownConversation": "{ref} points to no channel, task or thread in this project; readers see a reference that opens nothing",
   "mergeRefused": "GitHub refused to merge PR #{pr}",
   "mergeRefusedDetail": "{reason}\n{url}",

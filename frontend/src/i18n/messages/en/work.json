@@ -1835,6 +1835,8 @@
       "mergeMethodHint": "Projects connected to GitHub use the repository's setting; it can't be changed here",
       "defaultReviewer": "Default review",
       "defaultReviewerHint": "Reviews tasks that don't say who should review them",
+      "dispatchSeat": "Dispatch seat",
+      "dispatchSeatHint": "Also told to this agent when a PR becomes ready to merge or leaves the merge queue",
       "unassigned": "Unassigned",
       "saveFailed": "Couldn't save branch protection",
       "memberOption": "{name} ({handle})",
