@@ -319,7 +319,16 @@ export const DASH_USAGE: StatsUsage = {
   // 缓存命中只算记了缓存的行；没算进去的输入量写在 KPI 的口径里。
   cache: { hit_ratio: 0.71, input_tokens: 520000, cache_read_tokens: 369200, uncounted_input_tokens: 180000 },
   top_users: [
-    { handle: 'lin', name: '林同学', avatar_id: 5, is_agent: false, tokens: 301000, calls: 88, cost_usd: 0.92, cache_hit: 0.78 },
+    {
+      handle: 'lin',
+      name: '林同学',
+      avatar_id: 5,
+      is_agent: false,
+      tokens: 301000,
+      calls: 88,
+      cost_usd: 0.92,
+      cache_hit: 0.78,
+    },
     { handle: 'zhao', name: null, is_agent: false, tokens: 96000, calls: 31, cost_usd: 0.27, cache_hit: null },
   ],
   unattributed: { tokens: 42000, calls: 12, cost_usd: 0.11 },

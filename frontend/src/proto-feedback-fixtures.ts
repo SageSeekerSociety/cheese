@@ -138,7 +138,7 @@ function row(spec: {
     // 没人指派时是 null（不是 0/默认头像）：界面据此根本不画头像，也不会把「没这个人」
     // 画成别人。有人指派时头像同样只给真的挑过的那颗（`avatarOf` 的规矩）。
     assignee_avatar_id: spec.assignee ? avatarOf(spec.assignee) : null,
-    assignee_is_agent: spec.assignee ? (spec.assigneeIsAgent ?? false) : null,
+    assignee_is_agent: spec.assignee ? spec.assigneeIsAgent ?? false : null,
     tags: spec.tags ?? [],
     supports: spec.supports,
     comments: thread.length,

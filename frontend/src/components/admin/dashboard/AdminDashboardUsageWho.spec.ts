@@ -79,10 +79,22 @@ describe('AdminDashboardUsageWho · 最近的账本行', () => {
 
 describe('AdminDashboardUsageWho · 触发最多的人', () => {
   it('每一行都带头像：挑过的拼 /avatars/{id}，队友走队友的脸', async () => {
-    const { container } = await mountWho([], [
-      { handle: 'lin', name: '林一', avatar_id: 9, is_agent: false, tokens: 5, calls: 2, cost_usd: 0.1, cache_hit: null },
-      { handle: 'cheese-abc', name: '小苔', is_agent: true, tokens: 3, calls: 1, cost_usd: 0, cache_hit: null },
-    ])
+    const { container } = await mountWho(
+      [],
+      [
+        {
+          handle: 'lin',
+          name: '林一',
+          avatar_id: 9,
+          is_agent: false,
+          tokens: 5,
+          calls: 2,
+          cost_usd: 0.1,
+          cache_hit: null,
+        },
+        { handle: 'cheese-abc', name: '小苔', is_agent: true, tokens: 3, calls: 1, cost_usd: 0, cache_hit: null },
+      ]
+    )
 
     const users = container.querySelectorAll('table')[0]!
     const rows = Array.from(users.querySelectorAll('tbody tr')) as HTMLElement[]
