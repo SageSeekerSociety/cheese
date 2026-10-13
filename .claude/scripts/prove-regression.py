@@ -390,11 +390,29 @@ def reclaim_stale(root: Path) -> None:
     that other people's processes write to, and anything it cannot make sense of
     is left where it is. A refusal here would be exit 1 — NOT PROVEN — from a
     run that judged nothing.
+
+    What it removes it has to be sure of, and the name is not enough to be sure
+    of: a registration is a directory whose name somebody else chose. Two are
+    therefore held back whatever they are called — the repository's own
+    checkout, and the tree this run is standing in.
     """
     git("worktree", "prune", cwd=root)
     now = time.time()
-    for here in _worktrees(root):
+    # `git worktree list` reports every registration of the repository, the main
+    # working tree first, and `remove_worktree` deletes what it is handed: `git
+    # worktree remove --force` refuses a main tree and leaves the registration,
+    # but the `rmtree` behind it takes the directory anyway. The first entry is
+    # therefore the repository's own checkout, which no run ever abandoned, and
+    # the tree this run is standing in is where a second run starts when the
+    # author goes back to a `--keep`ed worktree — sweeping that one unlinks the
+    # directory the process is running in, and the run then ends on a
+    # FileNotFoundError at exit 1, the code for NOT PROVEN, having judged
+    # nothing. Both are held back before the name is even looked at.
+    standing_in = root.resolve()
+    for position, here in enumerate(_worktrees(root)):
         path = Path(here)
+        if position == 0 or standing_in.is_relative_to(path.resolve()):
+            continue
         if not path.name.startswith(WORKTREE_PREFIX):
             continue
         pid = path.name.rsplit("-", 1)[-1]
@@ -1715,6 +1733,73 @@ def self_test() -> int:
             swept and all(gone),
         )
 
+        # A registration is a directory whose name somebody else chose, and the
+        # loop has nothing but that name to go on. `git worktree list` reports
+        # every registration of the repository — the main working tree first —
+        # and `remove_worktree` deletes what it is handed: `git worktree remove
+        # --force` refuses a main tree and leaves the registration behind, but
+        # the `rmtree` after it takes the directory anyway. So a repository that
+        # lives in a directory named with the prefix loses its own checkout to a
+        # run started from one of its worktrees. A repository of its own, since
+        # deleting the fixture the rest of the suite stands on would fail every
+        # case after this one instead of this one.
+        danger = Path(scratch) / f"{WORKTREE_PREFIX}danger"
+        beside = Path(scratch) / "beside"
+        danger.mkdir()
+        (danger / "app.py").write_text("value = 1\n", encoding="utf-8")
+        for args in (
+            ("init", "-q"),
+            ("add", "app.py"),
+            ("commit", "-q", "-m", "one"),
+            ("worktree", "add", "-q", "--detach", str(beside), "HEAD"),
+        ):
+            subprocess.run(
+                ["git", "-c", "commit.gpgsign=false", *args],
+                cwd=str(danger),
+                env=env,
+                check=True,
+                capture_output=True,
+            )
+        try:
+            with _Muffle():
+                reclaim_stale(beside)
+            swept = True
+        except Exception:
+            swept = False
+        tally.case(
+            "the repository's own checkout is not reclaimed, whatever it is called",
+            swept and danger.exists() and _registered(beside, danger),
+        )
+
+        # The tree the run is standing in is the other one no name can make
+        # litter, nor is any directory above it — a worktree can be registered
+        # inside another one. `--keep` prints where the worktree was left, and
+        # going back there to start the next run is the ordinary way to use it:
+        # sweeping that tree unlinks the directory the process is running in,
+        # and the run then ends on a FileNotFoundError at exit 1, the code for
+        # NOT PROVEN, having judged nothing.
+        outer = plant(unused_pid())
+        inner = outer / "inner"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(inner), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        try:
+            with _Muffle():
+                reclaim_stale(inner)
+            swept = True
+        except Exception:
+            swept = False
+        tally.case(
+            "the tree this run stands in is not reclaimed, nor the one above it",
+            swept and inner.exists() and outer.exists(),
+        )
+        remove_worktree(repo, inner)
+        remove_worktree(repo, outer)
+
         # The number the reclaim rule turns on. An hour would take a worktree
         # out from under a run that is still using it, so the boundary is where
         # the value shows; only the age can settle a recycled pid, which is what
@@ -1804,10 +1889,11 @@ def self_test() -> int:
         # The prefix is what keeps the sweep off what belongs to nobody here.
         # The temp directory is every process's on the machine, and the guard is
         # not a formality: with it gone the slice that strips the prefix takes
-        # nineteen characters off whatever name it is given instead, so a
-        # neighbour's name only has to be nineteen characters longer, with the
-        # three fields the rule reads after that, for the sweep to read it as a
-        # report of its own and unlink it. Aged, with a pid that is gone, so
+        # its seventeen characters off whatever name it is handed instead, so a
+        # neighbour's name that stands junk where the prefix should be — this
+        # one carries nineteen characters of it — still ends up with the three
+        # fields the rule reads past the cut, and the sweep reads it as a
+        # report of its own and unlinks it. Aged, with a pid that is gone, so
         # neither the age nor the owner is what keeps it.
         neighbour = Path(tempfile.gettempdir()) / (
             "0123456789abcdefghi" + f"before-{unused_pid()}-aaaa" + ".json"
@@ -2119,7 +2205,13 @@ def self_test() -> int:
             "spec = importlib.util.spec_from_file_location('pr', sys.argv[1])\n"
             "pr = importlib.util.module_from_spec(spec)\n"
             "spec.loader.exec_module(pr)\n"
-            "pr.judge = lambda before, after, node: 0\n"
+            # One failing case, not two: the conversion that matters is the one
+            # for a single failure, and with two the child cannot tell a
+            # threshold of one from a threshold of two. The constant reddens
+            # exactly one row of `judge`'s table, and the count is read out of
+            # the summary so that a `>` in the conversion reddens this case
+            # instead of leaving the suite green.
+            "pr.judge = lambda before, after, node: 1\n"
             "raise SystemExit(pr.self_test())\n"
         )
         broken = subprocess.run(
@@ -2132,9 +2224,21 @@ def self_test() -> int:
         tail = broken.stdout.splitlines()[-1] if broken.stdout.splitlines() else ""
         # Both halves: the code the gate reads, and the summary a person reads.
         # A build that prints FAIL and exits 0 is the thing being ruled out.
+        # The count is held against the FAIL lines as well, and that is what
+        # makes the conversion's threshold observable: one failing case has to
+        # be enough, and a conversion that fires only above one prints the same
+        # `all ... passed` a green suite prints. Counting what the child printed
+        # rather than pinning a number keeps the case off how many of its cases
+        # the patch happens to redden.
+        failed = sum(
+            line.strip().startswith("FAIL") for line in broken.stdout.splitlines()
+        )
         tally.case(
             "a genuinely failing case makes the whole suite exit non-zero",
-            broken.returncode == 1 and "FAILED" in tail and "all" not in tail,
+            broken.returncode == 1
+            and failed >= 1
+            and f"{failed} of" in tail
+            and "FAILED" in tail,
         )
     return _self_test_exit(tally)
 
