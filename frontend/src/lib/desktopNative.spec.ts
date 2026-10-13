@@ -52,6 +52,15 @@ function drag(selector: string): boolean {
   return event.defaultPrevented
 }
 
+/** A drag carrying `types` over / onto `selector`; true when the page cancelled
+ *  it, which is what stops WebKit from opening a dropped file in the window. */
+function dragFile(type: 'dragover' | 'drop', selector: string, types = ['Files']): boolean {
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'dataTransfer', { value: { types, dropEffect: 'copy' } })
+  document.querySelector(selector)!.dispatchEvent(event)
+  return event.defaultPrevented
+}
+
 function selection(selector: string): string {
   return getComputedStyle(document.querySelector(selector)!).userSelect
 }
@@ -93,6 +102,31 @@ describe('in the desktop app', () => {
     expect(drag('.snippet')).toBe(false)
   })
 
+  it('refuses a file let go where the page takes no files, so the window never turns into that file', async () => {
+    await start(true)
+    expect(dragFile('dragover', 'nav')).toBe(true)
+    expect(dragFile('drop', 'nav')).toBe(true)
+    expect(dragFile('drop', '.said')).toBe(true)
+  })
+
+  it('leaves a drop zone that takes files to take them, and drags that carry no file alone', async () => {
+    const zone = document.querySelector('.box')!
+    zone.addEventListener('dragover', (event) => {
+      event.preventDefault()
+      ;(event as DragEvent).dataTransfer!.dropEffect = 'copy'
+    })
+    await start(true)
+    const over = new Event('dragover', { bubbles: true, cancelable: true })
+    const transfer = { types: ['Files'], dropEffect: 'none' }
+    Object.defineProperty(over, 'dataTransfer', { value: transfer })
+    zone.dispatchEvent(over)
+    // The zone still says it takes the file; the guard did not turn it away.
+    expect(transfer.dropEffect).toBe('copy')
+    // A project tile picked up in the rail is the page's own drag, not a file.
+    expect(dragFile('dragover', 'nav', ['application/x-cheese-project'])).toBe(false)
+    expect(dragFile('drop', 'nav', ['application/x-cheese-project'])).toBe(false)
+  })
+
   it('keeps the browser menu everywhere in a development build', async () => {
     vi.stubEnv('DEV', true)
     await start(true)
@@ -107,6 +141,7 @@ describe('in a browser', () => {
     expect(rightClick('.team')).toBe(false)
     expect(rightClick('.tile')).toBe(false)
     expect(drag('.team')).toBe(false)
+    expect(dragFile('drop', 'nav')).toBe(false)
     expect(selection('body')).not.toBe('none')
   })
 })
