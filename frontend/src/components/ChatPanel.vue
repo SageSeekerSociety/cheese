@@ -376,6 +376,7 @@ useComposerShortcut({
           :no-upgrade="noUpgrade"
           :threadable="threadable"
           :processable="inThread"
+          :fold-plain="!!conversationId"
           :replying-for="threadLines.replyingFor"
           :replying-seats-for="threadLines.replyingSeats"
           :thread-status-for="threadLines.statusFor"
