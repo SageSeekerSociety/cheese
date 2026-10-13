@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>侧栏任务行的签：补足 → 我的</title>
+<title>侧栏任务行的签：不标我的，标别人是谁</title>
 <style>
 /* ---- token：照 frontend/src/style.css 的两套主题块抄下来 ---- */
 :root{
@@ -137,7 +137,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .tk--pad .tk__t{color:var(--muted)}
 .tk__tail{display:flex;align-items:center;gap:6px;flex:none}
 .tk__badge{min-width:16px;height:16px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;padding:0 4px;font-family:var(--mono)}
-/* 这枚签：形态照 TopicRailTaskRow.vue 的 .rail-task__mine 抄——
+/* 这枚签：形态照 TopicRailTaskRow.vue 的 .rail-task__owner 抄——
    11px、--faint 字色、--fill 底、8px 圆角、左右各 6px 内边距。 */
 .tk__tag{font-size:11px;line-height:16px;color:var(--faint);background:var(--fill);border-radius:8px;padding:0 6px}
 
@@ -213,8 +213,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   <div class="chrome__id">
     <span class="chrome__mark">知</span>
     <div>
-      <h1>侧栏任务行的签：补足 → 我的</h1>
-      <p class="t-meta">caisongyang 2026-10-13：补足这个标签去掉，剩下的我负责的标记为「我的」· 界面上那些蓝标点一下，看这处改什么</p>
+      <h1>侧栏任务行的签：不标我的，标别人是谁</h1>
+      <p class="t-meta">caisongyang 2026-10-13：我负责的东西不标记，其他人的标记为其他昵称 · 界面上那些蓝标点一下，看这处改什么</p>
     </div>
   </div>
   <div class="chrome__tools">
@@ -227,15 +227,11 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   <div class="hint">
     <div class="segs" id="modeSeg">
       <button data-mode="before" class="is-on">改前：签上写「补足」</button>
-      <button data-mode="after">改后：签上写「我的」</button>
+      <button data-mode="after">改后：签上写负责人是谁</button>
     </div>
     <div class="segs" id="langSeg">
       <button data-lang="zh" class="is-on">中文</button>
       <button data-lang="en">English</button>
-    </div>
-    <div class="segs" id="spreadSeg" title="第 3 处标记要你定的就是这件事">
-      <button data-spread="always" class="is-on">「我的」一直打</button>
-      <button data-spread="mixed">只在混着别人的任务时打</button>
     </div>
     <span class="legend">左边点着走：<b>点频道</b>打开它，<b>点任务</b>打开那条任务。鼠标停在<b>淡一档</b>的那几行上看说明。</span>
   </div>
@@ -301,8 +297,9 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   // ------------------------------------------------------------------
   // 假数据。照侧栏里那一块画的。
   //   rel: 'own'  我负责的（后端 owner_handle 是我）
-  //        'help' 我协助的
+  //        'help' 我协助的（别人负责）
   //        'pad'  这个频道里别人的、被借来把这一块凑够三条的（后端 filling_in）
+  //   who = 那一条的负责人叫什么（项目名册上的名字）；我负责的不写。
   //   open = 这个频道进行中的任务总数
   // 一块里我负责和协助的合起来不到三条时，才从别人的活里借。谁被借来由后端定。
   // ------------------------------------------------------------------
@@ -314,7 +311,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
         {t:'电脑端待办入口位置', rel:'own', dot:'await', badge:2},
         {t:'验收卡 merge_state 快照过期', rel:'own'},
         {t:'空间重设计', rel:'own'},
-        {t:'新建频道入口设计', rel:'help'}
+        {t:'新建频道入口设计', rel:'help', who:'王长鑫'}
       ]
     },
     {
@@ -322,42 +319,41 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
       rows:[
         {t:'出题改动原型', rel:'own', dot:'run'},
         {t:'频道改动原型', rel:'own', dot:'await', badge:1},
-        {t:'全部频道页加搜索', rel:'pad'}
+        {t:'全部频道页加搜索', rel:'pad', who:'林夏'}
       ]
     },
     {
       id:'test', name:'测试频道', nameEn:'Testing', on:false, open:3,
       rows:[
-        {t:'冒烟测试补跑一遍', rel:'pad'},
-        {t:'移动端宽度回归', rel:'pad'},
-        {t:'合并队列卡住排查', rel:'pad'}
+        {t:'冒烟测试补跑一遍', rel:'pad', who:'陈默'},
+        {t:'移动端宽度回归', rel:'pad', who:'王长鑫'},
+        {t:'合并队列卡住排查', rel:'pad', who:'林夏'}
       ]
     },
     {
       id:'duty', name:'客服值班', nameEn:'Support duty', on:false, open:4,
       rows:[
         {t:'值班表自动排班', rel:'own', dot:'run'},
-        {t:'工单标签规范化', rel:'pad'},
-        {t:'常见问题库更新', rel:'pad'}
+        {t:'工单标签规范化', rel:'pad', who:'陈默'},
+        {t:'常见问题库更新', rel:'pad', who:'林夏'}
       ]
     }
   ];
 
-  // ---- 这一处改的东西：签上的字、签挂在哪几条上、说明挂在哪儿。 ------------------
-  // 键名和字段都没动：`filling_in` 还是那个意思，`fillInTip` 那句话只是从签上挪到整行。
+  // ---- 这一处改的东西：签上写什么、挂在哪几条上、说明挂在哪儿。 -------------------
+  // 名字不是文案：签上写的是那个人的昵称（项目名册上叫什么），中英两种界面都一样，
+  // 所以词表里为它不新增键，反而要删掉上一版加的那枚 `work.sidebar.mine`。
   var COPY = {
     zh:{
-      mine:'我的', fillIn:'补足',
-      tip:{ before:'这个频道里和你有关的不到三条，这一条是补上来的',
-            after:'这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿' },
+      fillIn:'补足',
+      tip:'这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿',
       channels:'频道', fold:'收起这个频道下面的任务', unfold:'展开这个频道下面的任务',
       more:'展开其余 {n} 个', countTip:'这个频道里进行中的任务数',
       borrowedHint:'（淡一档的是这个频道里别人的活）'
     },
     en:{
-      mine:'Mine', fillIn:'Filled in',
-      tip:{ before:'Fewer than three of your own tasks are here; this row makes up the three',
-            after:"Fewer than three of your own tasks are here; this one is someone else's, added to fill the three" },
+      fillIn:'Filled in',
+      tip:"Fewer than three of your own tasks are here; this one is someone else's, added to fill the three",
       channels:'Channels', fold:"Collapse this channel's tasks", unfold:"Expand this channel's tasks",
       more:'Show {n} more', countTip:'Tasks under way in this channel',
       borrowedHint:'(dimmed rows are other people’s work in this channel)'
@@ -365,37 +361,34 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   };
 
   var ITEMS = {
-    1:{t:'签换了：不标借来的，标我的',
-       s:'caisongyang 2026-10-13：补足这个标签去掉，剩下的我负责的标记为「我的」',
-       now:'签上写「补足」/ "Filled in"，挂在这个频道里<b>借来凑数</b>的那几条上。它说的是「这一条是补上来的」——凑数的动作。',
-       fix:'借来的那几条<b>不挂签</b>了，它为什么在这儿改由鼠标停上去的那句说明交代；'
-         + '我负责的那几条反过来缀一个「我的」。上面切「改前」「改后」，看的就是这一枚签。'
-         + '（「我协助的」不缀——它不是我在负责。）',
-       ask:'叫法：中文「我的」是照你说的写的，英文那半我暂定 "Mine"。你有别的说法以你为准。',
+    1:{t:'签上写的是谁，不是「补足」',
+       s:'caisongyang 2026-10-13：其他人的标记为其他昵称',
+       now:'借来的那几条缀「补足」/ "Filled in"——说的是「这一条是补上来的」这个动作，没说这活是谁的。',
+       fix:'别人的活缀上那个人是谁（项目名册上叫什么）：<b>林夏</b>。上面切「改前」「改后」，看的就是这枚签。'
+         + '我负责的那几条不缀——签说的是「这条不是你的活」，自己的活不用声明。',
+       ask:'签上就写名字本身（「林夏」），不加「负责」两个字。你要是想写成「林夏 负责」这种，说一声。',
        work:'两份词表 <span class="mono">frontend/src/i18n/messages/zh-CN/work.json</span> 和 '
-         + '<span class="mono">en/work.json</span>：删掉 <span class="mono">work.sidebar.fillIn</span>（签上的字），'
-         + '加上 <span class="mono">work.sidebar.mine</span>。行上那句说明留在 <span class="mono">work.sidebar.fillInTip</span>，'
-         + '只是从签挪到了整行。删键是照 <span class="mono">docs/i18n.md</span> §5：不留没人用的键。'},
-    2:{t:'整块都是别人的时候，一个字都不标',
+         + '<span class="mono">en/work.json</span>：删掉上一版加的 <span class="mono">work.sidebar.mine</span>，'
+         + '这一版不新增键（签上写的是人名）。名字从项目名册取，判据写在 '
+         + '<span class="mono">composables/useTopicRail.ts</span> 的 <span class="mono">ownerName()</span> 里。'},
+    2:{t:'整块都是别人的：一行一个名字',
        s:'同一条规则的另一头',
-       now:'「测试频道」我一条都没有，三行全是从这个频道借来的，三行都缀「补足」。',
-       fix:'这三行现在都不挂签，整块干净。鼠标停在任意一行上，说明照样说清它为什么在这儿。'
+       now:'「测试频道」我一条都没有，三行全是从这个频道借来的，三行都缀「补足」——三行看起来一模一样。',
+       fix:'三行各写各的负责人：陈默、王长鑫、林夏。扫一眼就知道这几件活分别是谁的。'
          + '（这几行的标题仍然淡一档——那是「不是我负责的活」的底色。）',
        ask:'',
-       work:'不用另外改。这是同一处文案在别处的样子。'},
-    3:{t:'全是我的时候，一排「我的」',
-       s:'照你说的「我负责的标记为我的」，字面写出来是这样 —— 这一处要你定',
-       now:'「综合」底下挂着四条我负责的、一条我协助的（一共五条，不用借别人的），这五条现在都没有签。',
-       fix:'改后四条我负责的都缀「我的」。上面第三个开关就是这件事：'
-         + '<b>「一直打」</b>是照你原话的写法，全是我的频道里也会一排「我的」；'
-         + '切<b>「只在混着别人的任务时打」</b>，这一块里没有借来的行就不打签，只有产品设计、客服值班那种混着的才打。',
-       ask:'这两种你挑一个。侧栏本来就是「和我有关的」那一份，全是我的地方再打一排「我的」可能只是噪声；'
-         + '只在混着的时候打，同一行的样子会随这个频道里别人的任务多少而变。',
-       work:'两种都只改 <span class="mono">frontend/src/components/topic-sidebar/TopicRailTaskRow.vue</span> 里那颗签的判据：'
-         + '「一直打」只认这一条是不是我负责的；混着才打还要知道这一块里有没有借来的行（多传一个条件进来）。'}
+       work:'不用另外改。这是同一处判据在别处的样子。'},
+    3:{t:'我负责的：一个字都不缀',
+       s:'你这次先说的一半',
+       now:'上一版我负责的那几条缀「我的」（「综合」底下四条）。',
+       fix:'现在四条都不挂签，整块只剩下「新建频道入口设计」那一条缀着<b>王长鑫</b>——'
+         + '那一条是我协助的，不是我在负责，所以它照样写清楚是谁的。',
+       ask:'',
+       work:'还是 <span class="mono">useTopicRail.ts</span> 的 <span class="mono">ownerName()</span>：'
+         + '负责人是我，回 null（不挂签）；是别人，回名册上那个名字。'}
   };
 
-  var seen = {}, mode = 'after', lang = 'zh', spread = 'always';
+  var seen = {}, mode = 'after', lang = 'zh';
   var selTask = '电脑端待办入口位置', selChannel = 'general';
   var $ = function(s,r){ return (r||document).querySelector(s); };
   var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
@@ -412,14 +405,17 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     if (!d) return '';
     return '<span class="dot dot--'+d+'" title="'+(d==='run'?'有队友在跑':'有事等你')+'"></span>';
   }
-  // 这一块里有没有借来的行：只有它才需要说「哪些是我的」。
-  function hasBorrowed(ch){ return ch.rows.some(function(r){ return r.rel === 'pad'; }); }
   // 签挂在哪几条上、写什么。
-  function chipOf(ch, row){
+  //   改前：借来的那几条缀「补足」。
+  //   改后：不是我的活（别人的、包括我协助的）缀负责人叫什么；我负责的不缀。
+  function chipOf(row){
     if (mode === 'before') return row.rel === 'pad' ? S().fillIn : '';
-    if (row.rel !== 'own') return '';
-    if (spread === 'mixed' && !hasBorrowed(ch)) return '';
-    return S().mine;
+    if (row.rel === 'own') return '';
+    return row.who || '';
+  }
+  // 借来的那几条为什么在这儿：改前那句话挂在签上，改后挂在整行上。
+  function tipOf(row){
+    return row.rel === 'pad' ? S().tip : '';
   }
 
   function renderSide(){
@@ -435,18 +431,18 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
       if (ch.id === 'general') parts.push(mk(3));
       parts.push('</span></div>');
 
-      ch.rows.forEach(function(row, i){
+      ch.rows.forEach(function(row){
         var on = row.t === selTask;
         var cls = 'tk' + (on?' is-on':'') + (row.rel==='help'?' tk--help':'') + (row.rel==='pad'?' tk--pad':'');
         // 淡一档的那几条，鼠标停上去说出它为什么在这儿；改前那句话挂在签上。
-        var tip = row.rel === 'pad' && !(mode === 'before') ? S().tip.after : '';
+        var tip = mode === 'before' ? '' : tipOf(row);
         parts.push('<button class="'+cls+'" data-task="'+esc(row.t)+'" data-chid="'+ch.id+'"'
           + (tip ? ' title="'+attr(tip)+'"' : '') + '>');
         parts.push('<span class="tk__t">'+esc(row.t)+'</span>');
         parts.push('<span class="tk__tail">');
-        var chip = chipOf(ch, row);
+        var chip = chipOf(row);
         if (chip) {
-          var chipTip = row.rel === 'pad' ? S().tip.before : '';
+          var chipTip = mode === 'before' ? tipOf(row) : '';
           parts.push('<span class="tk__tag"'+(chipTip?' title="'+attr(chipTip)+'"':'')+'>'+esc(chip)+'</span>');
         }
         if (row.badge) parts.push('<span class="tk__badge">'+row.badge+'</span>');
@@ -471,29 +467,26 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     $('#vhead').innerHTML = '<span class="vhead__crumb">'+esc(lang==='zh'?ch.name:ch.nameEn)+' /</span>'
       + '<h2>'+esc(title)+'</h2><span class="chip chip--warn">已开始</span>';
 
-    var zhTip = attr(COPY.zh.tip.after), enTip = attr(COPY.en.tip.after);
-    var zhMine = COPY.zh.mine, enMine = COPY.en.mine;
+    var tip = attr(S().tip);
+    var borrowed = '<span class="pair__demo tk--pad" title="'+tip+'"><span class="tk__t">全部频道页加搜索</span>';
     $('#vbody').innerHTML =
         '<div class="card"><h3>改的就是这枚签</h3>'
-      + '<p class="t-meta">同一个频道块，改前和这一版各画一遍。行的高度、颜色、后端那个 <span class="mono">filling_in</span> 字段都没动，动的是签挂在谁身上。</p>'
+      + '<p class="t-meta">同一个频道块，改前和这一版各画一遍。行的高度、颜色、后端那个 <span class="mono">filling_in</span> 字段都没动，动的是签上写什么、挂在谁身上。</p>'
       + '<div class="pair">'
       +   '<div class="pair__row pair--old"><span class="pair__k">改前</span>'
       +     '<span class="pair__demo tk--pad"><span class="tk__t">全部频道页加搜索</span>'
-      +     '<span class="tk__tag" title="'+attr(COPY.zh.tip.before)+'">'+esc(COPY.zh.fillIn)+'</span></span>'
-      +     '<span class="pair__demo" lang="en"><span class="tk__t">冒烟测试补跑一遍</span>'
-      +     '<span class="tk__tag" title="'+attr(COPY.en.tip.before)+'">'+esc(COPY.en.fillIn)+'</span></span>'
+      +     '<span class="tk__tag" title="'+tip+'">'+esc(S().fillIn)+'</span></span>'
+      +     '<span class="pair__demo"><span class="tk__t">新建频道入口设计</span></span>'
       +   '</div>'
       +   '<div class="pair__row"><span class="pair__k">这一版</span>'
-      +     '<span class="pair__demo"><span class="tk__t">出题改动原型</span>'
-      +     '<span class="tk__tag">'+esc(zhMine)+'</span></span>'
-      +     '<span class="pair__demo tk--pad" title="'+zhTip+'"><span class="tk__t">全部频道页加搜索</span></span>'
-      +     '<span class="pair__demo" lang="en"><span class="tk__t">出题改动原型</span>'
-      +     '<span class="tk__tag">'+esc(enMine)+'</span></span>'
-      +     '<span class="pair__demo tk--pad" lang="en" title="'+enTip+'"><span class="tk__t">冒烟测试补跑一遍</span></span>'
+      +     borrowed + '<span class="tk__tag">林夏</span></span>'
+      +     '<span class="pair__demo"><span class="tk__t">新建频道入口设计</span>'
+      +     '<span class="tk__tag">王长鑫</span></span>'
+      +     '<span class="pair__demo"><span class="tk__t">出题改动原型</span></span>'
       +   '</div>'
       + '</div>'
-      + '<p class="t-meta" style="margin-top:10px">借来的那两条，鼠标停上去分别说：<br>'
-      +   esc(COPY.zh.tip.after)+'<br>'+esc(COPY.en.tip.after)+'</p>'
+      + '<p class="t-meta" style="margin-top:10px">最后一格是我负责的：不挂签。借来的那两条，鼠标停上去说：<br>'
+      +   esc(S().tip)+'</p>'
       + '</div>'
       + '<div class="card"><h3>'+esc(title)+'</h3>'
       + '<p class="t-meta">这里是内容区，放它只为让左边点得动。这次改的是左边那条侧栏里的签。'
@@ -502,7 +495,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 
   function render(){
     $('#chLabel').textContent = S().channels;
-    $('#spreadSeg').hidden = (mode === 'before');
     renderSide();
     renderView();
   }
@@ -551,12 +543,6 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     if (lseg) {
       lang = lseg.dataset.lang;
       $$('#langSeg button').forEach(function(b){ b.classList.toggle('is-on', b === lseg); });
-      render(); return;
-    }
-    var sseg = e.target.closest('#spreadSeg button');
-    if (sseg) {
-      spread = sseg.dataset.spread;
-      $$('#spreadSeg button').forEach(function(b){ b.classList.toggle('is-on', b === sseg); });
       render(); return;
     }
     if (e.target.closest('#sheetClose')) { $('#sheet').hidden = true; }
