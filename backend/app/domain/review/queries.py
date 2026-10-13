@@ -94,9 +94,13 @@ async def latest_cards_by_task(
     does not explicitly begin, commit or roll back.
     """
     cards = await AcceptCardRepository(db).latest_by_task(task_ids)
-    handles = await AcceptCardRepository(db).reviewer_handles_for_cards(list(cards))
+    # 评审人在 `accept_card_reviewer` 表里，按**卡的 id** 查 —— `cards` 的键是活的
+    # id（`latest_by_task` 按 task_id 归），拿它当卡号去问表一条都查不到。
+    handles = await AcceptCardRepository(db).reviewer_handles_for_cards(
+        [card.id for card in cards.values()]
+    )
     return {
-        task_id: _rail_card(card, handles.get(task_id, []))
+        task_id: _rail_card(card, handles.get(card.id, []))
         for task_id, card in cards.items()
     }
 

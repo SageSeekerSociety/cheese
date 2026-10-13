@@ -282,14 +282,26 @@ def statements(session) -> Iterator[list[tuple[str, object]]]:
         event.remove(engine, "before_cursor_execute", record)
 
 
-async def _assert_read_by_index(session, seen, needle: str, index: str) -> None:
-    """The one statement matching `needle` is read by `index`, in the generic plan."""
+async def _assert_read_by_index(
+    session, seen, needle: str, index: str | tuple[str, ...]
+) -> None:
+    """The one statement matching `needle` is read by `index`, in the generic plan.
+
+    A tuple is for a lookup two indexes can serve: a 提交's reviews are read by
+    `submission_id`, and both the foreign-key index and the partial unique index
+    this branch added (`(submission_id, reviewer_id) WHERE deleted_at IS NULL`)
+    open with that column — which one the planner takes is a cost call, so what
+    is asserted is that it took one that reads it.
+    """
+    names = (index,) if isinstance(index, str) else index
     found = [(sql, params) for sql, params in seen if needle in sql]
     assert len(found) == 1, f"expected one {needle!r} statement, got {len(found)}"
     sql, params = found[0]
     conn = await session.connection()
-    plan = await _generic_plan(conn, f"probe_{index}", sql, params)
-    assert index in plan, f"{index} is not used:\n{sql}\n{plan}"
+    plan = await _generic_plan(conn, f"probe_{names[0]}", sql, params)
+    assert any(name in plan for name in names), (
+        f"none of {names} is used:\n{sql}\n{plan}"
+    )
 
 
 @pytest.mark.anyio
@@ -388,6 +400,9 @@ async def test_every_per_request_lookup_is_read_by_its_index(db_factory):
             session,
             seen,
             "FROM task_submission_review",
-            "ix_task_submission_review_submission_id",
+            (
+                "ix_task_submission_review_submission_id",
+                "uq_task_submission_review_submission_reviewer",
+            ),
         )
         await session.rollback()

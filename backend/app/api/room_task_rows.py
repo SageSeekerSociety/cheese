@@ -95,8 +95,11 @@ async def task_rows(
     card_repo = AcceptCardRepository(db)
     cards = await card_repo.latest_by_task(thread_ids)
     # 卡递给谁在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上：整屏卡
-    # 的评审人一次查完（`reviewer_handles_for_cards`）。
-    card_reviewers = await card_repo.reviewer_handles_for_cards(list(cards))
+    # 的评审人一次查完（`reviewer_handles_for_cards`）—— 按**卡的 id** 查，`cards`
+    # 的键是活的 id（`latest_by_task` 按 task_id 归）。
+    card_reviewers = await card_repo.reviewer_handles_for_cards(
+        [card.id for card in cards.values()]
+    )
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
     # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
     landed: dict[uuid.UUID, list] = {}

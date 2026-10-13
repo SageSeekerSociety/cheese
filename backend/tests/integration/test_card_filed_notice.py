@@ -177,11 +177,12 @@ def _unread(client, token: str) -> list[dict]:
     return [row for row in _notices(client, token) if row["read"] is False]
 
 
-def _decide(client, card: str, action: str, **body):
+def _decide(client, card: str, action: str, who: str = "alice", **body):
+    # 谁在决定是**认证出来的**（路由读 actor.handle，不看请求体），所以身份由这里给。
     return client.post(
         f"/accept-cards/{card}/{action}",
         json=body,
-        headers=session_auth_headers("alice"),
+        headers=session_auth_headers(who),
     )
 
 
@@ -201,7 +202,9 @@ def test_rejecting_the_card_clears_the_wait_from_both_inboxes(client):
     assert len(_unread(client, alice)) == 1
     assert len(_unread(client, reporter)) == 1
 
-    r = _decide(client, card, "reject", decided_by="alice", note="口径和上一版对不上")
+    # 撤回只认递卡人（或武装自动合并的人），所以这张卡由递它的 bob 退回 ——
+    # 审阅人 alice 撤不了（那条判据在 `test_accept_authorization.py` 里单列）。
+    r = _decide(client, card, "reject", who="bob", note="口径和上一版对不上")
     assert r.status_code == 200, r.text
     wait_work_idle()
 

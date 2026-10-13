@@ -197,34 +197,6 @@ class InProcessBroker:
                 if not q.offer(frame):
                     cut_off(self._subs, channel, q)
 
-    def _answering_in_thread(
-        self, room: str, thread: str, turn_id: str, seat: str | None
-    ) -> None:
-        """Tell ``room``'s main line, now, that ``seat`` is answering in ``thread``
-        — the line under the message it was summoned under.
-
-        Without this the room hears nothing until the teammate's turn actually
-        starts (`_set_hook_activity` → `RoomActivity.told`), and getting there
-        means dispatching a machine and a cold start: that gap is the minute of
-        silence right after @-ing someone in a channel.
-
-        Registering the turn here is what keeps the two ends balanced: the
-        runner publishes `turn_finished` for any turn it started (including one
-        whose session never took it over), and that pops exactly this key, so
-        the line under the message cannot outlive the turn.
-
-        ponytail: the ceiling is a turn admitted but never run — the runner
-        publishes no terminal frame for it, so the line stays until a reload.
-        Fix then: publish the terminal frame on `lifecycle` end regardless of
-        `started`.
-        """
-        if not seat:
-            return
-        self.activity.note_thread(thread, room)
-        for change in self.activity.turn_started(thread, turn_id, seat):
-            for to, extra in self.activity.told(thread, change):
-                self._fan_out(to, extra)
-
     async def typing(self, channel: str, member: str, *, active: bool) -> None:
         """A person composing in this room's input (or stopping)."""
         if (frame := self.activity.typing(channel, member, active)) is not None:

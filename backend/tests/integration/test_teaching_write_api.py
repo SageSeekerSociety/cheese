@@ -34,11 +34,14 @@ SPACE_WEEK = {
     "allowedTopics": ["空间话题"],
 }
 
-#: All seven fields set, in the request's spelling — what the settings form sends.
+#: All eight fields set, in the request's spelling — what the settings form sends.
+#: `privatePrompt` 是出题人可见的那一格（`teaching_to_api(include_private=True)`），
+#: 这几条用的都是出题人/管理员的身份，所以它也在读回来的那一份里。
 #: No 课件 / 知识 ids: naming one needs a real row, and the reference check has
 #: its own tests (`test_teaching_references.py`).
 FULL_TEACHING = {
     "systemPrompt": "第 {current_week} 周，只做 {allowed_topics}。",
+    "privatePrompt": None,
     "currentWeek": 3,
     "allowedTopics": ["循环", "数组"],
     "avoidInCode": ["递归"],
@@ -50,6 +53,7 @@ FULL_TEACHING = {
 #: What a level that says nothing reads back as.
 EMPTY_TEACHING = {
     "systemPrompt": None,
+    "privatePrompt": None,
     "currentWeek": None,
     "allowedTopics": [],
     "avoidInCode": [],
@@ -221,7 +225,7 @@ def test_an_empty_object_clears_the_space_default(
         headers=_auth(board["token"]),
     )
     assert cleared.status_code == 200, cleared.text
-    # 「清空」在读取侧的意思 = 六格全空，于是下一级（或没有下一级时）说了算。
+    # 「清空」在读取侧的意思 = 八格全空，于是下一级（或没有下一级时）说了算。
     assert _space_teaching_of(api_client, board) == EMPTY_TEACHING
 
 

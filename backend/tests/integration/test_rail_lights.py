@@ -22,7 +22,7 @@ from datetime import UTC, datetime, timedelta
 
 from app.api.deps import get_work_runner
 from app.domain.agent.models import AgentTurn
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.models import AcceptCard, AcceptCardReviewer, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import Building
@@ -82,14 +82,18 @@ def _planted(
                 s.add(task)
                 await s.flush()
                 if card is not None:
-                    s.add(
-                        AcceptCard(
-                            topic_id=uuid.UUID(room_id),
-                            task_id=task.id,
-                            reviewer_handle="alice",
-                            **card,
-                        )
+                    # 评审人在 `accept_card_reviewer` 表里（一卡一行），卡上那一列只
+                    # 留影子；读的一侧（`awaits_me`）看的是表，所以直接写库的卡要
+                    # 把那一行也写出来。
+                    card_row = AcceptCard(
+                        topic_id=uuid.UUID(room_id),
+                        task_id=task.id,
+                        reviewer_handle="alice",
+                        **card,
                     )
+                    s.add(card_row)
+                    await s.flush()
+                    s.add(AcceptCardReviewer(card_id=card_row.id, handle="alice"))
                 if turn:
                     now = datetime.now(UTC)
                     s.add(

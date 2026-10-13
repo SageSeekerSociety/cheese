@@ -15,8 +15,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from app.domain.agent.harness.claude_code import owner_login
-from app.domain.agent_instance.models import AgentInstance
-from app.domain.agent_instance.own import own_handle
+from app.domain.agent_instance.models import OwnAgent
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -404,16 +403,19 @@ def test_its_owner_arms_its_skills_without_a_manager(client):
     owner picks the skills it carries and needs no manager to approve that,
     while another member's agent stays a manager's call."""
     project_id, _room = _project_with_bob(client)
-    _log_in_claude_code(client, "bob")
+    # 机器上的那次登录只是一个**连接**；要成为项目里的一位队友，得由它主人加进来
+    # （#3611：一位队友 = 一个连接，加和删都只由主人做）。
+    _bring_in(client, project_id, "bob")
     assert _own_row(_members(client, project_id, "bob"), "bob") is not None
 
     async def instance_id():
         async with client.test_factory() as db:
             user = await db.scalar(select(User).where(User.username == "bob"))
+            # 席位 handle 带上了一个随机后缀（`own_handle`），认不出是谁的，
+            # 所以从 `own_agents` 那一行按主人用户认这一位队友。
             return await db.scalar(
-                select(AgentInstance.id).where(
-                    AgentInstance.project_id == uuid.UUID(project_id),
-                    AgentInstance.handle == own_handle(user.id),
+                select(OwnAgent.instance_id).where(
+                    OwnAgent.owner_user_id == user.id,
                 )
             )
 

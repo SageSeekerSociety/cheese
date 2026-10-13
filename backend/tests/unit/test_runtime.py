@@ -2408,30 +2408,3 @@ async def test_the_main_line_hears_who_is_answering_in_a_thread():
         ("thread_activity", "cheese", False),
     ]
     assert {f["thread_id"] for f in heard} == {str(thread)}
-
-
-@pytest.mark.anyio
-async def test_opening_a_thread_tells_the_room_before_it_starts_answering():
-    """@ 芝士 在频道主线上：房间不必等它开工。
-
-    开支线那一刻就发那一帧（`InProcessBroker.receive_message`），所以设备派发、
-    冷启动那段空档里主线也有话说 —— 本来要等到 `_set_hook_activity` 那一帧才
-    有。而它照旧由这一轮终了的那一帧关掉，开工、收工各一帧，多讲一次也不会。
-    """
-    broker = InProcessBroker()
-    room, thread = str(uuid.uuid4()), str(uuid.uuid4())
-    async with broker.subscribe(room) as q:
-        broker._answering_in_thread(room, thread, "t1", "cheese")
-        # 这一轮真的跑起来了（runner 先发不带 agent 的那一帧，钩子再发带的那
-        # 一帧），然后收工。
-        await broker.publish(thread, {"type": "turn_started", "turn_id": "t1"})
-        await broker.publish(
-            thread, {"type": "turn_started", "turn_id": "t1", "agent": "cheese"}
-        )
-        await broker.publish(thread, {"type": "turn_finished", "turn_id": "t1"})
-        heard = [q.get_nowait() for _ in range(q.qsize())]
-    assert [(f["type"], f["member"], f["active"]) for f in heard] == [
-        ("thread_activity", "cheese", True),
-        ("thread_activity", "cheese", False),
-    ]
-    assert {f["thread_id"] for f in heard} == {thread}

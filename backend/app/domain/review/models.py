@@ -101,10 +101,13 @@ class AcceptCard(UuidPk, Timestamps, Base):
         JSON, nullable=False, default=list, server_default="[]"
     )
     # 递给谁验收 (spec C5)：从 2026-10-12 起评审人在 `accept_card_reviewer` 表
-    # （一卡多行），不再是这一张表上的列。这里曾有一列 `reviewer_handle`，它把
-    # 「一卡一人」藏在列的类型里；搬进共用的表之后改成集合语义（`AcceptCardRepository
-    # .set_reviewers`），列退役。
-    #
+    # （一卡多行）—— 那张表是唯一的说法，新代码不读也不写这一列。列本身这一刀只留
+    # 成影子（迁移 `f3b8d2c7a1e5` 摘掉了它的 NOT NULL）：删列要等映射它的一版后端
+    # 下线，`check-migration-safety` 才放行；而只要模型里少一列、库里还留着，
+    # `alembic check` 就会报成新的 drift。删列留给下一刀。
+    reviewer_handle: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     # 审阅重点：交付的人请审阅的人确认的那几件事，至多三条，每条一句
     # （`cards.clean_focus` 把关）。验证过程在 `change_body` 里，不在这里。列名是
     # 它从前的名字 routing_reason，那时它说的是「为什么推荐这个审阅人」。
@@ -247,7 +250,7 @@ class AcceptCardReviewer(UuidPk, Timestamps, Base):
 
     表本来就装得下多行，这一版把它放开成集合：`AcceptCardRepository.set_reviewers`
     整体替换这张卡的评审人集合，任一评审人采纳即可推进。`accept_cards.reviewer_handle`
-    那一列已随本刀退役（迁移删列）—— 这张表是唯一的家。
+    那一列只留影子（新代码不读不写），这张表是唯一的家。
     """
 
     __tablename__ = "accept_card_reviewer"

@@ -80,7 +80,7 @@ async def test_project_service_get_finds_project_and_returns_none_for_unknown(
 async def _card(session, topic_id, *, status: AcceptStatus, pr_number=None):
     card = await AcceptCardRepository(session).add(
         topic_id=topic_id,
-        reviewer_handle="alice",
+        reviewer_handles=["alice"],
         focus="",
         status=status,
     )

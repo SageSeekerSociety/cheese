@@ -181,11 +181,6 @@ class RunnerIntake:
         )
         if answer_in != topic_id:
             live_delivery_expected = chat_service.has_running_turn(answer_in)
-            # 支线一开就告诉房间：主线该在它真开工之前就知道有人在答。见
-            # `InProcessBroker._answering_in_thread`。
-            self._broker._answering_in_thread(
-                channel, str(answer_in), str(turn_id), seat
-            )
         self._schedule_message(
             chat_service,
             answer_in,

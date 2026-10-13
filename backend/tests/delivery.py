@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
+from app.domain.user.repositories import UserRepository
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -24,6 +25,11 @@ def delivery_task(client, room_id, *, new=False, commit=True):
             room = await session.get(Topic, room_id)
             if room is None:
                 return None
+            # 下面把 alice 声明成这条活的递卡人，而 `set_credits` 只认平台上真实
+            # 存在的账号 —— 光给个 handle 不算数，所以先把她建出来。
+            users = UserRepository(session)
+            if await users.get_by_username("alice") is None:
+                await users.create_user(username="alice", email="alice@example.com")
             task = await TaskService(session).open_thread(
                 project_id=room.project_id,
                 room_id=room.id,
