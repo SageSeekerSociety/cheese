@@ -393,6 +393,11 @@ async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factor
             *(t.id for t in tasks.values()),
             spoken_since.id,
         ]
+        # 统计要先看见这份种子，再谈计划：autovacuum 上一轮留下的估计会让
+        # 会话单列索引显得够便宜，探出来的就成了 planner 的一次掷硬币，而不是
+        # 「切时间界的索引能不能服务这条读」—— 这正是这几条断言要分辨的两件
+        # 事。ANALYZE 在本事务里看得见自己刚种下的行，种子多大统计就多大。
+        await session.execute(text("ANALYZE blocks"))
         # Every path is still open to the planner; this only makes reading the
         # whole table the last resort, so the plan says whether the index was
         # usable at all rather than whether it was cheapest today.
