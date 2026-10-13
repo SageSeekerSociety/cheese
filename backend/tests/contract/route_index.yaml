@@ -1114,8 +1114,6 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unarchive", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "DELETE", path: "/topics/{topic_id}", auth: "topic.archive", owner: "topic"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/check-result", auth: "actor.topic", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/lock", auth: "cheese.room.gate", owner: "room_task"}
-  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/unlock", auth: "cheese.room.gate", owner: "room_task"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/clone-from", auth: "actor.topic", owner: "topic"}
   # app.api.routes.topics_attachments
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/attachments", auth: "actor.topic.verified", owner: "room.files"}
