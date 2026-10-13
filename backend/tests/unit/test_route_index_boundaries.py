@@ -407,20 +407,21 @@ def test_existing_frozen_debt_keeps_exact_b9_leaves():
     # them, then 724/748 again on main's 2026-10-13 batch, 726/750 once members
     # could add and remove their own agents, 727/751 once
     # `/run-records/turns` was registered above them, and 728/752 once
-    # `POST /blocks/{block_id}/skip` was. The pair itself is
+    # `POST /blocks/{block_id}/skip` was, then 732/756 once an account could
+    # hold a model connection. The pair itself is
     # unchanged — tests/AGENTS.md
     # ("Generated routes and database predicates") asks for the indices, the
     # identities behind them and this assertion to move in one commit.
     (pair,) = FROZEN
     assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        728,
-        752,
+        732,
+        756,
         "http",
         "GET",
     )
     records = [
-        replace(record(728, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(752, pair.later_path), endpoint=pair.later_endpoint),
+        replace(record(732, pair.earlier_path), endpoint=pair.earlier_endpoint),
+        replace(record(756, pair.later_path), endpoint=pair.later_endpoint),
     ]
     assert checked_findings(records, FROZEN) == []
 

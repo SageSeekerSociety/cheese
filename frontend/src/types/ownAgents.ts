@@ -36,7 +36,7 @@ export function modelServiceOf(login: ClaudeCodeLogin | null): string | null {
 export type OwnAgentsSettings = Schemas['OwnAgentsOut']
 export type OwnAgentRow = Schemas['OwnAgentOut']
 export type OwnAgentConnection = Schemas['OwnAgentConnectionOut']
-/** 读者自己的一份模型连接，可以加入这个项目；`id` 是存放它的那台设备。 */
+/** 读者自己的一份模型连接，可以加入这个项目；`id` 是存放它的那台设备，或账号里那一份的 id。 */
 export type MyOwnAgentConnection = Schemas['MyConnectionOut']
 /** 连接的类型：Claude 订阅、Anthropic API key、自定义模型服务。 */
 export type OwnAgentKind = Schemas['ConnectionKind']
