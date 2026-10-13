@@ -312,7 +312,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 ## 这份清单怎么来的 {#how}
 
-数字不是手数的：`.claude/scripts/frontend_grade.py` 里的 `grade_frontend` 逐文件跑一遍，取它的等级和理由；页面清单取自 `src/router/` 的 import 图（`scene-ratchet.py --list` 能把两者一起打出来——这一页的两张表就是它生成的）。看板上的 A/B/C/D 是**全部 435 个 `.vue`** 的口径，这里只切出「场景」这一层（路由页 + 面板），所以和看板对不上是正常的。
+数字不是手数的：等级和理由来自 `.claude/scripts/frontend_grade.py`，看板和棘轮读的是同一份判据；页面清单取自 `src/router/` 的 import 图（`scene-ratchet.py --list` 能把两者一起打出来——这一页的表就是它生成的）。看板上的 A/B/C/D 是**全部 `.vue`** 的口径（数量见[架构指标](/dev/arch-metrics#metrics)），这里只切出「场景」这一层（路由页 + 面板），所以和看板对不上是正常的。
 
 三个已知偏差写在这里，免得被当成事实用：
 
