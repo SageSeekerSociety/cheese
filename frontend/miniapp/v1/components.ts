@@ -11,12 +11,16 @@
 // `input` and `change` both fire whenever it changes, so Vue's v-model works.
 import { defineCustomElement } from 'vue'
 
+import { registerBoard } from './components/board'
 import Chart from './components/Chart.ce.vue'
 import Chip from './components/Chip.ce.vue'
 import MathEl from './components/Math.ce.vue'
 import NumberEl from './components/Number.ce.vue'
+import Plane from './components/Plane.ce.vue'
+import { registerPlaneItems } from './components/planeItem'
 import Player from './components/Player.ce.vue'
 import Row from './components/Row.ce.vue'
+import Scrub from './components/Scrub.ce.vue'
 import Segmented from './components/Segmented.ce.vue'
 import Select from './components/Select.ce.vue'
 import Slider from './components/Slider.ce.vue'
@@ -35,6 +39,8 @@ const ALL = {
   'c-row': Row,
   'c-chart': Chart,
   'c-math': MathEl,
+  'c-scrub': Scrub,
+  'c-plane': Plane,
 }
 /** Vue gives an element its properties only once it is in the page. A
  *  framework sets them earlier — React sets every prop on an element it has
@@ -60,6 +66,8 @@ function earlyProps(base: CustomElementConstructor, keys: string[]): CustomEleme
 }
 
 export function registerComponents() {
+  registerBoard()
+  registerPlaneItems()
   for (const [name, comp] of Object.entries(ALL)) {
     if (customElements.get(name)) continue
     const keys = Object.keys((comp as { props?: object }).props ?? {})

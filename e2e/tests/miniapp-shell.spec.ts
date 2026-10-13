@@ -40,8 +40,9 @@ test('the examples in the writing guide run in the shell', async ({ page }) => {
   expect(examples.length).toBeGreaterThan(0);
   for (const code of examples) {
     const errors = await runApp(page, code);
-    await expect(page.locator('#cheese-app')).not.toBeEmpty();
-    expect((await page.locator('#cheese-app').boundingBox())?.height ?? 0).toBeGreaterThan(40);
+    // What an app draws may sit inside a component's own shadow tree, so it
+    // is judged by the room it takes, not by text in the page.
+    await expect.poll(async () => (await page.locator('#cheese-app').boundingBox())?.height ?? 0).toBeGreaterThan(40);
     expect(errors).toEqual([]);
   }
 });
@@ -97,6 +98,128 @@ test('a formula wider than a phone stays inside the column and can be scrolled t
   });
   expect(box.scrolls).toBe(true);
   expect(box.end).toBeLessThanOrEqual(box.right + 1);
+  expect(errors).toEqual([]);
+});
+
+/** The middle of a dot the reader would grab, inside a plane's own picture. */
+async function dotCentre(page: Page, nth: number) {
+  const box = await page.locator('c-plane .point.movable .dot').nth(nth).boundingBox();
+  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
+}
+
+test('a point dragged on a plane hands the app its place in the plane’s own numbers, inside the plane and on its grid', async ({
+  page,
+}) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const p = ref([2, 2])
+</script>
+<template>
+  <c-plane :x="[0, 10]" :y="[0, 5]" :height="240"><c-point v-model="p" drag="xy" :snap="0.5" /></c-plane>
+  <p id="out">{{ p.join(' ') }}</p>
+</template>`
+  );
+  await expect(page.locator('c-plane .point.movable')).toHaveCount(1);
+  const at = await dotCentre(page, 0);
+  await page.mouse.move(at.x, at.y);
+  await page.mouse.down();
+  await page.mouse.move(at.x + 2000, at.y - 2000, { steps: 5 });
+  await page.mouse.up();
+  await expect(page.locator('#out')).toHaveText('10 5');
+
+  await page.locator('c-plane .point.movable').focus();
+  await page.keyboard.press('ArrowLeft');
+  await page.keyboard.press('ArrowDown');
+  await expect(page.locator('#out')).toHaveText('9.5 4.5');
+  expect(errors).toEqual([]);
+});
+
+test('an app that hands the plane a new function on every render still answers the reader', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const p = ref([1, 1])
+</script>
+<template>
+  <c-plane :x="[0, 4]" :y="[0, 4]">
+    <c-curve :f="(x) => x * p[1] / 4" />
+    <c-point v-model="p" drag="xy" :snap="1" />
+  </c-plane>
+  <p id="out">{{ p.join(' ') }}</p>
+</template>`
+  );
+  await page.locator('c-plane .point.movable').focus();
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.locator('#out')).toHaveText('2 2');
+  expect(errors).toEqual([]);
+});
+
+test('a piece dropped on a zone is there, in the order it was dropped; a full one-piece zone swaps', async ({
+  page,
+}) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const at = ref({ tray: ['a', 'b', 'c'], slot: [], list: ['x', 'y'] })
+</script>
+<template>
+  <c-board v-model="at">
+    <c-zone name="tray"><c-piece v-for="p in at.tray" :key="p" :name="p">{{ p }}</c-piece></c-zone>
+    <c-zone name="slot" :max="1"><c-piece v-for="p in at.slot" :key="p" :name="p">{{ p }}</c-piece></c-zone>
+    <c-zone name="list"><c-piece v-for="p in at.list" :key="p" :name="p">{{ p }}</c-piece></c-zone>
+  </c-board>
+  <p id="out">{{ JSON.stringify(at) }}</p>
+</template>`
+  );
+  const out = async () => JSON.parse((await page.locator('#out').textContent())!);
+
+  // Dragged, and let go on the empty one-piece zone.
+  const a = (await page.locator('c-piece[name="a"]').boundingBox())!;
+  const slot = (await page.locator('c-zone[name="slot"]').boundingBox())!;
+  await page.mouse.move(a.x + 5, a.y + 5);
+  await page.mouse.down();
+  await page.mouse.move(slot.x + slot.width / 2, slot.y + slot.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(out).toMatchObject({ tray: ['b', 'c'], slot: ['a'] });
+
+  // Picked and placed: dropped on the full zone, it swaps with what is there.
+  await page.locator('c-piece[name="b"]').click();
+  await page.locator('c-zone[name="slot"]').click();
+  await expect.poll(out).toMatchObject({ tray: ['a', 'c'], slot: ['b'] });
+
+  // From the keyboard, onto a piece in a list: it goes in before that piece.
+  await page.locator('c-piece[name="c"]').focus();
+  await page.keyboard.press('Enter');
+  await page.locator('c-piece[name="y"]').focus();
+  await page.keyboard.press('Enter');
+  await expect.poll(out).toMatchObject({ tray: ['a'], list: ['x', 'c', 'y'] });
+  expect(errors).toEqual([]);
+});
+
+test('a number in a sentence is dragged and stepped within its range', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const n = ref(3)
+</script>
+<template>
+  <p>每周 <c-scrub v-model="n" :min="1" :max="7" unit=" 次" />，<span id="out">{{ typeof n }} {{ n }}</span></p>
+</template>`
+  );
+  const box = (await page.locator('c-scrub').boundingBox())!;
+  await page.mouse.move(box.x + 4, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 600, box.y + box.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await expect(page.locator('#out')).toHaveText('number 7');
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.locator('#out')).toHaveText('number 6');
   expect(errors).toEqual([]);
 });
 
