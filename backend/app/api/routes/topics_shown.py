@@ -209,7 +209,7 @@ async def show_in_room(
         server = str(body.get("server") or "").strip()
         uri = str(body.get("path") or "").strip()
         if not server or not apps.is_ui_uri(uri):
-            raise UnprocessableEntityError("mcp-app needs a server and a ui:// resource")
+            raise UnprocessableEntityError(say("mcpAppNeedsServerAndResource"))
         path = apps.pointer(server, uri)
     else:
         path = clean_artifact_path(body.get("path") or "")

@@ -1030,5 +1030,9 @@
   "specDevicesOf": "{name}'s devices",
   "environmentDefaultPeopleOnly": "The default execution environment for new teammates is set by people; an AI teammate can only change its own",
   "environmentOwnOnly": "An AI teammate can only change its own execution environment",
-  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices."
+  "platformSpecUnavailable": "This deployment has no platform machines, so this sandbox cannot be placed; the conversation and platform tools still work. The teammate can be given another sandbox spec, such as someone's devices.",
+  "previewSelectionStale": "The preview's selection is no longer the one you opened; open the preview again",
+  "skillUnknown": "No such skill",
+  "mcpAppNeedsServerAndResource": "An mcp-app needs both a server and a ui:// resource",
+  "mcpResourcesMethodUnsupported": "This MCP resources endpoint does not support that method"
 }

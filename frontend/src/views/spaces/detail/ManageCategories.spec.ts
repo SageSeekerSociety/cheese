@@ -118,7 +118,9 @@ describe('项目集设置：默认队友', () => {
 
     await fireEvent.click(view.getByLabelText('编辑分类'))
     const picker = await view.findByTestId('default-teammate')
-    await fireEvent.mouseDown(within(picker).getByRole('combobox'))
+    // Vuetify 3.13 把 `role=combobox` 同时挂在字段的壳和里面的 `<input>` 上；
+    // 带 `aria-label` 的是 `<input>`，按名字找它。
+    await fireEvent.mouseDown(within(picker).getByRole('combobox', { name: '默认队友' }))
     await fireEvent.click(await view.findByRole('option', { name: /学术研究/ }))
 
     await fireEvent.click(view.getByRole('button', { name: '确认' }))
@@ -134,7 +136,7 @@ describe('项目集设置：默认队友', () => {
 
     await fireEvent.click(view.getByLabelText('编辑分类'))
     const picker = await view.findByTestId('default-teammate')
-    await fireEvent.mouseDown(within(picker).getByRole('combobox'))
+    await fireEvent.mouseDown(within(picker).getByRole('combobox', { name: '默认队友' }))
     await fireEvent.click(await view.findByRole('option', { name: /继承/ }))
 
     await fireEvent.click(view.getByRole('button', { name: '确认' }))

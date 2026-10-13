@@ -8,6 +8,8 @@
     :failed="failed"
     :error-reason="errorReason"
     :forbidden="forbidden"
+    :agent-types="agentTypes"
+    :agent-types-failed="agentTypesFailed"
     @retry="load"
     @submit="submitCategory"
     @delete="deleteCategory"
@@ -25,6 +27,7 @@ import type { CategoryFormValues } from './ManageCategoriesView.vue'
 import { computed, onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 
+import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useSpaceData } from '@/composables/useSpaceData'
 
 import ManageCategoriesView from './ManageCategoriesView.vue'
@@ -35,6 +38,8 @@ import { useSpaceStore } from '@/stores/space'
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
 const { currentSpace, categories, loadingCategories } = storeToRefs(spaceStore)
+// 「默认队友」那一格的候选预设：取数留在这里（画面那一半不碰 API 层）。
+const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 
 const dialogOpen = ref(false)
 const saving = ref(false)
@@ -52,11 +57,7 @@ const load = async () => {
   readError.value = await spaceData.fetchCategories(true)
 }
 
-const submitCategory = async (payload: {
-  id: number | null
-  values: CategoryFormValues
-  defaultRole?: string
-}) => {
+const submitCategory = async (payload: { id: number | null; values: CategoryFormValues; defaultRole?: string }) => {
   saving.value = true
   try {
     if (payload.id !== null) {

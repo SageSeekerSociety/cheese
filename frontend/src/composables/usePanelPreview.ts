@@ -23,7 +23,6 @@ import { useDocumentBytes, useDocumentPage } from '../lib/documentBytes'
 import { sameDocumentIdentity } from '../lib/documentIdentity'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, pageViewOf, suffixOf, webMimeOf } from '../lib/fileKind'
 import { MCP_APP_MIME } from '../lib/mcpAppBridge'
-import { warmPreviewPointer } from '../lib/previewPointer'
 import { roomFileDestination } from '../lib/previewSession'
 
 import { useDocumentRevisions } from './useDocumentRevisions'

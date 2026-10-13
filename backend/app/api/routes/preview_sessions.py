@@ -85,7 +85,7 @@ async def preview_session(
             # this one resource.
             parts = apps.pointer_parts(artifact.content)
             if parts is None:
-                raise NotFoundError("Preview selection changed")
+                raise NotFoundError(say("previewSelectionStale"))
             server, uri = parts
             resource = {
                 "kind": "mcp-app",

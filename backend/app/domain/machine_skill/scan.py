@@ -340,13 +340,16 @@ def read(result: dict[str, Any]) -> dict[str, Any]:
     server's.
     """
     if result.get("exit") != 0 or result.get("truncated"):
+        # i18n-exempt: 机器自己的 stderr，由 502 原样交给调用方
         raise ScanFailed(str(result.get("stderr") or "skill scan failed")[-1500:])
     try:
         said = json.loads(str(result["stdout"]).strip().splitlines()[-1])
     except (ValueError, IndexError, KeyError) as exc:
+        # i18n-exempt: 机器回了一句读不懂的东西，把 json 的报错原样说出来。
         raise ScanFailed(f"skill scan said nothing readable: {exc}") from exc
     skills = said.get("skills") if isinstance(said, dict) else None
     if not isinstance(skills, list):
+        # i18n-exempt: 同上 —— 机器回的 payload 不合约定，这句话是给排错的人看的。
         raise ScanFailed("skill scan returned no skills list")
     return {
         "skills": [row for row in (_reading(skill) for skill in skills) if row],

@@ -17,6 +17,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
+import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useSpaceData } from '@/composables/useSpaceData'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
@@ -40,6 +41,8 @@ const { t } = useI18n()
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
+// 「默认队友」那一格的候选预设：取数留在这里（画面那一半不碰 API 层）。
+const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 
 const spaceId = computed(() => Number(route.params.spaceId))
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
@@ -273,6 +276,8 @@ async function publish(form: TaskFormSubmitData) {
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
     :publishing="publishing"
+    :agent-types="agentTypes"
+    :agent-types-failed="agentTypesFailed"
     @cancel="router.push(listTo)"
     @use-template="useTemplate"
     @import="importFile"

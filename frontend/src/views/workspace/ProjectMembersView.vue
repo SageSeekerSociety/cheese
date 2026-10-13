@@ -446,7 +446,14 @@ useCommands(() => [
       <div v-if="agents.length" class="mb-6">
         <div class="t-eyebrow mb-2">{{ t('work.members.sectionAgents') }} · {{ agents.length }}</div>
         <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
-          <div class="d-flex align-center pa-3" @click="openAgentProfile(a)">
+          <div
+            class="d-flex align-center pa-3"
+            role="button"
+            tabindex="0"
+            @click="openAgentProfile(a)"
+            @keydown.enter="openAgentProfile(a)"
+            @keydown.space.prevent="openAgentProfile(a)"
+          >
             <CheeseAvatar
               :name="teammateName(a.display_name, a.name_source) || a.handle"
               :handle="a.seat_handle"

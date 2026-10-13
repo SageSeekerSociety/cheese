@@ -117,7 +117,13 @@ it('a ui/message is joined from its text parts, trimmed, and handed to the bridg
         jsonrpc: '2.0',
         id: 3,
         method: 'ui/message',
-        params: { role: 'user', content: [{ type: 'text', text: ' 你好 ' }, { type: 'text', text: '世界 ' }] },
+        params: {
+          role: 'user',
+          content: [
+            { type: 'text', text: ' 你好 ' },
+            { type: 'text', text: '世界 ' },
+          ],
+        },
       },
       source: frame as unknown as MessageEventSource,
     })

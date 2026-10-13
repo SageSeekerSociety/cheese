@@ -18,16 +18,15 @@ installing nor running anything.
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.core.db import get_db
 from app.domain.agent import skills as native_skills
 from app.domain.agent.carried_bodies import carried_bodies, room_device
 from app.domain.machine_skill.service import MachineSkillService
@@ -37,8 +36,6 @@ from app.domain.topic.services import TopicService
 router = APIRouter(
     prefix="/agent/skills", tags=["agent-skills"], dependencies=[ROUTE_DECIDES]
 )
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 #: Names are short labels; the room the caller names is what scopes the set.
 _SOURCE_PLATFORM = "平台发货"

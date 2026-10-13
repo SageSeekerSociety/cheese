@@ -221,10 +221,9 @@ class InProcessBroker:
         if not seat:
             return
         self.activity.note_thread(thread, room)
-        for to, frame in self.activity.told(
-            thread, self.activity.turn_started(thread, turn_id, seat)
-        ):
-            self._fan_out(to, frame)
+        for change in self.activity.turn_started(thread, turn_id, seat):
+            for to, extra in self.activity.told(thread, change):
+                self._fan_out(to, extra)
 
     async def typing(self, channel: str, member: str, *, active: bool) -> None:
         """A person composing in this room's input (or stopping)."""

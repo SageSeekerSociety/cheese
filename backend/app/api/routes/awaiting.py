@@ -37,7 +37,6 @@ from app.domain.notification.services import (
     asks_for_decision,
 )
 from app.domain.project.repositories import ProjectRepository
-from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import awaiting, presentation
 from app.domain.room_task.repositories import TaskRepository
@@ -139,11 +138,11 @@ async def waiting_items(
     room_cards = await _room_cards(db, topic_ids)
     # 卡递给谁在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上：这两批卡
     # 的评审人各一次查完，下面每行只做一次集合查询（`address` 要的就是这个集合）。
-    card_repo = AcceptCardRepository(db)
-    task_card_reviewers = await card_repo.reviewer_handles_for_cards(
+    cards_service = AcceptService(db)
+    task_card_reviewers = await cards_service.reviewer_handles_for_cards(
         [c.id for c in task_cards.values()]
     )
-    room_card_reviewers = await card_repo.reviewer_handles_for_cards(
+    room_card_reviewers = await cards_service.reviewer_handles_for_cards(
         [c.id for c in room_cards.values()]
     )
     # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻

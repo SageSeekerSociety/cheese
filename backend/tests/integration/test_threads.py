@@ -9,10 +9,10 @@ told of new replies, and only of what people said there.
 import time
 
 from tests.integration.conftest import (
-    chat_ws_url,
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -91,7 +91,7 @@ def test_the_main_line_is_told_it_is_answering_the_moment_the_thread_opens(clien
     起来，这一帧也就永远不来。
     """
     _project, room = _channel(client)
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         asked = post_message(
             client, room, "alice", {"content": "@芝士 首页要改哪些地方？"}
         )

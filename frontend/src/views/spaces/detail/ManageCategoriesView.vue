@@ -117,7 +117,13 @@
           v-bind="displayOrderProps"
         ></v-text-field>
 
-        <DefaultTeammatePicker v-model="defaultRole" :raw-value="editingDefaultRole" class="mt-4" />
+        <DefaultTeammatePicker
+          v-model="defaultRole"
+          :raw-value="editingDefaultRole"
+          :types="agentTypes"
+          :types-failed="agentTypesFailed"
+          class="mt-4"
+        />
       </v-form>
     </AdaptiveDialog>
   </div>
@@ -128,6 +134,7 @@
 // 发事件——读分类、增删改、读失败怎么显示，都归容器 `ManageCategories.vue`（场景规则
 // 见 docs/manual/dev/scenes.md）。
 import type { MenuAction } from '@/components/common/menuAction'
+import type { AgentType } from '@/cx_types'
 import type { SpaceCategory } from '@/types'
 
 import { reactive, ref } from 'vue'
@@ -164,6 +171,9 @@ defineProps<{
   failed: boolean
   errorReason: string | null
   forbidden: boolean
+  /** 「默认队友」那一格的候选预设：容器取好传进来（这一屏不碰 API 层）。 */
+  agentTypes: AgentType[]
+  agentTypesFailed: boolean
 }>()
 
 const emit = defineEmits<{

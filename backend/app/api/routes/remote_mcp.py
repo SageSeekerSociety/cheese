@@ -263,13 +263,13 @@ async def read_resource(
     project declares; the project's stored connection authorizes it here.
     """
     if body.method not in _RESOURCE_METHODS:
-        raise UnprocessableEntityError("Unsupported MCP resources method")
+        raise UnprocessableEntityError(say("mcpResourcesMethodUnsupported"))
     place = await TopicService(db).place_or_404(topic_id)
     actor = await resolver.resolve(
         project_id=place.project_id, topic_id=place.conversation_id
     )
     if not actor.authenticated:
-        raise AuthenticationRequiredError("Login required")
+        raise AuthenticationRequiredError(say("signInFirst"))
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id, enforce=True
     )
@@ -288,5 +288,7 @@ async def read_resource(
     except BaseError as exc:
         raise UnprocessableEntityError(str(exc)) from None
     except (upstream.UpstreamError, httpx.HTTPError) as exc:
-        raise UnprocessableEntityError(f"{name} 这次没有答复：{exc}") from None
+        raise UnprocessableEntityError(
+            say("mcpServerUnreachable", error=f"{name}: {exc}")
+        ) from None
     return ok({"result": result})

@@ -169,12 +169,15 @@ async def _manifest(client: httpx.AsyncClient, source: dict) -> dict:
     )
     where = f"{source['owner']}/{source['repo']} {source['manifest']}"
     if raw is None:
+        # i18n-exempt: 对方那份目录文件怎么了，排错用的；没有人接这个 LookupError
         raise LookupError(f"{where}: {_why(status)}")
     try:
         document = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
+        # i18n-exempt: 同上 —— 对方发布的东西不是 JSON，这句话是给排错的人看的。
         raise LookupError(f"{where}: not JSON") from None
     if not isinstance(document, dict):
+        # i18n-exempt: 同上 —— 对方发布的东西不是一份对象。
         raise LookupError(f"{where}: not an object")
     return document
 
@@ -393,6 +396,7 @@ async def _mcp_cards(client: httpx.AsyncClient) -> list[dict]:
         timeout=READ_TIMEOUT_S,
     )
     if got.status_code != 200:
+        # i18n-exempt: 官方注册表回了一个非 200 —— 排错用的数字，不是给读者的一句话。
         raise LookupError(f"the MCP registry answered {got.status_code}")
     rows = got.json().get("servers") or []
     return [

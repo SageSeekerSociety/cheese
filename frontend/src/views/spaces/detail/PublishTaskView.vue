@@ -6,6 +6,7 @@
 // 分类与话题、更多设置。从文件里读出好几道时，上面多一排题目列表：点一道就在下面改它的
 // 名称和描述，其余设置这几道共用，发布按钮写明发几道。
 import type { PickedAttachment } from '@/composables/useAttachmentUploads'
+import type { AgentType } from '@/cx_types'
 import type { NavTarget } from '@/lib/navTarget'
 import type { DomainGroup, SpaceCategory, SpaceTeaching, TaskFormSubmitData, Topic } from '@/types'
 import type { SpaceMaterial, SpaceMaterialsState } from '@/types/spaces'
@@ -46,6 +47,9 @@ defineProps<{
   materialsState: SpaceMaterialsState
   libraryTo: string
   publishing: boolean
+  /** 「默认队友」那一格的候选预设：容器取好传进来（这一屏不碰 API 层）。 */
+  agentTypes: AgentType[]
+  agentTypesFailed: boolean
 }>()
 
 const drafts = defineModel<PublishDraft[]>('drafts', { required: true })
@@ -299,7 +303,12 @@ function discardImport() {
               <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
               <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
             </v-radio-group>
-            <DefaultTeammatePicker v-model="defaultRole" class="pub__teammate" />
+            <DefaultTeammatePicker
+              v-model="defaultRole"
+              :types="agentTypes"
+              :types-failed="agentTypesFailed"
+              class="pub__teammate"
+            />
             <TeachingFields
               v-if="teachingOwn"
               v-model="teaching"

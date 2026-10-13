@@ -219,6 +219,7 @@ function addWebSkill() {
                     class="roots__input t-meta-read"
                     type="text"
                     autocomplete="off"
+                    :aria-label="t('work.room.skills.webPlaceholder')"
                     :placeholder="t('work.room.skills.webPlaceholder')"
                     :disabled="scanning"
                     @keyup.enter="addWebSkill"

@@ -40,15 +40,15 @@ one-shot command, the way ``machine/lifecycle.py`` asks a host to work.
 """
 
 import uuid
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.write_access import ROUTE_DECIDES
-from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     NotFoundError,
@@ -71,8 +71,6 @@ from app.domain.project_skill.importer import (
 router = APIRouter(
     prefix="/connector", tags=["machine-skills"], dependencies=[ROUTE_DECIDES]
 )
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 #: How long a machine is given to walk its own home for skills.
 SCAN_TIMEOUT_S = 60
@@ -237,6 +235,7 @@ async def set_machine_skill_roots(
         timeout=SCAN_TIMEOUT_S,
     )
     if written.get("exit") != 0 or written.get("truncated"):
+        # i18n-exempt: 机器自己的 stderr，占位句只是它没说话时的占位
         raise DeviceCallError(
             str(written.get("stderr") or "writing skill roots failed")[-1500:]
         )
@@ -325,6 +324,7 @@ async def fetch_machine_skill(
             timeout=SCAN_TIMEOUT_S,
         )
         if written.get("exit") != 0 or written.get("truncated"):
+            # i18n-exempt: 同上 —— 机器自己的 stderr，占位句只是它没说话时的那一句。
             raise DeviceCallError(
                 str(written.get("stderr") or "landing the skill failed")[-1500:]
             )

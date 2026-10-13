@@ -201,6 +201,17 @@ class AcceptService:
         """
         return await self._repo.latest_by_task(task_ids)
 
+    async def reviewer_handles_for_cards(
+        self, card_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[str]]:
+        """一批卡的评审人，一次查完 —— 侧栏和房间快照一次画很多张卡时用。
+
+        评审人在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上。
+        `topics.py` 的房间快照和 `awaiting.py` 的待办列表按批读它；路由直接摸
+        repository 会把领域的读者漏进 HTTP 层，所以从这里走 —— 同一个查询，深一层。
+        """
+        return await self._repo.reviewer_handles_for_cards(card_ids)
+
     async def open_pr_card_ids(
         self, project_id: uuid.UUID | None = None
     ) -> list[uuid.UUID]:

@@ -3,7 +3,7 @@
 // 预设队友的技能出生。
 //
 // 和「参考资料」那一格一样，发题页、改题页、项目集设置共用这一份 —— 只吃 props、
-// 只往上发，取数走 `useAgentTypes`（组件不碰 API 层）。
+// 只往上发。预设清单由调用方取好传进来（`types` / `typesFailed`），这一格不碰 API 层。
 //
 // 选择项：第一项是「继承（不单独指定）」，其余每个平台预设一项，标题用 `title`、
 // 副标题用它的技能清单（没有技能就退回 `description`）。预设清单读不到时只留「继承」
@@ -11,33 +11,39 @@
 //
 // 提交口径（`''` / 预设名 / 不带键）不在这里判：这一格只管报告人选，怎么落成 payload
 // 由调用方按 `defaultRolePayload` 算。
+import type { AgentType } from '@/cx_types'
+
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { useAgentTypes } from '@/composables/useAgentTypes'
-
-const props = defineProps<{
-  /** 当前提交值：`''` = 这一层不单独指定（继承上层）；或一个预设名。 */
-  modelValue?: string | null
-  /** 这一层现在写着的原始覆盖（`null` = 本来就没写）。只拿来把「继承」那一项讲准。 */
-  rawValue?: string | null
-}>()
+const props = withDefaults(
+  defineProps<{
+    /** 当前提交值：`''` = 这一层不单独指定（继承上层）；或一个预设名。 */
+    modelValue?: string | null
+    /** 这一层现在写着的原始覆盖（`null` = 本来就没写）。只拿来把「继承」那一项讲准。 */
+    rawValue?: string | null
+    /** 平台预设清单。取数在调用方（页面 / 它用的组合式）—— 这一格只吃 props、
+     *  只往上发，才作得成场景里的 A 级画面（docs/manual/dev/scenes.md）。 */
+    types?: AgentType[]
+    /** 清单没读到时为 true：只留「继承」那一项，并在副标题里说一句。 */
+    typesFailed?: boolean
+  }>(),
+  { types: () => [], typesFailed: false }
+)
 
 const emit = defineEmits<{ 'update:modelValue': [string] }>()
 
 const { t } = useI18n()
 
-const { types, failed } = useAgentTypes()
-
 const items = computed(() => [
   {
     value: '',
     title: t('spaces.teaching.defaultTeammate.inherit'),
-    subtitle: failed.value
+    subtitle: props.typesFailed
       ? t('spaces.teaching.defaultTeammate.loadFailed')
       : t('spaces.teaching.defaultTeammate.inheritHint'),
   },
-  ...types.value.map((type) => ({
+  ...props.types.map((type) => ({
     value: type.name,
     title: type.title,
     subtitle: type.skills?.length ? type.skills.join(' · ') : type.description,

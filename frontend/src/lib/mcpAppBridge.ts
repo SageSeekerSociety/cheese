@@ -92,11 +92,7 @@ export interface McpAppBridge {
  * replies go out with `'*'` as the target — the sender check is the frame identity,
  * not an origin string.
  */
-export function createMcpAppBridge(
-  frame: Window,
-  host: McpAppHostInfo,
-  handlers: McpAppHandlers = {}
-): McpAppBridge {
+export function createMcpAppBridge(frame: Window, host: McpAppHostInfo, handlers: McpAppHandlers = {}): McpAppBridge {
   function reply(id: string | number, result?: unknown, error?: unknown) {
     frame.postMessage({ jsonrpc: '2.0', id, ...(error === undefined ? { result } : { error }) }, '*')
   }

@@ -757,7 +757,7 @@ async def project_skill_health(
 
 async def _skill_health(name: str) -> dict:
     if name not in {s["name"] for s in _platform_catalog()}:
-        raise NotFoundError("Unknown skill")
+        raise NotFoundError(say("skillUnknown"))
     now = time.monotonic()
     cached = _health_cache.get(name)
     if cached is not None and now - cached[0] < _HEALTH_TTL_S:

@@ -1,12 +1,12 @@
 """谁带哪些技能进提示词：队友自己的 userskill 优先，没带就回落到房间点亮的。
 
-`carried_skills` 是这一层唯一的判据（`turn._TurnContext.skills` 是它的结果），
+`carried_skills` 是这一层唯一的判据（`_TurnContext.skills` 是它的结果），
 所以判据钉在这里，而不是钉在拼提示词的那段代码上。
 """
 
 import uuid
 
-from app.domain.agent.room.turn import carried_skills
+from app.domain.agent.turn.intake.preparation import carried_skills
 from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.topic.models import Topic
 

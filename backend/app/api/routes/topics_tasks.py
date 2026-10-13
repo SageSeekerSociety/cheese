@@ -290,6 +290,13 @@ async def _task_out(db, chat: ChatService, task, card=None) -> dict:
     function the list uses, so a deep link and the board cannot disagree."""
     if card is None:
         card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
+    # 递给谁在 `accept_card_reviewer` 表里（一卡多人）；页头那一格写集合里的第一个，
+    # 和侧栏（`room_task_rows.py`）读的是同一个。
+    reviewers = (
+        (await AcceptService(db).reviewer_handles_for_cards([card.id])).get(card.id, [])
+        if card is not None
+        else []
+    )
     running = await running_tasks(chat, db, [task])
     asked = await BlockRepository(db).awaiting_an_answer([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")
@@ -308,7 +315,7 @@ async def _task_out(db, chat: ChatService, task, card=None) -> dict:
         shown,
         running=task.id in running,
         owner=task.owner_handle,
-        reviewer=card.reviewer_handle if card is not None else None,
+        reviewer=reviewers[0] if reviewers else None,
         asked=asked.get(task.id),
     )
     return out

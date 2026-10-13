@@ -211,7 +211,9 @@ async function openMore(view: ReturnType<typeof render>) {
 /** 在「默认队友」那一格选一个选项。选项画在浮层里，查询挂在 `document.body` 上。 */
 async function pickTeammate(view: ReturnType<typeof render>, name: RegExp) {
   const picker = view.getByTestId('default-teammate')
-  await fireEvent.mouseDown(within(picker).getByRole('combobox'))
+  // Vuetify 3.13 把 `role=combobox` 同时挂在字段的壳和里面的 `<input>` 上；
+  // 带 `aria-label` 的是 `<input>`，按名字找它。
+  await fireEvent.mouseDown(within(picker).getByRole('combobox', { name: '默认队友' }))
   await fireEvent.click(await view.findByRole('option', { name }))
   await nextTick()
 }

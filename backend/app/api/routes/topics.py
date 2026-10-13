@@ -52,7 +52,6 @@ from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
-from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind
@@ -900,7 +899,7 @@ async def topic_status(
     cards = [
         card for card in filed if place.task is None or card.task_id == place.task.id
     ]
-    card_reviewers = await AcceptCardRepository(db).reviewer_handles_for_cards(
+    card_reviewers = await AcceptService(db).reviewer_handles_for_cards(
         [card.id for card in cards]
     )
     credits = await UsageService(db).project_credits(place.project_id)

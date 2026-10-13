@@ -10,7 +10,7 @@
 import type { Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { TaskLine } from '../lib/channelTasks'
 
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { useAskWithdraw } from '../composables/useAskWithdraw'
 import { useChannelPins } from '../composables/useChannelPins'
