@@ -39,15 +39,19 @@
    注意 `cProfile` 的 `tottime` 里 `select.epoll.poll` 那一行是等数据库的墙钟，
    不是 CPU，别当成热点。
 
-5. 两个探针：
+5. 三个探针：
 
        uv run --project backend python scripts/perf-awaiting-me/probe_brief.py
        uv run --project backend python scripts/perf-awaiting-me/probe_concurrency.py
+       uv run --project backend python scripts/perf-awaiting-me/probe_query_split.py
 
    `probe_brief.py` 量跨项目扫活那条：同一份查询换 1／7／13 个项目的 id 各跑一次，
    再跑一次只取一列的同样谓词。用来分清它的代价是跟着项目数走还是跟着行数走。
-   `probe_concurrency.py` 量 20 并发一批的墙钟和循环 CPU——就是那个「4.1 秒」的
-   场景。两边的 `PERF_ROUNDS`、`PERF_BATCHES` 都能用环境变量调。
+   `probe_query_split.py` 按语句拆「取数」那一段：SQLAlchemy 的
+   `after_cursor_execute` 给出驱动的往返，和叶子自己的 `process_time` 相减就是
+   我们把行变成对象的钱；每条语句还报它取回多少行 —— 代价跟着行数走时，缩结果比
+   缩计划有用。`probe_concurrency.py` 量 20 并发一批的墙钟和循环 CPU——就是那个
+   「4.1 秒」的场景。三个探针的 `PERF_ROUNDS`、`PERF_BATCHES` 都能用环境变量调。
 
 ## 读数的坑
 
