@@ -24063,7 +24063,7 @@
           "projects"
         ],
         "summary": "Set Own Agents",
-        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use. Turned off, members' own\nagents leave the project: off its roster and out of its channels. Turned on\nagain, they come back as their owners next look, and sit in a channel again\nonce someone they answer to names them there.",
+        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use. Turned off, members' own\nagents leave the project: off its roster and out of its channels. Turned on\nagain, the ones their owners had added are back on the roster, and sit in a\nchannel again once someone they answer to names them there.",
         "operationId": "set_own_agents_projects__project_id__own_agents_put",
         "parameters": [
           {
@@ -24087,6 +24087,111 @@
             }
           }
         },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Add Own Agent",
+        "description": "Bring the caller's own Claude Code, with one of their model connections,\ninto the project. Only a person adds their own, and only one of their own\nconnections, of a kind the project allows; adding one already here\nchanges nothing.",
+        "operationId": "add_own_agent_projects__project_id__own_agents_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnAgentAdd"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/own-agents/{handle}": {
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Remove Own Agent",
+        "description": "Take one of the caller's own agents out of the project: off its roster,\nout of its channels and out of reach of ``@``. Only its owner removes it.",
+        "operationId": "remove_own_agent_projects__project_id__own_agents__handle__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handle"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -60096,6 +60201,68 @@
         ],
         "title": "MoveCard"
       },
+      "MyConnectionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "machine_name": {
+            "type": "string",
+            "title": "Machine Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "added": {
+            "type": "boolean",
+            "title": "Added"
+          },
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "plan",
+          "model",
+          "machine_name",
+          "online",
+          "added",
+          "allowed"
+        ],
+        "title": "MyConnectionOut",
+        "description": "One of the reader's own connections, to add to this project."
+      },
       "NoteCreate": {
         "properties": {
           "body": {
@@ -60605,6 +60772,21 @@
         ],
         "title": "OnboardingOutEnvelope"
       },
+      "OwnAgentAdd": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Connection Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id"
+        ],
+        "title": "OwnAgentAdd"
+      },
       "OwnAgentCallersUpdate": {
         "properties": {
           "callers": {
@@ -60713,26 +60895,25 @@
             ],
             "title": "Owner Name"
           },
-          "connections": {
-            "items": {
-              "$ref": "#/components/schemas/OwnAgentConnectionOut"
-            },
-            "type": "array",
-            "title": "Connections"
-          },
-          "machines": {
+          "connection": {
             "anyOf": [
               {
-                "items": {
-                  "$ref": "#/components/schemas/OwnAgentMachineOut"
-                },
-                "type": "array"
+                "$ref": "#/components/schemas/OwnAgentConnectionOut"
               },
               {
                 "type": "null"
               }
-            ],
-            "title": "Machines"
+            ]
+          },
+          "machine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnAgentMachineOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -60742,8 +60923,8 @@
           "callers",
           "owner_handle",
           "owner_name",
-          "connections",
-          "machines"
+          "connection",
+          "machine"
         ],
         "title": "OwnAgentOut"
       },
@@ -60770,6 +60951,13 @@
             },
             "type": "array",
             "title": "Agents"
+          },
+          "my_connections": {
+            "items": {
+              "$ref": "#/components/schemas/MyConnectionOut"
+            },
+            "type": "array",
+            "title": "My Connections"
           }
         },
         "type": "object",
@@ -60777,7 +60965,8 @@
           "allowed",
           "kinds",
           "can_manage",
-          "agents"
+          "agents",
+          "my_connections"
         ],
         "title": "OwnAgentsOut"
       },

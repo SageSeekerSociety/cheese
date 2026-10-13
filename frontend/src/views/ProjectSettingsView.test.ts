@@ -58,6 +58,7 @@ beforeEach(() => {
     kinds: ['subscription', 'api_key', 'model_service'],
     can_manage: false,
     agents: [],
+    my_connections: [],
   })
   vi.mocked(api.getProject).mockResolvedValue({ id: 'p1', name: 'P', can_manage_members: false } as Project)
   vi.mocked(api.listAgentTypes).mockResolvedValue({ data: [], total: 0 })

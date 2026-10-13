@@ -6877,12 +6877,40 @@ export interface paths {
          * @description Let members bring their own Claude Code into the project, or not, and
          *     which kinds of model connection it may use. Turned off, members' own
          *     agents leave the project: off its roster and out of its channels. Turned on
-         *     again, they come back as their owners next look, and sit in a channel again
-         *     once someone they answer to names them there.
+         *     again, the ones their owners had added are back on the roster, and sit in a
+         *     channel again once someone they answer to names them there.
          */
         put: operations["set_own_agents_projects__project_id__own_agents_put"];
-        post?: never;
+        /**
+         * Add Own Agent
+         * @description Bring the caller's own Claude Code, with one of their model connections,
+         *     into the project. Only a person adds their own, and only one of their own
+         *     connections, of a kind the project allows; adding one already here
+         *     changes nothing.
+         */
+        post: operations["add_own_agent_projects__project_id__own_agents_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/own-agents/{handle}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Own Agent
+         * @description Take one of the caller's own agents out of the project: off its roster,
+         *     out of its channels and out of reach of ``@``. Only its owner removes it.
+         */
+        delete: operations["remove_own_agent_projects__project_id__own_agents__handle__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -15980,6 +16008,27 @@ export interface components {
             /** Height */
             height?: number | null;
         };
+        /**
+         * MyConnectionOut
+         * @description One of the reader's own connections, to add to this project.
+         */
+        MyConnectionOut: {
+            /** Id */
+            id: string;
+            kind: components["schemas"]["ConnectionKind"];
+            /** Plan */
+            plan: string | null;
+            /** Model */
+            model: string | null;
+            /** Machine Name */
+            machine_name: string;
+            /** Online */
+            online: boolean;
+            /** Added */
+            added: boolean;
+            /** Allowed */
+            allowed: boolean;
+        };
         /** NoteCreate */
         NoteCreate: {
             /** Body */
@@ -16156,6 +16205,11 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
+        /** OwnAgentAdd */
+        OwnAgentAdd: {
+            /** Connection Id */
+            connection_id: string;
+        };
         /** OwnAgentCallersUpdate */
         OwnAgentCallersUpdate: {
             callers: components["schemas"]["OwnCallers"];
@@ -16186,10 +16240,8 @@ export interface components {
             owner_handle: string | null;
             /** Owner Name */
             owner_name: string | null;
-            /** Connections */
-            connections: components["schemas"]["OwnAgentConnectionOut"][];
-            /** Machines */
-            machines: components["schemas"]["OwnAgentMachineOut"][] | null;
+            connection: components["schemas"]["OwnAgentConnectionOut"] | null;
+            machine: components["schemas"]["OwnAgentMachineOut"] | null;
         };
         /** OwnAgentsOut */
         OwnAgentsOut: {
@@ -16201,6 +16253,8 @@ export interface components {
             can_manage: boolean;
             /** Agents */
             agents: components["schemas"]["OwnAgentOut"][];
+            /** My Connections */
+            my_connections: components["schemas"]["MyConnectionOut"][];
         };
         /** OwnAgentsOutEnvelope */
         OwnAgentsOutEnvelope: {
@@ -32080,6 +32134,73 @@ export interface operations {
                 "application/json": components["schemas"]["OwnAgentsUpdate"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_own_agent_projects__project_id__own_agents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnAgentAdd"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_own_agent_projects__project_id__own_agents__handle__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

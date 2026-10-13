@@ -34,6 +34,7 @@ from app.domain.agent.place import (
     MODEL_SERVICE_FILE,
     footprint_root,
 )
+from app.domain.agent_instance.own import rename_for_connection
 from app.domain.device import claude_login
 from app.domain.device.login_kind import MODEL_SERVICE
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
@@ -193,6 +194,10 @@ async def remember(session: AsyncSession, device_id: str, login: ClaudeLogin) ->
             },
         )
     )
+    if login.logged_in:
+        # The own agents on this connection are named after it (its plan or
+        # model), which the owner may just have switched.
+        await rename_for_connection(session, device_id)
 
 
 async def status(session: AsyncSession, device_id: str) -> dict | None:
