@@ -91,18 +91,18 @@ export function miswired(template: Node | undefined, script: Script | null): str
     for (const p of node.props ?? []) {
       if (p.type !== DIRECTIVE) continue
       if (p.name === 'bind' && p.arg?.content.startsWith('v-'))
-        return `第 ${p.loc.start.line} 行：「:${p.arg.content}」不是 Vue 的写法，控件不会和变量连起来。去掉冒号，写 ${p.arg.content}="…"。`
+        return `第 ${p.loc.start.line} 行：「:${p.arg.content}」不是有效的 Vue 写法，控件不会与变量关联。去掉冒号，写作 ${p.arg.content}="…"。`
       if (p.name !== 'model' || !writes) continue
       const target = p.exp?.content.trim() ?? ''
       if (!IDENT.test(target)) continue
       if (readonly.has(target))
-        return `第 ${p.loc.start.line} 行：v-model="${target}" 绑的是 computed 算出来的值，写不回去：读者拖动、输入后它不会变，画面也不会跟着动。改成绑一个 ref，别的量从这个 ref 算；或者用 :value 加 @input 自己接住新值。`
+        return `第 ${p.loc.start.line} 行：v-model="${target}" 绑定的是 computed 计算出的值，无法写入：读者操作后它不会改变，画面也不会更新。改为绑定一个 ref，其他量由这个 ref 计算；或者用 :value 加 @input 接收新值。`
       if (FIXED.has(bindings[target] ?? ''))
-        return `第 ${p.loc.start.line} 行：v-model="${target}" 绑的是常量，读者一动它就报错。改成 const ${target} = ref(…)。`
+        return `第 ${p.loc.start.line} 行：v-model="${target}" 绑定的是常量，读者操作时会报错。改为 const ${target} = ref(…)。`
     }
     const hearing = heard || listens(node)
     if (control && !hearing && !byHand)
-      return `第 ${node.loc.start.line} 行：读者能动这个 <${tag}>，但没有人接住它的新值（没有 v-model，它和外面的元素上也没有 @input 或 @change），读者动了什么也不会变。`
+      return `第 ${node.loc.start.line} 行：读者可以操作这个 <${tag}>，但没有代码接收它的新值（它和外层元素上都没有 v-model、@input 或 @change），操作后画面不会变化。`
     for (const child of node.children ?? []) {
       const found = walk(child, hearing)
       if (found) return found

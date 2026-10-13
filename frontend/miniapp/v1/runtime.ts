@@ -16,8 +16,8 @@ import { themeChanged } from './theme'
 
 const CHANNEL = 'cheese-app'
 // Read by 芝士 when the check refuses a version, and shown as the error's text.
-const EMPTY = '运行后什么都没画出来：组件没有往页面里放任何内容。'
-const RUNAWAY = '小程序的高度一直在变大，停止跟随。常见原因：内嵌时用了 vh 或 100% 高度。'
+const EMPTY = '运行后页面没有内容：组件没有向页面输出任何元素。'
+const RUNAWAY = '小程序的高度持续增长，已停止调整外框高度。常见原因是内嵌时使用了 vh 或 100% 高度。'
 const root = document.getElementById('cheese-app') as HTMLElement
 const html = document.documentElement
 
@@ -33,7 +33,7 @@ addEventListener('error', (e) => fail(e.message || String(e.error)))
 // fails is an error like any other, so the platform's check refuses the version;
 // the browser itself only logs it, at a level the check does not read.
 console.assert = (ok?: unknown, ...what: unknown[]) => {
-  if (!ok) fail(`自查没通过：${what.map(String).join(' ') || 'console.assert 的条件不成立'}`)
+  if (!ok) fail(`自查未通过：${what.map(String).join(' ') || 'console.assert 的条件不成立'}`)
 }
 addEventListener('unhandledrejection', (e) => fail(String(e.reason?.message ?? e.reason)))
 

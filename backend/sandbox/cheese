@@ -491,14 +491,14 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_app_save",
-            "存一个文档里的小程序：嵌在文档里能运行的一小段程序。读者得改一改条件、看一遍过程"
-            "才看得出规律时用它（看懂原理、改条件试结果、比方案、按时间推演、做练习）。"
-            "code 是一个 Vue 单文件组件，要讲的东西自己画，控件用平台的 c- 组件，"
+            "保存文档中的一个小程序，即嵌在文档中、可以运行的一段程序。要讲的是随条件变化的关系、"
+            "逐步推进的过程，或者需要读者亲手练习的操作时使用。"
+            "code 是一个 Vue 单文件组件：图形自行绘制，控件使用平台的 c- 组件，"
             "写法和设计规范见 cheese-docs 技能的 references/apps.md。"
-            "平台先在浏览器里跑一遍：报错、什么都没画出来、自查（console.assert）没通过、"
-            "读者动的控件没接上，就不存，告诉你原因。"
-            "不给 app 是新建，返回整个块的写法，由你放进文档；给了 app 是改它，存成"
-            "新一版，并把文档里的版本号一起改掉。",
+            "平台先在浏览器中运行一遍；运行报错、页面没有内容、自查（console.assert）未通过，"
+            "或读者操作的控件没有绑定到变量时，不保存，并返回原因。"
+            "不给 app 时新建，返回整个块的写法，由你放进文档；给出 app 时修改该小程序，"
+            "保存为新版本，并同步更新文档中的版本号。",
             {
                 "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
                 "title": _text("新建时：小程序的标题，十个字左右"),
@@ -2181,25 +2181,25 @@ def _app_save(args: dict, host) -> str:
         if why is None:
             raise
         raise PlatformToolError(
-            f"没存下：{why.rstrip('。')}。改好再 cheese_app_save。"
+            f"未保存：{why.rstrip('。')}。修改后重新调用 cheese_app_save。"
         ) from exc
     saved = answer.get("data") or {}
     unchecked = (
         ""
         if saved.get("checked")
-        else "（平台的浏览器这会儿不在，这一版没有试跑，也没有截图。）"
+        else "平台的浏览器暂时不可用，这一版未经试运行，也没有截图。"
     )
     if not key:
         title = str(args.get("title") or "").strip() or "小程序"
         made = saved.get("key") or "?"
         return (
-            f"已存下小程序 {made} 的第 1 版{unchecked}文档里还没有它：把下面"
-            "这个块放到文档里该放的位置（cheese_doc_edit），第二行换成一句话，说清它"
-            "做什么、最重要的结论是什么——读文档的人和芝士都只读这一句。\n\n"
+            f"已保存小程序 {made} 的第 1 版。{unchecked}它还不在文档中：用 "
+            "cheese_doc_edit 把下面的块放到文档中合适的位置，并把第二行改写为一句说明，"
+            "写明它展示什么、最重要的结论是什么。读者和你以后读文档时，都只读这一句。\n\n"
             f":::app {made}@1 {title}\n一句话说明\n:::"
         )
     version = saved.get("version") or 1
-    done = f"已存下小程序 {key} 的第 {version} 版{unchecked}"
+    done = f"已保存小程序 {key} 的第 {version} 版。{unchecked}"
     return done + _point_at(host, key, version)
 
 
@@ -2216,9 +2216,9 @@ def _point_at(host, key: str, version: int) -> str:
         if (m := head.match(line)) and int(m.group(1)) != version
     ]
     if not any(head.match(line) for line in content.splitlines()):
-        return "文档里没有这个小程序的块，读者还看不到这一版。"
+        return "文档中没有这个小程序的块，读者还看不到这一版。"
     if not edits:
-        return "文档里的块已经是这一版。"
+        return "文档中的块已经是这一版。"
     try:
         answer = host.request(
             {
@@ -2232,12 +2232,12 @@ def _point_at(host, key: str, version: int) -> str:
         if why is None and getattr(exc, "status", None) != 409:
             raise
         return (
-            f"文档里的块没改成（{(why or '文档刚被改过').rstrip('。')}）："
-            f"用 cheese_doc_edit 把「:::app {key}@旧版本」改成 @{version}。"
+            f"未能更新文档中的块（{(why or '文档刚被修改过').rstrip('。')}）："
+            f"用 cheese_doc_edit 把「:::app {key}@旧版本号」改为 @{version}。"
         )
     if (answer.get("data") or {}).get("mode") == "suggest":
-        return f"把文档里的块改成第 {version} 版是一条修改建议，等人接受。"
-    return f"文档里的块已改成第 {version} 版。"
+        return f"已提出修改建议，把文档中的块改为第 {version} 版，等待接受。"
+    return f"文档中的块已改为第 {version} 版。"
 
 
 def _app_get(args: dict, host) -> str:
