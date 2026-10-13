@@ -1,11 +1,17 @@
 """看那两拍有没有该发没发，把结果记下来。
 
-影子期（2026-10-13 起第一段）：只判、只记，不真起轮 —— 先让判据在真实数据上跑一
-段，把误报核出来（哪些判了停摆、当时实际发生了什么），审过再打开补跳。
+影子期（2026-10-13 起第一段）已经跑过：只判、只记，不真起轮，把误报核在真实数据
+上。它还在，由配置的 `wake_watch_catchup` 决定要不要打开补跳；关掉就退回只判、只
+记，判据一个字不变。
 
 落点是运行记录，不是对话：观察者说的是平台的观察，不该把被观察的座位叫起来，也不
 该混进人读的聊天里。一次停摆只记一条 —— 记录 id 由「哪一拍、停在哪一刻」算出来
 （`beats.stall_record_id`），所以五分钟一轮的巡检不会把同一次停摆记成十几条。
+
+补跳是另一件事，走的是另一条路（`catchup.summon`，只管点名，不管起轮），由调用方
+传进来。判完先点名、再记：这样记录里能带上「这一遍点了谁」。反过来不成立 —— 已经
+记过的那一次不再改写记录，所以「第一遍点了谁」不会因为后来补上了而更新，那一次的
+补跳本身在那条线上看得到。
 
 判据只从库里读两样：那一拍最近一次真的来的时刻，和现在。中间不碰「有没有开始跑」
 「有没有人在处理」这类别的信号 —— 那些正是断掉的那一环说不出来的东西。
@@ -14,7 +20,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import ColumnElement, func, select
@@ -44,12 +50,19 @@ from app.domain.wake_watch.beats import (
 
 logger = logging.getLogger(__name__)
 
+#: 判到停摆之后怎么补跳。返回补给了谁；这一遍不补就返回 `None`。
+#:
+#: 判和补分成两层，是因为判据要能单独重放（`beats.py` 只依赖标准库就是这个缘故），
+#: 而补跳要碰库和收件人。关掉补跳就是传 `None`，判和记一个字都不变。
+type Summon = Callable[[Beat, Ticking, timedelta, datetime], Awaitable[str | None]]
+
 
 async def watch(
     sessions: SessionFactory,
     *,
     now: datetime | None = None,
     watched: Iterable[Beat] = WATCHED,
+    summon: Summon | None = None,
 ) -> dict[str, int]:
     """看一遍这几拍，给新判出来的停摆各记一条。返回这一遍记了几条新的。
 
@@ -65,7 +78,10 @@ async def watch(
         since = stall(beat, at, ticking.at)
         if since is None:
             continue
-        if await _note(sessions, beat, ticking, at, since):
+        # 先点名、再记：记录里要带上这一遍点了谁。已经记过的那一次不再改写记录，
+        # 所以后面几遍补上了也不回头改它 —— 补跳本身在 #1343 那条线上看得到。
+        seat = await summon(beat, ticking, since, at) if summon is not None else None
+        if await _note(sessions, beat, ticking, at, since, seat):
             noted += 1
     return {"stalled": noted} if noted else {}
 
@@ -130,6 +146,7 @@ async def _note(
     ticking: Ticking,
     now: datetime,
     since: timedelta,
+    seat: str | None = None,
 ) -> bool:
     """记下这一次停摆，返回是不是新记的一条。
 
@@ -144,7 +161,7 @@ async def _note(
         EVENT_WAKE_MISSED,
         severity=SEVERITY_WARN,
         who=WHO_PLATFORM,
-        detail=_evidence(beat, ticking, now, minutes),
+        detail=evidence(beat, ticking, now, minutes),
         detail_label=say("labelWakeWatchDetail"),
     )
     # 记录自己那一行也要跟着读者的语言走。`notice()` 只给 detail 那些字段的键，
@@ -155,6 +172,10 @@ async def _note(
         "stalled_minutes": minutes,
         "last_beat_at": stamp_text(ticking.at),
     }
+    if seat is not None:
+        # 这一遍把谁叫起来了。没补跳（关着，或者座位忙着）就不写这个键 —— 缺席本身
+        # 不说明是哪一种，看日志。
+        meta["catch_up_seat"] = seat
     try:
         async with sessions() as session:
             if await session.get(RunRecord, record_id) is not None:
@@ -173,16 +194,21 @@ async def _note(
     except IntegrityError:
         return False
     logger.warning(
-        "wake watch: %s 静了 %s 分钟，本该补跳（影子期只记，不真起轮）",
+        "wake watch: %s 静了 %s 分钟%s",
         beat.name,
         minutes,
+        f"，已点名 {seat} 补跳" if seat else "，这一遍没有点名",
     )
     await publish(payload)
     return True
 
 
-def _evidence(beat: Beat, ticking: Ticking, now: datetime, minutes: int) -> str:
-    """判停摆的依据：去看这条记录的人要能自己把这一次核对一遍。"""
+def evidence(beat: Beat, ticking: Ticking, now: datetime, minutes: int) -> str:
+    """判停摆的依据：去看这条记录的人要能自己把这一次核对一遍。
+
+    记录里那份依据和补跳那一轮带的那份是同一处写出来的 —— 座位收到的时候看到的
+    和判的人看到的是同一段话，不是两份各写各的。
+    """
     period = int(beat.period.total_seconds() // 60)
     grace = int(beat.grace.total_seconds() // 60)
     return "\n".join(
