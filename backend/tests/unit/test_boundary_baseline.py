@@ -3,14 +3,17 @@
 这个脚本管三件事,每一件都是「改错了会让门禁看起来还是绿的」那一类,所以每条规则
 都在这里被钉住:
 
-1. **八条契约一条都不能少。** 少一条,刷新的对象就变小了——它会拿着一个残缺的声明
+1. **九条契约一条都不能少。** 少一条,刷新的对象就变小了——它会拿着一个残缺的声明
    刷出一份「通过」的基线。删掉或改名任何一条,脚本必须退 2,而不是照刷。
 2. **冻结块有固定的形状。** 标记行、副标题、排序、去重、不许通配符;谁手动改坏了
    其中一样,脚本必须拒绝动手,而不是把没识别的东西悄悄留在声明里。
-3. **C3 的陈旧行只认检查器。** C1/C2 是重算出来的,C3 不是:它的反馈边集不唯一,
+3. **C3 的陈旧行只认检查器。** C1/C2/C5 是重算出来的,C3 不是:它的反馈边集不唯一,
    重算会给同一团环换一套切边。实测在这个仓库上,C3 重算会丢掉 21 条「导入仍在」
    的冻结边、再加回 66 条别的——所以本文件既在真仓库上回归(那些边一条都不许掉),
    也在真子进程里验证 C3 的新边即使 `--freeze-new` 也不写。
+4. **两个脚本共用一棵种子树。** `check_boundaries.py` 的 `_seed_config` 会重写真声明
+   里的层表,好让种出来的树满足它。这一步同时依赖「门禁怎么读这一行」和「种子树里有
+   哪些包」,所以两样都在这里钉住。
 
 测试从 backend/ 目录跑(CI 就是这么跑的),子进程用的是同一个解释器,和 CI、和
 pre-commit 用的是同一套依赖。
@@ -48,16 +51,51 @@ CYCLE = bb.CYCLE_CONTRACT
 
 # ---------------------------------------------------------------------------
 # Building trees and configs. The seed tree is check_boundaries.py's own — the
-# smallest tree that satisfies all eight declarations — so the script is judged
+# smallest tree that satisfies all nine declarations — so the script is judged
 # on the same tree the gate is, not on a fixture that agrees with it by luck.
 # ---------------------------------------------------------------------------
 
 
 def _empty_config() -> str:
-    """The real declarations with every frozen block emptied out."""
+    """The real declarations with every frozen block emptied out.
+
+    The layer tables are the seed's own: a table naming 80 packages the planted
+    tree does not hold is not a declaration the tree can be judged against, and
+    `check_boundaries.py` owns that rewrite for both scripts.
+    """
     return bb.write_baselines(
-        REAL_CONFIG.read_text(), {c: [] for c in bb.BLOCK_CONTRACTS}
+        cb._seed_config(cb.declared_layers(REAL_CONFIG.read_text())),
+        {c: [] for c in bb.BLOCK_CONTRACTS},
     )
+
+
+@pytest.fixture(autouse=True)
+def _unimport_the_application(monkeypatch):
+    """Forget the imported application for the duration of a test.
+
+    `recompute` analyses the tree at the working directory, but grimp's package
+    finder asks `importlib.util.find_spec`, which answers from `sys.modules`
+    before it looks at `sys.path`. The suite's conftest imports the application,
+    so without this an in-process recompute would read the real `app` package
+    while the test believes it is reading the planted tree — and would only
+    notice when a declaration names a package the real tree does not have.
+    """
+    monkeypatch.delitem(sys.modules, "app", raising=False)
+    for name in [n for n in sys.modules if n.startswith("app.")]:
+        monkeypatch.delitem(sys.modules, name)
+
+
+def _frozen(entries: dict[str, list[str]] | None = None) -> dict[str, list[str]]:
+    """The `frozen` mapping for every block contract, the unnamed ones empty.
+
+    Spelling the whole mapping out at each call site makes a new block contract
+    a failure about a contract the test was not talking about; naming only what
+    the test is about keeps the addition to the script from reaching them.
+    """
+    return {
+        contract_id: (entries or {}).get(contract_id, [])
+        for contract_id in bb.BLOCK_CONTRACTS
+    }
 
 
 def _plant(tmp: Path, config_text: str, files: dict[str, str] | None = None) -> Path:
@@ -137,6 +175,11 @@ def _c1_violation() -> dict[str, str]:
     return {"app/core/jobs.py": "from app.api.deps import get_db\n"}
 
 
+def _c5_violation() -> dict[str, str]:
+    """A low domain package reaching up a layer — a real C5 violation."""
+    return {"app/domain/bar/services.py": "import app.domain.agent\n"}
+
+
 #: The two-node cycle the seed below plants. `_REAL_C3_EDGE` is a cut of it that
 #: the checker needs (so it is never stale) but that a recompute does *not*
 #: name — a recompute names the opposite edge. That is the point: a baseline
@@ -144,6 +187,10 @@ def _c1_violation() -> dict[str, str]:
 #: tests below can tell a stale-only drop apart from writing the recomputed cut.
 #: `_BOGUS_C3_PAIR` names modules that exist but do not import, so the checker
 #: calls exactly that entry unused.
+#: An entry that names modules that exist but never imported — the checker
+#: calls it unused, so a refresh has something to drop.
+_STALE_C1_ENTRY = "app.core.zzz_gone -> app.core.nope_also_gone"
+
 _REAL_C3_EDGE = "app.domain.alpha.services -> app.domain.bar.services"
 _BOGUS_C3_PAIR = "app.domain.alpha.services -> app.domain.bar.models"
 
@@ -153,17 +200,12 @@ def _c3_config(bogus: bool) -> str:
     entries = [_REAL_C3_EDGE, _BOGUS_C3_PAIR] if bogus else [_REAL_C3_EDGE]
     return bb.write_baselines(
         _empty_config(),
-        {
-            "api-domain-core": [],
-            "routes-touch-no-models": [],
-            "domains-acyclic": entries,
-            "routes-independent": [],
-        },
+        _frozen({"domains-acyclic": entries}),
     )
 
 
 # ---------------------------------------------------------------------------
-# Every one of the eight contracts must be declared, or the refresh is refused.
+# Every one of the nine contracts must be declared, or the refresh is refused.
 # ---------------------------------------------------------------------------
 
 
@@ -293,12 +335,7 @@ def test_dry_run_without_update_reports_the_dry_run_first(tmp_path):
     # instead of being turned back earlier for a new violation.
     config_text = bb.write_baselines(
         _empty_config(),
-        {
-            "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
-            "routes-touch-no-models": [],
-            "domains-acyclic": [],
-            "routes-independent": [],
-        },
+        _frozen({"api-domain-core": [_STALE_C1_ENTRY]}),
     )
     config = _plant(tmp_path, config_text)
     before = config.read_text()
@@ -442,8 +479,8 @@ def test_a_block_on_a_structural_contract_is_refused():
 
 
 # ---------------------------------------------------------------------------
-# C1/C2: the original recompute. A new violation is reported, and only frozen
-# when somebody says so on purpose.
+# C1/C2/C5: the recomputed contracts. A new violation is reported, and only
+# frozen when somebody says so on purpose.
 # ---------------------------------------------------------------------------
 
 
@@ -452,8 +489,9 @@ def test_a_block_on_a_structural_contract_is_refused():
     [
         (_c2_violation(), "app.api.routes.demo -> app.domain.bar.models"),
         (_c1_violation(), "app.core.jobs -> app.api.deps"),
+        (_c5_violation(), "app.domain.bar.services -> app.domain.agent"),
     ],
-    ids=["C2", "C1"],
+    ids=["C2", "C1", "C5"],
 )
 def test_a_new_violation_needs_a_decision_then_freezes_on_request(
     tmp_path, files, entry
@@ -484,12 +522,7 @@ def test_a_new_violation_needs_a_decision_then_freezes_on_request(
 def test_a_stale_entry_is_dropped_on_the_clean_tree(tmp_path):
     config_text = bb.write_baselines(
         _empty_config(),
-        {
-            "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
-            "routes-touch-no-models": [],
-            "domains-acyclic": [],
-            "routes-independent": [],
-        },
+        _frozen({"api-domain-core": [_STALE_C1_ENTRY]}),
     )
     config = _plant(tmp_path, config_text)
 
@@ -585,12 +618,7 @@ def test_a_refresh_that_would_not_converge_rolls_back(tmp_path):
     # original must come back byte for byte.
     config_text = bb.write_baselines(
         _empty_config(),
-        {
-            "api-domain-core": ["app.core.zzz_gone -> app.core.nope_also_gone"],
-            "routes-touch-no-models": [],
-            "domains-acyclic": [],
-            "routes-independent": [],
-        },
+        _frozen({"api-domain-core": [_STALE_C1_ENTRY]}),
     )
     config = _plant(tmp_path, config_text, _cycle_files())
     before = config.read_text()
@@ -675,3 +703,58 @@ def test_the_real_baseline_is_already_stable(monkeypatch):
     new = bb.measure(text, stale)
     for contract_id, entries in bb.read_entries(text).items():
         assert new[contract_id] == entries, contract_id
+
+
+# ---------------------------------------------------------------------------
+# The seed's own declaration. `_seed_config` rewrites the two layer tables in
+# the real declaration, which makes it the one place where a header line has to
+# be found twice — by the gate and by the fixture — and the one place where a
+# package added to `_SEED` can turn a satisfying tree into a violation.
+# ---------------------------------------------------------------------------
+
+_DOMAIN_LAYER_HEADER = "[importlinter:contract:domain-layers]"
+
+
+def _header_with_a_trailing_space(text: str) -> str:
+    return text.replace(_DOMAIN_LAYER_HEADER, f"{_DOMAIN_LAYER_HEADER} ", 1)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        pytest.param(_header_with_a_trailing_space, id="trailing-space"),
+        pytest.param(lambda text: text.replace("\n", "\r\n"), id="crlf"),
+    ],
+)
+def test_the_seed_finds_the_header_the_gate_reads(mutate):
+    """`declared_layers` reads the header off a line the gate would accept, so
+    the rewrite has to find that same line in that same text. A trailing space
+    or a CR is not a different section — not to configparser, not to
+    import-linter — and it must not be one to the fixture either.
+
+    The needle is the seed's own second layer, which the repository's table does
+    not hold — `grep -c 'alpha : bar' .importlinter` is 0 — so it can only
+    arrive through the rewrite. `agent` is in both tables and would be satisfied
+    with the rewrite skipped entirely, so the case does not assert on it.
+    """
+    mutated = mutate(REAL_CONFIG.read_text())
+    declared = cb.declared_layers(mutated)
+    seeded = cb._seed_config(declared, mutated)
+    assert "    alpha : bar" in seeded
+
+
+@pytest.mark.parametrize(
+    "planted",
+    ["app/domain/gamma/__init__.py", "app/domain/gamma.py"],
+    ids=["package", "module"],
+)
+def test_a_child_added_to_the_seed_must_be_named_in_its_table(planted, monkeypatch):
+    """The seed holds none of the repository's packages, so its layer table is
+    its own — and a package planted under `app.domain` without a line in that
+    table comes back as C5 naming an unlisted module on a tree that is supposed
+    to satisfy it. That reads like the rule breaking rather than the fixture
+    going stale, so the mismatch is raised as a fixture failure instead."""
+    assert cb._seed_domain_children() == {"agent", "alpha", "bar"}
+    monkeypatch.setitem(cb._SEED, planted, "")
+    with pytest.raises(RuntimeError, match="gamma"):
+        cb._seed_config(cb.declared_layers(REAL_CONFIG.read_text()))
