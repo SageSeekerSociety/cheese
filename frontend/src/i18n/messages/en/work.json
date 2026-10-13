@@ -544,6 +544,7 @@
       "noTextDiff": "No text changes",
       "openFile": "Open",
       "openOther": "Open another file",
+      "fileOfTotal": "File {current} of {total}",
       "backToAll": "Back to all changes",
       "summary": "{count} files · +{added} −{removed}",
       "searchFiles": "Search files",
