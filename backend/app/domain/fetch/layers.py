@@ -78,7 +78,9 @@ MAX_BODY_BYTES = 10 * 1024 * 1024
 
 
 def _is_markdown(content_type: str) -> bool:
-    return "markdown" in content_type or "text/plain" in content_type
+    """Text a model reads as it comes: markdown, plain text, and the JSON an API
+    answers with (a paper's metadata from a scholarly API is the whole answer)."""
+    return any(kind in content_type for kind in ("markdown", "text/plain", "json"))
 
 
 def _is_page(content_type: str) -> bool:
@@ -149,7 +151,8 @@ async def rung_plain_http(url: str, timeout: float = 15.0) -> Attempt:
         )
     if _is_markdown(ctype):
         if body.strip():
-            return Attempt("markdown-native", True, body, url, loop.time() - start)
+            rung = "markdown-native" if "markdown" in ctype else "plain-http"
+            return Attempt(rung, True, body, url, loop.time() - start)
         return Attempt(
             "plain-http", False, note="empty body", seconds=loop.time() - start
         )

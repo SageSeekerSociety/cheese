@@ -552,3 +552,18 @@ async def test_render_goes_to_the_browser_first(monkeypatch):
         "https://example.com/app", browser_endpoint="http://render:8900", render=True
     )
     assert called == ["browser"] and outcome.rung == "browser"
+
+
+async def test_an_api_answering_json_is_read_not_skipped_as_binary(monkeypatch):
+    """A scholarly API's JSON is the page: measured, two such URLs failed once
+    every body that was not HTML or markdown was treated as binary."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"title": "A paper", "year": 2018})
+
+    _serve(monkeypatch, handler)
+
+    got = await layers.rung_plain_http("https://api.example.org/paper/1")
+
+    assert got.ok and '"title"' in got.text
