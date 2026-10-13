@@ -1,5 +1,6 @@
 // 「领取者」页签：一张表里批领取申请、评审提交。量的是出题人能说出来的几条规矩：
 // 待批的申请才有批准/拒绝；交了没判的才有评审；被拒的申请不算领取者；拿不到名单就说为什么。
+import type { TaskExternalProblem } from '@/api/externalProblem'
 import type { Latest } from './RosterView.vue'
 
 import { createVuetify } from 'vuetify'
@@ -32,6 +33,8 @@ function mount(
   opts: {
     participants?: unknown[]
     latest?: Map<number, Latest>
+    /** 这道题挂在 YOJ 上的那一块。不给 = 没接外站，那一列不画。 */
+    onlineJudge?: TaskExternalProblem
     denied?: boolean
     failed?: boolean
     failureReason?: string | null
@@ -42,11 +45,13 @@ function mount(
       taskData: TASK as never,
       participants: (opts.participants ?? []) as never,
       latestByParticipant: opts.latest ?? new Map(),
+      onlineJudge: opts.onlineJudge ?? null,
       loading: false,
       denied: opts.denied ?? false,
       failed: opts.failed ?? false,
       failureReason: opts.failureReason ?? null,
       busyId: null,
+      syncing: false,
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
@@ -67,6 +72,19 @@ const PEOPLE = [
 const LATEST = new Map<number, Latest>([
   [2, { submissionId: 501, version: 2, createdAt: Date.now(), review: { reviewed: false } as never }],
 ])
+
+/** 这道题挂在 YOJ 上那一块：许一过了，周舟没过，林小满还没同步到。 */
+const JUDGE: TaskExternalProblem = {
+  problemNo: '1000',
+  source: 'yoj',
+  lastSyncedAt: new Date(Date.now() - 3 * 3_600_000).toISOString(),
+  status: 'ok',
+  error: '',
+  results: [
+    { participantId: 3, studentNo: '20210129', solved: true, acceptedAt: new Date(Date.now() - DAY).toISOString() },
+    { participantId: 2, studentNo: '20210130', solved: false, acceptedAt: null },
+  ],
+}
 
 describe('领取者页签', () => {
   // 对话框（v-dialog）在 happy-dom 里要这几样才画得出来。
@@ -186,5 +204,43 @@ describe('领取者页签', () => {
     expect(view.getByText('服务端打盹了')).toBeTruthy()
     expect(view.getByText(t('global.loadError.retry'))).toBeTruthy()
     expect(view.queryByText(t('tasks.roster.empty'))).toBeNull()
+  })
+
+  // 外站那一列是这道题挂了 YOJ 题号才有的，数是上一次同步那一刻的。所以要量的有两件事：
+  // 过和没过分开画；旁边那行字分得清「上回看成了」和「上回没看成」。
+  it('挂了外站题才多一列：过了、没过、还没同步到分开画，点同步报出来', async () => {
+    const view = mount({ participants: PEOPLE, latest: LATEST, onlineJudge: JUDGE })
+
+    expect(view.getByText(t('tasks.roster.col.external'))).toBeTruthy()
+    expect(within(row(view, '许一')).getByText(t('tasks.roster.external.passed'))).toBeTruthy()
+    expect(within(row(view, '周舟')).getByText(t('tasks.roster.external.notPassed'))).toBeTruthy()
+    // 名单上是新领的、还没同步到他 —— 和「未过」不是一回事。
+    expect(within(row(view, '林小满')).queryByText(t('tasks.roster.external.notPassed'))).toBeNull()
+
+    await fireEvent.click(view.getByRole('button', { name: t('tasks.roster.external.sync') }))
+    expect(view.emitted('sync')).toEqual([[]])
+  })
+
+  it('没挂外站题的题：不画那一列，也不给同步', () => {
+    const view = mount({ participants: PEOPLE, latest: LATEST })
+
+    expect(view.queryByText(t('tasks.roster.col.external'))).toBeNull()
+    expect(view.queryByRole('button', { name: t('tasks.roster.external.sync') })).toBeNull()
+  })
+
+  // 上回没看成时，那一列摆的还是更早那次成功的数：这行字必须换一句说，否则屏幕上
+  // 是旧数、旁边写着刚同步过。
+  it('上回没同步成：那行字和上回同步成功时说的不是同一句', () => {
+    const said = (view: ReturnType<typeof mount>) => view.container.querySelector('.rs__ext-when')!.textContent
+
+    const ok = mount({ participants: PEOPLE, latest: LATEST, onlineJudge: JUDGE })
+    const failed = mount({
+      participants: PEOPLE,
+      latest: LATEST,
+      onlineJudge: { ...JUDGE, status: 'failed', error: 'timeout' },
+    })
+
+    expect(said(ok)).not.toBe('')
+    expect(said(failed)).not.toBe(said(ok))
   })
 })

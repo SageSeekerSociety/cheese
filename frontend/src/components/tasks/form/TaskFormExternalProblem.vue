@@ -22,7 +22,9 @@ defineProps<{
   problemNoControl: FieldControl
 }>()
 
-const problemNo = defineModel<string>('problemNo', { required: true })
+// 类型跟着校验那一格走：`useTaskForm` 的 zod 上它是 `.optional()`，所以可能没有值 ——
+// 这一节里别的几格（`TaskFormClassify` 的 `categoryId` 之类）也是这么写的。
+const problemNo = defineModel<string | undefined>('problemNo', { required: true })
 
 const { t } = useI18n()
 </script>
