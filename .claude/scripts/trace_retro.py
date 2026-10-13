@@ -4,6 +4,7 @@ Run it through trace-sweep.py, which passes its credentials on:
 
     python3 .claude/scripts/trace-sweep.py retro --since 2026-10-12T11:00 --until 2026-10-12T14:05
     python3 .claude/scripts/trace-sweep.py retro --since ... --until ... --room <channel-id> [--json]
+    python3 .claude/scripts/trace-sweep.py retro --since ... --until ... --cohort first-push
     python3 .claude/scripts/trace-sweep.py retro --self-test
 
 It answers the questions of the orchestrator's 3-hour review (library doc
@@ -17,6 +18,14 @@ It answers the questions of the orchestrator's 3-hour review (library doc
   * card filed to accepted, split into waiting for CI and waiting for review;
   * task start to first PR;
   * unfinished turns by seat and by reason (断流 and the rest).
+
+The window above is a merge window: the PRs are the ones merged inside it, and
+each one is judged on its first push however long ago that was. `--cohort
+first-push` asks the same 首推 questions of the PRs whose first CI-judged push
+falls inside the window instead — merged or still open — which is the set a
+change to CI should be measured on: a PR opened ten days ago and merged today
+was judged ten days ago, and reading it in today's window credits today's CI
+with an older first push.
 
 Every count is defined in the 口径 section of the report. `gh` does the GitHub
 reads; the platform half (--room) reads OKCHEESE_TOKEN, which trace-sweep.py
@@ -211,6 +220,50 @@ def merged_prs(repo: str, since: datetime, until: datetime) -> list[dict]:
         if since <= when <= until:
             out.append(pr)
     return sorted(out, key=lambda p: p["mergedAt"])
+
+
+def cohort_prs(repo: str, since: datetime, merged: list[dict]) -> list[dict]:
+    """PRs a first-push window needs that `merged` (the merge-window list) does
+    not have: still open, or merged after the window.
+
+    A PR whose first push CI judged inside the window may not have merged yet,
+    and its 首推 verdict is already final, because a later push cannot change
+    what the first one did. So the first-push cohort must see those PRs, not
+    just the merged ones. `updated:>=since` finds the candidates: a push in the
+    window moves `updatedAt` with it, so a PR judged in the window is always in
+    this list, whatever became of it afterwards.
+
+    Dropped: the PRs already in `merged` (same window, avoid double counting)
+    and the closed-without-merge ones. The latter were judged too, but they
+    never became a PR that had to pass CI to land, and counting them would move
+    the rate with how many drafts got abandoned.
+    """
+    raw = _gh(
+        [
+            "pr",
+            "list",
+            "--repo",
+            repo,
+            "--state",
+            "all",
+            "--limit",
+            "200",
+            "--search",
+            f"updated:>={since.strftime('%Y-%m-%dT%H:%M:%S')}Z",
+            "--json",
+            "number,title,mergedAt,headRefOid,mergeCommit,updatedAt,state",
+        ]
+    )
+    have = {p["number"] for p in merged}
+    out = []
+    for pr in raw or []:
+        at = pr.get("updatedAt")
+        if not at or _iso(at) < since:
+            continue
+        if pr["number"] in have or pr.get("state") == "CLOSED":
+            continue
+        out.append(pr)
+    return sorted(out, key=lambda p: p["number"])
 
 
 def pr_timeline(repo: str, number: int) -> list[dict]:
@@ -496,9 +549,19 @@ def pr_report(pr: dict, heads: list[dict], exits: list[dict]) -> dict:
     }
 
 
-def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
-    """One record per merged PR, every GitHub-side fact the retro needs."""
+def pr_reports(
+    repo: str, since: datetime, until: datetime, include_open: bool = False
+) -> list[dict]:
+    """One record per PR in the requested set, every GitHub-side fact the retro
+    needs.
+
+    `include_open` adds the not-yet-merged PRs touched inside the window, for
+    the first-push cohort (`judged_in_window` drops those whose first judged
+    push is not in the window, and nothing else reads them).
+    """
     prs = merged_prs(repo, since, until)
+    if include_open:
+        prs = prs + cohort_prs(repo, since, prs)
     mg = merge_group_runs(repo, since, until)
     reports = []
     for pr in prs:
@@ -511,6 +574,35 @@ def pr_reports(repo: str, since: datetime, until: datetime) -> list[dict]:
             pr_report(pr, heads, merge_queue_exits(timeline, mg.get(number, []), repo, since, until))
         )
     return reports
+
+
+def first_judged_at(report: dict) -> str | None:
+    """When required CI first judged a push of this PR, or None if it never did.
+
+    `push_detail[0]` is the first head CI ran on and its rounds are oldest
+    first, so its first round is the first verdict CI gave this PR. That second
+    — not `merged_at` — is the clock 首推 belongs to: it is the moment the
+    first push met the CI that was current then.
+    """
+    pushes = report.get("push_detail") or []
+    rounds = pushes[0]["rounds"] if pushes else []
+    return (rounds[0].get("started_at") or None) if rounds else None
+
+
+def judged_in_window(reports: list[dict], since: datetime, until: datetime) -> list[dict]:
+    """The reports whose first CI-judged push falls inside [since, until].
+
+    A PR with no CI-judged push at all (`first_judged_at` is None) has no 首推
+    and is not in any window. The comparison is on parsed times, not on the
+    strings: GitHub's `started_at` ends in `Z` and a window bound does not, and
+    `"…28Z" > "…28"` would read every round as inside.
+    """
+    out = []
+    for r in reports:
+        at = first_judged_at(r)
+        if at and since <= _iso(at) <= until:
+            out.append(r)
+    return out
 
 
 def _lenient(first_push: list[dict]) -> bool:
@@ -877,15 +969,22 @@ def _stats(values: list[float | None]) -> dict:
 
 
 def summarize(
-    reports: list[dict], window_cards: list[dict] | None = None, since: str = "", until: str = "~"
+    reports: list[dict],
+    window_cards: list[dict] | None = None,
+    since: str = "",
+    until: str = "~",
+    cohort: str = "merged",
 ) -> dict:
     """The numbers on the headline table. `window_cards` is the platform half's
-    accepted cards, or None when that half did not run."""
+    accepted cards, or None when that half did not run. `cohort` says which set
+    of PRs `reports` is: the ones merged in the window, or the ones CI first
+    judged in it."""
     n = len(reports)
     strict = sum(1 for r in reports if r["strict_first_pass"])
     lenient = sum(1 for r in reports if r["lenient_first_pass"])
     failed_exits = [e for r in reports for e in r["exits"] if e["failed"]]
     out = {
+        "cohort": cohort,
         "merged_prs": n,
         "strict_first_pass": {"n": strict, "pct": _pct(strict, n)},
         "lenient_first_pass": {"n": lenient, "pct": _pct(lenient, n)},
@@ -896,6 +995,9 @@ def summarize(
             {r["number"] for r in reports if any(e["failed"] for e in r["exits"])}
         ),
     }
+    if cohort != "merged":
+        landed = sum(1 for r in reports if r.get("merged_at"))
+        out["cohort_prs"] = {"n": n, "landed": landed, "pending": n - landed}
     if window_cards is not None:
         # Cards accepted inside the window, like the merged PRs.
         acc = [
@@ -914,15 +1016,35 @@ def summarize(
 
 def render_markdown(report: dict) -> str:
     s = report["summary"]
+    first_push = s.get("cohort", "merged") != "merged"
+    if first_push:
+        # The cohort changes what every number below counts, so it is stated
+        # before them, not in a footnote.
+        cohort_note = [
+            (
+                "- **按首次被判分组**：这张表的 PR 不是窗口内合并的那些，而是**第一次被必需 CI 判过的"
+                "那次推送落在窗口内**的那些——已合并的和还没合并的都算，只看那一刻在不在窗口里。"
+                "关掉没合并的不算（它没成为必须过 CI 才能落的 PR）；窗口内合并、但首次被判在十天前的，"
+                "也不进这张表，它属于十天前那个窗口。"
+            ),
+            "  首次被判 = 该 PR 第一个跑过必需 CI 的 head 上最早那一轮的 `started_at`。",
+            f"  本窗口 {s['cohort_prs']['n']} 个：已合并 {s['cohort_prs']['landed']}、"
+            f"截至窗口末端还没合并 {s['cohort_prs']['pending']}。",
+        ]
+    else:
+        cohort_note = [
+            (
+                "- **合并 PR**：`gh pr list --state merged --search merged:<窗口>`，再按 `mergedAt` 逐条复核"
+                "（搜索索引是分钟粒度、两端都含，边界靠秒级判定收口）。"
+            )
+        ]
     lines = [
-        f"# 复盘窗口 {report['since']} ~ {report['until']} UTC",
+        f"# 复盘窗口 {report['since']} ~ {report['until']} UTC"
+        + ("（按首次被判分组）" if first_push else ""),
         "",
         "## 口径",
         "",
-        (
-            "- **合并 PR**：`gh pr list --state merged --search merged:<窗口>`，再按 `mergedAt` 逐条复核"
-            "（搜索索引是分钟粒度、两端都含，边界靠秒级判定收口）。"
-        ),
+        *cohort_note,
         (
             "- **首推（严格）**：该 PR 第一个 head 的第一轮必需 CI 就 `success`。被新推顶掉的 "
             "`cancelled` 轮算失败——那次推送没过，是被换掉了。「第一个 head」指第一个跑过必需 CI 的 "
@@ -965,7 +1087,12 @@ def render_markdown(report: dict) -> str:
         "",
         "| 指标 | 本窗口 |",
         "|---|---|",
-        f"| 合并 PR | {s['merged_prs']} |",
+        (
+            f"| 首次被判入窗的 PR | {s['cohort_prs']['n']}"
+            f"（已合并 {s['cohort_prs']['landed']} / 还没合并 {s['cohort_prs']['pending']}） |"
+            if first_push
+            else f"| 合并 PR | {s['merged_prs']} |"
+        ),
         f"| 首推一次过 CI（严格） | {s['strict_first_pass']['pct']} |",
         f"| 首推一次过 CI（宽松） | {s['lenient_first_pass']['pct']} |",
         f"| 每 PR 轮数（按推送） | {s['pushes_per_pr']} |",
@@ -987,15 +1114,28 @@ def render_markdown(report: dict) -> str:
     else:
         lines.append("| 递卡→采纳 | 未测（没有 OKCHEESE_TOKEN，平台那一半没跑） |")
     lines += ["", "## 明细（每 PR 一行）", ""]
-    lines += [
-        "| PR | 合并时刻 | 推送 | 轮数 | 首推严格 | 首推宽松 | 出队失败 | 首个错误 |",
-        "|---|---|---|---|---|---|---|---|",
-    ]
+    if first_push:
+        # Sorted by 首次被判 (build does it), so the extra columns lead.
+        lines += [
+            "| PR | 首次被判 | 落地 | 推送 | 轮数 | 首推严格 | 首推宽松 | 出队失败 | 首个错误 |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+    else:
+        lines += [
+            "| PR | 合并时刻 | 推送 | 轮数 | 首推严格 | 首推宽松 | 出队失败 | 首个错误 |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
     for r in report["prs"]:
         failed = [e for e in r["exits"] if e["failed"]]
         err = next((e["first_error"] for e in failed if e["first_error"]), "—")
+        lead = (
+            f"| #{r['number']} | {first_judged_at(r) or '—'} | "
+            f"{'已合并' if r['merged_at'] else '还没合并'} | "
+            if first_push
+            else f"| #{r['number']} | {r['merged_at']} | "
+        )
         lines.append(
-            f"| #{r['number']} | {r['merged_at']} | {r['pushes']} | {r['ci_runs']} | "
+            f"{lead}{r['pushes']} | {r['ci_runs']} | "
             f"{'✓' if r['strict_first_pass'] else '✗'} | "
             f"{'✓' if r['lenient_first_pass'] else '✗'} | {len(failed)} | {err} |"
         )
@@ -1053,6 +1193,11 @@ def render_markdown(report: dict) -> str:
             "未测：没有 OKCHEESE_TOKEN（或没给 --room），平台那一半没跑。",
         ]
 
+    if first_push:
+        # The 10-12 sheet counted merged PRs; its numbers are not this cohort's
+        # peers, so a comparison row here would be a different question.
+        return "\n".join(lines)
+
     lines += [
         "",
         "## 对照（与《总调度复盘 10-12》§1）",
@@ -1082,10 +1227,21 @@ def render_markdown(report: dict) -> str:
 # ==========================================================================
 
 
-def build(repo: str, since: datetime, until: datetime, room: str | None) -> dict:
+def build(repo: str, since: datetime, until: datetime, room: str | None, cohort: str = "merged") -> dict:
     """Run both halves and join them. The GitHub half is always attempted; the
-    platform half only when a room id and an OKCHEESE_TOKEN are both present."""
-    reports = pr_reports(repo, since, until)
+    platform half only when a room id and an OKCHEESE_TOKEN are both present.
+
+    `cohort` picks the PR set: `merged` (merged inside the window) or
+    `first-push` (first judged by CI inside it, merged or not)."""
+    include_open = cohort != "merged"
+    # `everything` is what the platform half joins against: the window's cards
+    # belong to PRs merged in it, whichever cohort the GitHub table reads, so
+    # that half keeps the merge-window set (plus the extra candidates, which
+    # match no card).
+    everything = pr_reports(repo, since, until, include_open=include_open)
+    reports = judged_in_window(everything, since, until) if include_open else everything
+    if include_open:
+        reports.sort(key=lambda r: _iso(first_judged_at(r)))
     platform = None
     if room:
         token = token_from_env()
@@ -1096,11 +1252,11 @@ def build(repo: str, since: datetime, until: datetime, room: str | None) -> dict
         else:
             since_s, until_s = since.strftime("%Y-%m-%dT%H:%M:%S"), until.strftime("%Y-%m-%dT%H:%M:%S")
             raw = collect_platform(room, token, since_s, until_s)
-            joined = join_cards(raw["cards"], reports)
+            joined = join_cards(raw["cards"], everything)
             platform = {
                 "cards": joined,
                 "first_pr_lag": first_pr_lag(raw["tasks"], raw["cards"], since_s, until_s),
-                "lines": lines_table(raw["tasks"], raw["cards"], reports),
+                "lines": lines_table(raw["tasks"], raw["cards"], everything),
                 "turns_by_seat": turns_by_seat(raw["failed_turns"]),
             }
     cards = platform["cards"] if platform else None
@@ -1109,8 +1265,13 @@ def build(repo: str, since: datetime, until: datetime, room: str | None) -> dict
         "until": until.strftime("%Y-%m-%dT%H:%M:%S"),
         "prs": reports,
         "platform": platform,
+        "cohort": cohort,
         "summary": summarize(
-            reports, cards, since.strftime("%Y-%m-%dT%H:%M:%S"), until.strftime("%Y-%m-%dT%H:%M:%S")
+            reports,
+            cards,
+            since.strftime("%Y-%m-%dT%H:%M:%S"),
+            until.strftime("%Y-%m-%dT%H:%M:%S"),
+            cohort=cohort,
         ),
     }
 
@@ -1125,6 +1286,15 @@ def retro_main(argv: list[str]) -> int:
     parser.add_argument("--since", required=True, help="window start, ISO UTC")
     parser.add_argument("--until", required=True, help="window end, ISO UTC")
     parser.add_argument("--room", help="channel id: also run the platform half (needs OKCHEESE_TOKEN)")
+    parser.add_argument(
+        "--cohort",
+        choices=("merged", "first-push"),
+        default="merged",
+        help=(
+            "which PRs the sheet counts: merged=merged in the window (default); "
+            "first-push=first judged by CI in the window, merged or still open"
+        ),
+    )
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--cache", help="directory to cache gh answers in (speeds up re-runs)")
     parser.add_argument("--self-test", action="store_true")
@@ -1137,7 +1307,7 @@ def retro_main(argv: list[str]) -> int:
         # Exit 2 with a usage line, like argparse does for a missing flag: a
         # typo in the window is a mistyped argument, not a traceback to read.
         parser.error(f"窗口不是 ISO 时间（{exc}）：--since/--until 写成 2026-10-12T11:00:00Z 这样")
-    report = build(args.repo, since, until, args.room)
+    report = build(args.repo, since, until, args.room, args.cohort)
     if args.json:
         json.dump(report, sys.stdout, ensure_ascii=False, indent=2, default=str)
         print()
@@ -1271,6 +1441,49 @@ def self_test() -> int:
         rep["strict_first_pass"],
         False,
     )
+
+    # first_judged_at / judged_in_window: the clock a 首推 belongs to is the
+    # start of the first round CI ever ran on that PR — not the merge time.
+    def judged(number: int, started: str) -> dict:
+        head = {
+            "sha": "a",
+            "rounds": [{"outcome": "green", "tier": "full", "started_at": started, "jobs": []}],
+        }
+        return pr_report(pr_row(number), [head], [])
+
+    check(
+        "首次被判 is the first round's start",
+        first_judged_at(judged(5, "2026-10-12T11:00:00Z")),
+        "2026-10-12T11:00:00Z",
+    )
+    check(
+        "a PR no required check ever ran on has no 首次被判",
+        first_judged_at(pr_report(pr_row(6), [rnd("a")], [])),
+        None,
+    )
+    lo, hi = _iso("2026-10-12T11:00:00"), _iso("2026-10-12T14:05:00")
+    # Both ends are inclusive, and the trailing Z is the trap: `started_at`
+    # carries one and these window strings do not, so a plain string compare
+    # would drop the second one (#8) and its peers.
+    cohort = [
+        judged(7, "2026-10-12T11:00:00Z"),
+        judged(8, "2026-10-12T14:05:00Z"),
+        judged(9, "2026-10-12T10:59:59Z"),
+        judged(10, "2026-10-12T14:05:01Z"),
+    ]
+    check(
+        "首次被判 在窗口两端（含）之内才进组",
+        [r["number"] for r in judged_in_window(cohort, lo, hi)],
+        [7, 8],
+    )
+    check(
+        "没被必需 CI 判过的 PR 不属于任何窗口",
+        judged_in_window([pr_report(pr_row(11), [rnd("a")], [])], lo, hi),
+        [],
+    )
+    check("cohort 下摘要报出落地与未落地", summarize(cohort[:2], cohort="first-push")["cohort_prs"],
+          {"n": 2, "landed": 2, "pending": 0})
+    check("merged 口径不报这一栏", "cohort_prs" in summarize(cohort[:2]), False)
 
     # green_of: the boundary is a full-tier green, not a draft one.
     draft_green = {"outcome": "green", "tier": "draft", "started_at": "2026-10-12T11:00:00"}
