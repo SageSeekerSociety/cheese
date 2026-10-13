@@ -230,7 +230,10 @@ RUN_RECORDS_DESCRIPTION = (
     "读平台的运行记录：各个项目里出过的报错（后端、前端、没跑完的轮次）和平台自己"
     "处理掉的事（排队、重试、环境启停），和管理后台「运行记录」是同一份。一种事一行："
     "次数、涉及几个项目、首次和最近一次的时间。给 `key` 和 `kind`（列表每行末尾那一对）"
-    "就读那一种的详情：最近一次的全文、调用栈、出现在哪些项目和对话里。只读。"
+    "就读那一种的详情：最近一次的全文、调用栈、出现在哪些项目和对话里。"
+    "给 `turns` 读另一个问题：这一窗口里一共起了多少轮、其中多少轮留下了终态失败事件"
+    "——一种事一行的读法答不出「一共跑了多少轮」。没有失败事件的轮次读成空，那是平台"
+    "没为它记过，不是记了成功。只读。"
     "只有做这个平台本身的项目读得到，别的项目会被拒。"
 )
 
@@ -862,6 +865,15 @@ PLATFORM_TOOLS = ToolTable(
                 "query": _text("搜正文和详情里的文字，比如接口路径、异常名"),
                 "key": _text("要读详情的那一种：列表里那一行的 key"),
                 "kind": _text("要读详情的那一种：列表里那一行的 kind"),
+                "turns": {
+                    "type": "boolean",
+                    "description": "一轮一行：这一窗口里跑过的轮次、各自留下什么终态"
+                    "失败事件（空 = 平台没记过，不是成功）、这一轮的提示被投了几次",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "只跟 turns 一起用：最多回几行，默认 200，最多 500",
+                },
             },
         ),
         _tool(
@@ -1545,6 +1557,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "GET", "path": "/feedback?" + urllib.parse.urlencode(params)}
     if tool == "cheese_run_records":
         params = {"topic": topic, **_given(args, "window")}
+        if args.get("turns"):
+            params.update(_given(args, "limit"))
+            return {
+                "method": "GET",
+                "path": "/run-records/turns?" + urllib.parse.urlencode(params),
+            }
         if args.get("key") and args.get("kind"):
             params.update(key=args["key"], kind=args["kind"])
             return {
@@ -2402,6 +2420,8 @@ def _run_records(args: dict, host) -> str:
             raise PlatformToolError(f"没读到：{why.rstrip('。')}。") from exc
         raise
     body = data.get("data") or {}
+    if args.get("turns"):
+        return _turns_lines(body)
     if args.get("key") and args.get("kind"):
         meta = body.get("meta") or {}
         lines = [f"[{body.get('kind')}] {body.get('content')}", f"最近一次：{body.get('at')}"]
@@ -2431,6 +2451,37 @@ def _run_records(args: dict, host) -> str:
             f"（key={g.get('key')!r}）"
         )
     lines.append("读某一种的详情：给 cheese_run_records 传那一行的 key 和 kind。")
+    return "\n".join(lines)
+
+
+def _turns_lines(body: dict) -> str:
+    """One line per turn: when it started, how it ended, what it was fed.
+
+    「没记过失败」不写成「成功」：成功不写事件，这个读法只能证明平台没为这一轮落过
+    终态事件（`domain/run_record/turns.py` 的模块 docstring）。
+    """
+    turns = body.get("turns") or []
+    if not turns:
+        return f"{body.get('window')} 内没有跑过轮次。"
+    lines = [
+        f"{body.get('window')} 内一共 {body.get('total', len(turns))} 轮，"
+        f"这是最近的 {len(turns)} 轮（新的在前）："
+    ]
+    for turn in turns:
+        if turn.get("failure_event"):
+            became = f"失败 {turn['failure_event']}"
+        elif turn.get("stopped_at"):
+            became = "没记过失败"
+        else:
+            became = "还在跑"
+        line = (
+            f"{turn.get('turn_id')}  起 {turn.get('started_at')}  "
+            f"止 {turn.get('stopped_at') or '—'}  {became}"
+        )
+        if turn.get("prompt_attempts") is not None:
+            line += f"  投喂 {turn['prompt_attempts']} 次"
+        lines.append(line)
+    lines.append("没有失败事件的轮次是平台没为它记过，不是记了成功。")
     return "\n".join(lines)
 
 
