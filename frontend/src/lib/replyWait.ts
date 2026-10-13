@@ -49,14 +49,15 @@ export function waitedFor(since: string | null | undefined, now: number): string
 export interface StallInfo {
   reason?: string | null
   since?: string | null
-  pr?: number | null
 }
 
-/** 红灯悬停那一句：哪件事、哪个 PR、已经等了多久、该谁去动。 */
+/** 红灯悬停那一句：哪件事、已经等了多久、该谁去动。
+ *
+ *  话里不写 PR 号：这句悬停紧挨着话题那一行，而话题名旁边不该出现技术编号（清单第
+ *  10 条）。要顺着 PR 去看的人有别的路——验收卡上有可点的 `PR #{n}`，那儿才是它的位置。 */
 export function stallReasonText(info: StallInfo, agent: string, now: number): string {
   const waited = waitedFor(info.since, now)
   const long = waited ? t('work.sidebar.stall.waited', { waited }) : t('work.sidebar.stall.waitedLong')
-  const pr = info.pr ? t('work.sidebar.stall.pr', { pr: info.pr }) : ''
   switch (info.reason) {
     case 'device_waiting':
       return t('work.sidebar.stall.device', { agent, long })
@@ -66,13 +67,13 @@ export function stallReasonText(info: StallInfo, agent: string, now: number): st
     case 'environment_repaired':
       return t('work.sidebar.stall.environment', { agent, long })
     case 'check':
-      return t('work.sidebar.stall.check', { pr, agent, long })
+      return t('work.sidebar.stall.check', { agent, long })
     case 'conflict':
-      return t('work.sidebar.stall.conflict', { pr, agent, long })
+      return t('work.sidebar.stall.conflict', { agent, long })
     case 'rejected':
-      return t('work.sidebar.stall.rejected', { pr, agent, long })
+      return t('work.sidebar.stall.rejected', { agent, long })
     case 'gate':
-      return t('work.sidebar.stall.gate', { pr, agent, long })
+      return t('work.sidebar.stall.gate', { agent, long })
     default:
       return t('work.sidebar.stall.mention', { agent, long })
   }

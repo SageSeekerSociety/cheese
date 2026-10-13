@@ -110,11 +110,18 @@ function toggleTasks(channelId: string) {
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
 }
-// 「浏览频道」：全部频道都在那一页，加入、退出、新建也在那里。
+// 「全部频道」：全部频道都在那一页，加入、退出、新建也在那里。
 function browseChannels() {
   void router.push({ name: 'project-channels', params: { projectId: props.projectId } })
 }
 const browsingChannels = computed(() => route.name === 'project-channels')
+// 「进行中的任务」那一行：在「全部任务」这一页上就亮。按频道筛开（频道 ⋯ 里那一项）
+// 的时候亮的是那个频道那一行，这一行不亮。
+const tasksOpen = computed(() => route.name === 'project-tasks' && !route.query.channel)
+// 「进行中的任务」那一行：去看这个项目的全部任务（那一页里也有已经结束的）。
+function goToProjectTasks() {
+  void router.push({ name: 'project-tasks', params: { projectId: props.projectId } })
+}
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -166,7 +173,7 @@ function onPressTask(task: { roomId: string; taskId: string }) {
   })
 }
 
-// 新建频道在「浏览频道」那一页（先起名再建），命令面板里这一条去那里。
+// 新建频道在「全部频道」那一页（先起名再建），命令面板里这一条去那里。
 useCommands(() => [
   {
     id: 'topic.new',
@@ -212,6 +219,7 @@ useCommands(() => [
       :selected-task-id="activeTaskId"
       :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
+      :tasks-open="tasksOpen"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
       :active-docs="activeDocs"
@@ -222,6 +230,7 @@ useCommands(() => [
       @select-task="openTask"
       @toggle-tasks="toggleTasks"
       @browse-channels="browseChannels"
+      @open-tasks="goToProjectTasks"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @press-page="onPressPage"
@@ -231,8 +240,8 @@ useCommands(() => [
       @retry="store.reloadTopics()"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     >
-      <!-- 手机上进项目落在频道列表上，项目名下那一行收进了菜单，所以去项目总览的那一行
-           放在列表最顶上。桌面上它就是项目名下那一行的第一格。 -->
+      <!-- 手机上进项目落在频道列表上，项目名下那一行和总览都收进了项目名菜单，所以去项目
+           总览的那一行放在列表最顶上。桌面上这一行不画（清单第 9 条：总览从项目名菜单进）。 -->
       <template v-if="page || column" #top>
         <button type="button" class="overview-entry t-body" data-testid="overview-entry" @click="openOverview">
           <v-icon size="18" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>
