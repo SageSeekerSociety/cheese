@@ -127,4 +127,29 @@ describe('MemberPicker', () => {
     mount({})
     expect(document.querySelector('.member-picker__search input')?.getAttribute('aria-label')).toContain('挑')
   })
+
+  it('拿键盘也挑得动：候选行和「×」是真按钮', async () => {
+    // 这一件没写 keydown 处理器，键盘可用靠的是语义元素本身：行和「×」都是
+    // `<button type="button">`，Tab 到得了、Enter/Space 打得开。钉住它，免得哪天
+    // 被换成可点的 div —— 那一下子键盘就用不了了。
+    const utils = mount({ modelValue: ['alice'] })
+    const row = rowOf('Alice')
+    expect(row.tagName).toBe('BUTTON')
+    expect(row.getAttribute('type')).toBe('button')
+    const unpick = document.querySelector<HTMLElement>('.member-picker__unpick')!
+    expect(unpick.tagName).toBe('BUTTON')
+    expect(unpick.getAttribute('type')).toBe('button')
+    expect(document.querySelector('.member-picker__search input')?.tagName).toBe('INPUT')
+
+    await fireEvent.click(row)
+    expect(utils.emitted('update:modelValue')?.at(-1)).toEqual([[]])
+  })
+
+  it('忙着的时候，键盘也动不了这些按钮', async () => {
+    const utils = mount({ disabled: true, modelValue: ['alice'] })
+    expect(rows().every((r) => (r as HTMLButtonElement).disabled)).toBe(true)
+    expect(document.querySelector<HTMLButtonElement>('.member-picker__unpick')?.disabled).toBe(true)
+    await fireEvent.click(rows()[0])
+    expect(utils.emitted('update:modelValue')).toBeUndefined()
+  })
 })
