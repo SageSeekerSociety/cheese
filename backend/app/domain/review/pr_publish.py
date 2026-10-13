@@ -182,13 +182,15 @@ async def open_pr_for_card(
     title, body = await _pr_text(
         session, card_id=card_id, topic_id=topic_id, branch=branch
     )
-    opened = await client.open_pr(
-        head=branch,
-        base=base,
-        title=title,
-        body=body,
-    )
-    pr = opened.pr
+    pr = await _open_pr_of_task(client, task)
+    if pr is None:
+        opened = await client.open_pr(
+            head=branch,
+            base=base,
+            title=title,
+            body=body,
+        )
+        pr = opened.pr
     # The PR very often already exists by now: the task's draft PR was opened
     # at its first commit (#718 拍板①) and `open_pr` adopts it rather than
     # failing on GitHub's "already exists". An adopted PR still carries the
@@ -205,6 +207,25 @@ async def open_pr_for_card(
     logger.info(
         "PR #%s ready for card %s (%s)", pr.get("number"), card_id, pr.get("html_url")
     )
+    return pr
+
+
+async def _open_pr_of_task(
+    client: GitHubPRClient | ForgejoPRClient, task: Task
+) -> dict | None:
+    """The PR the task already has, while it is still open on the task's branch.
+
+    The card rides this PR rather than whatever `open_pr` returns: `open_pr`
+    adopts only a PR with the same head AND base, and a person may have moved
+    the task's PR onto another base on the forge. Asked with the task's old
+    base, it opened a second PR for the same branch, and the card and the task
+    then named different PRs (FB-96)."""
+    if task.pr_number is None:
+        return None
+    pr = await client.pr_view(task.pr_number)
+    head = pr.get("head") or {}
+    if pr.get("state") != "open" or head.get("ref") != task.branch_name:
+        return None
     return pr
 
 
@@ -805,7 +826,8 @@ async def record_pr(
         if card.task_id is not None:
             tasks = TaskService(session)
             task = await tasks.get(card.task_id)
-            if task is not None and task.pr_number is None:
+            # The task follows the card: it names the PR the card rides.
+            if task is not None and task.pr_number != number:
                 await tasks.record_pr(task, number=number, url=url)
         await session.commit()
 

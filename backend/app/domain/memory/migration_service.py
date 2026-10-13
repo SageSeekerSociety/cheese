@@ -348,8 +348,9 @@ class MemoryMigrationService:
                 raise BadRequestError(
                     say("migrationModelFailed", reason=exception_text(exc))
                 ) from exc
-            # 搬迁是平台自己做的事，花销记在平台头上，不扣任何团队（#2233）。
-            await Ledger(self._session).record_platform(
+            # 搬的是这个项目的记忆，花销记在项目头上，和项目里的其他调用一样扣团队。
+            await Ledger(self._session).record_project_call(
+                gathered.project_id,
                 kind=USAGE_KIND,
                 model=chat.model,
                 input_tokens=answer.usage.prompt_tokens,

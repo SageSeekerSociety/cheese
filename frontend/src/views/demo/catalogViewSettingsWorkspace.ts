@@ -20,6 +20,7 @@ import {
   CLOSED_TASK,
   DEVICE_TEAMS,
   MODEL_CONNECTIONS,
+  MODEL_HELD,
   MODEL_SERVICE_DEVICES,
   NOTIF_PREFS,
   OVERVIEW_TEXT,
@@ -385,7 +386,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.securityView.s4.note')
         },
-        props: { connections: [] },
+        props: { connections: [], held: [] },
         expect: '暂无关联账号',
         // 第二张卡片（已关联账号）里的空态那一行。
         expectSelector: 'section.settings-card:nth-of-type(2) .srow--empty',
@@ -462,6 +463,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       loading: false,
       error: null,
       connections: MODEL_CONNECTIONS,
+      held: MODEL_HELD,
       devices: MODEL_SERVICE_DEVICES,
       busy: '',
       saved: 0,
@@ -474,7 +476,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.modelConnectionsView.s1.note')
         },
-        props: { connections: [] },
+        props: { connections: [], held: [] },
         expect: '暂无模型连接',
         expectSelector: '.settings-empty',
       },
@@ -488,6 +490,20 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         props: { connections: [{ ...MODEL_CONNECTIONS[2], logged_in: false, revoking: true }] },
         expect: '解除中',
         expectSelector: '.mc-state--pending',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s3.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s3.note')
+        },
+        props: {
+          connections: [],
+          held: [{ ...MODEL_HELD[0], check_error: 'HTTP 401 invalid x-api-key' }],
+        },
+        expect: '检查未通过',
+        expectSelector: '.mc-state--failed',
       },
     ],
   },

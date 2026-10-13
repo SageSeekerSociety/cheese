@@ -1078,14 +1078,18 @@
     }
   },
   "modelConnectionsView": {
-    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device.",
+    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device; and the API keys and model services kept on your account, with the key's last four characters, service host, model and last check, and test, rename and remove.",
     "s1": {
       "name": "No connections",
-      "note": "Logged in on no device: the card says there are no model connections, and the custom model service button stays at its top right."
+      "note": "Logged in on no device and nothing kept on the account: the card says there are no model connections, and the buttons to add an API key, add a model service or use one on a device stay at its top right."
     },
     "s2": {
       "name": "Removing on an offline device",
       "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+    },
+    "s3": {
+      "name": "A key on the account fails its check",
+      "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
     }
   },
   "thisDeviceView": {

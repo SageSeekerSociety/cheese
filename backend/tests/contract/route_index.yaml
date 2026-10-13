@@ -53,6 +53,7 @@ auth_entries:
   device.flow.code: "DeviceService.poll / code_device_name checks the supplied pending device_code, including expiration. The code is the approval-flow secret; no preexisting user login is required. Source: app/api/routes/connector.py,205; app/domain/device/service.py."
   device.connect: "connector.device_connect resolves caller, explicitly rejects unauthenticated caller, authorize_project, then assigns the pending code to project. Source: app/api/routes/connector.py."
   device.user: "connector._require_user uses ActorResolver.resolve and requires authenticated actor.user_id; DeviceService owner operations additionally bind the supplied device id to that user. Source: app/api/routes/connector.py and domain/device/service.py."
+  model_connection.owner: "connector._require_user uses ActorResolver.resolve and requires authenticated actor.user_id; a connection the account holds is read only through account_connections.owned, which answers None (NotFound) unless AccountConnection.owner_user_id is that user, so only its owner checks, renames or removes it, and a new one is kept on the caller's own account. Source: app/api/routes/connector.py; domain/agent_instance/account_connections.py."
   device.team: "connector._require_user plus TeamRepository.is_team_member or DeviceService team ownership checks on registration/removal. Source: app/api/routes/connector.py and domain/device/service.py."
   device.token: "connector.device_me authenticates the durable device session token from X-Cheese-Session via device.owner_reads.device_for_token and answers only which device it names; an unknown or missing token is 401. Source: app/api/routes/connector.py."
   device.agent.ws: "connector.agent_socket authenticates durable device session token via device.owner_reads.device_for_token from X-Cheese-Session or token query; binds the socket to that device. Source: app/api/routes/connector.py."
@@ -540,6 +541,7 @@ routes:
   # app.api.routes.blocks
   - {protocol: "http", method: "PATCH", path: "/blocks/{block_id}", auth: "actor.topic.enforced", owner: "block"}
   - {protocol: "http", method: "POST", path: "/blocks/{block_id}/reactions", auth: "actor.topic.enforced", owner: "block"}
+  - {protocol: "http", method: "POST", path: "/blocks/{block_id}/skip", auth: "actor.topic.enforced", owner: "block"}
   - {protocol: "http", method: "DELETE", path: "/blocks/{block_id}/answer", auth: "actor.topic.enforced", owner: "block"}
   # app.api.routes.canvases
   - {protocol: "http", method: "POST", path: "/documents/{document_id}/canvases", auth: "canvas.writer", owner: "canvas"}
@@ -568,6 +570,10 @@ routes:
   - {protocol: "ws", method: "WS", path: "/connector/session/{sid}/screen", auth: "device.viewer.ws", owner: "device"}
   - {protocol: "http", method: "GET", path: "/connector/my/devices", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "GET", path: "/connector/my/model-connections", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "POST", path: "/connector/my/model-connections", auth: "model_connection.owner", owner: "device"}
+  - {protocol: "http", method: "POST", path: "/connector/my/model-connections/{connection_id}/check", auth: "model_connection.owner", owner: "device"}
+  - {protocol: "http", method: "PATCH", path: "/connector/my/model-connections/{connection_id}", auth: "model_connection.owner", owner: "device"}
+  - {protocol: "http", method: "DELETE", path: "/connector/my/model-connections/{connection_id}", auth: "model_connection.owner", owner: "device"}
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "PUT", path: "/connector/my/devices/{device_id}/claude-code/model-service", auth: "device.user", owner: "device"}

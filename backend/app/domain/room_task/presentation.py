@@ -628,7 +628,8 @@ def waiting_on(
     asked: str | None,
 ) -> str | None:
     """这一格在等哪一个人：卡面上写「待 某某 审阅」「待 某某 回答」「待 某某 开始」
-    的那个某某。不是在等一个具体的人就是 None。"""
+    的那个某某。不是在等一个具体的人就是 None —— 一道题问了几个人、问了所有人，
+    就不是。"""
     if shown.phrase == NeedsYou.awaiting_review.value:
         return reviewer
     if shown.phrase == NeedsYou.awaiting_answer.value:

@@ -324,7 +324,9 @@ async def diagnose_environment(
     if failure is None:
         raise ValidationError(say("envNoFailure"))
     ran = topic.environment or project_environment(project.settings)
-    answer = await diagnose(db, config=ran, failure=failure)
+    answer = await diagnose(
+        db, project_id=project.id, topic_id=topic_id, config=ran, failure=failure
+    )
     await db.commit()
     if answer is None:
         raise ValidationError(say("envDiagnoseFailed"))

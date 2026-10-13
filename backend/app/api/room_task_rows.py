@@ -74,7 +74,7 @@ async def task_out(db, chat: ChatService, task, card=None) -> dict:
         running=task.id in running,
         owner=task.owner_handle,
         reviewer=card.reviewer_handle if card is not None else None,
-        asked=asked.get(task.id),
+        asked=asked[task.id].only() if task.id in asked else None,
     )
     return out
 
@@ -127,7 +127,7 @@ async def task_rows(
             running=task.id in running,
             owner=task.owner_handle,
             reviewer=card.reviewer_handle if card is not None else None,
-            asked=asked.get(task.id),
+            asked=asked[task.id].only() if task.id in asked else None,
         )
         accepted = landed.get(task.id, [])
         items.append(
@@ -280,11 +280,10 @@ async def project_task_rows(
                     else (card.reviewer_handle,)
                 ),
                 reporter=task.reporter_handle,
-                asked=asking,
-                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知、
-                # 待办同一个名单（`announce.notify_question`）。题根本不在等，就
-                # 没有这一层。
-                asked_also=(task.people if task.id in asked and asking is None else ()),
+                # 题上没点名（平台发起的轮次）：等它的是这条活的人 —— 和通知、待办
+                # 同一个名单（`announce.notify_question`）。题根本不在等，就没有这
+                # 一层。
+                asked_also=() if asking is None else asking.waiting(task.people),
                 owner=(
                     task.owner_handle
                     if presentation.owner_acts_on(shown, running=is_running)

@@ -154,6 +154,9 @@ EVENT_POLICY_PROPOSAL: Final = "policy_proposal"
 EVENT_TIMED_DELIVERY: Final = "timed_delivery"
 #: 芝士把一次做法整理成了项目技能，等人确认后才保存、才下发。
 EVENT_SKILL_PROPOSED: Final = "skill_proposed"
+#: 叫醒链上该来的那一拍没来（`domain/wake_watch/`）：总调度的定时器或者看门狗的
+#: 心跳停了。影子期只记下「本该补跳」，不真起轮。
+EVENT_WAKE_MISSED: Final = "wake_missed"
 #: 芝士在某人的邮箱里写好了一封草稿；发不发由邮箱主人确认。
 EVENT_MAIL_DRAFTED: Final = "mail_drafted"
 #: 那封草稿的下落：邮箱主人发出了、发送失败了，或者放弃了。房间里的确认卡片据此
@@ -246,6 +249,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DEPENDENCY_REJECTED,
         EVENT_POLICY_PROPOSAL,
         EVENT_TIMED_DELIVERY,
+        EVENT_WAKE_MISSED,
         EVENT_SKILL_PROPOSED,
         EVENT_MAIL_DRAFTED,
         EVENT_MAIL_RESULT,
@@ -278,6 +282,7 @@ RUN_RECORD_EVENTS: Final = frozenset(
         EVENT_CONTEXT_COMPACT,
         EVENT_DEVICE_WAITING,
         EVENT_TIMED_DELIVERY,
+        EVENT_WAKE_MISSED,
         "cloud_startup",
         "cloud_provisioning",
         "sandbox_asleep",

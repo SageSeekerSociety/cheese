@@ -2247,6 +2247,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/blocks/{block_id}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Skip Question
+         * @description Skip a question asked with quick replies: you will not answer it.
+         *
+         *     Only someone the question waits on can — whoever may answer it
+         *     (`block.questions.waits_on`); anyone else is refused, and so is a question
+         *     that already has its answer. Nothing is said in the room. The question stops
+         *     waiting, as an answer would make it: it leaves that person's 待你回答 list,
+         *     and its notice is settled. The agent that asked runs another turn told that
+         *     the question was skipped, so it stops waiting for an answer that is not
+         *     coming. ``DELETE /blocks/{block_id}/answer`` undoes it.
+         */
+        post: operations["skip_question_blocks__block_id__skip_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/blocks/{block_id}/answer": {
         parameters: {
             query?: never;
@@ -2259,8 +2287,9 @@ export interface paths {
         post?: never;
         /**
          * Withdraw Answer
-         * @description Take back your own answer to a question asked with quick replies, so the
-         *     question is unanswered again and its options come back for everyone.
+         * @description Take back your own answer to a question asked with quick replies, or
+         *     your skip of it, so the question is unanswered again and its options come
+         *     back for everyone.
          *
          *     ``block_id`` is the question, not the answer: an answer is an ordinary
          *     message, and what is withdrawn is the line it left on the question
@@ -2578,17 +2607,71 @@ export interface paths {
         };
         /**
          * My Model Connections
-         * @description The caller's model connections across the machines they enrolled
-         *     (#2991): what each logs in with, where it is kept, its last check. Never a
-         *     key.
+         * @description The caller's model connections (#2991): the logins on the machines they
+         *     enrolled — what each logs in with, where it is kept, its last check — and
+         *     the API keys and model services their account holds. Never a key.
          */
         get: operations["my_model_connections_connector_my_model_connections_get"];
         put?: never;
-        post?: never;
+        /**
+         * Add Account Connection
+         * @description Keep an Anthropic API key or a model service on the caller's account,
+         *     with no machine (#2991). The service is called once first; a connection
+         *     it refuses is not kept, and the refusal says why. The key is sealed and
+         *     never returned.
+         */
+        post: operations["add_account_connection_connector_my_model_connections_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/connector/my/model-connections/{connection_id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Account Connection
+         * @description Call the service again with the connection, and record what it said.
+         */
+        post: operations["check_account_connection_connector_my_model_connections__connection_id__check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/model-connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Account Connection
+         * @description Remove a connection the caller's account holds: its key is deleted at
+         *     once, and nothing starts with it again. The own agents on it stay in their
+         *     projects with no connection, as one on a removed machine login does.
+         *     Answers with what was removed.
+         */
+        delete: operations["remove_account_connection_connector_my_model_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename Account Connection
+         * @description Name a connection; the own agents on it are named after it.
+         */
+        patch: operations["rename_account_connection_connector_my_model_connections__connection_id__patch"];
         trace?: never;
     };
     "/connector/my/devices/{device_id}/claude-code": {
@@ -13117,6 +13200,54 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * AccountConnectionIn
+         * @description An API key or a model service to keep on the caller's account.
+         */
+        AccountConnectionIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "api_key" | "model_service";
+            /** Key */
+            key: string;
+            /** Base Url */
+            base_url?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /**
+         * AccountConnectionOut
+         * @description A model connection the caller's account holds: an Anthropic API key or
+         *     a model service, kept sealed by the platform. Never the key.
+         */
+        AccountConnectionOut: {
+            /** Id */
+            id: string;
+            kind: components["schemas"]["ConnectionKind"];
+            /** Name */
+            name: string | null;
+            /** Key Last4 */
+            key_last4: string;
+            /** Service Host */
+            service_host: string | null;
+            /** Model */
+            model: string | null;
+            /** Checked At */
+            checked_at: string | null;
+            /** Check Error */
+            check_error: string | null;
+            /** Created At */
+            created_at: string;
+        };
+        /** AccountConnectionRename */
+        AccountConnectionRename: {
+            /** Name */
+            name: string;
+        };
         /** AddCard */
         AddCard: {
             /**
@@ -15916,6 +16047,8 @@ export interface components {
         ModelConnectionsOut: {
             /** Connections */
             connections: components["schemas"]["ModelConnectionOut"][];
+            /** Account Connections */
+            account_connections: components["schemas"]["AccountConnectionOut"][];
         };
         /**
          * ModelCreate
@@ -16041,8 +16174,14 @@ export interface components {
             plan: string | null;
             /** Model */
             model: string | null;
+            /** Name */
+            name: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** On Account */
+            on_account: boolean;
             /** Machine Name */
-            machine_name: string;
+            machine_name: string | null;
             /** Online */
             online: boolean;
             /** Added */
@@ -16242,6 +16381,8 @@ export interface components {
             plan: string | null;
             /** Model */
             model: string | null;
+            /** On Account */
+            on_account: boolean;
         };
         /** OwnAgentMachineOut */
         OwnAgentMachineOut: {
@@ -18299,9 +18440,9 @@ export interface components {
         };
         /**
          * WithdrawnAnswer
-         * @description 撤回一道题的回答，回的是这道题撤回之后的样子。
+         * @description 跳过一道题、或撤回对它的回答（跳过），回的是这道题改完之后的样子。
          *
-         *     和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+         *     和 `block_updated` 那条实时帧带的是同一份东西，发起的页面拿它直接替换这道题，
          *     不必再取一次。
          */
         WithdrawnAnswer: {
@@ -22618,6 +22759,37 @@ export interface operations {
             };
         };
     };
+    skip_question_blocks__block_id__skip_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawnAnswerEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     withdraw_answer_blocks__block_id__answer_delete: {
         parameters: {
             query?: never;
@@ -23328,6 +23500,136 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelConnectionsOut"];
+                };
+            };
+        };
+    };
+    add_account_connection_connector_my_model_connections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConnectionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_account_connection_connector_my_model_connections__connection_id__check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_account_connection_connector_my_model_connections__connection_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_account_connection_connector_my_model_connections__connection_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConnectionRename"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

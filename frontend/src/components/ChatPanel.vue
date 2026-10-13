@@ -12,7 +12,7 @@ import type { TaskLine } from '../lib/channelTasks'
 
 import { computed, ref, watch } from 'vue'
 
-import { useAskWithdraw } from '../composables/useAskWithdraw'
+import { useAskResponse } from '../composables/useAskResponse'
 import { useChannelPins } from '../composables/useChannelPins'
 import { type ChatPanelEmit, useChatPanel } from '../composables/useChatPanel'
 import { vGuideAnchor } from '../composables/useGuideAnchors'
@@ -292,7 +292,7 @@ const {
 
 // 撤回一道题上的回答。它要的两样（时间线、错误横幅）都在 `panel` 上，但它自己不在
 // `useChatPanel` 里：那个文件贴着行数上限，一行都长不了。
-const { withdrawQuestionAnswer } = useAskWithdraw({ timeline: panel.timeline, errorMsg })
+const { withdrawQuestionAnswer, skipQuestion } = useAskResponse({ timeline: panel.timeline, errorMsg })
 
 // 支线：历史读完、输入框还空着、我上一句叫过 AI 队友，就先带上「@芝士 」。只在打开
 // 的那一刻做一次，删掉了不会再长回来。
@@ -451,6 +451,7 @@ useComposerShortcut({
           "
           @ask-reply="replyToQuestion"
           @ask-withdraw="withdrawQuestionAnswer"
+          @ask-skip="skipQuestion"
           @checklist="changeChecklist"
           @download="downloadAttachment"
           @jump="openAt"

@@ -123,7 +123,7 @@ jobs:
       # Accessibility: eslint-plugin-vuejs-accessibility's recommended rules over
       # src/**/*.vue (a clickable <div> with no keyboard path, a control with no
       # label, an image with no alt). Ratcheted like the boundary step above:
-      # 165 violations in 82 files are frozen in a11y-baseline.json, and only new
+      # 159 violations in 79 files are frozen in a11y-baseline.json, and only new
       # ones fail. Read-only; the writer is `pnpm run lint:a11y:update`, which
       # only lowers counts. Its tests are scripts/a11y-ratchet.test.mjs, run by
       # the Ratchet unit tests step below.

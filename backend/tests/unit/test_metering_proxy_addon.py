@@ -3245,3 +3245,35 @@ async def test_a_line_the_metering_tolerates_does_not_break_the_observer(
     assert watch.complete is True
     await asyncio.gather(*mod._failure_reports)
     assert _recorded(posted) == []
+
+
+def test_a_turn_admission_names_as_the_dream_lands_on_the_meter_as_the_dream(
+    monkeypatch, tmp_path
+):
+    """Admission names the kind once, at request time; the usage line written
+    when the response ends carries it, so the subscription's books say the
+    call was the project's memory consolidation."""
+    mod, flow = _platform_turn(
+        monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
+    )
+    monkeypatch.setattr(
+        mod,
+        "ADMISSION",
+        SimpleNamespace(
+            check=lambda project, topic, bearer: _verdict(
+                pool="subscription", fail_open=False, usage_kind="memory_dream"
+            )
+        ),
+    )
+    asyncio.run(mod.requestheaders(flow))
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    body = (
+        b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+        b'"usage":{"input_tokens":10,"output_tokens":1}}}\n'
+        b'data: {"type":"message_delta","usage":{"output_tokens":9}}\n\n'
+    )
+    flow.response.stream(body)
+    flow.response.stream(b"")
+
+    assert [line.get("kind") for line in _usage_lines(tmp_path)] == ["memory_dream"]

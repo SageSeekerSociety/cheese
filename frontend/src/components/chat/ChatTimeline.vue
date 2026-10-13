@@ -153,6 +153,7 @@ const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
+  (e: 'ask-skip', block: Block): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -552,6 +553,7 @@ const rowLabels = computed(() =>
               @react="emitReact"
               @ask-reply="emitAskReply"
               @ask-withdraw="emitAskWithdraw"
+              @ask-skip="emit('ask-skip', $event)"
               @checklist="emitChecklist"
               @download="emit('download', $event)"
               @jump="emit('jump', $event)"
