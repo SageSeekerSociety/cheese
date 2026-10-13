@@ -130,6 +130,7 @@ _TOOL_ARG = {
     # 路径要剪掉工作区前缀。关掉一条活时说的是为什么关。
     "cheese_close_task": "conclusion",
     "cheese_fetch": "url",
+    "cheese_search": "query",
     "cheese_decision": "text",
     "cheese_title": "text",
     "cheese_notify": "title",

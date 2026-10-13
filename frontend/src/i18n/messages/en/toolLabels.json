@@ -57,6 +57,7 @@
   "cheeseCloseTask": "Close the task",
   "cheesePushFix": "Update the task PR",
   "cheeseFetch": "Read web page",
+  "cheeseSearch": "Search the web",
   "cheeseDocsSearch": "Search documentation",
   "cheeseDocsRead": "Read documentation",
   "cheeseDecision": "Record a decision",

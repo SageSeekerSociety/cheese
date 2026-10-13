@@ -16,13 +16,15 @@ import uuid
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.response import ok
 from app.core.config import settings
 from app.core.errors import SystemBusyError
+from app.domain.fetch.search import SearchUnavailable
+from app.domain.fetch.search import search as search_web
 from app.domain.fetch.service import fetch as fetch_url
 
 router = APIRouter(prefix="", tags=["fetch"])
@@ -89,6 +91,30 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
             "trail": outcome.trail(),
         }
     )
+
+
+@router.get("/web-search", summary="Search the web for an agent")
+async def web_search(
+    actor: ActorResolverDep,
+    q: Annotated[str, Query(min_length=1, max_length=400)],
+    limit: Annotated[int, Query(ge=1, le=20)] = 8,
+    topic: uuid.UUID | None = None,
+    project: uuid.UUID | None = None,
+) -> dict:
+    """Results (title, URL, snippet) from the deployment's search service.
+
+    The same caller rule as `/fetch`: a signed-in person or an agent's scoped
+    token, which verifies only against the room it names.
+    """
+    await actor.require_verified_caller(topic_id=topic, project_id=project)
+    endpoint = settings.fetch_search_endpoint
+    if not endpoint:
+        raise SystemBusyError("No web search service is configured on this deployment")
+    try:
+        found = await search_web(q, endpoint, limit=limit)
+    except SearchUnavailable as exc:
+        raise SystemBusyError(f"The web search service did not answer ({exc})") from exc
+    return ok({"results": [vars(r) for r in found]})
 
 
 class PageCheckIn(BaseModel):

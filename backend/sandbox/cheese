@@ -708,6 +708,17 @@ PLATFORM_TOOLS = ToolTable(
             ["url"],
         ),
         _tool(
+            "cheese_search",
+            "让平台搜网页，返回前几条结果的标题、网址和摘要。没有 WebSearch、或 WebSearch "
+            "报错时用它，不要拿 cheese_fetch 去打开搜索引擎的结果页（会被当成爬虫拦下）。"
+            "摘要不是事实，要引用就用 cheese_fetch 打开那一页读到原文。",
+            {
+                "query": _text("搜索词"),
+                "limit": {"type": "integer", "description": "要几条，默认 8，最多 20"},
+            },
+            ["query"],
+        ),
+        _tool(
             "cheese_docs_search",
             "按关键词检索知是的使用文档（怎么建项目、验收、设备、额度……），返回相关的页、"
             "小节、链接和摘录。用户问平台怎么用时先查它再答，答案里附上链接；"
@@ -1111,6 +1122,7 @@ DELEGATED_TOOLS = ToolTable(
 #: 文档检索不在其中：个人芝士没有话题，只读谁都能读的那些页。
 _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     "cheese_fetch",
+    "cheese_search",
     "platform_request",
     "cheese_docs_search",
     "cheese_docs_read",
@@ -1477,6 +1489,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "GET", "path": f"/topics/{topic}/preview/file?{query}"}
     if tool == "cheese_my_tasks":
         return {"method": "GET", "path": "/tasks/joined"}
+    if tool == "cheese_search":
+        query = {"q": args["query"], "topic": topic, "project": project}
+        if args.get("limit"):
+            query["limit"] = int(args["limit"])
+        params = urllib.parse.urlencode({k: v for k, v in query.items() if v})
+        return {"method": "GET", "path": f"/web-search?{params}"}
     if tool == "cheese_fetch":
         # 带上话题：不带的话每一次调用都会被判成 "Agent credential is invalid or
         # expired"——沙箱 token 是带作用域的。
@@ -2779,6 +2797,18 @@ def _say_my_tasks(args, data, env) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _say_search(args, data, env) -> str:
+    results = (data or {}).get("results") or []
+    if not results:
+        return f"没有搜到「{args['query']}」的结果。换个说法、或少几个词再试。"
+    lines = [
+        f"{n}. {r.get('title') or r.get('url')}\n   {r.get('url')}\n   {r.get('snippet', '')}"
+        for n, r in enumerate(results, 1)
+    ]
+    lines.append("\n摘要是搜索引擎截的，要引用就用 cheese_fetch 打开那一页读原文。")
+    return "\n".join(lines)
+
+
 def _say_fetch(args, data, env) -> str:
     data = data or {}
     if not data.get("ok"):
@@ -2982,6 +3012,7 @@ _SAY = {
     ),
     "cheese_notify": _say_notify,
     "cheese_fetch": _say_fetch,
+    "cheese_search": _say_search,
     "cheese_docs_search": _say_docs_search,
     "cheese_docs_read": _say_docs_read,
     "cheese_project_search": _say_project_search,

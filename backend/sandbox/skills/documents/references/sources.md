@@ -51,7 +51,7 @@ uv run --with pdfplumber --with pymupdf --with python-docx --with python-pptx \
 
 ## 二、查资料：什么时候搜、搜到的算什么
 
-有 WebSearch、WebFetch 和 `cheese_fetch`（平台代读网页，读不到时会说在哪一步失败）。
+有 WebSearch、WebFetch、`cheese_search`（平台代搜网页，没有 WebSearch 或它报错时用）和 `cheese_fetch`（平台代读网页，读不到时会说在哪一步失败）。
 
 - **用户限定了材料（「只用我给的这几份」「不要上网查」），就一次都不搜。** 材料不够时说
   缺什么，不要自己补。

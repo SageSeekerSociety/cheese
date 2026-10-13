@@ -314,6 +314,11 @@ class Settings(BaseSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # A web search service speaking SearXNG's JSON API (app.domain.fetch.search),
+    # for sessions whose model has no search tool of its own: Codex, pi, and
+    # Claude Code on a model that is not Claude. Off until configured, for the
+    # same reason as the reader: which engines are asked is an operator's call.
+    fetch_search_endpoint: str | None = None
     # A DNS-over-HTTPS resolver (JSON API), asked only on a machine whose own DNS
     # answers every name with a fake-IP placeholder (198.18.0.0/15): fetch has
     # to see the real address to know it is public. See domain/fetch/guard.py.

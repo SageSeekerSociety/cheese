@@ -17,9 +17,9 @@ covers:
 
 > 讲：平台工具表的来源、三种骨架各自的暴露方式、机器够不着时的答复。不讲：项目自己声明的 MCP 服务，见[项目自定义 MCP](/dev/remote-mcp)；一轮的整体流程，见[一条消息怎么变成芝士的一轮](/dev/turn)。
 
-## 一张表，45 样 {#table}
+## 一张表，46 样 {#table}
 
-`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 45 样：
+`backend/sandbox/cheese` 里的 `PLATFORM_TOOLS` 是一个 `ToolTable` 常量，**会话侧平台工具的唯一来源**（结论 21，由结论 63 修订）。今天表上有 46 样：
 
 | 类别 | 工具 |
 | --- | --- |
@@ -29,7 +29,7 @@ covers:
 | 任务与验收 | `cheese_task`、`cheese_close_task`、`cheese_accept_request`、`cheese_describe`、`cheese_ready` |
 | 记录 | `cheese_title` |
 | 通知与拍板 | `cheese_notify`、`cheese_ask` |
-| 资料 | `cheese_fetch`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
+| 资料 | `cheese_fetch`、`cheese_search`、`cheese_docs_search`、`cheese_docs_read`、`cheese_library_ls` |
 | 房间状态 | `cheese_members`、`cheese_status` |
 | 执行环境与调度 | `cheese_environment`、`cheese_wait_environment`、`cheese_note`、`cheese_deliver_at` |
 | 定时与触发 | `cheese_routine_draft`、`cheese_routine_list`、`cheese_routine_update`、`cheese_routine_pause`、`cheese_routine_report` |
