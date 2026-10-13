@@ -157,13 +157,6 @@ async function createChannel(channel: { title: string; description: string; memb
   }
 }
 const browsingChannels = computed(() => route.name === 'project-channels')
-// 「进行中的任务」那一行：在「全部任务」这一页上就亮。按频道筛开（频道 ⋯ 里那一项）
-// 的时候亮的是那个频道那一行，这一行不亮。
-const tasksOpen = computed(() => route.name === 'project-tasks' && !route.query.channel)
-// 「进行中的任务」那一行：去看这个项目的全部任务（那一页里也有已经结束的）。
-function goToProjectTasks() {
-  void router.push({ name: 'project-tasks', params: { projectId: props.projectId } })
-}
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -263,7 +256,6 @@ useCommands(() => [
       :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
       :can-create="canCreate"
-      :tasks-open="tasksOpen"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
       :active-docs="activeDocs"
@@ -276,7 +268,6 @@ useCommands(() => [
       @toggle-tasks-fold="toggleTasksFold"
       @browse-channels="browseChannels"
       @new-channel="creatingOpen = true"
-      @open-tasks="goToProjectTasks"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @press-page="onPressPage"
@@ -286,8 +277,9 @@ useCommands(() => [
       @retry="store.reloadTopics()"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     >
-      <!-- 手机上进项目落在频道列表上，项目名下那一行和总览都收进了项目名菜单，所以去项目
-           总览的那一行放在列表最顶上。桌面上这一行不画（清单第 9 条：总览从项目名菜单进）。 -->
+      <!-- 手机上进项目落在频道列表上，项目名下那一行不画（总览收进项目名面板），所以去
+           项目总览的那一行放在列表最顶上。桌面上总览在项目名下那一行，这一行不画
+           （.claude/rules/project-sidebar.md）。 -->
       <template v-if="page || column" #top>
         <button type="button" class="overview-entry t-body" data-testid="overview-entry" @click="openOverview">
           <v-icon size="18" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>

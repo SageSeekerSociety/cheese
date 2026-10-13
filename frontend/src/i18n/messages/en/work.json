@@ -1449,7 +1449,6 @@
     "workingTip": "{name} is working here",
     "moreMembers": "+{count}",
     "allTasks": "All tasks",
-    "underway": "Tasks in progress",
     "underwayHint": "Tasks still open in the project and not yet being written up",
     "moreTasks": "Show 1 more | Show {count} more",
     "fewerTasks": "Show fewer",

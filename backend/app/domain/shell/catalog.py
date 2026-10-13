@@ -73,11 +73,10 @@ class Shell:
 #: their existing order. A project that declares no 壳 must be indistinguishable
 #: from today, screen by screen — that equality is the acceptance test for this
 #: whole mechanism, which is why this declaration is edited whenever 「today」
-#: moves upstream. The bar under the project name holds only 资料库, a rule the
-#: frontend keeps (`PROJECT_BAR_PAGES`); every other page — 总览 (the `home`)
-#: included, since 2026-10-12 — is in the menu the project name opens, in the
-#: order `nav.project` gives. 成员 comes first there because 「退出项目」 lives
-#: on that page.
+#: moves upstream. The bar under the project name holds 总览 (the `home`) and
+#: then 资料库, a rule the frontend keeps (`PROJECT_BAR_PAGES`); every other page
+#: is in the menu the project name opens, in the order `nav.project` gives. 成员
+#: comes first there because 「退出项目」 lives on that page.
 _DEFAULT = Shell(
     name=DEFAULT_SHELL_NAME,
     home="workspace-overview",
