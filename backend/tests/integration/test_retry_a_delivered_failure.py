@@ -190,6 +190,18 @@ def test_retry_continues_the_read_but_failed_request_once(
         sum(b["author"] == "alice" and "核对分页方案" in b["content"] for b in blocks)
         == 1
     )
+    original = next(
+        b for b in blocks if b["author"] == "alice" and "核对分页方案" in b["content"]
+    )
+    turns, _ = work_state(client, thread)
+    retry_turn = max(turns, key=lambda turn: turn.started_at)
+    assert retry_turn.reply_to == uuid.UUID(original["id"])
+    replies = [
+        b
+        for b in blocks
+        if b["turn_id"] == str(retry_turn.id) and (b.get("meta") or {}).get("progress")
+    ]
+    assert replies and all(b["reply_to"] == original["id"] for b in replies)
     assert summon(client, thread, failure) == {
         "started": False,
         "reason": "nothing_pending",
