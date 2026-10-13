@@ -15,6 +15,7 @@ import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc/dist/co
 import { transform } from 'sucrase'
 
 import { requireFrom, start } from './runtime'
+import { miswired } from './wiring'
 
 const require = requireFrom({ vue: Vue })
 /** The platform's elements are elements, not Vue components to resolve. */
@@ -26,14 +27,22 @@ start((code, root) => {
   // component's `modelValue`, which the element never sees.
   const { descriptor, errors } = parse(code, { filename: 'App.vue', templateParseOptions: { isCustomElement } })
   if (errors.length) throw new Error(String(errors[0]))
+  // Compiling rewrites the template's tree in place (a `v-model` is gone from
+  // it afterwards), so the wiring is read from a copy taken before.
+  const tree = descriptor.template?.ast && structuredClone(descriptor.template.ast)
   let js: string
   if (descriptor.scriptSetup || descriptor.script) {
-    js = compileScript(descriptor, {
+    const script = compileScript(descriptor, {
       id: 'app',
       inlineTemplate: true,
       templateOptions: { compilerOptions: { isCustomElement } },
-    }).content
+    })
+    const wrong = miswired(tree, script)
+    if (wrong) throw new Error(wrong)
+    js = script.content
   } else {
+    const wrong = miswired(tree, null)
+    if (wrong) throw new Error(wrong)
     const template = compileTemplate({
       source: descriptor.template?.content ?? '',
       filename: 'App.vue',

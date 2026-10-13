@@ -29,6 +29,12 @@ export function fail(message: string) {
   post({ type: 'error', message })
 }
 addEventListener('error', (e) => fail(e.message || String(e.error)))
+// An app checks the numbers its document states with console.assert. One that
+// fails is an error like any other, so the platform's check refuses the version;
+// the browser itself only logs it, at a level the check does not read.
+console.assert = (ok?: unknown, ...what: unknown[]) => {
+  if (!ok) fail(`自查没通过：${what.map(String).join(' ') || 'console.assert 的条件不成立'}`)
+}
 addEventListener('unhandledrejection', (e) => fail(String(e.reason?.message ?? e.reason)))
 
 function setTheme(theme: string) {

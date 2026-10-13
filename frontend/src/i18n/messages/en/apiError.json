@@ -1048,7 +1048,7 @@
   "appCodeTooLarge": "The mini-app's code is over {limit} KB. Something that size belongs in the project as a website",
   "appRunFailed": "The mini-app failed when it ran and was not kept: {why}",
   "appShotMissing": "This version has no picture at this width",
-  "appDrewNothing": "It ran but drew nothing: the code put nothing on the page",
+  "appDrewNothing": "It ran but drew nothing: what it put on the page has no height",
   "externalProblemAccountRequired": "A YOJ account name is required",
   "externalProblemPasswordRequired": "A YOJ password is required",
   "externalProblemNumberInvalid": "A YOJ problem number can only be digits",

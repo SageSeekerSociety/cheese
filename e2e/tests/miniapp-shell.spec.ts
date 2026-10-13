@@ -10,7 +10,8 @@ import { expect, test, type Page } from '@playwright/test';
 // What is checked is what 芝士 and a reader rely on: the examples the writing
 // guide teaches run; a control hands the app its new value, as a number; an
 // app cannot reach the network; code that breaks says so, on the console the
-// platform's check reads; and the design tokens the guide tells 芝士 to draw
+// platform's check reads, and so do a control whose value has nowhere to go
+// and a number that fails the app's own check; and the design tokens the guide tells 芝士 to draw
 // with exist in both themes.
 
 const GUIDE = fileURLToPath(new URL('../../backend/app/domain/skill_library/doc_apps.md', import.meta.url));
@@ -245,4 +246,46 @@ const rows = undefined
 <template><p>{{ rows.length }}</p></template>`
   );
   await expect.poll(() => errors.join('\n')).toContain('length');
+});
+
+test('a control the reader moves but whose value cannot change is refused before it runs', async ({ page }) => {
+  const wired = (template: string) => `<script setup>
+import { ref, computed } from 'vue'
+const x = ref(1)
+const point = computed(() => [x.value, x.value ** 2])
+const anywhere = computed({ get: () => [x.value, x.value ** 2], set: ([nx]) => (x.value = nx) })
+const K = 3
+</script>
+<template><c-plane :x="[-3, 3]" :y="[0, 9]">${template}</c-plane><p>x</p></template>`;
+  for (const broken of [
+    '<c-point v-model="point" drag="x" />',
+    '<c-point :v-model="[x, x * x]" />',
+    '</c-plane><c-slider v-model="K" :min="0" :max="9" /><c-plane>',
+    '<c-point :value="point" drag="x" />',
+  ]) {
+    const errors = await runApp(page, wired(broken));
+    await expect.poll(() => errors.length, broken).toBeGreaterThan(0);
+  }
+  for (const fine of [
+    '<c-point v-model="anywhere" drag="x" />',
+    '<c-point :value="point" drag="x" @input="x = $event.target.value[0]" />',
+    '<c-point v-model="point" />',
+  ]) {
+    const errors = await runApp(page, wired(fine));
+    await expect(page.locator('#cheese-app')).not.toBeEmpty();
+    expect(errors, fine).toEqual([]);
+  }
+});
+
+test('a number that fails the app’s own check is refused; one that passes is not', async ({ page }) => {
+  const app = (expected: number) => `<script setup>
+const price = (tax) => 24 + tax / 2
+console.assert(price(0) === ${expected}, '不征税时均衡价应是 ${expected}')
+</script>
+<template><p>{{ price(0) }}</p></template>`;
+  const failed = await runApp(page, app(56));
+  await expect.poll(() => failed.join('\n')).toContain('56');
+  const passed = await runApp(page, app(24));
+  await expect(page.locator('#cheese-app')).toHaveText('24');
+  expect(passed).toEqual([]);
 });
