@@ -27,6 +27,7 @@ from app.domain.review import github_pr
 from app.domain.review.services import _NUDGE_TAIL_LIMIT
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_task_id
+from tests.integration.conftest import room_agent_seat
 
 # 复用 PR 采纳那套 fake GitHub 装置 —— 本文件测的是同一条真实路径的另一端
 # （房间里落下什么块），没有理由再造一套。
@@ -329,6 +330,84 @@ def test_leaving_the_merge_queue_wakes_the_task_once(client, app_world, monkeypa
     assert "cheese push-fix" in prompt
     assert "重新入队" in prompt
     assert "重新采纳" in prompt
+
+
+# --------------------------------------------------------------------------
+# 「调度座位」：设了以后，这两类事件也在它那里开工一轮
+# --------------------------------------------------------------------------
+
+
+def test_the_dispatch_seat_is_woken_on_ready_and_on_queue_exit(
+    client, app_world, monkeypatch
+):
+    """设了「调度座位」= 「可以合并」和「离开合并队列」也给它记一条投递。
+
+    不设（默认）时这两条路径和以前一字不差 —— 上面那条出队用例跑的就是那个状态，
+    它断言的「同一次出队只有一条」正是靠这里没有第二条投递。
+
+    设了以后投递落在**这句话刚落下的那段对话**里（这里是任务会话）：项目设置只说
+    一个 handle，平台手里只有这一段对话，事件出在哪就在哪儿告诉它。走的是点名、
+    定时投递共用的那本投递账本（`delivery/agent.record_agent`），不是站内信 ——
+    要的是这一轮真的跑起来，不是收件箱里多一行。
+    """
+    fake = app_world["fake"]
+    pid, tid, cid, _number, head = _ready_card(client, app_world)
+    seat = room_agent_seat(client, tid)
+    _protect(client, pid, dispatch_seat=seat)
+
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.domain.delivery.models import Delivery
+
+    task_id = str(delivery_task_id(client, tid))
+
+    def _dispatch_deliveries() -> list:
+        async def _read():
+            async with client.test_factory() as db:
+                rows = list(
+                    await db.scalars(
+                        select(Delivery).where(
+                            Delivery.conversation_id == _uuid.UUID(task_id)
+                        )
+                    )
+                )
+                return [r for r in rows if "调度座位" in r.payload["content"]]
+
+        return client.portal.call(_read)
+
+    # ① 可以合并（`accept_ready`）
+    fake.check_state_by_sha[head] = ("success", "全绿")
+    _poll(client)
+    _wait_for_event(client, tid, "accept_ready")
+    wait_work_idle()
+    ready = _dispatch_deliveries()
+    assert len(ready) == 1
+    assert ready[0].recipient_handle == seat
+    assert ready[0].agent_instance_id is not None
+    assert "可以合并" in ready[0].payload["content"]
+
+    # ② 离开合并队列（`merge_refused`）
+    async def enqueue(**kwargs):
+        return github_pr.MergeResult(queued=True)
+
+    async def not_in_queue(**kwargs):
+        return False
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "merge_queue_entry", not_in_queue, raising=False)
+    assert _accept(client, cid).status_code == 200
+    _poll(client)
+    _wait_for_event(client, tid, "merge_refused")
+    wait_work_idle()
+    after = _dispatch_deliveries()
+    assert len(after) == 2
+    queue_exit = after[1]
+    assert queue_exit.recipient_handle == seat
+    # 出队那一条带着要动手的那两句话：怎么看、怎么修。
+    assert "离开合并队列" in queue_exit.payload["content"]
+    assert "cheese push-fix" in queue_exit.payload["content"]
 
 
 # --------------------------------------------------------------------------

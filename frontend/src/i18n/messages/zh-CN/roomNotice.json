@@ -214,6 +214,7 @@
   "mentionFusedDetail": "同一个频道里，AI 队友点名每小时最多叫起 {limit} 轮，防止互相点名停不下来。这次没叫醒：{names}。人点名不受这个限制。",
   "mentionUnknownMember": "未能通知 {member}：项目中没有这个成员",
   "mergeQueueLeft": "PR #{pr} 离开了合并队列但未合并",
+  "dispatchSeatWoken": "你是这个项目设置里的「调度座位」，平台把「可以合并」和「离开合并队列」两类事件也叫一份给你：\n\n{headline}\n{detail}",
   "refUnknownConversation": "{ref} 指不到这个项目里的频道、任务或支线，读的人看到的是一个打不开的引用",
   "mergeRefused": "PR #{pr} 被 GitHub 拒绝合并",
   "mergeRefusedDetail": "{reason}\n{url}",

@@ -1,7 +1,5 @@
+import type { BranchProtection, BranchProtectionPatch, BranchProtectionRules } from '../branchProtection'
 import type {
-  BranchProtection,
-  BranchProtectionPatch,
-  BranchProtectionRules,
   ForgeAttribution,
   ForgeConnection,
   GithubConnection,
