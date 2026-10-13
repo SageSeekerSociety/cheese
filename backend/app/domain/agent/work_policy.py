@@ -27,9 +27,9 @@ async def work_policy(
             return None
         topic = place.room
         project = await ProjectRepository(session).get(topic.project_id)
-        # A member's own coding agent is paid by its owner's own login and
-        # runs on their machine: the project's credits and the session host's
-        # memory are not what admits it.
+        # A member's own coding agent is paid by its owner's own account: the
+        # project's credits are not what admits it, and neither is the session
+        # host's memory while it runs on its owner's machine.
         owned = (
             await owned_instance(session, agent_instance_id)
             if agent_instance_id is not None
@@ -57,5 +57,6 @@ async def work_policy(
         # Why the project's credits refuse a turn now (a sentence the room
         # shows), or None when they admit it.
         "credits_exhausted": refused.message if refused is not None else None,
-        "on_session_host": provider is not None and owned is None,
+        # One on a connection its owner's account holds runs there too.
+        "on_session_host": provider is not None and (owned is None or owned.on_account),
     }

@@ -66,6 +66,7 @@
   "ownAgentOwnerOnly": "This is {owner}'s Claude Code. Only {owner} can call it",
   "ownAgentsClosed": "This project doesn't allow members' own Claude Code",
   "ownAgentKindNotAllowed": "{owner}'s Claude Code uses {kinds}, a kind of connection this project doesn't allow. Switch to a connection the project allows, or call it again once a project admin allows this one",
+  "ownAgentHostNotAllowed": "{owner}'s Claude Code uses the model service at {host}, a provider this project doesn't allow. Switch to a connection the project allows, or call it again once a project admin allows this provider",
   "ownAgentKindSubscription": "a Claude subscription",
   "ownAgentKindApiKey": "an Anthropic API key",
   "ownAgentKindModelService": "a custom model service",

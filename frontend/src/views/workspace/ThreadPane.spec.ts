@@ -259,4 +259,27 @@ describe('支线', () => {
     })
     await waitFor(() => expect(container.querySelector('.feedback-probe')?.textContent).toBe('th1'))
   })
+
+  it('输入框说给这条支线正在和它说话的那位队友，不是频道默认那位', async () => {
+    getThread.mockResolvedValue({
+      id: 'th-mate',
+      room_id: 'r1',
+      root_block_id: 'b1',
+      reply_count: 2,
+      root: root(),
+      teammate: 'cheese-opus',
+    })
+    const { container } = render(ThreadPane as Component, {
+      props: { room: ROOM, threadId: 'th-mate', members: [], topicList: [], memberNames: { alice: '李安' } },
+      global: {
+        plugins: [vuetify],
+        stubs: {
+          MarkdownView: true,
+          AgentFeedbackCard: true,
+          ChatPanel: { props: ['agentHandle'], template: '<i class="composer-probe">{{ agentHandle }}</i>' },
+        },
+      },
+    })
+    await waitFor(() => expect(container.querySelector('.composer-probe')?.textContent).toBe('cheese-opus'))
+  })
 })

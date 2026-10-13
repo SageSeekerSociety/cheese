@@ -14,12 +14,19 @@ person a question names has skipped it is it settled by the skips, and a
 question asked of everyone never is: the channel is not a fixed list of people
 who could all decline.
 
+Who may respond to it at all — click an option, write an answer, skip it — is
+`may_answer`, one rule for all three: the people it names; anyone in the
+channel when it is asked of everyone; and anyone when it names nobody in
+particular, as it always has been.
+
 The readers — the 待你回答 list and the boards (`BlockRepository`), the answer
 path (`agent.announce`), the skip itself (`block.questions`) — all take these
 facts from here, so they cannot disagree on whom a question still waits on.
 """
 
 from dataclasses import dataclass
+
+from app.domain.identity.handles import names_a_person
 
 #: The ``kind`` of the `answer_log` entry a skip leaves.
 SKIPPED = "skipped"
@@ -37,6 +44,21 @@ def asked_of(meta: dict | None) -> tuple[str, ...]:
 def asked_everyone(meta: dict | None) -> bool:
     """Whether the question was asked of everyone in the channel."""
     return bool((meta or {}).get("asked_all"))
+
+
+def may_answer(meta: dict | None, handle: str | None) -> bool:
+    """Whether ``handle`` may respond to the question — answer it by an option or
+    in his own words, or skip it.
+
+    Always a person: a teammate does not answer a teammate's question. Among
+    people, those it names; everyone in the channel when it was asked of
+    everyone, someone who joined after it was asked included (the list holds
+    who was there at that moment, the question asks the channel); and anyone
+    when it names nobody in particular (asked in a turn the platform started)."""
+    asked = asked_of(meta)
+    return names_a_person(handle) and (
+        not asked or asked_everyone(meta) or handle in asked
+    )
 
 
 def skipped_by(meta: dict | None) -> frozenset[str]:

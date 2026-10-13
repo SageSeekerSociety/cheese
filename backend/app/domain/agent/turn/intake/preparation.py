@@ -252,7 +252,7 @@ class _Machines(Protocol):
         self, project_settings: Mapping[str, Any] | None
     ) -> tuple[str, RoomSessions | None]: ...
 
-    def owned(self, harness: str) -> RoomSessions | None: ...
+    def owned(self, harness: str, *, on_account: bool) -> RoomSessions | None: ...
 
     async def activate(self, session: SessionRef, runtime: RoomSessions) -> None: ...
 
@@ -279,7 +279,6 @@ class ModelOptions(Protocol):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
-        platform: bool = False,
     ) -> tuple[dict, str]: ...
 
 
@@ -321,12 +320,14 @@ class TurnPreparation:
     ) -> tuple[str, RoomSessions | None]:
         """The harness this agent's turn runs and the backend it runs on.
 
-        A member's own coding agent runs its own harness on its owner's machine
-        (`owner_provider`), whatever the room chose; every other agent runs the
-        project's harness on the room's machine."""
+        A member's own coding agent runs its own harness where its model
+        connection is (`owner_provider`), whatever the room chose; every other
+        agent runs the project's harness on the room's machine."""
         owned = await owned_instance(session, agent.instance_id)
         if owned is not None:
-            return owned.harness, self.compute.owned(owned.harness)
+            return owned.harness, self.compute.owned(
+                owned.harness, on_account=owned.on_account
+            )
         return self.compute.choose(project.settings if project else None)
 
     async def launch_inputs(

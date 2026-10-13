@@ -759,36 +759,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/admin/integrations/external-problem": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Read External Problem Account
-         * @description 配没配、配的是谁、谁配的。**没有密码。**
-         *
-         *     ``configured: false`` 是那个页面要问的第一件事：没人配过时同步一律失败
-         *     （``service.py`` 里 ``no_account``），而那是「还没到那一步」，不是错误。
-         */
-        get: operations["read_external_problem_account_admin_integrations_external_problem_get"];
-        /**
-         * Save External Problem Account
-         * @description 存下账号。密码留空 = 只改账号名，密码用原来那个。
-         *
-         *     换账号名**不动**已经存下的密码：页面看不到它，管理员也无从重打，要求重打就等于
-         *     逼他把口令找回来。要换密码就连密码一起填。
-         */
-        put: operations["save_external_problem_account_admin_integrations_external_problem_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/admin/admins": {
         parameters: {
             query?: never;
@@ -2260,13 +2230,13 @@ export interface paths {
          * Skip Question
          * @description Skip a question asked with quick replies: you will not answer it.
          *
-         *     Only someone the question waits on can — whoever may answer it
-         *     (`block.questions.waits_on`); anyone else is refused, and so is a question
-         *     that already has its answer. Nothing is said in the room. The question stops
-         *     waiting, as an answer would make it: it leaves that person's 待你回答 list,
-         *     and its notice is settled. The agent that asked runs another turn told that
-         *     the question was skipped, so it stops waiting for an answer that is not
-         *     coming. ``DELETE /blocks/{block_id}/answer`` undoes it.
+         *     Only someone who may answer it can (`block.asked.may_answer`, the rule an
+         *     answer by option or in words is held to); anyone else is refused, and so
+         *     is a question that already has its answer. Nothing is said in the room.
+         *     The question stops waiting, as an answer would make it: it leaves that
+         *     person's 待你回答 list, and its notice is settled. The agent that asked
+         *     runs another turn told that the question was skipped, so it stops waiting
+         *     for an answer that is not coming. ``DELETE /blocks/{block_id}/answer`` undoes it.
          */
         post: operations["skip_question_blocks__block_id__skip_post"];
         delete?: never;
@@ -2607,17 +2577,71 @@ export interface paths {
         };
         /**
          * My Model Connections
-         * @description The caller's model connections across the machines they enrolled
-         *     (#2991): what each logs in with, where it is kept, its last check. Never a
-         *     key.
+         * @description The caller's model connections (#2991): the logins on the machines they
+         *     enrolled — what each logs in with, where it is kept, its last check — and
+         *     the API keys and model services their account holds. Never a key.
          */
         get: operations["my_model_connections_connector_my_model_connections_get"];
         put?: never;
-        post?: never;
+        /**
+         * Add Account Connection
+         * @description Keep an Anthropic API key or a model service on the caller's account,
+         *     with no machine (#2991). The service is called once first; a connection
+         *     it refuses is not kept, and the refusal says why. The key is sealed and
+         *     never returned.
+         */
+        post: operations["add_account_connection_connector_my_model_connections_post"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/connector/my/model-connections/{connection_id}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Account Connection
+         * @description Call the service again with the connection, and record what it said.
+         */
+        post: operations["check_account_connection_connector_my_model_connections__connection_id__check_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/model-connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove Account Connection
+         * @description Remove a connection the caller's account holds: its key is deleted at
+         *     once, and nothing starts with it again. The own agents on it stay in their
+         *     projects with no connection, as one on a removed machine login does.
+         *     Answers with what was removed.
+         */
+        delete: operations["remove_account_connection_connector_my_model_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename Account Connection
+         * @description Name a connection; the own agents on it are named after it.
+         */
+        patch: operations["rename_account_connection_connector_my_model_connections__connection_id__patch"];
         trace?: never;
     };
     "/connector/my/devices/{device_id}/claude-code": {
@@ -2647,7 +2671,13 @@ export interface paths {
         delete: operations["revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Rename My Claude Code
+         * @description Name the login the caller's own Claude Code has on one of their machines
+         *     (#2991); the own agents on it are named after it, whatever the machine
+         *     reports later. The machine need not be online.
+         */
+        patch: operations["rename_my_claude_code_connector_my_devices__device_id__claude_code_patch"];
         trace?: never;
     };
     "/connector/my/devices/{device_id}/claude-code/model-service": {
@@ -6904,10 +6934,11 @@ export interface paths {
         /**
          * Set Own Agents
          * @description Let members bring their own Claude Code into the project, or not, and
-         *     which kinds of model connection it may use. Turned off, members' own
-         *     agents leave the project: off its roster and out of its channels. Turned on
-         *     again, the ones their owners had added are back on the roster, and sit in a
-         *     channel again once someone they answer to names them there.
+         *     which kinds of model connection it may use, and which model services.
+         *     Turned off, members' own agents leave the project: off its roster and out
+         *     of its channels. Turned on again, the ones their owners had added are back
+         *     on the roster, and sit in a channel again once someone they answer to names
+         *     them there.
          */
         put: operations["set_own_agents_projects__project_id__own_agents_put"];
         /**
@@ -9482,67 +9513,6 @@ export interface paths {
         patch: operations["patch_task_submission_review_tasks__taskId__participants__participantId__submissions__submissionId__review_patch"];
         trace?: never;
     };
-    "/tasks/{taskId}/external-problem": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get External Problem Sync
-         * @description 题号、上次同不成功、以及每个领取者的结论。
-         *
-         *     没挂题号时也回 200，回的是一块空的（``problemNo: ""``）—— 「这道题还没接外站」
-         *     是一个答案，和名单那条路上的「这道题还没有人报名」一样，不是错误。
-         */
-        get: operations["get_external_problem_tasks__taskId__external_problem_get"];
-        /**
-         * Set External Problem Number
-         * @description 挂上、或者换掉这道题在 YOJ 上的题号。返回换完之后的那一块。
-         *
-         *     换成一个**另一个**题号会把上一次的结果删掉（``set_problem``）：那些数说的是另一
-         *     道题，留着比空着更糟。同一个题号再挂一次是幂等的，结果原样留着。
-         */
-        put: operations["set_external_problem_tasks__taskId__external_problem_put"];
-        post?: never;
-        /**
-         * Clear External Problem
-         * @description 撤掉挂载：题号和结果一起没。
-         *
-         *     只撤题号、把结果留成孤儿是更小的动作，但那种状态没人能修回来（没有题号就没法再
-         *     同步一次），留着只是让一段读不懂的旧数据活着。
-         */
-        delete: operations["clear_external_problem_tasks__taskId__external_problem_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/tasks/{taskId}/external-problem/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Sync External Problem Now
-         * @description 现在去外站看一眼，返回看完之后的那一块。
-         *
-         *     同步失败也是 200，回的那一块上 ``status: "failed"`` 带着原因 —— 失败的是「外站
-         *     这一趟没去成」，不是「你这个请求不对」。上一次成功的结论**留着**（见
-         *     ``service.py`` 的取舍），所以界面要照着 ``status`` 说清这是几点的数。
-         */
-        post: operations["sync_external_problem_tasks__taskId__external_problem_sync_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/teams": {
         parameters: {
             query?: never;
@@ -11530,7 +11500,9 @@ export interface paths {
         };
         /**
          * Get Thread
-         * @description One 支线, and the message it hangs under.
+         * @description One 支线, the message it hangs under, and the seat of the AI teammate
+         *     it is talking with (`thread_teammate`; null before anyone called one): the
+         *     one its composer offers to hand a message to.
          */
         get: operations["get_thread_topics__topic_id__thread_get"];
         put?: never;
@@ -13146,6 +13118,49 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * AccountConnectionIn
+         * @description An API key or a model service to keep on the caller's account.
+         */
+        AccountConnectionIn: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "api_key" | "model_service";
+            /** Key */
+            key: string;
+            /** Base Url */
+            base_url?: string | null;
+            /** Model */
+            model?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /**
+         * AccountConnectionOut
+         * @description A model connection the caller's account holds: an Anthropic API key or
+         *     a model service, kept sealed by the platform. Never the key.
+         */
+        AccountConnectionOut: {
+            /** Id */
+            id: string;
+            kind: components["schemas"]["ConnectionKind"];
+            /** Name */
+            name: string | null;
+            /** Key Last4 */
+            key_last4: string;
+            /** Service Host */
+            service_host: string | null;
+            /** Model */
+            model: string | null;
+            /** Checked At */
+            checked_at: string | null;
+            /** Check Error */
+            check_error: string | null;
+            /** Created At */
+            created_at: string;
+        };
         /** AddCard */
         AddCard: {
             /**
@@ -13820,6 +13835,8 @@ export interface components {
             model: string | null;
             /** Service Host */
             service_host: string | null;
+            /** Name */
+            name: string | null;
             /** Checked At */
             checked_at: string;
             /** Revoking */
@@ -14090,6 +14107,14 @@ export interface components {
          * @enum {string}
          */
         ConnectionKind: "subscription" | "api_key" | "model_service";
+        /**
+         * ConnectionRename
+         * @description What its owner calls a model connection; empty takes the name away.
+         */
+        ConnectionRename: {
+            /** Name */
+            name: string;
+        };
         /** ControlIn */
         ControlIn: {
             /** Session Id */
@@ -14581,75 +14606,6 @@ export interface components {
              * @default false
              */
             email: boolean;
-        };
-        /**
-         * ExternalProblemAccountIn
-         * @description 账号名（对 YOJ 来说是学号或教师工号）。
-         */
-        ExternalProblemAccountIn: {
-            /** Username */
-            username: string;
-            /**
-             * Password
-             * @default
-             */
-            password: string;
-        };
-        /**
-         * ExternalProblemAccountOut
-         * @description 管理员看的那一行凭据。**没有密码** —— 存进去就再也读不出来。
-         */
-        ExternalProblemAccountOut: {
-            /** Configured */
-            configured: boolean;
-            /** Source */
-            source: string;
-            /** Username */
-            username: string;
-            /** Updated By */
-            updated_by: string;
-            /** Updated At */
-            updated_at: string | null;
-        };
-        /** ExternalProblemAccountOutEnvelope */
-        ExternalProblemAccountOutEnvelope: {
-            /**
-             * Code
-             * @default 200
-             */
-            code: number;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data: components["schemas"]["ExternalProblemAccountOut"];
-            /** Warnings */
-            warnings?: string[] | null;
-        };
-        /**
-         * ExternalProblemIn
-         * @description 挂题号的请求体。**形状由服务判**（``service.PROBLEM_NO`` 只收数字），这里只封
-         *     一个长度上界，免得把一兆的字符串送进去。
-         */
-        ExternalProblemIn: {
-            /** Problemno */
-            problemNo: string;
-        };
-        /**
-         * ExternalProblemResultOut
-         * @description 一个领取者在这道题上的结论。``participantId`` 是 ``task_membership.id`` ——
-         *     名单接口发出去的 ``participants[].id`` 就是它，前端按它把这一列贴回名单上。
-         */
-        ExternalProblemResultOut: {
-            /** Participantid */
-            participantId: number;
-            /** Studentno */
-            studentNo: string;
-            /** Solved */
-            solved: boolean;
-            /** Acceptedat */
-            acceptedAt: string | null;
         };
         /** FeedbackAdminCounts */
         FeedbackAdminCounts: {
@@ -15928,6 +15884,8 @@ export interface components {
             model: string | null;
             /** Service Host */
             service_host: string | null;
+            /** Name */
+            name: string | null;
             /** Checked At */
             checked_at: string;
             /** Revoking */
@@ -15945,6 +15903,8 @@ export interface components {
         ModelConnectionsOut: {
             /** Connections */
             connections: components["schemas"]["ModelConnectionOut"][];
+            /** Account Connections */
+            account_connections: components["schemas"]["AccountConnectionOut"][];
         };
         /**
          * ModelCreate
@@ -16070,8 +16030,14 @@ export interface components {
             plan: string | null;
             /** Model */
             model: string | null;
+            /** Name */
+            name: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** On Account */
+            on_account: boolean;
             /** Machine Name */
-            machine_name: string;
+            machine_name: string | null;
             /** Online */
             online: boolean;
             /** Added */
@@ -16271,6 +16237,10 @@ export interface components {
             plan: string | null;
             /** Model */
             model: string | null;
+            /** On Account */
+            on_account: boolean;
+            /** Allowed */
+            allowed: boolean;
         };
         /** OwnAgentMachineOut */
         OwnAgentMachineOut: {
@@ -16299,6 +16269,8 @@ export interface components {
             allowed: boolean;
             /** Kinds */
             kinds: components["schemas"]["ConnectionKind"][];
+            /** Service Hosts */
+            service_hosts: string[];
             /** Can Manage */
             can_manage: boolean;
             /** Agents */
@@ -16331,6 +16303,8 @@ export interface components {
             allowed?: boolean | null;
             /** Kinds */
             kinds?: components["schemas"]["ConnectionKind"][] | null;
+            /** Service Hosts */
+            service_hosts?: string[] | null;
         };
         /**
          * OwnCallers
@@ -17743,44 +17717,6 @@ export interface components {
         TaskCreateIn: {
             /** Title */
             title?: string | null;
-        };
-        /**
-         * TaskExternalProblemOut
-         * @description 一道题的外站那一块：题号、上次同步、以及每个领取者的结论。
-         *
-         *     ``status`` 是 ``""``（还没同步过）/ ``ok`` / ``failed``，取值在
-         *     ``service.STATUS_OK`` 与 ``STATUS_FAILED``。``error`` 是排查用的原文（``no_account``
-         *     这种），**不是**给人看的句子 —— 界面按 ``status`` 自己说。
-         */
-        TaskExternalProblemOut: {
-            /** Problemno */
-            problemNo: string;
-            /** Source */
-            source: string;
-            /** Lastsyncedat */
-            lastSyncedAt: string | null;
-            /** Status */
-            status: string;
-            /** Error */
-            error: string;
-            /** Results */
-            results: components["schemas"]["ExternalProblemResultOut"][];
-        };
-        /** TaskExternalProblemOutEnvelope */
-        TaskExternalProblemOutEnvelope: {
-            /**
-             * Code
-             * @default 200
-             */
-            code: number;
-            /**
-             * Message
-             * @default ok
-             */
-            message: string;
-            data: components["schemas"]["TaskExternalProblemOut"];
-            /** Warnings */
-            warnings?: string[] | null;
         };
         /**
          * TaskParticipantRequest
@@ -19728,59 +19664,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    read_external_problem_account_admin_integrations_external_problem_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExternalProblemAccountOutEnvelope"];
-                };
-            };
-        };
-    };
-    save_external_problem_account_admin_integrations_external_problem_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExternalProblemAccountIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExternalProblemAccountOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -23392,6 +23275,136 @@ export interface operations {
             };
         };
     };
+    add_account_connection_connector_my_model_connections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConnectionIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_account_connection_connector_my_model_connections__connection_id__check_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_account_connection_connector_my_model_connections__connection_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_account_connection_connector_my_model_connections__connection_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionRename"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountConnectionOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     check_my_claude_code_connector_my_devices__device_id__claude_code_post: {
         parameters: {
             query?: never;
@@ -23443,6 +23456,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_my_claude_code_connector_my_devices__device_id__claude_code_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ConnectionRename"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"];
                 };
             };
             /** @description Validation Error */
@@ -38948,146 +38996,6 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_external_problem_tasks__taskId__external_problem_get: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-User-Id"?: number | null;
-                Authorization?: string | null;
-            };
-            path: {
-                taskId: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskExternalProblemOutEnvelope"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_external_problem_tasks__taskId__external_problem_put: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-User-Id"?: number | null;
-                Authorization?: string | null;
-            };
-            path: {
-                taskId: number;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExternalProblemIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskExternalProblemOutEnvelope"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    clear_external_problem_tasks__taskId__external_problem_delete: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-User-Id"?: number | null;
-                Authorization?: string | null;
-            };
-            path: {
-                taskId: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeletedEnvelope"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    sync_external_problem_tasks__taskId__external_problem_sync_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                "X-User-Id"?: number | null;
-                Authorization?: string | null;
-            };
-            path: {
-                taskId: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["TaskExternalProblemOutEnvelope"];
                 };
             };
             /** @description Validation Error */

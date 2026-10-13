@@ -56,6 +56,7 @@ if __package__:
         serve,
     )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
+        EXECUTION_CONFIG,
         allow_native_tools,
         carry_conversation,
         copy_context,
@@ -63,6 +64,7 @@ if __package__:
         hook_module,
         link_forwarded_user_context,
         platform_tool_names,
+        take_view,
         touch_skills,
     )
     from app.domain.agent.harness.claude_code.remote_execution.shell_stop import (
@@ -98,6 +100,7 @@ else:
         sys.path.insert(0, str(Path(__file__).resolve().parent))
     from context_service import serve
     from release import (
+        EXECUTION_CONFIG,
         allow_native_tools,
         carry_conversation,
         copy_context,
@@ -105,15 +108,12 @@ else:
         hook_module,
         link_forwarded_user_context,
         platform_tool_names,
+        take_view,
         touch_skills,
     )
     from shell_stop import CAUGHT, KILL, current_target, deliver_stop, start_watcher
 
 PINNED_VERSION = "2.1.282"
-# Where a session's execution target is written. The launcher names it, so the
-# runner that holds the session and `bootstrap` preparing it agree on the file
-# without either spelling the other's layout.
-EXECUTION_CONFIG = "CHEESE_EXECUTION_CONFIG"
 # The file tools the plugin runs on the executor. Bash is not one: the build
 # runs it itself, through the shell prefix (`shell`), so its tasks, their
 # controls and their notifications are the build's own.
@@ -376,40 +376,10 @@ def prepare(
         token_path.chmod(0o600)
     if forwarded:
         context_tree = sync_context(target_path, context_tree)
-    # Deferred, not lifted with its siblings above: a test replaces `mount_state`
-    # on the `release` module, so this reads it through the import each time.
-    if __package__:
-        # deferred-import: tests replace mount_state on the release module
-        from .release import MOUNT_LIVE, mount_state, release_mount
-    else:
-        # deferred-import: tests replace mount_state on the release module
-        from release import MOUNT_LIVE, mount_state, release_mount
-
-    mount_log = directory / "forwarded-project.log"
-    if forwarded and not local and mount_state(workspace) != MOUNT_LIVE:
-        # A previous mount whose server died still occupies this directory and
-        # cannot be mounted over, so without this the spawn below fails and the
-        # room is stuck reporting a mount failure on every turn from then on.
-        release_mount(workspace)
-        with mount_log.open("a") as output:
-            subprocess.Popen(
-                [
-                    sys.executable,
-                    str(Path(__file__).with_name("forwarded_fs.py")),
-                    str(target_path),
-                    str(workspace),
-                ],
-                stdin=subprocess.DEVNULL,
-                stdout=output,
-                stderr=output,
-                start_new_session=True,
-            )
-        deadline = time.monotonic() + 10
-        while mount_state(workspace) != MOUNT_LIVE and time.monotonic() < deadline:
-            time.sleep(0.05)
-        if mount_state(workspace) != MOUNT_LIVE:
-            detail = mount_log.read_text()[-1000:] if mount_log.exists() else ""
-            raise RuntimeError("Forwarded project mount failed: " + detail)
+    if forwarded and not local:
+        failure = take_view(directory, target_path, workspace)
+        if failure is not None:
+            raise RuntimeError("Forwarded project mount failed: " + failure)
     if forwarded or unavailable:
         link_forwarded_user_context(
             directory,

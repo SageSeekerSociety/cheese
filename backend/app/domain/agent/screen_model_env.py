@@ -16,6 +16,7 @@ from app.domain.agent import provider_env
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S, ScreenSetupError
 from app.domain.agent.machine_address import tunnel_url as machine_tunnel_url
 from app.domain.agent.machine_address import ws_url
+from app.domain.agent.place import OWN_KEY
 
 # Where the launch script writes the metering proxy's CA on the device (under the
 # screen's ISOLATED home) and exports NODE_EXTRA_CA_CERTS to point. The env value
@@ -82,10 +83,13 @@ def screen_model_env(
     # CLAUDE_MODEL=deepseek-chat while users thought they were talking to
     # Claude). This is what ``builds_model_env`` declares.
     #
-    # A member's own Claude Code on their own machine (#2991) signs in with
-    # the login its owner gave the platform there, and none of its requests
-    # reach the metering proxy: no CA, no CONNECT credential, no tunnel.
-    own_login = (env or {}).get("CHEESE_OWN_LOGIN") == "1"
+    # A member's own Claude Code (#2991) signs in with the login its owner
+    # gave the platform on their machine, or calls the model with a connection
+    # its owner's account holds (`OWN_KEY`), and none of its requests reach the
+    # metering proxy: no CA, no CONNECT credential, no tunnel.
+    own_login = (env or {}).get("CHEESE_OWN_LOGIN") == "1" or (env or {}).get(
+        OWN_KEY
+    ) == "1"
     if own_login:
         ca_pem = ""
         model_env = {**(env or {})}

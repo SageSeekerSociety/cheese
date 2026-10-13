@@ -190,3 +190,16 @@ CLAUDE_LOGIN_DIR = "claude-login"
 #: The launch exports it and the probe reports its model; the connector writes
 #: it (`claudecode.serviceFile`), held to this name by the same test.
 MODEL_SERVICE_FILE = "model-service.json"
+
+#: A member's own Claude Code on a connection their account holds (#2991): its
+#: session host is the deployment's, and the connection reaches the launch as
+#: these variables of the session it starts. The launch turns them into Claude
+#: Code's own (`ANTHROPIC_BASE_URL`, the key, the model) and removes them, so
+#: nothing else the launch starts reads them. ``OWN_KEY`` marks such a session;
+#: ``OWN_MODEL_AUTH`` is ``api_key`` (an Anthropic key, sent as ``x-api-key``)
+#: or ``bearer`` (a model service's, as ``ANTHROPIC_AUTH_TOKEN``).
+OWN_KEY = "CHEESE_OWN_KEY"
+OWN_MODEL_BASE_URL = "OWN_MODEL_BASE_URL"
+OWN_MODEL_KEY = "OWN_MODEL_KEY"
+OWN_MODEL_AUTH = "OWN_MODEL_AUTH"
+OWN_MODEL = "OWN_MODEL"

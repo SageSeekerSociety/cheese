@@ -533,14 +533,6 @@
     "s5": {
       "name": "No one has claimed",
       "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
-    },
-    "s6": {
-      "name": "An external problem is linked",
-      "note": "The problem number was filled in when the task was published: there is one more column, saying whether each person solved it over there. Solved ones open to show the day it was solved; a claimant the other side has no result for yet shows a dash."
-    },
-    "s7": {
-      "name": "Last sync did not go through",
-      "note": "When a sync fails, that line has to say it outright: the column below is not this attempt's numbers, they are the last successful one's."
     }
   },
   "views404": {
@@ -1078,14 +1070,18 @@
     }
   },
   "modelConnectionsView": {
-    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device.",
+    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device; and the API keys and model services kept on your account, with the key's last four characters, service host, model and last check, and test, rename and remove.",
     "s1": {
       "name": "No connections",
-      "note": "Logged in on no device: the card says there are no model connections, and the custom model service button stays at its top right."
+      "note": "Logged in on no device and nothing kept on the account: the card says there are no model connections, and the buttons to add an API key, add a model service or use one on a device stay at its top right."
     },
     "s2": {
       "name": "Removing on an offline device",
       "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+    },
+    "s3": {
+      "name": "A key on the account fails its check",
+      "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
     }
   },
   "thisDeviceView": {
@@ -1282,29 +1278,6 @@
     "s4": {
       "name": "App ID blank",
       "note": "Saving with a blank App ID: it says \"Enter the App ID first\" and the request is never sent."
-    },
-    "s5": {
-      "name": "Save failed",
-      "note": "A rejected save shows the server's own words and leaves every field untouched."
-    }
-  },
-  "adminExternalProblemPageView": {
-    "about": "The admin \"external problem account\" page: an admin fills in the account the platform uses to read results on external problems (today only YOJ); the password is write-only and never echoed.",
-    "s1": {
-      "name": "Already configured",
-      "note": "Default state: the status line reads \"Configured · username · source\" and who last updated it; the username is filled in, the password is always empty."
-    },
-    "s2": {
-      "name": "Never configured",
-      "note": "Never set up: the status line reads \"Not configured\" and the two fields wait to be filled."
-    },
-    "s3": {
-      "name": "Could not load",
-      "note": "A failed read shows only \"could not load\" with a retry — no status line and no form, because only a successful read knows whether it is configured."
-    },
-    "s4": {
-      "name": "Username blank",
-      "note": "Saving with a blank username: it says \"Enter the username first\" and the request is never sent."
     },
     "s5": {
       "name": "Save failed",

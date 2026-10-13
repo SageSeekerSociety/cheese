@@ -21,7 +21,7 @@ from app.domain.agent.turn.store.human import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
-from app.domain.delivery.mention import record_mentions
+from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import looks_like_agent_handle, names_a_person
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
@@ -46,8 +46,17 @@ async def prepare_human(
         if _is_dm(topic)
         else None
     )
+    follows_up = False
     if place.thread is not None:
-        agent = await _thread_agent(session, place, project) or agent
+        teammate = await _thread_agent(session, place, project)
+        if teammate is not None:
+            agent = teammate
+            # An @ of anyone, a person or another teammate, says who the
+            # message is for; and an agent's word never calls one this way,
+            # or two teammates in a 支线 would wake each other forever.
+            follows_up = names_a_person(author) and not mentioned_handles(
+                mentions.content
+            )
     recipient = {
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
@@ -63,20 +72,19 @@ async def prepare_human(
             h: (str(seat.id), seat.handle) for h, seat in mentions.by_seat.items()
         },
         recipient=recipient,
+        follows_up=follows_up,
     )
 
 
 async def _thread_agent(session: AsyncSession, place: Place, project):
     """Who a 支线's message is for when it calls nobody: the teammate the 支线
-    is talking with (`thread_teammate`), while it still sits in the channel.
-    Handed to the channel's default instead, it reached no one: the default
-    has no turn there to hear it, and the next turn of the teammate that does
-    leaves out a message addressed to somebody else."""
+    is talking with (`thread_teammate`). Handed to the channel's default
+    instead, it reached no one: the default has no turn there to hear it, and
+    the next turn of the teammate that does leaves out a message addressed to
+    somebody else."""
     assert place.thread is not None
     seat = await thread_teammate(session, place.thread)
-    if seat is None or seat not in await TopicMemberService(session).agent_handles(
-        place.room_id
-    ):
+    if seat is None:
         return None
     return await AgentInstanceService(session).for_seat_handle(project, seat)
 
@@ -141,9 +149,25 @@ async def record_human_effects(
     addressed: str | None,
     quoted_context: dict | None,
 ) -> list[Block]:
+    # A typed answer to a question goes to whoever asked it, which in a 支线
+    # need not be its teammate, and a reply to another person is said to that
+    # person; any other message follows up with the teammate and calls it as
+    # an @ would.
+    answered = await answer_questions(session, user_block, recipient)
+    if (
+        prepared.follows_up
+        and addressed is None
+        and not recipient["mentioned"]
+        and not await _replies_to_someone_else(session, user_block)
+    ):
+        recipient["mentioned"] = True
+        refused = await own_calls.refused(session, prepared.project, recipient, author)
+        user_block.meta = {
+            **(user_block.meta or {}),
+            "agent_recipient": dict(recipient),
+        }
     await own_calls.say_refused(session, place, user_block, refused)
     await announce_mentions(session, place.room, user_block, author, prepared.roster)
-    answered = await answer_questions(session, user_block, recipient)
     if len(prepared.agent_handles) > 1:
         await record_mentions(
             session,
@@ -159,6 +183,16 @@ async def record_human_effects(
             skip=frozenset({addressed} if addressed else ()),
         )
     return answered
+
+
+async def _replies_to_someone_else(session: AsyncSession, block: Block) -> bool:
+    """Whether ``block`` replies to a message somebody other than its author
+    said. A reply to a teammate's message never asks this: it addresses that
+    teammate (`refuse_call`)."""
+    if block.reply_to is None:
+        return False
+    parent = await session.get(Block, block.reply_to)
+    return parent is not None and parent.author != block.author
 
 
 class HumanMessages:

@@ -122,7 +122,7 @@ def test_looking_at_a_failure_answers_about_it_and_changes_nothing(client, monke
     _failed_in_a_thread(client, room_id)
     seen: dict = {}
 
-    async def fake(session, *, config, failure, transport=None):
+    async def fake(session, *, project_id, topic_id, config, failure, transport=None):
         seen["log"] = failure["log"]
         return Diagnosis(
             reason="Node 版本太旧",

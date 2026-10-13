@@ -29,13 +29,12 @@ from app.core.sentences import say
 from app.domain.block.asked import (
     SKIPPED,
     answered,
-    asked_of,
+    may_answer,
     skipped_by,
     skipped_by_all,
 )
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.identity.handles import names_a_person
 
 #: Codex's `request_user_input` caps one call at three questions of two or three
 #: options each; a longer list reads as a form, which is what this replaced.
@@ -147,18 +146,6 @@ async def post_questions(
     return rows
 
 
-def waits_on(question: Block, handle: str) -> bool:
-    """这道题等不等 ``handle`` 的回答 —— 也就是他能不能答它、能不能跳过它。
-
-    和 `BlockRepository.questions_a_reply_answers` 认一句打字回复是不是答案的那条
-    判据同一个读法：题上记着问的是谁（`meta.asked`），就等他们；一个人也没记（平台
-    发起的那一轮里问的），谁回都算。回答的永远是人：队友不答队友的题（人的消息才走
-    `announce.answer_questions`）。
-    """
-    asked = asked_of(question.meta)
-    return names_a_person(handle) and (not asked or handle in asked)
-
-
 def skip_question(question: Block, *, by: str) -> bool:
     """``by`` 跳过这道题：他不回答它。返回这一下是不是让题了结了（它点名的每个人
     都跳过了，`block.asked.skipped_by_all`）—— 了结了，提问的那位才该知道。
@@ -168,13 +155,14 @@ def skip_question(question: Block, *, by: str) -> bool:
     了几个人，别人照旧等着回答。撤销跳过就是撤回这一条（`withdraw_answer`），和撤回
     答案是同一个动作。
 
-    只有这道题在等的人跳得过（`waits_on`）；已经有人回答的题不再收，同一个人也不跳
+    只有能回答这道题的人跳得过（`block.asked.may_answer`，点选项、打字回答也是这
+    一条）；已经有人回答的题不再收，同一个人也不跳
     两次。不 flush：调用方和别的写一起落库。
     """
     meta = dict(question.meta or {})
     if not meta.get("options"):
         raise UnprocessableEntityError(say("askNotAQuestion"))
-    if not waits_on(question, by):
+    if not may_answer(meta, by):
         raise ForbiddenError(say("askSkipNotYours"))
     if answered(meta):
         raise ConflictError(say("askAlreadyAnswered"))

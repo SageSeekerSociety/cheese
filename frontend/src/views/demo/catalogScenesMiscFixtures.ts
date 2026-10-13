@@ -186,31 +186,3 @@ export const FEISHU_UNCONFIGURED: Record<string, unknown> = {
   updated: '',
   appId: '',
 }
-
-// ---- 外站题账号（AdminExternalProblemPageView）----------------------------
-
-/** 已经配过一次：状态行说的是「已配置 · 账号 · 来源」。密码永远是空的（只写不回显）。
- *  这里用的是占位账号，不是任何真账号。 */
-export const EXTERNAL_PROBLEM_CONFIGURED: Record<string, unknown> = {
-  loading: false,
-  loadError: null,
-  status: '已配置 · teacher01 · yoj',
-  showStatus: true,
-  configured: true,
-  updated: '最后由 andy 更新',
-  saving: false,
-  saved: false,
-  saveError: '',
-  validationError: '',
-  username: 'teacher01',
-  password: '',
-}
-
-/** 还没配过：状态行说的是「还没配置」，两格空着等人填。 */
-export const EXTERNAL_PROBLEM_UNCONFIGURED: Record<string, unknown> = {
-  ...EXTERNAL_PROBLEM_CONFIGURED,
-  status: '还没配置',
-  configured: false,
-  updated: '',
-  username: '',
-}

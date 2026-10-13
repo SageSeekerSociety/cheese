@@ -230,21 +230,6 @@ export default [
         component: () => import('@/views/admin/AdminIntegrationsPage.vue'),
         meta: { titleKey: 'navigation.admin.integrations', isFullPage: true },
       },
-      {
-        // 外站题账号（`/admin/integrations/external-problem`）：平台去外站题（今天只有
-        // YOJ）读成绩用的一个账号，同样是平台级设置，挨着飞书应用放。
-        //
-        // 地址里带 `integrations/` 是为了让它读起来归在集成那一块，但它**不是**
-        // `integrations` 那条路由的子路由 —— 那样写会把它挂进 `AdminIntegrationsPage.vue`
-        // 的 `<router-view>`，而那一页里根本没有那个出口，页面会空掉。所以这里把它写成
-        // `/admin` 的**另一个平级孩子**：两条地址各自独立，`/admin/integrations` 那条
-        // 不受影响（vue-router 按完整路径匹配，`integrations` 和 `integrations/external-
-        // problem` 是两条不同的路）。
-        path: 'integrations/external-problem',
-        name: 'AdminExternalProblem',
-        component: () => import('@/views/admin/AdminExternalProblemPage.vue'),
-        meta: { titleKey: 'navigation.admin.externalProblem', isFullPage: true },
-      },
     ],
   },
 ] as RouteRecordRaw[]
