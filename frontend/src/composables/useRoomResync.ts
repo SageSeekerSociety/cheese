@@ -55,9 +55,9 @@ export function useRoomResync(room: {
     /** 跟到最新：来了新的而读的人停在底部时。 */
     follow: () => void
     /** 落到最新那条上（整段换成最新一页之后）。 */
-    toNewest: () => void
+    scrollToBottom: () => void
     /** 这间房记下的滚动位置作废：再打开时显示的是最新一页，那个偏移指的不是它。 */
-    forget: (topicId: string) => void
+    forgetScroll: (topicId: string) => void
     /** 一屏没画满就往回补（最新一带常常整页不露面）。 */
     fill: () => Promise<unknown>
   }
@@ -90,8 +90,8 @@ export function useRoomResync(room: {
     // 换掉了整段：照旧的 scrollTop 指的是新内容里随便哪个高度，落到最新那条上。
     // 收在了背后：屏幕上那段没动，滚动也不动；只是下次打开这间房显示的是缓存里的最新
     // 一页，记下的那个偏移是原来那段里的，作废。
-    if (merged === 'replaced') room.scroll.toNewest()
-    else if (merged === 'held') room.scroll.forget(topicId)
+    if (merged === 'replaced') room.scroll.scrollToBottom()
+    else if (merged === 'held') room.scroll.forgetScroll(topicId)
     else if (merged === 'grew' && room.scroll.atBottom.value) room.scroll.follow()
     return true
   }

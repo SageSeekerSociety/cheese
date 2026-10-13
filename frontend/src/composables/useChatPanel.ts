@@ -687,13 +687,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     settle: (b: Block) => settleOutbox(b),
     noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b)),
     readEnded: () => tail.check(),
-    scroll: {
-      atBottom,
-      follow: autoScroll,
-      toNewest: scrollToBottom,
-      forget: forgetScroll,
-      fill: () => paging.fillViewportIfNeeded(),
-    },
+    scroll: { atBottom, follow: autoScroll, scrollToBottom, forgetScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
     failed: historyReadFailed,
   })
