@@ -700,11 +700,19 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_fetch",
-            "让平台读一个网页：先找站点发布的 markdown，再依次普通抓取、换浏览器指纹、"
-            "浏览器渲染，覆盖面比 WebFetch 广，出口也不在你的机器上。"
-            "带 prompt 返回答案，不带返回整页 markdown，尽量带上。"
-            "读不到时逐级说明怎么失败的。",
-            {"url": _text("网址"), "prompt": _text("想从这一页知道什么")},
+            "让平台读一个网页：先普通抓取（站点发布了 markdown 就直接用），读不出正文再试"
+            "同名 .md、换浏览器指纹、浏览器渲染，出口也不在你的机器上；同一网址 15 分钟内"
+            "直接用读过的那份。带 prompt 返回答案，不带返回整页 markdown，尽量带上。"
+            "读不到时逐级说明怎么失败的。它读一个网址，不是搜索引擎。",
+            {
+                "url": _text("网址"),
+                "prompt": _text("想从这一页知道什么"),
+                "render": {
+                    "type": "boolean",
+                    "description": "读回来的只是页面框架、正文要脚本才出来时设 true，"
+                    "直接用浏览器渲染",
+                },
+            },
             ["url"],
         ),
         _tool(
@@ -1483,6 +1491,8 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         body = {"url": args["url"], "topic": topic, "project": project}
         if args.get("prompt"):
             body["prompt"] = args["prompt"]
+        if args.get("render"):
+            body["render"] = True
         return {"method": "POST", "path": "/fetch", "body": body}
     if tool == "cheese_ask":
         return {

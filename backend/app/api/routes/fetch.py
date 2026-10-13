@@ -34,6 +34,9 @@ class FetchIn(BaseModel):
     #: which is the difference between spending tens of tokens and tens of
     #: thousands on the same article.
     prompt: str | None = Field(default=None, max_length=4000)
+    #: Go to the platform's browser first: the caller read the page and found
+    #: only what scripts would have replaced (an app shell, a cookie wall).
+    render: bool = False
     #: Which room and project are asking. A sandbox token is SCOPED — it names
     #: both — so verifying it needs to know which one the caller claims to be
     #: speaking for. An endpoint that touches none of our resources still has to
@@ -75,6 +78,7 @@ async def read_url(body: FetchIn, actor: ActorResolverDep) -> dict:
         reader_endpoint=settings.fetch_reader_endpoint,
         browser_endpoint=settings.fetch_browser_endpoint,
         distill=distill,
+        render=body.render,
     )
     return ok(
         {

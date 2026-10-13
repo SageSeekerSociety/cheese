@@ -71,73 +71,48 @@ def _graded(rung: str, text: str, seconds: float, *, source: str = "") -> Attemp
     return Attempt(rung, False, text, f"only {body} chars of prose", seconds)
 
 
-async def rung_markdown_native(url: str, timeout: float = 12.0) -> Attempt:
-    """L0 — ask the site for markdown it already publishes for machines.
+#: A body larger than this is not read further. Claude Code's WebFetch stops at
+#: the same 10 MB; a page that size is a dump or a binary, and decoding and
+#: converting it costs seconds of the event loop every other request shares.
+MAX_BODY_BYTES = 10 * 1024 * 1024
 
-    Three shapes, all cheap and all exact: ``Accept: text/markdown``, the same
-    URL with ``.md`` appended, and the nearest ``llms.txt`` walking up the path.
-    When a site answers, this beats every other rung by an order of magnitude on
-    both quality and cost — one docs page measured 444 KB as HTML and 3,554
-    bytes as ``.md``, the same content without the chrome.
+
+def _is_markdown(content_type: str) -> bool:
+    return "markdown" in content_type or "text/plain" in content_type
+
+
+def _is_page(content_type: str) -> bool:
+    """Whether the body is text a converter can read. No content type at all
+    is read as HTML, which is what a server that forgets the header serves."""
+    return not content_type or "html" in content_type or "xml" in content_type
+
+
+async def _read_capped(response: httpx.Response) -> str:
+    chunks: list[bytes] = []
+    size = 0
+    async for chunk in response.aiter_bytes():
+        chunks.append(chunk)
+        size += len(chunk)
+        if size >= MAX_BODY_BYTES:
+            break
+    body = b"".join(chunks)[:MAX_BODY_BYTES]
+    return body.decode(response.encoding or "utf-8", errors="replace")
+
+
+async def rung_plain_http(url: str, timeout: float = 15.0) -> Attempt:
+    """L0 — one ordinary GET that asks for markdown first, as WebFetch does.
+
+    A site that publishes a markdown edition answers this very request with it
+    (``Accept: text/markdown``), and that body is taken whatever its length:
+    the server declared it the copy for machines, so a short one is a short
+    page. Anything else HTML is converted and graded. Measured, a plain GET
+    reads 58% of pages for about a second.
+
+    A body that is neither (a PDF, an image, an archive) is a miss marked
+    ``binary`` without being decoded: converting megabytes of binary as if it
+    were HTML stalled the event loop, and no rung that renders HTML reads it
+    either, so the service skips those rungs.
     """
-    loop = asyncio.get_running_loop()
-    start = loop.time()
-    parsed = urlparse(url)
-    candidates: list[tuple[str, dict[str, str]]] = [(url, {"Accept": _MARKDOWN_ACCEPT})]
-    # The twin is the page's PATH plus `.md`, on the same host. Appended to the
-    # whole URL instead, a site root became `https://example.com.md` — another
-    # host, which the guard refuses as unresolvable, and a refusal there ends
-    # the whole fetch. A root has no page name to append to, so it has no twin.
-    page = parsed.path.rstrip("/")
-    if parsed.scheme and parsed.netloc and page:
-        twin = urlunparse((parsed.scheme, parsed.netloc, page + ".md", "", "", ""))
-        candidates.append((twin, {"Accept": _MARKDOWN_ACCEPT}))
-    if parsed.scheme and parsed.netloc:
-        candidates.append(
-            (urljoin(f"{parsed.scheme}://{parsed.netloc}", "/llms.txt"), {})
-        )
-    async with guard.client(
-        timeout=timeout, follow_redirects=True, headers={"User-Agent": _BROWSER_UA}
-    ) as client:
-        for candidate, headers in candidates:
-            try:
-                r = await client.get(candidate, headers=headers)
-            except NotPublic:
-                raise
-            except Exception:
-                continue
-            if r.status_code != 200:
-                continue
-            ctype = r.headers.get("content-type", "")
-            body = r.text
-            # Only accept it when the SERVER says markdown/plain. A site that
-            # answers `.md` with its normal HTML page has not published a
-            # markdown edition, and taking it here would skip the converter for
-            # no gain.
-            if "markdown" not in ctype and "text/plain" not in ctype:
-                continue
-            # No length bar at all, only "not empty". Every other rung has to
-            # guess whether what came back is the page or a wall, which is what
-            # the length bars are for. Here the server already answered: it
-            # declared `text/markdown`, so this IS the copy the site publishes
-            # for machines, and a short one is a short page. Measured, a docs
-            # page whose markdown twin is 220 characters was rejected by the
-            # article-vs-interstitial bar and fell all the way to a browser
-            # render — the opposite of what this rung exists for.
-            if body.strip():
-                return Attempt(
-                    "markdown-native", True, body, candidate, loop.time() - start
-                )
-    return Attempt(
-        "markdown-native",
-        False,
-        note="no markdown edition published",
-        seconds=loop.time() - start,
-    )
-
-
-async def rung_plain_http(url: str, timeout: float = 20.0) -> Attempt:
-    """L1 — an ordinary HTTPS GET. Reads 58% of pages for ~1 s and no dependency."""
     loop = asyncio.get_running_loop()
     start = loop.time()
     try:
@@ -146,7 +121,23 @@ async def rung_plain_http(url: str, timeout: float = 20.0) -> Attempt:
             follow_redirects=True,
             headers={"User-Agent": _BROWSER_UA, "Accept": _MARKDOWN_ACCEPT},
         ) as client:
-            r = await client.get(url)
+            async with client.stream("GET", url) as r:
+                if r.status_code != 200:
+                    return Attempt(
+                        "plain-http",
+                        False,
+                        note=f"HTTP {r.status_code}",
+                        seconds=loop.time() - start,
+                    )
+                ctype = r.headers.get("content-type", "").lower()
+                if not _is_markdown(ctype) and not _is_page(ctype):
+                    return Attempt(
+                        "plain-http",
+                        False,
+                        note=f"binary {ctype.split(';')[0]}",
+                        seconds=loop.time() - start,
+                    )
+                body = await _read_capped(r)
     except NotPublic:
         raise
     except Exception as exc:  # noqa: BLE001 — every failure here is just a miss
@@ -156,14 +147,67 @@ async def rung_plain_http(url: str, timeout: float = 20.0) -> Attempt:
             note=f"{type(exc).__name__}",
             seconds=loop.time() - start,
         )
-    if r.status_code != 200:
+    if _is_markdown(ctype):
+        if body.strip():
+            return Attempt("markdown-native", True, body, url, loop.time() - start)
         return Attempt(
-            "plain-http",
+            "plain-http", False, note="empty body", seconds=loop.time() - start
+        )
+    markdown = await asyncio.to_thread(to_markdown, body)
+    return _graded("plain-http", markdown, loop.time() - start)
+
+
+async def rung_markdown_native(url: str, timeout: float = 8.0) -> Attempt:
+    """L1 — the page's ``.md`` twin, for a page whose HTML read thin.
+
+    The convention (Stripe, Anthropic, our own docs) is that a page URL plus
+    ``.md`` returns its source; a docs site rendered by JavaScript serves an
+    empty shell as HTML and the whole page as ``.md``. One docs page measured
+    444 KB as HTML and 3,554 bytes as ``.md``.
+
+    The site's ``llms.txt`` is not asked for. It is an index of the whole site,
+    not the page that was asked for, and taking it as the page answered half
+    the fetches this rung won with the wrong document: a GitHub repository
+    page, a blog post and a 403 page all came back as their site's index.
+    """
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    parsed = urlparse(url)
+    # The twin is the page's PATH plus `.md`, on the same host. Appended to the
+    # whole URL instead, a site root became `https://example.com.md` — another
+    # host, which the guard refuses as unresolvable, and a refusal there ends
+    # the whole fetch. A root has no page name to append to, so it has no twin.
+    page = parsed.path.rstrip("/")
+    if not (parsed.scheme and parsed.netloc and page):
+        return Attempt("markdown-native", False, note="no page name", seconds=0.0)
+    twin = urlunparse((parsed.scheme, parsed.netloc, page + ".md", "", "", ""))
+    try:
+        async with guard.client(
+            timeout=timeout,
+            follow_redirects=True,
+            headers={"User-Agent": _BROWSER_UA, "Accept": _MARKDOWN_ACCEPT},
+        ) as client:
+            r = await client.get(twin)
+    except NotPublic:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        return Attempt(
+            "markdown-native",
             False,
-            note=f"HTTP {r.status_code}",
+            note=f"{type(exc).__name__}",
             seconds=loop.time() - start,
         )
-    return _graded("plain-http", to_markdown(r.text), loop.time() - start)
+    # Only when the SERVER says markdown/plain. A site that answers `.md` with
+    # its normal HTML page (or its 404 page) has not published a twin.
+    if r.status_code == 200 and _is_markdown(r.headers.get("content-type", "")):
+        if r.text.strip():
+            return Attempt("markdown-native", True, r.text, twin, loop.time() - start)
+    return Attempt(
+        "markdown-native",
+        False,
+        note="no markdown edition published",
+        seconds=loop.time() - start,
+    )
 
 
 async def rung_impersonated(url: str, timeout: float = 25.0) -> Attempt:
@@ -216,7 +260,8 @@ async def rung_impersonated(url: str, timeout: float = 25.0) -> Attempt:
         return Attempt(
             "impersonated", False, note=f"HTTP {status}", seconds=loop.time() - start
         )
-    return _graded("impersonated", to_markdown(body), loop.time() - start)
+    markdown = await asyncio.to_thread(to_markdown, body)
+    return _graded("impersonated", markdown, loop.time() - start)
 
 
 async def rung_reader_service(
@@ -292,5 +337,7 @@ async def rung_browser(url: str, endpoint: str, timeout: float = 75.0) -> Attemp
         )
     payload = r.json()
     html = payload.get("html") or ""
-    markdown = payload.get("markdown") or (to_markdown(html) if html else "")
+    markdown = payload.get("markdown") or (
+        await asyncio.to_thread(to_markdown, html) if html else ""
+    )
     return _graded("browser", markdown, loop.time() - start)

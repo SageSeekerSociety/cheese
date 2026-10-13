@@ -18,11 +18,14 @@ buys coverage by spending the budget it was supposed to save.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from dataclasses import dataclass, field
 
 import httpx
 
+from app.core.redis import get_redis_client
 from app.domain.fetch import guard, layers
 from app.domain.fetch.guard import NotPublic
 from app.domain.fetch.layers import Attempt
@@ -34,8 +37,16 @@ logger = logging.getLogger(__name__)
 MAX_RAW_CHARS = 100_000
 
 #: The distillation call's ceiling. Not a tuning knob so much as the whole
-#: point: an unbounded call here is exactly the bug being designed out.
-DISTILL_TIMEOUT_SECONDS = 45.0
+#: point: an unbounded call here is exactly the bug being designed out. Measured
+#: on dev, answering a page took 3-5 s; past this the page itself is returned.
+DISTILL_TIMEOUT_SECONDS = 25.0
+
+#: How long a page read is reused. Claude Code's WebFetch keeps pages for the
+#: same 15 minutes. The key is the URL alone: what is cached is a public page
+#: read without credentials, the same for every caller, and never the answer
+#: to anyone's prompt.
+CACHE_SECONDS = 15 * 60
+_CACHE_PREFIX = "fetch:page:"
 
 
 @dataclass
@@ -126,6 +137,39 @@ async def _distill(
         return None
 
 
+def _cache_key(url: str) -> str:
+    return _CACHE_PREFIX + hashlib.sha256(url.encode()).hexdigest()
+
+
+async def _cached(url: str) -> Attempt | None:
+    redis = get_redis_client()
+    if redis is None:
+        return None
+    try:
+        raw = await redis.get(_cache_key(url))
+    except Exception:  # noqa: BLE001 — a cache that is down is a miss
+        logger.warning("fetch cache read failed", exc_info=True)
+        return None
+    if not raw:
+        return None
+    hit = json.loads(raw)
+    return Attempt(hit["rung"], True, hit["text"], "cached", 0.0)
+
+
+async def _remember(url: str, won: Attempt) -> None:
+    redis = get_redis_client()
+    if redis is None:
+        return
+    try:
+        await redis.set(
+            _cache_key(url),
+            json.dumps({"rung": won.rung, "text": won.text[:MAX_RAW_CHARS]}),
+            ex=CACHE_SECONDS,
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("fetch cache write failed", exc_info=True)
+
+
 def _refused(
     url: str, exc: NotPublic, attempts: list[Attempt] | None = None
 ) -> FetchOutcome:
@@ -143,13 +187,17 @@ async def fetch(
     reader_endpoint: str | None = None,
     browser_endpoint: str | None = None,
     distill: tuple[str, str, str] | None = None,
+    render: bool = False,
 ) -> FetchOutcome:
     """Read ``url`` and, if asked, answer ``prompt`` about it.
 
     ``reader_endpoint`` and ``browser_endpoint`` are optional on purpose. The
     reader is a third party, so sending it a URL is the operator's decision, not
     a default. The browser costs a Chrome install and seconds per page, so it is
-    the last rung rather than the first.
+    the last rung rather than the first — unless the caller says the page needs
+    one (``render``): a page whose HTML carries plenty of text that is not its
+    content (an app shell, a cookie wall) passes the fast rungs' bar, and only
+    the caller, having read it, can tell.
     """
     attempts: list[Attempt] = []
 
@@ -161,31 +209,37 @@ async def fetch(
     except NotPublic as exc:
         return _refused(url, exc)
 
+    async def attempt(got: Attempt) -> Attempt | None:
+        attempts.append(got)
+        return got if got.ok else None
+
     async def climb() -> Attempt | None:
-        for rung in (layers.rung_markdown_native, layers.rung_plain_http):
-            got = await rung(url)
-            attempts.append(got)
-            if got.ok:
-                return got
-        for rung in (layers.rung_impersonated,):
-            got = await rung(url)
-            attempts.append(got)
-            if got.ok:
-                return got
-        if reader_endpoint:
-            got = await layers.rung_reader_service(url, reader_endpoint)
-            attempts.append(got)
-            if got.ok:
-                return got
-        if browser_endpoint:
-            got = await layers.rung_browser(url, browser_endpoint)
-            attempts.append(got)
-            if got.ok:
-                return got
+        if render and browser_endpoint:
+            if won := await attempt(await layers.rung_browser(url, browser_endpoint)):
+                return won
+        plain = await layers.rung_plain_http(url)
+        if won := await attempt(plain):
+            return won
+        if won := await attempt(await layers.rung_markdown_native(url)):
+            return won
+        # A PDF or an image: the rungs below that render HTML would download it
+        # again and read nothing. A reader service can still convert it.
+        html = not plain.note.startswith("binary")
+        if html and (won := await attempt(await layers.rung_impersonated(url))):
+            return won
+        if reader_endpoint and (
+            won := await attempt(await layers.rung_reader_service(url, reader_endpoint))
+        ):
+            return won
+        if browser_endpoint and html and not render:
+            return await attempt(await layers.rung_browser(url, browser_endpoint))
         return None
 
+    hit = None if render else await _cached(url)
+    if hit is not None:
+        attempts.append(hit)
     try:
-        won = await climb()
+        won = hit or await climb()
     except NotPublic as exc:
         return _refused(url, exc, attempts)
     if won is None:
@@ -207,6 +261,8 @@ async def fetch(
                 text=(best.text[:MAX_RAW_CHARS] if best and best.text else ""),
                 attempts=attempts,
             )
+    elif hit is None:
+        await _remember(url, won)
 
     if prompt and distill:
         base_url, token, model = distill
