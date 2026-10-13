@@ -3,6 +3,7 @@
 // 任务卡。同一个人接连新建的几件归在同一个名字下面（`cont`），像同一个人连着说的几句。
 // 卡在原处变化（TaskCard），主线底部不再为它追加任何一行。
 import type { TaskLine } from '../../lib/channelTasks'
+import type { FaceIdentity } from '../../lib/identityFace'
 
 import { isAgentHandle } from '../../lib/authorship'
 import CheeseAvatar from '../CheeseAvatar.vue'
@@ -17,7 +18,8 @@ defineProps<{
   /** 新建它的人；认不出来时不署名。 */
   creator: string | null
   creatorName: string
-  ownerName: string | null
+  /** 下面那张卡的负责人（谁负责这件任务）。 */
+  owner: FaceIdentity | null
   avatar: string | null
   time: string
   /** 紧接在同一个人新建的上一件后面：不再重复署名。 */
@@ -41,7 +43,7 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
         <span class="im-time">{{ time }}</span>
         <span class="task-post__what">{{ t('work.room.taskCard.created') }}</span>
       </div>
-      <TaskCard :task="task" :owner-name="ownerName" @open="emit('open', $event)" />
+      <TaskCard :task="task" :owner="owner" @open="emit('open', $event)" />
     </div>
   </div>
 </template>

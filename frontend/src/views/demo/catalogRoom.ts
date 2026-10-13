@@ -152,6 +152,9 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
   }
 }
 
+/** 上面那张卡的负责人：`taskLine` 里写的那个 handle，名字照这一册的叫法。 */
+const taskOwner = { handle: 'cheese', name: AGENT_NAME, agent: true }
+
 /** 任务页页头那一格：一件还没开始的任务，一位 AI 队友，它的会话在标准沙箱里。 */
 const TASK_HEADER_PROPS = {
   room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
@@ -269,8 +272,8 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '进行中',
-        note: '状态那一枚跟着任务走：在跑的是一个点，做完是一个勾，关掉是一道横。',
-        props: { task: taskLine({}), ownerName: AGENT_NAME },
+        note: '状态那一枚跟着任务走：在跑的是一个点，做完是一个勾，关掉是一道横。负责人是一张脸 + 他的名字（`owner`），不是一行字符串。',
+        props: { task: taskLine({}), owner: taskOwner },
         expect: '整理第一周的课件',
       },
       {
@@ -278,7 +281,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
         note: '还开着、已经采纳过的任务在状态前面写采纳了几次。',
         props: {
           task: taskLine({ accepted: '已采纳 2 次', status: '待 波比 审阅', tone: 'waiting' }),
-          ownerName: AGENT_NAME,
+          owner: taskOwner,
         },
         expect: '已采纳 2 次',
       },
@@ -299,7 +302,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
           task: taskLine({}),
           creator: 'bob',
           creatorName: '波比',
-          ownerName: AGENT_NAME,
+          owner: taskOwner,
           avatar: null,
           time: '10:24',
         },

@@ -16,6 +16,7 @@ import type { RunEdge } from '../../lib/chatGrouping'
 import type { Outgoing } from '../../lib/composerDrafts'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { OpenedDocument } from '../../lib/docReview'
+import type { FaceIdentity } from '../../lib/identityFace'
 import type { NoticeAgent, NoticeRow, PlatformNotice } from '../../lib/platformNotice'
 import type { RefNames } from '../../lib/refChip'
 
@@ -202,8 +203,20 @@ const createdCont = computed(() =>
     return Date.parse(row.block.created_at) - Date.parse(prev.block.created_at) < REGROUP_GAP_MS
   })
 )
-function ownerName(task: TaskLine): string | null {
-  return task.owner ? (props.nameOf ?? String)(task.owner) : null
+/**
+ * 一件任务的负责人要画的那张脸：名字照房间里的叫法，头像地址照 `avatarOf`（两者都
+ * 是这一层现成的），「是不是队友」照正文标签那张名册表（`refs.mentionIdentities`）——
+ * 表上没有这一位时留 null，让 `IdentityView` 按 handle 的命名规则兜底，绝不猜。
+ */
+function ownerIdentity(task: TaskLine): FaceIdentity | null {
+  if (!task.owner) return null
+  const known = props.refs.mentionIdentities?.[task.owner]
+  return {
+    handle: task.owner,
+    name: (props.nameOf ?? String)(task.owner),
+    avatar: props.avatarOf(task.owner),
+    agent: known?.agent ?? null,
+  }
 }
 function under(blockId: string): TaskLine[] {
   return props.tasksUnder?.(blockId) ?? []
@@ -458,7 +471,7 @@ const rowLabels = computed(() =>
               :task="createdTasks[i]!"
               :creator="createdTasks[i]!.creator"
               :creator-name="(nameOf ?? String)(createdTasks[i]!.creator ?? '')"
-              :owner-name="ownerName(createdTasks[i]!)"
+              :owner="ownerIdentity(createdTasks[i]!)"
               :avatar="avatarOf(createdTasks[i]!.creator ?? '')"
               :time="fmtTime(m.created_at)"
               :cont="createdCont[i]"
@@ -588,7 +601,7 @@ const rowLabels = computed(() =>
                   :key="task.id"
                   v-guide-anchor="'task-card'"
                   :task="task"
-                  :owner-name="ownerName(task)"
+                  :owner="ownerIdentity(task)"
                   :in-list="!!m.thread"
                   @open="emit('open-card', $event)"
                 />
