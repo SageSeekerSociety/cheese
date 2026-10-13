@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from sqlalchemy import select
 
 from app.domain.agent.models import AgentTurn
+from app.domain.agent.platform_notices import (
+    EVENT_DEPLOY_INTERRUPTED,
+    EVENT_DISPATCH_UNKNOWN,
+    EVENT_TURN_TIMEOUT,
+)
 from app.domain.block.indexed_rows import (
     FAILED_TURN_EVENTS,
     FAILED_TURN_ROWS,
@@ -21,6 +26,13 @@ from app.domain.delivery.retry import (
     can_retry_inputs,
     failed_work_inputs,
     release_for_explicit_retry,
+)
+
+RETRYABLE_TURN_EVENTS = (
+    *FAILED_TURN_EVENTS,
+    EVENT_TURN_TIMEOUT,
+    EVENT_DEPLOY_INTERRUPTED,
+    EVENT_DISPATCH_UNKNOWN,
 )
 
 
@@ -53,7 +65,7 @@ async def take_failed_reply(session, conversation_id, *, block_id=None, seats=()
         block is None
         or (block_id is not None and block.id != block_id)
         or block.kind != BlockKind.event
-        or (block.meta or {}).get("event_type") not in FAILED_TURN_EVENTS
+        or (block.meta or {}).get("event_type") not in RETRYABLE_TURN_EVENTS
         or (block.meta or {}).get("retryable") is not True
     ):
         return None, None

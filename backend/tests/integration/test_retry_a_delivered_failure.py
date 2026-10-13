@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.api.deps import get_chat_service
 from app.domain.agent.models import AgentTurn
+from app.domain.block.models import Block
 from app.domain.delivery.models import NativeInput
 from tests.conftest import StubChannel, settle_turn, wait_work_idle
 from tests.integration.conftest import (
@@ -111,6 +112,19 @@ def failed_reply(client, stub_hooks, *, forgotten_mention=False):
     return thread, failure
 
 
+def set_failure_event(client, failure, event_type, *, without_turn=False):
+    async def update():
+        async with client.test_factory() as session:
+            block = await session.get(Block, uuid.UUID(failure["id"]))
+            assert block is not None
+            block.meta = {**(block.meta or {}), "event_type": event_type}
+            if without_turn:
+                block.turn_id = None
+            await session.commit()
+
+    asyncio.run(update())
+
+
 def summon(client, thread, failure, *, require_started=False):
     response = client.post(
         f"/topics/{thread}/summon",
@@ -151,8 +165,15 @@ def summon(client, thread, failure, *, require_started=False):
     return result
 
 
-def test_retry_continues_the_read_but_failed_request_once(client, stub_hooks):
+@pytest.mark.parametrize(
+    "event_type",
+    ["turn_failed", "turn_timeout", "deploy_interrupted", "dispatch_unknown"],
+)
+def test_retry_continues_the_read_but_failed_request_once(
+    client, stub_hooks, event_type
+):
     thread, failure = failed_reply(client, stub_hooks)
+    set_failure_event(client, failure, event_type)
     original_seat = stub_hooks.prompts[-1][0]
     stub_hooks.fail = False
 
@@ -177,6 +198,32 @@ def test_retry_continues_the_read_but_failed_request_once(client, stub_hooks):
     retired = next(b for b in blocks if b["id"] == failure["id"])
     assert retired["meta"]["retryable"] is False
     assert retired["meta"]["detail"] == failure["meta"]["detail"]
+
+
+@pytest.mark.parametrize(
+    "event_type", ["turn_timeout", "deploy_interrupted", "dispatch_unknown"]
+)
+def test_a_notice_without_identifiable_work_retires_without_starting_unrelated_work(
+    client, stub_hooks, event_type
+):
+    thread, failure = failed_reply(client, stub_hooks)
+    set_failure_event(client, failure, event_type, without_turn=True)
+    stub_hooks.fail = False
+    assert summon(client, thread, failure) == {
+        "started": False,
+        "reason": "nothing_pending",
+    }
+    wait_work_idle()
+    assert len(stub_hooks.prompts) == 1
+    blocks = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+    retired = next(b for b in blocks if b["id"] == failure["id"])
+    assert retired["meta"]["retryable"] is False
+    assert retired["meta"]["detail"] == failure["meta"]["detail"]
+    assert summon(client, thread, retired) == {
+        "started": False,
+        "reason": "nothing_pending",
+    }
+    assert len(stub_hooks.prompts) == 1
 
 
 def test_a_second_failure_can_be_retried_without_reviving_the_old_card(
