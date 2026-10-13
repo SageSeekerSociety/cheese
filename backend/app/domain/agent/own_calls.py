@@ -4,7 +4,8 @@ A member's own agent (#2991) is called by whoever its owner lets call it: its
 owner alone, or any person in the project. It follows its owner into the
 project's rooms: the first message in which someone it answers to names it
 seats it in that room, as any teammate sits there. Anyone else naming it reaches
-nobody, and is told why beside their message.
+nobody, and is told why beside their message. So is its owner while every login
+they have is of a kind the project does not allow.
 """
 
 import uuid
@@ -12,7 +13,6 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
@@ -24,8 +24,7 @@ from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_instance.own import (
     allows_own_agents,
     callable_by,
-    may_call,
-    owner_of,
+    why_not,
 )
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.topic_membership.services import TopicMemberService
@@ -53,29 +52,28 @@ async def seat_if_named(
 
 async def refused(session: AsyncSession, project, recipient: dict, author: str):
     """When this message calls an agent its author may not call, take the call
-    back and name whose agent it is; None when the call stands."""
+    back and say why: the sentence the room is told, or None when the call
+    stands."""
     if not recipient.get("mentioned") or not recipient.get("instance_id"):
         return None
     instance_id = uuid.UUID(recipient["instance_id"])
-    if await may_call(session, instance_id, author, project.settings):
+    reason = await why_not(session, instance_id, author, project.settings)
+    if reason is None:
         return None
     recipient["mentioned"] = False
-    owner = await owner_of(session, instance_id)
-    return owner[1] if owner is not None else ""
+    return reason
 
 
-async def say_refused(
-    session: AsyncSession, place, block, owner_name: str | None
-) -> None:
+async def say_refused(session: AsyncSession, place, block, reason: str | None) -> None:
     """Beside the message, the reason it reached nobody; nothing when the call
     stood (``refused`` answered None)."""
-    if owner_name is None:
+    if reason is None:
         return
     await announce(
         session,
         place_id=place.room_id,
         task_id=place.inner_id,
-        content=say("ownAgentOwnerOnly", owner=owner_name),
+        content=reason,
         meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
         turn_id=block.turn_id,
     )

@@ -23909,9 +23909,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Own Agents Projects  Project Id  Own Agents Get"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -23933,7 +23931,7 @@
           "projects"
         ],
         "summary": "Set Own Agents",
-        "description": "Let members bring their own Claude Code into the project, or not. Turned\noff, no member's own agent is called in it; turned on again, they are.",
+        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use. Turned off, members' own\nagents leave the project: off its roster and out of its channels. Turned on\nagain, they come back as their owners next look, and sit in a channel again\nonce someone they answer to names them there.",
         "operationId": "set_own_agents_projects__project_id__own_agents_put",
         "parameters": [
           {
@@ -23963,9 +23961,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Own Agents Projects  Project Id  Own Agents Put"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -54675,6 +54671,15 @@
         ],
         "title": "ConnectRequest"
       },
+      "ConnectionKind": {
+        "type": "string",
+        "enum": [
+          "subscription",
+          "api_key",
+          "model_service"
+        ],
+        "title": "ConnectionKind"
+      },
       "ControlIn": {
         "properties": {
           "session_id": {
@@ -60258,6 +60263,42 @@
         ],
         "title": "OwnAgentCallersUpdate"
       },
+      "OwnAgentConnectionOut": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "plan",
+          "model"
+        ],
+        "title": "OwnAgentConnectionOut"
+      },
       "OwnAgentMachineOut": {
         "properties": {
           "name": {
@@ -60318,11 +60359,25 @@
             ],
             "title": "Owner Name"
           },
-          "machines": {
+          "connections": {
             "items": {
-              "$ref": "#/components/schemas/OwnAgentMachineOut"
+              "$ref": "#/components/schemas/OwnAgentConnectionOut"
             },
             "type": "array",
+            "title": "Connections"
+          },
+          "machines": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/OwnAgentMachineOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Machines"
           }
         },
@@ -60333,6 +60388,7 @@
           "callers",
           "owner_handle",
           "owner_name",
+          "connections",
           "machines"
         ],
         "title": "OwnAgentOut"
@@ -60342,6 +60398,13 @@
           "allowed": {
             "type": "boolean",
             "title": "Allowed"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionKind"
+            },
+            "type": "array",
+            "title": "Kinds"
           },
           "can_manage": {
             "type": "boolean",
@@ -60358,6 +60421,7 @@
         "type": "object",
         "required": [
           "allowed",
+          "kinds",
           "can_manage",
           "agents"
         ],
@@ -60402,15 +60466,35 @@
       "OwnAgentsUpdate": {
         "properties": {
           "allowed": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Allowed"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionKind"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
           }
         },
         "type": "object",
-        "required": [
-          "allowed"
-        ],
-        "title": "OwnAgentsUpdate"
+        "title": "OwnAgentsUpdate",
+        "description": "What a manager changes; a field left out stays as it is."
       },
       "OwnCallers": {
         "type": "string",

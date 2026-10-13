@@ -1,16 +1,18 @@
 """Members' own Claude Code in a project (#2991): whether the project lets
-members bring theirs, and whose are here.
+members bring theirs, which kinds of model connection they may use, and whose
+are here.
 
 A member's own Claude Code sends the project's content to the model through
-its owner's own account, under that account's terms and settings. A project
-whose content must not leave that way is closed to them here, by the people who
-manage it.
+its owner's own account, under that account's terms and settings. So a project
+lets them in only when someone who manages it turns that on, and may allow only
+some kinds of connection — a Claude subscription, an Anthropic API key, another
+model service.
 """
 
 import uuid
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
@@ -20,21 +22,32 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_instance.own import (
+    KINDS_SETTING,
     SETTING,
     OwnCallers,
+    allowed_kinds,
     allows_own_agents,
     listing,
     owned_by_seat,
+    owned_in_project,
     set_callers,
 )
+from app.domain.device.login_kind import ConnectionKind
+from app.domain.identity.handles import agent_instance_handle
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 class OwnAgentsUpdate(BaseModel):
-    allowed: bool
+    """What a manager changes; a field left out stays as it is."""
+
+    allowed: bool | None = None
+    # The kinds of connection members' own agents may use here. At least one:
+    # allowing none is turning them off, which ``allowed`` says.
+    kinds: list[ConnectionKind] | None = Field(default=None, min_length=1)
 
 
 class OwnAgentCallersUpdate(BaseModel):
@@ -46,22 +59,36 @@ class OwnAgentMachineOut(BaseModel):
     online: bool
 
 
+class OwnAgentConnectionOut(BaseModel):
+    kind: ConnectionKind
+    # A subscription's plan (`max`, `pro`, …).
+    plan: str | None
+    # The model a model service is called with.
+    model: str | None
+
+
 class OwnAgentOut(BaseModel):
     handle: str
     name: str | None
     callers: OwnCallers
     owner_handle: str | None
     owner_name: str | None
-    machines: list[OwnAgentMachineOut]
+    connections: list[OwnAgentConnectionOut]
+    # Only for the reader's own agent; None for everyone else's.
+    machines: list[OwnAgentMachineOut] | None
 
 
 class OwnAgentsOut(BaseModel):
     allowed: bool
+    kinds: list[ConnectionKind]
     can_manage: bool
     agents: list[OwnAgentOut]
 
 
-@router.get("/{project_id}/own-agents")
+@router.get(
+    "/{project_id}/own-agents",
+    **typed_response(OwnAgentsOut),
+)
 async def get_own_agents(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -73,30 +100,54 @@ async def get_own_agents(
         await MemberService(db).require_manager(project_id, actor)
     except ForbiddenError:
         can_manage = False
+    allowed = allows_own_agents(project.settings)
+    kinds = allowed_kinds(project.settings)
     return ok(
         {
-            "allowed": allows_own_agents(project.settings),
+            "allowed": allowed,
+            "kinds": [kind.value for kind in ConnectionKind if kind in kinds],
             "can_manage": can_manage,
-            "agents": await listing(db, project_id, device_hub.is_online),
+            # Withdrawn from a project closed to them: none is here.
+            "agents": await listing(db, project_id, actor.user_id, device_hub.is_online)
+            if allowed
+            else [],
         }
     )
 
 
-@router.put("/{project_id}/own-agents")
+@router.put(
+    "/{project_id}/own-agents",
+    **typed_response(OwnAgentsOut),
+)
 async def set_own_agents(
     project_id: uuid.UUID,
     body: OwnAgentsUpdate,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Let members bring their own Claude Code into the project, or not. Turned
-    off, no member's own agent is called in it; turned on again, they are."""
+    """Let members bring their own Claude Code into the project, or not, and
+    which kinds of model connection it may use. Turned off, members' own
+    agents leave the project: off its roster and out of its channels. Turned on
+    again, they come back as their owners next look, and sit in a channel again
+    once someone they answer to names them there."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
-    await service.merge_settings(project, {SETTING: body.allowed})
+    patch: dict[str, object] = {}
+    if body.allowed is not None:
+        patch[SETTING] = body.allowed
+    if body.kinds is not None:
+        patch[KINDS_SETTING] = [k.value for k in ConnectionKind if k in body.kinds]
+    await service.merge_settings(project, patch)
+    if body.allowed is False:
+        seats = TopicMemberService(db)
+        for instance, _owner, _callers in await owned_in_project(db, project_id):
+            await seats.revoke_project_seats(
+                project_id=project_id,
+                member_handle=agent_instance_handle(instance.id),
+            )
     return await get_own_agents(project_id, db, resolver)
 
 

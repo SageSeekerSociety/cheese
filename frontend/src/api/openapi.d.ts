@@ -6823,8 +6823,11 @@ export interface paths {
         get: operations["get_own_agents_projects__project_id__own_agents_get"];
         /**
          * Set Own Agents
-         * @description Let members bring their own Claude Code into the project, or not. Turned
-         *     off, no member's own agent is called in it; turned on again, they are.
+         * @description Let members bring their own Claude Code into the project, or not, and
+         *     which kinds of model connection it may use. Turned off, members' own
+         *     agents leave the project: off its roster and out of its channels. Turned on
+         *     again, they come back as their owners next look, and sit in a channel again
+         *     once someone they answer to names them there.
          */
         put: operations["set_own_agents_projects__project_id__own_agents_put"];
         post?: never;
@@ -13925,6 +13928,11 @@ export interface components {
             /** Project Id */
             project_id?: string | null;
         };
+        /**
+         * ConnectionKind
+         * @enum {string}
+         */
+        ConnectionKind: "subscription" | "api_key" | "model_service";
         /** ControlIn */
         ControlIn: {
             /** Session Id */
@@ -16032,6 +16040,14 @@ export interface components {
         OwnAgentCallersUpdate: {
             callers: components["schemas"]["OwnCallers"];
         };
+        /** OwnAgentConnectionOut */
+        OwnAgentConnectionOut: {
+            kind: components["schemas"]["ConnectionKind"];
+            /** Plan */
+            plan: string | null;
+            /** Model */
+            model: string | null;
+        };
         /** OwnAgentMachineOut */
         OwnAgentMachineOut: {
             /** Name */
@@ -16050,13 +16066,17 @@ export interface components {
             owner_handle: string | null;
             /** Owner Name */
             owner_name: string | null;
+            /** Connections */
+            connections: components["schemas"]["OwnAgentConnectionOut"][];
             /** Machines */
-            machines: components["schemas"]["OwnAgentMachineOut"][];
+            machines: components["schemas"]["OwnAgentMachineOut"][] | null;
         };
         /** OwnAgentsOut */
         OwnAgentsOut: {
             /** Allowed */
             allowed: boolean;
+            /** Kinds */
+            kinds: components["schemas"]["ConnectionKind"][];
             /** Can Manage */
             can_manage: boolean;
             /** Agents */
@@ -16078,10 +16098,15 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
-        /** OwnAgentsUpdate */
+        /**
+         * OwnAgentsUpdate
+         * @description What a manager changes; a field left out stays as it is.
+         */
         OwnAgentsUpdate: {
             /** Allowed */
-            allowed: boolean;
+            allowed?: boolean | null;
+            /** Kinds */
+            kinds?: components["schemas"]["ConnectionKind"][] | null;
         };
         /**
          * OwnCallers
@@ -31821,9 +31846,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -31858,9 +31881,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */
