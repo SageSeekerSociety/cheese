@@ -347,3 +347,29 @@ const ink = computed(() => color('chart-1'))
   await expect(page.locator('#out')).not.toHaveText(light!);
   expect(errors).toEqual([]);
 });
+
+test('a card the layout moves slides to its new place, and is there at once in the check’s pictures', async ({ page }) => {
+  const app = `<script setup>
+import { ref } from 'vue'
+import { vLayout } from '@platform/motion'
+const span = ref(4)
+</script>
+<template>
+  <button id="go" @click="span = 10">go</button>
+  <div v-layout style="display: grid; grid-template-columns: repeat(12, 1fr); gap: 4px; width: 600px">
+    <div :style="{ gridColumn: 'span ' + span, height: '40px' }">A</div>
+    <div id="b" style="grid-column: span 4; height: 40px">B</div>
+  </div>
+</template>`;
+  const errors = await runApp(page, app);
+  const moving = () =>
+    page.evaluate(() => document.getElementById('b')!.getAnimations().length > 0);
+  await page.locator('#go').click();
+  expect(await moving()).toBe(false);
+  await runApp(page, app);
+  await page.evaluate(() => (document.documentElement.dataset.mode = 'inline'));
+  await page.locator('#go').click();
+  expect(await moving()).toBe(true);
+  await expect.poll(moving).toBe(false);
+  expect(errors).toEqual([]);
+});

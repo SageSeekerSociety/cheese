@@ -7,7 +7,21 @@
 // a point or a slider — is followed at once: the hand leads, and a picture
 // trailing behind it reads as lag. Nothing slides when the reader asked for
 // less motion, or while the platform takes the check's still pictures.
-import { getCurrentScope, isRef, onScopeDispose, type Ref, type ShallowRef, shallowRef, watch } from 'vue'
+//
+// `v-layout` on a container makes its children slide when the page's own
+// layout moves or resizes them — a card that wraps to the next row of a grid,
+// a list that reflows — which no CSS transition can do, since the browser
+// places them anew rather than changing a property.
+import {
+  type Directive,
+  getCurrentScope,
+  isRef,
+  onScopeDispose,
+  type Ref,
+  type ShallowRef,
+  shallowRef,
+  watch,
+} from 'vue'
 
 import { duration, ease, still } from '../components/motion'
 
@@ -59,3 +73,36 @@ export function tween<T>(source: Ref<T> | (() => T), options: { duration?: numbe
   if (getCurrentScope()) onScopeDispose(stop)
   return shown
 }
+
+const before = new WeakMap<HTMLElement, Map<Element, DOMRect>>()
+
+/** Where each child of `el` is now, kept for the moment after it is redrawn. */
+function measure(el: HTMLElement) {
+  if (still()) return
+  before.set(el, new Map([...el.children].map((c) => [c, c.getBoundingClientRect()])))
+}
+
+/** Each child that the redraw moved or resized starts where it was and slides
+ *  to where it is. A child that is new has nowhere to come from and is left. */
+function settle(el: HTMLElement) {
+  const was = before.get(el)
+  before.delete(el)
+  if (!was) return
+  for (const child of el.children) {
+    const a = was.get(child)
+    if (!a || !(child instanceof HTMLElement)) continue
+    const b = child.getBoundingClientRect()
+    const dx = a.left - b.left
+    const dy = a.top - b.top
+    if (Math.max(Math.abs(dx), Math.abs(dy), Math.abs(a.width - b.width), Math.abs(a.height - b.height)) < 0.5) continue
+    child.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px)`, width: `${a.width}px`, height: `${a.height}px` },
+        { transform: 'none', width: `${b.width}px`, height: `${b.height}px` },
+      ],
+      { duration: duration(), easing: 'cubic-bezier(0.4, 0, 0.2, 1)' }
+    )
+  }
+}
+
+export const vLayout: Directive<HTMLElement> = { beforeUpdate: measure, updated: settle }
