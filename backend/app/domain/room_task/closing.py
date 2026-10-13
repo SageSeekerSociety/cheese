@@ -148,26 +148,28 @@ async def unfinished(
                 )
             )
         )
-        said = dict(
-            (
+        said = {
+            turn_id: at
+            for turn_id, at in (
                 await session.execute(
                     select(Block.turn_id, func.max(Block.created_at))
                     .where(Block.turn_id.in_(chains))
                     .group_by(Block.turn_id)
                 )
             ).all()
-        )
+        }
         # A turn a message began keeps that message, not a copy, until it is
         # assembled: the message says what it is.
-        asked = dict(
-            (
+        asked = {
+            block_id: content
+            for block_id, content in (
                 await session.execute(
                     select(Block.id, Block.content).where(
                         Block.id.in_([turn.id for turn in running if not turn.content])
                     )
                 )
             ).all()
-        )
+        }
         quiet_since = now - timedelta(seconds=settings.turn_silence_timeout_s)
         for turn in running:
             if turn.id in write_ups or turn.continuation_id in write_ups:
