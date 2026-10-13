@@ -147,6 +147,16 @@ streaming logger's file hash before applying a timing correction. The upstream
 logger starts its clock when the stream wrapper is created, omitting earlier
 request time. The patch retains the logging object's original request start.
 An isolated test runs during the image build without calling a model provider.
+
+A model served through OpenAI's Responses API (the ChatGPT accounts) reaches
+`/v1/messages` through an adapter that, as pinned, ends the stream quietly when
+the upstream drops the connection or reports `response.failed`. The router holds
+`message_start` back until content arrives, so the caller got a 200 stream with
+no content and no stop, which Claude Code reports as "Stream ended without
+receiving any events" and does not retry. `patch_responses_stream_errors.py`
+ends such a stream with an Anthropic `error` event instead; before any content
+the router turns it into an HTTP error the caller retries.
+`test_responses_stream_errors.py` checks this against a local fake upstream.
 These timestamps cover the gateway request; they do not separately measure
 provider processing and gateway overhead. Application deployments still leave
 this independent gateway stack running.
