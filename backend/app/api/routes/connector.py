@@ -41,6 +41,7 @@ from starlette.websockets import WebSocketState
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.write_access import ROUTE_DECIDES
+from app.auth.caller import handle_named_by
 from app.common.auth import AccessClaims, verify_access_token
 from app.core import background
 from app.core.config import settings
@@ -509,8 +510,9 @@ async def _may_view_screen(
     """
     if claims is None or not await _sign_in_lasts(session, claims):
         return False
-    # Membership is keyed by handle.
-    handle = claims.handle
+    # Membership is keyed by handle, and the claims are read the same way the
+    # workspace routes read them: an all-digit one is a NAME, not a user id.
+    handle = await handle_named_by(session, claims)
     if screen.topic_id is not None:
         room = await owner_reads.room_of(session, screen.topic_id)
         if await owner_reads.members_only(session, room):

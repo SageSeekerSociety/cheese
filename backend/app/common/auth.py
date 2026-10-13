@@ -225,6 +225,15 @@ class AccessClaims(NamedTuple):
     # authenticates to the handle-keyed layer only.
     user_id: int | None
     handle: str
+    # Whether ``handle`` is a name the token itself states (its ``handle``
+    # claim) or is the ``sub`` claim standing in for a missing one. Nothing in
+    # the value tells them apart: ``sub`` is the int user PK whenever the token
+    # carries one, and a username may be all digits too
+    # (``app.domain.user.services._USERNAME_RE`` takes ``2026201782``), so a
+    # handle-keyed check that reads the standing-in value as a name hands that
+    # caller a handle matching no roster — every permission they hold, revoked
+    # in silence.
+    handle_from_claim: bool
     sid: uuid.UUID | None
 
 
@@ -333,9 +342,11 @@ def verify_access_token(token: str) -> AccessClaims | None:
     except (TypeError, ValueError):
         return None
     handle = decoded.get("handle")
+    names_a_handle = isinstance(handle, str) and bool(handle)
     return AccessClaims(
         user_id=int(sub) if sub.isdigit() else None,
-        handle=handle if isinstance(handle, str) and handle else sub,
+        handle=handle if names_a_handle else sub,
+        handle_from_claim=names_a_handle,
         sid=sid,
     )
 
