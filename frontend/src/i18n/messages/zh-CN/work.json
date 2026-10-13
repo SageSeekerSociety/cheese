@@ -1448,7 +1448,6 @@
     "workingTip": "{name}正在这里工作",
     "moreMembers": "+{count}",
     "allTasks": "全部任务",
-    "underway": "进行中的任务",
     "underwayHint": "在项目里还开着、也还没在收尾的任务",
     "moreTasks": "展开其余 {count} 个",
     "fewerTasks": "收起",

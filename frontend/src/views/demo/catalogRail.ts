@@ -203,15 +203,26 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-pinned',
     title: 'TopicRailPinnedRows',
-    about: '项目名下面那一行：资料库，和频道行同一种行。总览和别的页都进项目名菜单，这里不再加。',
+    about: '项目名下面那一行：总览和资料库，和频道行同一种行。别的页都进项目名菜单，这里不长。',
     file: 'src/components/topic-sidebar/TopicRailPinnedRows.vue',
     component: TopicRailPinnedRows,
     // 只读词表和 props：哪几页露出来了、当前在哪一页，都是父级算好递进来的。
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '站在资料库上',
+        name: '站在总览上',
         note: '选中态和频道行同一套。',
+        props: {
+          pages: RAIL_PAGES,
+          routeName: 'workspace-overview',
+          terms: RAIL_TERMS,
+          page: false,
+        },
+        expect: '总览',
+      },
+      {
+        name: '站在资料库上',
+        note: '同一个组件，换一个当前页。',
         props: {
           pages: RAIL_PAGES,
           routeName: 'project-library',
@@ -222,7 +233,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '手机上：这一行收进项目菜单',
-        note: '整页形态里这一页在点项目名弹出的面板里，这里不画。',
+        note: '整页形态里这几页在点项目名弹出的面板里，这里不画。',
         props: {
           pages: RAIL_PAGES,
           routeName: 'workspace-overview',
