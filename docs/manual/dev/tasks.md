@@ -48,7 +48,7 @@ covers:
 |---|---|---|
 | `accepted_at` | 每次采纳（那次合并成功），记最近一次 | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
 | `delivered_head` | 同上，记下最近合进去的那一版 | 下一步的工作目录从这里把没合进去的提交带走 |
-| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写总结的那一轮结束就关闭，最晚 45 分钟（`room_task.closing`）；这期间显示「已采纳」 |
+| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写总结的那一轮结束就关闭，最晚 45 分钟（`room_task.closing`），但 AI 队友在任务里做着总结以外的事时不关；这期间显示「已采纳」 |
 | `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`），或最后一步采纳后那一轮总结结束时的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
 
 所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」「已完成」「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已采纳」。
@@ -87,7 +87,7 @@ covers:
 
 **转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务里执行环境落在新负责人不能用的电脑上的队友（原负责人自己的电脑，不进沙箱或那人电脑的规格），先照换环境的流程换到新负责人能用的那个（`environments.usable_by_owner`：任务的默认、房间的默认、项目默认，不能用的跳过，最后是标准沙箱），任务指着这样一台电脑的默认清掉；推送不成功就不转交，说明原因。
 
-**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
+**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着。后三种是平台自己关的，AI 队友在任务里有总结以外的一轮在跑时（`closing.working`）一律不关，等它停下后的那次再关，所以平台自己关任务打断的只会是写总结的那一轮：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
 
 平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。任务里每位队友的执行环境是自己的；它第一次要手时按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目默认 取一份，之后默认再变也不跟着动。负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/sessions/{session}/environment` 换一位、用 `PUT /topics/{task}/environment-default` 改任务的默认；设备页的批量挪走对任务会话走的就是前一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`environment.works_tasks_of`）：选不了，那个人电脑的沙箱也不放在上面。
 
@@ -158,7 +158,7 @@ covers:
 
 一件任务可以交付好几次。每次递卡时芝士说明这是不是最后一步（`cheese_accept_request` 的 `completes_task`，存在 `AcceptCard.completes_task`；这一列之前递的卡都算最后一步）。合并之后怎么走只在一处决定（`review/task_landing.py` 的 `delivery_landed`），采纳、合并队列、轮询器、在托管平台上直接合并的那几条路都经过它：
 
-- 最后一步：任务关闭，`after_close` 收拾机器上的工作目录。
+- 最后一步：AI 队友写完总结后任务关闭（见上面 `closing_since`），`after_close` 收拾机器上的工作目录。例外是合并落地时，或者写总结的窗口里，AI 队友正在做递卡之后才开始的事（任务里有一轮在跑，起于这张卡递上之后；窗口里由 `landing_watch` 每一跳看一次，`task_landing.go_on_while_working`）：那件事不在这次合并里，关掉任务就把它半路打断、也没处交付，所以这次合并按「不是最后一步」走，平台叫芝士把手上的活作为下一步交付，没东西可交就自己关任务。没送出去的总结指令不再发（`delivery.agent.dispatch_pending`）。
 - 不是最后一步：任务开着，`TaskService.next_step` 把它换到一条从默认分支切出的新分支上（`task/<id>` 之后是 `task/<id>-2`、`-3`……），清掉 `pr_number`，下一步开自己的 PR；平台在任务的会话里留一条指令叫芝士接着做。叠在它旧分支上的任务由 `retarget_completed_dependencies` 改到默认分支。
 
 **一笔合并只落地一次**：`delivery_landed` 按 PR 号认，已经在 `task_landings` 里落过的那一笔直接不做。几条路看到的是同一笔合并，而任务可能早换到下一步的分支上、或者已经被重开了 —— 第二次落地会把已经走过去的任务再关一次。没有 PR 的交付（一份产物、一个网址）不写 `task_landings`，也就不受这条约束。

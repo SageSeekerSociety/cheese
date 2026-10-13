@@ -8,6 +8,15 @@ task up, and the task closes when that turn ends (`room_task.closing`). Either
 way the discussion the task came from hears what landed, and a merged PR is
 watched on the default branch for a while (`landing_watch`).
 
+A last step lands as a step after all when its AI teammate is working in the
+task on something begun after the delivery was handed over — someone asked
+for more after the card went up, and accepted it anyway. What it is doing is
+not in the delivery, and closing the task would stop it half done and leave
+it with nowhere to be delivered. So the task stays open on the next step's
+branch, and the AI teammate delivers that work as the next step. The same
+holds for a task already being written up when such work starts in it
+(`go_on_while_working`).
+
 Every path that sees a delivery merge comes through here — an accept click,
 the merge queue, the poller, a PR merged by hand — so none of them can keep
 closing a task the card said goes on, and none of them can land one merge on
@@ -23,7 +32,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say
-from app.domain.agent.harness.prompt import task_next_step_prompt, task_summary_prompt
+from app.domain.agent.harness.prompt import (
+    task_next_step_prompt,
+    task_step_landed_while_working_prompt,
+    task_summary_prompt,
+)
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.schemas import BlockOut
@@ -33,7 +46,8 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.review.landing_models import TaskLanding
-from app.domain.room_task.closing import CLOSES_TASK
+from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.room_task.closing import CLOSES_TASK, working
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
 from app.domain.thread.services import open_thread
@@ -55,8 +69,11 @@ async def delivery_landed(
     head: str | None,
     pr_number: int | None,
     completes: bool,
+    handed_over: datetime | None,
 ) -> bool:
     """``task``'s delivery merged. ``completes``: it was the task's last step.
+    ``handed_over``: when its card went up; None for a merge no card asked
+    for, where any turn running in the task is work that merge does not hold.
 
     Says whether the merge landed on the task this time: one that has already
     landed there does not land twice (`_already_landed`)."""
@@ -69,8 +86,15 @@ async def delivery_landed(
         task.delivered_head = head[:64]
     if pr_number is not None:
         await _watch(session, task, pr_number, now)
-    goes_on = not completes and task.status == TaskStatus.open
-    if goes_on:
+    still_working = (
+        completes
+        and task.status == TaskStatus.open
+        and await working(session, task.id, since=handed_over)
+    )
+    goes_on = task.status == TaskStatus.open and (not completes or still_working)
+    if still_working:
+        await _go_on(session, task)
+    elif goes_on:
         await TaskService(session).next_step(task)
         await tell_agent(
             session, task, task_next_step_prompt(title=task.title, task_id=task.id)
@@ -93,6 +117,49 @@ async def delivery_landed(
         else say("taskLandedNoPr", title=said_title(task)),
     )
     return True
+
+
+async def go_on_while_working(session: AsyncSession) -> list[Task]:
+    """Every task being written up whose AI teammate has started work in it
+    since its last delivery went up stops being written up and goes on, like
+    a last step that landed while that work was running (module docstring)."""
+    gone_on = []
+    for task in await session.scalars(
+        select(Task).where(Task.closing_since.is_not(None)).with_for_update()
+    ):
+        if await working(session, task.id, since=await _handed_over(session, task)):
+            task.closing_since = None
+            await _go_on(session, task)
+            gone_on.append(task)
+    await session.flush()
+    return gone_on
+
+
+async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
+    """When the card of the delivery ``task`` landed last went up: its latest
+    accepted card. None when no card of it was ever accepted."""
+    return await session.scalar(
+        select(AcceptCard.created_at)
+        .where(
+            AcceptCard.task_id == task.id,
+            AcceptCard.status == AcceptStatus.accepted,
+        )
+        .order_by(AcceptCard.created_at.desc())
+        .limit(1)
+    )
+
+
+async def _go_on(session: AsyncSession, task: Task) -> None:
+    """``task``'s last step landed while its AI teammate was at work on more:
+    it goes on to the next step, and its AI teammate hears so once that work's
+    turn ends. The write-up instruction, if one was given, is not sent
+    (`delivery.agent.dispatch_pending`)."""
+    await TaskService(session).next_step(task)
+    await tell_agent(
+        session,
+        task,
+        task_step_landed_while_working_prompt(title=task.title, task_id=task.id),
+    )
 
 
 async def _already_landed(

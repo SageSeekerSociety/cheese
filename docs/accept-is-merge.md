@@ -33,6 +33,11 @@ task machine.
    moves the task onto a new branch from the latest code; the last one gives
    the task's AI teammate one turn to update the task document and post a
    summary, and the task closes when that turn ends (`room_task.closing`).
+   A last step whose AI teammate is, when it lands or while it is written up,
+   working on something begun after its card went up lands as a step instead:
+   that work is not in the merge, and the next step delivers it. Nothing
+   closes a task while its AI teammate is working in it on anything but the
+   write-up; once it is idle, the task closes as above.
    The room remains active for further work.
 7. For two hours after the merge the platform watches the merge commit on the
    default branch (`review.landing_watch`): a check that fails there and passed
