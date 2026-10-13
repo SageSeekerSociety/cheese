@@ -12,7 +12,12 @@ the session — a Bash call sent to the background, a long build or test whose
 result the next turn reads (``running_commands``) — keeps an idle sandbox up
 too, but only until ``cloud_sandbox_background_cap_s`` after that activity. A
 process the agent detached itself (``nohup … &``, a dev server) is not work in
-progress and keeps nothing up. A home of no session (a room's directory from
+progress and keeps nothing up. A line that has handed its delivery over and is
+waiting on the checks the platform is watching for its card
+(``review.queries.waiting_on_checks``) is not idle either, on the same clock:
+the poller wakes its session when they finish, and the sandbox it comes back
+to should be this one rather than a new one and the documents read again. A
+home of no session (a room's directory from
 before session leases) is measured by its own activity alone. A sandbox whose
 project has run out
 of credits is destroyed as soon as its room runs no turn (``metering``), idle
@@ -57,6 +62,7 @@ from app.domain.machine import metering, sandbox_home
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
 from app.domain.machine.repositories import CloudHostRepository
+from app.domain.review.queries import waiting_on_checks
 
 logger = logging.getLogger("cheese.machine.lifecycle")
 
@@ -250,6 +256,16 @@ class SandboxLifecycle:
         since = max(home.active_at, turns[1] or home.active_at)
         if now - since < idle_for:
             return None
+        cap = timedelta(seconds=settings.cloud_sandbox_background_cap_s)
+        if now - since < cap and await self._waiting_on_checks(home):
+            # The line has handed its delivery over and is waiting on the
+            # checks the platform is watching for its card. The poller wakes
+            # its session when they finish; the sandbox it comes back to is
+            # this one instead of a rebuilt one and the documents read again.
+            # Held on the background command's clock — both are waits on
+            # something outside the machine — so a card nobody looks at again
+            # cannot keep a host for a day.
+            return None
         lease = await self._session.scalar(
             select(AgentSession.work_lease).where(AgentSession.id == home.session_id)
         )
@@ -258,7 +274,6 @@ class SandboxLifecycle:
         if until and datetime.fromisoformat(until) > now:
             # A tool call is starting it right now.
             return None
-        cap = timedelta(seconds=settings.cloud_sandbox_background_cap_s)
         if (
             lease
             and lease.get("state")
@@ -279,6 +294,29 @@ class SandboxLifecycle:
                 return None
         _asked.pop(home.id, None)
         return since
+
+    async def _waiting_on_checks(self, home) -> bool:
+        """Whether the task this home's session works in is waiting on the
+        checks the platform is watching for its card.
+
+        The conversation first, then the card: which conversation a session
+        works in is this layer's question (``agent_session``, and a task of a
+        room works in its own), and which card says CI is running is
+        ``review``'s — asked of it by task id rather than by joining across.
+        """
+        conversation = await self._session.scalar(
+            select(AgentSession.conversation_id).where(
+                AgentSession.id == home.session_id
+            )
+        )
+        await self._session.commit()
+        if conversation is None:
+            return False
+        answer = await waiting_on_checks(self._session, conversation)
+        # The read above opened a transaction; the host call or the destroy
+        # that follows must not hold it.
+        await self._session.commit()
+        return answer
 
     async def _destroy(
         self,

@@ -4,12 +4,15 @@
 期望的 state 和 reason」。断言的是行为（issue #718 的规则表），不是实现。
 """
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from app.domain.review.merge_state import (
     CheckRun,
     MergeVerdict,
     RequiredCheck,
+    checks_running,
     compute_merge_state,
     local_merge_state,
     whose_move,
@@ -643,3 +646,97 @@ class TestWhoseMove:
 
     def test_local_clean_is_the_humans_move(self):
         assert whose_move(local_merge_state(conflicts_with_trunk=False)) == "human"
+
+
+# ---- 读镜像：还在等 CI 吗（`checks_running`，环境释放判据读它）----------------
+
+_LOOKED = datetime(2026, 10, 12, 0, 0, tzinfo=UTC)
+#: 三个轮询间隔（`queries.CHECK_WATCH_TICKS` 乘 `accept_pr_poll_interval_s`）。
+_FRESH = timedelta(minutes=15)
+
+
+def _mirror(**over: object) -> dict:
+    """轮询写下的那一份镜像，六个键一个不少。"""
+    base: dict = {
+        "state": "blocked",
+        "who": "agent",
+        "reasons": [
+            {"kind": "ci_running", "checks": ["test"], "detail": "CI 正在运行：test"}
+        ],
+        "head_sha": "0" * 40,
+        "checked_at": _LOOKED.isoformat(),
+        "since": _LOOKED.isoformat(),
+    }
+    base.update(over)
+    return base
+
+
+def _at(minutes: float) -> datetime:
+    return _LOOKED + timedelta(minutes=minutes)
+
+
+def test_a_fresh_mirror_saying_ci_runs_is_waiting_on_ci():
+    assert checks_running(_mirror(), now=_at(4), fresh_for=_FRESH)
+
+
+def test_the_window_is_measured_from_when_the_poller_last_looked():
+    """边界上是还在新鲜期内（`>` 不是 `>=`）：那正是轮询该写下一次的间隔。"""
+    assert checks_running(_mirror(), now=_at(15), fresh_for=_FRESH)
+    assert not checks_running(_mirror(), now=_at(15.1), fresh_for=_FRESH)
+
+
+@pytest.mark.parametrize(
+    "mirror",
+    [
+        pytest.param(None, id="no snapshot ever taken"),
+        pytest.param(_mirror(state="clean", reasons=[]), id="nothing in the way"),
+        pytest.param(
+            _mirror(
+                reasons=[
+                    {"kind": "required_check_missing", "checks": ["test"], "detail": ""}
+                ]
+            ),
+            id="a required check that never appeared (a person's clock, not CI's)",
+        ),
+        pytest.param(
+            _mirror(
+                reasons=[{"kind": "check_failed", "checks": ["test"], "detail": ""}]
+            ),
+            id="a check that finished red",
+        ),
+        pytest.param(_mirror(checked_at=None), id="no look recorded"),
+        pytest.param(_mirror(checked_at="whenever"), id="an unreadable look"),
+        pytest.param(_mirror(reasons=None), id="reasons unreadable"),
+        pytest.param(
+            _mirror(reasons=["ci_running"]), id="a reason that is not a record"
+        ),
+        pytest.param(_mirror(checked_at=1234), id="a look recorded as a number"),
+    ],
+)
+def test_a_mirror_that_does_not_say_a_fresh_ci_is_running_is_not_waited_on(mirror):
+    assert not checks_running(mirror, now=_at(4), fresh_for=_FRESH)
+
+
+def test_a_naive_look_stamp_reads_as_utc():
+    """镜像里写的一直是带时区的 ISO（`_write_merge_mirror`），但读到一份没带
+    时区的旧值时当作 UTC，不是当作读不懂 —— 读不懂就成了「没在等」。"""
+    assert checks_running(
+        _mirror(checked_at=_LOOKED.replace(tzinfo=None).isoformat()),
+        now=_at(4),
+        fresh_for=_FRESH,
+    )
+
+
+def test_a_mirror_saying_both_ci_runs_and_a_check_is_red_is_still_waiting_on_ci():
+    """红色的注解和「在跑」可以同时在（#718：透传模式下注解只影响「谁的活」
+    标签）。有检查还在跑就是在等它。"""
+    assert checks_running(
+        _mirror(
+            reasons=[
+                {"kind": "check_failed", "checks": ["lint"], "detail": ""},
+                {"kind": "ci_running", "checks": ["test"], "detail": ""},
+            ]
+        ),
+        now=_at(4),
+        fresh_for=_FRESH,
+    )
