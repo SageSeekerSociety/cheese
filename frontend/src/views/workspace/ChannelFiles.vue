@@ -52,7 +52,10 @@ watch(
  * （AI 队友的座位只在房间名册上，项目名册上那行共用的不是它），项目名册补上不在这间
  * 房里的队友，和对话栏署名同一个出处（`agentNames`）。
  */
-const roster = useQuery(computed(() => roomMembersQuery(props.topicId)), queryClient)
+const roster = useQuery(
+  computed(() => roomMembersQuery(props.topicId)),
+  queryClient
+)
 const roomMembers = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
 const memberNames = computed<Record<string, string>>(() => ({
   ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
