@@ -47,7 +47,7 @@ def test_a_mixed_title_is_counted_by_what_it_draws():
 
 
 def test_a_title_cut_to_fit_is_cut_by_width_and_keeps_its_start():
-    assert fit_title("问卷显示条件实时生效与招募文案格式") == "问卷显示条件实时生效与招"
+    assert fit_title("仓库巡检报表自动导出与周报邮件模板") == "仓库巡检报表自动导出与周"
     # 英文按半个算，留下的字是中文的两倍。
     assert fit_title("a" * 40) == "a" * TITLE_WIDTH
     # 切口落在空格后面时，不留下这个空格。

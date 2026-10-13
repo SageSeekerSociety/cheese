@@ -490,16 +490,21 @@ async def _fitted(
     material: str,
     verdict: Verdict,
     *,
+    current: str | None,
     transport: httpx.AsyncBaseTransport | None,
     factory: "SessionFactory",
     deadline: float,
 ) -> Verdict:
-    """`verdict`, with a new title that fits the sidebar.
+    """`verdict`, with a title that fits the sidebar.
 
     A title too wide goes back to the model with its measured width, up to
     `_RETRIES` times while the naming budget lasts; what still does not fit
-    after that is cut to the width (`fit_title`). A verdict to keep the
-    current title is left alone: it writes nothing."""
+    after that is cut to the width (`fit_title`). Keeping `current`, the title
+    the task already has, counts as choosing it, so a stored title too wide
+    for the sidebar is asked about and cut the same way. On a retry, `keep`
+    means nothing better came back, and the candidate before it is cut."""
+    if verdict.keep and current is not None and not title_fits(current):
+        verdict = Verdict(keep=False, title=current)
     loop = asyncio.get_running_loop()
     messages = _conversation_with_model(material)
     for _ in range(_RETRIES):
@@ -519,8 +524,10 @@ async def _fitted(
         ]
         answer = await _ask(key, messages, transport, timeout=left)
         await _record_usage(factory, answer)
-        if answer.verdict is None or (
-            not answer.verdict.keep and answer.verdict.title is None
+        if (
+            answer.verdict is None
+            or answer.verdict.keep
+            or answer.verdict.title is None
         ):
             break  # nothing better came back; cut what we have
         verdict = answer.verdict
@@ -834,6 +841,8 @@ async def run(
                 key,
                 material,
                 answer.verdict,
+                # At the first name the task has nothing of its own to keep.
+                current=task.title if stage != "name" else None,
                 transport=transport,
                 factory=factory,
                 deadline=deadline,

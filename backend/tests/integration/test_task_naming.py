@@ -497,20 +497,20 @@ def test_a_title_too_wide_goes_back_to_the_model_with_its_width(client, alice, g
     written. The model is told how wide it was, and its shorter title is the
     one the task gets."""
     rid = _unnamed(client, alice)
-    _say(client, rid, "问卷的显示条件要实时生效，招募文案的格式也要统一")
+    _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
     gateway["answers"] += [
-        {"keep": False, "title": "问卷显示条件实时生效与招募文案格式"},
-        {"keep": False, "title": "问卷条件与招募文案"},
+        {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        {"keep": False, "title": "巡检报表与周报模板"},
     ]
 
     renamed = _run(client, rid, "message")
 
-    assert renamed is not None and renamed.title == "问卷条件与招募文案"
-    assert _shown(client, rid) == ("问卷条件与招募文案", "auto")
-    assert _history(client, rid) == [("问卷条件与招募文案", "auto", "name")]
+    assert renamed is not None and renamed.title == "巡检报表与周报模板"
+    assert _shown(client, rid) == ("巡检报表与周报模板", "auto")
+    assert _history(client, rid) == [("巡检报表与周报模板", "auto", "name")]
     assert len(gateway["asked"]) == 2
     told = gateway["asked"][1]
-    assert str(title_width("问卷显示条件实时生效与招募文案格式")) in told
+    assert str(title_width("仓库巡检报表自动导出与周报邮件模板")) in told
     assert str(TITLE_WIDTH) in told
 
 
@@ -521,16 +521,57 @@ def test_a_title_that_never_fits_is_cut_to_fit(client, alice, gateway):
     rid = _named(client, alice, gateway)
     asked = len(gateway["asked"])
     gateway["answers"] += [
-        {"keep": False, "title": "股东平价股权转让指南 Word 文档"}
+        {"keep": False, "title": "季度预算编制流程说明 Word 文档"}
     ] * 10
 
     renamed = _run(client, rid, "turn")
 
     assert renamed is not None
     assert title_fits(renamed.title)
-    assert "股东平价股权转让指南 Word 文档".startswith(renamed.title)
+    assert "季度预算编制流程说明 Word 文档".startswith(renamed.title)
     assert title_fits(_row(client, rid).title)
     assert 1 < len(gateway["asked"]) - asked <= 3
+
+
+def test_keep_on_a_retry_cuts_the_title_it_was_asked_about(client, alice, gateway):
+    """Answering `keep` when asked for something shorter means nothing better
+    came back: the task is still named, with the too-wide title cut to fit."""
+    rid = _unnamed(client, alice)
+    _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
+    gateway["answers"] += [
+        {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        {"keep": True, "title": "仓库巡检报表自动导出与周报邮件模板"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and renamed.title == "仓库巡检报表自动导出与周"
+    assert _shown(client, rid) == ("仓库巡检报表自动导出与周", "auto")
+    assert len(gateway["asked"]) == 2
+
+
+def test_keeping_a_stored_title_too_wide_does_not_leave_it_too_wide(
+    client, alice, gateway
+):
+    """A title stored before the width was checked is not kept as it is: the
+    model is asked for a shorter one, and when it keeps answering `keep` the
+    stored title is cut to fit."""
+    rid = _named(client, alice, gateway)
+    _set(client, rid, title="季度预算编制流程说明 Word 文档")
+    asked = len(gateway["asked"])
+    gateway["answers"] += [
+        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
+        {"keep": True, "title": "季度预算编制流程说明 Word 文档"},
+    ]
+
+    renamed = _run(client, rid, "turn")
+
+    assert renamed is not None
+    assert renamed.previous == "季度预算编制流程说明 Word 文档"
+    assert renamed.title == "季度预算编制流程说明 Wor"
+    assert _row(client, rid).title == "季度预算编制流程说明 Wor"
+    assert len(gateway["asked"]) - asked == 2
+    assert str(title_width("季度预算编制流程说明 Word 文档")) in gateway["asked"][-1]
 
 
 def test_asking_again_stays_inside_the_naming_timeout(
@@ -540,10 +581,10 @@ def test_asking_again_stays_inside_the_naming_timeout(
     little left it is not started, and the title is cut instead."""
     monkeypatch.setattr(settings, "topic_naming_timeout_seconds", 1.0)
     rid = _unnamed(client, alice)
-    _say(client, rid, "问卷的显示条件要实时生效，招募文案的格式也要统一")
+    _say(client, rid, "仓库巡检报表要能自动导出，周报邮件的模板也要统一")
     gateway["answers"] += [
-        {"keep": False, "title": "问卷显示条件实时生效与招募文案格式"},
-        {"keep": False, "title": "问卷条件与招募文案"},
+        {"keep": False, "title": "仓库巡检报表自动导出与周报邮件模板"},
+        {"keep": False, "title": "巡检报表与周报模板"},
     ]
 
     renamed = _run(client, rid, "message")
