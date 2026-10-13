@@ -4,8 +4,9 @@ import uuid
 from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
@@ -24,7 +25,7 @@ from app.domain.room_task.models import (
     TaskTitleSource,
 )
 from app.domain.room_task.repositories import TaskRepository
-from app.domain.topic.models import Topic, TopicStatus
+from app.domain.topic.models import Topic, TopicReadState, TopicStatus
 from app.domain.user.services import user_by_handle
 
 
@@ -251,6 +252,74 @@ class TaskService:
     async def underway_with(self, room_ids: list[uuid.UUID], person: str) -> list[Task]:
         """The tasks underway in these rooms that ``person`` owns or helps on."""
         return await self._repo.underway_with(room_ids, person)
+
+    async def unseen_deliveries(
+        self, room_ids: list[uuid.UUID], person: str
+    ) -> set[uuid.UUID]:
+        """Which of these rooms hold a delivery ``person`` has not opened since:
+        the delivered task's conversation id and its room's, both in the set.
+
+        哪几件活「交付完了、而这个人从那以后还没点开看过」：那件活自己的交谈 id，
+        和它所在的房间 id，两个都在返回的这一堆里 —— 侧栏的灯问的就是这两种行
+        （`TopicOut.unseen_delivery` / `RoomTask.unseen_delivery`）。
+
+        交付完了 = 卡片被采纳过（`accepted_at`）。「点开看过」认这个人在这段对话上
+        的已读位那一行动没动过：点开会推已读位，那一行跟着写一次时间
+        （`TopicRepository.mark_read_many` 每次都把 `updated_at` 写成当下），所以它
+        最后被动过的时刻就是最后点开的时刻。
+
+        频道要问的是「我在这间房里看过没有」，不只「我看过那件活没有」——点开频道
+        这个动作落在房间的已读位上，点开那件活落在活自己的已读位上，两个都算看过。
+        所以取两个时刻里晚的那个（`greatest` 在 Postgres 里跳过 NULL，全空才是
+        空）。两处都没有 = 从来没点开过，那也是没看过。
+
+        只算这个人自己参与的活（负责人或协作者，`TaskRepository.takes_part`）：一
+        件与他无关的活交付了，不该在他的侧栏上亮灯 —— 和 `unread_counts` 给任务算
+        未读是同一条规矩。
+
+        这条查询读的是另一个域的表（已读位是 topic 域的），所以它在服务层：这个域
+        已经在读 `topic.models` 的那几个模块（`checkouts` / `place` / `presentation`
+        / `services`）在契约上都冻结过，仓库那一层再加一个进口就是新债。
+        """
+        if not room_ids:
+            return set()
+        task_read = aliased(TopicReadState)
+        room_read = aliased(TopicReadState)
+        stmt = (
+            select(
+                Task.id,
+                Task.room_id,
+                Task.accepted_at,
+                func.greatest(task_read.updated_at, room_read.updated_at),
+            )
+            .outerjoin(
+                task_read,
+                and_(
+                    task_read.topic_id == Task.id,
+                    task_read.user_handle == person,
+                ),
+            )
+            .outerjoin(
+                room_read,
+                and_(
+                    room_read.topic_id == Task.room_id,
+                    room_read.user_handle == person,
+                ),
+            )
+            .where(
+                Task.room_id.in_(room_ids),
+                Task.accepted_at.is_not(None),
+                TaskRepository.takes_part(person),
+            )
+        )
+        unseen: set[uuid.UUID] = set()
+        for task_id, room_id, accepted_at, looked_at in (
+            await self._session.execute(stmt)
+        ).all():
+            if looked_at is None or accepted_at > looked_at:
+                unseen.add(task_id)
+                unseen.add(room_id)
+        return unseen
 
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.

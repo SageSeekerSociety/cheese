@@ -11,8 +11,9 @@
 # _actor_in_place 与 _parse_moment 现在是那边的函数（下文两处 actor.topic /
 # address.reader 的口径随之改写），routes/topics.py 也不再转发 Block / BlockKind /
 # BlockOut / BlockRepository / ProjectRepository / UsageRepository——各 topics_*
-# 改从 app/api/topics_deps.py 取，routes/topics_rows.py 随 TopicRow / CardRow 两个
-# 行协议搬走而删除。没有 cite 指向上面这几个文件，例外只涉及这两处文字口径。
+# 改从 app/api/topics_deps.py 取。TopicRow / CardRow 两个行协议不在那一批里：#3545
+# 把 routes/topics_rows.py 整个挪成了 app/api/topics_rows.py，topics.py 改从那里取。
+# 没有 cite 指向上面这几个文件，例外只涉及这两处文字口径。
 # 上面这份快照之后的漂移不在这条例外之内，其余行号维持快照口径。
 # Addresses cover the real regenerated profiled snapshot in scripts/route_index.json.
 # Each address is explicit. Catalog ids only share explanatory text; the app never reads this sidecar.

@@ -23,6 +23,8 @@ from app.domain.agent.realtime.broker import get_broker
 
 @event.listens_for(Session, "after_commit")
 def _show_committed_notices(session: Session) -> None:
+    if session.in_nested_transaction():
+        return  # a savepoint was released; the session has not committed
     rows: set[uuid.UUID] = set()
     for channel, frame in session.info.pop(SHOW_ONCE_COMMITTED, ()):
         spawn(get_broker().publish(channel, frame), name="notice live")
