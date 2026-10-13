@@ -11,7 +11,8 @@
 补跳是另一件事，走的是另一条路（`catchup.summon`，只管点名，不管起轮），由调用方
 传进来。判完先点名、再记：这样记录里能带上「这一遍点了谁」。反过来不成立 —— 已经
 记过的那一次不再改写记录，所以「第一遍点了谁」不会因为后来补上了而更新，那一次的
-补跳本身在那条线上看得到。
+补跳本身在那条线上看得到。补跳出错只吞掉补跳（`_call_summon`）：判和记是这一层的，
+不该因为别人那一半坏了而整遍没有。
 
 判据只从库里读两样：那一拍最近一次真的来的时刻，和现在。中间不碰「有没有开始跑」
 「有没有人在处理」这类别的信号 —— 那些正是断掉的那一环说不出来的东西。
@@ -80,10 +81,31 @@ async def watch(
             continue
         # 先点名、再记：记录里要带上这一遍点了谁。已经记过的那一次不再改写记录，
         # 所以后面几遍补上了也不回头改它 —— 补跳本身在 #1343 那条线上看得到。
-        seat = await summon(beat, ticking, since, at) if summon is not None else None
+        #
+        # 补跳抛错不带上判据：判是这一层的事，记是这一层的事，补是别人的事。补的那
+        # 一半出错（库抖了、座位解析不出来），这一拍该记的那一条照样记，后面几拍也
+        # 照样判 —— 否则一个补跳的毛病会让整个观察者哑掉，而它哑掉本身没人看得见。
+        seat = await _call_summon(summon, beat, ticking, since, at)
         if await _note(sessions, beat, ticking, at, since, seat):
             noted += 1
     return {"stalled": noted} if noted else {}
+
+
+async def _call_summon(
+    summon: Summon | None,
+    beat: Beat,
+    ticking: Ticking,
+    since: timedelta,
+    at: datetime,
+) -> str | None:
+    """点名补跳，失败只记日志、返回「这一遍没点名」。"""
+    if summon is None:
+        return None
+    try:
+        return await summon(beat, ticking, since, at)
+    except Exception:  # noqa: BLE001 — 补跳的错不该带走这一遍的判据
+        logger.exception("wake watch: %s 补跳这一步出错，这一遍只判不补", beat.name)
+        return None
 
 
 async def _last_beat(sessions: SessionFactory, beat: Beat) -> Ticking | None:

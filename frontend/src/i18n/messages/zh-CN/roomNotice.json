@@ -402,7 +402,7 @@
   "turnWedgedDetail": "已完成的改动都在工作区里。平台不会自动重试，因为重试会回到刚刚出问题的环境。检查过后可以重试，会从中断处继续。",
   "wakeWatchStalled": "【该发没发】{beat}：{minutes} 分钟没有新的一拍",
   "wakeWatchCatchUp": "【补跳】平台侧观察者：{beat}停摆 {minutes} 分钟",
-  "wakeWatchCatchUpHow": "按资料库《总调度看门狗：脚本与重挂步骤》那一份做，把定时器和看门狗重新起起来。",
+  "wakeWatchCatchUpHow": "按资料库《{title}》那一份做，把定时器和看门狗重新起起来。",
   "wakeWatchBeatTimer": "总调度定时器",
   "wakeWatchBeatWatchdog": "看门狗心跳",
   "labelWakeWatchDetail": "这次判停摆的依据",

@@ -15,13 +15,16 @@ chat 和 runner —— 判的人不碰「它跑起来没有」，那一问归投
   一遍，看多少遍、进程重启多少次，账上都只有一条。
 - **座位上还有没处理完的输入就不补。** 那个座位这一遍收不下新的一条：平台的入场闸本来
   就会把它挂住（`delivery/input_holds.py` 的 `seat_has_unfinished_input`，也是
-  `agent/pending_messages.py` 和 `agent/initial_admission.py` 用的同一句话），而挂住的
-  投递会一直重试到放弃，还会在那条对话里留一行「没能起来」。这一遍不记，下一遍再看 ——
-  停摆还在，判的还是同一次，去重键也没变。
+  `agent/pending_messages.py` 和 `agent/initial_admission.py` 用的同一句话），挂住的投递
+  会一直重试到放弃，最后只落成账本上一行 `failed` 和一条给平台的超时告警
+  （`delivery/overdue.py`）—— 这一条是平台的指令（`ROOM_NOTICE`），放弃时不往那条线上
+  说话（`delivery/timer.py` 的 `give_up_stale` 只替人的消息说），于是没人会知道这一跳
+  没补成。这一遍不记，下一遍再看 —— 停摆还在，判的还是同一次，去重键也没变。
 - **不替工作机上那两个循环说话。** 它只点名、只说照重挂步骤做，不从平台这一侧重发那一
   拍，也不重复看门狗自己那句提醒（`【看门狗】你的定时器停了`）。重挂步骤本身也不抄一份
   进仓库：资料库《总调度看门狗：脚本与重挂步骤》那份是源，抄一份迟早两边分叉，这里只
-  指过去。
+  指过去 —— 那句话里的文档名是 `REHANG_DOC` 这个参数，不是写死在句子里：它是那份文档
+  的标题，跟着文档走，不是平台的界面文案。
 
 心跳停摆和定时器停摆点的是同一个座位：重挂那一块本来就是两个脚本一起起（同一份步骤里
 `ps` 数的是两个进程），能重挂的是这条线上坐着的人。所以两拍共用这一个入口，不各写一份。
@@ -59,6 +62,11 @@ logger = logging.getLogger(__name__)
 #: 任务的 id 就是它自己那条对话（`delivery.agent.record_task_instruction` 里写给
 #: 任务的话用的就是它），所以这一条既是对话也是任务行。
 LINE: Final = beats.TIMER.conversation_id
+
+#: 重挂该照哪份做。参数，不是句子的一部分：它是资料库里那份文档的标题，人随时可能
+#: 改名，改名不该要求改代码、更不该让英文界面显示一个中文书名（`docs/i18n.md` 第 5 节
+#: 的「英文无中文」没有例外）。所以句子只留一个 `{title}`，标题由这里传进去。
+REHANG_DOC: Final = "总调度看门狗：脚本与重挂步骤"
 
 
 async def summon(
@@ -132,7 +140,11 @@ async def summon(
                 type=NotificationType.ROOM_NOTICE,
                 payload={
                     "projectId": str(project.id),
-                    "topicId": str(LINE),
+                    # `topicId` 是房间，`conversation_id` 才是这条线自己的对话 ——
+                    # 别的生产者都是这么填的（`review/task_landing.py`、
+                    # `api/task_instructions.py`），读它的人也是照房间读的
+                    # （`notification/push.py` 拼的是房间链接）。
+                    "topicId": str(room.id),
                     "eventType": EVENT_WAKE_MISSED,
                     "severity": SEVERITY_WARN,
                 },
@@ -162,6 +174,6 @@ def _words(beat: Beat, ticking: Ticking, at: datetime, minutes: int) -> str:
         [
             str(say("wakeWatchCatchUp", beat=say(beat.label), minutes=minutes)),
             evidence(beat, ticking, at, minutes),
-            str(say("wakeWatchCatchUpHow")),
+            str(say("wakeWatchCatchUpHow", title=REHANG_DOC)),
         ]
     )

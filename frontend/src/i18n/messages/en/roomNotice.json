@@ -402,7 +402,7 @@
   "turnWedgedDetail": "Finished changes are all in the workspace. The platform will not retry on its own, because a retry would go back to the environment that just failed. Once someone has checked it, you can retry and it will pick up where it stopped.",
   "wakeWatchStalled": "Missed beat: {beat} went quiet for {minutes} minutes",
   "wakeWatchCatchUp": "Missed-beat catch-up, from the platform-side observer: {beat} went quiet for {minutes} minutes",
-  "wakeWatchCatchUpHow": "Follow the library's \"总调度看门狗：脚本与重挂步骤\" and restart the timer and the watchdog.",
+  "wakeWatchCatchUpHow": "Follow the library's \"{title}\" and restart the timer and the watchdog.",
   "wakeWatchBeatTimer": "the dispatcher timer",
   "wakeWatchBeatWatchdog": "the watchdog heartbeat",
   "labelWakeWatchDetail": "How this was judged",

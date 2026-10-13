@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.domain.agent.platform_notices import EVENT_WAKE_MISSED
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.models import Delivery, NativeInput
@@ -19,7 +20,7 @@ from app.domain.delivery.timer import deliver_due
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.run_record.models import RunRecord
 from app.domain.topic.models import Topic
-from app.domain.wake_watch import catchup
+from app.domain.wake_watch import beats, catchup
 from app.domain.wake_watch.beats import Beat, stall_record_id
 from app.domain.wake_watch.observe import watch
 from tests.integration.test_same_handle_note_and_timed_delivery import (
@@ -116,16 +117,28 @@ class _Line:
             )
         )
 
-    def deliveries(self) -> list[Delivery]:
+    def deliveries(self, on: uuid.UUID | None = None) -> list[Delivery]:
+        """这条线上记下的投递。
+
+        默认只捞落在这条线自己那段对话上的（也就是该落的地方）。要看它有没有落错
+        地方，就传别处（比如它所在的房间）去捞 —— 传了才知道落对没有，不传的话
+        「都落在 `task_id` 上」是这句 where 自己保证的，证不了什么。
+        """
+        where = self.task_id if on is None else on
+
         async def read() -> list[Delivery]:
             async with self.client.test_factory() as session:
                 return list(
                     await session.scalars(
-                        select(Delivery).where(Delivery.conversation_id == self.task_id)
+                        select(Delivery).where(Delivery.conversation_id == where)
                     )
                 )
 
         return self.client.portal.call(read)
+
+    @property
+    def room_id(self) -> uuid.UUID:
+        return uuid.UUID(self.room)
 
     def record(self) -> dict:
         async def read() -> dict:
@@ -188,7 +201,44 @@ def test_a_stalled_beat_is_handed_to_the_seat_on_that_line(client, line):
 
 
 def test_the_catch_up_carries_the_dedup_key_of_its_stall(client, line):
-    """去重键按停摆窗口算：巡检看多少遍，账上只有一条。"""
+    """去重键按停摆窗口算：巡检看多少遍，账上只有一条。
+
+    两遍都补同一个座位时，账本上那个唯一索引也拦得住，所以「看两遍只有一条」证明
+    不了这一层还查了一次事件 id。这里把那次查询单独试出来：同一场停摆，账上已经
+    有一条补给了**别人**的（座位在中途换了就是这个样子），这一遍不该再补一条 ——
+    那一刻在场的是谁就叫谁，叫过了就不再叫第二个。
+    """
+    _stalled(line)
+    window = stall_record_id(line.beat, AT)
+
+    async def someone_answered_it() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                Delivery(
+                    event_id=window,
+                    recipient_handle="cheese-someone-else",
+                    conversation_id=line.task_id,
+                    dedup_key=f"{window}:cheese-someone-else",
+                    type="ROOM_NOTICE",
+                    payload={},
+                    event_at=AT,
+                    recorded_at=AT,
+                )
+            )
+            await session.commit()
+
+    client.portal.call(someone_answered_it)
+
+    line.look(STALLED)
+
+    # 只补过一条，而且是原来那条；这一遍一条都没添。
+    (only,) = line.deliveries()
+    assert only.recipient_handle == "cheese-someone-else"
+    assert "catch_up_seat" not in line.record()
+
+
+def test_the_catch_up_carries_the_windows_dedup_key(client, line):
+    """补出来的那一条，去重键就是「这次停摆 + 这个座位」。"""
     _stalled(line)
     window = stall_record_id(line.beat, AT)
 
@@ -271,8 +321,8 @@ def test_a_closed_line_is_not_called(client, line):
 def test_a_seat_that_is_still_working_is_left_alone(client, line):
     """座位上还有没处理完的输入：这一遍不补，等它空出来再看。
 
-    硬塞进去的那一条会被入场闸挂住，一路重试到放弃，最后在那条线上留一行「没能起
-    来」。停摆还在，判的还是同一次，等下一遍不损失什么。
+    硬塞进去的那一条会被入场闸挂住，一路重试到放弃，最后只落成账本上一行 failed。
+    停摆还在，判的还是同一次，等下一遍不损失什么。
     """
     _stalled(line)
 
@@ -308,7 +358,11 @@ def test_the_judgement_still_records_when_the_catch_up_is_off(client, line):
 
 
 def test_the_catch_up_points_at_the_lines_own_conversation(client, line):
-    """补跳落在那条线自己的对话里，不是它所在的房间。"""
+    """补跳落在那条线自己的对话里，不是它所在的房间。
+
+    落到房间上是这条路上最像样的错法：叫起来的是同一个座位，但它手里的上下文是
+    另一条线。所以两边都捞一遍 —— 捞得到的那个才是它落的地方。
+    """
     _stalled(line)
 
     async def room_of_the_line() -> uuid.UUID:
@@ -316,5 +370,108 @@ def test_the_catch_up_points_at_the_lines_own_conversation(client, line):
             task = await session.get(Task, line.task_id)
             return (await session.get(Topic, task.room_id)).id
 
-    assert line.task_id != client.portal.call(room_of_the_line)
-    assert all(row.conversation_id == line.task_id for row in line.deliveries())
+    room = client.portal.call(room_of_the_line)
+    assert line.task_id != room, "这一条测不出东西：线和房间是同一个"
+
+    line.look(STALLED)
+
+    assert len(line.deliveries()) == 1
+    assert line.deliveries(on=room) == []
+
+
+def test_the_delivery_says_which_room_it_is_about(client, line):
+    """投递上的 `topicId` 是房间，不是这条线自己的对话。
+
+    别的生产者都是这么填的（`topic_landing`、`api/task_instructions`），读它的人
+    也照房间读（推送拼的是房间链接）。这里填成任务 id，就是一个没人查得出来的、
+    和别处不一样的 id。
+    """
+    _stalled(line)
+
+    line.look(STALLED)
+
+    (delivery,) = line.deliveries()
+    assert delivery.payload["topicId"] == str(line.room_id)
+
+
+def test_the_shipped_line_is_the_timer_beat_of_the_dispatcher_line():
+    """线上的那条线就是定时器那一拍所在的对话。
+
+    这一条把补跳指向哪里钉死在真常量上：测试里那条线是造出来的，所以它答不出
+    「真的会不会补对人」。真常量写错（房间 id、标记），这条会红。
+    """
+    assert catchup.LINE == beats.TIMER.conversation_id
+    assert beats.TIMER in beats.WATCHED
+    assert beats.HEARTBEAT in beats.WATCHED
+    assert beats.TIMER.marker and not beats.TIMER.stamp_in_content
+    assert beats.HEARTBEAT.marker_first and beats.HEARTBEAT.stamp_in_content
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_the_wiring_reads_the_flag(monkeypatch, enabled):
+    """开关真被接线读了：开着才把补跳接上，关着传 None。
+
+    单独的 `summon` 测得到补跳本身，测不到「它有没有被接上去」—— 接线那一行写
+    成 `summon = None`，只测 `summon` 的那一组一条都不会红。
+    """
+    from app.core.background import PeriodicJobs
+    from app.domain.wake_watch import observe as observe_module
+    from app.domain.wake_watch import periodic as periodic_module
+
+    monkeypatch.setattr(settings, "wake_watch_catchup", enabled)
+    seen: dict = {}
+
+    async def fake_watch(sessions, *, now=None, watched=None, summon=None):
+        seen["summon"] = summon
+        return {}
+
+    monkeypatch.setattr(observe_module, "watch", fake_watch)
+    jobs = PeriodicJobs()
+    periodic_module.register_periodic_jobs(jobs, sessions=lambda: None)
+
+    client_loop = __import__("asyncio").new_event_loop()
+    try:
+        client_loop.run_until_complete(jobs.ordered(["wake watch"])[0]._job())
+    finally:
+        client_loop.close()
+
+    assert (seen["summon"] is not None) is enabled
+
+
+def test_a_judged_stall_is_still_recorded_when_the_catch_up_raises(client, line):
+    """补跳那一步抛错，这一遍的判据照记，后面几拍也照样判。
+
+    补跳碰库、解析座位，比判据多好几处会出错的地方。它出错时把整遍带走的话，观察
+    者自己就哑了 —— 而它哑掉这件事，没有任何别的东西在看。
+    """
+    _stalled(line)
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("补跳这一半坏了")
+
+    assert client.portal.call(
+        functools.partial(
+            watch,
+            client.test_request_factory,
+            now=STALLED,
+            watched=(line.beat,),
+            summon=boom,
+        )
+    ) == {"stalled": 1}
+    assert line.record()["stalled_minutes"] == 61
+    assert "catch_up_seat" not in line.record()
+    assert line.deliveries() == []
+
+
+def test_the_catch_up_records_the_moment_the_stall_became_true(client, line):
+    """投递上的时刻是「判出停摆的那一刻」，不是这一遍看它的时刻。
+
+    这一笔是补一笔早就该发生的事：按巡检这一遍的时刻记，事后对时间线时，它会比真实
+    那一次晚一整个巡检周期（甚至更多）。
+    """
+    _stalled(line)
+
+    line.look(STALLED + timedelta(hours=3))
+
+    (delivery,) = line.deliveries()
+    assert delivery.event_at == AT + line.beat.stall_after
