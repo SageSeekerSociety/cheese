@@ -410,7 +410,14 @@ async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factor
             assert "blocks.created_at >" in sql, sql
             plan = await _generic_plan(conn, "probe_spoke", sql, params)
             assert "Seq Scan on blocks" not in plan, plan
-            assert "created_at >" in plan, plan
+            # The bound has to be something the index cuts on, not a `Filter:`
+            # the scan throws rows away with afterwards. A plan that only cuts
+            # on the conversation and filters on the time passes a bare
+            # `"created_at >" in plan` while reading the place's whole run.
+            cuts_on_the_bound = re.search(
+                r"(Index Cond|Recheck Cond):[^\n]*created_at >", plan
+            )
+            assert cuts_on_the_bound, plan
         # One read for who answered and one for the agent that asked, both of
         # them bounded — a batch of places still asks both questions.
         assert bounded == 2, seen
