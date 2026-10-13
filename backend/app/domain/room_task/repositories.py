@@ -338,7 +338,9 @@ class TaskRepository:
         row = (await self._session.execute(stmt)).one()
         return dict(zip(("all", "mine", "helping", "others"), row, strict=True))
 
-    async def brief_for_projects(self, project_ids: list[uuid.UUID]) -> list[Row]:
+    async def brief_for_projects(
+        self, project_ids: list[uuid.UUID], *, open_only: bool = False
+    ) -> list[Row]:
         """跨若干项目的活，只取判「这件事可能点到谁」要用的那几列。
 
         「待我处理」问的是我能看见的全部项目，但它只显示点到我的那些行 —— 而一条
@@ -355,6 +357,13 @@ class TaskRepository:
 
         收出来的**只是候选**（题问到谁那一笔要多查一步，见调用点），所以只多不少；
         真正算数的还是 `delivery.addressing` 那份判据。
+
+        ``open_only`` 再收一次：判据只对还开着的活跑，关了的活下一步在平台手上，
+        永远点不到任何人（`delivery.addressing.address`），所以对它们要的只是「这条
+        对话在哪个频道」那一个映射 —— 那一笔由调用点单独按 id 去认（见
+        `awaiting.waiting_items`），不必把整行的钱先付了。dev 2026-10-12：一个项目
+        有史以来派出去的活十之九都关了（1437 条里 1355 条），开着的一屏只有一百来
+        条；本机 13 个项目实测，这一笔从 10.9ms 降到 1ms 上下。
         """
         if not project_ids:
             return []
@@ -370,6 +379,8 @@ class TaskRepository:
             .where(Task.project_id.in_(project_ids))
             .order_by(Task.created_at, Task.id)
         )
+        if open_only:
+            stmt = stmt.where(Task.status == TaskStatus.open)
         return list((await self._session.execute(stmt)).all())
 
     async def list_open(self) -> list[Task]:

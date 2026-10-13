@@ -328,6 +328,52 @@ async def test_questions_and_waits_come_back_and_each_read_uses_its_index(
 
 
 @pytest.mark.anyio
+async def test_the_speaking_again_reads_do_not_reach_past_the_question(db_factory):
+    """`_awaiting_an_answer` asks, for each place, whether anyone spoke after the
+    question it is still holding. Anything older than **the oldest** question in
+    the batch cannot change that answer, so the two reads that ask it must carry
+    that bound — without one they bring back every message of every place and
+    group them, which on dev is 80k blocks over 426 places for an answer that
+    was almost always "nobody" (2026-10-12: 89ms, twice per `/awaiting-me`
+    before the two calls were merged).
+
+    The bound is what lets the reads walk an index keyed on (conversation_id,
+    created_at) instead of the place's whole run. Both halves are asserted — the
+    predicate is in the SQL, and the plan reads through an index on both of
+    those rather than scanning the blocks of every place. Which of the two
+    conversation-scoped indexes the planner takes is its business (at fixture
+    size it takes `ix_blocks_conversation_kind_created`, which also covers it);
+    what must hold is that the time bound is part of what the scan cuts on.
+    """
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        rooms, tasks = seeded["rooms"], seeded["tasks"]
+        ids = [*(room.id for room in rooms.values()), *(t.id for t in tasks.values())]
+        # Every path is still open to the planner; this only makes reading the
+        # whole table the last resort, so the plan says whether the index was
+        # usable at all rather than whether it was cheapest today.
+        await session.execute(text("SET LOCAL enable_seqscan = off"))
+        with statements(session) as seen:
+            asked = await BlockRepository(session).awaiting_an_answer(ids)
+        assert asked == {rooms["asks"].id: "u1", tasks["asks"].id: "u1"}
+
+        conn = await session.connection()
+        bounded = 0
+        for sql, params in seen:
+            if "max(blocks.created_at)" not in sql:
+                continue
+            bounded += 1
+            assert "blocks.created_at >" in sql, sql
+            plan = await _generic_plan(conn, "probe_spoke", sql, params)
+            assert "Seq Scan on blocks" not in plan, plan
+            assert "created_at >" in plan, plan
+        # One read for who answered and one for the agent that asked, both of
+        # them bounded — a batch of places still asks both questions.
+        assert bounded == 2, seen
+        await session.rollback()
+
+
+@pytest.mark.anyio
 async def test_a_stuck_card_waits_on_the_agent_and_neither_read_scans_every_block(
     db_factory,
 ):
