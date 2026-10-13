@@ -73,6 +73,7 @@ def sources():
         name: (directory / name).read_text()
         for name in (
             "client.py",
+            "send_user_file.py",
             "shell_stop.py",
             # Windows' locks, process trees and detached starts, which the two
             # above load from beside them there.

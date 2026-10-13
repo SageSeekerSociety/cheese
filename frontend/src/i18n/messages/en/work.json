@@ -496,7 +496,7 @@
       "emptyCarried": "This teammate carries nothing yet.",
       "full": "A teammate carries at most {max} — drop one first.",
       "managerOnly": "Only a project manager can change a teammate's skills.",
-      "stale": "Someone else just changed this teammate, so it was re-read. Try again",
+      "stale": "Someone else just changed this teammate",
       "editingBy": "{name} is editing this teammate. Try again once they're done",
       "editingBlocked": "Someone is editing this teammate. Try again once they're done",
       "from": {
