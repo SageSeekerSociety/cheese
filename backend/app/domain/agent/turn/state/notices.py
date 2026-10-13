@@ -2,6 +2,7 @@
 
 from app.core.obs import scrub_secrets
 from app.core.sentences import NoticeText, say
+from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
     SESSION_START_CODES,
     classify_platform_failure,
@@ -63,6 +64,10 @@ def _turn_failure_notice(
             return line, _with_log(failure.meta, log)
         return failure.content, _with_log(failure.meta, log)
     detail = (text or "").strip()
+    if not _is_out_of_credit(detail) and (said := cli_notice(scrub_secrets(detail))):
+        # Claude Code's own one-line refusal ("API Error: ..."): the same card
+        # it gets when it is printed as a reply, whose line names the cause.
+        return said
     if _is_out_of_credit(detail):
         # A spent balance is not a wait — no amount of retrying refills it, and
         # telling someone to try again later sends them into a loop that cannot
