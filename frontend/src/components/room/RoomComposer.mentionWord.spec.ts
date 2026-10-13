@@ -26,12 +26,12 @@ import { setLocale } from '@/i18n'
 
 const CHEESE_SEAT = { handle: 'cheese-topica', label: '芝士' }
 const POOL = [
-  { handle: 'andy', label: 'Andy Li', avatar: null, agent: false },
+  { handle: 'mila', label: 'Mila Wu', avatar: null, agent: false },
   { handle: CHEESE_SEAT.handle, label: CHEESE_SEAT.label, avatar: null, agent: true },
 ]
 
-// 「请 @Andy Li 看看」：提及占 [2, 10)，后面跟一个空格。
-const TEXT = '请 @Andy Li 看看'
+// 「请 @Mila Wu 看看」：提及占 [2, 10)，后面跟一个空格。
+const TEXT = '请 @Mila Wu 看看'
 const AT = 2
 const END = 10
 
@@ -101,7 +101,7 @@ describe('Ctrl+←/→（Windows、Linux）把 @ 某某 当一个词', () => {
     box.setSelectionRange(AT, AT)
     expect(await wordStep(box, 'ArrowRight', { ctrlKey: true }, [AT + 1, AT + 1])).toEqual([END, END])
     box.setSelectionRange(AT, AT)
-    // 名字里有空格：浏览器停在「Andy」后面，那也还在提及里。
+    // 名字里有空格：浏览器停在「Mila」后面，那也还在提及里。
     expect(await wordStep(box, 'ArrowRight', { ctrlKey: true }, [AT + 5, AT + 5])).toEqual([END, END])
   })
 

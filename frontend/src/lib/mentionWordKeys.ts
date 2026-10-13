@@ -1,7 +1,7 @@
 /** 按词跳、按词选、按词删时，正文里的一个 `@某某` 算一个词。
  *
  * 草稿里的 `@` 只是一段普通文字（发出去那一刻才展开成 `<@handle>`），所以浏览器按
- * 自己的分词走：`@` 和后面的名字是两站，名字里有空格（`@Andy Li`）还会再多一站。
+ * 自己的分词走：`@` 和后面的名字是两站，名字里有空格（`@Mila Wu`）还会再多一站。
  * 浏览器不认识「提及」，这件事只能由输入框自己接。
  *
  * 跳和选**不替浏览器算下一站在哪**：各平台的按词规则（macOS 停在词尾、Windows 停在
@@ -32,7 +32,7 @@ const INLINE_SPACE = /[^\S\n]/
 
 /** 处理一次 keydown。不是按词的键就什么都不做；从不 preventDefault。 */
 export function mentionWordKey(e: KeyboardEvent, spansOf: (text: string) => TextSpan[]): void {
-  if (e.isComposing || !isWordKey(e)) return
+  if (e.isComposing || e.keyCode === 229 || !isWordKey(e)) return
   const box = e.target
   if (!(box instanceof HTMLTextAreaElement)) return
   if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
