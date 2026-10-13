@@ -341,12 +341,15 @@ def verify_access_token(token: str) -> AccessClaims | None:
         sid = uuid.UUID(decoded["sid"]) if decoded.get("sid") else None
     except (TypeError, ValueError):
         return None
-    handle = decoded.get("handle")
-    names_a_handle = isinstance(handle, str) and bool(handle)
+    stated = decoded.get("handle")
+    if isinstance(stated, str) and stated:
+        name, handle_from_claim = stated, True
+    else:
+        name, handle_from_claim = sub, False
     return AccessClaims(
         user_id=int(sub) if sub.isdigit() else None,
-        handle=handle if names_a_handle else sub,
-        handle_from_claim=names_a_handle,
+        handle=name,
+        handle_from_claim=handle_from_claim,
         sid=sid,
     )
 
