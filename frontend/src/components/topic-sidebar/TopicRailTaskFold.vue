@@ -40,7 +40,7 @@ const title = computed(() => t(props.collapsed ? 'work.sidebar.expandTasks' : 'w
     </span>
     <button
       type="button"
-      class="row-slot task-fold__btn"
+      class="task-fold__btn"
       :class="{ 'task-fold__btn--collapsed': collapsed, 'tap-target': page }"
       :title="title"
       :aria-expanded="!collapsed"
@@ -76,8 +76,9 @@ const title = computed(() => t(props.collapsed ? 'work.sidebar.expandTasks' : 'w
 }
 /* 和左边那个子话题开关同一条理由：不给底色 hover，那行底色有三档（静默 / hover /
    选中），任何一个固定的底色 token 都会在其中某一档上糊掉。改成图标本身变深。 */
-/* 尺寸自己给：`row-slot` 那条规则带 TopicRailRow 的作用域，套不进子组件里，
-   少了它这颗按钮就只剩图标那么大（15px），比旁边那个子话题开关小一圈。
+/* 尺寸自己给，且故意不叫 `row-slot`：那个类名在频道行、根行几个组件里各写各的
+   scoped 规则，作用域套不进子组件，挂上它只会看着像有盒子（实测那颗按钮就只剩
+   图标那么大，15px，比旁边那个子话题开关小一圈）。
    position 是给下面 tap-target 的伪元素当基准的。 */
 .task-fold__btn {
   position: relative;
