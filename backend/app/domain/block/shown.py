@@ -9,6 +9,7 @@
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,3 +43,36 @@ async def add_shown_block(
         refs=[path],
     )
     return BlockOut.model_validate(block)
+
+
+#: How long a second `cheese show` of the same, unchanged file counts as a repeat
+#: of the card already in the conversation rather than a new showing. A file
+#: shown twice seconds apart (once from the task directory, once from the room's)
+#: left two identical cards; an hour later it is a deliberate "here it is again".
+SHOWN_AGAIN_WINDOW = timedelta(minutes=5)
+
+
+async def repeat_of_latest_shown(
+    db: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    path: str,
+    mime: str,
+    file_saved_at: datetime,
+) -> BlockOut | None:
+    """The card this showing would duplicate, or None when it needs a card of its own.
+
+    It duplicates the conversation's newest card when that card shows the same
+    path as the same kind, went up within :data:`SHOWN_AGAIN_WINDOW`, and the file
+    has not been saved since (``file_saved_at``, when the page or a file it loads
+    was last saved, is not after the card). A changed file is a new version and gets a new card."""
+    latest = await BlockRepository(db).latest_artifact(conversation_id)
+    if (
+        latest is None
+        or latest.content != path
+        or latest.mime_type != mime
+        or file_saved_at > latest.created_at
+        or datetime.now(UTC) - latest.created_at > SHOWN_AGAIN_WINDOW
+    ):
+        return None
+    return BlockOut.model_validate(latest)
