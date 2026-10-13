@@ -498,10 +498,9 @@ class CiFastTest(unittest.TestCase):
     def test_the_entry_point_stays_out_of_the_way_outside_a_work_tree(self):
         """Nothing runs when there is no work tree to check.
 
-        Pins the assignment's `|| exit 0`: outside a work tree `rev-parse`
-        fails, and its status is the assignment's. The `[ -n "$root" ]` line
-        under it guards `cd ""` returning 0 — a state this cannot reach, and
-        the guard stays anyway.
+        Pins the behaviour, not either guard on its own: deleting the
+        assignment's `|| exit 0` alone leaves this green, because the
+        `[ -n "$root" ]` line under it answers the same state.
         """
         entry = SCRIPT.parents[2] / ".cheese/pre-push"
         tools = self.tmp / "tools"

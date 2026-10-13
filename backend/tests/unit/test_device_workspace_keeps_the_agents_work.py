@@ -578,6 +578,48 @@ def test_a_room_that_will_not_take_the_report_gets_it_on_stderr(device, capsys):
     assert not [t for t in _told_the_room(home) if "ruff 报了一个错" in t]
 
 
+def test_a_push_killed_for_outrunning_its_budget_still_reports(
+    device, tmp_path, monkeypatch
+):
+    """The report is the only copy a killed push has, so it must survive one.
+
+    Git runs `.cheese/pre-push` inside the push, and that script is allowed a
+    wall clock of its own — 240 s by default — so the two budgets are one and a
+    push that outruns the total is killed with the hook's report already on
+    disk. The read-back runs in a `finally` for exactly that case.
+    """
+    cli, _tasks, _remote, _home = device
+    work = tmp_path / "work"
+    work.mkdir()
+    report = work / "report.txt"
+    budgets = []
+
+    class Ran:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def outrun(args, **kwargs):
+        budgets.append(kwargs["timeout"])
+        if args[-1] == "push":
+            # The hook runs, leaves its report, and then the push itself
+            # outruns the budget it shares with the hook.
+            report.write_text("ruff 报了一个错\n")
+            raise subprocess.TimeoutExpired(cmd=args, timeout=kwargs["timeout"])
+        return Ran()
+
+    cli._pending_pre_push_reports.clear()
+    monkeypatch.setattr(cli.subprocess, "run", outrun)
+    cli._git_task(work, "rev-parse", "--git-dir")
+    with pytest.raises(subprocess.TimeoutExpired):
+        cli._git_task(work, "push", pre_push_report=report)
+
+    assert list(cli._pending_pre_push_reports.values()) == ["ruff 报了一个错"]
+    # A push that runs the hook needs more room than the calls that do not:
+    # the hook's own 240 s and the transfer do not fit in the plain budget.
+    assert budgets[1] > budgets[0]
+
+
 def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
     cli, tasks, remote, home = device
     task = next(iter(tasks))

@@ -122,6 +122,7 @@
     ".github/workflows/mcp-equivalence.yml"
   ],
   "cifast": [
+    ".cheese/pre-push",
     ".github/scripts/ci-fast.py",
     ".github/scripts/ci_fast_backend.py",
     ".github/scripts/ci_fast_checks.py",
