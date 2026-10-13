@@ -1,8 +1,8 @@
 """A member's own Claude Code as a teammate in a project (#2991).
 
-It belongs to its owner and follows them into every project they are in, as
-long as the project lets members bring their own and the owner has logged it
-in on a machine. It runs on the account its owner set up, so its owner decides
+It belongs to its owner and follows them into every project they are in that
+lets members bring their own, once the owner has logged it in on a machine.
+It runs on the account its owner set up, so its owner decides
 who may call it — by naming it, giving it a task they are responsible for, or
 chatting with it: themselves alone, which is where it starts, or any person in
 the project. No agent calls it.
@@ -52,8 +52,16 @@ def _log_in_claude_code(client, handle: str) -> None:
 
 
 def _project_with_bob(client):
+    """A project alice manages and bob is in, which lets members bring their
+    own Claude Code."""
     project = new_project(client, "Own teammate", owner="alice")
     join_project_team(client, project["id"], "bob")
+    opened = client.put(
+        f"/projects/{project['id']}/own-agents",
+        json={"allowed": True},
+        headers=session_auth_headers("alice"),
+    )
+    assert opened.status_code == 200, opened.text
     room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "Room"},

@@ -26,6 +26,7 @@ from app.domain.agent.place import (
     MODEL_SERVICE_FILE,
     footprint_root,
 )
+from app.domain.device.login_kind import MODEL_SERVICE
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.device.supply import Supply
 
@@ -84,10 +85,6 @@ def program() -> str:
         f"SERVICE = {MODEL_SERVICE_FILE!r}\n"
         f"VERSION = {CLAUDE_PINNED_VERSION!r}\n" + _PROGRAM
     )
-
-
-#: What a machine whose owner set another model service reports as its login.
-MODEL_SERVICE = "model_service"
 
 
 @dataclass(frozen=True)
