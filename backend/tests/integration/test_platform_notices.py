@@ -340,7 +340,16 @@ def test_leaving_the_merge_queue_wakes_the_task_once(client, app_world, monkeypa
 def _task_deliveries(client, topic_id: str) -> list:
     """Every row of the task's own delivery ledger, oldest first — the ledger
     the runner turns into turns. Ordered so that no test depends on which row
-    the database happens to hand back first."""
+    the database happens to hand back first.
+
+    Rows of one event do not share ``recorded_at``: each is stamped by its own
+    write call (`delivery/agent.py`: `record_agent` and
+    `record_task_instruction`, both `now()`), so a queue-exit notice and the
+    task's instruction land milliseconds apart. What they share is ``event_at``,
+    the announcement's ``occurred_at`` — which is not what this sorts by. The
+    ``dedup_key`` tiebreak only keeps the order stable; it decides nothing,
+    because every assertion picks its row by ``payload["eventType"]``
+    (`_dispatch_rows`), never by position."""
     import uuid as _uuid
 
     from sqlalchemy import select
@@ -390,6 +399,28 @@ def _second_seat(client, pid: str) -> str:
             return agent_instance_handle(made.id)
 
     return client.portal.call(_make)
+
+
+def _close(client, topic_id: str) -> None:
+    """把任务标成已关闭 —— 只落状态这一个字段。
+
+    本用例要的形状是「出队被看到的那一刻活已经关了」；关任务那一整条路（停掉正在跑
+    的轮次、结账、退房）是别的用例的事，在这里跑一遍只会把这条路径淹掉。
+    """
+    import uuid as _uuid
+
+    from app.domain.room_task.models import Task, TaskStatus
+
+    task_id = str(delivery_task_id(client, topic_id))
+
+    async def _write() -> None:
+        async with client.test_factory() as db:
+            task = await db.get(Task, _uuid.UUID(task_id))
+            assert task is not None
+            task.status = TaskStatus.closed
+            await db.commit()
+
+    client.portal.call(_write)
 
 
 def test_the_dispatch_seat_is_woken_on_ready_and_on_queue_exit(
@@ -443,6 +474,49 @@ def test_the_dispatch_seat_is_woken_on_ready_and_on_queue_exit(
     # 出队那一条带着要动手的那两句和这张卡的号：怎么看、怎么修。
     assert f"PR #{number} 离开了合并队列但未合并" in left[0].payload["content"]
     assert "cheese push-fix" in left[0].payload["content"]
+
+
+def test_a_closed_task_s_queue_exit_leaves_the_seat_alone(
+    client, app_world, monkeypatch
+):
+    """任务在出队被看到之前已经关了：房间那句话照旧落下，座位上不留这一行。
+
+    关了的活不是没人知道 —— 房间那块照样落（`_wait_for_event` 就是在等它）；任务
+    自己那条指令本来就不投（`room_notices._record_task_nudge` 按 `TaskStatus.open`
+    挡着）。只有调度座位这一路以前不看任务关没关都投：递给它的那段话里写着
+    「先执行 cd "$(cheese worktree …)"…用 cheese push-fix 更新原 PR」，活都关了
+    照做不了，账本只会把这行标成失败（`delivery/agent.dispatch_pending`），座位
+    没被叫起来，却留下一行理由误导的账（独立复核 #3569 第 2 条）。
+    """
+    fake = app_world["fake"]
+    pid, tid, cid, _number, head = _ready_card(client, app_world)
+    seat = _second_seat(client, pid)
+    _protect(client, pid, dispatch_seat=seat)
+
+    # 照上一条用例走到「已经入队」：检查全绿，卡变成可以合并。
+    fake.check_state_by_sha[head] = ("success", "全绿")
+    _poll(client)
+    _wait_for_event(client, tid, "accept_ready")
+    wait_work_idle()
+
+    async def enqueue(**kwargs):
+        return github_pr.MergeResult(queued=True)
+
+    async def not_in_queue(**kwargs):
+        return False
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "merge_queue_entry", not_in_queue, raising=False)
+    assert _accept(client, cid).status_code == 200
+    before = {row.id for row in _task_deliveries(client, tid)}
+    _close(client, tid)
+
+    _poll(client)
+    _wait_for_event(client, tid, "merge_refused")
+    wait_work_idle()
+
+    fresh = [r for r in _task_deliveries(client, tid) if r.id not in before]
+    assert _dispatch_rows(fresh, "merge_refused") == []
 
 
 def test_a_dispatch_seat_that_works_the_task_is_woken_once(

@@ -1,7 +1,8 @@
 // In the desktop app this page is the window of an app, and its frame should
 // behave like one: the rail, the sidebars and the bars are not text to select,
 // a right-click on them opens no browser menu (Look Up, Open Link, Download
-// Image), and their links and pictures are not dragged out of the window.
+// Image), their links and pictures are not dragged out of the window, and a
+// file dragged in from outside lands only where the page takes files.
 // What a person reads or writes stays as it is in a browser: what they type,
 // messages, documents, code and file previews keep their selection and the
 // system's menu with Copy on it. In a browser none of this runs.
@@ -53,6 +54,29 @@ ${SELECTABLE.map((s) => `:root[data-desktop-app] ${s}`).join(',\n')} { -webkit-u
 const DRAGGABLE = [...SELECTABLE, '[draggable="true"]'].join(', ')
 const KEEPS_MENU = SELECTABLE.join(', ')
 
+// A file dragged in from Finder and let go anywhere the page does not take
+// files: with the app's own drag-and-drop handler off (desktop/src-tauri,
+// main.rs), WebKit's default for that drop is to open the file in place of the
+// page, and an app window has no Back to return from it. A drop zone that takes
+// files cancels the event itself (the composer, the library, the welcome page;
+// the doc editor cancels its dragover), so whatever reaches the document still
+// uncancelled had no taker and is refused here.
+function carriesFiles(event: DragEvent): boolean {
+  return !!event.dataTransfer?.types.includes('Files')
+}
+
+function refuseStrayFileDrops(): void {
+  document.addEventListener('dragover', (event) => {
+    if (event.defaultPrevented || !carriesFiles(event)) return
+    event.preventDefault()
+    // The cursor says the file will not go here, rather than a copy badge.
+    event.dataTransfer!.dropEffect = 'none'
+  })
+  document.addEventListener('drop', (event) => {
+    if (!event.defaultPrevented && carriesFiles(event)) event.preventDefault()
+  })
+}
+
 function within(target: EventTarget | null, selector: string): boolean {
   const element = target instanceof Element ? target : target instanceof Node ? target.parentElement : null
   return !!element?.closest(selector)
@@ -68,6 +92,7 @@ export function behaveAsDesktopApp(): void {
   document.addEventListener('dragstart', (event) => {
     if (!within(event.target, DRAGGABLE)) event.preventDefault()
   })
+  refuseStrayFileDrops()
   // A development build (`pnpm tauri dev` against the dev server) keeps the
   // menu everywhere, since Inspect Element is on it.
   if (import.meta.env.DEV) return

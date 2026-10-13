@@ -80,6 +80,11 @@ const docs = useQuery(
     enabled: pageActive.value,
     queryKey: docsKey.value,
     queryFn: async (): Promise<DocsPayload> => {
+      // 「总览是哪一份」只要项目 id，和上面那份项目并行去取。串着等的话，它得排在项目
+      // 那条后面才出发（实测冷开白等 115 ms，占这一页串行段的一跳）。
+      const overviewRead = kind.value === 'charter' ? getProjectOverview(props.projectId) : null
+      // 项目没读到、下面那条路不走了的时候，别让这一条还在飞的请求变成没人接的拒绝。
+      void overviewRead?.catch(() => {})
       const project = await queryClient.fetchQuery(projectQuery(props.projectId))
       const payload: DocsPayload = {
         rootTopicId: project.root_topic_id ?? null,
@@ -88,8 +93,8 @@ const docs = useQuery(
         weeklies: [],
         memoryEntries: [],
       }
-      if (kind.value === 'charter') {
-        payload.overviewId = (await getProjectOverview(props.projectId)).id
+      if (kind.value === 'charter' && overviewRead) {
+        payload.overviewId = (await overviewRead).id
         if (project.root_topic_id) payload.rootTopic = await queryClient.fetchQuery(roomRowQuery(project.root_topic_id))
       } else if (kind.value === 'memory') {
         payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data

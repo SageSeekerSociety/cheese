@@ -561,6 +561,12 @@ ignore_imports =
 # reads lower layers and nothing imports it, which is that layer's whole
 # definition — and `canvas` at layer 4, where `living_doc` is (whose models it
 # reads) and where `room_task` is (which reads it).
+#
+# `external_problem` joined at layer 3 beside `integration` (2026-10-13): it
+# reads only `common` below it and no package imports it yet, but it is the same
+# kind of thing as `integration` — a synchronous call out to a site that is not
+# ours — and layer 3 leaves room for the `task` layer that will read what it
+# brings back.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
@@ -568,7 +574,7 @@ layers =
     routine : task_quiet : admin : room_cleanup
     agent : agent_session : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas
-    repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification
+    repository : integration : external_problem : webhook : fetch : remote_mcp : gateway_chat : usage : notification
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
     common : day_windows : conversation : idempotency : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal
 containers =

@@ -22,11 +22,14 @@
 
 import hashlib
 import re
+import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from stat import S_ISREG
+from typing import BinaryIO
 
+from app.core import video_files
 from app.core.config import settings
 from app.core.errors import (
     NotFoundError,
@@ -73,8 +76,8 @@ def is_message_attachment(path: str) -> bool:
 
 
 #: 一份文件落地时的字节上限。房间文件（:func:`write_room_file`）与资料库
-#: （:mod:`app.domain.library.records`）落的是同一批字节，用同一个数；路由那一层
-#: 的 ``MAX_ARTIFACT_BYTES`` / ``MAX_ATTACHMENT_BYTES`` /
+#: （:mod:`app.domain.library.records`）落的是同一批字节，用同一条规则
+#: （:func:`max_bytes_for`）；路由那一层的 ``MAX_ARTIFACT_BYTES`` /
 #: ``MAX_LIBRARY_UPLOAD_BYTES`` 都指回这里，别在别处再写一遍。
 #:
 #: 这道上限不是「上传那一层」的事：``client_max_body_size`` 只在网关后面那一条路
@@ -82,37 +85,95 @@ def is_message_attachment(path: str) -> bool:
 #: 端端口、前面没有网关」列为合法入口 —— 那条路上没有这道门。
 MAX_FILE_BYTES = 10 * 1024 * 1024
 
+#: 一段视频的上限。手机录屏是拿来报问题的，30–60 秒的 iPhone 录屏常常有几十到一百
+#: 多 MB，10MB 装不下一段。这个数和网关上传附件那一条路的 ``client_max_body_size``
+#: 是一对（``frontend/nginx.conf``、``deploy/llm-tunnel/``），改一个就改另一个。
+MAX_VIDEO_BYTES = 200 * 1024 * 1024
 
-def refuse_oversize(data: bytes) -> None:
-    """超过 :data:`MAX_FILE_BYTES` 的字节不落地，报「超限」而不是别的。
+#: 落地的字节：整份在内存里，或者一个读得到、能倒回开头的文件（上传时 multipart
+#: 已经落在临时文件里的那一份，不必再整份读进内存）。
+Content = bytes | BinaryIO
+
+_CHUNK = 1024 * 1024
+
+
+def max_bytes_for(name: str | None) -> int:
+    """叫这个名字的一份文件最多多大：视频按 :data:`MAX_VIDEO_BYTES`，别的都是
+    :data:`MAX_FILE_BYTES`。没有名字的（一版历史）按后者。"""
+    suffix = PurePosixPath(name or "").suffix.lower()
+    if suffix in video_files.SUFFIX_MEDIA_TYPE:
+        return MAX_VIDEO_BYTES
+    return MAX_FILE_BYTES
+
+
+def refuse_oversize(size: int, name: str | None = None) -> None:
+    """超过这一类文件上限的字节不落地，报「超限」而不是别的，带着那一类的上限。
 
     房间文件和资料库的每一个字节都从这里过，所以上限只有一处、也只有一层：调用方
     漏判也好、直连后端绕开网关也好，字节都写不进去。
     """
-    if len(data) > MAX_FILE_BYTES:
-        raise UnprocessableEntityError(
-            say("fileTooLarge", mb=MAX_FILE_BYTES // (1024 * 1024))
-        )
+    limit = max_bytes_for(name)
+    if size > limit:
+        raise UnprocessableEntityError(say("fileTooLarge", mb=limit // (1024 * 1024)))
+
+
+def size_of(content: Content) -> int:
+    """多少字节；文件看它的结尾在哪，一个字节也不读。"""
+    if isinstance(content, bytes):
+        return len(content)
+    content.seek(0, 2)
+    size = content.tell()
+    content.seek(0)
+    return size
+
+
+def measure(content: Content) -> tuple[int, str]:
+    """多少字节、sha256 是多少。文件读一遍之后倒回开头，留给写的那一步。"""
+    if isinstance(content, bytes):
+        return len(content), hashlib.sha256(content).hexdigest()
+    content.seek(0)
+    digest = hashlib.sha256()
+    size = 0
+    while chunk := content.read(_CHUNK):
+        digest.update(chunk)
+        size += len(chunk)
+    content.seek(0)
+    return size, digest.hexdigest()
+
+
+def write_content(target: Path, content: Content) -> None:
+    """把字节写到 `target`；文件按块拷，不整份进内存。"""
+    if isinstance(content, bytes):
+        target.write_bytes(content)
+        return
+    content.seek(0)
+    with target.open("wb") as out:
+        shutil.copyfileobj(content, out, _CHUNK)
 
 
 def write_room_file(
-    project_id: uuid.UUID, room_id: uuid.UUID, path: str, data: bytes
+    project_id: uuid.UUID, room_id: uuid.UUID, path: str, data: Content
 ) -> None:
-    refuse_oversize(data)
+    refuse_oversize(size_of(data), path)
     if path.split("/")[0] == LIBRARY_PREFIX:
         # `library/…` 是资料库那一份的地址（见 `read_attachment`）。房间里再写一个
         # 同名的东西，读的人就会拿到房间那份、以为看的是资料库里的原件。
         raise ValidationError(say("libraryPrefixReserved", prefix=LIBRARY_PREFIX))
     target = _safe_path(room_files_root(project_id, room_id), path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(data)
+    write_content(target, data)
 
 
-def read_room_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
+def room_file_path(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> Path:
+    """这个房间里这一份文件在磁盘上的位置；没有这份文件就拒。"""
     target = _safe_path(room_files_root(project_id, room_id), path)
     if not target.is_file():
         raise ValidationError("file not found")
-    return target.read_bytes()
+    return target
+
+
+def read_room_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bytes:
+    return room_file_path(project_id, room_id, path).read_bytes()
 
 
 def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> dict:
@@ -196,7 +257,7 @@ def write_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, data: bytes) 
     the room must not land here either: this is where the history's bytes land,
     so the ceiling is checked here too (:func:`refuse_oversize`).
     """
-    refuse_oversize(data)
+    refuse_oversize(len(data))
     digest = hashlib.sha256(data).hexdigest()
     target = _revision_root(project_id, room_id) / digest
     if not target.is_file():

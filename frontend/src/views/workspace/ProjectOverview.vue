@@ -78,6 +78,11 @@ const overviewText = computed(() => overview.data.value?.text ?? null)
 const progress = computed<ProgressItem[] | null>(() => recent.data.value ?? null)
 const progressFailed = computed(() => recent.isError.value && !recent.data.value && !store.accessDenied)
 const tasks = computed<RoomTask[] | null>(() => work.data.value?.data ?? null)
+// 「进行中的任务」那一个数要按后端那一个判据算，而不是自己拿列去凑（清单第 14 条）。
+// 到现在为止两边碰巧一致：`closing` 的任务落的就是 `done` 列，所以「open 且不在 done
+// 列」和 `underway_counts` 数目相同。但一致是碰巧，不是保证——所以数字从侧栏那几行
+// 带下来的同一个字段里数，真正取数的地方只有后端一处。
+const underway = computed(() => store.topics.reduce((sum, topic) => sum + (topic.my_tasks?.open ?? 0), 0))
 function loadProgress() {
   void recent.refetch()
 }
@@ -133,6 +138,7 @@ function allTasks() {
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"
+    :underway="underway"
     :names="names"
     :avatars="avatars"
     :me="myHandle()"

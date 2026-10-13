@@ -165,7 +165,7 @@ beforeEach(() => {
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
 })
 
-describe('项目名下只有总览和资料库，其余都在点项目名弹出的菜单里', () => {
+describe('项目名下只有总览和资料库，其余页在点项目名弹出的菜单里', () => {
   it('壳点名了更多页，项目名下也只有总览和资料库', async () => {
     const { container, baseElement } = mount()
     expect(pagesIn(container)).toEqual([t('navigation.project.overview'), t('navigation.project.library')])

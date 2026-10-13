@@ -197,6 +197,7 @@ async def poll_uncarded_task_prs(
                     head=status.head_sha,
                     pr_number=number,
                     completes=True,
+                    handed_over=None,
                 )
                 await announce(
                     session,

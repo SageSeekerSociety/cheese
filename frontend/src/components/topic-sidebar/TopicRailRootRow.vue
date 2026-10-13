@@ -11,6 +11,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import TopicRailBadge from './TopicRailBadge.vue'
 import TopicRailLight from './TopicRailLight.vue'
+import TopicRailTaskFold from './TopicRailTaskFold.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import { t } from '@/i18n'
@@ -32,6 +33,12 @@ const props = defineProps<{
   lightOf?: (id: string) => RowLight | null
   /** 这一行的操作（和频道行 ⋯ 同一份），右键弹出来。 */
   rootActions?: MenuAction[]
+  /** 挂在它下面的任务收起来了没有。 */
+  tasksCollapsed?: boolean
+  /** 这个频道里进行中的任务数；收起来时行尾画它。 */
+  taskCount?: number
+  /** 收起来的那一块该画的灯；不亮是 null。 */
+  taskLight?: RowLight | null
 }>()
 
 /** 这一行自己的灯。父级还没读到「综合」这个话题时（`rootTopic` 为空）这一行不画，
@@ -47,6 +54,7 @@ const emit = defineEmits<{
   (e: 'hover-topic', id: string): void
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
+  (e: 'toggle-tasks'): void
 }>()
 </script>
 
@@ -106,6 +114,14 @@ const emit = defineEmits<{
         />
         <TopicRailBadge v-if="unreadOf(rootTopic.id) > 0" :count="unreadOf(rootTopic.id)" />
         <TopicRailLight v-if="rootLight" :light="rootLight" />
+        <!-- 挂在它下面的那一整块任务的把手：收起来时它自己顶上那一块的灯和条数。 -->
+        <TopicRailTaskFold
+          v-if="taskCount"
+          :collapsed="tasksCollapsed === true"
+          :count="taskCount"
+          :light="taskLight ?? null"
+          @toggle="emit('toggle-tasks')"
+        />
       </template>
     </v-list-item>
     <!-- 挂在这个房间下面的任务。 -->

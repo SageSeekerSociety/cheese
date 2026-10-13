@@ -13,6 +13,8 @@ from typing import Any
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.sentences import listing as sentence_list
+from app.core.sentences import say
 from app.domain.agent_instance.models import (
     AgentInstance,
     NameSource,
@@ -20,20 +22,113 @@ from app.domain.agent_instance.models import (
     OwnCallers,
 )
 from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.device.login_kind import ConnectionKind, connection_kind
 from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.user.models import User
 from app.domain.user.services import faces_by_handle, user_by_handle
 
-#: The project setting that lets members bring their own agent in. On unless a
-#: manager turns it off: a project whose content must not leave through a
-#: member's own model account says so here.
+#: The project setting that lets members bring their own agent in. Off unless a
+#: manager turns it on: the project's content leaves through a member's own
+#: model account only where someone who manages the project chose that.
 SETTING = "allow_own_agents"
+
+#: The kinds of model connection (`ConnectionKind`) a project lets its members'
+#: own agents use, as a list. Absent, every kind is allowed.
+KINDS_SETTING = "own_agent_kinds"
+
+#: How a room names each kind (catalog ``roomNotice``).
+_KIND_WORDS = {
+    ConnectionKind.subscription: "ownAgentKindSubscription",
+    ConnectionKind.api_key: "ownAgentKindApiKey",
+    ConnectionKind.model_service: "ownAgentKindModelService",
+}
 
 
 def allows_own_agents(project_settings: dict[str, Any] | None) -> bool:
-    value = (project_settings or {}).get(SETTING)
-    return value is not False
+    return (project_settings or {}).get(SETTING) is True
+
+
+def allowed_kinds(
+    project_settings: dict[str, Any] | None,
+) -> frozenset[ConnectionKind]:
+    value = (project_settings or {}).get(KINDS_SETTING)
+    if not isinstance(value, list):
+        return frozenset(ConnectionKind)
+    known = {kind.value for kind in ConnectionKind}
+    return frozenset(ConnectionKind(v) for v in value if v in known)
+
+
+@dataclass(frozen=True)
+class Login:
+    """One of a person's machines with their own Claude Code logged in for the
+    platform, and how it reaches a model."""
+
+    device_id: str
+    device_name: str
+    kind: ConnectionKind
+    #: A subscription's plan (`max`, `pro`, …); None for the other kinds.
+    plan: str | None
+    #: The model a model service is called with; None for the other kinds.
+    model: str | None
+
+
+async def logins(db: AsyncSession, owner_user_id: int) -> list[Login]:
+    """This person's machines with the platform's login, by machine name."""
+    rows = await db.execute(
+        select(
+            DeviceRow.device_id,
+            DeviceRow.name,
+            DeviceClaudeLoginRow.auth_method,
+            DeviceClaudeLoginRow.subscription_type,
+            DeviceClaudeLoginRow.model,
+        )
+        .join(
+            DeviceClaudeLoginRow,
+            DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
+        )
+        .where(
+            DeviceRow.owner_user_id == owner_user_id,
+            DeviceClaudeLoginRow.logged_in.is_(True),
+        )
+        .order_by(DeviceRow.name)
+    )
+    found = []
+    for device_id, name, auth_method, subscription_type, model in rows:
+        kind = connection_kind(auth_method, subscription_type)
+        found.append(
+            Login(
+                device_id=device_id,
+                device_name=name,
+                kind=kind,
+                plan=subscription_type if kind is ConnectionKind.subscription else None,
+                model=model if kind is ConnectionKind.model_service else None,
+            )
+        )
+    return found
+
+
+async def kinds_refused(
+    db: AsyncSession, owner_user_id: int, project_settings: dict[str, Any] | None
+) -> list[ConnectionKind]:
+    """The kinds of this person's logins when the project allows none of them,
+    so their own agent has no login to run on here; empty when one is allowed,
+    or when nothing is logged in (their agent waits for a machine instead)."""
+    allowed = allowed_kinds(project_settings)
+    kinds = list(dict.fromkeys(login.kind for login in await logins(db, owner_user_id)))
+    if any(kind in allowed for kind in kinds):
+        return []
+    return kinds
+
+
+def kinds_refused_sentence(owner_name: str, kinds: list[ConnectionKind]) -> str:
+    """What the room is told when a member's own agent has only logins of
+    kinds the project does not allow."""
+    return say(
+        "ownAgentKindNotAllowed",
+        owner=owner_name,
+        kinds=sentence_list(say(_KIND_WORDS[kind]) for kind in kinds),
+    )
 
 
 @dataclass(frozen=True)
@@ -276,21 +371,29 @@ async def set_callers(
     await db.flush()
 
 
-async def may_call(
+async def why_not(
     db: AsyncSession,
     instance_id: uuid.UUID,
     caller: str,
     project_settings: dict[str, Any] | None,
-) -> bool:
-    """Whether ``caller`` may set this agent to work. A member's own agent is
-    called by whoever its owner lets call it, in a project that still lets
-    members bring their own. Every other agent may be called by anyone who may
-    speak to it."""
-    if await owned_instance(db, instance_id) is None:
-        return True
+) -> str | None:
+    """Why ``caller`` may not set this agent to work, as the sentence the room
+    is told; None when they may. A member's own agent is withheld in a project
+    closed to them, from anyone it does not answer to, and when every login its
+    owner has is of a kind the project does not allow."""
+    owned = await owned_instance(db, instance_id)
+    if owned is None:
+        return None
     if not allows_own_agents(project_settings):
-        return False
-    return await callable_by(db, instance_id, caller)
+        return say("ownAgentsClosed")
+    owner = await owner_of(db, instance_id)
+    owner_name = owner[1] if owner is not None else ""
+    if not await callable_by(db, instance_id, caller):
+        return say("ownAgentOwnerOnly", owner=owner_name)
+    refused = await kinds_refused(db, owned.owner_user_id, project_settings)
+    if refused:
+        return kinds_refused_sentence(owner_name, refused)
+    return None
 
 
 async def may_work_for(
@@ -321,7 +424,9 @@ async def may_chat_with(
 ) -> bool:
     """Whether ``person`` may open a private chat with the agent whose own
     handle is ``agent_handle``: with a member's own agent, only someone it
-    answers to."""
+    answers to, in a project that lets members bring their own. Whether the
+    kind of its owner's login is allowed is told in the chat, when a message
+    calls it (``why_not``)."""
     if not agent_handle:
         return True
     instance_id = await db.scalar(
@@ -330,32 +435,29 @@ async def may_chat_with(
             AgentInstance.handle == agent_handle,
         )
     )
-    if instance_id is None:
+    if instance_id is None or await owned_instance(db, instance_id) is None:
         return True
-    return await may_call(db, instance_id, person, project_settings)
+    return allows_own_agents(project_settings) and await callable_by(
+        db, instance_id, person
+    )
 
 
-async def listing(db: AsyncSession, project_id: uuid.UUID, is_online) -> list[dict]:
+async def listing(
+    db: AsyncSession, project_id: uuid.UUID, viewer_user_id: int | None, is_online
+) -> list[dict]:
     """The members' own agents a project has: whose each one is, who may call
-    it, and on which of its owner's machines it can run."""
+    it, and the kinds of model connection it has. Everyone in the project reads
+    that much; the machines it runs on, and whether they are online, only its
+    owner reads (``machines`` is None for everyone else)."""
 
     rows = []
     for instance, owner_user_id, callers in await owned_in_project(db, project_id):
         owner = await db.get(User, owner_user_id)
-        machines = (
-            await db.execute(
-                select(DeviceRow.device_id, DeviceRow.name)
-                .join(
-                    DeviceClaudeLoginRow,
-                    DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
-                )
-                .where(
-                    DeviceRow.owner_user_id == owner_user_id,
-                    DeviceClaudeLoginRow.logged_in.is_(True),
-                )
-                .order_by(DeviceRow.name)
-            )
-        ).all()
+        found = await logins(db, owner_user_id)
+        connections = dict.fromkeys(
+            (login.kind.value, login.plan, login.model) for login in found
+        )
+        mine = viewer_user_id is not None and viewer_user_id == owner_user_id
         rows.append(
             {
                 "handle": agent_instance_handle(instance.id),
@@ -363,10 +465,19 @@ async def listing(db: AsyncSession, project_id: uuid.UUID, is_online) -> list[di
                 "callers": callers.value,
                 "owner_handle": owner.username if owner else None,
                 "owner_name": await _nickname(db, owner.username) if owner else None,
-                "machines": [
-                    {"name": name, "online": bool(is_online(device_id))}
-                    for device_id, name in machines
+                "connections": [
+                    {"kind": kind, "plan": plan, "model": model}
+                    for kind, plan, model in connections
                 ],
+                "machines": [
+                    {
+                        "name": login.device_name,
+                        "online": bool(is_online(login.device_id)),
+                    }
+                    for login in found
+                ]
+                if mine
+                else None,
             }
         )
     return rows

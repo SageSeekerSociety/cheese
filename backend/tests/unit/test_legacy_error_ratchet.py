@@ -133,7 +133,7 @@ _BASELINE: dict[tuple[str, str], int] = {
     ("app/api/routes/room_files.py", "ValidationError"): 4,
     ("app/api/routes/sandbox.py", "UnauthorizedError"): 1,
     ("app/api/routes/topics.py", "ValidationError"): 8,
-    ("app/api/routes/topics_attachments.py", "ValidationError"): 10,
+    ("app/api/routes/topics_attachments.py", "ValidationError"): 9,
     ("app/api/routes/topics_deliveries.py", "ValidationError"): 1,
     ("app/api/routes/topics_documents.py", "ValidationError"): 12,
     ("app/api/routes/topics_messages.py", "ValidationError"): 5,

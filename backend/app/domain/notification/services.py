@@ -58,6 +58,21 @@ def notification_type_of(value: str) -> NotificationType:
     return NotificationType(value)
 
 
+def notification_types_of(value: str | None) -> list[NotificationType] | None:
+    """``/notifications?type=`` 那个值的全部类型：逗号分开，可以只写一种。
+
+    界面上的「动态」按事由分档（需我处理 / 仅通知 / 系统提醒），每一档是若干种通知，
+    所以那里的筛选问的是「这几种里的任意一种」，一次问一组。未知的名字抛
+    ``ValueError``，调用方把它翻成 400；空串（``?type=``）当没筛。
+    """
+    if value is None:
+        return None
+    names = [name.strip() for name in value.split(",") if name.strip()]
+    if not names:
+        return None
+    return [notification_type_of(name) for name in names]
+
+
 class NotificationQueryService:
     """Python port of notification query operations.
 
@@ -102,7 +117,7 @@ class NotificationQueryService:
         limit: int,
         cursor_created_at: datetime | None = None,
         cursor_id: int | None = None,
-        type_: NotificationType | None = None,
+        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> Sequence[Notification]:
         return await self._repo.list_for_user(
@@ -131,7 +146,7 @@ class NotificationQueryService:
         self,
         user_id: int,
         *,
-        type_: NotificationType | None = None,
+        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> int:
         """Return total count of notifications for pagination metadata."""

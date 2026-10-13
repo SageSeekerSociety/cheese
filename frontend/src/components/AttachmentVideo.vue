@@ -11,24 +11,24 @@ const emit = defineEmits<{ download: [] }>()
 const source = inject(ATTACHMENT_SOURCE, NO_ATTACHMENT_SOURCE)
 const name = computed(() => props.path.split('/').pop() ?? props.path)
 const url = ref('')
+// width / height of the recording, once the player has read it. Until then the
+// box is 16:9; after it, a portrait phone recording gets a tall box instead of
+// being letterboxed into a wide one.
+const ratio = ref<number | null>(null)
 const loading = ref(false)
 const failure = ref<'load' | 'play' | null>(null)
 let generation = 0
 
-function release() {
-  if (url.value) URL.revokeObjectURL(url.value)
-  url.value = ''
-}
-
 function reset() {
   generation += 1
-  release()
+  url.value = ''
+  ratio.value = null
   loading.value = false
   failure.value = null
 }
 
-// A video cannot send Authorization headers. Fetch only on request, then let
-// the native player seek the complete blob (attachments remain capped at 10MB).
+// Fetch only on request. The player streams from the URL it is given, so a long
+// recording starts without being downloaded whole first.
 async function load() {
   reset()
   const mine = generation
@@ -39,16 +39,17 @@ async function load() {
   loading.value = true
   try {
     const next = await source.mediaUrl(props.topicId, props.path)
-    if (mine !== generation) {
-      URL.revokeObjectURL(next)
-      return
-    }
-    url.value = next
+    if (mine === generation) url.value = next
   } catch {
     if (mine === generation) failure.value = 'load'
   } finally {
     if (mine === generation) loading.value = false
   }
+}
+
+function measure(event: Event) {
+  const video = event.target as HTMLVideoElement
+  if (video.videoWidth > 0 && video.videoHeight > 0) ratio.value = video.videoWidth / video.videoHeight
 }
 
 watch(() => [props.topicId, props.path], reset)
@@ -64,7 +65,9 @@ onBeforeUnmount(reset)
       controls
       playsinline
       preload="metadata"
+      :style="ratio ? { '--video-ratio': ratio } : undefined"
       :aria-label="t('work.room.video.label', { name })"
+      @loadedmetadata="measure"
       @error="failure = 'play'"
     />
     <div v-else class="attachment-video__placeholder">
@@ -103,7 +106,12 @@ onBeforeUnmount(reset)
   border-radius: var(--radius-md);
   background: var(--fill);
 }
+/* The recording's own shape, no taller than --video-max-height: a portrait
+   phone recording narrows instead of shrinking into a wide box. */
 .attachment-video video {
+  --video-max-height: 480px;
+  width: min(100%, calc(var(--video-max-height) * var(--video-ratio, 16 / 9)));
+  aspect-ratio: var(--video-ratio, 16 / 9);
   object-fit: contain;
 }
 .attachment-video__placeholder {

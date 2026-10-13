@@ -192,7 +192,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rememberScroll,
     restoreScroll,
     restoresToBottom,
-  } = useChatScroll({ showingNewest: () => !hasNewer.value })
+    forgetScroll,
+  } = useChatScroll({ showingNewest: () => !hasNewer.value, topicId: () => place()?.id })
 
   // 打开话题时分批挂行 —— 见 room/composables/useRowBatch（`rows`、`paging` 在下面，晚读）。
   const rowBatch = useRowBatch({
@@ -686,7 +687,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     settle: (b: Block) => settleOutbox(b),
     noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b)),
     readEnded: () => tail.check(),
-    scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
+    scroll: { atBottom, follow: autoScroll, scrollToBottom, forgetScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
     failed: historyReadFailed,
   })

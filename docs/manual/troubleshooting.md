@@ -13,7 +13,7 @@ order: 1
 
 - 频道或任务的对话里：[「这条会话的环境尚未配置或未连接」](#device-offline)、[「工作电脑的环境准备失败」](#environment-failed)、[「本轮未完成」或「本轮意外中断」](#turn-failed)、[「消息未送达」](#undelivered)、[「排队中」](#queued)、[「额度已用完，这一轮没有执行」](#quota-exhausted)、[「云端资源紧张，暂时无法准备环境」](#cloud-busy)
 - 检查芝士的结果时：[「采纳」按钮是灰的](#accept-blocked)、[找不到芝士做出的文件](#result-not-found)
-- 上传文件时：[「超过 10MB，无法上传」](#upload-failed)
+- 上传文件时：[「超过 10MB，无法上传」或「超过 200MB，无法上传」](#upload-failed)
 - 题目页上：[「暂时无法参与」](#claim-blocked)、[没有「提交作业」](#submission-unavailable)
 
 ## 提示电脑没有连上平台 {#device-offline}
@@ -48,9 +48,9 @@ AI 队友开始工作前，平台先运行项目设置的脚本，其中一段�
 
 平台检查没有通过，这一版现在不能合并。鼠标停在按钮上，提示写明原因。处理办法见[验收与采纳 · 采纳按钮是灰的](/accept#accept-blocked)。
 
-## 提示「超过 10MB，无法上传」 {#upload-failed}
+## 提示「超过 10MB，无法上传」或「超过 200MB，无法上传」 {#upload-failed}
 
-频道里的附件每个不超过 10MB，一条消息最多 9 个。处理办法见[文件与成果 · 文件无法上传](/files#upload-failed)。
+频道里的附件每个不超过 10MB，视频不超过 200MB，一条消息最多 9 个。处理办法见[文件与成果 · 文件无法上传](/files#upload-failed)。
 
 ## 找不到芝士做出的文件 {#result-not-found}
 

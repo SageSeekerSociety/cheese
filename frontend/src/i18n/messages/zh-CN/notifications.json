@@ -6,12 +6,9 @@
     "deleteTitle": "删除这条动态？",
     "deleteHint": "删掉之后它不再出现在这里，也没法恢复。",
     "noNotifications": "暂无通知",
-    "noUnread": "暂无未读通知",
     "loadFailed": "无法读取动态",
     "markAllAsRead": "全部标为已读",
     "loadMore": "加载更多",
-    "filterAll": "全部",
-    "filterUnread": "未读",
     "filterLabel": "动态筛选",
     "unknownTeam": "未知团队",
     "unknownDiscussion": "未知讨论",
@@ -21,6 +18,11 @@
     "unknownProject": "未知项目",
     "unreachable": "无法访问该页面，你可能没有权限或页面不存在",
     "yesterday": "昨天 {time}"
+  },
+  "category": {
+    "mine": "需我处理",
+    "notice": "仅通知",
+    "system": "系统提醒"
   },
   "default": {
     "title": "未知类型通知: {type}",
