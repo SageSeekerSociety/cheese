@@ -24,7 +24,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select, text, update
 
-from app.core.errors import GatewayUnavailableError
+from app.core.errors import UpstreamUnavailableError
 from app.domain.agent.models import AgentTurn
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.models import Delivery
@@ -420,7 +420,7 @@ def test_a_task_the_forge_cannot_take_on_does_not_hold_up_the_rest(
 
     async def default_branch(project_id, session):
         if project_id == stuck_project:
-            raise GatewayUnavailableError("forge down")
+            raise UpstreamUnavailableError("forge down")
         return await reachable(project_id, session)
 
     monkeypatch.setattr(forge, "default_branch", default_branch)
