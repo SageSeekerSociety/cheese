@@ -539,7 +539,7 @@ class PreviewHostMiddleware:
         contents = result.get("contents") if isinstance(result, dict) else None
         entry = contents[0] if isinstance(contents, list) and contents else None
         text = entry.get("text") if isinstance(entry, dict) else None
-        if not isinstance(text, str):
+        if not isinstance(entry, dict) or not isinstance(text, str):
             return Response("Preview unavailable", status_code=404)
         body = text.encode()
         response = Response(

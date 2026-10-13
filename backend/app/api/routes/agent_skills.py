@@ -115,7 +115,7 @@ async def _installed(db: AsyncSession, place) -> dict[str, dict]:
         # so not installed.
         if row.state == "active":
             add(row.name, row.description, _SOURCE_PROJECT, _project_markdown(row))
-    device_id = await room_device(db, place.room)
+    device_id = room_device(place.room)
     if device_id is not None:
         for row in await MachineSkillService(db).list(device_id):
             # Un-adopted is not carried (``carried_bodies``); and the body is

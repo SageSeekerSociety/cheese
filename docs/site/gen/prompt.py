@@ -168,14 +168,18 @@ class _Week:
     current_week = 6
     allowed_topics = ["循环", "数组"]
     avoid_in_code = ["递归"]
+    learning_goals = ["能自己写出循环", "能讲清数组和循环怎么配合"]
+    private_prompt = "参考答案在第 6 周讲义第 12 页；评分只看能否独立跑通，不看代码风格。"
 
     @property
     def is_empty(self) -> bool:
         return not (
             self.system_prompt
+            or self.private_prompt
             or self.current_week is not None
             or self.allowed_topics
             or self.avoid_in_code
+            or self.learning_goals
         )
 
     def fill(self, template: str) -> str:
@@ -183,6 +187,7 @@ class _Week:
             ("{current_week}", str(self.current_week)),
             ("{allowed_topics}", "、".join(self.allowed_topics)),
             ("{avoid_in_code}", "、".join(self.avoid_in_code)),
+            ("{learning_goals}", "、".join(self.learning_goals)),
         ):
             template = template.replace(token, value)
         return template

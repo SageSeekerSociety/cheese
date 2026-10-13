@@ -46,7 +46,7 @@ async def carried_bodies(session: AsyncSession, topic, names: list[str]) -> str:
     mine = [name for name in names if name not in _SHIPPED]
     if not mine:
         return "\n\n---\n\n".join(chunks)
-    device_id = await room_device(session, topic)
+    device_id = room_device(topic)
     if device_id is None:
         return "\n\n---\n\n".join(chunks)
     for name in mine:
@@ -56,24 +56,19 @@ async def carried_bodies(session: AsyncSession, topic, names: list[str]) -> str:
     return "\n\n---\n\n".join(chunks)
 
 
-async def room_device(session: AsyncSession, topic) -> str | None:
-    """这一轮会落到哪台机器：房间点名的那台，没点名就认已经绑上的那台。
+def room_device(topic) -> str | None:
+    """这一轮会落到哪台机器：这间房的屏开在哪台，就是哪台。
 
-    都没有（云，或者这间房还没碰过机器）就是 ``None`` —— 不认机器，也就没有
+    机器的归属在这一层没有一张表可读（`machine` 域持着 lease，agent 域碰不到
+    —— 见 `.claude/scripts/check-repo-rules.sh` 的 supply 一条）；agent 域自己
+    的 ``device_hub`` 知道每间房的屏挂在谁身上，那就是答案。屏含离线的那些：
+    机器刚掉线时这条技能本来就读不回来，``_from_machine`` 自己会把那条丢掉。
+
+    没有屏（云，或者这间房还没碰过机器）就是 ``None`` —— 不认机器，也就没有
     机器技能可读。
     """
-    choice = topic.compute_config or {}
-    if choice.get("profile") != "device":
-        return None
-    if choice.get("device_id"):
-        return str(choice["device_id"])
-    # 局部 import：`device.wiring` 会拉起 device 域那一套，而这里只在真要去读
-    # 机器技能时才走到（见模块 docstring）。
-    # deferred-import: start-up cost; device.wiring pulls in the device domain
-    from app.domain.device.wiring import sql_device_service
-
-    binding = await sql_device_service(session).topic_binding(topic.id)
-    return binding.device_id if binding is not None else None
+    screens = device_hub.screens_for_topic(topic.id)
+    return screens[0].device_id if screens else None
 
 
 async def _from_machine(session: AsyncSession, device_id: str, name: str) -> str:

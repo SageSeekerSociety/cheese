@@ -120,23 +120,7 @@ class ProjectService:
             intent=intent,
             project_id=project_id,
         )
-        # P0（本地补丁）：新建项目就把算力默认值落库，`get_compute_configs` 读到的
-        # 就是当初显示给用户的那一份。否则 stored 是空、shown 是读时算出来的
-        # `compute_default_name()`，两边会随部署环境漂移（迁移 e2c7a4b97310 给老项目
-        # 补的正是这一份）。
-        # deferred-import: agent already reaches back into project; keeps C3 acyclic
-        from app.domain.agent.compute_configs import (
-            ProjectComputeConfigs,
-            standard_choice,
-        )
-
-        project.settings = {
-            **(project.settings or {}),
-            "forge_kind": forge_kind,
-            "compute_configs": ProjectComputeConfigs(
-                default=standard_choice()
-            ).model_dump(),
-        }
+        project.settings = {**(project.settings or {}), "forge_kind": forge_kind}
         root = await self._topics.add(
             project_id=project.id,
             title="综合",

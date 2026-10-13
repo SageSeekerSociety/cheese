@@ -173,8 +173,12 @@ check_supply_reverse_lookup() {
   local hits=""
   local dirs="$ROOT/backend/app/domain/device $ROOT/backend/app/domain/agent"
   # (a) the device/agent layers must not reach into the machine table at all.
+  # The import is spelled out to its boundary (`machine import` / `machine.`) so
+  # a sibling package whose name merely starts with it — `machine_skill` — is not
+  # read as the machine domain. A bare prefix matched that one and failed the
+  # guard on a legitimate import.
   hits="$(grep -rn --include='*.py' \
-    -e 'CloudHostRepository' -e 'from app.domain.machine' \
+    -e 'CloudHostRepository' -e 'from app.domain.machine import' -e 'from app.domain.machine\.' \
     $dirs 2>/dev/null || true)"
   # (b) and nowhere in app/ may a function be DEFINED that infers the answer.
   hits="$hits

@@ -68,7 +68,7 @@ def pointer_parts(content: str) -> tuple[str, str] | None:
     if not isinstance(found, dict):
         return None
     server, uri = found.get("server"), found.get("uri")
-    if isinstance(server, str) and server and is_ui_uri(uri):
+    if isinstance(server, str) and server and isinstance(uri, str) and is_ui_uri(uri):
         return server, uri
     return None
 

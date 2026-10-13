@@ -148,9 +148,11 @@ describe('空间设置：给 AI 队友的指导', () => {
       expect(updateSpace).toHaveBeenCalledWith(SPACE_ID, {
         teaching: {
           systemPrompt: '第 {current_week} 周',
+          privatePrompt: null,
           currentWeek: 3,
           allowedTopics: [],
           avoidInCode: [],
+          learningGoals: [],
           materialIds: [],
           knowledgeIds: [],
         },
@@ -169,9 +171,11 @@ describe('空间设置：给 AI 队友的指导', () => {
     expect(updateSpace.mock.calls[0][1]).toEqual({
       teaching: {
         systemPrompt: null,
+        privatePrompt: null,
         currentWeek: null,
         allowedTopics: [],
         avoidInCode: [],
+        learningGoals: [],
         materialIds: [],
         knowledgeIds: [],
       },

@@ -31,8 +31,7 @@ class _Service:
 
 
 class _Topic:
-    def __init__(self, compute_config=None, topic_id="t1"):
-        self.compute_config = compute_config
+    def __init__(self, topic_id="t1"):
         self.id = topic_id
 
 
@@ -47,7 +46,7 @@ def _wire(monkeypatch, rows, *, device="dev1", reads=None):
     """把三次外部调用都换成桩：索引、设备名、设备上的 `cat`。"""
     monkeypatch.setattr(module, "MachineSkillService", _Service(rows))
 
-    async def _room_device(session, topic):
+    def _room_device(topic):
         return device
 
     monkeypatch.setattr(module, "room_device", _room_device)
@@ -94,7 +93,7 @@ async def test_a_machine_that_cannot_answer_just_drops_the_skill(monkeypatch):
     rows = {"ponytail": _Row(adopted=True)}
     monkeypatch.setattr(module, "MachineSkillService", _Service(rows))
 
-    async def _room_device(session, topic):
+    def _room_device(topic):
         return "dev1"
 
     async def _exec(device_id, argv, *, timeout):
@@ -124,7 +123,7 @@ async def test_a_changed_digest_is_read_again(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(module, "MachineSkillService", _Service(rows))
 
-    async def _room_device(session, topic):
+    def _room_device(topic):
         return "dev1"
 
     async def _exec(device_id, argv, *, timeout):
