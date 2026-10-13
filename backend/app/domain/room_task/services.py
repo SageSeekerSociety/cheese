@@ -536,15 +536,19 @@ class TaskService:
         await self._session.flush()
         return task
 
-    async def next_step(self, task: Task) -> None:
+    async def next_step(self, task: Task, *, base_branch: str | None = None) -> None:
         """A delivery of ``task`` landed and the task goes on: its next one is
         made on a branch of its own, cut from the project's latest code, and
         opens a PR of its own. The machine moves the task's checkout onto it
-        (`cheese worktree`), carrying what had not landed."""
+        (`cheese worktree`), carrying what had not landed. ``base_branch``: the
+        project's default branch, when the caller read it from the forge before
+        locking ``task``."""
         # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
-        task.base_branch = await default_branch(task.project_id, self._session)
+        task.base_branch = base_branch or await default_branch(
+            task.project_id, self._session
+        )
         task.base_task_id = None
         task.branch_name = _next_branch(task)
         task.pr_number = task.pr_url = None

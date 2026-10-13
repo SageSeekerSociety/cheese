@@ -51,6 +51,7 @@ from app.domain.agent.platform_notices import (
     EVENT_ARTIFACT_DECLARED,
     EVENT_CARD_FILED,
     EVENT_MERGE_WITHHELD,
+    EVENT_TURN_TIMEOUT,
     SEVERITY_INFO,
     SEVERITY_WARN,
     WHO_HUMAN,
@@ -70,7 +71,9 @@ from app.domain.project.protection import branch_protection_of
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.closing import Overdue
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.services import said_title
 from app.domain.topic.models import Topic
 from app.domain.webhook import service as webhook_service
 
@@ -490,3 +493,38 @@ async def _note_outside_accept_txn(
             await session.commit()
     except Exception:  # noqa: BLE001
         logger.exception("could not record the PR-open failure on card %s", card_id)
+
+
+async def tell_room_undelivered(session: AsyncSession, closed: Overdue) -> None:
+    """``closed`` was closed past its deadline with work still going on or
+    asked for in it (`room_task.closing.STOP_WORK_AFTER`): its room hears that
+    the task closed, that work was stopped, and what it was. Best effort,
+    like `task_landing.tell_origin`."""
+    if not closed.undelivered:
+        return
+    try:
+        async with session.begin_nested():
+            await announce(
+                session,
+                place_id=closed.task.room_id,
+                content=say("taskClosedUndelivered", title=said_title(closed.task)),
+                meta=notice(
+                    EVENT_TURN_TIMEOUT,
+                    severity=SEVERITY_WARN,
+                    who=WHO_HUMAN,
+                    detail=say(
+                        "taskClosedUndeliveredDetail",
+                        items=[_gist(said) for said in closed.undelivered],
+                    ),
+                    detail_label=say("labelDetails"),
+                ),
+            )
+    except Exception:  # noqa: BLE001 — a courtesy line never undoes a close
+        logger.warning(
+            "could not tell task %s's room what it left", closed.task.id, exc_info=True
+        )
+
+
+def _gist(said: str) -> str:
+    line = " ".join(said.split())
+    return line if len(line) <= 120 else line[:119] + "…"

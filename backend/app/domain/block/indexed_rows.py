@@ -86,7 +86,7 @@ AGENT_CHECK_ROWS = text(f"(meta ->> 'event_type') IN ({_one_of(CHECKS_FOR_THE_AG
 
 #: A message that named an agent and has not had its turn: never read into a
 #: prompt, never answered or refused another way. The rows the pending-message
-#: scan starts turns from (`pending_messages.queued_messages`), kept in a partial
+#: scan starts turns from (`block.queries.queued_messages`), kept in a partial
 #: index because that scan runs on a clock and the rest of the table is
 #: everything ever said.
 QUEUED_MESSAGE_ROWS = text(
