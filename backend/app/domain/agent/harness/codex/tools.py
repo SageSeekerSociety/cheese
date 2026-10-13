@@ -536,7 +536,8 @@ class RemoteTools:
         assert self.monitors is not None
         arguments = params.get("arguments") or {}
         if tool == "TaskStop":
-            task = arguments.get("task_id") or arguments.get("shell_id")
+            # Routed here only for a monitor id (`_is_monitor_call`).
+            task = str(arguments.get("task_id") or arguments.get("shell_id") or "")
             text, success = await self.monitors.stop(task), True
         elif not session_call:
             # What a monitor prints is told to the room's session; a subagent
