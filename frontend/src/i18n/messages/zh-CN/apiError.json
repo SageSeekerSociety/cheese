@@ -114,7 +114,6 @@
   "usernameReserved": "该用户名是平台保留字，请换一个",
   "appSignInUnavailable": "暂时无法登录知是 app，请稍后重试",
   "emptyFile": "空文件",
-  "attachmentTooLarge": "文件太大（上限 10MB）",
   "previewFormatUnsupported": "这个格式不能转换为预览",
   "previewTooLarge": "文件超过 {mb}MB，无法生成预览",
   "revisionsWordOnly": "只有 Word 文档带修订记录",

@@ -93,7 +93,7 @@ describe('输入区的上传入口', () => {
     const any = fileInputs(c).find((i) => !i.accept)
     expect(any).toBeTruthy()
     const opened = vi.spyOn(any!, 'click')
-    await fireEvent.click(c.querySelector('[title="上传文件（每个最大 10MB）"]')!)
+    await fireEvent.click(c.querySelector('[title="上传文件（每个最大 10MB，视频 200MB）"]')!)
     expect(opened).toHaveBeenCalled()
   })
 

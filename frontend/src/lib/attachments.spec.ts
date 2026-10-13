@@ -216,6 +216,22 @@ describe('chat attachments', () => {
     expect(pending.value[0].path).toContain('small.pdf')
   })
 
+  // A phone screen recording runs to tens or hundreds of MB: a video is held to
+  // the video ceiling, and refused past it with that ceiling named.
+  it('lets a video past the general ceiling and names the video ceiling past its own', async () => {
+    const onError = vi.fn()
+    const recording = file('IMG_0001.MOV', 'video/quicktime')
+    Object.defineProperty(recording, 'size', { value: 80 * 1024 * 1024 })
+    const tooLong = file('long.mp4', 'video/mp4')
+    Object.defineProperty(tooLong, 'size', { value: 200 * 1024 * 1024 + 1 })
+    const { addFiles, pending } = usePendingAttachments(() => 't1', onError)
+    await addFiles([recording, tooLong])
+    expect(onError).toHaveBeenCalledOnce()
+    expect(onError).toHaveBeenCalledWith('long.mp4 超过 200MB，无法上传')
+    expect(pending.value).toHaveLength(1)
+    expect(pending.value[0].path).toContain('IMG_0001.MOV')
+  })
+
   // 失败的那一枚留在待发条里：它带着名字和 File，重试就是拿着同一份再传一次。
   // 原来它被删掉、错误只在一条会自己走掉的提示里，人回头看时既不知道少了哪个
   // 文件，也没有再试一次的路。
