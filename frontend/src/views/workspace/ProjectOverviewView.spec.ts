@@ -71,6 +71,7 @@ function mount(extra: Record<string, unknown> = {}) {
       progress: [],
       progressFailed: false,
       tasks: [],
+      underway: 0,
       names: { alice: 'Alice', bob: 'Bob' },
       avatars: {},
       me: 'alice',
@@ -133,6 +134,18 @@ it('任务和进展还没读到：不写「0」，也不写「暂无」', () => 
   expect(view.getByTestId('overview-all-tasks').textContent).not.toMatch(/\d/)
   expect(view.queryByText(t('work.overview.nobody'))).toBeNull()
   expect(view.queryByText(t('work.overview.noProgress'))).toBeNull()
+})
+
+it('「进行中的任务」那一个数用的是传进来的那一份，不是拿列表自己数', () => {
+  // 清单第 14 条：这个数（后端 `underway_counts`）含不含停在那儿的任务，由说明那一句讲
+  // 清楚；数字本身不再从列里凑，所以给几件任务也不影响它。
+  const view = mount({
+    underway: 7,
+    tasks: [task({ title: 'A' }), task({ title: 'B' }), task({ title: 'C' })],
+  })
+  const button = view.getByTestId('overview-all-tasks')
+  expect(button.textContent).toContain('7')
+  expect(button.getAttribute('title')).toBe(t('work.sidebar.underwayHint'))
 })
 
 it('领题开的项目：写着这份报名自己截到哪一刻，按看的人的钟点到分钟', () => {

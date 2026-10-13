@@ -74,7 +74,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import BlockOut, BlockRepository, _actor_in_place
+from app.api.topics_deps import BlockOut, BlockRepository, _actor_in_place
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.errors import (
     AuthenticationRequiredError,

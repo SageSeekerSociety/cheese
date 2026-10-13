@@ -82,18 +82,6 @@ class TaskRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
-        """How many open tasks each of these rooms has, in one read. A room
-        with none is absent."""
-        if not room_ids:
-            return {}
-        stmt = (
-            select(Task.room_id, func.count(Task.id))
-            .where(Task.room_id.in_(room_ids), Task.status == TaskStatus.open)
-            .group_by(Task.room_id)
-        )
-        return {room: n for room, n in (await self._session.execute(stmt)).all()}
-
     async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many tasks each of these rooms has underway: open and not in the
         window where a merged task is being written up before it closes. A room
@@ -120,6 +108,30 @@ class TaskRepository:
             Task.status == TaskStatus.open,
             Task.closing_since.is_(None),
             or_(Task.owner_handle == person, self._whose("helping", person)),
+        )
+        return list((await self._session.execute(stmt)).scalars().all())
+
+    async def underway_others(
+        self, room_ids: list[uuid.UUID], person: str
+    ) -> list[Task]:
+        """The tasks underway in these rooms that ``person`` neither owns nor
+        helps on, most recently moved first: the sidebar borrows the first few
+        of them to bring a channel up to its floor of rows (`rail_tasks`).
+
+        Ordered here rather than left to the caller: 一个项目里这样的活能有几百条，
+        调用方按房间各取前几条，排序在库里做才不用把它们都读出来再排。
+        """
+        if not room_ids:
+            return []
+        stmt = (
+            select(Task)
+            .where(
+                Task.room_id.in_(room_ids),
+                Task.status == TaskStatus.open,
+                Task.closing_since.is_(None),
+                TaskRepository.not_taking_part(person),
+            )
+            .order_by(TaskRepository._moved().desc())
         )
         return list((await self._session.execute(stmt)).scalars().all())
 
@@ -230,13 +242,24 @@ class TaskRepository:
 
     @staticmethod
     def _whose(whose: str, me: str):
-        mine = Task.owner_handle == me
-        helping = cast(Task.contributor_handles, JSONB).contains([me])
         if whose == "mine":
-            return mine
+            return Task.owner_handle == me
         if whose == "helping":
-            return helping
-        return and_(Task.owner_handle.is_distinct_from(me), not_(helping))
+            return cast(Task.contributor_handles, JSONB).contains([me])
+        return TaskRepository.not_taking_part(me)
+
+    @staticmethod
+    def not_taking_part(person: str):
+        """这个人没沾过手的活：`takes_part` 的反面，`whose=others` 问的就是这一批，
+        侧栏给频道补足到 3 条时借的也是这一批。
+
+        `is_distinct_from` 而不是 `!=`：没负责人的活 `owner_handle` 是 NULL，`!=` 在
+        那里给 NULL，取反还是 NULL，那一行会既不算「我的」也不算「别人的」。
+        """
+        return and_(
+            Task.owner_handle.is_distinct_from(person),
+            not_(cast(Task.contributor_handles, JSONB).contains([person])),
+        )
 
     @staticmethod
     def takes_part(person: str):

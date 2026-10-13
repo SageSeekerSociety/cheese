@@ -26,13 +26,15 @@ import { menuActionOf, useCommands } from '@/commands'
 import { archiveTopic, topicActions } from '@/commands/topicActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelDetailsDialog from '@/components/channel/ChannelDetailsDialog.vue'
+import DeleteChannelDialog from '@/components/channel/DeleteChannelDialog.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import MobileActionSheet from '@/components/common/MobileActionSheet.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
+import { routeIds } from '@/lib/addresses'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { queryClient } from '@/query/client'
@@ -71,12 +73,12 @@ const isWorkTopic = computed(() => props.topic.kind !== 'root')
 // 我对这个频道的通知档位（铃铛）。
 const store = useWorkspaceStore()
 // ---- 用量 popover (was the 资源 drawer) ----
-const usageOpen = ref(false)
+const menuOpen = ref(false)
 const usageLoading = ref(false)
 const topicUsage = ref<UsageStats | null>(null)
 const projectUsage = ref<UsageStats | null>(null)
 
-// 指针移到 ⋯ 上就开始取，点开时多半已经到了；刚取过的（同一个话题、十秒以内）
+// 指针移到 ⋯ 上就开始取，点开菜单时多半已经到了；刚取过的（同一个话题、十秒以内）
 // 不再取第二遍——悬停一次紧接着点开是常态。取的时候手里的旧数照样显示，只有
 // 一个数都还没有时才画占位条（TopicUsageSummary），卡片从一出来就是最终尺寸。
 // 没有定时器：20 秒轮询买来的新鲜度没人在看。
@@ -103,7 +105,7 @@ async function loadUsage() {
   }
 }
 
-watch(usageOpen, (open) => {
+watch(menuOpen, (open) => {
   if (open) void loadUsage()
 })
 // 换了话题，上一个话题的数不能挂在这一个上。
@@ -116,8 +118,11 @@ watch(
   }
 )
 
-// 手机上话题列表没有行尾那颗 ⋯，改名、归档原本只有长按那一行才找得到。⋯ 面板里
-// 放的是同一份（topicActions），只是这里重命名另起一页。
+// ⋯ 里放的是侧栏那一行同一个频道操作菜单（commands/topicActions.ts）：两处各写一份
+// 就会各长各的。桌面和手机都是这一份，桌面是下拉菜单、手机是底部升起的面板
+// （AdaptiveMenu）——原先桌面上这颗 ⋯ 只开用量，改名、归档只有手机上找得到，等于
+// 桌面版够不着（清单第 1、3 条）。用量本来是这颗 ⋯ 的全部内容，现在它退成菜单顶上
+// 的一段（#desktopHeader / #header），照旧在指针移上来时先取。
 const nav = useNavigation()
 const renaming = ref(false)
 const draftTitle = ref('')
@@ -140,12 +145,14 @@ function saveRename() {
 // 少画一点」同一个道理。
 function roomCommands() {
   if (!nav) return []
-  return topicActions(props.topic, nav.router, { rename: startRename })
+  return topicActions(props.topic, nav.router, { rename: startRename, remove: () => (deleteOpen.value = true) })
 }
 const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
 
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
+// 成员名单开着没有。名单自己长在成员名册那一块上，详情只叫它开（清单第 5 条）。
+const membersOpen = ref(false)
 const managerName = ref<string | null>(null)
 // 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
@@ -160,6 +167,32 @@ function archiveFromDetails() {
 function leaveFromDetails() {
   detailsOpen.value = false
   void store.setJoined(props.topic.id, false)
+}
+// 详情先关、名单再开：两张浮层叠在一起，关上面那张时下面那张会跟着晃一下。
+function openMembersFromDetails() {
+  detailsOpen.value = false
+  membersOpen.value = true
+}
+
+// 删除频道（清单第 2 条）：⋯ 菜单和详情「设置」都开到这张确认框上，真正删的是
+// store（它删完把侧栏那一行去掉）。删成了就走——内容是刚被删掉的那个频道，留着
+// 只会是一页空壳或者一个 404。
+const deleteOpen = ref(false)
+const deleting = ref(false)
+function removeChannel() {
+  detailsOpen.value = false
+  deleteOpen.value = true
+}
+async function confirmRemove() {
+  const topic = props.topic
+  deleting.value = true
+  const done = await store.removeChannel(topic.id)
+  deleting.value = false
+  if (!done) return
+  deleteOpen.value = false
+  const here = nav?.router.currentRoute.value
+  if (here?.name === 'workspace-topic' && routeIds(here.params).topicId === topic.id)
+    void nav?.router.replace({ name: 'workspace-project', params: { projectId: topic.project_id } })
 }
 useCommands(roomCommands)
 </script>
@@ -206,6 +239,7 @@ useCommands(roomCommands)
       <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
            芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
       <TopicMembers
+        v-model:open="membersOpen"
         :topic-id="topic.id"
         :can-manage="topic.can_manage === true"
         :can-invite="topic.joined === true"
@@ -231,6 +265,8 @@ useCommands(roomCommands)
         @archive="archiveFromDetails"
         @unarchive="store.unarchive(topic.id)"
         @leave="leaveFromDetails"
+        @delete="removeChannel"
+        @open-members="openMembersFromDetails"
         @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
       />
 
@@ -247,7 +283,7 @@ useCommands(roomCommands)
       <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
            看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
            连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
-      <v-menu v-if="mdAndUp" v-model="usageOpen" :close-on-content-click="false" location="bottom end">
+      <AdaptiveMenu v-model="menuOpen" :actions="roomActions" :title="t('work.room.menu.more')">
         <template #activator="{ props: menuProps }">
           <BaseButton
             v-bind="menuProps"
@@ -259,55 +295,50 @@ useCommands(roomCommands)
             @mouseenter="loadUsage"
           />
         </template>
-        <v-card min-width="300" class="room-menu">
+        <!-- 用量排在操作前面：它是这一段的口径，不是一件能做的事。桌面那颗 ⋯ 本来就
+             只开它，现在它退成菜单顶上的一段；手机上这一块从底部升起（设计系统 §10.4）。 -->
+        <template #desktopHeader>
+          <v-card min-width="300" class="room-menu">
+            <TopicUsageSummary
+              class="room-menu__usage"
+              :loading="usageLoading"
+              :topic-usage="topicUsage"
+              :project-usage="projectUsage"
+              :short-id="isWorkTopic ? shortId : null"
+              :topic-id="topic.id"
+            />
+          </v-card>
+        </template>
+        <template #header>
           <TopicUsageSummary
-            class="room-menu__usage"
             :loading="usageLoading"
             :topic-usage="topicUsage"
             :project-usage="projectUsage"
             :short-id="isWorkTopic ? shortId : null"
             :topic-id="topic.id"
           />
-        </v-card>
-      </v-menu>
-      <!-- 手机上同一块内容从底部升起，和别的手机菜单一样（设计系统 §10.4）。 -->
-      <template v-else>
-        <BaseButton
-          icon="mdi-dots-horizontal"
-          size="sm"
-          class="tap-target"
-          :title="t('work.room.menu.more')"
-          :aria-label="t('work.room.menu.more')"
-          @click="usageOpen = true"
+        </template>
+      </AdaptiveMenu>
+      <!-- 改名、删除两张表单两端共用一份，不能待在手机那一支里：桌面版也得够得着。 -->
+      <AdaptiveDialog
+        v-model="renaming"
+        :title="t('work.room.menu.renameTitle')"
+        :primary-label="t('global.save')"
+        :primary-disabled="!draftTitle.trim()"
+        @primary="saveRename"
+      >
+        <v-text-field
+          v-model="draftTitle"
+          :label="t('work.room.menu.topicName')"
+          :maxlength="TOPIC_TITLE_MAX_LENGTH"
+          :counter="TOPIC_TITLE_MAX_LENGTH"
+          persistent-counter
+          autocomplete="off"
+          autofocus
+          @keyup.enter="saveRename"
         />
-        <MobileActionSheet v-model="usageOpen" :actions="roomActions">
-          <TopicUsageSummary
-            :loading="usageLoading"
-            :topic-usage="topicUsage"
-            :project-usage="projectUsage"
-            :short-id="isWorkTopic ? shortId : null"
-            :topic-id="topic.id"
-          />
-        </MobileActionSheet>
-        <AdaptiveDialog
-          v-model="renaming"
-          :title="t('work.room.menu.renameTitle')"
-          :primary-label="t('global.save')"
-          :primary-disabled="!draftTitle.trim()"
-          @primary="saveRename"
-        >
-          <v-text-field
-            v-model="draftTitle"
-            :label="t('work.room.menu.topicName')"
-            :maxlength="TOPIC_TITLE_MAX_LENGTH"
-            :counter="TOPIC_TITLE_MAX_LENGTH"
-            persistent-counter
-            autocomplete="off"
-            autofocus
-            @keyup.enter="saveRename"
-          />
-        </AdaptiveDialog>
-      </template>
+      </AdaptiveDialog>
+      <DeleteChannelDialog v-model="deleteOpen" :name="title" :busy="deleting" @confirm="confirmRemove" />
     </div>
   </Teleport>
 </template>

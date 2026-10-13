@@ -24,7 +24,7 @@ from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.doc_access import reach
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.routes.topics import _actor_in_place
+from app.api.topics_deps import _actor_in_place
 from app.core.errors import (
     ConflictError,
     ForbiddenError,

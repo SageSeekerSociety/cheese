@@ -46,19 +46,25 @@ import pytest
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 
+#: C2 那一段所在的配置文件。下面两条自检拿它和 `_SCANNED_MODULES` 对账。
+_IMPORTLINTER = BACKEND_ROOT / ".importlinter"
+
 #: 扫哪几棵树，相对 backend 根。见上面「管辖范围」。
 _SCANNED = ("app/domain", "app/api/routes")
 
 #: 另外点名扫描的文件：路由的共享依赖模块。它们和路由一样不属于任何领域，摸谁的
 #: repository 都算跨域。**点名而不是扫整个 ``app/api``**：那棵树里还有别的模块，
 #: 历史导入与本类纪律无关，一起扫进来只会多出一批要单独解释的行。往里面新增共享
-#: 依赖模块时，把路径写在这里。
+#: 依赖模块时，把路径写在这里——同时要在 ``.importlinter`` 的 C2 ``source_modules``
+#: 里加同一项。两处由 ``test_c2_sources_and_the_guard_scan_the_same_modules`` 逐条
+#: 对账，也由 ``test_every_named_source_has_a_file`` 确认文件都在。
 _SCANNED_MODULES = (
     "app/api/admin_deps.py",
     "app/api/users_deps.py",
     "app/api/space_deps.py",
     "app/api/space_payloads.py",
     "app/api/task_deps.py",
+    "app/api/topics_deps.py",
 )
 
 #: 路由那棵树的「领域」。它不是领域包，这个值只用来让路由发出的每一条 repository
@@ -301,8 +307,8 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读
         # 和写那一条选择，外加一条会话对那台机器的租约）。它摸的 repository 只有
         # machine 一个，正是原先 topics.py 里跟着它走的那条边：`ProjectRepository`
-        # 它从 topics.py 拿（那是另一笔债，仍在 topics.py 名下），名字也跟着从
-        # topics.py 的 import 里读；`ProjectMachineRepository` 只在
+        # 它从 `app/api/topics_deps.py` 拿（那是另一笔债，记在 topics_deps 名下），
+        # 名字也跟着从那里的 import 里读；`ProjectMachineRepository` 只在
         # `set_topic_compute_profile` 里读一次，随它搬走。拆模块没有新增跨包的边，
         # 只是发起方从 topics.py 换成了 topics_compute.py，所以按同一笔债入账。
         # --- users 包 --- users.py 拆成 routes/users/ 之后（第 4 步重构），原先记在
@@ -341,6 +347,18 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.task_deps", "app.domain.space.repositories"),
         ("app.api.task_deps", "app.domain.team.repositories"),
         ("app.api.task_deps", "app.domain.user.repositories"),
+        # --- topics_deps --- 同一轮重构的下一片：routes/topics.py 曾把
+        # `Block` / `BlockKind` / `BlockOut` / `BlockRepository` /
+        # `ProjectRepository` / `UsageRepository` 转发给各 `topics_*`，转发本身正是
+        # C4 不许的形状（一个路由成了另一个路由的依赖）。转发点挪到
+        # `app/api/topics_deps.py` 之后，三个领域 repository 的发起方从
+        # `app.api.routes.topics` 换成了 `app.api.topics_deps`——被摸的 repository
+        # 一个没多，所以按同一笔债入账，只是换了个名字。`routes/topics.py` 自己
+        # 仍在摸这三个（上面那三行），因为它的处理函数直接读它们。还法同上一批：
+        # 改成调对方的 service，然后删行。
+        ("app.api.topics_deps", "app.domain.block.repositories"),
+        ("app.api.topics_deps", "app.domain.project.repositories"),
+        ("app.api.topics_deps", "app.domain.usage.repositories"),
     }
 )
 
@@ -485,6 +503,67 @@ def test_exemptions_are_all_still_needed() -> None:
             f"{lines}\n\n"
             "（债还完了忘删白名单，下一个人就会以为这条依赖还在。）"
         )
+
+
+#: C2 的 `source_modules` 里不属于 `_SCANNED_MODULES` 的那两项。它们管的是同一批
+#: 模块，只是由两处分别扫：`app.api.routes` 是守卫扫的那棵树；
+#: `app.api.deps` 不在那棵树里，只有它的 models 一半归 C2 管（见 test 顶部说明）。
+_ROUTE_LAYER_SOURCES = ("app.api.routes", "app.api.deps")
+
+
+def _c2_source_modules(config: Path = _IMPORTLINTER) -> list[str]:
+    """`.importlinter` 里 C2 那一段的 `source_modules`，按声明顺序。
+
+    逐行读，不引 yaml 解析器：这份配置存在的意思就是让「谁管谁」一眼看得见，
+    多一个解析器就多一处会和它分叉的地方。
+    """
+    sources: list[str] = []
+    collecting = False
+    for line in config.read_text(encoding="utf-8").splitlines():
+        if line.startswith("name = C2 "):
+            collecting = True
+        elif collecting and line.startswith("source_modules"):
+            continue
+        elif collecting and line.startswith("    ") and line.strip():
+            sources.append(line.strip())
+        elif collecting and line.strip() and sources:
+            break  # 下一个键（`forbidden_modules =`）开始，本段结束
+    return sources
+
+
+def test_c2_sources_and_the_guard_scan_the_same_modules() -> None:
+    """两本名单逐条对齐：C2 的 `source_modules` 去掉路由那两项，即
+    `_SCANNED_MODULES`。
+
+    「搬出路由不等于掉出管辖」这句话落在两处手写的名单上，而两处都只写一遍、漏了
+    都不出声：C2 少一个源，那个模块的 models import 就没人管了；守卫少扫一个文件，
+    它的 repository import 就没人管了——而两边都还是绿的。逐条比一次，任何一边删掉
+    任何一条都会红。
+    """
+    declared = set(_c2_source_modules())
+    scanned = set(_SHARED_API_MODULES)
+    only_declared = sorted(declared - scanned - set(_ROUTE_LAYER_SOURCES))
+    only_scanned = sorted(scanned - declared)
+    assert not only_declared and not only_scanned, (
+        "C2 的 source_modules 与 _SCANNED_MODULES 指的是同一批路由共享依赖模块，"
+        "改一边就要改另一边：\n"
+        f"  只在 .importlinter 里：{only_declared}\n"
+        f"  只在守卫的 _SCANNED_MODULES 里：{only_scanned}"
+    )
+
+
+def test_every_named_source_has_a_file() -> None:
+    """两本名单点名的每个模块都得有对应文件——删了文件却留着名单不会自己变红。
+
+    `_scan` 对不存在的文件是跳过的（假树只搭用得上的那半棵，靠的就是这个），所以
+    真树里少一个文件会被静默少扫一片。这里逐条查一遍。
+    """
+    missing = [
+        module
+        for module in sorted(set(_c2_source_modules()) | _SHARED_API_MODULES)
+        if not _module_exists(BACKEND_ROOT, module)
+    ]
+    assert missing == [], f"名单上点名、树里却没有的模块：{missing}"
 
 
 # ---------------------------------------------------------------------------

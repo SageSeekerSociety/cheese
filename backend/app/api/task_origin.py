@@ -12,7 +12,7 @@ import re
 import uuid
 from datetime import UTC, datetime
 
-from app.api.routes.topics import BlockRepository
+from app.api.topics_deps import BlockRepository
 from app.domain.block.documents import DOC_CARD_KEY
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.identity.handles import recipient_seat

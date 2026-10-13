@@ -530,6 +530,7 @@
   "protectionEmptyHandle": "{what} 里有空的 handle",
   "handleTooLong": "handle 不能超过 {max} 个字符",
   "defaultReviewerNul": "default_reviewer 不能包含 NUL 字节",
+  "dispatchSeatNul": "调度座位不能包含 NUL 字节",
   "protectionOverrideList": "人工放行名单",
   "projectNeedsTeam": "项目需要归属一个团队",
   "projectNumberTaken": "这个项目编号已被使用",
@@ -1033,5 +1034,14 @@
   "specDevicesOf": "{name}的设备",
   "environmentDefaultPeopleOnly": "新队友的默认执行环境由人来设；AI 队友只能换自己的",
   "environmentOwnOnly": "AI 队友只能换自己的执行环境",
-  "platformSpecUnavailable": "这个部署没有平台的机器，这种沙箱放不下；对话和平台工具仍可用。可以给这位队友换一种沙箱规格，比如某个人的设备。"
+  "platformSpecUnavailable": "这个部署没有平台的机器，这种沙箱放不下；对话和平台工具仍可用。可以给这位队友换一种沙箱规格，比如某个人的设备。",
+  "externalProblemAccountRequired": "请填 YOJ 的账号",
+  "externalProblemPasswordRequired": "请填 YOJ 账号的密码",
+  "externalProblemNumberInvalid": "YOJ 题号只能填数字",
+  "externalProblemNotSet": "这道题还没填 YOJ 题号，先填上再同步",
+  "deleteChannelSignIn": "删除频道需要登录",
+  "projectRootCannotDelete": "项目本体不能删除",
+  "channelDeletedCannotUnarchive": "这个频道已经删除了，恢复不了",
+  "privateChatHasNoThreads": "私聊里没有支线，在频道里开",
+  "threadTitleRequired": "支线得有个名字，写一句再建"
 }

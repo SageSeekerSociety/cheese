@@ -8,6 +8,7 @@
 // 分这两半是为了让组件不认识 `vue-router`（.claude/rules/architecture.md），也让
 // 折叠记不记得住、红灯会不会自己亮这些事能离开「画」单独测。
 import type { Project, Topic } from '../cx_types'
+import type { RowLight } from '../lib/roomLight'
 import type { TopicUnread } from '../types/channels'
 import type { MenuAction } from './common/menuAction'
 import type { VirtualListHandle } from './common/VirtualList.vue'
@@ -20,12 +21,14 @@ import { useLongPress } from '@/composables/useLongPress'
 import { useTopicRail } from '@/composables/useTopicRail'
 import { useTopicRailRoutes } from '@/composables/useTopicRailRoutes'
 
+import { brightest } from '../lib/roomLight'
 import { DEFAULT_SHELL, projectPageLayout, shellFor, termParams } from '../lib/shell'
 import { topicTitle } from '../lib/topicState'
 import { normalizeTopicTitle } from '../lib/topicTitle'
 import { countLabel } from '../lib/topicTree'
 import { myHandle } from '../me'
 
+import BaseButton from './base/BaseButton.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
@@ -77,12 +80,18 @@ const props = defineProps<{
   roomTaskTotals?: Record<string, number>
   /** 就地展开了的频道（频道 id → 它其余进行中的任务读到哪一步）；不在里面的就是收着的。 */
   moreTasks?: Record<string, MoreTasks>
+  /** 收起了任务块的频道（频道 id 的集合）：不挂它下面的任务，只在频道行上留条数和灯。 */
+  foldedChannels?: Record<string, boolean>
   /** 正打开的任务。 */
   selectedTaskId?: string | null
   /** 正打开的东西在哪个频道里（见 `useTopicRail` 的同名字段）。 */
   hereChannelId?: string | null
-  /** 「浏览频道」那一页正开着。 */
+  /** 「全部频道」那一页正开着。 */
   browsingChannels?: boolean
+  /** 我能新建频道（外部成员不能）。外面说，因为「我是谁」不是这一层的事。 */
+  canCreate?: boolean
+  /** 「全部任务」那一页正开着（底部「进行中的任务」那一行跟着亮起来）。 */
+  tasksOpen?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -90,14 +99,21 @@ const emit = defineEmits<{
   (e: 'select-task', task: { roomId: string; taskId: string }): void
   // 频道下面最后那一行：展开或收起这个频道其余进行中的任务（读失败时是再读一次）。
   (e: 'toggle-tasks', channelId: string): void
-  // 「浏览频道」：去看这个项目的全部频道（侧栏只列加入了的）。
+  // 频道行右边那个把手：把挂在它下面的一整块任务收起来或展开。
+  (e: 'toggle-tasks-fold', channelId: string): void
+  // 「全部频道」：去看这个项目的全部频道（侧栏只列加入了的）。
   (e: 'browse-channels'): void
+  // 「新建频道」：就在这一层弹对话框（频道标题右边那颗 ＋，空项目里的主按钮）。
+  // 对话框和它要发的请求都在外面：这一层不认识 store。
+  (e: 'new-channel'): void
+  // 「进行中的任务」：去看这个项目的全部任务（那一页里也有已经结束的）。
+  (e: 'open-tasks'): void
   // 指针停在一行上：让父组件（拥有这一行的路由的那个）顺手把它预热了。点这一行
   // 会发生什么由 select-topic 的接收方决定，所以「提前准备什么」也归它。
   (e: 'hover-topic', id: string): void
   (e: 'press-topic', id: string): void
   (e: 'leave-topic'): void
-  // 同上，按下去就先下代码：总览/资料库那一行和任务行（见 TopicRailPinnedRows、
+  // 同上，按下去就先下代码：资料库那一行和任务行（见 TopicRailPinnedRows、
   // TopicRailTaskRow 各自的 `press`）。
   (e: 'press-page', key: string): void
   (e: 'press-task', task: { roomId: string; taskId: string }): void
@@ -147,9 +163,13 @@ const {
 function hiddenTasks(channelId: string): number {
   return Math.max(0, (props.roomTaskTotals?.[channelId] ?? 0) - (props.roomTasks?.[channelId]?.length ?? 0))
 }
+
+// 清单第 14 条：底部那一颗数字、项目总览、频道卡片上写的都叫「进行中的任务」，都按
+// 同一个判据数（`underway_counts`：还开着、也没在合并后的收尾窗口里）。
+const underwayCount = computed(() => Object.values(props.roomTaskTotals ?? {}).reduce((sum, n) => sum + n, 0))
 function moreTaskRows(channelId: string) {
   const more = props.moreTasks?.[channelId]
-  return more?.state === 'ready' ? more.rows : []
+  return !tasksFoldOf(channelId) && more?.state === 'ready' ? more.rows : []
 }
 function hasMoreRow(channelId: string): boolean {
   return !!props.moreTasks?.[channelId] || hiddenTasks(channelId) > 0
@@ -160,6 +180,45 @@ function moreLabel(channelId: string): string {
   if (more.state === 'loading') return t('work.sidebar.tasksLoading')
   if (more.state === 'failed') return t('work.sidebar.tasksFailed')
   return t('work.sidebar.fewerTasks')
+}
+
+// ---- 这一块收起来了 ----
+// 收起那一块不能把你手里的事一起收掉：正打开的那条留在下面（侧栏对频道已经有同一条
+// 规矩——正待着的频道即便没加入也留在列表上，见 `useTopicRail` 的 hereChannelId）。
+// 留哪一条按「我现在开着哪个任务」问，而不是按它有没有挂在 `roomTasks` 里：收起来只
+// 收画法，不动数据。
+function tasksFoldOf(channelId: string): boolean {
+  return props.foldedChannels?.[channelId] === true
+}
+function pinnedTask(channelId: string): RailTask | null {
+  const id = props.selectedTaskId
+  if (!id || !tasksFoldOf(channelId)) return null
+  return (props.roomTasks?.[channelId] ?? []).find((task) => task.id === id) ?? null
+}
+/** 收起来了还留在下面那一条（没有就是空）。 */
+function pinnedRows(channelId: string): RailTask[] {
+  const task = pinnedTask(channelId)
+  return task ? [task] : []
+}
+/** 展开着才挂任务行：收起来时只留正打开的那一条。 */
+function taskRows(channelId: string): RailTask[] {
+  return tasksFoldOf(channelId) ? [] : props.roomTasks?.[channelId] ?? []
+}
+/** 「展开其余 N 个」那一行也一样：收起来就跟着那一块一起走。 */
+function showMoreRow(channelId: string): boolean {
+  return !tasksFoldOf(channelId) && hasMoreRow(channelId)
+}
+/** 这块任务此刻该画的灯：里面所有行里最亮的那一盏（`brightest`）——黄压过绿，红压过黄。
+ *  开着的时候不画（每行自己的灯就在下面）；收起时才用它替这一块报信。 */
+function tasksLight(channelId: string): RowLight | null {
+  if (!tasksFoldOf(channelId)) return null
+  return brightest([
+    lightOf(channelId),
+    ...(props.roomTasks?.[channelId] ?? []).map((task) => taskLight(task)),
+    ...(props.moreTasks?.[channelId]?.state === 'ready' ? props.moreTasks[channelId].rows : []).map((task) =>
+      taskLight(task)
+    ),
+  ])
 }
 
 // ---- 路由那一半 ----
@@ -173,8 +232,9 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
   { rename: (topic) => (renamingTopicId.value = topic.id) }
 )
 
-// 项目级页面：总览和资料库摆在项目名下那一行，其余几页（全部任务在内）、项目文档、
-// 项目设置、转让或退出都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
+// 项目级页面：只有资料库摆在项目名下那一行，其余几页（总览、全部任务、项目文档、
+// 项目设置、转让或退出）都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，
+// 只换内容区。
 //
 // 「转让项目」两处都有（菜单里一条，成员页那颗按钮保留）——它只需要「我是不是所有者
 // 或这个项目的团队管理员」，项目行自己就带着这个答案。
@@ -185,7 +245,7 @@ const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsF
 // 文案走词表：壳把「项目」叫「工作」的时候，「{project}文档」跟着变成「工作文档」。
 // 表里存的是 i18n key 而不是字面量，正因为壳能换词而组件不能。
 const PROJECT_PAGES: Record<string, { label: string; icon: string }> = {
-  // 总览是首页，项目名下那一行的第一格。
+  // 总览是首页：它不进项目名下那一行，从点项目名弹出的菜单进（清单第 9 条）。
   'workspace-overview': { label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
   'project-tasks': { label: 'navigation.project.tasks', icon: 'mdi-format-list-checks' },
   // 资料库和 @ 菜单里那一格用同一个图标：点开的是同一批文件。
@@ -201,7 +261,7 @@ const KNOWN_PROJECT_PAGES = Object.keys(PROJECT_PAGES)
 const shell = computed(() => shellFor(props.projects, props.selectedProjectId) ?? DEFAULT_SHELL)
 const terms = computed(() => termParams(shell.value))
 
-// 项目名下那一行只有总览和资料库，其余都进点项目名弹出的菜单（`projectPageLayout`）。
+// 项目名下那一行只有资料库，其余（含总览）都进点项目名弹出的菜单（`projectPageLayout`）。
 // 那一行**不再加东西**，见 .claude/rules/project-sidebar.md。
 const layout = computed(() => projectPageLayout(shell.value, KNOWN_PROJECT_PAGES))
 
@@ -368,6 +428,14 @@ const rowSheetActions = computed<MenuAction[]>(() =>
   rowSheetTopic.value ? actionsFor(rowSheetTopic.value).map(menuActionOf) : []
 )
 
+// 这一列里我还没有别的频道。侧栏只列我加入的，所以「没有别的行」既可能是刚建出来的
+// 项目，也可能是别的频道我一个都没加入——两种情况下「新建一个」都接得上；反过来，
+// 有别的行时不该多这一块。加载中和读失败都返回 false：那两种情况下「没有行」说的是
+// 数据还没到，不是没有频道。
+const noOtherChannels = computed(
+  () => !props.error && !props.loadingTopics && !railSections.value.some((section) => section.rows.length > 0)
+)
+
 // 项目文档 (C4): 项目目标 / 周报集 / 记忆 在侧栏只占一行，点开进项目目标；
 // 三选一的切换长在 ProjectDocsView 页面里（一 kind 一址，URL 照旧会变）。所以
 // 这一行在任何一种文档打开时都是选中态。
@@ -431,7 +499,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
-      <!-- 手机上的项目菜单。项目名下那一行（总览、资料库）在手机上也收进这里：列表只留
+      <!-- 手机上的项目菜单。项目名下那一行（资料库）在手机上也收进这里：列表只留
            频道。换项目也只能在这里——一个项目
            一格的那条竖 rail 只在桌面渲染，底栏「工作区」那一格只落到一个项目。 -->
       <MobileActionSheet v-if="page" v-model="projectSheetOpen" :actions="projectSheetActions">
@@ -469,7 +537,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         <template v-else>
           <!-- 列表顶上由外面填的一行（手机上是去项目总览的那一行，见 ProjectSidebar）。 -->
           <slot name="top" />
-          <!-- 项目名下面一行：总览和资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
+          <!-- 项目名下面一行：只有资料库，别的不放（.claude/rules/project-sidebar.md）。 -->
           <TopicRailPinnedRows
             :pages="barPages"
             :route-name="routeName"
@@ -481,9 +549,23 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             @cancel-prefetch="cancelPrefetch()"
           />
 
-          <!-- 新建频道在「浏览频道」那一页，这里不放「＋」：频道少而稳定，新建是一年几次
-               的事。 -->
-          <div class="t-eyebrow side-subhead">{{ t('work.sidebar.topics') }}</div>
+          <!-- 新建频道就在这一组标题右边：常驻可见、不藏进 hover，点一下就地弹对话框，
+               不再跳到「浏览频道」那一页（那里只管找和加入别人的频道）。位置钉在这一
+               行上，频道再多也不动。 -->
+          <div class="t-eyebrow side-subhead">
+            <span class="side-subhead__label">{{ t('work.sidebar.topics') }}</span>
+            <button
+              v-if="canCreate"
+              type="button"
+              class="side-subhead__add tap-target"
+              data-testid="new-channel-entry"
+              :title="t('work.projectSettings.channels.create')"
+              :aria-label="t('work.projectSettings.channels.create')"
+              @click="emit('new-channel')"
+            >
+              <v-icon size="16" icon="mdi-plus" />
+            </button>
+          </div>
 
           <!-- 频道的第一行：项目自带的「综合」，固定在最上面，和其他频道同一组。 -->
           <TopicRailRootRow
@@ -497,14 +579,18 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :muted-of="mutedOf"
             :light-of="lightOf"
             :root-actions="rootTopic ? actionsFor(rootTopic).map(menuActionOf) : []"
+            :tasks-collapsed="!!rootTopic && tasksFoldOf(rootTopic.id)"
+            :task-count="rootTopic ? roomTaskTotals?.[rootTopic.id] : undefined"
+            :task-light="rootTopic ? tasksLight(rootTopic.id) : null"
             @select-topic="emit('select-topic', $event)"
             @hover-topic="emit('hover-topic', $event)"
             @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
+            @toggle-tasks="rootTopic && emit('toggle-tasks-fold', rootTopic.id)"
           >
             <template #root-tasks>
               <TopicRailTaskRow
-                v-for="(task, i) in rootTopic ? roomTasks?.[rootTopic.id] ?? [] : []"
+                v-for="(task, i) in rootTopic ? taskRows(rootTopic.id) : []"
                 :key="task.id"
                 v-guide-anchor="i === 0 ? 'task-row' : ''"
                 :task="task"
@@ -524,8 +610,19 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
               />
+              <!-- 收起来以后只留你正打开的那一条：「收起」不能把你手里的事一起收掉。 -->
+              <TopicRailTaskRow
+                v-for="task in rootTopic ? pinnedRows(rootTopic.id) : []"
+                :key="task.id"
+                :task="task"
+                :selected="true"
+                :light="taskLight(task)"
+                :unread="unreadOf(task.id)"
+                @select="emit('select-task', $event)"
+                @press="emit('press-task', $event)"
+              />
               <TopicRailMoreTasksRow
-                v-if="rootTopic && hasMoreRow(rootTopic.id)"
+                v-if="rootTopic && showMoreRow(rootTopic.id)"
                 :channel-id="rootTopic.id"
                 :label="moreLabel(rootTopic.id)"
                 :expanded="!!moreTasks?.[rootTopic.id]"
@@ -549,6 +646,15 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <LoadingSkeleton v-else-if="loadingTopics" variant="list" class="rail-skel" />
 
           <template v-else>
+            <!-- 一个别的频道都还没有：光一个 ＋ 太安静，把话说出来，并给一颗主按钮
+                顶上（空项目里这是唯一要做的事）。 -->
+            <div v-if="canCreate && noOtherChannels" class="rail-empty" data-testid="no-other-channels">
+              <span class="t-meta c-faint">{{ t('work.sidebar.noOtherChannels') }}</span>
+              <BaseButton kind="primary" size="sm" prepend-icon="mdi-plus" @click="emit('new-channel')">
+                {{ t('work.projectSettings.channels.create') }}
+              </BaseButton>
+            </div>
+
             <template v-for="section in railSections" :key="section.key">
               <v-list v-if="section.rows.length" density="compact" nav class="py-0" tabindex="-1">
                 <!-- Rows are ordered by most recent activity, so a new message pushes a room
@@ -595,6 +701,9 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :marks="memberMarks(item.topic)"
                         :toggle-title="toggleTitle(item)"
                         :actions="actionsFor"
+                        :tasks-collapsed="tasksFoldOf(item.topic.id)"
+                        :task-count="roomTaskTotals?.[item.topic.id]"
+                        :task-light="tasksLight(item.topic.id)"
                         @select="emit('select-topic', $event)"
                         @hover="emit('hover-topic', $event)"
                         @press="emit('press-topic', $event)"
@@ -603,9 +712,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         @commit-rename="(draft: string) => commitRename(item.topic, draft)"
                         @cancel-rename="cancelRename()"
                         @update:menu-open="(open: boolean) => setActionsMenu(item.topic.id, open)"
+                        @toggle-tasks="emit('toggle-tasks-fold', $event)"
                       />
                       <TopicRailTaskRow
-                        v-for="task in roomTasks?.[item.topic.id] ?? []"
+                        v-for="task in taskRows(item.topic.id)"
                         :key="task.id"
                         :task="task"
                         :depth="item.depth"
@@ -626,8 +736,20 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         @select="emit('select-task', $event)"
                         @press="emit('press-task', $event)"
                       />
+                      <!-- 收起来以后只留你正打开的那一条。 -->
+                      <TopicRailTaskRow
+                        v-for="task in pinnedRows(item.topic.id)"
+                        :key="task.id"
+                        :task="task"
+                        :depth="item.depth"
+                        :selected="true"
+                        :light="taskLight(task)"
+                        :unread="unreadOf(task.id)"
+                        @select="emit('select-task', $event)"
+                        @press="emit('press-task', $event)"
+                      />
                       <TopicRailMoreTasksRow
-                        v-if="hasMoreRow(item.topic.id)"
+                        v-if="showMoreRow(item.topic.id)"
                         :channel-id="item.topic.id"
                         :depth="item.depth"
                         :label="moreLabel(item.topic.id)"
@@ -642,8 +764,20 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
 
             <TopicRailBrowseRow
               :label="t('work.channel.browse')"
+              icon="mdi-magnify"
               :selected="browsingChannels === true"
               @select="emit('browse-channels')"
+            />
+            <!-- 进行中的任务：项目和总览那两个入口在项目名那一行／项目菜单里（清单第 9
+                 条把总览从这一栏搬走了），但是「我手上还有多少活在跑」这一件事值得常驻
+                 一栏，所以这一行留着。数字的口径见 underwayCount。 -->
+            <TopicRailBrowseRow
+              :label="t('work.sidebar.underway')"
+              icon="mdi-progress-clock"
+              :selected="tasksOpen === true"
+              :count="underwayCount"
+              :hint="t('work.sidebar.underwayHint')"
+              @select="emit('open-tasks')"
             />
           </template>
         </template>
@@ -663,7 +797,51 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
   height: 100%;
 }
 .side-subhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 14px 16px 4px;
+}
+.side-subhead__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 「频道」右边那颗 ＋：常驻可见但不抢眼（--faint 的 16px 图标），hover 才亮成琥珀。
+   负的外边距是把它收进标题行的内距里——多一颗按钮，这一行的高度不变。
+   .tap-target 要一个定位的锚点，所以 position: relative。 */
+.side-subhead__add {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  margin: -4px -6px -4px 0;
+  color: var(--faint);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  transition:
+    color var(--dur-quick) var(--ease-standard),
+    background-color var(--dur-quick) var(--ease-standard);
+}
+.side-subhead__add:hover {
+  color: var(--accent-ink);
+  background: var(--fill);
+}
+
+/* 还没有别的频道时那一块：一句话 + 主按钮。 */
+.rail-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 16px 4px;
 }
 
 /* 话题还在路上时，先把行的形状画出来（LoadingSkeleton）。这条 rail 的底是
@@ -745,5 +923,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
    要能单独渲染），这里这条管的是这一层画不出来的部分。 */
 .topic-rail--page .group-toggle {
   min-height: 44px;
+}
+/* 整页形态：＋ 画大一点（32px），手指点得中——命中区由 .tap-target 撑到 44px。 */
+.topic-rail--page .side-subhead__add {
+  width: 32px;
+  height: 32px;
+  margin-right: -8px;
 }
 </style>

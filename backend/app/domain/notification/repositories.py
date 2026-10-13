@@ -21,6 +21,21 @@ from app.domain.notification.models import (
 )
 
 
+def wanted_types(
+    type_: NotificationType | Sequence[NotificationType] | None,
+) -> list[NotificationType] | None:
+    """把「只要一种」和「要这几种里的任意一种」收敛成同一个东西。
+
+    界面上的「动态」是按事由分档筛的，一档是好几种类型，所以这里两种形状都得收：
+    只传一个类型的老调用方照旧，传一串的按 `IN` 查。
+    """
+    if type_ is None:
+        return None
+    if isinstance(type_, NotificationType):
+        return [type_]
+    return list(type_)
+
+
 class NotificationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -69,15 +84,15 @@ class NotificationRepository:
         limit: int,
         cursor_created_at: datetime | None = None,
         cursor_id: int | None = None,
-        type_: NotificationType | None = None,
+        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> Sequence[Notification]:
         stmt: Select[tuple[Notification]] = self._my_mail(
             select(Notification), user_id
         ).where(Notification.finalized.is_(True))
 
-        if type_ is not None:
-            stmt = stmt.where(Notification.type == type_)
+        if (types := wanted_types(type_)) is not None:
+            stmt = stmt.where(Notification.type.in_(types))
         if read is not None:
             stmt = stmt.where(Notification.read == read)
 
@@ -185,7 +200,7 @@ class NotificationRepository:
         self,
         user_id: int,
         *,
-        type_: NotificationType | None = None,
+        type_: NotificationType | Sequence[NotificationType] | None = None,
         read: bool | None = None,
     ) -> int:
         """Count notifications for a given user with optional filters.
@@ -197,8 +212,8 @@ class NotificationRepository:
             Notification.finalized.is_(True)
         )
 
-        if type_ is not None:
-            stmt = stmt.where(Notification.type == type_)
+        if (types := wanted_types(type_)) is not None:
+            stmt = stmt.where(Notification.type.in_(types))
         if read is not None:
             stmt = stmt.where(Notification.read == read)
 
