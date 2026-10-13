@@ -581,6 +581,7 @@ def classify_platform_failure(
 PROVIDER_UNREACHABLE_CODE = "provider_unreachable"
 PROVIDER_OVERLOADED_CODE = "provider_overloaded"
 SUBSCRIPTION_EGRESS_OFFLINE_CODE = "subscription_egress_offline"
+SUBSCRIPTION_ACCOUNTS_COOLING_CODE = "subscription_accounts_cooling"
 MODEL_LIMIT_REACHED_CODE = "model_limit_reached"
 RESPONSE_TRUNCATED_CODE = "response_truncated"
 TOOL_UNAVAILABLE_CODE = "tool_unavailable"
@@ -599,6 +600,14 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"^API Error:.*\bsubscription egress is offline\b", re.I),
         SUBSCRIPTION_EGRESS_OFFLINE_CODE,
     ),
+    # The metering proxy's 429 when every Claude account of the subscription is
+    # cooling down after hitting its own limit (`deploy/metering-proxy`,
+    # `claude_accounts.py`). Not the provider throttling everyone for a moment:
+    # the accounts stay out until their limits reset, minutes to days later.
+    (
+        re.compile(r"^API Error:.*\ball Claude accounts are cooling down\b", re.I),
+        SUBSCRIPTION_ACCOUNTS_COOLING_CODE,
+    ),
     (
         re.compile(
             r"^API Error:.*\b(ConnectionRefused|ECONNRESET|Connection refused)\b",
@@ -612,6 +621,11 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
     ),
     (
         re.compile(r"^API Error:.*\b(Overloaded|Bad Gateway)\b", re.I),
+        PROVIDER_OVERLOADED_CODE,
+    ),
+    # Claude Code's wording for a 429 that is not the account's usage limit.
+    (
+        re.compile(r"^API Error:.*\btemporarily limiting requests\b", re.I),
         PROVIDER_OVERLOADED_CODE,
     ),
     (
