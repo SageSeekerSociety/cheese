@@ -74,7 +74,7 @@ const n = ref(5)
 </template>`
   );
   await expect(page.locator('#out')).toHaveText('number 5');
-  await page.locator('c-slider input[type=range]').focus();
+  await page.locator('c-slider [role=slider]').focus();
   await page.keyboard.press('ArrowRight');
   await expect(page.locator('#out')).toHaveText('number 6');
   expect(errors).toEqual([]);
@@ -371,5 +371,31 @@ const span = ref(4)
   await page.locator('#go').click();
   expect(await moving()).toBe(true);
   await expect.poll(moving).toBe(false);
+  expect(errors).toEqual([]);
+});
+
+test('a slider follows the finger, settles on a step, and its thumb sits on its track', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const n = ref(6)
+</script>
+<template><c-slider label="栏数" :min="1" :max="12" v-model="n" /><p id="out">{{ n }}</p></template>`
+  );
+  const area = page.locator('c-slider [role=slider]');
+  const box = (await area.boundingBox())!;
+  const centre = async (sel: string) => {
+    const b = (await page.locator(`c-slider ${sel}`).boundingBox())!;
+    return b.y + b.height / 2;
+  };
+  expect(Math.abs((await centre('.thumb')) - (await centre('.track')))).toBeLessThan(1);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 8 });
+  await expect(page.locator('#out')).toHaveText('12');
+  await page.mouse.up();
+  await page.keyboard.press('Home');
+  await expect(page.locator('#out')).toHaveText('1');
   expect(errors).toEqual([]);
 });
