@@ -95,11 +95,13 @@ async def _cards(
     comments = await service.comment_counts(ids)
     supported = await service.supported_ids(ids, handle)
     activity = await service.last_activity(ids)
-    # Same identity pass as the public list: the queue draws the holder's face
-    # and name, and an agent may hold a row — that is a fact about the handle,
+    # Same identity pass as the public list: the queue draws the holder's name
+    # and face, and an agent may hold a row — that is a fact about the handle,
     # asked in one batch, never inferred from its spelling.
     assignees = [r.assignee_handle for r in rows if r.assignee_handle]
-    avatars = await service.chosen_avatars([r.author_handle for r in rows] + assignees)
+    faces = await service.faces([r.author_handle for r in rows] + assignees)
+    avatars = {h: a for h, (_, a) in faces.items() if a is not None}
+    names = {h: n for h, (n, _) in faces.items() if n}
     agents = await service.agents_among(assignees)
     return [
         FeedbackCard.from_row(
@@ -108,6 +110,7 @@ async def _cards(
             comments=comments.get(row.id, 0),
             supported=row.id in supported,
             avatars=avatars,
+            names=names,
             last_activity_at=activity.get(row.id),
             agents=agents,
         ).model_dump(mode="json")

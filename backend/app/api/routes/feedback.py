@@ -102,12 +102,12 @@ async def _cards(
 ) -> list[dict]:
     """Turn a page of rows into JSON.
 
-    Every counter and every face on the page costs one query for the page, never
-    one per row: support counts, comment counts, who already supported, last
-    activity, and the authors' avatars — the last of those is two queries
-    (handles → users → profiles) because the avatar hangs off the profile and
-    not off the user. The `hot` tab is *sorted by* the number a per-row fetch
-    would be re-reading twenty times.
+    Every counter and every name-and-face on the page costs one query for the
+    page, never one per row: support counts, comment counts, who already
+    supported, last activity, and the authors' names and faces — the last of
+    those is one pass (handles → users → profiles) because both the nickname and
+    the avatar hang off the profile. The `hot` tab is *sorted by* the number a
+    per-row fetch would be re-reading twenty times.
     """
     ids = [r.id for r in rows]
     supports = await service.support_counts(ids)
@@ -118,7 +118,12 @@ async def _cards(
     # covers both authors and whoever holds each row — a per-row lookup here is
     # the N+1 this whole method exists to avoid.
     assignees = [r.assignee_handle for r in rows if r.assignee_handle]
-    avatars = await service.chosen_avatars([r.author_handle for r in rows] + assignees)
+    # One pass gives both the name and the face for everyone on the page — see
+    # `FeedbackService.faces`. Filtering the avatar to the people who picked one
+    # keeps the contract `from_row` documents (absent = draw the initial).
+    faces = await service.faces([r.author_handle for r in rows] + assignees)
+    avatars = {h: a for h, (_, a) in faces.items() if a is not None}
+    names = {h: n for h, (n, _) in faces.items() if n}
     agents = await service.agents_among(assignees)
     return [
         FeedbackCard.from_row(
@@ -127,6 +132,7 @@ async def _cards(
             comments=comments.get(row.id, 0),
             supported=row.id in supported,
             avatars=avatars,
+            names=names,
             last_activity_at=activity.get(row.id),
             agents=agents,
         ).model_dump(mode="json")
