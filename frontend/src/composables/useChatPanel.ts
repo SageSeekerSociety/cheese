@@ -128,7 +128,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pool: mentionPool,
     nameOf: agentNameOf,
     names: mentionNames,
-    taskAgentHandle: opts.taskAgentHandle,
+    agentHandle: opts.agentHandle,
     alwaysSummon,
   })
 

@@ -24,6 +24,7 @@ from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_room
 from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
+from app.domain.topic_membership.services import TopicMemberService
 
 # The channel a message is in. A bare table: ``topic`` and ``room_task`` resolve
 # 支线 (`room_task.place`), and importing them back would make a cycle.
@@ -137,10 +138,12 @@ async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uui
 async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
     """The seat of the AI teammate a 支线 is talking with: the one the latest
     message that called a teammate there called, the message it hangs under
-    included. None when nobody in it has called one.
+    included. None when nobody in it has called one, or when that teammate has
+    since left the channel.
 
-    A message said in a 支线 without calling anyone is for this teammate: the
-    conversation is the one held with it, not with the channel's default."""
+    A person's message said in a 支线 without calling anyone is for this
+    teammate, and calls it as an @ would: the conversation is the one held with
+    it, not with the channel's default."""
     meta = await session.scalar(
         select(Block.meta)
         .where(
@@ -154,7 +157,12 @@ async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
         .order_by(Block.created_at.desc(), Block.id.desc())
         .limit(1)
     )
-    return recipient_seat((meta or {}).get("agent_recipient"))
+    seat = recipient_seat((meta or {}).get("agent_recipient"))
+    if seat is None or seat not in await TopicMemberService(session).agent_handles(
+        thread.room_id
+    ):
+        return None
+    return seat
 
 
 async def thread_opening(
