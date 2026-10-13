@@ -120,7 +120,8 @@ func Present() error {
 // writes a tiny config that keeps a pane after its program exits: read when the
 // server first starts (via -f), so it applies before any command can run and a
 // program that dies instantly still leaves its output and a dead marker on
-// screen instead of tearing the server down.
+// screen instead of tearing the server down. Kept for someone to read, not for
+// good: the host closes a screen once it has been dead a while (`Exited`).
 func NewManager() (*Manager, error) {
 	bin, err := findTmux()
 	if err != nil {
@@ -216,6 +217,44 @@ func (m *Manager) Identities(owner string) (map[string]string, error) {
 		}
 	}
 	return identities, nil
+}
+
+// Exited names the sessions owner launched whose every pane has been dead for
+// at least `after`, as of now. A pane whose death time tmux does not report
+// is never counted: what cannot be dated is not known to be finished.
+func (m *Manager) Exited(owner string, after time.Duration, now time.Time) ([]string, error) {
+	identities, err := m.Identities(owner)
+	if err != nil || len(identities) == 0 {
+		return nil, err
+	}
+	out, err := m.tmux("list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}\t#{pane_dead_time}").CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("terminal: list panes: %w: %s", err, out)
+	}
+	finished := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		parts := strings.SplitN(line, "\t", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		name := parts[0]
+		if _, ours := identities[name]; !ours {
+			continue
+		}
+		died, err := strconv.ParseInt(parts[2], 10, 64)
+		done := parts[1] == "1" && err == nil && now.Sub(time.Unix(died, 0)) >= after
+		if previous, seen := finished[name]; seen {
+			done = done && previous
+		}
+		finished[name] = done
+	}
+	var names []string
+	for name, done := range finished {
+		if done {
+			names = append(names, name)
+		}
+	}
+	return names, nil
 }
 
 // Session is one hosted program: a tmux session polled for screen changes.
@@ -528,12 +567,20 @@ func (s *Session) Close() error {
 	// the retiring agent's still-live prompt socket.
 	killAndWait := func(socket, session string) error {
 		args := []string{"-S", socket}
-		out, err := exec.Command(s.m.bin, append(args, "list-panes", "-t", "="+session, "-F", "#{pane_pid}")...).CombinedOutput()
+		out, err := exec.Command(s.m.bin, append(args, "list-panes", "-t", "="+session, "-F", "#{pane_dead} #{pane_pid}")...).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("terminal: list pane processes: %w: %s", err, out)
 		}
 		var processes []*os.Process
-		for _, value := range strings.Fields(string(out)) {
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			dead, value, _ := strings.Cut(line, " ")
+			// A dead pane's pid is a number the kernel has already handed
+			// back, and may have handed to anything since: waiting on it and
+			// then killing its group would take down whatever holds it now —
+			// another screen's helper, after the weeks a dead pane can sit.
+			if dead != "0" {
+				continue
+			}
 			pid, err := strconv.Atoi(value)
 			if err != nil {
 				return err

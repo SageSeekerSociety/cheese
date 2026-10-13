@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/link"
 	"github.com/SageSeekerSociety/cheese/cli/internal/terminal"
@@ -127,5 +128,43 @@ func TestAServerRequestedCloseEndsTheScreen(t *testing.T) {
 
 	if m.HasSession("screen-b") {
 		t.Fatal("a close the server asked for left the session running")
+	}
+}
+
+// A screen whose program ended is closed once it has been kept long enough to
+// be read; a running one stays, however long it runs. Before this nothing
+// closed an ended screen unless the server came back to its seat, and a dev
+// session host held 900 of them.
+func TestEndedScreensAreClosedAndRunningOnesKept(t *testing.T) {
+	m := isolatedManager(t)
+	grace, check := exitedScreenGrace, exitedScreenCheck
+	exitedScreenGrace, exitedScreenCheck = 0, 20*time.Millisecond
+	t.Cleanup(func() { exitedScreenGrace, exitedScreenCheck = grace, check })
+	h := &Host{tm: tmuxScreens{m}, base: "https://backend.test", conn: link.New("", "", "", ""),
+		ctx: context.Background(), sessions: map[string]*sess{}}
+	h.createSession(link.Msg{T: "session.create", Sid: "running", Command: []string{"sleep", "60"}})
+	h.createSession(link.Msg{T: "session.create", Sid: "ended", Command: []string{"true"}})
+	if h.session("running") == nil || h.session("ended") == nil {
+		t.Fatal("screen creation failed")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { h.closeExitedScreens(ctx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for m.HasSession("ended") {
+		if time.Now().After(deadline) {
+			t.Fatal("the ended screen was never closed")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	if h.session("ended") != nil {
+		t.Fatal("the host still drives a screen it closed")
+	}
+	if !m.HasSession("running") || h.session("running") == nil {
+		t.Fatal("a running screen was closed")
 	}
 }
