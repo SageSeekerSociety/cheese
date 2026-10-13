@@ -200,11 +200,12 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
     expect(row.querySelector('.unread-badge')?.textContent?.trim()).toBe('7')
   })
 
-  // 收起来的父话题会把子话题里成员的动静整个藏掉，由折叠开关自己带聚合色补上。
-  it('收着的时候里面有队友在干活，冒到折叠开关上', async () => {
+  // 收起来的父话题会把子话题里的动静整个藏掉，由折叠开关自己带聚合色补上。
+  it('收着的时候里面有活在跑，冒到折叠开关上', async () => {
     const running = {
       ...topic('a1x', 'a1'),
       activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }],
+      moving: true,
     } as Topic
     const { container } = mount({ topics: topics.map((t) => (t.id === 'a1x' ? running : t)) })
     // 默认收着 —— 底下有东西在跑，只能靠开关上的颜色说
@@ -222,7 +223,9 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
 
   it('收着的时候"等你处理"也冒上来，并且压过"有队友在干活"', () => {
     const patched = topics.map((t) => {
-      if (t.id === 'a1x') return { ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic
+      if (t.id === 'a1x') {
+        return { ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }], moving: true } as Topic
+      }
       if (t.id === 'a2') return { ...t, awaits_me: true } as Topic
       return t
     })
@@ -237,7 +240,9 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
   // 选中 + 收起是最需要看见聚合状态的组合（人正站在这个话题里，子话题在替他跑）。
   it('选中的房间收着时，聚合状态仍然挂在开关上', () => {
     const patched = topics.map((t) =>
-      t.id === 'a2' ? ({ ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic) : t
+      t.id === 'a2'
+        ? ({ ...t, activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }], moving: true } as Topic)
+        : t
     )
     const { container } = mount({ topics: patched, selectedTopicId: 'a' })
     const row = rowFor(container, 'a')

@@ -2,7 +2,7 @@ import type { Block, ChecklistMeta, TodoItem } from '@/cx_types'
 
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { askAnswers, askOptions, replyBlock, replySnippet } from './blockDisplay'
+import { askAnswers, askOptions, isVideoBlock, replyBlock, replySnippet } from './blockDisplay'
 import { loadDocRead } from './docReadLoad'
 
 import { setLocale } from '@/i18n'
@@ -23,6 +23,37 @@ function said(author: string, content: string): Block {
     created_at: '2026-09-25T00:00:00Z',
   } as Block
 }
+
+describe('视频附件的内联播放入口', () => {
+  it.each(['mp4', 'm4v', 'mov', 'webm', 'ogv', 'MP4', 'MOV'])(
+    '媒体读取白名单内的 .%s 显示播放器，不依赖上传时的 MIME',
+    (suffix) => {
+      const block = {
+        ...said('alice', `library/clip.${suffix}`),
+        kind: 'attachment',
+        mime_type: 'application/octet-stream',
+      } as Block
+      expect(isVideoBlock(block)).toBe(true)
+    }
+  )
+
+  it.each([
+    ['clip.avi', 'video/x-msvideo'],
+    ['clip.mkv', 'video/x-matroska'],
+    ['clip', 'video/mp4'],
+    ['clip.html', 'video/mp4'],
+    ['clip.svg', 'video/webm'],
+    ['notes.constructor', 'application/octet-stream'],
+    ['notes.__proto__', 'application/octet-stream'],
+  ])('不在媒体读取白名单的 %s 走下载，即使 MIME 是 %s', (name, mime) => {
+    const block = { ...said('alice', `library/${name}`), kind: 'attachment', mime_type: mime } as Block
+    expect(isVideoBlock(block)).toBe(false)
+  })
+
+  it('只有附件显示播放器，普通消息里的视频路径不播放', () => {
+    expect(isVideoBlock(said('alice', 'library/clip.mp4'))).toBe(false)
+  })
+})
 
 const maps = { mentionNames: { 'cheese-3fa2': '芝士', lixue: '李雪' }, topicTitles: { t9: '第三节图表' } }
 
@@ -80,13 +111,40 @@ function listBlock(steps: Step[]): Block {
 }
 
 describe('步骤清单在摘要里说什么', () => {
-  it('念一步，连它的记号；不念折成一行的那串记号', () => {
+  it('念正在做的那一步，不念早已做完的第一步，也不念折成一行的那串记号', () => {
     const block = listBlock([
       { subject: '读 main 源码', status: 'completed' },
       { subject: '改摘要行', status: 'in_progress' },
       { subject: '跑相关检查', status: 'pending' },
     ])
-    expect(replySnippet(block, maps, 200)).toBe('✓ 读 main 源码')
+    expect(replySnippet(block, maps, 200)).toBe('✱ 改摘要行')
+  })
+
+  it('没有正在做的，念还没做的第一步', () => {
+    const block = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'pending' },
+      { subject: '跑相关检查', status: 'pending' },
+    ])
+    expect(replySnippet(block, maps, 200)).toBe('○ 改摘要行')
+  })
+
+  it('全做完、写了结果，念结果', () => {
+    const block = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'completed' },
+    ])
+    block.meta = { checklist: { ...(block.meta?.checklist as ChecklistMeta), result: '摘要行改好了' } }
+    expect(replySnippet(block, maps, 200)).toBe('✅ 摘要行改好了')
+  })
+
+  it('还有没做完的步骤时，结果先不念', () => {
+    const block = listBlock([
+      { subject: '读 main 源码', status: 'completed' },
+      { subject: '改摘要行', status: 'pending' },
+    ])
+    block.meta = { checklist: { ...(block.meta?.checklist as ChecklistMeta), result: '先写一句' } }
+    expect(replySnippet(block, maps, 200)).toBe('○ 改摘要行')
   })
 
   it('太长了照旧截断', () => {
@@ -94,17 +152,17 @@ describe('步骤清单在摘要里说什么', () => {
     expect(replySnippet(block, maps, 6)).toBe('✱ 一步一步…')
   })
 
-  it('迁移前那种只有 `true` 的清单没有结构，仍按正文说', () => {
+  it('迁移前那种只有 `true` 的清单，也从正文里念那一步，不念一串记号', () => {
     const block = {
-      ...said('lin', '✓ 读代码\n✱ 改摘要行'),
+      ...said('lin', '✓ 读代码\n✱ 改摘要行\n○ 回结论'),
       meta: { checklist: true },
     } as Block
-    expect(replySnippet(block, maps, 200)).toBe('✓ 读代码 ✱ 改摘要行')
+    expect(replySnippet(block, maps, 200)).toBe('✱ 改摘要行')
   })
 })
 
 describe('支线摘要里那条最后回复', () => {
-  it('后端随它带上清单结构时，摘要念的是清单的一步', () => {
+  it('后端随它带上清单结构时，摘要念的是清单正在做的那一步', () => {
     const message = listBlock([
       { subject: '读 main 源码', status: 'completed' },
       { subject: '改摘要行', status: 'in_progress' },
@@ -115,7 +173,17 @@ describe('支线摘要里那条最后回复', () => {
       created_at: message.created_at,
       checklist: message.meta?.checklist as ChecklistMeta,
     }
-    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('✓ 读 main 源码')
+    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('✱ 改摘要行')
+  })
+
+  it('迁移前的清单（后端带来 `true`）也只念一步', () => {
+    const reply = {
+      author: 'cheese',
+      content: '✓ 取一份主干代码\n✓ 定位中间分割线\n✱ 查回复树的加载路径\n○ 在支线里回结论',
+      created_at: '2026-10-12T00:00:00Z',
+      checklist: true as const,
+    }
+    expect(replySnippet(replyBlock(reply), maps, 200)).toBe('✱ 查回复树的加载路径')
   })
 
   it('后端没带结构时，还是按正文说', () => {

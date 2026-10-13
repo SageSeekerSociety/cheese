@@ -9,6 +9,7 @@ import { computed } from 'vue'
 
 import { isAgentHandle } from '../../lib/authorship'
 import { replyBlock, replySnippet } from '../../lib/blockDisplay'
+import { cancelPrefetch, prefetchNow, prefetchOnHover } from '../../lib/routePrefetch'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import UserAvatar from '../common/UserAvatar.vue'
 
@@ -21,6 +22,9 @@ const props = defineProps<{
   summary: ThreadSummary | null
   /** 正在回复的队友叫什么；没有人在回复时为 null。 */
   replying: string | null
+  /** 正在回复的那几位（handle）。还没有回复时 `participants` 里只有发起的人，头像里得
+   *  补上它们。 */
+  replyingSeats?: string[]
   /** 正在回复的那位此刻在等什么（排队、重试……）；没有就是 null。 */
   status?: string | null
   refs: RefNames
@@ -34,7 +38,14 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'open'): void }>()
 
 const replies = computed(() => props.summary?.reply_count ?? 0)
-const faces = computed(() => (props.summary?.participants ?? []).slice(0, FACES))
+// 说过话的人按先后排；此刻在回复的队友一定在里面（排不下就让出后面的位置），否则
+// 「芝士 正在回复」旁边画的是发起人的脸。
+const faces = computed(() => {
+  const answering = [...new Set(props.replyingSeats ?? [])].slice(0, FACES)
+  const said = (props.summary?.participants ?? []).filter((handle) => !answering.includes(handle))
+  const kept = new Set([...said.slice(0, FACES - answering.length), ...answering])
+  return [...new Set([...(props.summary?.participants ?? []), ...answering])].filter((handle) => kept.has(handle))
+})
 // 一轮出错、还没有任何回复的支线：那句为什么没回答在支线里，这一行是去看它的入口。
 const failed = computed(() => !props.replying && !!props.summary?.failed)
 // 额度用完不是「回复失败」：重试没有用，主线上直接说额度用完了。
@@ -43,6 +54,17 @@ const failedText = computed(() =>
     ? t('work.room.thread.failedCredits')
     : t('work.room.thread.failed')
 )
+
+// 点开之前先把支线取回来：页头那条消息和里面的回复，点下去就在（`query/room` 的
+// `prefetchThread`）。指针停住、键盘移到这一行上才算想点；按下去就不再等。触屏上也在
+// 按下时取——别处的列表不这么做，是怕手指滑过一整列都发请求，这一行只有一条支线，
+// 同一时刻也只热一条。
+function warm() {
+  if (props.summary) prefetchOnHover({ threadId: props.summary.id })
+}
+function warmNow() {
+  if (props.summary) prefetchNow({ threadId: props.summary.id })
+}
 
 const last = computed(() => {
   const reply = props.summary?.last_reply
@@ -60,6 +82,11 @@ const last = computed(() => {
     type="button"
     class="thread-line"
     :data-testid="replies > 0 ? 'thread-line' : replying ? 'thread-replying' : failed ? 'thread-failed' : 'thread-line'"
+    @pointerenter="warm"
+    @pointerleave="cancelPrefetch"
+    @focus="warm"
+    @blur="cancelPrefetch"
+    @pointerdown="warmNow"
     @click="emit('open')"
   >
     <span class="thread-line__head">

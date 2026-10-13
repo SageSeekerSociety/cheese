@@ -17,6 +17,7 @@ from app.core.errors import (
 )
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
+from app.domain.dashboard.user_statistics import UserStatisticsRepository
 from app.domain.questions.repositories import (
     QuestionRepository,
     QuestionTopicRepository,
@@ -24,7 +25,6 @@ from app.domain.questions.repositories import (
 from app.domain.user.repositories import (
     UserProfileRepository,
     UserRepository,
-    UserStatisticsRepository,
 )
 from app.domain.user.services import (
     UserAuthService,

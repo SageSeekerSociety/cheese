@@ -40,10 +40,13 @@ from app.domain.agent.place import (
     footprint_root,
     seat_name,
 )
-from app.domain.agent.skills import SKILLS_SHIPPED_BEFORE_THE_LIST, shipped_skill_names
 from app.domain.project_skill.service import (
     project_skill_names,
     publish_session_skill_bundle,
+)
+from app.domain.skill_library import (
+    SKILLS_SHIPPED_BEFORE_THE_LIST,
+    shipped_skill_names,
 )
 
 # --- the version this session is pinned to ----------------------------------

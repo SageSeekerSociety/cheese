@@ -185,11 +185,32 @@ function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') emit('close')
 }
 
+// 返回手势 / 返回键关掉的是这一层，不是整页：打开时在历史里压一格（地址不变，
+// 只在 state 上做个记号），返回把它弹掉，这里听到就关。用别的办法关掉（点空白、
+// 右上角、Esc）时，那一格还在，自己退掉它，不在身后留一格空的——否则下一次返回
+// 什么也不做。state 照抄当前那一份再加记号：路由靠 state 里的字段认位置。
+const HISTORY_MARK = 'imageLightbox'
+let historyPushed = false
+
+function onPopState() {
+  if ((history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) return
+  historyPushed = false
+  emit('close')
+}
+
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  history.pushState({ ...(history.state as object | null), [HISTORY_MARK]: true }, '')
+  historyPushed = true
+  window.addEventListener('popstate', onPopState)
   closeButton.value?.focus()
 })
-onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKeydown)
+  window.removeEventListener('popstate', onPopState)
+  // 只退自己压的那一格：已经被返回弹掉了，或者这期间页面又往前走了一步，都不碰。
+  if (historyPushed && (history.state as Record<string, unknown> | null)?.[HISTORY_MARK]) history.back()
+})
 </script>
 
 <template>

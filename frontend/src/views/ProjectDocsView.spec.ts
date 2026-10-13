@@ -30,12 +30,14 @@ vi.mock('../api', async () => {
     ...actual,
     getDocNodes: async () => ({ data: [] }),
     deleteMemory: vi.fn(),
+    getProject: vi.fn(),
   }
 })
 // 项目目标开的是那一份文档，面板会读它叫什么。
 vi.mock('../api/projectDocuments', async () => ({
   ...(await vi.importActual<typeof import('../api/projectDocuments')>('../api/projectDocuments')),
   getDocumentAbout: async (id: string) => ({ id, title: '项目目标' }),
+  getProjectOverview: vi.fn(),
 }))
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 vi.mock('../api/docCollab', async () => ({
@@ -47,7 +49,8 @@ vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
-import { deleteMemory } from '../api'
+import { deleteMemory, getProject } from '../api'
+import { getProjectOverview } from '../api/projectDocuments'
 import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
 import ProjectDocsView from './ProjectDocsView.vue'
@@ -147,6 +150,17 @@ describe('项目目标', () => {
 
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('每周二上课'))
     view.unmount()
+  })
+
+  // 「总览是哪一份」只要项目 id：冷开这一面时它和项目本身一起去问，不排在项目后面。
+  it('冷开时总览和项目一起去问，不等项目回来', async () => {
+    vi.mocked(getProject).mockReturnValue(new Promise(() => {}))
+    vi.mocked(getProjectOverview).mockReturnValue(new Promise(() => {}))
+    render(ProjectDocsView, {
+      props: { projectId: 'cold', kind: 'charter' },
+      global: { plugins: [createVuetify()] },
+    })
+    await waitFor(() => expect(getProjectOverview).toHaveBeenCalledWith('cold'))
   })
 })
 

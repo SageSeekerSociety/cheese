@@ -413,6 +413,18 @@ class ChatService(SessionRecovery):
     def session_factory(self) -> async_sessionmaker:
         return self._sessions
 
+    @property
+    def work_runner(self) -> SessionTurnEvents:
+        """The runner the composition root gave this service.
+
+        For callers that already hold the service: review's polling clocks
+        address agents through it, and they used to import ``app.api.deps`` for
+        the runner — a domain reaching up into the API layer
+        (``app/.importlinter``, C1). Handing the same assembled collaborator
+        back keeps one runner per process, whichever way it is reached.
+        """
+        return self._work_runner
+
     async def _turn_seat_handle(
         self,
         topic_id: uuid.UUID,

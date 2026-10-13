@@ -9,11 +9,11 @@
 //
 // happy-dom comes from `frontend/node_modules`, as for demo-arch.test.mjs.
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { scratchDir } from './scratch.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -32,7 +32,7 @@ const eq = (got, want, what) => ok(String(got) === String(want), `${what}: got Â
 const require = createRequire(path.join(REPO, 'frontend/package.json'))
 const { Window } = require('happy-dom')
 
-const out = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'docs-host-'))
+const out = process.env.OUT || scratchDir('docs-host-')
 if (!process.env.OUT) {
   execFileSync(process.execPath, ['build.mjs'], {
     cwd: SITE,
@@ -53,7 +53,7 @@ ok(read('llms.txt').includes(`](${DOCS}/quickstart.md)`), 'llms.txt points at th
 // What differs per deployment is a placeholder, filled at container start
 // (frontend/scripts/docs-mode.sh, tested by test-docs-mode.sh).
 {
-  const plain = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-host-plain-'))
+  const plain = scratchDir('docs-host-plain-')
   const env = { ...process.env, OUT: plain, DOCS_BASE: '' }
   delete env.DOCS_PLATFORM
   delete env.DOCS_SITE

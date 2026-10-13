@@ -24,7 +24,7 @@ from app.api.doc_identity import operation_actor
 from app.api.doc_store import announce, store, tell_origin_room
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import _actor_in_place
+from app.api.topics_deps import _actor_in_place
 from app.core import rank
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -365,6 +365,17 @@ async def _base(db, doc, expected_version: int) -> str | None:
     )
 
 
+async def _agent_authors(db, document_id: uuid.UUID) -> list[str]:
+    """The handles among the document's pending suggestions that are agent
+    seats. A suggestion's author is the part of its id before the colon; the
+    service cannot tell a seat's suggestion from a person's on its own, so the
+    judgment is made here and handed to it. A pending suggestion the backend
+    has not stored yet reads as a person's, which refuses rather than drops."""
+    pending = await DocumentJournal(db).suggestions(document_id)
+    handles = [str(item.get("author") or "") for item in pending]
+    return sorted(await IdentityService(db).agents_among([h for h in handles if h]))
+
+
 @router.put("/{document_id}")
 async def replace_document(
     document_id: uuid.UUID,
@@ -404,6 +415,7 @@ async def replace_document(
         keep=Counter(canvas_ids(doc.content or "")),
     )
     content = settled.text
+    agent_authors = await _agent_authors(db, doc.id)
     # Nothing of this request may stay open across the call: the service's
     # store takes the document's lock in a transaction of its own.
     await db.commit()
@@ -416,6 +428,7 @@ async def replace_document(
         actor=actor.handle,
         operation=operation,
         check=True,
+        agent_authors=agent_authors,
     )
     await db.refresh(doc)
     await tell_origin_room(db, _origin(resolver, actor), doc, actor.handle)
@@ -474,6 +487,8 @@ async def edit_doc_passages(
             asked=body.mode,
         )
     # The service's store takes the document's lock in a transaction of its own.
+    editor_is_agent = await IdentityService(db).is_agent(author)
+    agent_authors = await _agent_authors(db, doc.id)
     await db.commit()
     result = await collab.edit(
         doc.id,
@@ -482,6 +497,8 @@ async def edit_doc_passages(
         requested_by=decision.requested_by,
         mode=decision.mode,
         reason=body.reason,
+        editor_is_agent=editor_is_agent,
+        agent_authors=agent_authors,
     )
     if delegation is not None:
         await work_edits.record(get_redis_client(), delegation.work, edits)
@@ -628,6 +645,7 @@ async def restore_document(
     if content is None:
         raise NotFoundError(say("docVersionNotFound"))
     base = await _base(db, doc, body.expected_version)
+    agent_authors = await _agent_authors(db, doc.id)
     await db.commit()
     return await collab.replace(
         doc.id,
@@ -635,6 +653,7 @@ async def restore_document(
         base=base,
         actor=actor.handle,
         operation=operation,
+        agent_authors=agent_authors,
     )
 
 

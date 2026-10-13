@@ -16,10 +16,12 @@ import { RAIL_ACTIONS, RAIL_MARKS, RAIL_PAGES, RAIL_ROOT_TOPIC, RAIL_ROWS, RAIL_
 
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import TopicRailHeader from '@/components/topic-sidebar/TopicRailHeader.vue'
+import TopicRailLight from '@/components/topic-sidebar/TopicRailLight.vue'
 import TopicRailMoreTasksRow from '@/components/topic-sidebar/TopicRailMoreTasksRow.vue'
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
+import TopicRailTaskFold from '@/components/topic-sidebar/TopicRailTaskFold.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
 
@@ -32,6 +34,7 @@ function rowProps(over: Record<string, unknown> = {}): Record<string, unknown> {
     menuOpen: false,
     stalled: false,
     toggleTitle: '收起',
+    light: null,
     actions: () => RAIL_ACTIONS,
     ...over,
   }
@@ -78,13 +81,56 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'topic-rail-light',
+    title: 'TopicRailLight',
+    about:
+      '行尾那盏灯：一个 8px 的点。四盏说这一行自己的状态，判据在 `lib/roomLight.ts`；第五盏是蓝的，说的是「这条不归我」，由父级按归谁盖上（`useTopicRail.taskLight`），压过那四盏。这一件只管画。',
+    file: 'src/components/topic-sidebar/TopicRailLight.vue',
+    component: TopicRailLight,
+    // `lightTitle` 要读词表（无障碍名字和 hover 那句话），所以得多装一个 i18n。
+    needs: ['i18n'],
+    states: [
+      {
+        name: '红：显示在跑，但没动静了',
+        note: '五分钟没有输出。跑着的轮次真卡住了，和那个进程已经没了，长的是同一盏。',
+        props: { light: { kind: 'red', breathe: false } },
+        expectSelector: '.row-light--red',
+      },
+      {
+        name: '黄：有事等你',
+        note: '有点名给你的验收卡、没答的决策请求，或者芝士停在一道只有你能回答的问题上。',
+        props: { light: { kind: 'yellow', breathe: false } },
+        expectSelector: '.row-light--yellow',
+      },
+      {
+        name: '呼吸绿：有活在往前走',
+        note: '它在闪：有一轮在跑，或者活已经走在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。系统设了「减少动态」时它停住，那圈常驻的光晕还在，和长绿仍然分得开。',
+        props: { light: { kind: 'green', breathe: true } },
+        expectSelector: '.row-light--breathe',
+      },
+      {
+        name: '长绿：做完了，你还没看过',
+        note: '不闪。点开看过就灭，之后再有新活它回到呼吸绿。',
+        props: { light: { kind: 'green', breathe: false } },
+        expectSelector: '.row-light--green:not(.row-light--breathe)',
+      },
+      {
+        name: '蓝：这条不归我',
+        note: '别人负责的任务行用它，压过上面那四盏——这条活是别人的，先看清这个，再看它在跑还是卡住。它自己一个色相：红黄绿说的是状态，蓝说的是归谁。频道行没有蓝灯（频道不归谁）。',
+        props: { light: { kind: 'blue', breathe: false } },
+        expectSelector: '.row-light--blue',
+      },
+    ],
+  },
+  {
     id: 'topic-rail-row',
     title: 'TopicRailRow',
-    about: '话题列表里的一行：左边一个 16px 槽，右边在忙的成员、未读和 hover 才浮现的 ⋯。',
+    about:
+      '话题列表里的一行：左边一个 16px 槽，行尾是这一行自己的灯、未读角标、这个频道挂着任务时的折叠加手，以及 hover 才浮现的 ⋯。',
     file: 'src/components/topic-sidebar/TopicRailRow.vue',
     component: TopicRailRow,
     // 一行不认识路由、也不取数：状态、折叠、未读全在 props 里（`row` 是
-    // `lib/topicTree.ts` 的 `VisibleRow`，聚合已经在那边算完了）。
+    // `lib/topicTree.ts` 的 `VisibleRow`，灯是 `lib/roomLight.ts` 算的）。
     needs: UI,
     states: [
       {
@@ -94,10 +140,28 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         expect: '写第 4 章的教案',
       },
       {
-        name: '等你拍板',
-        note: '琥珀点：有待处理的事项。未读的 @ 不点这颗灯（芝士汇报、递卡都 @人），未读有右边的数字。',
-        props: rowProps({ row: RAIL_ROWS.awaits }),
+        name: '有事等你（黄灯）',
+        note: '行尾一盏黄灯：有点名给你的验收卡、没答的决策请求，或者芝士停在一道只有你能回答的问题上。未读的 @ 不点这盏灯（芝士汇报、递卡都 @人），未读有右边的数字。',
+        props: rowProps({ row: RAIL_ROWS.awaits, light: { kind: 'yellow', breathe: false } }),
         expect: '决定这学期用哪本教材',
+      },
+      {
+        name: '有活在往前走（呼吸绿）',
+        note: '行尾那盏绿在闪：有一轮在跑，或者活已经走在交付链路上（等闸门、等 CI、修检查、解冲突、换基）。',
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green', breathe: true } }),
+        expectSelector: '.row-light--breathe',
+      },
+      {
+        name: '做完了、你还没看过（长绿）',
+        note: '同样一盏绿，不闪：这里的活都交付完了，你还没点开看过。点开就灭。',
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'green', breathe: false } }),
+        expectSelector: '.row-light--green:not(.row-light--breathe)',
+      },
+      {
+        name: '显示在跑、但没动静了（红灯）',
+        note: '五分钟没有输出。这一盏压过黄和绿——同时成立时只画它。',
+        props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'red', breathe: false } }),
+        expectSelector: '.row-light--red',
       },
       {
         name: '一位成员卡住了',
@@ -107,7 +171,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '收起来的父话题',
-        note: '折叠开关顶掉状态点，所以它自己带聚合色（橙 = 里面有事等你）；右边是聚上来的未读，说的是「这里还有内容」。',
+        note: '折叠开关自己带一层聚合色，说的是收起来的那几行里有什么（黄 = 里面有事等你）；右边是聚上来的未读，说的是「这里还有内容」。开关只管收起来的东西，这一行自己的灯在行尾。',
         props: rowProps({ row: RAIL_ROWS.collapsed, toggleTitle: '展开：里面有待处理的事项' }),
         expect: '期末复习',
       },
@@ -123,20 +187,48 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working, page: true, selected: true }),
         expect: '写第 4 章的教案',
       },
+      {
+        name: '挂着任务：行尾多一个折叠加手',
+        note: '这个频道下面挂着一块任务，行尾就多一个把手，把那一块收起来。⋯ 给它让开一个身位，不压住它——这里把 ⋯ 一直亮着（`menuOpen`），看得清两个控件的位置。',
+        props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working, menuOpen: true, taskCount: 5 }),
+        expect: '写第 4 章的教案',
+      },
+      {
+        name: '任务块收起来了：条数和灯挪上来',
+        note: '那一块收起来时，行上留一个数（这个频道里进行中的有几条）和一盏最亮的灯——收起来不能把「有活在走」和「有事等你」一起收掉。',
+        props: rowProps({
+          row: RAIL_ROWS.awaits,
+          taskCount: 5,
+          tasksCollapsed: true,
+          taskLight: { kind: 'yellow', breathe: false },
+        }),
+        expect: '5',
+      },
     ],
   },
   {
     id: 'topic-rail-pinned',
     title: 'TopicRailPinnedRows',
-    about: '项目名下面那两行：总览和资料库，和频道行同一种行。别的页进项目名菜单，这里不再加。',
+    about: '项目名下面那一行：总览和资料库，和频道行同一种行。别的页都进项目名菜单，这里不长。',
     file: 'src/components/topic-sidebar/TopicRailPinnedRows.vue',
     component: TopicRailPinnedRows,
     // 只读词表和 props：哪几页露出来了、当前在哪一页，都是父级算好递进来的。
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '站在资料库上',
+        name: '站在总览上',
         note: '选中态和频道行同一套。',
+        props: {
+          pages: RAIL_PAGES,
+          routeName: 'workspace-overview',
+          terms: RAIL_TERMS,
+          page: false,
+        },
+        expect: '总览',
+      },
+      {
+        name: '站在资料库上',
+        note: '同一个组件，换一个当前页。',
         props: {
           pages: RAIL_PAGES,
           routeName: 'project-library',
@@ -147,7 +239,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '手机上：这一行收进项目菜单',
-        note: '整页形态里这两页在点项目名弹出的面板里，这里不画。',
+        note: '整页形态里这几页在点项目名弹出的面板里，这里不画。',
         props: {
           pages: RAIL_PAGES,
           routeName: 'workspace-overview',
@@ -176,12 +268,24 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         },
         expect: '综合',
       },
+      {
+        name: '有活在往前走',
+        note: '行尾那盏灯和频道行、任务行是同一件（`TopicRailLight`），算它的判据也同一份。',
+        props: {
+          rootTopic: RAIL_ROOT_TOPIC,
+          selectedTopicId: null,
+          page: false,
+          unreadOf: () => 0,
+          lightOf: () => ({ kind: 'green', breathe: true }),
+        },
+        expectSelector: '.row-light--breathe',
+      },
     ],
   },
   {
     id: 'topic-rail-header',
     title: 'TopicRailHeader',
-    about: '项目名那一行：点名字弹出项目菜单（总览、资料库之外的几页、项目文档、设置），右边是搜索。',
+    about: '项目名那一行：点名字弹出项目菜单（资料库之外的几页：总览、项目文档、设置），右边是搜索。',
     file: 'src/components/topic-sidebar/TopicRailHeader.vue',
     component: TopicRailHeader,
     // 名字连着 ⌄ 是一个按钮，点下去是菜单。
@@ -190,7 +294,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '所有者',
-        note: '项目名上面一行是它所属的团队，点了去团队的项目列表。菜单里是项目文档、总览和资料库之外的几页、项目设置和「转让项目」；成员上挂着私聊未读。',
+        note: '项目名上面一行是它所属的团队，点了去团队的项目列表。菜单里是总览、项目文档、资料库之外的几页、项目设置和「转让项目」；成员上挂着私聊未读。',
         props: {
           page: false,
           column: false,
@@ -305,6 +409,36 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         note: '竖线和文字左缘跟着频道在树里的层级往里缩。',
         props: { label: '展开其余 2 个', expanded: false, depth: 1 },
         expect: '展开其余 2 个',
+      },
+    ],
+  },
+  {
+    id: 'topic-rail-task-fold',
+    title: 'TopicRailTaskFold',
+    about:
+      '频道行右边那个折叠加手：把挂在它下面的一整块任务收起来。收起来时它自己顶上那一块的条数和灯——不然收起来就成了一条没有信息量的空白。',
+    file: 'src/components/topic-sidebar/TopicRailTaskFold.vue',
+    component: TopicRailTaskFold,
+    // 那个箭头是 v-icon，所以要 Vuetify；两句 title 和计数那颗的说明要读词表。
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '开着：任务就挂在下面',
+        note: '只有一个朝下的箭头，安静地说「这一块能收」。它左边的宽度是留给下面的条数的，所以两颗箭头不会因为收没收起来而左右跳。',
+        props: { collapsed: false, count: 4 },
+        expectSelector: '.task-fold__btn',
+      },
+      {
+        name: '收起来了：留着条数和灯',
+        note: '箭头转成朝右，前面接上这个频道里进行中的任务数和那一块最亮的一盏灯。收起不能把信号一起收掉。',
+        props: { collapsed: true, count: 4, light: { kind: 'yellow', breathe: false } },
+        expect: '4',
+      },
+      {
+        name: '收起来了，里面很静',
+        note: '没有在走的活、也没有等你的东西，就不点灯——不亮不是「亮着但说不清」。条数照旧。',
+        props: { collapsed: true, count: 2, light: null },
+        expect: '2',
       },
     ],
   },

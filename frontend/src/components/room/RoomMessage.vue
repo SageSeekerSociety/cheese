@@ -14,11 +14,19 @@ import type { FaceState } from '../../lib/agentFace'
 import { computed, ref } from 'vue'
 
 import { useMessageFold } from '../../composables/useMessageFold'
-import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
+import {
+  artifactKind,
+  artifactName,
+  askOptions,
+  isImageBlock,
+  isVideoBlock,
+  replySnippet,
+} from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
+import AttachmentVideo from '../AttachmentVideo.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 import MarkdownView from '../common/MarkdownView.vue'
@@ -92,6 +100,11 @@ const props = defineProps<{
   mentionPool?: MentionPoolEntry[]
   /** 编辑框自己 @ 得到的话题，和发消息那个输入区同一份表。 */
   topicList?: Topic[]
+  /**
+   * 人发的长消息也收起。支线和任务里的对话给它：人在那里贴需求、报错、长文，一条就
+   * 占满一栏。频道主线和私聊不给，那里只收队友的回复。
+   */
+  foldPlain?: boolean
 }>()
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
@@ -147,11 +160,11 @@ const checklist = computed(() => {
 })
 
 // ---- 长回复收起 ----
-// 一条很长的队友回复收成一段高度，底下给一颗「展开 / 收起」。判据、量高和状态都在
-// composables/useMessageFold：支线顶部那条初始消息用的是同一份。还没落库的那条
-// （正在写、正在送）不收——它的正文每帧都在长。
+// 一条很长的队友回复收成一段高度，底下给一颗「展开 / 收起」；`foldPlain` 时人发的
+// 长消息也一样收。判据、量高和状态都在 composables/useMessageFold：支线顶部那条初始
+// 消息用的是同一份。还没落库的那条（正在写、正在送）不收——它的正文每帧都在长。
 const foldEl = ref<HTMLElement | null>(null)
-const canFold = computed(() => !props.outgoing && !props.editing)
+const canFold = computed(() => (props.isAgent || !!props.foldPlain) && !props.outgoing && !props.editing)
 const {
   foldable,
   expanded,
@@ -241,6 +254,12 @@ function renderPlain(text: string): string {
            (click opens it larger, in place, see ImageLightbox). 字节在
            AttachmentImage 里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
         <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
+        <AttachmentVideo
+          v-else-if="isVideoBlock(block)"
+          :topic-id="topicId"
+          :path="block.content"
+          @download="emit('download', block)"
+        />
         <BaseButton
           v-else-if="block.kind === 'attachment'"
           kind="ghost"
@@ -306,21 +325,30 @@ function renderPlain(text: string): string {
         :editable="mine && !outgoing"
         @change="emit('checklist', block, $event)"
       />
-      <template v-else-if="isAgent">
-        <!-- 还没落库的那条（正在写、正在送）不带「复制」：它的代码块还在长。 -->
+      <template v-else>
         <div
           ref="foldEl"
           class="fold"
           :class="{ 'fold-clamped': clamped }"
           :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
         >
+          <!-- 还没落库的那条（正在写、正在送）不带「复制」：它的代码块还在长。 -->
           <MarkdownView
+            v-if="isAgent"
             class="im-text md-content"
             :source="block.content"
             as="chat"
             :names="refs"
             :copy-code="!outgoing"
           />
+          <!-- 现场尊重原文: human text renders verbatim — newlines and
+             spacing preserved (pre-wrap), no markdown reflow. 「已编辑」接在最后
+             一个字后面，不另起一行。 -->
+          <div v-else class="im-text im-text--verbatim">
+            <span v-html="renderPlain(block.content)" /><span v-if="edited" class="im-edited">{{
+              t('work.room.message.edited')
+            }}</span>
+          </div>
           <!-- Fade at the cut edge, so a folded reply reads as "there is more" rather than "it ends here". -->
           <div v-if="clamped" class="fold-fade" aria-hidden="true" />
         </div>
@@ -334,16 +362,8 @@ function renderPlain(text: string): string {
           <v-icon size="16">{{ expanded ? 'mdi-chevron-up' : 'mdi-chevron-down' }}</v-icon>
           {{ expanded ? t('work.room.message.showLess') : t('work.room.message.showMore') }}
         </button>
-        <div v-if="edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
+        <div v-if="isAgent && edited" class="im-edited">{{ t('work.room.message.edited') }}</div>
       </template>
-      <!-- 现场尊重原文: human text renders verbatim — newlines and
-         spacing preserved (pre-wrap), no markdown reflow. 「已编辑」接在最后
-         一个字后面，不另起一行。 -->
-      <div v-else class="im-text im-text--verbatim">
-        <span v-html="renderPlain(block.content)" /><span v-if="edited" class="im-edited">{{
-          t('work.room.message.edited')
-        }}</span>
-      </div>
       <MessageQuote v-if="block.meta?.quoted_context" :quote="block.meta.quoted_context" />
       <div v-if="outgoing?.failed" class="outbox-fail" role="alert">
         <span class="outbox-fail__text">{{

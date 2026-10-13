@@ -2,13 +2,19 @@
 
 An AI teammate may draft or edit one; a person confirms, restores or deletes,
 because what is confirmed is what every later session in the project follows.
+
+The row shape every skill route answers with (`_skill`) and the room's slice of
+it (`proposals_in_room`) are in `app.api.project_skill_rows`: a room's snapshot
+embeds the second and is not a route, so both live under `app.api` where the
+route and the snapshot may ask for the same one (C4 `routes-independent`). This
+module imports the two back — the rows it returns have to be that shape, not a
+second copy of it.
 """
 
 import base64
 import binascii
 import re
 import uuid
-from datetime import datetime
 
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
@@ -16,6 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.project_skill_rows import _iso, _skill
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -127,32 +134,6 @@ def _by_title(text: str, skills: list[ProjectSkill]) -> str:
     )
 
 
-def _iso(value: datetime | None) -> str | None:
-    return value.isoformat() if value else None
-
-
-def _skill(row: ProjectSkill) -> dict:
-    return {
-        "id": str(row.id),
-        "project_id": str(row.project_id),
-        "name": row.name,
-        "title": row.title,
-        "description": row.description,
-        "body": row.body,
-        "files": row.files,
-        "state": row.state,
-        "origin": row.origin,
-        "shipped_revision": row.shipped_revision,
-        "proposed_by": row.proposed_by,
-        "confirmed_by": row.confirmed_by,
-        "confirmed_at": _iso(row.confirmed_at),
-        "source_topic_id": str(row.source_topic_id) if row.source_topic_id else None,
-        "proposal": row.proposal,
-        "created_at": _iso(row.created_at),
-        "updated_at": _iso(row.updated_at),
-    }
-
-
 def _revision(row: ProjectSkillRevision) -> dict:
     return {
         "revision": row.revision,
@@ -210,23 +191,6 @@ async def list_skills(
     await _in_project(db, resolver, project_id, topic)
     items = [_skill(r) for r in await ProjectSkillService(db).list(project_id)]
     return ok(page(items, len(items)))
-
-
-async def proposals_in_room(
-    db: AsyncSession, project_id: uuid.UUID, room_id: uuid.UUID
-) -> list[dict]:
-    """Skills an AI teammate proposed in this room and nobody has decided on
-    yet, as `GET /projects/{id}/skills` lists them: what the room's proposal
-    cards draw. The `skill_proposals` of the room snapshot a subscription opens
-    with; the caller has authorised the reader."""
-    room = str(room_id)
-    return [
-        item
-        for item in (_skill(r) for r in await ProjectSkillService(db).list(project_id))
-        if item["state"] == "draft"
-        and item["proposal"]
-        and item["source_topic_id"] == room
-    ]
 
 
 def _post_line(

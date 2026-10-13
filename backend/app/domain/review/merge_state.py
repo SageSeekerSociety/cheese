@@ -46,6 +46,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import Literal
 
@@ -126,6 +127,47 @@ class MergeVerdict:
 
     state: MergeState
     reasons: tuple[MergeReason, ...]
+
+
+def checks_running(mirror: dict | None, *, now: datetime, fresh_for: timedelta) -> bool:
+    """卡上的镜像是不是在说「还在等 CI」，而且是刚看过的 —— 一份**看过的
+    结论**，不是现在算一遍。
+
+    轮询每看一次 PR 就把整份镜像覆写一遍（``checked_at`` 是它看的那一刻），
+    所以镜像里写着 ``ci_running`` 意味着**最近一次看**的时候检查还在跑。
+    ``fresh_for`` 是这段话的有效期：比它更旧就当没人看着这张卡了 —— 轮询停了、
+    卡被撤了、结论停在上一次看的样子，都不该按它办。读不懂的镜像一律当没在等
+    （``unknown`` 不拦任何事，这里也一样）。
+
+    谁读它：环境释放判据（``machine.lifecycle``）。一条线把交付递上去以后手上
+    就没活了，CI 还要跑一阵；这段等待里判它空闲就是把机器收掉，平台叫醒它时
+    得重开一台、把文档再读一遍。
+
+    **只认 ``ci_running`` 这一个 kind**：它是这一族里唯一一个自己会到头的等待
+    （检查跑完就有结论，轮询下一次看就换掉了）。``required_check_missing`` 说的
+    「必跑检查一直没出现」不在这里 —— 那条路超了宽限期是转给人处理，等的已经不是
+    CI 了，按人等人的钟留机器不合适。
+    """
+    if not isinstance(mirror, dict):
+        return False
+    raw = mirror.get("checked_at")
+    if not isinstance(raw, str):
+        return False
+    try:
+        checked = datetime.fromisoformat(raw)
+    except ValueError:
+        return False
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=UTC)
+    if now - checked > fresh_for:
+        return False
+    reasons = mirror.get("reasons")
+    if not isinstance(reasons, list):
+        return False
+    return any(
+        isinstance(reason, dict) and reason.get("kind") == "ci_running"
+        for reason in reasons
+    )
 
 
 @lru_cache(maxsize=256)

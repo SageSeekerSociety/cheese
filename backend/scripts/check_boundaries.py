@@ -33,7 +33,7 @@ Everything else is import-linter's own machinery: the contracts live in
 is enough to reproduce a verdict by hand. This script adds the two things above
 and nothing more.
 
-    ... --self-test   plant each violation the eight contracts exist to catch,
+    ... --self-test   plant each violation the nine contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
                       code is unchanged. The record's shape is fixed in
@@ -43,8 +43,10 @@ and nothing more.
 from __future__ import annotations
 
 import argparse
+import configparser
 import contextlib
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -60,6 +62,37 @@ DEFAULT_CONFIG = BACKEND_ROOT / ".importlinter"
 #: directory that contains it, because that is how grimp finds it.
 ROOT_PACKAGE = "app"
 
+#: The contracts that declare a layer table.
+_LAYER_CONTRACTS = ("domain-layers", "turn-layers")
+
+
+def declared_layers(config_text: str) -> dict[str, list[str]]:
+    """The layers each layer contract declares, one entry per layer, top first.
+
+    The self-test plants trees that hold none of the repository's turn or
+    domain packages, so it rewrites these two tables to name the packages its
+    seed does hold. Carrying the list across from the declaration instead of
+    re-typing it is what keeps that copy from going stale: a layer this helper
+    missed would come back as an undeclared module, which reads like a broken
+    rule rather than a stale fixture.
+    """
+    parser = configparser.ConfigParser()
+    parser.read_string(config_text)
+    found: dict[str, list[str]] = {}
+    for contract_id in _LAYER_CONTRACTS:
+        section = f"importlinter:contract:{contract_id}"
+        raw = parser.get(section, "layers", fallback=None)
+        if raw is None:
+            raise RuntimeError(
+                f"{section} declares no `layers`; the self-test cannot carry a "
+                "layer table the declaration does not have"
+            )
+        # One layer per line: import-linter takes `layers` as a list, which its
+        # reader builds from the continuation lines of the option.
+        found[contract_id] = [line.strip() for line in raw.splitlines() if line.strip()]
+    return found
+
+
 #: The contract ids this check claims to be running. Kept here, next to the
 #: check, on purpose: a declaration that quietly lost a contract would otherwise
 #: run fewer contracts and still report success — a check that narrowed itself
@@ -74,6 +107,7 @@ CONTRACT_IDS = (
     "realtime-no-turn",
     "turn-storage-purity",
     "routes-independent",
+    "domain-layers",
 )
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
@@ -251,7 +285,7 @@ def _failure_locations(report) -> list[str]:
             metadata = getattr(check, "metadata", {})
             walk(metadata)
             for module in sorted(metadata.get("undeclared_modules", ())):
-                add(module, "undeclared turn layer", (1,))
+                add(module, "undeclared layer", (1,))
     return locations
 
 
@@ -289,6 +323,13 @@ _BOUNDARY_FIXES = {
         "C4 route modules are independent of one another. Move what both routes "
         "need into a neutral module (app/api/request_deps.py for request "
         "dependencies, a domain service for behaviour) and import it from both."
+    ),
+    "C5": (
+        "C5 domain packages form seven layers, dependencies point down. Move the "
+        "dependency into the lower layer (or call it through the declared seam); "
+        "an unplaced child of app.domain goes into the layer table in "
+        "`.importlinter` first — this contract is exhaustive, so every child of "
+        "app.domain, package or top-level module, must be named in it."
     ),
 }
 
@@ -492,6 +533,24 @@ _SEED = {
     "app/__init__.py": "",
     "app/api/__init__.py": "",
     "app/api/deps.py": "def get_db():\n    ...\n",
+    # C2 names the route-shared dependency modules as sources; the seed is the
+    # smallest tree every declaration holds on, so they have to exist here too.
+    "app/api/admin_deps.py": "",
+    "app/api/users_deps.py": "",
+    "app/api/space_deps.py": "",
+    "app/api/space_payloads.py": "",
+    "app/api/task_deps.py": "",
+    "app/api/topics_deps.py": "",
+    "app/api/awaiting_deps.py": "",
+    "app/api/legal_deps.py": "",
+    "app/api/teams_deps.py": "",
+    "app/api/topics_file_sources.py": "",
+    "app/api/ws_pipe.py": "",
+    "app/api/preview_relay.py": "",
+    "app/api/project_skill_rows.py": "",
+    "app/api/review_comment_rows.py": "",
+    "app/api/topic_member_rows.py": "",
+    "app/api/topic_pin_rows.py": "",
     "app/api/routes/__init__.py": "",
     "app/api/routes/demo.py": "from app.domain.bar.services import read_bar\n",
     "app/api/routes/other.py": "",
@@ -501,6 +560,7 @@ _SEED = {
     "app/domain/bar/__init__.py": "",
     "app/domain/bar/models.py": "class Bar:\n    ...\n",
     "app/domain/bar/services.py": "def read_bar():\n    ...\n",
+    "app/domain/alpha/__init__.py": "",
     "app/domain/agent/__init__.py": "",
     "app/domain/agent/chat.py": "",
     "app/domain/agent/runtime.py": "",
@@ -525,6 +585,7 @@ _IMPORT_STATE = "import app.domain.agent.turn.state\n"
 _IMPORT_BRIDGE = "import app.domain.agent.fixture_bridge\n"
 _IMPORT_BROKER = "import app.domain.agent.realtime.broker\n"
 _IMPORT_RECORDS = "import app.domain.agent.run_records\n"
+_IMPORT_AGENT = "import app.domain.agent\n"
 
 
 _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
@@ -632,6 +693,20 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         ("turn-storage-purity",),
     ),
     (
+        "a package reaching a higher layer (C5)",
+        {"app/domain/bar/services.py": _IMPORT_AGENT},
+        BROKEN,
+        "app.domain.bar is not allowed to import app.domain.agent",
+        ("domain-layers",),
+    ),
+    (
+        "an unclassified domain package (C5 exhaustive)",
+        {"app/domain/unplaced/__init__.py": ""},
+        BROKEN,
+        "app.domain.unplaced",
+        ("domain-layers",),
+    ),
+    (
         "one route importing another (C4)",
         {"app/api/routes/demo.py": "import app.api.routes.other\n"},
         BROKEN,
@@ -669,9 +744,16 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         None,
         (),
     ),
+    (
+        "a shared route dependency module reaching a model directly (C2)",
+        {"app/api/space_payloads.py": "from app.domain.bar.models import Bar\n"},
+        BROKEN,
+        "app.api.space_payloads is not allowed to import app.domain.bar.models",
+        ("routes-touch-no-models",),
+    ),
 ]
 
-#: A config that declares nothing, and one that declares all eight contracts
+#: A config that declares nothing, and one that declares all nine contracts
 #: but freezes an exception as a wildcard — the one thing this format must not
 #: accept, and which import-linter itself honours happily.
 _THIN_CONFIG = "[importlinter]\nroot_package = app\n"
@@ -748,12 +830,153 @@ def _record_problem(
     return None, record
 
 
+def _section_span(lines: list[str], contract_id: str) -> tuple[int, int]:
+    """The inclusive-exclusive span of one `[importlinter:contract:...]`.
+
+    The header is matched on its stripped text, because that is how the two
+    readers that count — `configparser` for `declared_layers`, and
+    import-linter itself — read it: a trailing space on the line, or a CR if the
+    file is ever checked out with CRLF, is the same section to them. Exact
+    equality here would make such a line a declaration the gate accepts and the
+    self-test cannot find, and the meta-test would fail as a traceback rather
+    than as the named failure it exists to print.
+    """
+    header = f"[importlinter:contract:{contract_id}]"
+    start = next(
+        (index for index, line in enumerate(lines) if line.strip() == header), None
+    )
+    if start is None:
+        raise RuntimeError(
+            f".importlinter has no `{header}` line; the self-test cannot rewrite "
+            "a layer table it cannot find"
+        )
+    for index_after in range(start + 1, len(lines)):
+        if lines[index_after].lstrip().startswith("[importlinter"):
+            return start, index_after
+    return start, len(lines)
+
+
+_SEED_DOMAIN_TABLE = ["layers =", "    agent", "    alpha : bar"]
+
+
+def _seed_domain_children() -> set[str]:
+    """The children of `app.domain` that `_SEED` plants.
+
+    A child is a directory under `app/domain/` or a module directly in it —
+    the same two shapes the contract's own layer table has to name.
+    """
+    children: set[str] = set()
+    for relative in _SEED:
+        parts = relative.split("/")
+        if parts[:2] != ["app", "domain"] or len(parts) < 3:
+            continue
+        if len(parts) == 3 and parts[2].endswith(".py"):
+            if parts[2] != "__init__.py":
+                children.add(parts[2][:-3])
+        else:
+            children.add(parts[2])
+    return children
+
+
+def _seed_domain_table() -> list[str]:
+    """The seed's domain table, checked against what `_SEED` plants.
+
+    The table cannot be derived from the tree — which layer each package goes
+    in is the thing the cases exercise — so the two are checked against each
+    other instead. A package added to `_SEED` and not named here would come
+    back as C5 reporting an unlisted module on a tree that is meant to satisfy
+    it: a red that reads like the rule breaking, on a fixture nobody edited.
+    """
+    named = {
+        name
+        for line in _SEED_DOMAIN_TABLE[1:]
+        for name in line.replace(":", " ").split()
+    }
+    planted = sorted(_seed_domain_children())
+    if named != set(planted):
+        raise RuntimeError(
+            f"the seed's domain table names {sorted(named)} but _SEED plants "
+            f"{planted} under app/domain; add the new one to _SEED_DOMAIN_TABLE "
+            "in the layer it belongs to, or drop it from the seed"
+        )
+    return list(_SEED_DOMAIN_TABLE)
+
+
+def _seed_config(declared: dict[str, str], text: str | None = None) -> str:
+    """The real declaration, rewritten so the planted trees satisfy it.
+
+    The trees `_SEED` plants hold none of the repository's domain packages, so
+    the package table becomes the seed's own, cross-checked against the tree by
+    `_seed_domain_table`: `agent` on top, `alpha` and `bar` in the layer below
+    it — the smallest table with a downward edge to allow and an upward edge to
+    catch. The turn table is the repository's, which the seed already builds the
+    modules for. Everything else — the exemptions and the plumbing around them —
+    is untouched, so what a case exercises is the contract and not the fixture.
+
+    `text` is the declaration to rewrite, defaulting to the real file. A caller
+    that already read one — `declared_layers` returns layer lists, not the text
+    they came from, so the two can be a mutation apart — passes it, and the
+    rewrite then works on what the gate read rather than on what is on disk.
+    """
+    lines = (text if text is not None else DEFAULT_CONFIG.read_text()).split("\n")
+    turn_lines = [f"    {layer}" for layer in declared["turn-layers"]]
+    for contract_id, replacement in (
+        ("domain-layers", _seed_domain_table()),
+        ("turn-layers", ["layers =", *turn_lines]),
+    ):
+        try:
+            start, end = _section_span(lines, contract_id)
+        except RuntimeError as exc:
+            raise RuntimeError(f"the {contract_id} table: {exc}") from exc
+        head = next(
+            (
+                index
+                for index in range(start + 1, end)
+                if re.match(r"^\s*layers\s*=", lines[index])
+            ),
+            None,
+        )
+        if head is None:
+            raise RuntimeError(
+                f"the {contract_id} table: the section has no `layers` option to "
+                "rewrite for the planted trees"
+            )
+        stop = head + 1
+        while stop < end and re.match(r"^\s+\S", lines[stop]):
+            stop += 1
+        lines[head:stop] = replacement
+    return "\n".join(lines)
+
+
 def _tail(output: str, lines: int = 25) -> str:
     """The end of a report — the part that says why it is red."""
     kept = output.strip().splitlines()
     if len(kept) <= lines:
         return "\n".join(kept)
     return f"... ({len(kept) - lines} earlier lines)\n" + "\n".join(kept[-lines:])
+
+
+def _self_test_verdict(failures: list[str]) -> int:
+    """The self-test's exit code and closing line, decided in one place.
+
+    One is the meta-test's own breakage — a case that did not fire, or a
+    fixture that could not be built — and stays distinct from what 2 means
+    everywhere else: the check could not judge the tree.
+    """
+    if failures:
+        print("\n".join(failures), file=sys.stderr)
+        print(
+            f"\nFAIL: check_boundaries self-test ({len(failures)} case(s))",
+            file=sys.stderr,
+        )
+        return 1
+    print(
+        "PASS: check_boundaries self-test (9 contracts fire on the violation they "
+        "exist to catch; an absent, a trimmed and a wildcarded declaration each "
+        "come back not-passing; every case agrees with the exit code under --json, "
+        "on one line of stdout, naming all nine contracts)"
+    )
+    return 0
 
 
 def self_test() -> int:
@@ -763,6 +986,33 @@ def self_test() -> int:
     wildcard_config = DEFAULT_CONFIG.read_text().replace(
         "ignore_imports =\n", "ignore_imports =\n    app.api.** -> app.domain.**\n", 1
     )
+
+    # The planted trees replace every package under app.domain, so they carry
+    # the layer tables across instead of re-typing them: a layer this file
+    # forgot to copy would come back as an undeclared module, and the failure
+    # would read like a broken rule rather than a stale fixture.
+    #
+    # A declaration that stopped naming one of those tables cannot seed them at
+    # all. That is this run's failure and not a planted case — and the gate
+    # already reports the state as `cannot judge: missing [...]` — so it is said
+    # in one line rather than unwound as a traceback out of the meta-test.
+    try:
+        declared = declared_layers(DEFAULT_CONFIG.read_text())
+    except RuntimeError as exc:
+        failures.append(f"the default declaration: {exc}")
+        print(f"  [FAIL] the default declaration: {exc}")
+        return _self_test_verdict(failures)
+
+    # Seeding the trees is the other half of that bootstrap: it rewrites the
+    # tables in the declaration, so it fails for the same class of reason — a
+    # line the gate reads differently than this file does, or a fixture that
+    # drifted from the table it seeds. Same one-line treatment.
+    try:
+        seed_config = _seed_config(declared)
+    except RuntimeError as exc:
+        failures.append(f"the seed's declaration: {exc}")
+        print(f"  [FAIL] the seed's declaration: {exc}")
+        return _self_test_verdict(failures)
 
     def report(what: str, code: int, output: str, expected: int, needle: str | None):
         verdict = "ok"
@@ -780,7 +1030,7 @@ def self_test() -> int:
         for index, (what, files, expected, needle, _broken) in enumerate(_CASES):
             tmp = sandbox / f"case{index}"
             tmp.mkdir()
-            code, output = _run(None, files, tmp)
+            code, output = _run(seed_config, files, tmp)
             report(what, code, output, expected, needle)
             if expected == BROKEN:
                 report(
@@ -791,7 +1041,8 @@ def self_test() -> int:
                     "scripts/check_boundaries.py` to recheck",
                 )
                 for contract_id in _broken:
-                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4")[
+                    # In `CONTRACT_IDS` order: the ids in `.importlinter` order.
+                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4", "C5")[
                         CONTRACT_IDS.index(contract_id)
                     ]
                     report(
@@ -830,7 +1081,7 @@ def self_test() -> int:
         tmp = sandbox / "thin"
         tmp.mkdir()
         report(
-            "a declaration that lost all eight contracts",
+            "a declaration that lost all nine contracts",
             *_run(_THIN_CONFIG, {}, tmp),
             CANNOT_JUDGE,
             "missing",
@@ -855,6 +1106,40 @@ def self_test() -> int:
                 CANNOT_JUDGE,
                 f"missing ['{contract_id}']",
             )
+
+        # The state no case above can plant: a default declaration that stopped
+        # naming a layer table, which is where the planted trees get theirs.
+        # The self-test has to say so and fail — unwinding a traceback through
+        # the same exit code is the failure nobody can read. A renamed section
+        # is the shape a contract rename leaves behind.
+        unlayered = sandbox / "unlayered"
+        unlayered.mkdir()
+        _plant(seed_config, {}, unlayered)
+        declaration = unlayered / DEFAULT_CONFIG.name
+        declaration.write_text(
+            declaration.read_text().replace(
+                "[importlinter:contract:domain-layers]",
+                "[importlinter:contract:domain-layers-renamed]",
+            )
+        )
+        copied = unlayered / "scripts" / HERE.name
+        copied.parent.mkdir()
+        shutil.copy(HERE, copied)
+        result = subprocess.run(
+            [sys.executable, str(copied), "--self-test"],
+            cwd=unlayered,
+            capture_output=True,
+            text=True,
+        )
+        report(
+            "a declaration that lost a layer table",
+            result.returncode,
+            result.stdout + result.stderr,
+            1,
+            # The named failure, not the exit code: a traceback out of the
+            # bootstrap carries the same text and the same 1.
+            "  [FAIL] the default declaration:",
+        )
 
         # No config at all. Nothing to judge, and 2 is not a pass.
         tmp = sandbox / "absent"
@@ -890,10 +1175,12 @@ def self_test() -> int:
 
         # Copy the checker away from its default config. --config must remain
         # independent of that file, and an absent default must be judged, not
-        # crash while importing self-test fixture constants.
+        # crash while importing self-test fixture constants. The explicit config
+        # is the seed's rewrite of the real one, so this run judges the seed
+        # tree the way every other case does.
         detached = sandbox / "detached"
         detached.mkdir()
-        _plant(None, {}, detached)
+        _plant(seed_config, {}, detached)
         alternate = detached / "explicit.ini"
         (detached / DEFAULT_CONFIG.name).rename(alternate)
         copied = detached / "scripts" / HERE.name
@@ -951,7 +1238,7 @@ def self_test() -> int:
             for index, (what, _f, expected, _n, _broken) in enumerate(_CASES)
         ]
         json_cases.append(
-            ("thin", "a declaration that lost all eight contracts", CANNOT_JUDGE)
+            ("thin", "a declaration that lost all nine contracts", CANNOT_JUDGE)
         )
         json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
         json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))
@@ -991,20 +1278,7 @@ def self_test() -> int:
                 failures.append(f"--json {what}: {problem}")
             print(f"  [{verdict}] --json {what}")
 
-    if failures:
-        print("\n".join(failures), file=sys.stderr)
-        print(
-            f"\nFAIL: check_boundaries self-test ({len(failures)} case(s))",
-            file=sys.stderr,
-        )
-        return 1
-    print(
-        "PASS: check_boundaries self-test (8 contracts fire on the violation they "
-        "exist to catch; an absent, a trimmed and a wildcarded declaration each "
-        "come back not-passing; every case agrees with the exit code under --json, "
-        "on one line of stdout, naming all eight contracts)"
-    )
-    return 0
+    return _self_test_verdict(failures)
 
 
 if __name__ == "__main__":

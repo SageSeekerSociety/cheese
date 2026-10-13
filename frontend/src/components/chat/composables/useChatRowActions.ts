@@ -12,6 +12,7 @@ import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useEventListener, useResizeObserver } from '@vueuse/core'
 
 import { useLongPress } from '../../../composables/useLongPress'
+import { messageSelection } from '../../../lib/messageSelection'
 
 import { useTimelineKeys } from './useTimelineKeys'
 
@@ -74,7 +75,7 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     shown: false,
     top: 0,
     jump: false,
-    menuAt: null as { x: number; y: number } | null,
+    menuAt: null as { x: number; y: number; selectedText?: string } | null,
   })
   const barBlock = computed(() => (bar.id ? timeline.find(bar.id) ?? null : null))
 
@@ -111,8 +112,19 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     return e.clientX < el.getBoundingClientRect().left && e.clientX > from.x && e.clientY <= from.y
   }
 
+  // A selected passage pins the existing bar to its message, even when the
+  // pointer leaves the row on the way to Reply. Touch keeps its native handles.
+  function selectedMessage() {
+    return touchOnly.value ? null : messageSelection(scrollRef.value, editingId.value)
+  }
+  useEventListener(document, 'selectionchange', () => {
+    const selected = selectedMessage()
+    if (selected) showBarAt(selected.row)
+    else if (!scrollRef.value?.matches(':hover')) hideBar()
+  })
+
   function hideBar() {
-    if (reactionPickerFor.value) return
+    if (reactionPickerFor.value || selectedMessage()) return
     bar.shown = false
   }
 
@@ -120,6 +132,8 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     // 触屏上没有悬停：浏览器照样补发 mouseover，悬停条出来了就再也收不回去。这些操作
     // 在触屏上是长按一条消息打开的面板（见下面 touchOnly）。
     if (touchOnly.value) return
+    const selected = selectedMessage()
+    if (selected) return showBarAt(selected.row)
     const from = last
     last = { x: e.clientX, y: e.clientY }
     const target = e.target as HTMLElement | null
@@ -211,19 +225,20 @@ export function useChatRowActions(deps: ChatRowActionsDeps) {
     bar.shown = false
   }
 
-  // 右键一条消息：弹它的 ⋯，和桌面上别处的行一样。正在选字、或者右键在链接、输入框上
-  // 时不拦——那时要的是浏览器那一份（复制、在新标签打开）。触屏上的同一组操作是长按。
+  // Right-click also opens message actions for a passage selected in this row.
+  // Links, editors, cross-row selections and selections in other panes stay native.
   function onRowContextMenu(e: MouseEvent) {
     if (touchOnly.value) return
     const target = e.target as HTMLElement | null
     if (!target || target.closest('.hover-bar, a[href], input, textarea, [contenteditable="true"]')) return
-    if (window.getSelection()?.isCollapsed === false) return
     const row = target.closest<HTMLElement>('[data-mid][data-actions]')
     if (!row || row.dataset.mid === editingId.value) return
-    e.preventDefault()
+    const selected = selectedMessage()
+    if (window.getSelection()?.isCollapsed === false && selected?.row !== row) return
     showBarAt(row)
     if (bar.id !== row.dataset.mid) return
-    bar.menuAt = { x: e.clientX, y: e.clientY }
+    e.preventDefault()
+    bar.menuAt = { x: e.clientX, y: e.clientY, selectedText: selected?.text }
   }
   useEventListener(scrollRef, 'contextmenu', onRowContextMenu)
 

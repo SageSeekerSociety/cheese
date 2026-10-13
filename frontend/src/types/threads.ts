@@ -1,14 +1,20 @@
 // 支线：主线上一条消息下面的回复，自成一段对话。
-import type { Block, ChecklistMeta, RoomTask } from '../cx_types'
+import type { AuthorType, Block, ChecklistMeta, RoomTask } from '../cx_types'
 
 /** 支线里最后说的一句：谁、说了什么（前两行够用的长度）、什么时候。 */
 export interface ThreadReply {
   author: string
+  /** 谁那一档写的、是消息还是附件：同 `Block` 上那两列。 */
+  author_type?: AuthorType
+  kind?: string
+  /** 前两行够用的长度；`truncated` 说它是不是被截过。 */
   content: string
+  truncated?: boolean
   created_at: string
   /** 这一句是队友的步骤清单时它那份结构。摘要只显示一步，而正文里一步一行、折成
-   * 一行之后只剩一串记号，所以结构得由后端随回复带上（不是清单就是 null）。 */
-  checklist?: ChecklistMeta | null
+   * 一行之后只剩一串记号，所以结构得由后端随回复带上（不是清单就是 null）。迁移前的
+   * 清单没有结构，只有一个 `true`：那一步从正文里读。 */
+  checklist?: ChecklistMeta | true | null
 }
 
 /** 从支线（和它挂着的那条消息）出来的一件任务。 */
@@ -82,10 +88,21 @@ declare module '../cx_types' {
   }
 }
 
-// `GET /topics` 的每一行带着侧栏挂在它下面的任务：和我有关的几件（最多五件），和这个
-// 频道进行中的一共几件（views/workspace/ProjectSidebar）。
+// `GET /topics` 的每一行带着侧栏挂在它下面的任务：和我有关的全部，不足三条时补上这个
+// 频道别人的几条（那些行带 `filling_in`），加这个频道进行中的一共几件
+// （views/workspace/ProjectSidebar）。
 declare module '../cx_types' {
   interface Topic {
     my_tasks?: { shown: RoomTask[]; open: number }
+  }
+}
+
+// 侧栏那一块里的一条：这一条不是和我有关的，是从这个频道里别人的活借来把这一块凑够三条
+// 的（`projects.rail_tasks`）。侧栏把它画淡一档，悬浮说明写清它为什么在这儿。只有
+// `my_tasks.shown` 这份行带它；别的调用方（项目级列表、频道里的全部任务）不带，读作
+// false——那是「和我无关」，不是「说不清」。
+declare module '../cx_types' {
+  interface RoomTask {
+    filling_in?: boolean
   }
 }

@@ -66,7 +66,7 @@ from pathlib import Path
 import re
 import xml.etree.ElementTree as ET
 
-from ci_fast_backend import select_backend
+from ci_fast_backend import pinned_harness_gap, select_backend
 
 I18N_SPECS = ("src/i18n/catalog.spec.ts", "src/i18n/english.spec.ts")
 # Specs that judge a frontend file by reading it with `node:fs` — a component's
@@ -403,7 +403,17 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
             omissions.append({"id": "frontend-typecheck-changed",
                               "reason": "no changed TS/Vue files; types not applicable"})
     if scope.get("backend"):
-        selected, reason, targets = select_backend(root, changed, conservative)
+        # A tier that has no pinned harness builds must not judge the tests that
+        # need one: without them they fail rather than skip. They are named in
+        # not_run and left in required, so a green run still means the change's
+        # pinpointed consumers ran.
+        selected, reason, targets, omitted = select_backend(
+            root, changed, conservative, pinned_harness_gap())
+        if omitted:
+            omissions.append({"id": "backend-pure:pinned-harness",
+                              "reason": f"{len(omitted)} test files need the pinned Claude Code/"
+                                        f"Codex/pi builds, which this tier does not install: "
+                                        + ", ".join(omitted)})
         output = tmp / "pytest.xml"
         nodes = tmp / "pytest-nodes.json"
         # The audit plugin sits beside the runner; pytest imports it by module

@@ -8,7 +8,7 @@ messages are answered where they were said.
 
 import uuid
 
-from sqlalchemy import Boolean, String, Uuid, column, select, table
+from sqlalchemy import Boolean, String, Uuid, column, or_, select, table
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +22,7 @@ from app.domain.block.models import (
 )
 from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_room
+from app.domain.identity.handles import recipient_seat
 from app.domain.thread.models import Thread
 
 # The channel a message is in. A bare table: ``topic`` and ``room_task`` resolve
@@ -131,6 +132,29 @@ async def waiting_in_room(session: AsyncSession, room_id: uuid.UUID) -> list[uui
         if conversation not in waiting:
             waiting.append(conversation)
     return waiting
+
+
+async def thread_teammate(session: AsyncSession, thread: Thread) -> str | None:
+    """The seat of the AI teammate a 支线 is talking with: the one the latest
+    message that called a teammate there called, the message it hangs under
+    included. None when nobody in it has called one.
+
+    A message said in a 支线 without calling anyone is for this teammate: the
+    conversation is the one held with it, not with the channel's default."""
+    meta = await session.scalar(
+        select(Block.meta)
+        .where(
+            or_(
+                Block.conversation_id == thread.id,
+                Block.id == thread.root_block_id,
+            ),
+            Block.kind == BlockKind.message,
+            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
+        )
+        .order_by(Block.created_at.desc(), Block.id.desc())
+        .limit(1)
+    )
+    return recipient_seat((meta or {}).get("agent_recipient"))
 
 
 async def thread_opening(

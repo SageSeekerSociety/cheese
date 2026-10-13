@@ -471,23 +471,27 @@ const inkStyle = computed(() =>
   border-bottom: 1px solid var(--line);
 }
 
+/* 溢出的那一侧：从栏边往里 56px 的一层淡出。靠边的 34px 是实心的——箭头那颗 20px
+   的记号居中在一颗 44px 的按钮里，落在离栏边 12–32px 这一段，34px 的实心正好盖住它；
+   不留这 34px，页签的图标和字就从箭头底下透上来。往里 22px 渐变到透明：页签被一刀
+   切断看着像画坏了，虚进来的第一个字还认得出是「被箭头压着」。 */
 .tabbar-host__edge {
   position: absolute;
   top: 0;
   bottom: 1px;
   z-index: 1;
-  width: 40px;
+  width: 56px;
   pointer-events: none;
 }
 
 .tabbar-host__edge--right {
   right: 0;
-  background: linear-gradient(to right, transparent, var(--surface));
+  background: linear-gradient(to right, transparent 0, var(--surface) 22px);
 }
 
 .tabbar-host__edge--left {
   left: 0;
-  background: linear-gradient(to left, transparent, var(--surface));
+  background: linear-gradient(to left, transparent 0, var(--surface) 22px);
 }
 
 /* 箭头本身 44×44（手指点得中的下限），记号画小一号。它压在栏的边上，所以只在那一侧

@@ -70,15 +70,25 @@ class AgentInstance(UuidPk, Timestamps, Base):
     )
 
 
+class OwnCallers(enum.StrEnum):
+    """Who may set a member's own agent to work. Its owner decides; the
+    platform does not look at what the agent signs in with."""
+
+    #: Its owner alone.
+    owner = "owner"
+    #: Any person in the project, the owner included.
+    project = "project"
+
+
 class OwnAgent(Base):
     """A project's agent that is one member's own coding agent (#2991): their
-    own Claude Code, run on their own machine with the login they gave the
-    platform (`cheesehost claude login`), and called by them alone.
+    own Claude Code with one of their model connections — the login they gave
+    the platform on one of their machines (`cheesehost claude login`) — called
+    by whoever its owner lets call it (``callers``).
 
     It is still an ``AgentInstance`` — a memory pool, a seat, a name in the
-    roster — and this row is what makes it someone's. The owner's machine is
-    not recorded here: a session goes to whichever of their machines is online
-    with that login when it starts.
+    roster — and this row is what makes it someone's. A person may have one per
+    connection in a project; its owner adds it there and removes it.
     """
 
     __tablename__ = "own_agents"
@@ -91,3 +101,29 @@ class OwnAgent(Base):
     )
     # Which harness it is: the coding agent the owner logged in on the machine.
     harness: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The model connection it runs on: the login on this machine
+    # (`DeviceClaudeLoginRow`, keyed by the machine). Its sessions run there and
+    # nowhere else — a subscription's login never leaves the machine it was
+    # given on. None once the machine is gone; then it has nothing to run on.
+    device_id: Mapped[str | None] = mapped_column(
+        String(64),
+        ForeignKey(
+            "device.device_id",
+            ondelete="SET NULL",
+            name="fk_own_agents_device_id_device",
+        ),
+        nullable=True,
+        index=True,
+    )
+    callers: Mapped[OwnCallers] = mapped_column(
+        Enum(
+            OwnCallers,
+            native_enum=False,
+            length=16,
+            create_constraint=True,
+            name="ck_own_agents_callers",
+        ),
+        nullable=False,
+        default=OwnCallers.owner,
+        server_default=OwnCallers.owner.value,
+    )

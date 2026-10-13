@@ -15,7 +15,7 @@
 - `building` 进行中 —— 开始了，还没递出交付。
 - `delivering` 检查中 —— 下一步在**平台/芝士**手上。
 - `needs_you` 待处理 —— 下一步在**人**手上。
-- `done` 已完成 —— 已采纳，或已关闭且没交付。
+- `done` 已关闭 —— 任务关了：最后一步已采纳，或没交付就关了。
 - `archived` 已归档 —— 房间才有；活不归档。
 
 同一个客观事实会因为「谁负责下一步」落在不同列。CI 红了，平台已经派芝士去修就是
@@ -469,6 +469,41 @@ def _card_presentation(card: CardFacts) -> Presentation | None:
     return None
 
 
+def card_column(card: CardSignals | CardRow) -> Column | None:
+    """这张卡此刻把它所在的地方摆在哪一列；它已经不说话了就是 None。
+
+    和 `task_presentation` 同一个判据（`_card_presentation`），只是形状公开：调用方
+    要问的是「这个地方是不是走在交付链路上」，而那条链路上的每一格都在 `Delivering`
+    里（见 `Column`）。卡说不出话时返回 None，不替调用方猜一列。
+
+    比 `task_presentation` 少几层：只看卡，不看这条活关没关、有没有在跑、在不在等
+    回答。所以「说得出交付中」是充分的，反过来不成立 —— 问「有没有走在交付链路上」
+    只要充分就够了。
+    """
+    facts = facts_for_card(card)
+    if facts is None:
+        return None
+    shown = _card_presentation(facts)
+    return None if shown is None else shown.column
+
+
+def work_moving(shown: Presentation, *, also: bool = False) -> bool:
+    """这个格子里此刻有没有活在往前走 —— 侧栏那盏**呼吸绿**问的就是它。
+
+    两种都算：有一轮在跑（`Building.running`），或者已经递出去、走在交付链路上
+    （`Delivering` 那一列：等闸门、等 CI、修检查、解冲突、换基）。其余都不算 ——
+    还没开工、在等人、做完了，都不是「正在往前走」。
+
+    `also` 是给一个房间用的：它自己那条线可能闲着，名下的活却走在交付链路上
+    （`routes/topics._delivering_rooms`），那也算这间房在往前走。
+    """
+    return (
+        also
+        or shown.column is Column.delivering
+        or shown.phrase == Building.running.value
+    )
+
+
 def card_waits_on_reviewer(card: CardSignals | CardRow) -> bool:
     """这张卡此刻是不是真的在等验收人动手 —— 看板「待审阅」那一格。
 
@@ -527,8 +562,8 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
 
     三条优先级规矩：
 
-    1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，留了结论的写「已完成」，
-       都没有的写「已关闭」。还开着的任务就算采纳过前几步，也还在做；只有最后一步
+    1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，其余写「已关闭」——留了
+       结论的（`completed`）和什么都没留的（`closed`）码不同，字一样：关掉不等于做成。还开着的任务就算采纳过前几步，也还在做；只有最后一步
        合并后 AI 队友写总结的那一会儿例外，它已经是「已采纳」。
     2. **待回答压过「在跑」**：进程可能还在，但它不会自己往下走了，而看板显示
        「运行中」正是让人不来看的那一句。

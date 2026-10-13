@@ -74,10 +74,7 @@ beforeEach(() => {
   reviews.mockReset().mockResolvedValue({ items: [application()] })
   review.mockReset().mockResolvedValue({})
 })
-afterEach(() => {
-  cleanup()
-  vi.useRealTimers()
-})
+afterEach(cleanup)
 
 describe('space review queue', () => {
   it('approves an application and refreshes the queue', async () => {
@@ -171,16 +168,26 @@ describe('space review queue · 列表', () => {
   })
 
   // 审核时间和申请时间一样按读者的时钟说成「几小时前」，不是把接口里的 ISO 串原样印出来。
+  //
+  // 「此刻」在这里钉成本地中午：以前拿真实此刻减三小时当输入，本地零点到三点零一分
+  // 之间那三小时落在昨天，页面按日历天改说「昨天」，这条就跟着跑的钟点红（CI 是 UTC
+  // 的 runner，于是每天 00:00–03:01 UTC 必红）。钉在中午之后，喂进去的三小时无论
+  // 哪个时区都落在同一天。只钉 `Date`，`setTimeout` 还是真的，等元素照常。
   it('审过的那一条说什么时候审的，不印 ISO 时间串', async () => {
-    // Keep the three-hour example on one local calendar day so the test is not midnight-dependent.
     vi.useFakeTimers({ toFake: ['Date'] })
-    vi.setSystemTime(new Date(2026, 9, 13, 12, 0, 0))
-    const reviewedAt = new Date(Date.now() - 3 * 3600_000 - 60_000).toISOString().replace('Z', '+00:00')
-    reviews.mockResolvedValue({ items: [application({ reviewStatus: 'APPROVED', reviewedBy: 'admin', reviewedAt })] })
-    const page = mountPage()
-    await page.findByText('Programming course')
-    expect(page.queryByText(new RegExp(reviewedAt.slice(0, 10)))).toBeNull()
-    expect(page.getByText('3 hours ago')).toBeTruthy()
+    vi.setSystemTime(new Date(2026, 9, 12, 12, 0, 0).getTime())
+    try {
+      const reviewedAt = new Date(Date.now() - 3 * 3600_000 - 60_000).toISOString().replace('Z', '+00:00')
+      reviews.mockResolvedValue({ items: [application({ reviewStatus: 'APPROVED', reviewedBy: 'admin', reviewedAt })] })
+      const page = mountPage()
+      await page.findByText('Programming course')
+      // 接口给的是 ISO 串（那一天的那一段），页上不该原样出现。
+      expect(page.queryByText(new RegExp(reviewedAt.slice(0, 10)))).toBeNull()
+      // 说的是人话：三小时前。语言跟着默认语言走，中英都算。
+      expect(page.getByText(/3 ?(hours? ago|小时前)/)).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

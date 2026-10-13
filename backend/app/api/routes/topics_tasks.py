@@ -10,17 +10,22 @@ document go through the same routes as a room's (`/messages`, `/title`,
 `/document`), with the task's id.
 
 `_actor_in_place`, `DbSession` and the block/project/usage repositories come from
-topics.py, so the import guard and `.importlinter` see no new edges; the accept
-card is read through `AcceptService`, not a repository re-export.
+`app.api.topics_deps` (they lived in `topics.py` until that module's siblings
+stopped importing it), so the import guard and `.importlinter` see no new edges;
+the accept card is read through `AcceptService`, not a repository re-export.
+Handing one task back to its page is `app.api.room_task_rows.task_out` — the same
+row the room's list builds — so the title route asks for it there, not here (C4
+`routes-independent`). The rows a room's list and a task's page answer with
+(`room_task_items`, `task_page_row`, `_opening`) and the 相关 of a task
+(`related_of`, in `app.api.task_origin`) live there too, for the same reason:
+the room snapshot reads them and is not a route.
 """
 
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
@@ -28,8 +33,12 @@ from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.room_task_rows import named_task, task_rows
-from app.api.routes.topics import BlockRepository, ProjectRepository, UsageRepository
+from app.api.room_task_rows import (
+    _opening,
+    room_task_items,
+    task_out,
+    task_page_row,
+)
 from app.api.task_instructions import (
     dispatch,
     say_task_started,
@@ -42,7 +51,11 @@ from app.api.task_origin import (
     discussion,
     materials,
     materials_text,
-    source,
+    related_of,
+)
+from app.api.topics_deps import (
+    BlockRepository,
+    ProjectRepository,
 )
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
@@ -55,21 +68,16 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
-from app.domain.agent.liveness import running_tasks
-from app.domain.agent.opening import opening_content, opening_state
+from app.domain.agent.opening import opening_content
 from app.domain.agent_instance.own import may_work_for
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
-from app.domain.identity.actor import Actor
-from app.domain.living_doc.services import Documents
 from app.domain.machine import session_work
 from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
-from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin
 from app.domain.review.task_pr import close_pr_after_commit
-from app.domain.room_task import binding, presentation
 from app.domain.room_task.closing import close_task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
@@ -160,40 +168,6 @@ async def list_room_tasks(
     return conditional_json(ok(page(items, len(items))), if_none_match)
 
 
-async def room_task_items(
-    db: AsyncSession,
-    chat: ChatService,
-    actor: Actor,
-    topic,
-    *,
-    limit: int | None = None,
-    status: Literal["open", "closed"] | None = None,
-    ids: list[uuid.UUID] | None = None,
-    blocks: list[uuid.UUID] | None = None,
-    branch: bool = False,
-    latest: int | None = None,
-) -> list[dict]:
-    """A room's tasks as `GET /topics/{id}/tasks` lists them (see there for what
-    each option keeps); also the `tasks` of the room snapshot a subscription
-    opens with (`room_snapshot`). The caller has authorised the reader."""
-    named: set[uuid.UUID] | None = set(ids) if ids is not None else None
-    if blocks is not None:
-        lines = await BlockRepository(db).many(blocks)
-        named = (named or set()) | {
-            task_id for line in lines if (task_id := named_task(line)) is not None
-        }
-    threads = await TaskService(db).threads_for_room(
-        topic.id,
-        limit=limit,
-        status=status,
-        ids=named,
-        origins=blocks,
-        with_branch=branch,
-        latest=latest,
-    )
-    return await task_rows(db, chat, actor, topic.project_id, threads)
-
-
 @router.get("/{topic_id}/task")
 async def get_task(
     topic_id: uuid.UUID,
@@ -208,45 +182,6 @@ async def get_task(
     return ok(await task_page_row(db, chat, place, task))
 
 
-async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dict:
-    """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
-    snapshot a subscription to it opens with. The caller has authorised the
-    reader."""
-    cards = await AcceptService(db).latest_by_task([task.id])
-    out = await _task_out(db, chat, task, cards.get(task.id))
-    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
-    # 就是它绑的那个。和列表里显示的是同一个函数算的。
-    project = await ProjectRepository(db).get(place.project_id)
-    out["model"] = presentation.card_model(
-        task,
-        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
-        choices=binding.catalog(project.settings if project else None),
-    )
-    card = cards.get(task.id)
-    out["card"] = (
-        None
-        if card is None
-        else {
-            "id": str(card.id),
-            "status": str(card.status),
-            "pr_number": card.pr_number,
-            "pr_url": card.pr_url,
-        }
-    )
-    out["opening"] = await _opening(db, task)
-    return out
-
-
-async def _opening(db, task) -> str | None:
-    """Where the task's first turn is, while its document is still empty
-    (`agent/opening.py`); None once the document says something."""
-    if task.document_id is not None:
-        doc = await Documents(db).get(task.document_id)
-        if doc is not None and doc.content.strip():
-            return None
-    return await opening_state(db, task.id)
-
-
 @router.get("/{topic_id}/related")
 async def task_related(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
@@ -255,17 +190,6 @@ async def task_related(
     (`task_origin.py`): what its page shows as 相关."""
     _place, _actor, task = await task_conversation(db, resolver, topic_id)
     return ok(await related_of(db, task))
-
-
-async def related_of(db: AsyncSession, task) -> dict:
-    """Where a task came from and what it was given, as its page's 相关 shows
-    it; also the `related` of a task's room snapshot."""
-    origin, blocks = await discussion(db, task)
-    return {
-        "source": await source(db, task),
-        "origin": origin,
-        "materials": materials(blocks),
-    }
 
 
 @router.post("/{topic_id}/opening")
@@ -288,36 +212,6 @@ async def retry_opening(
     await db.commit()
     await dispatch(chat)
     return ok({"opening": "drafting"})
-
-
-async def _task_out(db, chat: ChatService, task, card=None) -> dict:
-    """The task with its board cell — what every route that hands a task back
-    to its page returns, so the page never holds one without it. The same
-    function the list uses, so a deep link and the board cannot disagree."""
-    if card is None:
-        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
-    running = await running_tasks(chat, db, [task])
-    asked = await BlockRepository(db).awaiting_an_answer([task.id])
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    shown = presentation.task_presentation(
-        presentation.facts_for_task(
-            task,
-            card,
-            running=task.id in running,
-            awaiting_answer=task.id in asked,
-        ),
-        now=datetime.now(UTC),
-    )
-    out["presentation"] = shown.as_dict()
-    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
-    out["waiting_on"] = presentation.waiting_on(
-        shown,
-        running=task.id in running,
-        owner=task.owner_handle,
-        reviewer=card.reviewer_handle if card is not None else None,
-        asked=asked.get(task.id),
-    )
-    return out
 
 
 @router.post("/{topic_id}/close")
@@ -386,7 +280,7 @@ async def conclude_task(
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
     )
     await tell_origin(db, task, ended)
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)
 
@@ -411,7 +305,7 @@ async def reopen_task(
         content=say("taskReopened", actor=f"<@{actor.handle}>", title=said_title(task)),
         meta={"platform": True, "action": "task_reopened", "task_id": str(task.id)},
     )
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)
 
@@ -484,7 +378,7 @@ async def start_task(
     )
     await say_task_started(db, task, actor=actor.handle)
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     await dispatch(chat)
     return ok(out)
@@ -515,7 +409,7 @@ async def update_task(
         ):
             raise ForbiddenError(say("taskOwnerOnly"))
         await tasks.set_contributors(task, leaving)
-        out = await _task_out(db, chat, task)
+        out = await task_out(db, chat, task)
         await db.commit()
         return ok(out)
     members = TopicMemberService(db)
@@ -554,7 +448,7 @@ async def update_task(
         await tasks.set_contributors(
             task, [h for h in wanted if h != task.owner_handle]
         )
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)
 

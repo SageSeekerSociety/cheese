@@ -79,12 +79,12 @@ describe('输入区的上传入口', () => {
     }
   })
 
-  it('手机上照片有自己的入口，点它打开的是相册（accept=image/*）', async () => {
+  it('手机上照片和视频有自己的入口，点它打开的是相册（accept=image/*,video/*）', async () => {
     const c = mount(390)
-    const image = fileInputs(c).find((i) => i.accept === 'image/*')
-    expect(image).toBeTruthy()
-    const opened = vi.spyOn(image!, 'click')
-    await fireEvent.click(c.querySelector('[title="发送照片"]')!)
+    const media = fileInputs(c).find((i) => i.accept === 'image/*,video/*')
+    expect(media).toBeTruthy()
+    const opened = vi.spyOn(media!, 'click')
+    await fireEvent.click(c.querySelector('[title="发送照片或视频"]')!)
     expect(opened).toHaveBeenCalled()
   })
 
@@ -93,13 +93,13 @@ describe('输入区的上传入口', () => {
     const any = fileInputs(c).find((i) => !i.accept)
     expect(any).toBeTruthy()
     const opened = vi.spyOn(any!, 'click')
-    await fireEvent.click(c.querySelector('[title="上传文件（每个最大 10MB）"]')!)
+    await fireEvent.click(c.querySelector('[title="上传文件（每个最大 10MB，视频 200MB）"]')!)
     expect(opened).toHaveBeenCalled()
   })
 
   // 桌面上截图一贴、文件一拖就完事了，再摆一颗「照片」只是把这一行挤窄。
   it('桌面上不摆「照片」那一颗', () => {
     const c = mount(1440)
-    expect(c.querySelector('[title="发送照片"]')).toBeNull()
+    expect(c.querySelector('[title="发送照片或视频"]')).toBeNull()
   })
 })

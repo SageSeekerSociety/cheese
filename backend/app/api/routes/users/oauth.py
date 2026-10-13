@@ -26,7 +26,7 @@ from app.api.deps import (
     get_oauth_service,
     get_user_auth_service,
 )
-from app.api.routes.legal import client_context
+from app.api.legal_deps import client_context
 from app.api.routes.users._common import (
     OAuthEmailCodeRequest,
     OAuthEmailVerifyRequest,
@@ -40,7 +40,7 @@ from app.api.routes.users._common import (
     _trusted_device,
     logger,
 )
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     issue_session,
 )
 from app.core import single_use_state

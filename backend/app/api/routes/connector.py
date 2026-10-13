@@ -34,7 +34,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
@@ -45,11 +45,14 @@ from app.common.auth import AccessClaims, verify_access_token
 from app.core import background
 from app.core.config import settings
 from app.core.errors import (
+    ConflictError,
     ForbiddenError,
     NotFoundError,
     UnauthorizedError,
+    UnprocessableEntityError,
 )
 from app.core.sentences import say
+from app.domain.agent import model_connections
 from app.domain.agent.device_hub import (
     DeviceCallError,
     DeviceOffline,
@@ -736,6 +739,60 @@ async def my_devices(
     return {"devices": views}
 
 
+async def _my_self_hosted(
+    device_id: str, resolver: ActorResolverDep, service: DeviceService
+) -> None:
+    """Only the machine's owner, and only for a machine they enrolled."""
+    user_id = await _require_user(resolver)
+    owned = {d.device_id: d for d in await service.list_owned(user_id)}
+    device = owned.get(device_id)
+    if device is None or device.supply != Supply.self_hosted:
+        raise NotFoundError(say("deviceNotYours"))
+
+
+class ClaudeCodeLoginOut(BaseModel):
+    """What a machine last said about its owner's Claude Code login."""
+
+    installed: bool
+    logged_in: bool
+    #: `claude.ai` for a subscription, the API key kind, or `model_service`.
+    auth_method: str | None
+    subscription_type: str | None
+    model: str | None
+    service_host: str | None
+    checked_at: str
+    #: Removed while the machine was away; it logs out as it next connects.
+    revoking: bool
+
+
+def _login_out(login: dict | None) -> ClaudeCodeLoginOut | None:
+    return None if login is None else ClaudeCodeLoginOut.model_validate(login)
+
+
+class ModelConnectionOut(ClaudeCodeLoginOut):
+    device_id: str
+    device_name: str
+    online: bool
+    #: When a session of the owner's Claude Code last ran on that machine.
+    last_used_at: str | None
+
+
+class ModelConnectionsOut(BaseModel):
+    connections: list[ModelConnectionOut]
+
+
+@router.get("/my/model-connections")
+async def my_model_connections(
+    resolver: ActorResolverDep, db: DbSession
+) -> ModelConnectionsOut:
+    """The caller's model connections across the machines they enrolled
+    (#2991): what each logs in with, where it is kept, its last check. Never a
+    key."""
+    user_id = await _require_user(resolver)
+    connections = await model_connections.of_owner(db, user_id, device_hub)
+    return ModelConnectionsOut.model_validate({"connections": connections})
+
+
 @router.post("/my/devices/{device_id}/claude-code")
 async def check_my_claude_code(
     device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
@@ -743,14 +800,12 @@ async def check_my_claude_code(
     """Ask one of the caller's machines again whether their own Claude Code is
     logged in there (#2991). They log in on the machine itself, which tells the
     server nothing; the page showing that machine asks, rather than leaving the
-    answer from its last connection standing."""
-    user_id = await _require_user(resolver)
-    owned = {d.device_id: d for d in await service.list_owned(user_id)}
-    device = owned.get(device_id)
-    if device is None or device.supply != Supply.self_hosted:
-        raise NotFoundError(say("deviceNotYours"))
+    answer from its last connection standing. A logout its owner asked for
+    while it was away is carried out first."""
+    await _my_self_hosted(device_id, resolver, service)
     if device_hub.is_online(device_id):
         try:
+            await owner_login.settle(db, device_hub, device_id)
             login = await owner_login.ask(device_hub, device_id)
         except Exception:
             # Gone or slow to answer: what it said last still stands.
@@ -760,6 +815,62 @@ async def check_my_claude_code(
             await owner_login.remember(db, device_id, login)
             await db.commit()
     return await owner_login.status(db, device_id)
+
+
+# The handler decides: only the machine's owner, a person, may remove it.
+@router.delete("/my/devices/{device_id}/claude-code", dependencies=[ROUTE_DECIDES])
+async def revoke_my_claude_code(
+    device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> ClaudeCodeLoginOut | None:
+    """Log the caller's own Claude Code out on one of their machines, from any
+    browser (#2991). Out of use at once; the machine logs out now when online,
+    else as it next connects."""
+    await _my_self_hosted(device_id, resolver, service)
+    await owner_login.revoke(db, device_hub, device_id)
+    return _login_out(await owner_login.status(db, device_id))
+
+
+class ModelServiceRequest(BaseModel):
+    base_url: Annotated[
+        str, StringConstraints(strip_whitespace=True, pattern=r"^https?://[^\s/]+")
+    ]
+    token: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    model: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^\S+$")]
+
+
+# The handler decides: only the machine's owner, a person, may set it.
+@router.put(
+    "/my/devices/{device_id}/claude-code/model-service", dependencies=[ROUTE_DECIDES]
+)
+async def use_my_model_service(
+    device_id: str,
+    body: ModelServiceRequest,
+    resolver: ActorResolverDep,
+    service: DeviceServiceDep,
+    db: DbSession,
+) -> ClaudeCodeLoginOut | None:
+    """Point the caller's own Claude Code on one of their machines at another
+    model service, from any browser (#2991). The key is handed to the machine,
+    which keeps it; it is not stored here. The machine has to be online."""
+    await _my_self_hosted(device_id, resolver, service)
+    if not device_hub.is_online(device_id):
+        raise ConflictError(say("modelServiceMachineOffline"))
+    try:
+        await owner_login.use_model_service(
+            db,
+            device_hub,
+            device_id,
+            base_url=body.base_url,
+            token=body.token,
+            model=body.model,
+        )
+    except owner_login.MachineRefused as refused:
+        raise UnprocessableEntityError(
+            say("modelServiceRefused", reason=str(refused))
+        ) from None
+    except (DeviceOffline, TimeoutError):
+        raise ConflictError(say("modelServiceMachineOffline")) from None
+    return _login_out(await owner_login.status(db, device_id))
 
 
 # The handler decides: only the machine's owner, a person, may ask it.

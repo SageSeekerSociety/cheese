@@ -45,16 +45,18 @@ export function useAgentNaming(opts: {
   )
 
   // Keep the handle→name map in sync with the roster, so <@handle> tokens render
-  // with the member's display name.
+  // with the member's display name. Only what changed is written: every message body
+  // watches this map, and refilling it redraws the whole timeline on each roster read.
   watch(
     opts.pool,
     (pool) => {
-      for (const k of Object.keys(opts.names)) delete opts.names[k]
-      for (const row of pool) opts.names[row.handle] = row.label
+      const next = new Map(pool.map((row) => [row.handle, row.label]))
       // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
       // not the raw literal — they are reserved handles, not roster members.
-      opts.names.all = t('work.room.mention.all')
-      opts.names.here = t('work.room.mention.here')
+      next.set('all', t('work.room.mention.all'))
+      next.set('here', t('work.room.mention.here'))
+      for (const k of Object.keys(opts.names)) if (!next.has(k)) delete opts.names[k]
+      for (const [k, label] of next) if (opts.names[k] !== label) opts.names[k] = label
     },
     { immediate: true, deep: true }
   )

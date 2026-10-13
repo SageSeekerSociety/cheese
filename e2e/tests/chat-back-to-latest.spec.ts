@@ -77,8 +77,14 @@ for (const viewport of [
     const newest = page.locator('[data-mid="m59"]');
     await expect(newest).toBeVisible({ timeout: 30_000 });
 
-    // Read from the top, the way someone scrolls back through a long task.
-    await scroll.evaluate((el) => (el.scrollTop = 0));
+    // Read from the top, the way someone scrolls back through a long task: with
+    // the wheel. A scrollTop write with no input while rows are still being
+    // laid out is what useChatScroll takes for the browser, not the reader.
+    await scroll.hover();
+    await page.mouse.wheel(0, -100_000);
+    await expect
+      .poll(() => scroll.evaluate((el) => el.scrollTop), { timeout: 5_000 })
+      .toBe(0);
     const pill = page.getByRole("button", { name: "回到最新" });
     await expect(pill).toBeVisible();
     await pill.click();

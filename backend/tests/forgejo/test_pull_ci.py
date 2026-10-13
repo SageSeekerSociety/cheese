@@ -227,11 +227,22 @@ fi
                 calls.append(["elapsed", str(time.monotonic() - signalled)])
             if (case / "client-pid").exists():
                 client_pid = (case / "client-pid").read_text()
-                probe = subprocess.run(
-                    [shell, "-c", 'kill -0 "$1" 2>/dev/null', "probe", client_pid],
-                    capture_output=True,
-                    timeout=5,
-                )
+                # Ask until the client is gone rather than sampling once. The
+                # signal is sent to the shell the client runs under, and on a
+                # loaded runner that shell can return in the instant before the
+                # reaping lands — a single probe then reads "running" and fails
+                # an assertion about reaping while the code did reap it. The
+                # wait is bounded by the kill grace the probe is asking about.
+                deadline = time.monotonic() + 2
+                while True:
+                    probe = subprocess.run(
+                        [shell, "-c", 'kill -0 "$1" 2>/dev/null', "probe", client_pid],
+                        capture_output=True,
+                        timeout=5,
+                    )
+                    if probe.returncode != 0 or time.monotonic() >= deadline:
+                        break
+                    time.sleep(0.05)
                 calls.append(
                     ["owned-client", "running" if probe.returncode == 0 else "exited"]
                 )

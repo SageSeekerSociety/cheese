@@ -15,10 +15,11 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.review import (
+    merge_state,
     notes,
     pr_signals,
 )
-from app.domain.review.merge_state import RED_CONCLUSIONS
+from app.domain.review.merge_state import RED_CONCLUSIONS, MergeVerdict
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
@@ -47,6 +48,7 @@ from app.domain.review.services._shared import (
     logger,
     notice,
 )
+from app.domain.review.services.merge_queue import _write_merge_mirror
 from app.domain.review.task_landing import delivery_landed
 
 
@@ -420,6 +422,14 @@ async def _refresh_github_snapshot(
     """GitHub 那一侧的重算：读一眼现在的状态，写回卡面。"""
     number = card.pr_number
     assert number is not None  # PR lane only; the caller checked
+    if card.note_code == notes.NoteCode.waiting_merge_queue:
+        # 队列里的卡不在这里重算。GitHub 把它的 `mergeStateStatus` 钉在 BLOCKED
+        # 上，从 PR 自己的信号重算只会得到「GitHub 合并状态：blocked」——队列
+        # 自己那套检查它看不见，于是重算出来的那份会把轮询写下的「还在等 CI」
+        # 抹掉（`reasons` 里少了 `ci_running`），而环境释放判据读的正是那句话：
+        # 一张还在队里等的卡就此被当成没人再看，机器被收掉。这张卡的镜像归
+        # `_poll_pr_card` 的队列分支管，它每跳问一次 GitHub 队列条目还在不在。
+        return
     owner, repo = await self._pr_repo_of(card, topic)
     creds, reason = await self._pr_poll_credentials(card, topic)
     if creds is None:
@@ -546,6 +556,7 @@ async def _mark_task_merged(
         head=delivered_head,
         pr_number=card.pr_number,
         completes=card.completes_task,
+        handed_over=card.created_at,
     )
 
 
@@ -635,15 +646,35 @@ async def _poll_pr_card(
         if await client.merge_queue_entry(
             owner=owner, repo=repo, number=number, token=creds.read
         ):
+            # 队列里这段是和普通路径**一样**的等 CI，只是 PR 的 `mergeStateStatus`
+            # 被 GitHub 钉在 BLOCKED、判定算出来没有意义，所以上面那条路不进。可
+            # 镜像照旧要一轮刷一次：`checked_at` 是「还在等 CI」这句话的有效期，
+            # 冻在入队那一刻，等不到队列检查出结果就先过期了 —— 环境释放判据会当
+            # 没人再看这张卡，把机器收掉，而轮询其实一直在看，回头又要叫醒这条线
+            # 重建环境、重读文档。只推 `checked_at` 到此刻：state、reasons 说的都还
+            # 是入队时那份判定，没有任何一条更新。
+            _write_merge_mirror(
+                self,
+                card,
+                MergeVerdict(
+                    state="blocked",
+                    reasons=(
+                        merge_state.MergeReason(
+                            kind="ci_running", detail="等待合并队列检查"
+                        ),
+                    ),
+                ),
+                "ci",
+                card.pr_head_sha or "",
+            )
+            await self._session.flush()
             return
-        # Removal can mean failed checks or a human cancellation. Never re-enqueue.
+        # Removal can mean failed checks or a human cancellation. Never
+        # re-enqueue; but the card still reads 「已采纳」, so note it and wake
+        # the task's 芝士 instead of leaving it for someone to notice.
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
-        notes.record(
-            card,
-            notes.NoteCode.merge_refused,
-            f"PR #{number} 已离开合并队列但尚未确认合并，请检查 GitHub 后重新采纳。",
-        )
+        await self._note_left_merge_queue(card=card, topic=topic)
         await self._session.flush()
         return
 
@@ -729,6 +760,20 @@ async def _poll_pr_card(
         conflict = self._conflict_nudge(card=card, status=status)
         if conflict is not None:
             pending.append(conflict)
+    # GitHub 上那行标题还是不是这张卡要落的那一行。不是就停机叫人，而且**绿了
+    # 也不算绿**：`_notify_ready` 说「可以合了」、自动合布防真的去合，两条都得
+    # 拦住 —— 合下去落进历史的是仓库检查没评判过的字（`pr_text` 的那条注释）。
+    title = self._title_nudge(card=card, topic=topic, status=status)
+    if title is None and card.note_code is notes.NoteCode.pr_title_disagrees:
+        # 两行又对上了（人用 `cheese_describe` 把卡片的 subject 改成了该落的那
+        # 一行、或者干脆把 GitHub 上的标题改回来了）：「标题和卡片不一致，合并
+        # 已暂停」那句说的是过去。改 PR 标题不动 head，上面换 head 时那次清理
+        # 永远轮不到它 —— 不清，卡面一直亮着红灯，而同一次轮询已经在下边报了
+        # 「可以合了」，同屏两句话互相打脸。放在 `_dispatch_nudges` 之前清，
+        # 卡面空下来，它才会按全部待发里最重的那条重写（此刻没有比它更重的）。
+        notes.clear(card)
+    if title is not None:
+        pending.append(title)
     await self._dispatch_nudges(
         card=card,
         topic=topic,
@@ -740,8 +785,9 @@ async def _poll_pr_card(
         await self._session.flush()  # the mirror and dispatched ledger keep
         raise deferred
 
-    if verdict.state == "clean":
-        # CLEAN → 通知验收人（按 head 去重）。
+    if verdict.state == "clean" and title is None:
+        # CLEAN → 通知验收人（按 head 去重）。标题分家时不报「可以合了」：
+        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。
         await self._notify_ready(card, topic)
     elif verdict.state == "blocked" and "required_check_missing" in kinds:
         # BLOCKED 必跑检查没报到 → 等 CI，不发；超过宽限期转人 ——
@@ -781,7 +827,11 @@ async def _poll_pr_card(
         )
         return
 
-    if card.auto_merge_armed_by and verdict.state in ("clean", "unstable"):
+    if (
+        card.auto_merge_armed_by
+        and verdict.state in ("clean", "unstable")
+        and title is None
+    ):
         await self._merge_armed_card(
             card=card,
             topic=topic,

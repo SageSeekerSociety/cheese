@@ -23,6 +23,11 @@ const createSubmission = vi.fn()
 const updateParticipant = vi.fn()
 const postSubmissionReview = vi.fn()
 const getSubmissionQueue = vi.fn()
+/**
+ * 「领取者」页签进来还会读这道题挂在 YOJ 上的那一块（名单上那一列）。这些用例里都没有
+ * 接外站，统一回一句「没挂」—— 那一列不画，量的是别的事。
+ */
+const getTaskExternalProblem = vi.fn()
 
 vi.mock('@/api/taskBoard', () => ({
   TaskBoardApi: {
@@ -37,6 +42,20 @@ vi.mock('@/api/taskBoard', () => ({
 vi.mock('@/api/spaces', () => ({
   SpacesApi: { getSubmissionQueue: (...a: unknown[]) => getSubmissionQueue(...a) },
 }))
+vi.mock('@/api/externalProblem', () => ({
+  getTaskExternalProblem: (...a: unknown[]) => getTaskExternalProblem(...a),
+  syncTaskExternalProblem: vi.fn(),
+}))
+
+/** 没挂外站题时服务端给的那一份（题号是空串、结果为空；见 `api/externalProblem.ts`）。 */
+const EMPTY_EXTERNAL_PROBLEM = {
+  problemNo: '',
+  source: 'yoj',
+  lastSyncedAt: null,
+  status: '',
+  error: '',
+  results: [],
+}
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -201,6 +220,7 @@ describe('题目详情', () => {
     listSubmissions.mockImplementation(async () => ({ submissions: [], page: {} }))
     getParticipants.mockImplementation(async () => ({ participants: [] }))
     getSubmissionQueue.mockImplementation(async () => ({ submissions: [] }))
+    getTaskExternalProblem.mockImplementation(async () => EMPTY_EXTERNAL_PROBLEM)
   })
 
   afterEach(() => {

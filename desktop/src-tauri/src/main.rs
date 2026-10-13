@@ -10,6 +10,7 @@ mod notices;
 mod platform;
 mod resident;
 mod updates;
+mod update_launch;
 
 use serde::Serialize;
 use tauri::ipc::{CapabilityBuilder, Channel};
@@ -301,7 +302,7 @@ fn main() {
                 capability = capability.permission(*permission);
             }
             app.add_capability(capability)?;
-            if updates::restarted_by_update(app) || std::env::args().any(|a| a == resident::AT_LOGIN) {
+            if updates::start_hidden(app, std::env::args().any(|a| a == resident::AT_LOGIN)) {
                 app.state::<resident::StartHidden>().0.store(true, Ordering::Relaxed);
             }
             #[cfg(not(target_os = "macos"))]
@@ -353,7 +354,9 @@ fn main() {
                 // never sees the drop. Off, WebKit handles drags itself, which is
                 // what the page's drag code expects; nothing here listens for the
                 // events wry would send instead (`dragDrop` in the page is the DOM
-                // one, not Tauri's).
+                // one, not Tauri's). WebKit's own default for a file let go
+                // where the page takes none is to open it in place of the page;
+                // the page refuses those drops itself (frontend/src/lib/desktopNative.ts).
                 .disable_drag_drop_handler()
                 .theme(window_theme(&theme).flatten())
                 .title("Cheese")

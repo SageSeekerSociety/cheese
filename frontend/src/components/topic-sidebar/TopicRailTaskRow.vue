@@ -1,28 +1,40 @@
 <script setup lang="ts">
 // 侧栏里挂在频道下面的一个任务。比频道的字往里缩一点，左边一条竖线从频道的 # 下面
-// 一直连到「展开其余」那一行，说「这几条是那个频道里的」；字和频道一样大。在等**你**的亮
-// 一颗暖色点（服务端按看的人算的 `awaits_me`，不是「在待处理那一列」），正在运行的
-// 一颗绿点，别的不画。
-import type { RoomTask } from '@/cx_types'
+// 一直连到「展开其余」那一行，说「这几条是那个频道里的」；字和频道一样大。
+//
+// 行尾是那颗灯（`light`，父级算好）：黄 = 有事等你，呼吸绿 = 正在往前走，长绿 = 交付
+// 完了你还没看过，红 = 显示在跑但五分钟没动静，蓝 = 这条不归我、是别人负责的。灯上
+// 只画一盏，蓝压过其余四盏——「不是我的活」比「它现在怎么了」先要知道。不亮就不画。
+//
+// 这一条不是和我有关的、是频道里别人的、被借来凑够三条的（`task.filling_in`）：整个
+// 标题淡一档，鼠标停上去的那句说明写清它为什么在这儿 —— 不然侧栏里突然多出一条我没
+// 参与过的活，看起来像我漏看了什么。
+import type { RowLight } from '@/lib/roomLight'
+import type { RailTask } from './moreTasks'
 
 import { computed } from 'vue'
 
 import TopicRailBadge from './TopicRailBadge.vue'
+import TopicRailLight from './TopicRailLight.vue'
 
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
 
 const props = withDefaults(
   defineProps<{
-    task: Pick<RoomTask, 'id' | 'room_id' | 'title' | 'title_source' | 'presentation' | 'awaits_me'>
+    task: RailTask
     selected: boolean
+    /** 这一行此刻画哪盏灯（父级带钟算的）；不亮是 null。 */
+    light?: RowLight | null
     /** 任务里别人说了几句我还没读（只对负责人和协作者算，只算人说的）。 */
     unread?: number
     // 它的频道在树里的第几层：竖线跟着频道的图标列走。
     depth?: number
   }>(),
-  { depth: 0, unread: 0 }
+  { depth: 0, unread: 0, light: null }
 )
+
+const fillingIn = computed(() => props.task.filling_in === true)
 
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void
@@ -31,21 +43,16 @@ const emit = defineEmits<{
   // 毫秒，打开它就少等这一段。
   (e: 'press', task: { roomId: string; taskId: string }): void
 }>()
-
-const mark = computed<'needs-you' | 'running' | null>(() => {
-  if (props.task.awaits_me) return 'needs-you'
-  if (props.task.presentation.phrase === 'running') return 'running'
-  return null
-})
 </script>
 
 <template>
   <button
     type="button"
     class="rail-task"
-    :class="{ 'rail-task--selected': selected }"
+    :class="{ 'rail-task--selected': selected, 'rail-task--filled': fillingIn }"
     :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
+    :title="fillingIn ? t('work.sidebar.fillInTip') : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
     @pointerdown="
       $event.pointerType === 'mouse' && $event.button === 0 && emit('press', { roomId: task.room_id, taskId: task.id })
@@ -59,13 +66,7 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
       >{{ taskTitle(task) }}</span
     >
     <TopicRailBadge v-if="unread > 0" :count="unread" />
-    <span
-      v-if="mark"
-      class="rail-task__dot"
-      :class="`rail-task__dot--${mark}`"
-      role="img"
-      :aria-label="mark === 'needs-you' ? t('work.sidebar.taskNeedsYou') : t('work.sidebar.taskRunning')"
-    />
+    <TopicRailLight v-if="light" :light="light" />
   </button>
 </template>
 
@@ -125,16 +126,13 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
 .rail-task__title--unread {
   font-weight: 650;
 }
-.rail-task__dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
+/* 借来凑数的那几条退到次要色：它们不是我的活，只是把频道里的三行凑齐。选中和 hover 要
+   自己再抬一次——上面那两条改的是行盒的颜色，标题自己有颜色时继承不到。 */
+.rail-task--filled .rail-task__title {
+  color: var(--muted);
 }
-.rail-task__dot--needs-you {
-  background: var(--warn);
-}
-.rail-task__dot--running {
-  background: var(--ok);
+.rail-task--filled:hover .rail-task__title,
+.rail-task--filled.rail-task--selected .rail-task__title {
+  color: var(--ink);
 }
 </style>

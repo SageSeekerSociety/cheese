@@ -79,6 +79,9 @@
   --danger-wash: #fdecec;
   /* 侧栏红黄绿灯的黄：和琥珀（--accent/--warn）拉开，未读数字是琥珀色。 */
   --signal-yellow: #eab308;
+  /* 侧栏那盏「别人的活」的蓝：亮到在白、在选中行（--line-2）上都压得住
+     （5.2:1 / 4.0:1，色块够 3:1）。 */
+  --signal-blue: #2563eb;
 
   /* ---- Brand glow (header corner gradient in styles/common.scss) ----
      Only ever composited at 4–8% alpha, so these are deliberately brighter
@@ -411,6 +414,8 @@
   --danger-ink: #f79490;
   --danger-wash: #2e1a1a;
   --signal-yellow: #facc15;
+  /* 同上那盏蓝，深色底上抬亮（--surface 6.6:1、--line-2 4.2:1）。 */
+  --signal-blue: #60a5fa;
 
   /* ---- Syntax highlighting (see the light block for why these exist) ----
      Same hues, lifted into readable range on a dark ground. Measured against

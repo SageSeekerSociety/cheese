@@ -8,6 +8,7 @@ import { defineStore } from 'pinia'
 import {
   archiveTopic,
   createTopic,
+  deleteTopic,
   joinChannel,
   leaveChannel,
   markAllTopicsRead,
@@ -23,6 +24,7 @@ import { ApiError, isProjectArchivedError } from '@/api'
 import { setChannelMembersOnly } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { type ProjectRefusal, projectRefusal } from '@/lib/addresses'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { memberName } from '@/lib/agentNames'
 import { externalHandles } from '@/lib/externalMembers'
 import { identityChanges } from '@/lib/identity'
@@ -164,21 +166,24 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 每个频道和任务在等我的东西（`TopicUnread`：行上的数字、名字加不加粗、上次读后来了
   // 几条），和私聊未读——私聊按对方的 handle 编址（'cheese' = 和芝士那一间），因为私聊
   // 的行来自成员名单，没有话题 id。频道的数字已经按我设的通知档位算过了（后端）。
+  // 这三样只画角标（行上的数字、名字加不加粗、未读点、静音标），不挡内容，所以第一遍
+  // 排到首帧之后（`lib/afterFirstPaint.ts`）：开页那一瞬间先把页面自己要的数据发出去，
+  // 角标随后补上。`query/` 里的重读逻辑照旧，不动。
   const withMe = computed(() => reachable.value && !!me.value)
   const unreadRead = useQuery(
-    computed(() => ({ ...unreadQuery(pid.value, me.value), enabled: withMe.value })),
+    computed(() => ({ ...unreadQuery(pid.value, me.value), enabled: withMe.value && firstPaintDone.value })),
     queryClient
   )
   const unreadMap = computed<Record<string, TopicUnread>>(() => unreadRead.data.value ?? {})
   const privateUnreadRead = useQuery(
-    computed(() => ({ ...privateUnreadQuery(pid.value, me.value), enabled: withMe.value })),
+    computed(() => ({ ...privateUnreadQuery(pid.value, me.value), enabled: withMe.value && firstPaintDone.value })),
     queryClient
   )
   const privateUnreadMap = computed<Record<string, number>>(() => privateUnreadRead.data.value ?? {})
   // 我不在默认档位的频道（{topic_id: {level, muted_until}}）。过了期的静音后端不列；
   // 页面开着的时候静音到点，下一次轮询会把它拿掉。
   const levelsRead = useQuery(
-    computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: reachable.value })),
+    computed(() => ({ ...notifyLevelsQuery(pid.value), enabled: reachable.value && firstPaintDone.value })),
     queryClient
   )
   const notifyLevels = computed<Record<string, TopicNotifySetting>>(() => levelsRead.data.value ?? {})
@@ -482,6 +487,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     const project = pid.value
     if (!project) return
     await patchQuery<Record<string, TopicUnread>>(keys.projectUnread(project, me.value), () => ({}))
+    // 每一间的已读位都推到了现在，所以亮着的长绿也一起灭（见 `clearDeliveries`）。
+    void patchTopics(project, (rows) => rows.map(clearDeliveries))
     try {
       await markAllTopicsRead(project)
     } catch (e) {
@@ -504,7 +511,47 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
         return next
       })
     }
+    forgetUnseenDelivery(topicId)
     markTopicRead(topicId, me.value).catch(() => {})
+  }
+
+  // 「点开看过就灭」：点开的那一行（频道或一件活）交付完的长绿当场灭掉。这正是上面
+  // 那一次 `markTopicRead` 在服务端记下的同一笔——差别只是服务端要等下一次清单回来，
+  // 而这个灯是「你刚点开」当场就该变的。
+  //
+  // 两种点开都算，和后端算这一位时比的同一个东西（那儿把已读位和采纳时刻取
+  // `GREATEST`）：开那个频道，或者开它名下的一件活。所以点开一件活时，灭掉的是挂着
+  // 它的那个频道那一行——长绿只画在频道行上（活一关就从侧栏消失，只剩它的频道）。
+  function forgetUnseenDelivery(topicId: string) {
+    const project = pid.value
+    if (!project) return
+    void patchTopics(project, (rows) =>
+      rows.map((topic) => {
+        if (topic.id === topicId) return clearDeliveries(topic)
+        const my = topic.my_tasks
+        if (!my) return topic
+        const at = my.shown.findIndex((task) => task.id === topicId && task.unseen_delivery)
+        if (at < 0) return topic
+        return {
+          ...topic,
+          my_tasks: {
+            ...my,
+            shown: my.shown.map((task, i) => (i === at ? { ...task, unseen_delivery: false } : task)),
+          },
+        }
+      })
+    )
+  }
+
+  /** 这一行上还亮着的长绿灭掉（含它名下那几件活）；本来就没亮的原样返回，省掉一次
+   *  整行重画。 */
+  function clearDeliveries(topic: Topic): Topic {
+    const my = topic.my_tasks
+    if (!my) return topic.unseen_delivery ? { ...topic, unseen_delivery: false } : topic
+    const shown = my.shown.map((task) => (task.unseen_delivery ? { ...task, unseen_delivery: false } : task))
+    const lit = shown.some((task, i) => task !== my.shown[i])
+    if (!topic.unseen_delivery && !lit) return topic
+    return { ...topic, unseen_delivery: false, my_tasks: lit ? { ...my, shown } : my }
   }
 
   // Same, for a 私聊 — its badge is keyed by peer handle, not topic id.
@@ -560,6 +607,22 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
 
   function unarchive(topicId: string): Promise<void> {
     return setStatus(topicId, 'active', () => unarchiveTopic(topicId), t('shell.workspaceErrors.unarchive'))
+  }
+
+  /** 删掉一个频道（清单第 2 条）。和归档不一样，这里没有乐观的一步：删了就是没了，
+   *  本地那一行等它真的走完再摘。回来 true 表示行已经删掉了，调用方该离开这一页。 */
+  async function removeChannel(topicId: string): Promise<boolean> {
+    const topic = topics.value.find((row) => row.id === topicId)
+    try {
+      await deleteTopic(topicId)
+    } catch (e) {
+      reportError(e, t('shell.workspaceErrors.deleteChannel'))
+      return false
+    }
+    if (topic && lastPlaceByProject.value[topic.project_id]?.room === topicId) forgetPlace(topic.project_id)
+    await patchTopics(pid.value, (rows) => rows.filter((row) => row.id !== topicId))
+    void refreshTopics()
+    return true
   }
 
   // The three ways a topic is born. Each returns the new topic so the caller can
@@ -643,6 +706,7 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     renameTopic,
     archive,
     unarchive,
+    removeChannel,
     rememberPlace,
     placeFor,
     create,

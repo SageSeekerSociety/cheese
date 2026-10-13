@@ -6,12 +6,9 @@
     "deleteTitle": "Delete this notification?",
     "deleteHint": "It will disappear from your inbox and can’t be brought back.",
     "noNotifications": "No notifications",
-    "noUnread": "No unread notifications",
     "loadFailed": "Couldn't load activity",
     "markAllAsRead": "Mark all as read",
     "loadMore": "Load more",
-    "filterAll": "All",
-    "filterUnread": "Unread",
     "filterLabel": "Filter notifications",
     "unknownTeam": "Unknown team",
     "unknownDiscussion": "Unknown discussion",
@@ -21,6 +18,11 @@
     "unknownProject": "Unknown project",
     "unreachable": "Can’t open this page. It may not exist, or you may not have access",
     "yesterday": "Yesterday {time}"
+  },
+  "category": {
+    "mine": "Needs me",
+    "notice": "FYI",
+    "system": "System"
   },
   "default": {
     "title": "Unknown notification type: {type}",

@@ -17,7 +17,8 @@
  * 链子和 `ProjectSettingsView.test.ts` 同一条：mock 掉 `../api`，不 mock store。
  * 绿在拆之前的旧文件上；拆完必须原样绿。
  */
-import type { BranchProtection, Project } from '../cx_types'
+import type { BranchProtection } from '../branchProtection'
+import type { Project } from '../cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -67,6 +68,7 @@ function rules(overrides: Partial<BranchProtection> = {}): BranchProtection {
     override_handles: null,
     approvals_required: 1,
     default_reviewer: '',
+    dispatch_seat: '',
     merge_method: 'squash',
     github_protection: { enforced: false, status: 'none' },
     ...overrides,

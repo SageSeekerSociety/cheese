@@ -46,7 +46,6 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import BlockRepository
 from app.api.task_instructions import (
     dispatch,
     source_text,
@@ -54,6 +53,7 @@ from app.api.task_instructions import (
     tell_task,
 )
 from app.api.task_origin import discussion, materials, materials_text
+from app.api.topics_deps import BlockRepository
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService

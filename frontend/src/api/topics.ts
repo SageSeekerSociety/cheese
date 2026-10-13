@@ -1,5 +1,6 @@
 import type { ListPayload, RoomTask, Topic } from '../cx_types'
 
+import { changesAwaiting } from './awaitingChanged'
 import { readSince, request } from './http'
 
 // `last_activity_at` = 最后活动时间 (the topic's newest block). `updated_at` is
@@ -69,14 +70,26 @@ export function setTaskNaming(projectId: string, mode: TaskNamingMode): Promise<
 // ---- 归档去向: manual archive / unarchive ----
 
 export function archiveTopic(topicId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
-    method: 'POST',
-  })
+  return changesAwaiting(
+    request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
+      method: 'POST',
+    })
+  )
 }
 
 export function unarchiveTopic(topicId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
-    method: 'POST',
+  return changesAwaiting(
+    request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
+      method: 'POST',
+    })
+  )
+}
+
+/** 删除一个频道：消息、任务、文档一起走，不能恢复（清单第 2 条）。服务端把这一行
+ *  标记成已删除、等它自己的清理走完再摘掉，所以这里回来之后别再读它。 */
+export function deleteTopic(topicId: string): Promise<{ deleted: boolean }> {
+  return request<{ deleted: boolean }>(`/topics/${encodeURIComponent(topicId)}`, {
+    method: 'DELETE',
   })
 }
 

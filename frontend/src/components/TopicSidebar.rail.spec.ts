@@ -148,9 +148,9 @@ beforeAll(() => {
 })
 
 describe('C1 置顶导航组', () => {
-  it('项目名下面只有总览和资料库，综合是频道分组里的第一个频道', () => {
+  it('项目名下面是总览和资料库，综合是频道分组里的第一个频道', () => {
     const { container } = mount()
-    // 其余的页在点项目名弹出的菜单里（.claude/rules/project-sidebar.md）。
+    // 其余的页都在点项目名弹出的菜单里（.claude/rules/project-sidebar.md）。
     expect(titlesIn(container, '[aria-label="项目页面"] .pinned-row')).toEqual(['总览', '资料库'])
     // 综合排在「频道」标题下面，和别的频道同一组。
     const heading = container.querySelector('.side-subhead')!
@@ -315,9 +315,11 @@ describe('行左边那一个槽', () => {
 
   it('没有子频道、也没有人等你的频道行，槽里是 #，和综合同一个记号', () => {
     const { container } = mount()
-    const slot = slotsOf(topicRowFor(container, 'a'))[0]
-    expect(slot.querySelector('.await-dot')).toBeNull()
+    const row = topicRowFor(container, 'a')
+    const slot = slotsOf(row)[0]
     expect(slot.querySelector('.mdi-pound')).not.toBeNull()
+    // 没开过任务、也没活在跑的行不亮灯——没有那个空着的第八个点
+    expect(row.querySelector('.row-light')).toBeNull()
     expect(container.querySelector('[data-row-actions="root"] .mdi-pound')).not.toBeNull()
   })
 
@@ -329,19 +331,22 @@ describe('行左边那一个槽', () => {
     )
     const { container } = mount({ topics: busy })
     const row = topicRowFor(container, 'a')
-    // 等你处理还在左边那个槽里：等的是读这一行的人自己
-    expect(slotsOf(row)[0].querySelector('.await-dot')).not.toBeNull()
+    // 有事等你画在行尾那盏黄灯上：等的是读这一行的人自己。
+    // 黄不占槽——槽永远是频道记号。
+    expect(row.querySelector('.row-slot .row-light')).toBeNull()
+    expect(row.querySelector('.row-light--yellow')).not.toBeNull()
     const marks = Array.from(row.querySelectorAll('[data-state]'))
     expect(marks.map((m) => m.getAttribute('data-state'))).toEqual(['working'])
     expect(marks[0].getAttribute('title')).toContain('正在这里工作')
     expect(topicRowFor(container, 'b').querySelector('[data-state]')).toBeNull()
 
-    // 同一个话题一旦有了子话题，槽让给折叠开关
+    // 同一个话题一旦有了子话题，槽让给折叠开关；灯还在行尾，不受影响
     const withChild = [...busy, topic('a-sub', 'a')]
     const second = mount({ topics: withChild })
     const parent = topicRowFor(second.container, 'a')
     expect(parent.querySelector('button.subtree-toggle')).not.toBeNull()
-    expect(parent.querySelector('.await-dot')).toBeNull()
+    expect(parent.querySelector('.subtree-toggle .row-light')).toBeNull()
+    expect(parent.querySelector('.row-light--yellow')).not.toBeNull()
   })
 
   it('打字的人不画在侧栏上：这份列表隔一阵才读一次，打字几秒就过去了', () => {
@@ -363,11 +368,15 @@ describe('行左边那一个槽', () => {
           : t
     )
     const { container } = mount({ topics: rows })
-    const stalled = Array.from(topicRowFor(container, 'a').querySelectorAll('[data-state]'))
+    const rowA = topicRowFor(container, 'a')
+    const stalled = Array.from(rowA.querySelectorAll('[data-state]'))
     expect(stalled.map((m) => m.getAttribute('data-state'))).toEqual(['stalled'])
     expect(stalled[0].getAttribute('title')).toMatch(/有人 @ 了.*分钟/)
-    // 槽里没有房间级的红灯：卡住的是成员
-    expect(slotsOf(topicRowFor(container, 'a'))[0].querySelector('[data-state], .await-dot')).toBeNull()
+    // 槽里没有房间级的状态：卡住的是成员
+    expect(slotsOf(rowA)[0].querySelector('[data-state]')).toBeNull()
+    // 这一行的灯也不亮：红灯说的是「这一行显示在跑、却没动静」，一位成员卡住
+    // 是另一件事，那位成员自己的红点说了它
+    expect(rowA.querySelector('.row-light')).toBeNull()
     expect(topicRowFor(container, 'b').querySelector('[data-state]')).toBeNull()
   })
 
@@ -475,6 +484,23 @@ describe('C5 行操作', () => {
     expect(onSelectTopic).not.toHaveBeenCalled()
   })
 
+  // 「综合」是频道分组里的第一个频道，行尾那颗 ⋯ 和别的频道行是同一颗。它自己的
+  // 那几项（新建任务、全部任务、文件）以前只在右键里摸得到，看着像这一行没有操作。
+  it('综合那一行的行尾也有那颗 ⋯，点开是它自己那几项', async () => {
+    const { container } = mount()
+    const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
+    if (!row) throw new Error('没有找到「综合」那一行')
+    const more = row.querySelector('.row-actions .v-btn')
+    if (!more) throw new Error('「综合」那一行的行尾没有那颗 ⋯')
+    await fireEvent.click(more as HTMLElement)
+    await vi.waitFor(() => {
+      const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
+        n.textContent?.trim()
+      )
+      expect(items).toEqual(expect.arrayContaining(['新建任务', '全部任务', '文件']))
+    })
+  })
+
   it('排序菜单已经不在侧栏里', () => {
     const { container } = mount()
     const buttons = Array.from(container.querySelectorAll('.v-btn')) as HTMLElement[]
@@ -482,10 +508,10 @@ describe('C5 行操作', () => {
   })
 })
 
-// 行首只有一颗点，而且只为「在等你」亮：看板每一列的状态点对每一行都有，画进标题里
-// 就是满屏的点，哪一行都不显眼。看板上落在「待处理」列、但等的是别人的房间，在你的
-// 侧栏上不该和等你的那一个长得一样。
-describe('C6 等你的那一颗点', () => {
+// 行尾那一盏黄灯只为「在等你」亮：看板每一列的状态点对每一行都有，画出来就是满屏的
+// 灯，哪一行都不显眼。看板上落在「待处理」列、但等的是别人的房间，在你的侧栏上不该
+// 和等你的那一个长得一样。
+describe('C6 等你的那一盏黄灯', () => {
   function rooms(): Topic[] {
     return [
       topic('root', null, 'root'),
@@ -509,11 +535,14 @@ describe('C6 等你的那一颗点', () => {
     return row
   }
 
-  it('只有等你的房间亮点', () => {
+  it('只有等你的房间亮灯', () => {
     const { container } = mount({ topics: rooms() })
-    expect(rowOf(container, 'mine').querySelectorAll('[title="有待处理的事项"]').length).toBe(1)
-    expect(rowOf(container, 'theirs').querySelector('[title="有待处理的事项"]')).toBeNull()
-    expect(rowOf(container, 'busy').querySelector('[title="有待处理的事项"]')).toBeNull()
+    const mine = rowOf(container, 'mine').querySelector('.row-light--yellow')
+    expect(mine).not.toBeNull()
+    // 悬停和读屏都靠它：这一盏说的是「有事等你」，不是看板那一列的名字
+    expect(mine?.getAttribute('title')).toBe('有事等你')
+    expect(rowOf(container, 'theirs').querySelector('.row-light')).toBeNull()
+    expect(rowOf(container, 'busy').querySelector('.row-light')).toBeNull()
   })
 
   it('看板状态不再以任何记号出现在标题里', () => {
@@ -532,6 +561,13 @@ describe('整页形态', () => {
     const { container } = mount({ page: true })
     expect(container.querySelector('.v-navigation-drawer')).toBeNull()
     expect(container.querySelector('.rail-resizer')).toBeNull()
+  })
+
+  // 整页形态没有行的 hover，那里的操作是长按一行升起的面板，所以这颗 ⋯ 一个都不画
+  // ——「综合」那一行也一样，不能只有它留一颗手指摸不到的按钮。
+  it('行尾不画那颗 ⋯，综合那一行也不画', () => {
+    const { container } = mount({ page: true })
+    expect(container.querySelectorAll('.row-actions').length).toBe(0)
   })
 
   it('装的东西和抽屉形态一样', () => {

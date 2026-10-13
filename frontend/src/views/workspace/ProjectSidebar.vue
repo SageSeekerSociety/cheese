@@ -10,11 +10,13 @@ import { useQuery } from '@tanstack/vue-query'
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import { useCommands } from '@/commands'
+import NewChannelDialog from '@/components/channel/NewChannelDialog.vue'
 import { restOfChannel } from '@/components/topic-sidebar/moreTasks'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
+import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -24,12 +26,21 @@ import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 // every navigation inside the project (ProjectShell's doc comment says why).
 //
 // Its one rule: every row that opens something is a route change in the content
-// area. Nothing here opens something "in place" — that split (some rows swapped
-// the panel, others pushed a full page and took the sidebar with them) was the
-// reason a click's outcome was unpredictable. What changes only the sidebar
-// itself (folding a channel's subtree, expanding the rest of its tasks) leaves
-// the content area alone.
-defineOptions({ name: 'ProjectSidebar' })
+// area. Nothing here swaps the panel, because a click's outcome has to be
+// predictable — what changes only the sidebar itself (folding a channel's
+// subtree, expanding the rest of its tasks) leaves the content area alone. The
+// task-block fold is the one sidebar-only control that also navigates: it puts
+// the block away, so the task it was showing goes with it (`toggleTasksFold`).
+//
+// The one thing that opens in place is 新建频道 (`NewChannelDialog`) — that makes a
+// new channel rather than showing a different view of the one you are on, and it is
+// that rule's single exception (`.claude/rules/project-sidebar.md`).
+//
+// `inheritAttrs: false`: the router hands this view the whole route params as props,
+// and whatever it does not name by a prop lands here as attrs. This template has two
+// root nodes now, so there is no single element left to inherit them; say so rather
+// than let Vue warn about each one. `SplitListColumn` does the same.
+defineOptions({ name: 'ProjectSidebar', inheritAttrs: false })
 
 // `page`: 手机上话题列表是页面栈的一层，占满内容区（由 WorkspaceEntry 挂起来）。
 // 不带这个 prop 的那份是常驻侧栏——桌面才有，所以手机上它整个不渲染。
@@ -62,9 +73,10 @@ const hereChannelId = computed(
   () => activeTopicId.value ?? activeAllTasks.value ?? (activeTaskId.value ? ids.value.topicId ?? null : null)
 )
 
-// 每个频道里和我有关的几条任务，挂在频道那一行下面：频道清单的每一行自己带着
-// （`my_tasks`：最多几件和我有关的，加这个频道进行中的总数），侧栏不读整个项目的任务。
-// 任务变了，房间推来的帧会把那一行重读一次（query/changes）。
+// 每个频道里和我有关的任务，挂在频道那一行下面：频道清单的每一行自己带着
+// （`my_tasks`：和我有关的全部、不足三条时补上这个频道别人的几条，加这个频道进行中的
+// 总数），侧栏不读整个项目的任务。任务变了，房间推来的帧会把那一行重读一次
+// （query/changes）。
 const roomTasks = computed<Record<string, RoomTask[]>>(() =>
   Object.fromEntries(
     store.topics.filter((topic) => topic.my_tasks?.shown.length).map((topic) => [topic.id, topic.my_tasks!.shown])
@@ -107,12 +119,52 @@ function toggleTasks(channelId: string) {
     ? expandedChannels.value.filter((id) => id !== channelId)
     : [...expandedChannels.value, channelId]
 }
+
+// 频道行右边那个把手：把挂在它下面的一整块任务收起来。收起的是画法，不是数据——这个
+// 频道里进行中的条数和那盏灯挪到频道行上。哪几个频道收着只是这一处的界面状态（没落盘），
+// 换项目就都展开。
+//
+// 收起也是把这一块放下：正开着的那条任务就在这一块里，跟着一起放下——回到这个频道的
+// 页面，它不再单独留在下面。收起只收一半、人还留在一条已经看不见的任务里，比不收还难
+// 懂；2026-10-13 用户定的，原型里「留住你正打开的那一条」那条作废。
+const foldedChannels = ref<Record<string, boolean>>({})
+watch(
+  () => props.projectId,
+  () => (foldedChannels.value = {})
+)
+function toggleTasksFold(channelId: string) {
+  const folded = !foldedChannels.value[channelId]
+  foldedChannels.value = { ...foldedChannels.value, [channelId]: folded }
+  // 正开着的那条任务属于这个频道，就跟着这一块一起放下。收起（folded）才带走人：展开
+  // 是在这一行里往回走，不动正文。
+  if (folded && activeTaskId.value && ids.value.topicId === channelId) openTopic(channelId)
+}
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
 }
-// 「浏览频道」：全部频道都在那一页，加入、退出、新建也在那里。
+// 「全部频道」：全部频道都在那一页，加入、退出、新建也在那里。
 function browseChannels() {
   void router.push({ name: 'project-channels', params: { projectId: props.projectId } })
+}
+
+// 新建频道：就地在侧栏弹对话框，不跳页——「我要开一个」和「我要找/加入别人的」是两件
+// 事，只有后者该去「浏览频道」那一页（分家见 `.claude/rules/project-sidebar.md`）。
+// 对话框本身、以及它上面那些字段（名称、说明、私密）和「浏览频道」页里那颗是同一个
+// 组件，行为不变；请求照样走 store，失败的那句话也照样由 store 说。
+const creatingOpen = ref(false)
+const creating = ref(false)
+const canCreate = computed(() => !store.isExternal(myHandle()))
+async function createChannel(channel: { title: string; description: string; membersOnly: boolean }) {
+  creating.value = true
+  try {
+    const topic = await store.create(channel.title, channel.description, channel.membersOnly)
+    // 建失败时 store 已经说了原因，对话框留着让人改名字再试。
+    if (!topic) return
+    creatingOpen.value = false
+    void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: topic.id } })
+  } finally {
+    creating.value = false
+  }
 }
 const browsingChannels = computed(() => route.name === 'project-channels')
 function openTask(task: { roomId: string; taskId: string }) {
@@ -166,13 +218,13 @@ function onPressTask(task: { roomId: string; taskId: string }) {
   })
 }
 
-// 新建频道在「浏览频道」那一页（先起名再建），命令面板里这一条去那里。
+// 新建频道：和侧栏那颗 ＋ 落在同一处（就地弹对话框），不再绕「全部频道」那一页。
 useCommands(() => [
   {
     id: 'topic.new',
     title: t('navigation.palette.newTopic'),
     icon: 'mdi-plus',
-    run: () => void router.push({ name: 'project-channels', params: { projectId: props.projectId } }),
+    run: () => (creatingOpen.value = true),
   },
   // 全部标为已读（同 Slack 的 Shift+Esc）：只在真有未读时登记，没有时 Shift+Esc 照旧归
   // 别人（比如关掉一个浮层）。
@@ -209,9 +261,11 @@ useCommands(() => [
       :room-tasks="roomTasks"
       :room-task-totals="roomTaskTotals"
       :more-tasks="moreTasks"
+      :folded-channels="foldedChannels"
       :selected-task-id="activeTaskId"
       :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
+      :can-create="canCreate"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
       :active-docs="activeDocs"
@@ -221,7 +275,9 @@ useCommands(() => [
       @select-topic="openTopic"
       @select-task="openTask"
       @toggle-tasks="toggleTasks"
+      @toggle-tasks-fold="toggleTasksFold"
       @browse-channels="browseChannels"
+      @new-channel="creatingOpen = true"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @press-page="onPressPage"
@@ -231,8 +287,9 @@ useCommands(() => [
       @retry="store.reloadTopics()"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     >
-      <!-- 手机上进项目落在频道列表上，项目名下那一行收进了菜单，所以去项目总览的那一行
-           放在列表最顶上。桌面上它就是项目名下那一行的第一格。 -->
+      <!-- 手机上进项目落在频道列表上，项目名下那一行不画（总览收进项目名面板），所以去
+           项目总览的那一行放在列表最顶上。桌面上总览在项目名下那一行，这一行不画
+           （.claude/rules/project-sidebar.md）。 -->
       <template v-if="page || column" #top>
         <button type="button" class="overview-entry t-body" data-testid="overview-entry" @click="openOverview">
           <v-icon size="18" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>
@@ -242,6 +299,10 @@ useCommands(() => [
       </template>
     </TopicSidebar>
   </SplitListColumn>
+
+  <!-- 新建频道那个对话框：挂在侧栏外面，因为它不属于某一栏的排版，来源也不止一处
+       （侧栏那颗 ＋、空项目里的主按钮、命令面板那一格）。 -->
+  <NewChannelDialog v-model="creatingOpen" :busy="creating" @create="createChannel" />
 </template>
 
 <style scoped>

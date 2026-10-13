@@ -10,6 +10,8 @@ from fastapi import APIRouter, Depends, Path, Query, status
 from app.api.routes.tasks._common import (
     PatchTaskParticipantRequest,
     PatchTaskRequest,
+)
+from app.api.task_deps import (
     get_task_membership_service,
     get_task_service,
 )

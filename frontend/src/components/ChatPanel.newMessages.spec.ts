@@ -57,6 +57,7 @@ function scrollAway(pane: HTMLElement) {
   Object.defineProperty(pane, 'scrollHeight', { configurable: true, value: 4000 })
   Object.defineProperty(pane, 'clientHeight', { configurable: true, value: 600 })
   pane.scrollTo = vi.fn()
+  pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
   pane.scrollTop = 3400
   pane.dispatchEvent(new Event('scroll'))
   pane.scrollTop = 0

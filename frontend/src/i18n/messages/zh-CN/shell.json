@@ -66,6 +66,7 @@
     "rename": "重命名失败",
     "archive": "归档失败",
     "unarchive": "取消归档失败",
+    "deleteChannel": "删除频道失败",
     "createTopic": "创建频道失败",
     "convertMessage": "未能转换这条消息"
   }

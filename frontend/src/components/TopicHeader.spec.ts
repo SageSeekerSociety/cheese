@@ -111,6 +111,82 @@ describe('话题头', () => {
   })
 })
 
+// 桌面上这颗 ⋯ 原先只开用量：改名、归档在桌面版根本没有别的入口（清单第 1、3 条）。
+// 现在它和手机上问的是同一份话题操作，用量退成菜单顶上的一段。
+describe('桌面上话题头的 ⋯', () => {
+  async function openMore() {
+    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await screen.findByRole('menuitem', { name: '复制链接' })
+  }
+
+  it('改名：填上新名字保存，改的就是这个话题', async () => {
+    const { emitted } = mountHeader({ can_manage: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '重命名' }))
+    const field = await screen.findByLabelText('频道名称')
+    await fireEvent.update(field, '登录页改成浅色')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    expect(emitted().rename).toEqual([['登录页改成浅色']])
+  })
+
+  it('能归档的人可以从这里归档', async () => {
+    mountHeader({ can_manage: true })
+
+    await openMore()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '归档' }))
+
+    expect(archiveTopic).toHaveBeenCalledWith('topic-1')
+  })
+
+  it('用量还在菜单里：它是这段的口径，不是一件能做的事', async () => {
+    mountHeader()
+
+    await openMore()
+    expect(document.body.textContent).toContain('用量')
+  })
+})
+
+// 删除不可撤销，所以按不动的那一下要有人守着：频道名没打对，删除键就是灰的。
+describe('删除频道', () => {
+  async function openDelete() {
+    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '删除频道' }))
+    await screen.findByLabelText('频道名称')
+  }
+
+  function confirmButton(): HTMLButtonElement {
+    return screen.getByRole('button', { name: '删除频道' }) as HTMLButtonElement
+  }
+
+  it('把频道名原样打一遍才点得动', async () => {
+    mountHeader({ can_manage: true })
+
+    await openDelete()
+    expect(confirmButton().disabled).toBe(true)
+
+    await fireEvent.update(screen.getByLabelText('频道名称'), '登录页改成深色')
+    expect(confirmButton().disabled).toBe(false)
+  })
+
+  it('不管这个频道的人没有这一项', async () => {
+    mountHeader({ can_manage: false })
+
+    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await screen.findByRole('menuitem', { name: '复制链接' })
+    expect(screen.queryByRole('menuitem', { name: '删除频道' })).toBeNull()
+  })
+
+  it('「综合」是项目本身，删不得', async () => {
+    mountHeader({ kind: 'root', can_manage: true })
+
+    await fireEvent.click(screen.getByRole('button', { name: '更多' }))
+    await screen.findByRole('menuitem', { name: '复制链接' })
+    expect(screen.queryByRole('menuitem', { name: '删除频道' })).toBeNull()
+  })
+})
+
 // 手机上话题列表的行尾没有 ⋯，改名、归档在房间顶栏的 ⋯ 里也得找得到。
 describe('手机上话题头的 ⋯', () => {
   let slot: HTMLElement
@@ -165,13 +241,22 @@ describe('手机上话题头的 ⋯', () => {
     expect(archiveTopic).toHaveBeenCalledWith('topic-1')
   })
 
-  it('不管这个频道的人既不能改名也不能归档', async () => {
+  it('不管这个频道的人能改名，但不能归档', async () => {
     mountHeader({ can_manage: false })
+
+    await openMore()
+    // 改名只要「进得来这个频道」；频道叫什么是用它的人一起定的事。
+    await screen.findByRole('menuitem', { name: '重命名' })
+    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
+  })
+
+  it('已归档的频道，不管它的人一样动不了', async () => {
+    mountHeader({ status: 'archived', can_manage: false })
 
     await openMore()
     await screen.findByRole('menuitem', { name: '复制链接' })
     expect(screen.queryByRole('menuitem', { name: '重命名' })).toBeNull()
-    expect(screen.queryByRole('menuitem', { name: '归档' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: '取消归档' })).toBeNull()
   })
 
   it('已归档的话题只能取消归档', async () => {

@@ -8,6 +8,9 @@
 所以这件事不放在调用点上，放在卡这一行被写下去的那一刻：这个会话 flush 过一张卡，
 提交之后就对卡所在的那段对话（有任务就是任务，没有就是房间）和它的房间各发
 `state: accept` 和 `state: tasks`（卡决定任务走到哪一档）。回滚了就不发。
+
+积压按 savepoint 分桶（`core.live_frames`）：释放一个 savepoint 不当作提交，回滚只
+丢自己那一桶，别的 savepoint 排的帧留到会话真正提交时才发。
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from app.core import background
+from app.core.live_frames import drop_rolled_back, stage, take_committed
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.review.models import AcceptCard
 
@@ -68,20 +72,23 @@ def _note_cards(session: Session, _context) -> None:
     # `new` / `dirty` still describe what this flush wrote while it runs.
     for row in session.new:
         if isinstance(row, AcceptCard):
-            session.info.setdefault(_PENDING, set()).update(_channels(row))
+            for channel in _channels(row):
+                stage(session, _PENDING, channel)
     for row in session.dirty:
         if isinstance(row, AcceptCard) and _changed_on_screen(row):
-            session.info.setdefault(_PENDING, set()).update(_channels(row))
+            for channel in _channels(row):
+                stage(session, _PENDING, channel)
 
 
 @event.listens_for(Session, "after_commit")
 def _tell_pages(session: Session) -> None:
-    channels = session.info.pop(_PENDING, None)
+    channels = take_committed(session, _PENDING)
     if not channels:
         return
     # The card itself, and the task's progress (待审阅 / 已退回 / 已采纳), which the
     # card decides: the task page's header and the room's task list read it.
-    for channel in channels:
+    # One channel staged in more than one savepoint is still one page.
+    for channel in dict.fromkeys(channels):
         for resource in ("accept", "tasks"):
             background.spawn(
                 get_broker().publish(channel, {"type": "state", "resource": resource}),
@@ -91,4 +98,4 @@ def _tell_pages(session: Session) -> None:
 
 @event.listens_for(Session, "after_rollback")
 def _forget(session: Session) -> None:
-    session.info.pop(_PENDING, None)
+    drop_rolled_back(session, _PENDING)

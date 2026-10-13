@@ -452,10 +452,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     """Register the error handlers: the BaseError family (AppError included),
     HTTP and request-validation errors, the device-link conditions, and the
     catch-all. Shared by main.py and the connection owner."""
-    # Imported here, not at module scope: `device_hub` sits above this module and
-    # imports back through `app.core`, and nothing but this registration needs
-    # the name.
-    from app.domain.agent.device_hub import (
+    # Imported here, not at module scope: nothing but this registration needs
+    # the names, and `app.core.obs` (for the logger below) only loads once the
+    # module is being finished.
+    from app.core.device_failures import (
         DeviceCallError,
         DeviceOffline,
         LinkInterrupted,

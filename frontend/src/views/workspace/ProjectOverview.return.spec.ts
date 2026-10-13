@@ -22,6 +22,8 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     projects: [{ id: 'p1', name: '项目一' }],
     members: [],
+    // 「进行中的任务」那个数从侧栏带下来的这几行里数（清单第 14 条），没有频道就是 0。
+    topics: [],
     accessDenied: null,
     noteAccess: () => false,
   }),

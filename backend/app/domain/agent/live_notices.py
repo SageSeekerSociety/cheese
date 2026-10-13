@@ -2,6 +2,7 @@
 
 `announce` 落下一行时把它记在会话的 `session.info` 里（`SHOW_ONCE_COMMITTED`），
 这里在会话提交之后把它们作为 `event_block` 发到各自那段对话的频道上；回滚了就扔掉。
+每一层 savepoint 各是一桶（`core.live_frames`）：释放不当作提交，回滚只丢自己那一桶。
 
 发送放在这里而不在 `announce` 里：broker 在 `runtime`，而 `runtime` 本身会间接载入
 `announce`，两边互相 import 就成了一个环。这个模块由 `app.api.deps`（接 broker 的
@@ -16,7 +17,11 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.core.background import spawn
-from app.core.live_frames import SHOW_ONCE_COMMITTED
+from app.core.live_frames import (
+    SHOW_ONCE_COMMITTED,
+    drop_rolled_back,
+    take_committed,
+)
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.broker import get_broker
 
@@ -24,7 +29,7 @@ from app.domain.agent.realtime.broker import get_broker
 @event.listens_for(Session, "after_commit")
 def _show_committed_notices(session: Session) -> None:
     rows: set[uuid.UUID] = set()
-    for channel, frame in session.info.pop(SHOW_ONCE_COMMITTED, ()):
+    for channel, frame in take_committed(session, SHOW_ONCE_COMMITTED):
         spawn(get_broker().publish(channel, frame), name="notice live")
         # A room's row changed: the project's channel list shows it too, once
         # however many of the room's conversations were told.
@@ -36,4 +41,4 @@ def _show_committed_notices(session: Session) -> None:
 
 @event.listens_for(Session, "after_rollback")
 def _drop_rolled_back_notices(session: Session) -> None:
-    session.info.pop(SHOW_ONCE_COMMITTED, None)
+    drop_rolled_back(session, SHOW_ONCE_COMMITTED)

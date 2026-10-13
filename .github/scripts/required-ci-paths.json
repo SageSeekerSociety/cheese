@@ -21,9 +21,9 @@
     ".claude/scripts/test_scene_debt_ratchet.py",
     ".claude/scripts/ratchet_report.py",
     "docs/site/src/style.css",
-    "backend/app/domain/agent/skill_library/doc_writing.md",
-    "backend/app/domain/agent/skill_library/doc_blocks.md",
-    "backend/app/domain/agent/skill_library/doc_form.md"
+    "backend/app/domain/skill_library/doc_writing.md",
+    "backend/app/domain/skill_library/doc_blocks.md",
+    "backend/app/domain/skill_library/doc_form.md"
   ],
   "e2e": [
     "backend/**",
@@ -122,6 +122,7 @@
     ".github/workflows/mcp-equivalence.yml"
   ],
   "cifast": [
+    ".cheese/pre-push",
     ".github/scripts/ci-fast.py",
     ".github/scripts/ci_fast_backend.py",
     ".github/scripts/ci_fast_checks.py",

@@ -11,11 +11,11 @@
 //
 // happy-dom comes from `frontend/node_modules`, as in demo-arch.test.mjs.
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { scratchDir } from './scratch.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -35,7 +35,7 @@ try {
   process.exit(2)
 }
 
-const out = process.env.OUT || fs.mkdtempSync(path.join(os.tmpdir(), 'docs-panel-'))
+const out = process.env.OUT || scratchDir('docs-panel-')
 if (!process.env.OUT) {
   execFileSync(process.execPath, ['build.mjs'], { cwd: SITE, env: { ...process.env, OUT: out }, stdio: ['ignore', 'ignore', 'inherit'] })
 }

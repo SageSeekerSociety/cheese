@@ -1,6 +1,6 @@
 /**
  * 预览站里「账号设置与项目工作台那一组整页」：账号设置里的六屏（通用、通知、个人资料、
- * 实名信息、密码与安全、这台设备），和项目工作台的三屏（浏览频道、全部任务、项目总览）。
+ * 实名信息、密码与安全、这台设备），和项目工作台的三屏（全部频道、全部任务、项目总览）。
  *
  * 这些页面在应用里都由各自的容器取数（`settings/*.vue`、`workspace/*.vue` 那一批），
  * 容器碰接口层，预览站碰不得。好在它们都已经拆成「容器 → 只吃 props 的画面」：这里摆的
@@ -19,6 +19,8 @@ import {
   CHANNEL_ENTRIES,
   CLOSED_TASK,
   DEVICE_TEAMS,
+  MODEL_CONNECTIONS,
+  MODEL_SERVICE_DEVICES,
   NOTIF_PREFS,
   OVERVIEW_TEXT,
   PROJECT_PROGRESS,
@@ -35,6 +37,7 @@ import {
 
 import { t } from '@/i18n'
 import General from '@/views/user/settings/General.vue'
+import ModelConnectionsView from '@/views/user/settings/ModelConnectionsView.vue'
 import NotificationsView from '@/views/user/settings/NotificationsView.vue'
 import ProfileView from '@/views/user/settings/ProfileView.vue'
 import RealNameView from '@/views/user/settings/RealNameView.vue'
@@ -445,6 +448,50 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'model-connections-view',
+    title: 'ModelConnectionsView',
+    get about() {
+      return t('catalog.modelConnectionsView.about')
+    },
+    file: 'src/views/user/settings/ModelConnectionsView.vue',
+    component: ModelConnectionsView,
+    needs: UI_T,
+    // 「解除」的确认框和「使用自定义模型服务」的表单都画在 body 上。
+    teleport: true,
+    args: {
+      loading: false,
+      error: null,
+      connections: MODEL_CONNECTIONS,
+      devices: MODEL_SERVICE_DEVICES,
+      busy: '',
+      saved: 0,
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s1.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s1.note')
+        },
+        props: { connections: [] },
+        expect: '暂无模型连接',
+        expectSelector: '.settings-empty',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s2.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s2.note')
+        },
+        props: { connections: [{ ...MODEL_CONNECTIONS[2], logged_in: false, revoking: true }] },
+        expect: '解除中',
+        expectSelector: '.mc-state--pending',
+      },
+    ],
+  },
+  {
     id: 'this-device-view',
     title: 'ThisDeviceView',
     get about() {
@@ -638,7 +685,8 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       closedHasMore: false,
       closedLoading: false,
       closedFailed: false,
-      closed: false,
+      status: 'open',
+      delivery: 'all',
       whose: 'all',
     },
     states: [
@@ -692,7 +740,11 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.projectTasksView.s5.note')
         },
-        props: { closed: true, closedTasks: [CLOSED_TASK], closedCounts: { all: 1, mine: 1, helping: 0, others: 0 } },
+        props: {
+          status: 'closed',
+          closedTasks: [CLOSED_TASK],
+          closedCounts: { all: 1, mine: 1, helping: 0, others: 0 },
+        },
         expectSelector: '.tasks__group',
         expect: '把实验指导书发下去',
       },
@@ -716,8 +768,39 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         },
         props: { channelId: 'ch-lab' },
         expect: '实验课',
-        // 频道那条自己亮着（「看已关闭的」没亮）。
+        // The selected channel remains independent of lifecycle and delivery.
         expectSelector: '[data-testid="tasks-channel"].tasks__chip--on',
+      },
+      {
+        get name() {
+          return t('taskList.allStatuses')
+        },
+        get note() {
+          return t('taskList.catalogAllNote')
+        },
+        props: {
+          status: 'all',
+          closedTasks: [CLOSED_TASK],
+          closedCounts: { all: 1, mine: 1, helping: 0, others: 0 },
+        },
+        expect: '交付已采纳',
+        expectSelector: '.tasks__accepted',
+      },
+      {
+        get name() {
+          return t('taskList.acceptedDelivery')
+        },
+        get note() {
+          return t('taskList.catalogAcceptedNote')
+        },
+        props: {
+          delivery: 'accepted',
+          tasks: PROJECT_TASKS.map((task, index) =>
+            index === 1 ? { ...task, accepted_at: CLOSED_TASK.accepted_at } : task
+          ),
+        },
+        expect: '整理第二章的课件',
+        expectSelector: '.tasks__row',
       },
     ],
   },
@@ -738,6 +821,8 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       progress: PROJECT_PROGRESS,
       progressFailed: false,
       tasks: PROJECT_TASKS,
+      // 「进行中的任务」那个数（清单第 14 条）和下面这几件对得上：四件都还没做完。
+      underway: 4,
       names: TASK_NAMES,
       avatars: {},
       me: 'wangxiaoming',
@@ -796,7 +881,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.projectOverviewView.s5.note')
         },
-        props: { tasks: [] },
+        props: { tasks: [], underway: 0 },
         expect: '暂无进行中的任务',
         expectSelector: '[data-testid="overview-people"] p.ov-empty',
       },

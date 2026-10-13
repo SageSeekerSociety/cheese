@@ -536,11 +536,16 @@ class BlockRepository:
         if not place_ids:
             return {}
         place_column = Block.conversation_id
+        # `in_()` 会把这一串 id 摊成同样多个绑定参数，每执行一次都要重新拼一遍
+        # SQL（一屏「待我处理」要拿七百来个对话来问，量出来光这一步就 8~9 毫秒）。
+        # 收成一个数组参数之后语句只编译一次，后面每次都由驱动直接复用；和
+        # `room_task/repositories.py` 的 `_uuids` 是同一个写法。
+        among = any_(bindparam(None, list(place_ids), type_=ARRAY(Uuid)))
         # 每段只取最近一题（#1084 的原语义）。
         latest = (
             select(place_column, Block.meta, Block.created_at, Block.author, Block.id)
             .where(
-                place_column.in_(place_ids),
+                place_column == among,
                 # 和 `ix_blocks_questions` 的谓词是同一个对象，规划器才认得出
                 # 能用那个部分索引。
                 QUESTION_ROWS,
@@ -568,12 +573,15 @@ class BlockRepository:
         # 「开始」 is the owner saying the task is discussed enough: what was asked
         # in it before then no longer holds it, so a started task reads 已开始 /
         # 运行中 rather than 待回答 until a question is asked after it.
+        asked_places = any_(
+            bindparam(None, [place_id for place_id, *_ in rows], type_=ARRAY(Uuid))
+        )
         started: dict[uuid.UUID, datetime] = {
             task_id: at
             for task_id, at in (
                 await self._session.execute(
                     select(_tasks.c.id, _tasks.c.started_at).where(
-                        _tasks.c.id.in_([place_id for place_id, *_ in rows]),
+                        _tasks.c.id == asked_places,
                         _tasks.c.started_at.is_not(None),
                     )
                 )
@@ -586,10 +594,24 @@ class BlockRepository:
             return {}
         # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
         # （题上没记是谁，就任何一个人）在这里说过话，这道题就不再挂在他身上。
+        #
+        # 下面两趟都只回答「说过话的时间 > 提问时间吗」，所以**比最早那道题还早**的
+        # 消息，无论落在哪一段对话里都不会改变答案 —— 挡在库里，这两趟就从「把这几
+        # 百段对话的全部历史捞回来再分组」变成一趟区间读，可以由 (conversation_id,
+        # created_at) 这样的键走索引，不必再扫每段对话的全部历史（本机实测规划器取
+        # `ix_blocks_conversation_created_at`；夹具那么大时它取覆盖同一件事的
+        # `ix_blocks_conversation_kind_created`）。本机 13 个项目、426 道待答题、
+        # 8 万条消息实测：89ms 降到 9ms。留一条边界之外的行无害 —— 只是
+        # `max(created_at)` 里多一个比提问时间还早的候选，下面照样比不出「说过话」。
+        still_asked = any_(
+            bindparam(None, [place_id for place_id, *_ in rows], type_=ARRAY(Uuid))
+        )
+        since_asked = Block.created_at > min(row[2] for row in rows)
         spoke = (
             select(place_column, Block.author, func.max(Block.created_at))
             .where(
-                place_column.in_([place_id for place_id, *_ in rows]),
+                place_column == still_asked,
+                since_asked,
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 ~agent_handle_column(Block.author),
@@ -608,7 +630,8 @@ class BlockRepository:
         agent_spoke = (
             select(place_column, Block.author, func.max(Block.created_at))
             .where(
-                place_column.in_([place_id for place_id, *_ in rows]),
+                place_column == still_asked,
+                since_asked,
                 Block.kind == BlockKind.message,
                 participant_blocks(),
                 agent_handle_column(Block.author),

@@ -61,9 +61,28 @@ jobs:
           python3 .claude/scripts/check-migration-safety.py --self-test
           python3 .claude/scripts/check-file-sizes.py --self-test
           python3 .claude/scripts/check-doc-references.py --self-test
+          python3 .claude/scripts/check-manual-anchors.py --self-test
           python3 .claude/scripts/scene-ratchet.py --self-test
           python3 .claude/scripts/frontend_grade.py --self-test
           python3 .claude/scripts/catalog-ratchet.py --self-test
+
+      # Not a guard of this tree: prove-regression.py is what AGENTS.md tells an
+      # author to run on a fix's own test, and nothing in CI runs it against the
+      # tree. Its self-test is here because that is the only thing keeping an
+      # unused helper honest — it builds a throwaway repository and proves the
+      # verdict on a test that is red before the fix and green at it.
+      - name: Regression-proof helper self-test
+        run: python3 .claude/scripts/prove-regression.py --self-test
+
+      # The mining tools judge platform history, not the tree, so they are not
+      # guards — but a regression in them prints a wrong report, and nothing
+      # else runs their self-tests. All are offline: no token, no network.
+      # `retro --self-test` is what reaches trace_retro.py's self-test.
+      - name: Trace tooling self-test
+        run: |
+          python3 .claude/scripts/trace-sweep.py --self-test
+          python3 .claude/scripts/trace-sweep.py retro --self-test
+          python3 .claude/scripts/orchestrator_metrics.py --self-test
 
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).

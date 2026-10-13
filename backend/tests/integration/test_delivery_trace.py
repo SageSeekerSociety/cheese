@@ -108,8 +108,10 @@ def _deliver(
         async with client.test_factory() as session:
             card = await AcceptCardRepository(session).get(uuid.UUID(result["id"]))
             number = 100 + len(client.trace_forge.prs)
+            # 假 PR 的标题就是卡片 subject（平台递卡时按它写 PR 标题）：两条合并
+            # 路径都比对这两行，不一致就停下（`pr_text.pr_title_matches_subject`）。
             head = client.trace_forge.seed_pr(
-                number, head=branch_for_task(uuid.UUID(tasks[0]))
+                number, head=branch_for_task(uuid.UUID(tasks[0])), title=subject
             )
             client.trace_forge.check_state_by_sha[head] = ("success", "")
             card.pr_number = number

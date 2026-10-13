@@ -3,7 +3,6 @@
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
-from urllib.parse import urlsplit
 
 from fastapi import (
     APIRouter,
@@ -32,10 +31,11 @@ from app.api.routes.users._common import (
     _trusted_device,
     logger,
 )
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     _SUDO_TICKET_SCOPE,
     REFRESH_COOKIE,
     _clear_refresh_cookie,
+    _require_same_origin,
     _set_refresh_cookie,
     challenge_from_credential,
     issue_session,
@@ -90,37 +90,6 @@ from app.domain.user.verification_service import (
 )
 
 router = APIRouter(prefix="/users", tags=["Users"])
-
-
-def _origin_of(url: str) -> str:
-    parts = urlsplit(url)
-    return f"{parts.scheme}://{parts.netloc}".lower()
-
-
-def _require_same_origin(request: Request) -> None:
-    """Refuse a refresh or sign-out that another site had the browser send.
-
-    SameSite=Lax keeps the cookie off a cross-site POST, but not off one from
-    a sibling subdomain, and older browsers do not apply it at all. Modern
-    browsers say where a request came from in Sec-Fetch-Site; older ones at
-    least send Origin on a POST. A request with neither did not come from a
-    browser, so it carries no cookie it did not mean to, and passes.
-    """
-    site = request.headers.get("sec-fetch-site")
-    if site is not None:
-        if site != "same-origin":
-            raise ForbiddenError("Cross-site request refused")
-        return
-    origin = request.headers.get("origin")
-    if origin is None:
-        return
-    trusted = {
-        _origin_of(settings.frontend_url),
-        *map(_origin_of, settings.cors_origins),
-    }
-    same_host = urlsplit(origin).netloc == request.headers.get("host")
-    if not same_host and _origin_of(origin) not in trusted:
-        raise ForbiddenError("Cross-site request refused")
 
 
 async def _spend_2fa_attempt(

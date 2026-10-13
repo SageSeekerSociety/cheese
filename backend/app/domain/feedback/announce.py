@@ -19,11 +19,11 @@ back must not be announced.
 
 from __future__ import annotations
 
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import alerting
 from app.core.config import settings
+from app.core.db import after_own_commit
 from app.domain.feedback.models import Feedback, FeedbackVisibility
 
 KIND_LABELS = {"bug": "缺陷", "suggestion": "建议", "other": "其他"}
@@ -55,9 +55,4 @@ def after_commit(session: AsyncSession, row: Feedback) -> None:
     if not url:
         return
     text = text_of(row)
-    event.listen(
-        session.sync_session,
-        "after_commit",
-        lambda _s: alerting.post(url, text),
-        once=True,
-    )
+    after_own_commit(session, lambda: alerting.post(url, text))

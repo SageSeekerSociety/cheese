@@ -533,6 +533,14 @@
     "s5": {
       "name": "No one has claimed",
       "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
+    },
+    "s6": {
+      "name": "An external problem is linked",
+      "note": "The problem number was filled in when the task was published: there is one more column, saying whether each person solved it over there. Solved ones open to show the day it was solved; a claimant the other side has no result for yet shows a dash."
+    },
+    "s7": {
+      "name": "Last sync did not go through",
+      "note": "When a sync fails, that line has to say it outright: the column below is not this attempt's numbers, they are the last successful one's."
     }
   },
   "views404": {
@@ -1069,6 +1077,17 @@
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
     }
   },
+  "modelConnectionsView": {
+    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device.",
+    "s1": {
+      "name": "No connections",
+      "note": "Logged in on no device: the card says there are no model connections, and the custom model service button stays at its top right."
+    },
+    "s2": {
+      "name": "Removing on an offline device",
+      "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+    }
+  },
   "thisDeviceView": {
     "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
     "s1": {
@@ -1097,7 +1116,7 @@
     }
   },
   "channelBrowseView": {
-    "about": "The project's 'Browse channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
+    "about": "The project's 'All channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
     "s1": {
       "name": "List channels",
       "note": "Default cell: a search box, a row of filters (all / joined / archived, each with a count), one row per channel below — name, description, headcount, with 'Join' or 'Leave' on the right."
@@ -1139,7 +1158,7 @@
     },
     "s5": {
       "name": "Show closed",
-      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Completed' group, and the counts come from the server's set."
+      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Closed' group, and the counts come from the server's set."
     },
     "s6": {
       "name": "Folds a few stalled",
@@ -1263,6 +1282,29 @@
     "s4": {
       "name": "App ID blank",
       "note": "Saving with a blank App ID: it says \"Enter the App ID first\" and the request is never sent."
+    },
+    "s5": {
+      "name": "Save failed",
+      "note": "A rejected save shows the server's own words and leaves every field untouched."
+    }
+  },
+  "adminExternalProblemPageView": {
+    "about": "The admin \"external problem account\" page: an admin fills in the account the platform uses to read results on external problems (today only YOJ); the password is write-only and never echoed.",
+    "s1": {
+      "name": "Already configured",
+      "note": "Default state: the status line reads \"Configured · username · source\" and who last updated it; the username is filled in, the password is always empty."
+    },
+    "s2": {
+      "name": "Never configured",
+      "note": "Never set up: the status line reads \"Not configured\" and the two fields wait to be filled."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read shows only \"could not load\" with a retry — no status line and no form, because only a successful read knows whether it is configured."
+    },
+    "s4": {
+      "name": "Username blank",
+      "note": "Saving with a blank username: it says \"Enter the username first\" and the request is never sent."
     },
     "s5": {
       "name": "Save failed",
