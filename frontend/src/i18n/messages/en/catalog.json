@@ -1139,7 +1139,7 @@
     },
     "s5": {
       "name": "Show closed",
-      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Completed' group, and the counts come from the server's set."
+      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Closed' group, and the counts come from the server's set."
     },
     "s6": {
       "name": "Folds a few stalled",
