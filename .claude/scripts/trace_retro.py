@@ -178,7 +178,7 @@ def _iso(text: str) -> datetime:
 
 
 def merged_prs(repo: str, since: datetime, until: datetime) -> list[dict]:
-    """PRs merged inside [since, until], newest first.
+    """PRs merged inside [since, until], oldest first.
 
     `gh pr list --state merged --search merged:A..B` uses GitHub's search
     qualifier, then the ISO timestamps are re-checked locally: the search index

@@ -222,8 +222,20 @@ def _command_of(meta: dict) -> str:
     return str(meta.get("detail") or meta.get("arg") or "")
 
 
+def _order_of(block: dict) -> tuple:
+    """A block's own place in the transcript: its seq, then its full timestamp.
+
+    ``at`` is truncated to the second, so it cannot tell apart the several calls
+    one turn makes inside that second. Sorting by it alone leaves the tie to the
+    rest of the key — enough for ``Bash`` to sort ahead of the edits it actually
+    followed."""
+    meta = block.get("meta") or {}
+    seq = block.get("seq")
+    return (seq if isinstance(seq, int) else -1, meta.get("at") or block.get("created_at") or "")
+
+
 def _tool_calls(task: dict, token: str, since: str, until: str):
-    """Yield (block id, at, tool, command, error) for every tool call inside the window."""
+    """Yield (order, block id, at, tool, command, error) for every tool call inside the window."""
     before = None
     for _ in range(100):
         query = f"/topics/{task['id']}/transcript?limit=200" + (f"&before={before}" if before else "")
@@ -237,6 +249,7 @@ def _tool_calls(task: dict, token: str, since: str, until: str):
             tool, error = meta.get("tool"), meta.get("error")
             if (tool or error) and since <= at <= until:
                 yield (
+                    _order_of(block),
                     block.get("id") or f"{task['id']}:{at}",
                     at,
                     tool or "?",
@@ -278,6 +291,11 @@ def edit_blocks(calls: list[tuple[str, str, str]]) -> list[int]:
     return blocks
 
 
+def _timeline(calls: list[tuple]) -> list[tuple[str, str, str]]:
+    """(at, tool, command) in the transcript's own order, for ``edit_blocks``."""
+    return [(at, tool, command) for _, _, at, tool, command, _ in sorted(calls, key=lambda c: c[0])]
+
+
 def _label(task: dict) -> str:
     """A task's number as text; a task without one is told apart by its id."""
     number = task.get("number")
@@ -298,9 +316,8 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
     calls = 0
     blind: dict[str, list[int]] = {}
     for task in tasks:
-        timeline = []
-        for block_id, at, tool, command, error in _tool_calls(task, token, since, until):
-            timeline.append((at, tool, command))
+        task_calls = list(_tool_calls(task, token, since, until))
+        for _order, block_id, at, tool, command, error in task_calls:
             if not error:
                 continue
             calls += 1
@@ -325,7 +342,7 @@ def sweep(channel: str, token: str, since: str, until: str) -> dict:
             row["ids"][block_id] = at
             row["tasks"].add(_label(task))
             row["first"], row["last"] = min(row["first"], at), max(row["last"], at)
-        if blocks := edit_blocks(sorted(timeline)):
+        if blocks := edit_blocks(_timeline(task_calls)):
             blind[_label(task)] = blocks
     return {
         "since": since,
@@ -591,8 +608,8 @@ def self_test() -> int:
             globals()["_request"] = real_request
 
     calls = calls_of({"data": [described, plain], "has_more": False})
-    check("a described call's command comes from detail", calls[0][3], "uv run pytest -q")
-    check("a plain call's command comes from arg", calls[1][3], "ruff check .")
+    check("a described call's command comes from detail", calls[0][4], "uv run pytest -q")
+    check("a plain call's command comes from arg", calls[1][4], "ruff check .")
 
     # The same two commands through the signal they feed: a check ends the run of
     # edits, so four either side of one is not a block. Each command is the only
@@ -610,9 +627,33 @@ def self_test() -> int:
         )
         check(
             f"{middle['id']}'s command ends the run of edits",
-            edit_blocks([(c[1], c[2], c[3]) for c in calls]),
+            edit_blocks(_timeline(calls)),
             [],
         )
+
+    # One turn makes several calls inside the same second, so the truncated `at`
+    # cannot order them: only the block's own `seq` can. Eight edits either side
+    # of a check, all stamped 11:00:05, arriving check-last. Order by the second
+    # and the tie falls to the tool name — Bash sorts before Edit, the check
+    # lands first, and the eight edits join into one block of 8. Drop the sort
+    # and the check stays last, which does the same. Either way the table this
+    # sweep exists to print is wrong.
+    def stamped(seq: int, tool: str, command: str) -> dict:
+        return {"id": f"s{seq}", "seq": seq, "meta": {"tool": tool, "at": "2026-10-12T11:00:05", "arg": command}}
+
+    tied = calls_of(
+        {
+            "data": [stamped(s, "Edit", "改文件") for s in (100, 101, 102, 103, 110, 111, 112, 113)]
+            + [stamped(104, "Bash", "ruff check .")],
+            "has_more": False,
+        }
+    )
+    check("a check in the same second still ends the block", edit_blocks(_timeline(tied)), [])
+    check(
+        "ordering that second by tool name would not",
+        edit_blocks([(c[2], c[3], c[4]) for c in tied]),
+        [8],
+    )
     check("tasks sort by number", ledger["s"]["tasks"], ["2", "10"])
     check("a task without a number keeps its id", _label({"number": None, "id": "abcdef12"}), "?abcdef")
     check("two tasks flag deep dive", ledger["s"]["status"], DEEP_DIVE)
