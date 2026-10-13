@@ -35,6 +35,9 @@ const files = [
 
 const read = vi.fn(async () => new TextEncoder().encode('这个频道的一份文件。').buffer)
 
+/** 这个房间名册上每个 handle 叫什么。屏幕上写的是名字，不是 handle。 */
+const memberNames: Record<string, string> = { alice: '阿丽', 'cheese-1a2b3c': '小苔' }
+
 beforeEach(() => {
   read.mockClear()
   vi.stubGlobal('visualViewport', {
@@ -54,7 +57,7 @@ afterEach(() => {
 
 function mount(extra: Record<string, unknown> = {}) {
   return render(ChannelFilesView, {
-    props: { files, truncated: false, loading: false, error: null, read, ...extra },
+    props: { files, truncated: false, loading: false, error: null, read, memberNames, ...extra },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -90,24 +93,38 @@ it('点文件夹进去看里面，面包屑回上一层', async () => {
   expect(names(view)).toEqual(['runs', 'screenshot-2026-09-12.png', '文献综述.docx'])
 })
 
-it('一行上写着是谁、从哪来的、什么时候、多大', () => {
+it('一行上写着是谁、什么时候、多大', () => {
   const view = mount()
   const screenshot = rows(view)[1]
-  expect(screenshot.textContent).toContain('alice')
-  expect(screenshot.textContent).toContain(t('work.room.fileHistory.source.upload'))
+  // 名册上叫「阿丽」，handle 是 alice：屏幕上写名字，不写 handle。
+  expect(screenshot.textContent).toContain('阿丽')
+  expect(screenshot.textContent).not.toContain('alice')
   expect(screenshot.textContent).toContain('KB')
+  // 这一行不再多写一件「从哪条路来的」：一行上只留谁、什么时候、多大。
+  expect(screenshot.textContent).not.toContain(t('work.room.fileHistory.source.upload'))
 
   // 没有保存记录的那一份说不出是谁写的：写「来源未知」，别的照写。
   expect(rows(view)[2].textContent).toContain(t('work.library.unknownSource'))
-  expect(rows(view)[2].textContent).toContain(t('work.room.fileHistory.source.baseline'))
+  expect(rows(view)[2].textContent).not.toContain(t('work.room.fileHistory.source.baseline'))
 })
 
-it('队友写的照「芝士」命名，不把座位编号画出来', () => {
+it('队友写的是名册上那一位的名字，不把座位编号画出来', () => {
   const view = mount({
-    files: [file('报告.md', { author: 'cheese-1a2b3c', author_kind: 'agent', source: 'ai' })],
+    files: [
+      file('报告.md', { author: 'cheese-1a2b3c', author_kind: 'agent', source: 'ai' }),
+      file('结果.md', {
+        author: 'cheese-9f8e7d',
+        author_kind: 'agent',
+        source: 'ai',
+        modified_at: '2026-09-13T10:12:00Z',
+      }),
+    ],
   })
-  expect(rows(view)[0].textContent).toContain(t('work.room.defaultAgentName'))
+  expect(rows(view)[0].textContent).toContain('小苔')
   expect(rows(view)[0].textContent).not.toContain('cheese-1a2b3c')
+  // 名册上认不出的（已经不在这间房了）照「芝士」写：兜底也不把 handle 摆到屏幕上。
+  expect(rows(view)[1].textContent).toContain(t('work.room.defaultAgentName'))
+  expect(rows(view)[1].textContent).not.toContain('cheese-9f8e7d')
 })
 
 it('点一份就在右边看内容、能下载', async () => {
