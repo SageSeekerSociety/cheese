@@ -20,12 +20,11 @@ channel private; only someone who manages the project turns one back.
 
 import uuid
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.conversation.services import room_of
+from app.domain.conversation.services import room_of, room_of_thread
 from app.domain.identity.handles import (
     AGENT_HANDLE_PREFIX,
     CHEESE_HANDLE,
@@ -34,7 +33,6 @@ from app.domain.identity.handles import (
 )
 from app.domain.identity.services import IdentityService
 from app.domain.project.repositories import ProjectRepository
-from app.domain.thread.models import Thread
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -533,9 +531,7 @@ class TopicMemberService:
         """
         if room_id is None:
             # A 支线 seats nobody of its own: its channel's roster answers.
-            room_id = await self._session.scalar(
-                select(Thread.room_id).where(Thread.id == topic_id)
-            )
+            room_id = await room_of_thread(self._session, topic_id)
         if not await self.agent_handles(room_id or topic_id):
             return None
         return await self.resolve_agent_handle(topic_id, room_id=room_id)
