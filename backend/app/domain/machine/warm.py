@@ -45,6 +45,11 @@ DELETION_CONFIRM_S = 15 * 60
 # A failed cleanup whose error starts with this was set aside by a person
 # (ownership unverified); the sweep never settles it on its own.
 QUARANTINED_PREFIX = "Quarantined"
+# How often a failed cleanup the provider still has is asked to delete again. A
+# deletion can fail for a reason that passes: on 2026-10-06 MicroCloud could not
+# reach Proxmox for seven hours, and two dev machines kept running for a week.
+# One whose record points at another machine's guest is refused by MicroCloud.
+CLEANUP_RETRY = timedelta(hours=1)
 # One provider claim per reservation per process; a second claimer waits here,
 # holding no database lock. One lock per machine ever claimed, so this stays small.
 _claim_locks: dict[uuid.UUID, asyncio.Lock] = {}
@@ -578,8 +583,10 @@ class WarmPoolService:
         A failed cleanup is kept because the machine may still be billed. Once
         MicroCloud no longer knows the machine there is nothing left to bill, and
         keeping the row would stop the pool for good, because nothing else ever
-        looks at it again. The check only reads: no deletion is retried here.
-        A row a person set aside is left exactly as it is.
+        looks at it again. One the provider still has is asked to delete it
+        again once per ``CLEANUP_RETRY``, and a later sweep closes the row when
+        the deletion has landed. A row a person set aside is left exactly as it
+        is.
         """
         rows = (
             await self.session.scalars(
@@ -596,13 +603,33 @@ class WarmPoolService:
             try:
                 vanished = await self.client.get_machine(row.machine_id) is None
             except MicroCloudError:
-                vanished = False
+                unresolved += 1
+                continue
             if vanished:
                 logger.info(
                     "warm cleanup settled: provider no longer has machine=%s",
                     row.machine_id,
                 )
                 await self._forget(row)
-            else:
-                unresolved += 1
+                continue
+            unresolved += 1
+            if row.updated_at < datetime.now(UTC) - CLEANUP_RETRY:
+                await self._delete_again(row)
         return unresolved
+
+    async def _delete_again(self, row: WarmMachine) -> None:
+        """Ask the provider once more to delete a failed cleanup's machine."""
+        assert row.machine_id is not None
+        try:
+            await self.client.delete_machine(row.machine_id)
+        except MicroCloudError as exc:
+            row.error = f"delete retry HTTP {exc.status}"
+            logger.warning(
+                "warm cleanup retry refused machine=%s status=%s",
+                row.machine_id,
+                exc.status,
+            )
+        else:
+            logger.info("warm cleanup retried machine=%s", row.machine_id)
+        row.updated_at = datetime.now(UTC)
+        await self.session.commit()
