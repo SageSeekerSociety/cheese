@@ -1801,6 +1801,34 @@ def self_test() -> int:
             swept and all(left),
         )
 
+        # The prefix is what keeps the sweep off what belongs to nobody here.
+        # The temp directory is every process's on the machine, and the guard is
+        # not a formality: with it gone the slice that strips the prefix takes
+        # nineteen characters off whatever name it is given instead, so a
+        # neighbour's name only has to be nineteen characters longer, with the
+        # three fields the rule reads after that, for the sweep to read it as a
+        # report of its own and unlink it. Aged, with a pid that is gone, so
+        # neither the age nor the owner is what keeps it.
+        neighbour = Path(tempfile.gettempdir()) / (
+            "0123456789abcdefghi" + f"before-{unused_pid()}-aaaa" + ".json"
+        )
+        neighbour.write_text('{"numTotalTests": 1}', encoding="utf-8")
+        when = time.time() - STALE_AFTER - 60
+        os.utime(neighbour, (when, when))
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        finally:
+            kept = neighbour.exists()
+            neighbour.unlink(missing_ok=True)
+        tally.case(
+            "a name outside this tool's prefix is left where it is",
+            swept and kept,
+        )
+
         # The two guards that decide the name's shape at all: the report suffix
         # and the three fields. Each is load-bearing and neither implies the
         # other — without the suffix guard a `.txt` neighbour still slices into
@@ -1836,35 +1864,43 @@ def self_test() -> int:
         # Looking at an entry can fail on its own — the file removed between the
         # listing and the look, a mount that stops answering. The sweep is not
         # the place to say so, and an entry it could not read is not one it has
-        # read as litter.
-        # This run's own pid, so a concurrent run of this suite — which sweeps
-        # the same shared temp directory — reads it as live and fresh and leaves
-        # it alone. A pid that is not alive would be collected by that other
-        # run's sweep, and the case would fail on the competition rather than on
-        # the guard.
-        unreadable = (
-            Path(tempfile.gettempdir())
-            / f"{WORKTREE_PREFIX}before-{os.getpid()}-aaaa.json"
-        )
-        unreadable.write_text('{"numTotalTests": 1}', encoding="utf-8")
-        real_is_file = Path.is_file
-
-        def refuse_is_file(self: Path, *args: object, **kwargs: object) -> bool:
-            if self.name == unreadable.name:
-                raise OSError("forced")
-            return real_is_file(self, *args, **kwargs)
-
-        Path.is_file = refuse_is_file  # type: ignore[method-assign]
+        # read as litter. The entry has to be one the rule would otherwise
+        # collect, or "left where it is" says nothing about the look: this run's
+        # own fresh report is left alone whatever the guard does. Through a temp
+        # directory of this case's own, because an entry the rule wants removed
+        # in the shared one is what a concurrently running copy of this suite
+        # wants removed too.
+        was_temp = tempfile.tempdir
+        tempfile.tempdir = str(Path(scratch) / "unreadable-temp")
+        Path(tempfile.tempdir).mkdir()
         try:
-            with _Muffle():
-                reclaim_stale(repo)
-            swept = True
-        except Exception:
-            swept = False
+            unreadable = (
+                Path(tempfile.tempdir)
+                / f"{WORKTREE_PREFIX}before-{unused_pid()}-aaaa.json"
+            )
+            unreadable.write_text('{"numTotalTests": 1}', encoding="utf-8")
+            when = time.time() - STALE_AFTER - 60
+            os.utime(unreadable, (when, when))
+            real_is_file = Path.is_file
+
+            def refuse_is_file(self: Path, *args: object, **kwargs: object) -> bool:
+                if self.name == unreadable.name:
+                    raise OSError("forced")
+                return real_is_file(self, *args, **kwargs)
+
+            Path.is_file = refuse_is_file  # type: ignore[method-assign]
+            try:
+                with _Muffle():
+                    reclaim_stale(repo)
+                swept = True
+            except Exception:
+                swept = False
+            finally:
+                Path.is_file = real_is_file  # type: ignore[method-assign]
+                kept = unreadable.exists()
+                unreadable.unlink(missing_ok=True)
         finally:
-            Path.is_file = real_is_file  # type: ignore[method-assign]
-            kept = unreadable.exists()
-            unreadable.unlink(missing_ok=True)
+            tempfile.tempdir = was_temp
         tally.case(
             "an entry the sweep cannot look at is left where it is, not raised on",
             swept and kept,
