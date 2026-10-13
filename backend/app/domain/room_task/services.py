@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Collection
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,9 +16,6 @@ from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task.models import (
-    HEAVY_LOCK_TTL,
-    LockKind,
-    RoomLock,
     Task,
     TaskStatus,
     TaskTitle,
@@ -642,117 +639,6 @@ class TaskService:
             )
         )
         return [(task, conversations.get(task.id, [])) for task in tasks]
-
-
-class RoomLockService:
-    """整块覆盖一个文件、跑重活 —— 一次一个。
-
-    Narrow on purpose. It does not make concurrent writing safe in general: a
-    lock around a write cannot prevent a lost update, because the read that the
-    write is based on happened before the lock existed. It covers the two cases
-    that have no other defence — a whole-file overwrite (an `Edit` defends
-    itself; a `Write` cannot) and the things that fight over the machine rather
-    than the tree.
-    """
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-
-    async def acquire(
-        self,
-        *,
-        room_id: uuid.UUID,
-        kind: LockKind,
-        resource: str = "",
-        holder_task_id: uuid.UUID | None,
-    ) -> tuple[bool, str]:
-        """Take the lock, or say who has it.
-
-        Never waits. Blocking would spend a whole turn's compute sitting still,
-        and the caller has something better to do with the answer — write a
-        different file, use `Edit`, come back next turn.
-        """
-        now = datetime.now(UTC)
-        existing = (
-            await self._session.scalars(
-                select(RoomLock).where(
-                    RoomLock.room_id == room_id,
-                    RoomLock.kind == kind,
-                    RoomLock.resource == resource,
-                )
-            )
-        ).first()
-        if existing is not None:
-            if existing.expires_at > now:
-                if existing.holder_task_id == holder_task_id:
-                    existing.expires_at = now + self._ttl(kind)
-                    await self._session.flush()
-                    return True, ""
-                return False, await self._who(existing)
-            # Expired: whoever held it is not coming back.
-            await self._session.delete(existing)
-            await self._session.flush()
-        self._session.add(
-            RoomLock(
-                room_id=room_id,
-                kind=kind,
-                resource=resource,
-                holder_task_id=holder_task_id,
-                acquired_at=now,
-                expires_at=now + self._ttl(kind),
-            )
-        )
-        await self._session.flush()
-        return True, ""
-
-    async def release(
-        self,
-        *,
-        room_id: uuid.UUID,
-        kind: LockKind,
-        resource: str = "",
-        holder_task_id: uuid.UUID | None,
-    ) -> bool:
-        """Give it back. Releasing a lock somebody else holds does nothing."""
-        existing = (
-            await self._session.scalars(
-                select(RoomLock).where(
-                    RoomLock.room_id == room_id,
-                    RoomLock.kind == kind,
-                    RoomLock.resource == resource,
-                )
-            )
-        ).first()
-        if existing is None or existing.holder_task_id != holder_task_id:
-            return False
-        await self._session.delete(existing)
-        await self._session.flush()
-        return True
-
-    async def sweep_expired(self) -> int:
-        """Take back every lock whose holder never came home."""
-        stale = list(
-            (
-                await self._session.scalars(
-                    select(RoomLock).where(RoomLock.expires_at <= datetime.now(UTC))
-                )
-            ).all()
-        )
-        for lock in stale:
-            await self._session.delete(lock)
-        if stale:
-            await self._session.flush()
-        return len(stale)
-
-    @staticmethod
-    def _ttl(kind: LockKind) -> timedelta:
-        return HEAVY_LOCK_TTL
-
-    async def _who(self, lock: RoomLock) -> str:
-        if lock.holder_task_id is None:
-            return "这个房间自己正在改它"
-        task = await TaskRepository(self._session).get(lock.holder_task_id)
-        return f"「{task.title}」正在改它" if task else "另一条活正在改它"
 
 
 def _next_branch(task: Task) -> str:

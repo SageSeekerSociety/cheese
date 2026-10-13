@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import topics_signals
-from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import (
     get_broker,
@@ -22,8 +22,8 @@ from app.api.deps import (
 from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.room_task_rows import tasks_under_blocks
-from app.api.routes.projects import rail_tasks
+from app.api.room_task_rows import rail_tasks, tasks_under_blocks
+from app.api.topics_deps import _actor_in_place, _parse_moment
 from app.api.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
@@ -61,18 +61,12 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
-from app.domain.room_task.models import LockKind
-from app.domain.room_task.place import Place
-from app.domain.room_task.services import (
-    RoomLockService,
-    TaskService,
-)
+from app.domain.room_task.services import TaskService
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, thread_opening
 from app.domain.topic.schemas import (
     CheckResultIn,
-    LockIn,
     MemberActivityOut,
     MemberWaitOut,
     TopicCreate,
@@ -90,18 +84,6 @@ from app.domain.usage.services import UsageService
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
-
-
-async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
-    """Who is calling here, and whether they may be — identity, then the
-    room's roster."""
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    return actor
 
 
 @router.post("")
@@ -287,8 +269,8 @@ async def list_topics(
 
     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
     this is the endpoint the sidebar lists from — and the tasks the sidebar
-    hangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never
-    reads the whole project's task list to find the few rows it draws.
+    hangs under it (`my_tasks`, see `room_task_rows.rail_tasks`), so the sidebar
+    never reads the whole project's task list to find the few rows it draws.
 
     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
@@ -1225,19 +1207,6 @@ async def mint_webhook_token(
     return ok({"token": token})
 
 
-def _parse_moment(raw: object) -> datetime | None:
-    """一个可选的 ISO-8601 时刻；空串和缺席是一回事。"""
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    try:
-        moment = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
-    except ValueError:
-        raise ValidationError(say("sinceUntilIso")) from None
-    # 不带时区的按 UTC 读：否则它和 now() 相减时 naive/aware 直接抛，而调用方
-    # 只写了个「2026-09-06」也得能用。
-    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
-
-
 def _weekly_window(body: dict) -> tuple[datetime, datetime]:
     """这份周报讲的是哪一段。略过就是「截止到现在的一周」。"""
     until = _parse_moment(body.get("until")) or datetime.now(UTC)
@@ -1395,65 +1364,6 @@ async def record_check_result(
     await TaskService(db).record_check(task, ok=body.ok, detail=body.detail)
     await db.commit()
     return ok({"recorded": True, "task_id": str(task.id)})
-
-
-@router.post("/{topic_id}/lock", dependencies=[CHEESE_ONLY_IN_ROOM])
-async def take_room_lock(
-    topic_id: uuid.UUID,
-    body: LockIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Take one of the room's two locks, or be told who has it.
-
-    Never waits: blocking would spend a whole turn's compute standing still,
-    and the caller has better answers available — write a different file, use
-    `Edit` instead of a whole-file write, come back next turn.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    holder = await _lock_holder(db, place, body)
-    acquired, reason = await RoomLockService(db).acquire(
-        room_id=place.room_id,
-        kind=LockKind(body.kind),
-        resource=body.resource or "",
-        holder_task_id=holder,
-    )
-    await db.commit()
-    return ok({"acquired": acquired, "reason": reason})
-
-
-async def _lock_holder(db, place, body: LockIn) -> uuid.UUID:
-    """The task a room lock is taken or given back for: the task asking, or
-    for a room the task it names."""
-    if place.task is not None:
-        if body.task_id not in (None, place.task.id):
-            raise ValidationError(say("taskNotFound"))
-        return place.task.id
-    if body.task_id is None:
-        raise ValidationError(say("taskNotFound"))
-    await TaskService(db).require_in_room(place.room_id, body.task_id)
-    return body.task_id
-
-
-@router.post("/{topic_id}/unlock", dependencies=[CHEESE_ONLY_IN_ROOM])
-async def release_room_lock(
-    topic_id: uuid.UUID,
-    body: LockIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    holder = await _lock_holder(db, place, body)
-    released = await RoomLockService(db).release(
-        room_id=place.room_id,
-        kind=LockKind(body.kind),
-        resource=body.resource or "",
-        holder_task_id=holder,
-    )
-    await db.commit()
-    return ok({"released": released})
 
 
 @router.post("/{topic_id}/clone-from")

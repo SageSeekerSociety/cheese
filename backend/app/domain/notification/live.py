@@ -20,9 +20,9 @@ import asyncio
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 
-from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import after_own_commit
 from app.domain.notification.models import NotificationType
 from app.domain.notification.push import PUSHABLE, away_text, push_link, push_text
 from app.domain.notification.repositories import NotificationRepository
@@ -60,9 +60,7 @@ def wake_after_commit(session: AsyncSession, user_ids: set[int]) -> None:
     """Wake these people's connections once `session` commits, not before."""
     if not user_ids:
         return
-    event.listen(
-        session.sync_session, "after_commit", lambda _s: wake(user_ids), once=True
-    )
+    after_own_commit(session, lambda: wake(user_ids))
 
 
 async def behind(db: AsyncSession, user_id: int, cursor: int) -> bool:

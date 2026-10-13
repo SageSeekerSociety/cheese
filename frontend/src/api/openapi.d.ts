@@ -9730,8 +9730,8 @@ export interface paths {
          *
          *     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
          *     this is the endpoint the sidebar lists from — and the tasks the sidebar
-         *     hangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never
-         *     reads the whole project's task list to find the few rows it draws.
+         *     hangs under it (`my_tasks`, see `room_task_rows.rail_tasks`), so the sidebar
+         *     never reads the whole project's task list to find the few rows it draws.
          *
          *     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
          *     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
@@ -10191,47 +10191,6 @@ export interface paths {
          *     got reported as "inconclusive" would rot into a second full CI.
          */
         post: operations["record_check_result_topics__topic_id__check_result_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/lock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Take Room Lock
-         * @description Take one of the room's two locks, or be told who has it.
-         *
-         *     Never waits: blocking would spend a whole turn's compute standing still,
-         *     and the caller has better answers available — write a different file, use
-         *     `Edit` instead of a whole-file write, come back next turn.
-         */
-        post: operations["take_room_lock_topics__topic_id__lock_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/unlock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Release Room Lock */
-        post: operations["release_room_lock_topics__topic_id__unlock_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -15318,21 +15277,6 @@ export interface components {
             id: string;
             /** Title */
             title: string;
-        };
-        /**
-         * LockIn
-         * @description Acquire or release the room's heavy-operation lane.
-         */
-        LockIn: {
-            /** Kind */
-            kind: string;
-            /** Task Id */
-            task_id?: string | null;
-            /**
-             * Resource
-             * @default
-             */
-            resource: string;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -39929,80 +39873,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CheckResultIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    take_room_lock_topics__topic_id__lock_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LockIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    release_room_lock_topics__topic_id__unlock_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LockIn"];
             };
         };
         responses: {

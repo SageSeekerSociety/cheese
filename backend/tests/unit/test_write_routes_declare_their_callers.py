@@ -34,8 +34,6 @@ _CEILING = 404
 _CHEESE_ONLY = {
     ("POST", "/topics/{topic_id}/webhook-token", "cheese_only_in_room"),
     ("POST", "/topics/{topic_id}/note", "cheese_only_in_room"),
-    ("POST", "/topics/{topic_id}/lock", "cheese_only_in_room"),
-    ("POST", "/topics/{topic_id}/unlock", "cheese_only_in_room"),
     ("POST", "/projects/{project_id}/memory", "cheese_only_in_project"),
 }
 

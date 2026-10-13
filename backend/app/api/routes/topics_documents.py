@@ -51,8 +51,8 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import _actor_in_place
 from app.api.routes.topics_file_sources import source_bytes
+from app.api.topics_deps import _actor_in_place
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say
