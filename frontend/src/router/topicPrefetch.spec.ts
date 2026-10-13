@@ -103,7 +103,12 @@ describe('opening a topic', () => {
     const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b0b'
     let land!: () => void
     vi.mocked(listBlocks).mockImplementationOnce(
-      () => new Promise((resolve) => (land = () => resolve({ data: [], has_more: false })))
+      () =>
+        new Promise(
+          (resolve) =>
+            (land = () =>
+              resolve({ data: [], total: 0, has_more: false, oldest_id: null, has_newer: false, newest_id: null }))
+        )
     )
     vi.mocked(preloadPdfViewer).mockClear()
     void router.push(`/projects/${PROJECT}/channels/${topic}`)
