@@ -27,6 +27,11 @@ change to CI should be measured on: a PR opened ten days ago and merged today
 was judged ten days ago, and reading it in today's window credits today's CI
 with an older first push.
 
+That cohort is the more expensive read: which PRs are in it is only known after
+each candidate's timeline and each of its heads' check-runs are fetched, so a
+cohort run costs several times a merge-window run. `--cache` makes the second
+run over the same window cheap; a first run over a wide window is minutes.
+
 Every count is defined in the 口径 section of the report. `gh` does the GitHub
 reads; the platform half (--room) reads OKCHEESE_TOKEN, which trace-sweep.py
 sets from its own login. Times without a zone are UTC.
@@ -247,13 +252,22 @@ def cohort_prs(repo: str, since: datetime, merged: list[dict]) -> list[dict]:
             "--state",
             "all",
             "--limit",
-            "200",
+            "1000",
             "--search",
             f"updated:>={since.strftime('%Y-%m-%dT%H:%M:%S')}Z",
             "--json",
             "number,title,mergedAt,headRefOid,mergeCommit,updatedAt,state",
         ]
     )
+    # The candidate list is every PR touched in the window — several times the
+    # merged set — so it gets a wider cap than the merge window's 200. A silent
+    # truncation would drop a judged PR out of the denominator and read as a
+    # better rate; say so instead.
+    if raw and len(raw) >= 1000:
+        sys.stderr.write(
+            "cohort_prs: the updated:>= search hit its 1000-row cap; the candidate "
+            "list may be truncated and the rate with it\n"
+        )
     have = {p["number"] for p in merged}
     out = []
     for pr in raw or []:
@@ -985,7 +999,6 @@ def summarize(
     failed_exits = [e for r in reports for e in r["exits"] if e["failed"]]
     out = {
         "cohort": cohort,
-        "merged_prs": n,
         "strict_first_pass": {"n": strict, "pct": _pct(strict, n)},
         "lenient_first_pass": {"n": lenient, "pct": _pct(lenient, n)},
         "pushes_per_pr": round(sum(r["pushes"] for r in reports) / n, 2) if n else None,
@@ -998,6 +1011,11 @@ def summarize(
     if cohort != "merged":
         landed = sum(1 for r in reports if r.get("merged_at"))
         out["cohort_prs"] = {"n": n, "landed": landed, "pending": n - landed}
+    else:
+        # Only under this cohort is the count a count of merged PRs; under the
+        # other one the key would carry the cohort's size and read as the wrong
+        # number, so it is absent rather than wrong.
+        out["merged_prs"] = n
     if window_cards is not None:
         # Cards accepted inside the window, like the merged PRs.
         acc = [
@@ -1484,6 +1502,11 @@ def self_test() -> int:
     check("cohort 下摘要报出落地与未落地", summarize(cohort[:2], cohort="first-push")["cohort_prs"],
           {"n": 2, "landed": 2, "pending": 0})
     check("merged 口径不报这一栏", "cohort_prs" in summarize(cohort[:2]), False)
+    check(
+        "cohort 口径不报 merged_prs（那是共组的大小，写成合并数就是错）",
+        "merged_prs" in summarize(cohort[:2], cohort="first-push"),
+        False,
+    )
 
     # green_of: the boundary is a full-tier green, not a draft one.
     draft_green = {"outcome": "green", "tier": "draft", "started_at": "2026-10-12T11:00:00"}
