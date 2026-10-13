@@ -13,7 +13,7 @@ describe('columnLabel', () => {
     expect(columnLabel('building')).toBe('进行中')
     expect(columnLabel('delivering')).toBe('检查中')
     expect(columnLabel('needs_you')).toBe('待处理')
-    expect(columnLabel('done')).toBe('已完成')
+    expect(columnLabel('done')).toBe('已关闭')
     expect(columnLabel('archived')).toBe('已归档')
   })
 })

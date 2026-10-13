@@ -545,6 +545,7 @@
       "noTextDiff": "No text changes",
       "openFile": "Open",
       "openOther": "Open another file",
+      "fileOfTotal": "File {current} of {total}",
       "backToAll": "Back to all changes",
       "summary": "{count} files · +{added} −{removed}",
       "searchFiles": "Search files",
@@ -1327,7 +1328,7 @@
       "building": "In progress",
       "delivering": "Checking",
       "needs_you": "Needs you",
-      "done": "Done",
+      "done": "Closed",
       "archived": "Archived"
     },
     "phrase": {
@@ -1348,7 +1349,7 @@
       "accepted": "Accepted",
       "closed": "Closed",
       "archived": "Archived",
-      "completed": "Completed"
+      "completed": "Closed"
     },
     "noAssignee": "No assignee",
     "made": "What was made",
@@ -1395,7 +1396,7 @@
   },
   "topicState": {
     "draft": "Draft",
-    "done": "Done",
+    "done": "Closed",
     "open": "In progress",
     "archived": "Archived"
   },
@@ -2265,7 +2266,7 @@
       "quietRunning": "Nothing moved in the last 7 days; {count} in all tasks",
       "latest": "{name}: {text}",
       "owner": "{name} owns it · {when}",
-      "recentDone": "Recently done",
+      "recentDone": "Recently closed",
       "allTasks": "All tasks"
     },
     "pins": {
@@ -2360,7 +2361,7 @@
       "created": "New",
       "started": "Started",
       "accepted": "Accepted",
-      "completed": "Completed",
+      "completed": "Closed",
       "closed": "Closed",
       "returned": "Returned",
       "stalled": "Stalled",
