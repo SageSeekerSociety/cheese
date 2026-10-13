@@ -99,6 +99,30 @@ it('connects the project feed only once the first frame is done', async () => {
   view.unmount()
 })
 
+it('三样角标也等首帧：门没开一次都不问，门开了各问一趟', async () => {
+  // 上面那条管的是推送连接。未读、私聊未读、通知档位是三样**各自一条 query**，`enabled`
+  // 上挂着同一道门（`ProjectShell.vue` 的 `badges`）——拆掉它不会有任何用例变红，而它一旦
+  // 拆掉，开页那一瞬间就多三笔和页面自己的数据抢网络的请求。这里把三样都钉上：门没开
+  // 一笔都不发，门开了各发一趟。三份缓存都不种，种了就成了「刚读过、还新鲜」。
+  closeFirstPaint()
+  seedProject('p', { topics: [] }, 'alice')
+  const view = render(ProjectShell, {
+    props: { projectId: 'p' },
+    global: { plugins: [createPinia()], stubs: { RouterView: true, VSnackbar: true } },
+  })
+  await new Promise((r) => setTimeout(r, 0))
+  expect(api.getTopicUnread).not.toHaveBeenCalled()
+  expect(api.getPrivateUnread).not.toHaveBeenCalled()
+  expect(api.getTopicNotifyLevels).not.toHaveBeenCalled()
+
+  await openFirstPaint()
+  await new Promise((r) => setTimeout(r, 0))
+  expect(api.getTopicUnread).toHaveBeenCalledTimes(1)
+  expect(api.getPrivateUnread).toHaveBeenCalledTimes(1)
+  expect(api.getTopicNotifyLevels).toHaveBeenCalledTimes(1)
+  view.unmount()
+})
+
 it('asks nothing while nothing in the project changes', async () => {
   const view = await mount()
   vi.useFakeTimers()

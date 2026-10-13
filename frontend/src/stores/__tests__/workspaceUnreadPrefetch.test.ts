@@ -29,7 +29,7 @@ vi.mock('@/api', () => ({
   upgradeBlock: vi.fn(),
 }))
 
-import { getTopicUnread, listBlocks } from '@/api'
+import { getPrivateUnread, getTopicUnread, listBlocks } from '@/api'
 import { setCachedWindow } from '@/query/blocks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { closeFirstPaint, openFirstPaint } from '@/test/firstPaint'
@@ -78,6 +78,22 @@ describe('未读轮询的后台预取', () => {
 
     expect(vi.mocked(getTopicUnread)).toHaveBeenCalled()
     expect(store.unreadMap.t1?.count).toBe(2)
+  })
+
+  it('私聊未读也等首帧：门开之前一笔不发，门开了只发一趟', async () => {
+    // 同一道门上挂着三样（`stores/workspace.ts` 的 topic unread / private unread / notify
+    // levels），上面那条只钉了第一样。这一样单独一条 query，拆掉它上面照样绿。
+    closeFirstPaint()
+    const store = useWorkspaceStore()
+    store.openProject('p1')
+    await flush()
+
+    expect(vi.mocked(getPrivateUnread)).not.toHaveBeenCalled()
+
+    await openFirstPaint()
+    await flush()
+
+    expect(vi.mocked(getPrivateUnread)).toHaveBeenCalledTimes(1)
   })
 
   it('刷新页面时不会为每个有未读的话题各发一个请求', async () => {

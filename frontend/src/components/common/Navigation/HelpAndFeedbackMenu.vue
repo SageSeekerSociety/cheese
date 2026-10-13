@@ -101,7 +101,10 @@ watch(
   ([yes, painted]) => {
     if (!yes) {
       asked = false
-      refresh()
+      // 未登录这一支同样等首帧：冷开落在登录页上时，挂载那一刻就是未登录，这里问一趟、
+      // 门开了 `painted` 又变一次、再问一趟 —— 同一个回答问了两遍，而第一遍还在首帧前。
+      // 登出要重问那一趟照旧（那时门早开了，`painted` 一直是 true）。
+      if (painted) refresh()
       return
     }
     if (!painted || asked) return
