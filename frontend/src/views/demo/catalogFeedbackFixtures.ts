@@ -21,6 +21,7 @@ export function comment(over: Partial<FeedbackComment> & Pick<FeedbackComment, '
     id,
     parent_id: null,
     author_handle: 'andylizf',
+    author_name: null,
     author_is_agent: false,
     author_avatar_id: null,
     body: `正文 ${id}`,

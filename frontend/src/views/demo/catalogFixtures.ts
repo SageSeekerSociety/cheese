@@ -490,10 +490,16 @@ function feedbackRow(over: Partial<FeedbackCard> = {}): FeedbackCard {
     visibility: 'public',
     security: false,
     author_handle: 'alice',
+    // 名册上那一格：名字和头像都从名册取，预览这份数据没接名册，所以留空 ——
+    // 界面拿不着名字时读的就是 handle，正好是这一页原来那个样子。
+    author_name: null,
     author_is_agent: false,
     author_avatar_id: null,
     submitted_by_handle: null,
     assignee_handle: null,
+    assignee_name: null,
+    assignee_avatar_id: null,
+    assignee_is_agent: null,
     tags: [],
     supports: 0,
     comments: 0,

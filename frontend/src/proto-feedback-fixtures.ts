@@ -113,10 +113,15 @@ function row(spec: {
     visibility: spec.visibility ?? 'public',
     security: spec.security ?? false,
     author_handle: spec.author,
+    // 真实现里这两格来自名册（`author_name` 是昵称、`author_avatar_id` 是挑过的头像）。
+    // 预览没有名册，昵称就不编：客户端拿不着名字时读的就是 handle 本身。
+    author_name: null,
     author_is_agent: spec.authorIsAgent ?? false,
     author_avatar_id: avatarOf(spec.author),
     submitted_by_handle: spec.submittedBy ?? null,
     assignee_handle: spec.assignee ?? null,
+    // 指派人那一格的名字同理：没人指派、或预览里的人没起昵称，都退回 handle。
+    assignee_name: null,
     ...assigneeFace(spec.assignee),
     tags: spec.tags ?? [],
     supports: spec.supports,
@@ -225,6 +230,8 @@ function comment(spec: {
     id: spec.id,
     parent_id: spec.parent ?? null,
     author_handle: spec.author,
+    // 同 `row` 的 `author_name`：预览没有名册，昵称不编，界面退回 handle。
+    author_name: null,
     author_is_agent: spec.authorIsAgent ?? false,
     author_avatar_id: avatarOf(spec.author),
     body: spec.body,
@@ -465,6 +472,7 @@ const HANDWRITTEN: FeedbackDetail[] = [
       {
         id: 'n-1',
         author_handle: 'andy',
+        author_name: null,
         author_avatar_id: avatarOf('andy'),
         body: '先别公开：里面可能带着别的项目的数据量信息。等定位完再看要不要合并回普通条目。',
         created_at: ago(1400),
@@ -594,6 +602,7 @@ const HANDWRITTEN: FeedbackDetail[] = [
       {
         id: 'n-2',
         author_handle: 'andy',
+        author_name: null,
         author_avatar_id: avatarOf('andy'),
         body: '改成 0700；已经在跑的机器要出一条修好的命令，不能只改安装脚本。',
         created_at: ago(300),
@@ -2516,6 +2525,7 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
       {
         id: `n-${item.notes.length + 10}`,
         author_handle: ME,
+        author_name: null,
         author_avatar_id: avatarOf(ME),
         body: String(payload.body ?? ''),
         created_at: ago(0),

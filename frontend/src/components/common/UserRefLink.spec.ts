@@ -31,7 +31,15 @@ const { room, members } = vi.hoisted(() => ({
     status: 'active',
     created_at: '2026-08-15T00:00:00Z',
   },
-  members: [] as { user_handle: string; role: string; name: string; agent: boolean }[],
+  members: [] as {
+    user_handle: string
+    role: string
+    name: string
+    agent: boolean
+    /** 这个人**自己挑的**头像素材 id，和真的 `ProjectMemberRow.avatar_id` 同一格：
+     *  没挑过是 null（画彩色首字母），不是「默认头像」。 */
+    avatar_id?: number | null
+  }[],
 }))
 
 vi.mock('../../lib/libraryApi', async () => ({
@@ -265,5 +273,61 @@ describe('UserRefLink：句子里的一个人', () => {
     members.splice(0, members.length, { user_handle: 'alice', role: 'member', name: '爱丽丝', agent: false })
     const { container } = mountRef(router, { handle: 'alice' })
     expect(chipOf(container).textContent).toContain('@爱丽丝')
+  })
+})
+
+describe('UserRefLink：名册上的身份（头像、是不是队友）', () => {
+  // 这三格（名字、挑过的头像、是不是队友）名册是唯一同时知道的地方，而 chip 只认 props。
+  // 中间那条路（useUserRef → UserRef → IdentityView）任何一跳断了，画出来的都还是
+  // 「@handle + 彩色首字母」——看着像那么回事，其实已经不认识这个人了。所以这里拿真名册
+  // 各钉一路：头像 id、名册说是队友、名册说是人。
+  it('挑过头像的人：画的是名册上那张图，不是彩色首字母', async () => {
+    const router = await makeRouter('/projects/p1/settings')
+    members.splice(0, members.length, {
+      user_handle: 'alice',
+      role: 'member',
+      name: '爱丽丝',
+      agent: false,
+      avatar_id: 7,
+    })
+    const { container } = mountRef(router, { handle: 'alice' })
+    const chip = chipOf(container)
+    expect(chip.textContent).toContain('@爱丽丝')
+    expect(chip.querySelector('img')?.getAttribute('src')).toContain('/avatars/7')
+    expect(chip.querySelector('.user-avatar-char')).toBeNull()
+  })
+
+  it('名册说是队友：不是 cheese 命名的 handle 也画队友那张脸', async () => {
+    const router = await makeRouter('/projects/p1/settings')
+    members.splice(0, members.length, {
+      user_handle: 'kimi-3fa2',
+      role: 'member',
+      name: 'Kimi',
+      agent: true,
+      avatar_id: null,
+    })
+    const { container } = mountRef(router, { handle: 'kimi-3fa2' })
+    const chip = chipOf(container)
+    expect(chip.textContent).toContain('@Kimi')
+    // 按 handle 命名规则认不出它是队友（不是 cheese / cheese-*）：说它是队友的只有名册。
+    expect(chip.querySelector('svg.cheese-avatar'), '名册上写着是队友，却按 handle 画成了人').not.toBeNull()
+    expect(chip.querySelector('.user-avatar-char')).toBeNull()
+  })
+
+  it('名册说是人：handle 长得像队友也照名册画人', async () => {
+    const router = await makeRouter('/projects/p1/settings')
+    members.splice(0, members.length, {
+      user_handle: 'cheese-lookalike',
+      role: 'member',
+      name: '芝士学徒',
+      agent: false,
+      avatar_id: null,
+    })
+    const { container } = mountRef(router, { handle: 'cheese-lookalike' })
+    const chip = chipOf(container)
+    expect(chip.textContent).toContain('@芝士学徒')
+    // 名册那一格说了不是队友，按 handle 兜底猜出来的「像队友」不该盖过它。
+    expect(chip.querySelector('svg.cheese-avatar'), '名册上写着是人，却按 handle 画成了队友').toBeNull()
+    expect(chip.querySelector('.user-avatar-char')).not.toBeNull()
   })
 })
