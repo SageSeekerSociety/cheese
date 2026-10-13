@@ -1069,6 +1069,17 @@
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
     }
   },
+  "modelConnectionsView": {
+    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device.",
+    "s1": {
+      "name": "No connections",
+      "note": "Logged in on no device: the card says there are no model connections, and the custom model service button stays at its top right."
+    },
+    "s2": {
+      "name": "Removing on an offline device",
+      "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+    }
+  },
   "thisDeviceView": {
     "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
     "s1": {
@@ -1097,7 +1108,7 @@
     }
   },
   "channelBrowseView": {
-    "about": "The project's 'Browse channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
+    "about": "The project's 'All channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
     "s1": {
       "name": "List channels",
       "note": "Default cell: a search box, a row of filters (all / joined / archived, each with a count), one row per channel below — name, description, headcount, with 'Join' or 'Leave' on the right."
@@ -1139,7 +1150,7 @@
     },
     "s5": {
       "name": "Show closed",
-      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Completed' group, and the counts come from the server's set."
+      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Closed' group, and the counts come from the server's set."
     },
     "s6": {
       "name": "Folds a few stalled",

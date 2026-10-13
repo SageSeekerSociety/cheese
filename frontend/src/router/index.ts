@@ -22,6 +22,7 @@ import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
 import { prefetchNewestBlocks } from '@/query/blocks'
 import { keys } from '@/query/keys'
+import { prefetchProjectTopics } from '@/query/project'
 import { prefetchPreview } from '@/query/room'
 import { expectRoom, readEarly } from '@/query/snapshot'
 import { recoverNavigations } from '@/services/staleBuild'
@@ -188,6 +189,27 @@ router.afterEach((to, from, failure) => {
   if (!failure) rememberPageBeforeSettings(to, from)
 })
 
+// 工作台外壳的频道清单和页面代码同时去取。
+//
+// 它只看地址上的项目 id，可发得太晚了：那个请求由 `ProjectShell` 挂载时发起，于是在
+// 「项目这一跳的 chunk 下完」之后才轮到它。冷开一个项目页实测 1040 ms 才出发（正是
+// 框架挂上那一刻），清单自己还要 200 ms，侧栏和页面上的房间行又在等它。这里趁 chunk
+// 还在下就让它走（`query/project` 的 `prefetchProjectTopics`）。
+//
+// 只补一次：已经站在同一个项目里了，框架还挂着、清单自己会重读，不重复发。短名地址
+// 在上面 `canonicalAddress` 那条守卫里已经换成了 UUID；换不出来的（没有这个项目、
+// 看不到）这里不发。
+router.beforeEach((to, from) => {
+  if (!myId() || !to.matched.some((record) => record.meta?.projectFrame === true)) return
+  const projectId = routeIds(to.params).projectId
+  if (!projectId || !isUuid(projectId)) return
+  const fromProjectId = from.matched.some((record) => record.meta?.projectFrame === true)
+    ? routeIds(from.params).projectId
+    : undefined
+  if (fromProjectId === projectId) return
+  prefetchProjectTopics(projectId)
+})
+
 // 房间的消息和房间页的代码同时去取。不在这里起头的话，消息要等房间页那一串
 // chunk 下完、ChatPanel 挂上之后才开始请求，两段等待首尾相接，冷打开一个房间时
 // 那条最大的消息晚半秒以上才出现。ChatPanel 挂上来时跟着这一条走，不另发一次；
@@ -198,15 +220,19 @@ router.beforeEach((to, from) => {
   const ids = routeIds(to.params)
   const conversation = to.name === 'workspace-task' ? ids.taskId : ids.topicId
   if (!conversation || !isUuid(conversation)) return
-  void prefetchNewestBlocks(conversation).catch(() => {})
+  // 房间里会点开文档预览：趁浏览器空闲把 pdf.js 先取下来（只取一次）。**排在消息这一条
+  // 后面**：pdf.js 主体加 worker 有半兆，而这一跳里浏览器正是在等网络，`requestIdleCallback`
+  // 所谓「空闲」指 CPU 不忙，于是它当场就发出去，和这一屏真正要等的那次消息请求同时在飞
+  // （实测两条重叠，消息那次被拖长到 400 ms 以上）。等消息落地再取：那时第一眼已经看到了。
+  void prefetchNewestBlocks(conversation)
+    .catch(() => {})
+    .finally(() => preloadPdfViewer())
   // 房间的名册、任务、置顶这些随订阅一起来（query/snapshot）：页面上读它们的先等快照。
   if (ids.topicId && isUuid(ids.topicId)) expectRoom(conversation, ids.topicId)
   // 冷打开时订阅连得晚，快照赶不上消息：提议卡和消息一起先去问，不然它比消息晚一个来回。
   if (from === START_LOCATION) {
     readEarly(keys.roomFeedbackProposals(conversation), () => useFeedbackStore().loadProposals(conversation))
   }
-  // 房间里会点开文档预览：趁浏览器空闲把 pdf.js 先取下来（只取一次）。
-  preloadPdfViewer()
 })
 
 // 「这件任务当前预览是哪一份」也和页面代码同时去问。它和消息一样不依赖任务页的代码：

@@ -45,7 +45,7 @@ from app.api.auth import ActorResolverDep
 from app.api.preview_host import preview_origin
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import BlockRepository, _actor_in_place
+from app.api.topics_deps import BlockRepository, _actor_in_place
 from app.core.config import settings
 from app.core.errors import NotFoundError
 from app.domain.agent.preview_hub import preview_hub

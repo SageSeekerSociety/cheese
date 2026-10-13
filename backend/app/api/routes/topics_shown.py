@@ -50,6 +50,7 @@ same prefix and tags, is all it takes.
 import base64
 import binascii
 import uuid
+from datetime import datetime
 from pathlib import PurePosixPath
 
 from fastapi import APIRouter
@@ -58,13 +59,13 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.routes.topics import BlockRepository, _actor_in_place
+from app.api.topics_deps import BlockRepository, _actor_in_place
 from app.core.config import settings
 from app.core.errors import UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
-from app.domain.block.shown import add_shown_block
+from app.domain.block.shown import add_shown_block, repeat_of_latest_shown
 from app.domain.project import room_files
 from app.domain.project.room_files import (
     ARTIFACT_MIME,
@@ -224,6 +225,9 @@ async def show_in_room(
             )
         )
     assets: list[tuple[str, bytes]] = []
+    #: When this call last changed what the card shows: the page or any file it
+    #: loads. None when nothing was sent, so there is nothing to compare.
+    saved_at: datetime | None = None
     # `app` and `mcp-app` carry no bytes of their own (a note and a pointer).
     carries_bytes = as_ not in {"app", "mcp-app"}
     if carries_bytes and ("content" in body or "content_b64" in body):
@@ -256,7 +260,7 @@ async def show_in_room(
         # of somebody's newer save into a 409.
         base = body.get("base_version")
         note = body.get("note")
-        await room_files.save_room_file(
+        revision = await room_files.save_room_file(
             db,
             project_id=place.project_id,
             room_id=place.room_id,
@@ -268,11 +272,12 @@ async def show_in_room(
             note=note if isinstance(note, str) else None,
             base_version=base if isinstance(base, str) and base else None,
         )
+        saved_at = revision.created_at
         for asset_path, data in assets:
             # After the page itself, so a refused page (409) writes nothing. Written
             # as the machine has them, with no `base_version`: these are the
             # page's own files as it was made, and nobody pulled them to edit.
-            await room_files.save_room_file(
+            asset = await room_files.save_room_file(
                 db,
                 project_id=place.project_id,
                 room_id=place.room_id,
@@ -282,6 +287,19 @@ async def show_in_room(
                 author_kind="agent" if actor.via == "cheese" else "human",
                 source="ai" if actor.via == "cheese" else "upload",
             )
+            saved_at = max(saved_at, asset.created_at)
+    if saved_at is not None:
+        # The same unchanged file shown again moments later: the card is already
+        # in the conversation, and a second identical one is only noise.
+        repeat = await repeat_of_latest_shown(
+            db,
+            conversation_id=place.conversation_id,
+            path=path,
+            mime=mime,
+            file_saved_at=saved_at,
+        )
+        if repeat is not None:
+            return ok({**repeat.model_dump(mode="json"), "already_shown": True})
     block = await add_shown_block(
         db,
         project_id=place.project_id,

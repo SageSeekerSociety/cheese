@@ -759,6 +759,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/admin/integrations/external-problem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read External Problem Account
+         * @description 配没配、配的是谁、谁配的。**没有密码。**
+         *
+         *     ``configured: false`` 是那个页面要问的第一件事：没人配过时同步一律失败
+         *     （``service.py`` 里 ``no_account``），而那是「还没到那一步」，不是错误。
+         */
+        get: operations["read_external_problem_account_admin_integrations_external_problem_get"];
+        /**
+         * Save External Problem Account
+         * @description 存下账号。密码留空 = 只改账号名，密码用原来那个。
+         *
+         *     换账号名**不动**已经存下的密码：页面看不到它，管理员也无从重打，要求重打就等于
+         *     逼他把口令找回来。要换密码就连密码一起填。
+         */
+        put: operations["save_external_problem_account_admin_integrations_external_problem_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/admins": {
         parameters: {
             query?: never;
@@ -2539,6 +2569,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connector/my/model-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My Model Connections
+         * @description The caller's model connections across the machines they enrolled
+         *     (#2991): what each logs in with, where it is kept, its last check. Never a
+         *     key.
+         */
+        get: operations["my_model_connections_connector_my_model_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connector/my/devices/{device_id}/claude-code": {
         parameters: {
             query?: never;
@@ -2553,9 +2605,38 @@ export interface paths {
          * @description Ask one of the caller's machines again whether their own Claude Code is
          *     logged in there (#2991). They log in on the machine itself, which tells the
          *     server nothing; the page showing that machine asks, rather than leaving the
-         *     answer from its last connection standing.
+         *     answer from its last connection standing. A logout its owner asked for
+         *     while it was away is carried out first.
          */
         post: operations["check_my_claude_code_connector_my_devices__device_id__claude_code_post"];
+        /**
+         * Revoke My Claude Code
+         * @description Log the caller's own Claude Code out on one of their machines, from any
+         *     browser (#2991). Out of use at once; the machine logs out now when online,
+         *     else as it next connects.
+         */
+        delete: operations["revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/claude-code/model-service": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Use My Model Service
+         * @description Point the caller's own Claude Code on one of their machines at another
+         *     model service, from any browser (#2991). The key is handed to the machine,
+         *     which keeps it; it is not stored here. The machine has to be online.
+         */
+        put: operations["use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -7044,8 +7125,11 @@ export interface paths {
         get: operations["get_own_agents_projects__project_id__own_agents_get"];
         /**
          * Set Own Agents
-         * @description Let members bring their own Claude Code into the project, or not. Turned
-         *     off, no member's own agent is called in it; turned on again, they are.
+         * @description Let members bring their own Claude Code into the project, or not, and
+         *     which kinds of model connection it may use. Turned off, members' own
+         *     agents leave the project: off its roster and out of its channels. Turned on
+         *     again, they come back as their owners next look, and sit in a channel again
+         *     once someone they answer to names them there.
          */
         put: operations["set_own_agents_projects__project_id__own_agents_put"];
         post?: never;
@@ -9598,6 +9682,67 @@ export interface paths {
         patch: operations["patch_task_submission_review_tasks__taskId__participants__participantId__submissions__submissionId__review_patch"];
         trace?: never;
     };
+    "/tasks/{taskId}/external-problem": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get External Problem Sync
+         * @description 题号、上次同不成功、以及每个领取者的结论。
+         *
+         *     没挂题号时也回 200，回的是一块空的（``problemNo: ""``）—— 「这道题还没接外站」
+         *     是一个答案，和名单那条路上的「这道题还没有人报名」一样，不是错误。
+         */
+        get: operations["get_external_problem_tasks__taskId__external_problem_get"];
+        /**
+         * Set External Problem Number
+         * @description 挂上、或者换掉这道题在 YOJ 上的题号。返回换完之后的那一块。
+         *
+         *     换成一个**另一个**题号会把上一次的结果删掉（``set_problem``）：那些数说的是另一
+         *     道题，留着比空着更糟。同一个题号再挂一次是幂等的，结果原样留着。
+         */
+        put: operations["set_external_problem_tasks__taskId__external_problem_put"];
+        post?: never;
+        /**
+         * Clear External Problem
+         * @description 撤掉挂载：题号和结果一起没。
+         *
+         *     只撤题号、把结果留成孤儿是更小的动作，但那种状态没人能修回来（没有题号就没法再
+         *     同步一次），留着只是让一段读不懂的旧数据活着。
+         */
+        delete: operations["clear_external_problem_tasks__taskId__external_problem_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{taskId}/external-problem/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sync External Problem Now
+         * @description 现在去外站看一眼，返回看完之后的那一块。
+         *
+         *     同步失败也是 200，回的那一块上 ``status: "failed"`` 带着原因 —— 失败的是「外站
+         *     这一趟没去成」，不是「你这个请求不对」。上一次成功的结论**留着**（见
+         *     ``service.py`` 的取舍），所以界面要照着 ``status`` 说清这是几点的数。
+         */
+        post: operations["sync_external_problem_tasks__taskId__external_problem_sync_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/teams": {
         parameters: {
             query?: never;
@@ -10008,8 +10153,8 @@ export interface paths {
          *
          *     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
          *     this is the endpoint the sidebar lists from — and the tasks the sidebar
-         *     hangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never
-         *     reads the whole project's tasks for the few that are the caller's.
+         *     hangs under it (`my_tasks`, see `room_task_rows.rail_tasks`), so the sidebar
+         *     never reads the whole project's task list to find the few rows it draws.
          *
          *     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
          *     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
@@ -10085,7 +10230,15 @@ export interface paths {
         get: operations["get_topic_topics__topic_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Topic
+         * @description 删除频道 (清单第 2 条): 频道连同消息、任务和文档一起走，不能恢复。
+         *
+         *     It goes the way archiving goes — session stopped, cards settled, machines
+         *     freed — and then does not come back: no list shows it, and 取消归档 is
+         *     refused for it.
+         */
+        delete: operations["delete_topic_topics__topic_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10388,63 +10541,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/topics/{topic_id}/archive": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Archive Topic
-         * @description 手动归档 (归档去向): explicit archive, independent of 采纳.
-         */
-        post: operations["archive_topic_topics__topic_id__archive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/cleanup": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cleanup Status */
-        get: operations["cleanup_status_topics__topic_id__cleanup_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/unarchive": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Unarchive Topic
-         * @description 取消归档: bring an archived topic back to active.
-         */
-        post: operations["unarchive_topic_topics__topic_id__unarchive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/topics/{topic_id}/check-result": {
         parameters: {
             query?: never;
@@ -10563,6 +10659,12 @@ export interface paths {
         /**
          * Attachment Raw
          * @description Authorized raster images and video bytes, never executable HTML/SVG.
+         *
+         *     A room's own file is served from disk with byte ranges, so a player seeking
+         *     through a long recording reads only the part it shows. A video read with the
+         *     ``Authorization`` header leaves a cookie for this path behind
+         *     (``remember_for_media``): the ``<video>`` element's own range requests
+         *     cannot carry the header, and the cookie is how they prove the same viewer.
          */
         get: operations["attachment_raw_topics__topic_id__attachments_raw_get"];
         put?: never;
@@ -10909,6 +11011,63 @@ export interface paths {
          *     conflict here rather than an overwrite.
          */
         post: operations["decide_document_revisions_topics__topic_id__documents_revisions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive Topic
+         * @description 手动归档 (归档去向): explicit archive, independent of 采纳.
+         */
+        post: operations["archive_topic_topics__topic_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cleanup Status */
+        get: operations["cleanup_status_topics__topic_id__cleanup_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/unarchive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Unarchive Topic
+         * @description 取消归档: bring an archived topic back to active.
+         */
+        post: operations["unarchive_topic_topics__topic_id__unarchive_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11546,7 +11705,16 @@ export interface paths {
          */
         get: operations["list_threads_topics__topic_id__threads_get"];
         put?: never;
-        post?: never;
+        /**
+         * Create Thread
+         * @description 新建支线 (清单第 4 条): a 支线 opened from a channel by a person, which
+         *     today is not possible — a 支线 needs a message to hang under, and the only
+         *     way to one was replying to a message that was already said.
+         *
+         *     A person opens it, as with the other road into a 支线: 芝士 does not open
+         *     one by itself, and cats may not speak in a channel they have not joined.
+         */
+        post: operations["create_thread_topics__topic_id__threads_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11609,7 +11777,11 @@ export interface paths {
          * @description 给这个地方起/改标题: a person renaming a channel or a task, or a task's
          *     own session naming it (`cheese_title`, only where the platform cannot).
          *
-         *     A channel is renamed by whoever manages it (`TopicMemberService.manages`).
+         *     A channel is renamed by anyone who can be in it: which channel is called what
+         *     is the room's own business, not its creator's alone. Being able to reach the
+         *     room at all is settled above (`authorize_topic`), which is the same answer a
+         *     reader of the channel gets — and an outsider to a private channel is still
+         *     told it does not exist.
          *
          *     A task's id names the task: a person taking part in it renames it, and that
          *     title is final; its own session's title the platform may still change
@@ -13896,6 +14068,28 @@ export interface components {
              */
             detail: string;
         };
+        /**
+         * ClaudeCodeLoginOut
+         * @description What a machine last said about its owner's Claude Code login.
+         */
+        ClaudeCodeLoginOut: {
+            /** Installed */
+            installed: boolean;
+            /** Logged In */
+            logged_in: boolean;
+            /** Auth Method */
+            auth_method: string | null;
+            /** Subscription Type */
+            subscription_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** Checked At */
+            checked_at: string;
+            /** Revoking */
+            revoking: boolean;
+        };
         /** CommentCreate */
         CommentCreate: {
             /** Body */
@@ -14156,6 +14350,11 @@ export interface components {
             /** Project Id */
             project_id?: string | null;
         };
+        /**
+         * ConnectionKind
+         * @enum {string}
+         */
+        ConnectionKind: "subscription" | "api_key" | "model_service";
         /** ControlIn */
         ControlIn: {
             /** Session Id */
@@ -14651,6 +14850,75 @@ export interface components {
              * @default false
              */
             email: boolean;
+        };
+        /**
+         * ExternalProblemAccountIn
+         * @description 账号名（对 YOJ 来说是学号或教师工号）。
+         */
+        ExternalProblemAccountIn: {
+            /** Username */
+            username: string;
+            /**
+             * Password
+             * @default
+             */
+            password: string;
+        };
+        /**
+         * ExternalProblemAccountOut
+         * @description 管理员看的那一行凭据。**没有密码** —— 存进去就再也读不出来。
+         */
+        ExternalProblemAccountOut: {
+            /** Configured */
+            configured: boolean;
+            /** Source */
+            source: string;
+            /** Username */
+            username: string;
+            /** Updated By */
+            updated_by: string;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /** ExternalProblemAccountOutEnvelope */
+        ExternalProblemAccountOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ExternalProblemAccountOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * ExternalProblemIn
+         * @description 挂题号的请求体。**形状由服务判**（``service.PROBLEM_NO`` 只收数字），这里只封
+         *     一个长度上界，免得把一兆的字符串送进去。
+         */
+        ExternalProblemIn: {
+            /** Problemno */
+            problemNo: string;
+        };
+        /**
+         * ExternalProblemResultOut
+         * @description 一个领取者在这道题上的结论。``participantId`` 是 ``task_membership.id`` ——
+         *     名单接口发出去的 ``participants[].id`` 就是它，前端按它把这一列贴回名单上。
+         */
+        ExternalProblemResultOut: {
+            /** Participantid */
+            participantId: number;
+            /** Studentno */
+            studentNo: string;
+            /** Solved */
+            solved: boolean;
+            /** Acceptedat */
+            acceptedAt: string | null;
         };
         /** FeedbackAdminCounts */
         FeedbackAdminCounts: {
@@ -16027,6 +16295,38 @@ export interface components {
             /** Mid Conversation System */
             mid_conversation_system?: boolean | null;
         };
+        /** ModelConnectionOut */
+        ModelConnectionOut: {
+            /** Installed */
+            installed: boolean;
+            /** Logged In */
+            logged_in: boolean;
+            /** Auth Method */
+            auth_method: string | null;
+            /** Subscription Type */
+            subscription_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** Checked At */
+            checked_at: string;
+            /** Revoking */
+            revoking: boolean;
+            /** Device Id */
+            device_id: string;
+            /** Device Name */
+            device_name: string;
+            /** Online */
+            online: boolean;
+            /** Last Used At */
+            last_used_at: string | null;
+        };
+        /** ModelConnectionsOut */
+        ModelConnectionsOut: {
+            /** Connections */
+            connections: components["schemas"]["ModelConnectionOut"][];
+        };
         /**
          * ModelCreate
          * @description `POST /admin/gateway/models` 的体 —— 新建一条运行时模型。
@@ -16077,6 +16377,15 @@ export interface components {
             cache_read?: number | null;
             /** Cache Creation */
             cache_creation?: number | null;
+        };
+        /** ModelServiceRequest */
+        ModelServiceRequest: {
+            /** Base Url */
+            base_url: string;
+            /** Token */
+            token: string;
+            /** Model */
+            model: string;
         };
         /**
          * ModelUpdate
@@ -16310,6 +16619,14 @@ export interface components {
         OwnAgentCallersUpdate: {
             callers: components["schemas"]["OwnCallers"];
         };
+        /** OwnAgentConnectionOut */
+        OwnAgentConnectionOut: {
+            kind: components["schemas"]["ConnectionKind"];
+            /** Plan */
+            plan: string | null;
+            /** Model */
+            model: string | null;
+        };
         /** OwnAgentMachineOut */
         OwnAgentMachineOut: {
             /** Name */
@@ -16328,13 +16645,17 @@ export interface components {
             owner_handle: string | null;
             /** Owner Name */
             owner_name: string | null;
+            /** Connections */
+            connections: components["schemas"]["OwnAgentConnectionOut"][];
             /** Machines */
-            machines: components["schemas"]["OwnAgentMachineOut"][];
+            machines: components["schemas"]["OwnAgentMachineOut"][] | null;
         };
         /** OwnAgentsOut */
         OwnAgentsOut: {
             /** Allowed */
             allowed: boolean;
+            /** Kinds */
+            kinds: components["schemas"]["ConnectionKind"][];
             /** Can Manage */
             can_manage: boolean;
             /** Agents */
@@ -16356,10 +16677,15 @@ export interface components {
             /** Warnings */
             warnings?: string[] | null;
         };
-        /** OwnAgentsUpdate */
+        /**
+         * OwnAgentsUpdate
+         * @description What a manager changes; a field left out stays as it is.
+         */
         OwnAgentsUpdate: {
             /** Allowed */
-            allowed: boolean;
+            allowed?: boolean | null;
+            /** Kinds */
+            kinds?: components["schemas"]["ConnectionKind"][] | null;
         };
         /**
          * OwnCallers
@@ -17960,6 +18286,44 @@ export interface components {
             title?: string | null;
         };
         /**
+         * TaskExternalProblemOut
+         * @description 一道题的外站那一块：题号、上次同步、以及每个领取者的结论。
+         *
+         *     ``status`` 是 ``""``（还没同步过）/ ``ok`` / ``failed``，取值在
+         *     ``service.STATUS_OK`` 与 ``STATUS_FAILED``。``error`` 是排查用的原文（``no_account``
+         *     这种），**不是**给人看的句子 —— 界面按 ``status`` 自己说。
+         */
+        TaskExternalProblemOut: {
+            /** Problemno */
+            problemNo: string;
+            /** Source */
+            source: string;
+            /** Lastsyncedat */
+            lastSyncedAt: string | null;
+            /** Status */
+            status: string;
+            /** Error */
+            error: string;
+            /** Results */
+            results: components["schemas"]["ExternalProblemResultOut"][];
+        };
+        /** TaskExternalProblemOutEnvelope */
+        TaskExternalProblemOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["TaskExternalProblemOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
          * TaskParticipantRequest
          * @description Body for joining a task (user or team). All fields optional.
          */
@@ -18087,6 +18451,11 @@ export interface components {
             /** Suffix */
             suffix: string;
         };
+        /** ThreadCreateIn */
+        ThreadCreateIn: {
+            /** Title */
+            title: string;
+        };
         /** ThreadMutation */
         ThreadMutation: {
             /**
@@ -18096,6 +18465,45 @@ export interface components {
             operation_id: string;
             /** Expected Revision */
             expected_revision: number;
+        };
+        /**
+         * ThreadOut
+         * @description A 支线 as the routes hand it back: enough for a list row, nothing more.
+         *
+         *     Ids are strings on the wire (they are ``uuid`` columns underneath), and
+         *     ``last_reply_at`` is null until someone replies.
+         */
+        ThreadOut: {
+            /** Id */
+            id: string;
+            /** Room Id */
+            room_id: string;
+            /** Root Block Id */
+            root_block_id: string;
+            /** Reply Count */
+            reply_count: number;
+            /** Last Reply At */
+            last_reply_at: string | null;
+            /** Created By */
+            created_by: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** ThreadOutEnvelope */
+        ThreadOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ThreadOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * TimelineOut
@@ -19913,6 +20321,59 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_external_problem_account_admin_integrations_external_problem_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalProblemAccountOutEnvelope"];
+                };
+            };
+        };
+    };
+    save_external_problem_account_admin_integrations_external_problem_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExternalProblemAccountIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExternalProblemAccountOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -23473,6 +23934,26 @@ export interface operations {
             };
         };
     };
+    my_model_connections_connector_my_model_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelConnectionsOut"];
+                };
+            };
+        };
+    };
     check_my_claude_code_connector_my_devices__device_id__claude_code_post: {
         parameters: {
             query?: never;
@@ -23493,6 +23974,72 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     } | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelServiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
                 };
             };
             /** @description Validation Error */
@@ -32640,9 +33187,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -32677,9 +33222,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -39305,6 +39848,146 @@ export interface operations {
             };
         };
     };
+    get_external_problem_tasks__taskId__external_problem_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-User-Id"?: number | null;
+                Authorization?: string | null;
+            };
+            path: {
+                taskId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskExternalProblemOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_external_problem_tasks__taskId__external_problem_put: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-User-Id"?: number | null;
+                Authorization?: string | null;
+            };
+            path: {
+                taskId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExternalProblemIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskExternalProblemOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_external_problem_tasks__taskId__external_problem_delete: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-User-Id"?: number | null;
+                Authorization?: string | null;
+            };
+            path: {
+                taskId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sync_external_problem_tasks__taskId__external_problem_sync_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-User-Id"?: number | null;
+                Authorization?: string | null;
+            };
+            path: {
+                taskId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskExternalProblemOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_teams_teams_get: {
         parameters: {
             query?: {
@@ -40535,6 +41218,37 @@ export interface operations {
             };
         };
     };
+    delete_topic_topics__topic_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_topic_blocks_topics__topic_id__blocks_get: {
         parameters: {
             query?: {
@@ -40910,105 +41624,6 @@ export interface operations {
                 };
             };
         };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    archive_topic_topics__topic_id__archive_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    cleanup_status_topics__topic_id__cleanup_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    unarchive_topic_topics__topic_id__unarchive_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -41740,6 +42355,105 @@ export interface operations {
                 };
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_topic_topics__topic_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_status_topics__topic_id__cleanup_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unarchive_topic_topics__topic_id__unarchive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -42745,6 +43459,41 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_thread_topics__topic_id__threads_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThreadCreateIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThreadOutEnvelope"];
                 };
             };
             /** @description Validation Error */

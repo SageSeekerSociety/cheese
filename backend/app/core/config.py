@@ -1006,6 +1006,10 @@ class Settings(BaseSettings):
     #: 报警，但同一个问题一小时只报一条。
     delivery_overdue_check_interval_s: int = 600
     task_deadline_sweep_interval_s: int = 900
+    #: 挂过外站题号的题多久回外站看一遍（`domain/external_problem/periodic.py`）。
+    #: 一天一次是有意的：那边是个校内的老站点，抓的是老师本人的账号，抓得太勤会被
+    #: 封号 —— 老师随时可以自己点「同步」，这一趟只负责「他没点，但学生昨晚做了」。
+    external_problem_sync_interval_s: int = 86400
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having

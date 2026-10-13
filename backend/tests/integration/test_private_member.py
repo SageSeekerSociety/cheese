@@ -99,6 +99,7 @@ def test_member_summary(client, bearer):
             "kind": "decision_request",
             "title": "等你定",
             "target_handle": "user-1",
+            "payload": {"options": ["A", "B"]},
         },
     )
 

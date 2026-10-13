@@ -1,4 +1,10 @@
-"""review 领域的**窄读**出口：一条活此刻骑的那张卡，折成路由画得出来的几个值。
+"""review 领域的**窄读**出口：别的领域想知道卡上的一两件事，问这里。
+
+两问：
+
+- 一条活此刻骑的那张卡，折成路由画得出来的几个值（``RailCard``）。
+- 这条活是不是停在「等 CI」上（``waiting_on_checks``）——环境释放判据读它，
+  判据本身在 :func:`merge_state.checks_running` 里。
 
 侧栏每画一条活，都要知道它骑的那张验收卡停在哪 —— 而这只需要卡上很少的几位：
 状态、它骑的 PR、卡停什么上的码、合并态镜像里的 state/who，以及是谁采纳过或布防
@@ -19,11 +25,13 @@ session。这里交出去的 `RailCard` 是一份冻结的值：没有 session�
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.review.models import AcceptCard
+from app.core.config import settings
+from app.domain.review.merge_state import checks_running
+from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.review.repositories import AcceptCardRepository
 
@@ -91,6 +99,41 @@ async def latest_cards_by_task(
         task_id: _rail_card(card, handles.get(task_id, []))
         for task_id, card in cards.items()
     }
+
+
+#: 轮询隔多久看一次每张卡的 PR（``accept_pr_poll_interval_s``）。镜像的新鲜度
+#: 按它的几倍算：一个间隔的容差经不起一次网络重试，三个是「轮询还在看」与
+#: 「轮询其实早停了」之间留的余量。
+CHECK_WATCH_TICKS = 3
+
+
+async def waiting_on_checks(db: AsyncSession, task_id: uuid.UUID) -> bool:
+    """这条活此刻是不是停在「等 CI」上 —— 平台自己的轮询最近一次看它的 PR 时，
+    结论是检查还在跑。
+
+    读卡上的镜像（``merge_state``），不另外去问一次 GitHub：镜像就是轮询每次
+    写下的那一份，判据在 :func:`merge_state.checks_running` 里。一条活被退回后
+    可以再递一张，算数的是最新那张（``latest_by_task``）；作废、退回、已合并的卡
+    都不算 —— 那些都不是「还在等」。
+
+    Callers own this session and its transaction; this read does not explicitly
+    begin, commit or roll back.
+    """
+    cards = await AcceptCardRepository(db).latest_by_task([task_id])
+    card = cards.get(task_id)
+    if (
+        card is None
+        or card.status != AcceptStatus.pending
+        or card.pr_merged_at is not None
+    ):
+        return False
+    return checks_running(
+        card.merge_state,
+        now=datetime.now(UTC),
+        fresh_for=timedelta(
+            seconds=CHECK_WATCH_TICKS * settings.accept_pr_poll_interval_s
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -29,7 +29,6 @@ from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.room_task_rows import named_task, task_rows
-from app.api.routes.topics import BlockRepository, ProjectRepository, UsageRepository
 from app.api.task_instructions import (
     dispatch,
     say_task_started,
@@ -43,6 +42,11 @@ from app.api.task_origin import (
     materials,
     materials_text,
     source,
+)
+from app.api.topics_deps import (
+    BlockRepository,
+    ProjectRepository,
+    UsageRepository,
 )
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (

@@ -19,7 +19,9 @@ The places that tell an AI teammate how long a title may be all read the numbers
 below: ``naming.py`` (the platform naming a task), ``agent/harness/prompt.py``
 (the reminder to name an unnamed task) and ``cheese_task`` / ``cheese_title`` in
 ``backend/sandbox/cheese``, which cannot import this module and spells the
-number out. ``topics_tasks.py`` and ``topics_title.py`` hold the API to it.
+number out. ``topics_tasks.py`` and ``topics_title.py`` hold the API to it;
+``naming.py`` asks the model again when its title is too wide and cuts with
+`fit_title` only when asking again did not help.
 """
 
 import unicodedata
@@ -45,3 +47,19 @@ def title_width(title: str) -> int:
 def title_fits(title: str) -> bool:
     """Whether `title` is narrow enough to be drawn whole."""
     return title_width(title) <= TITLE_WIDTH
+
+
+def fit_title(title: str) -> str:
+    """`title`, or as much of it from the start as is drawn whole.
+
+    Cut by width, so an English title keeps twice the characters a Chinese one
+    does. A Python string is indexed by code point, so no character is ever
+    split in half."""
+    kept = 0
+    width = 0
+    for char in title:
+        width += title_width(char)
+        if width > TITLE_WIDTH:
+            break
+        kept += 1
+    return title[:kept].rstrip()

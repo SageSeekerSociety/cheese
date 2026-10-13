@@ -671,9 +671,17 @@ class AcceptService:
     async def _void_closed_pr_card(self, *, card: AcceptCard, topic: Topic) -> None:
         return await _accept._void_closed_pr_card(self, card=card, topic=topic)
 
-    async def _record_task_nudge(self, *, topic, task, content, headline, meta):
+    async def _record_task_nudge(
+        self, *, topic, task, content, headline, meta, dispatch: str | None = None
+    ):
         return await notices._record_task_nudge(
-            self, topic=topic, task=task, content=content, headline=headline, meta=meta
+            self,
+            topic=topic,
+            task=task,
+            content=content,
+            headline=headline,
+            meta=meta,
+            dispatch=dispatch,
         )
 
     async def _note_merge_blocked(

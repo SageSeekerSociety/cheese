@@ -1,11 +1,11 @@
 // 项目设置里「成员自己的 Claude Code」那一块的数据：项目允不允许成员接入，以及谁接了、
-// 跑在谁的哪几台电脑上（#2991）。改开关只有管理者能做；谁可以叫某一位，只有它的主人能改。
+// 各用哪类连接（#2991）。开关和允许的连接类型只有管理者能改；谁可以叫某一位，只有它的主人能改。
 import type { MaybeRefOrGetter } from 'vue'
-import type { OwnAgentCallers, OwnAgentsSettings } from '@/types/ownAgents'
+import type { OwnAgentCallers, OwnAgentKind, OwnAgentsSettings } from '@/types/ownAgents'
 
 import { ref, toValue, watch } from 'vue'
 
-import { getOwnAgents, setOwnAgentCallers, setOwnAgentsAllowed } from '@/api/ownAgents'
+import { getOwnAgents, setOwnAgentCallers, setOwnAgentsRules } from '@/api/ownAgents'
 import { t } from '@/i18n'
 
 export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
@@ -27,7 +27,20 @@ export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
     saving.value = true
     error.value = ''
     try {
-      state.value = await setOwnAgentsAllowed(toValue(projectId), allowed)
+      state.value = await setOwnAgentsRules(toValue(projectId), { allowed })
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : t('work.projectSettings.ownAgents.saveFailed')
+    } finally {
+      saving.value = false
+    }
+  }
+
+  async function setKinds(kinds: OwnAgentKind[]) {
+    if (!state.value?.can_manage || !kinds.length) return
+    saving.value = true
+    error.value = ''
+    try {
+      state.value = await setOwnAgentsRules(toValue(projectId), { kinds })
     } catch (e) {
       error.value = e instanceof Error ? e.message : t('work.projectSettings.ownAgents.saveFailed')
     } finally {
@@ -49,5 +62,5 @@ export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
 
   watch(() => toValue(projectId), load)
 
-  return { state, error, saving, load, setAllowed, setCallers }
+  return { state, error, saving, load, setAllowed, setKinds, setCallers }
 }

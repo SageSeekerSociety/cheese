@@ -314,7 +314,7 @@ export interface RoomTask {
  *    building   进行中 —— 已开始，还没递出交付
  *    delivering 检查中 —— 下一步在平台/芝士手上
  *    needs_you  待处理 —— 下一步在人手上
- *    done       已完成 —— 已采纳，或已关闭且没交付
+ *    done       已关闭 —— 任务关了：最后一步已采纳，或没交付就关了
  *    archived   已归档 —— 房间才有；活不归档
  */
 export type BoardColumn = 'not_started' | 'building' | 'delivering' | 'needs_you' | 'done' | 'archived'
@@ -870,37 +870,6 @@ export interface ForgeAttribution {
   requester_coauthor: boolean | null
   effective: boolean
   deployment_default: boolean
-}
-
-// 分支保护 (#718): 平台侧的合并规则，照 GitHub 分支保护那一页配置。
-// GitHub 能判定的听 GitHub，判定不了的平台按这份配置补位。
-export interface RequiredCheck {
-  name: string
-  // 相对仓库根的 glob；缺省/为空 = 每个 PR 都要求这条检查。
-  paths?: string[]
-}
-// 可写的规则本体。PUT partial-update：body 里出现哪个键就改哪个，返回值也是这一块。
-export interface BranchProtectionRules {
-  required_checks: RequiredCheck[]
-  strict: boolean
-  dismiss_stale: boolean
-  auto_merge_allowed: boolean
-  // null = 未配置：默认由项目 owner 和 lead 放行。
-  override_handles: string[] | null
-  approvals_required: number
-  // '' = 未指定。
-  default_reviewer: string
-}
-export type BranchProtectionPatch = Partial<BranchProtectionRules>
-// GET 额外带两块只读附注，说明 GitHub 那一侧的现实。
-export interface BranchProtection extends BranchProtectionRules {
-  // 绑定 GitHub 的项目从仓库设置读；未绑定固定 'squash'。只读。
-  merge_method: string
-  github_protection: {
-    enforced: boolean
-    status: 'unbound' | 'enforced' | 'none' | 'unknown'
-    detail?: string | null
-  }
 }
 
 // A user's OAuth/App connections — GET /users/{userId}/oauth/connections

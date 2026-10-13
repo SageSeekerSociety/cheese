@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import topics_signals
-from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.auth import ActorResolverDep
 from app.api.conditional import conditional_json
 from app.api.deps import (
     get_broker,
@@ -22,8 +22,8 @@ from app.api.deps import (
 from app.api.message_effects import announce_edited_message
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.room_task_rows import tasks_under_blocks
-from app.api.routes.projects import rail_tasks
+from app.api.room_task_rows import rail_tasks, tasks_under_blocks
+from app.api.topics_deps import _actor_in_place, _parse_moment
 from app.api.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
@@ -61,7 +61,6 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
-from app.domain.room_task.place import Place
 from app.domain.room_task.services import TaskService
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
@@ -85,18 +84,6 @@ from app.domain.usage.services import UsageService
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
-
-
-async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
-    """Who is calling here, and whether they may be — identity, then the
-    room's roster."""
-    actor = await resolver.resolve(
-        topic_id=place.conversation_id, project_id=place.project_id
-    )
-    await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=place.room_id
-    )
-    return actor
 
 
 @router.post("")
@@ -282,8 +269,8 @@ async def list_topics(
 
     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
     this is the endpoint the sidebar lists from — and the tasks the sidebar
-    hangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never
-    reads the whole project's tasks for the few that are the caller's.
+    hangs under it (`my_tasks`, see `room_task_rows.rail_tasks`), so the sidebar
+    never reads the whole project's task list to find the few rows it draws.
 
     条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
@@ -1223,19 +1210,6 @@ async def mint_webhook_token(
     return ok({"token": token})
 
 
-def _parse_moment(raw: object) -> datetime | None:
-    """一个可选的 ISO-8601 时刻；空串和缺席是一回事。"""
-    if not isinstance(raw, str) or not raw.strip():
-        return None
-    try:
-        moment = datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
-    except ValueError:
-        raise ValidationError(say("sinceUntilIso")) from None
-    # 不带时区的按 UTC 读：否则它和 now() 相减时 naive/aware 直接抛，而调用方
-    # 只写了个「2026-09-06」也得能用。
-    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
-
-
 def _weekly_window(body: dict) -> tuple[datetime, datetime]:
     """这份周报讲的是哪一段。略过就是「截止到现在的一周」。"""
     until = _parse_moment(body.get("until")) or datetime.now(UTC)
@@ -1299,71 +1273,6 @@ async def record_weekly(
     if key is not None:
         await idem.record_result(db, key, out)
     return ok(out)
-
-
-@router.post("/{topic_id}/archive")
-async def archive_topic(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """手动归档 (归档去向): explicit archive, independent of 采纳."""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    # A channel's manager, or whoever manages the project, in it or not: the
-    # settings' channels page archives a private channel its admin is outside.
-    await resolver.authorize_project(actor, project_id=topic.project_id)
-    if not actor.authenticated:
-        raise ForbiddenError(say("archiveSignIn"))
-    await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    topic = await TopicService(db).archive(topic_id, by=actor.handle)
-    out = TopicOut.model_validate(topic).model_dump(mode="json")
-    await db.commit()
-    await tell_project(topic_id, TOPICS)
-    return ok(out)
-
-
-@router.get("/{topic_id}/cleanup")
-async def cleanup_status(
-    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id, enforce=True
-    )
-    operation = await TopicService(db).cleanup_operation(topic)
-    if operation is None:
-        return ok({"state": "not_scheduled"})
-    return ok(
-        {
-            "state": operation.state,
-            "due_at": operation.due_at.isoformat(),
-            "reason": operation.last_error,
-            "resources": len(operation.resources),
-            "removed": sum(bool(entry.get("removed")) for entry in operation.resources),
-        }
-    )
-
-
-@router.post("/{topic_id}/unarchive")
-async def unarchive_topic(
-    topic_id: uuid.UUID,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """取消归档: bring an archived topic back to active."""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    # A channel's manager, or whoever manages the project, in it or not: the
-    # settings' channels page archives a private channel its admin is outside.
-    await resolver.authorize_project(actor, project_id=topic.project_id)
-    if not actor.authenticated:
-        raise ForbiddenError(say("unarchiveSignIn"))
-    await TopicMemberService(db).require_administrator(topic_id, actor.handle)
-    topic = await TopicService(db).unarchive(topic_id, by=actor.handle)
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
 
 
 @router.post("/{topic_id}/check-result")
