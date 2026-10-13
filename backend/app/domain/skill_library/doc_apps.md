@@ -31,7 +31,7 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
 
 `code` 是一个 Vue 单文件组件：`<script setup>`、`<template>`，需要时加 `<style>`（不支持 `scoped`，类名要起得具体）。
 
-- 只能从 `vue` 和 `@platform/motion`（见下文「动画」）导入，例如 `import { ref, computed, watch, onMounted, onUnmounted } from 'vue'`。没有其他库，不能联网，不能使用 `localStorage`、`alert` 和表单提交。
+- 只能从 `vue` 和平台提供的 `@platform/motion`、`@platform/sim`、`@platform/random`、`@platform/theme`（见下文）导入，例如 `import { ref, computed, watch, onMounted, onUnmounted } from 'vue'`。没有其他库，不能联网，不能使用 `localStorage`、`alert` 和表单提交。
 - 宽度与文档的栏宽一致：手机上三百多像素，桌面上六七百像素。按窄屏设计，用 flex 或 grid 排版，宽度不足时换行或缩小。
 - 高度由内容决定。不要使用 `vh`、`height: 100%` 或固定的整屏高度：平台按内容高度调整外框，内容又随外框变高，高度会持续增长，保存会被拒绝。
 
@@ -150,6 +150,28 @@ description: 文档中小程序的代码写法和设计规范。随 cheese-docs 
 
 坐标平面中的点、线和面积，拖放板中的块，以及指标卡中的数字，已经自带过渡，无需另行处理。读者在系统中设置了减少动态效果时，以上过渡都会关闭。
 
+## 模拟与随机数
+
+推演一个随时间发展的过程（传染病传播、排队、轨道运动）时，用 `@platform/sim` 的 `simulate`，不要自己写定时器：
+
+```js
+const sim = simulate({
+  init: () => ({ s: 990, i: 10, r: 0 }), // 初始状态
+  step: (state, dt, t) => next,          // 由当前状态算出下一步的状态，可以直接修改 state 后返回它
+  dt: 1,                                 // 每一步代表的时长，默认 1
+  speed: 10,                             // 播放时每秒走几步，默认 10
+  start: 30,                             // 打开时已经走过的步数，让初始画面就体现要点
+})
+```
+
+返回的 `sim` 可以直接在模板中使用：`sim.state` 是当前状态，`sim.t` 是当前时刻，`sim.running` 表示是否在播放；`sim.play()`、`sim.pause()`、`sim.reset()` 分别是播放、暂停和回到开头，`sim.advance(n)` 一次走 `n` 步。播放和暂停用普通的 `<button>`。读者改了参数要从头开始时，写 `watch(参数, () => sim.reset())`。需要按微分方程精确推进时（轨道、摆），用同一模块的 `rk4(f, y, t, dt)`：`f(t, y)` 返回 `y` 各分量的变化率，`rk4` 返回走一步之后的 `y`。
+
+需要随机数时，用 `@platform/random` 的 `random(种子)`，不用 `Math.random`。同一个种子每次产生同样的随机数，平台检查时拍下的画面就是读者看到的画面，`console.assert` 也能核对模拟的结果。它提供 `next()`（0 到 1 之间的数）、`uniform(a, b)`、`int(a, b)`、`normal(均值, 标准差)`、`exponential(速率)`、`poisson(均值)`、`pick(列表)`、`shuffle(列表)`。要让 `reset()` 后重现同样的过程，在 `init` 中重新创建它。
+
+## 在脚本中取颜色
+
+在 `<canvas>` 上作画时无法写 `var(--chart-1)`，用 `@platform/theme` 的 `color('chart-1')` 取得颜色；`color('1')` 到 `color('8')`、`color('ok')`、`color('muted')` 这类简写与 `tone` 一致。把作画的代码放进 `watchEffect`，读者切换深浅色时会自动重画。
+
 ## 质量标准
 
 - 读者不读正文，只看画面并稍加操作，也能理解小程序讲的内容和结论。
@@ -257,6 +279,59 @@ const x = tween(slots)
     />
   </svg>
 </template>
+```
+
+窗口前的队伍：顾客每分钟随机到达，窗口每分钟最多服务 3 人。读者调整到达速度，看到达速度接近服务能力时队伍如何越排越长。过程用 `simulate` 推进，到达人数用固定种子的 `random` 生成，队伍中的人用 `c-list` 过渡进出。
+
+```vue
+<script setup>
+import { ref, computed, watch } from 'vue'
+import { random } from '@platform/random'
+import { simulate } from '@platform/sim'
+
+const rate = ref(2.6)
+const SERVE = 3
+let r = random(7)
+const sim = simulate({
+  init: () => {
+    r = random(7)
+    return { line: [], next: 0, history: [0] }
+  },
+  step: (s) => {
+    for (let k = r.poisson(rate.value); k > 0; k--) s.line.push(s.next++)
+    s.line.splice(0, SERVE)
+    s.history.push(s.line.length)
+    if (s.history.length > 61) s.history.shift()
+    return s
+  },
+  speed: 4,
+  start: 30,
+})
+watch(rate, () => sim.reset())
+const path = computed(() =>
+  sim.state.history.map((q, i) => `${i * 5},${78 - Math.min(q, 25) * 3}`).join(' ')
+)
+</script>
+
+<template>
+  <c-row>
+    <c-slider label="到达速度" :min="1" :max="3.4" :step="0.2" unit=" 人/分" v-model="rate" />
+    <button class="primary" @click="sim.running ? sim.pause() : sim.play()">{{ sim.running ? '暂停' : '播放' }}</button>
+    <button @click="sim.reset()">从头开始</button>
+  </c-row>
+  <TransitionGroup name="c-list" tag="div" class="qu-line">
+    <span v-for="id in sim.state.line.slice(0, 24)" :key="id" class="qu-person"></span>
+  </TransitionGroup>
+  <svg viewBox="0 0 300 80" width="100%">
+    <polyline :points="path" fill="none" stroke="var(--chart-1)" stroke-width="2" />
+  </svg>
+  <p>第 {{ sim.t }} 分钟，队伍中有 {{ sim.state.line.length }} 人</p>
+</template>
+
+<style>
+.qu-line { display: flex; flex-wrap: wrap; gap: 4px; min-height: 48px; margin-top: 12px; }
+.qu-person { width: 16px; height: 20px; border-radius: var(--radius-sm); background: var(--chart-2); }
+</style>
 ```
 
 拖动数据点，观察最小二乘直线如何随之转动：点位于坐标平面中，读者直接拖动，直线和残差同步变化。

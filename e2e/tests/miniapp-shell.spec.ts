@@ -295,3 +295,55 @@ const shown = tween(n)
   expect(seen.at(-1)).toBe(100);
   expect(errors).toEqual([]);
 });
+
+test('random numbers from one seed repeat; from another they differ', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { random } from '@platform/random'
+const draw = (seed) => { const r = random(seed); return [r.next(), r.normal(), r.int(1, 6), r.poisson(3)].join(' ') }
+</script>
+<template><p id="a">{{ draw(7) }}</p><p id="b">{{ draw(7) }}</p><p id="c">{{ draw(8) }}</p></template>`
+  );
+  const [a, b, c] = await Promise.all(['#a', '#b', '#c'].map((s) => page.locator(s).textContent()));
+  expect(a).toBe(b);
+  expect(a).not.toBe(c);
+  expect(errors).toEqual([]);
+});
+
+test('a simulation opens with its first steps taken, steps on, and starts over', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { simulate } from '@platform/sim'
+const sim = simulate({ init: () => ({ n: 0 }), step: (s) => { s.n += 1; return s }, dt: 0.5, start: 4 })
+</script>
+<template>
+  <p id="out">{{ sim.steps }} {{ sim.t }} {{ sim.state.n }}</p>
+  <button id="on" @click="sim.advance(3)">on</button><button id="back" @click="sim.reset()">back</button>
+</template>`
+  );
+  await expect(page.locator('#out')).toHaveText('4 2 4');
+  await page.locator('#on').click();
+  await expect(page.locator('#out')).toHaveText('7 3.5 7');
+  await page.locator('#back').click();
+  await expect(page.locator('#out')).toHaveText('4 2 4');
+  expect(errors).toEqual([]);
+});
+
+test('a colour read in script follows the document from light to dark', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { computed } from 'vue'
+import { color } from '@platform/theme'
+const ink = computed(() => color('chart-1'))
+</script>
+<template><p id="out">{{ ink }}</p></template>`
+  );
+  const light = await page.locator('#out').textContent();
+  expect(light).toBeTruthy();
+  await page.evaluate(() => window.postMessage({ ch: 'cheese-app', type: 'theme', theme: 'dark' }, '*'));
+  await expect(page.locator('#out')).not.toHaveText(light!);
+  expect(errors).toEqual([]);
+});

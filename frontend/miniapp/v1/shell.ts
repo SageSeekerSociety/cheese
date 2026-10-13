@@ -9,17 +9,26 @@
 // instead.
 //
 // What an app can import is Vue and the platform's own modules
-// (`@platform/motion`), nothing else: the frame has no network, and every
+// (`@platform/*`), nothing else: the frame has no network, and every
 // other library it may use is an element of components.ts.
 import * as Vue from 'vue'
 import { compileScript, compileTemplate, parse } from '@vue/compiler-sfc/dist/compiler-sfc.esm-browser.js'
 import { transform } from 'sucrase'
 
 import * as motion from './platform/motion'
+import * as random from './platform/random'
+import * as sim from './platform/sim'
+import * as theme from './platform/theme'
 import { requireFrom, start } from './runtime'
 import { miswired } from './wiring'
 
-const require = requireFrom({ vue: Vue, '@platform/motion': motion })
+const require = requireFrom({
+  vue: Vue,
+  '@platform/motion': motion,
+  '@platform/random': random,
+  '@platform/sim': sim,
+  '@platform/theme': theme,
+})
 /** The platform's elements are elements, not Vue components to resolve. */
 const isCustomElement = (tag: string) => tag.startsWith('c-')
 
