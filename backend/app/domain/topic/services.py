@@ -64,7 +64,6 @@ from app.domain.room_task.services import TaskService, said_title
 from app.domain.team.models import TeamMemberRole
 from app.domain.team.services import team_service
 from app.domain.thread.models import Thread
-from app.domain.thread.services import open_thread
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
@@ -919,16 +918,20 @@ class TopicService:
         thread = await self._session.get(Thread, block.conversation_id)
         return thread.root_block_id if thread is not None else block.id
 
-    async def open_thread_here(
+    async def say_thread_title(
         self, *, room_id: uuid.UUID, title: str, by: str
-    ) -> Thread:
-        """在频道里手动开一条支线 (清单第 4 条)。
+    ) -> uuid.UUID:
+        """把「开一条支线」的那句话说到频道主线里，返回它的 id (清单第 4 条)。
 
         支线今天只挂在频道主线里的**一条消息**下面（`thread/services.py` 的
         `open_thread` 只认 `kind == message` 的根），所以「填个标题就开出来」落地
         成：以创建者自己的名义在主线说一句标题，支线开在这句话下。这样支线永远有
         根，`threads.root_block_id` 不必改成可空，读它的每一处（只有人回复时才开
         支线的那条路）也都不用动。
+
+        说这句话的是频道域；开支线那一步由调用方做（`thread` 在频道之上，频道域
+        反向 import 它是 C5 层表里的向上依赖）。同一个请求共用一个 session，两步
+        之间没有提交，所以不存在只说出话、支线没开出来的一刻。
 
         私聊没有主线，也就没有支线；归档的频道冻结，和别处一样。
         """
@@ -955,7 +958,7 @@ class TopicService:
             # 支线」而不是一条发言。
             meta={"opened_thread": True},
         )
-        return await open_thread(self._session, block.id, by=by)
+        return block.id
 
     async def _card_block(self, room: Topic, task: Task, *, actor: str) -> Block:
         """The room's timeline says a task was created here, and whose it is.

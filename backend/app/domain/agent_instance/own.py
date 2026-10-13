@@ -103,15 +103,17 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
 
 async def owned_in_project(
     db: AsyncSession, project_id: uuid.UUID
-) -> list[tuple[AgentInstance, int]]:
-    """This project's members' own agents, each with its owner's user id."""
+) -> list[tuple[AgentInstance, int, OwnCallers]]:
+    """This project's members' own agents, each with its owner's user id and who
+    may call it. The callers column rides along because the row holding it is
+    this package's: a reader below that wants it calls this, not ``OwnAgent``."""
     rows = await db.execute(
-        select(AgentInstance, OwnAgent.owner_user_id)
+        select(AgentInstance, OwnAgent.owner_user_id, OwnAgent.callers)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
         .where(AgentInstance.project_id == project_id)
         .order_by(AgentInstance.created_at)
     )
-    return [(instance, owner) for instance, owner in rows]
+    return [(instance, owner, callers) for instance, owner, callers in rows]
 
 
 async def has_a_login(db: AsyncSession, owner_user_id: int) -> bool:
@@ -338,7 +340,7 @@ async def listing(db: AsyncSession, project_id: uuid.UUID, is_online) -> list[di
     it, and on which of its owner's machines it can run."""
 
     rows = []
-    for instance, owner_user_id in await owned_in_project(db, project_id):
+    for instance, owner_user_id, callers in await owned_in_project(db, project_id):
         owner = await db.get(User, owner_user_id)
         machines = (
             await db.execute(
@@ -354,12 +356,11 @@ async def listing(db: AsyncSession, project_id: uuid.UUID, is_online) -> list[di
                 .order_by(DeviceRow.name)
             )
         ).all()
-        own = await db.get(OwnAgent, instance.id)
         rows.append(
             {
                 "handle": agent_instance_handle(instance.id),
                 "name": instance.display_name,
-                "callers": (own.callers if own is not None else OwnCallers.owner).value,
+                "callers": callers.value,
                 "owner_handle": owner.username if owner else None,
                 "owner_name": await _nickname(db, owner.username) if owner else None,
                 "machines": [

@@ -5,10 +5,13 @@ Read [`../AGENTS.md`](../AGENTS.md) first; this file only adds what applies here
 ## The import graph is checked, and a wrong import fails CI
 
 `app/` is layered **api -> domain -> core**. Imports that point backwards, a
-route reaching into another domain's models, a cycle between sibling domains
-under `app.domain`, or one route module importing another (directly or through
-a helper) are failures — including when the import sits inside a
-function. The contracts and the frozen `importer -> imported` pairs are in
+route reaching into another domain's models, an import pointing up the seven
+layers of `app.domain` (every child of it belongs to one layer; a new package
+or top-level module is a violation until the layer table names it), a cycle
+between sibling domains under `app.domain`, or one route module importing
+another (directly or through a helper) are failures — including when the
+import sits inside a function. The contracts and the frozen `importer ->
+imported` pairs are in
 `.importlinter`. Shared request dependencies (`DbSession`, `AuthUser`) live in
 `app/api/request_deps.py`, so a route never needs another route's import;
 `task boundaries` (`Taskfile.yml`) runs them.

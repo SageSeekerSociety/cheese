@@ -38,7 +38,7 @@ block_router = APIRouter(prefix="/blocks", tags=["topics"])
 
 
 class ThreadCreateIn(BaseModel):
-    #: 支线的名字。手动开的支线总要先有话（`TopicService.open_thread_here` 把它说
+    #: 支线的名字。手动开的支线总要先有话（`TopicService.say_thread_title` 把它说
     #: 在主线里），那句话就是它。
     title: str = Field(min_length=1, max_length=300)
 
@@ -102,9 +102,12 @@ async def create_thread(
         raise ForbiddenError(say("threadOpenedByPerson"))
     if not await TopicMemberService(db).may_speak(place.room, actor.handle):
         raise ForbiddenError(say("channelJoinToPost"))
-    thread = await TopicService(db).open_thread_here(
+    # 频道域把标题说在主线里，支线由这里开：`open_thread` 属于 `thread`，而
+    # `thread` 在 `topic` 之上（C5 层表），频道域不能反向 import 它。
+    block_id = await TopicService(db).say_thread_title(
         room_id=place.room_id, title=body.title, by=actor.handle
     )
+    thread = await open_thread(db, block_id, by=actor.handle)
     out = _thread_out(thread).model_dump(mode="json")
     await db.commit()
     await announce_stale(place.room_id, "threads")

@@ -31,7 +31,11 @@ import time
 import uuid
 from pathlib import Path
 
-from app.domain.agent.executor_transport import PlatformHost, RemoteClient
+from app.domain.agent.executor_transport import (
+    PlatformHost,
+    RemoteClient,
+    failure_text,
+)
 from app.domain.agent.harness.driven import runner
 from app.domain.agent.harness.driven.journal import PAGE
 from app.domain.agent.harness.driven.runner import SessionStart, socket_path
@@ -527,7 +531,7 @@ class Runner(runner.Runner[Journal]):
                     catalog.run_platform_tool, tool, arguments, host
                 )
             except Exception as error:  # noqa: BLE001 — the agent reads the reason
-                return {"status": 1, "stdout": "", "stderr": str(error)}
+                return {"status": 1, "stdout": "", "stderr": failure_text(error)}
             return {"status": 0, "stdout": text, "stderr": ""}
         command = shlex.join([catalog.CLI, *catalog.argv(tool, arguments)])
         code, output = await asyncio.to_thread(
@@ -559,7 +563,7 @@ class Runner(runner.Runner[Journal]):
         try:
             text = catalog.run_platform_tool(tool, arguments, host)
         except Exception as error:  # noqa: BLE001 — the agent reads the reason
-            return {"status": 1, "stdout": "", "stderr": str(error)}
+            return {"status": 1, "stdout": "", "stderr": failure_text(error)}
         return {"status": 0, "stdout": text, "stderr": ""}
 
     async def tool_hooks(self, params: dict) -> dict:
