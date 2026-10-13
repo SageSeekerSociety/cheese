@@ -17,8 +17,10 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
+import { memberFacesOf } from '@/lib/memberFaces'
 import { relTime } from '@/lib/relTime'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -73,6 +75,23 @@ function personName(handle: string | null): string {
   const row = props.members.find((m) => m.user_handle === handle)
   return row ? memberName(row) || handle : handle
 }
+
+/** 名册 → handle 那张脸（名字、头像 id、是不是队友）。管理者那一格和换人的下拉都用它，
+ *  「项目管理者」这种不是人的写法照旧走文字。 */
+const faces = computed(() => memberFacesOf(props.members))
+const faceOf = (handle: string | null) => (handle ? faces.value[handle] ?? null : null)
+
+/** 换管理者下拉的一行：身份字段跟着 item 走，画脸靠共用的 IdentityView。 */
+const managerItems = computed(() =>
+  people.value.map((p) => ({
+    title: memberName(p) || p.user_handle,
+    value: p.user_handle,
+    handle: p.user_handle,
+    name: memberName(p) || p.user_handle,
+    avatarId: faceOf(p.user_handle)?.avatarId ?? null,
+    agent: faceOf(p.user_handle)?.agent ?? null,
+  }))
+)
 
 // 每个动作跑完都重读一遍：数字和管理者都从服务器那一份来，不在这里猜。
 const failure = ref<string | null>(null)
@@ -266,7 +285,18 @@ function actions(c: ChannelEntry): MenuAction[] {
               <span v-if="c.general" class="t-meta c-faint"> {{ t('work.channelBrowse.general') }}</span>
               <span v-else-if="!c.visible" class="t-meta c-faint"> {{ t('work.projectSettings.channels.notIn') }}</span>
             </td>
-            <td>{{ personName(c.manager) }}</td>
+            <td>
+              <IdentityView
+                v-if="c.manager"
+                :handle="c.manager"
+                :name="faceOf(c.manager)?.name ?? personName(c.manager)"
+                :avatar-id="faceOf(c.manager)?.avatarId ?? null"
+                :agent="faceOf(c.manager)?.agent ?? null"
+                :size="20"
+                :data-user-content="''"
+              />
+              <span v-else>{{ personName(c.manager) }}</span>
+            </td>
             <td>{{ c.member_count }}</td>
             <td>{{ c.open_tasks ?? '—' }}</td>
             <td class="c-muted">{{ c.last_activity_at ? relTime(c.last_activity_at) : '—' }}</td>
@@ -326,12 +356,33 @@ function actions(c: ChannelEntry): MenuAction[] {
         v-else-if="editing?.kind === 'manager'"
         v-model="draft"
         :label="t('work.projectSettings.channels.columns.manager')"
-        :items="people.map((p) => ({ title: memberName(p) || p.user_handle, value: p.user_handle }))"
+        :items="managerItems"
         variant="outlined"
         density="comfortable"
         hide-details
         autocomplete="off"
-      />
+      >
+        <template #item="{ item, props: itemAttrs }">
+          <v-list-item v-bind="itemAttrs" :title="undefined">
+            <IdentityView
+              :handle="item.raw.handle"
+              :name="item.raw.name"
+              :avatar-id="item.raw.avatarId"
+              :agent="item.raw.agent"
+              :size="24"
+            />
+          </v-list-item>
+        </template>
+        <template #selection="{ item }">
+          <IdentityView
+            :handle="item.raw.handle"
+            :name="item.raw.name"
+            :avatar-id="item.raw.avatarId"
+            :agent="item.raw.agent"
+            :size="18"
+          />
+        </template>
+      </v-select>
     </AdaptiveDialog>
 
     <AdaptiveDialog

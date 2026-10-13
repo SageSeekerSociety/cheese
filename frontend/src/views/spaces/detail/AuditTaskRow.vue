@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n'
 import dayjs from 'dayjs'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import TaskDescription from '@/components/tasks/TaskDescription.vue'
 
 const props = defineProps<{ task: Task; open: boolean }>()
@@ -46,7 +47,17 @@ const facts = computed(() => {
         <span class="ar__name">{{ task.name }}</span>
         <span v-if="task.intro" class="ar__intro">{{ task.intro }}</span>
         <span class="ar__meta">
-          <span>{{ t('spaces.detail.auditTasks.by', { name: publisher }) }}</span>
+          <span>
+            <i18n-t keypath="spaces.detail.auditTasks.by" scope="global" tag="span">
+              <template #name>
+                <UserRef
+                  :handle="task.creator.username"
+                  :name="publisher"
+                  :avatar-id="task.creator.avatarId"
+                />
+              </template>
+            </i18n-t>
+          </span>
           <span>{{ date(task.createdAt) }}</span>
           <span v-if="task.category" class="ar__tag">{{ task.category.name }}</span>
           <span v-for="topic in task.topics ?? []" :key="topic.id" class="ar__tag">{{ topic.name }}</span>

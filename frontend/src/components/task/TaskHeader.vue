@@ -83,6 +83,13 @@ function avatarOf(handle: string | null | undefined): string {
   const chosen = props.people.find((m) => m.member_handle === handle)?.avatar_id
   return chosen ? getAvatarUrl(chosen) : ''
 }
+/** 名册那一行（人 + 队友两处）→ 画脸要的三样，负责人那颗 chip 用它；名册上没有这一位时给 null。 */
+function faceOf(handle: string | null | undefined) {
+  if (!handle) return null
+  const row = [...props.people, ...props.agents].find((m) => m.member_handle === handle)
+  if (!row) return null
+  return { handle, name: row.name || handle, avatarId: row.avatar_id ?? null, agent: row.agent ?? null }
+}
 /** 身份字段跟着下拉行走：这一行是 `{handle, name, avatarId}` 就画脸 + 名字，画的是谁一处说了算。
  * 还没挑（模型是 `null`）时 Vuetify 根本不调「选中」那个插槽，占位提示照常露出；但模型里
  * 若是一串没匹配上任何一行的裸 handle（比如这个人已经退出名册），`raw` 就是那串字符串 ——
@@ -254,8 +261,19 @@ async function confirmHandOver() {
             :title="t('work.task.details')"
             data-testid="task-details"
           >
-            <UserAvatar :size="20" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
-            <span class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
+            <span class="task-header__owner-name">
+              <i18n-t keypath="work.task.ownerChip" scope="global" tag="span">
+                <template #name>
+                  <IdentityView
+                    :handle="task?.owner_handle"
+                    :name="faceOf(task?.owner_handle)?.name ?? ownerName"
+                    :avatar-id="faceOf(task?.owner_handle)?.avatarId ?? null"
+                    :agent="faceOf(task?.owner_handle)?.agent ?? null"
+                    :size="20"
+                  />
+                </template>
+              </i18n-t>
+            </span>
             <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
               <UserAvatar
                 v-for="handle in collaborators.slice(0, 3)"

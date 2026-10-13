@@ -17,7 +17,7 @@ vi.mock('@/components/common/UserRefLink.vue', () => ({ default: { name: 'UserRe
 
 import TaskHeader from './TaskHeader.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 setLocale('zh-CN')
 const vuetify = createVuetify({ components, directives })
@@ -105,7 +105,10 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
     setMachine: vi.fn(async () => ({})),
     setMachineDefault: vi.fn(async () => ({})),
   }
-  const view = render(TaskHeader as Component, { props: baseProps, global: { plugins: [vuetify] } })
+  const view = render(TaskHeader as Component, {
+    props: baseProps,
+    global: { plugins: [vuetify, i18n] },
+  })
   // 名册会变（有人退出这间房）：重画时整份 props 再交一遍，只换掉名册那一项。
   const rerender = (over2: { people?: typeof PEOPLE }) => view.rerender({ ...baseProps, ...over2 })
   return { ...view, rerender, start, loadMachine, setCollaborators, setAgent, rename, reopen }

@@ -12,7 +12,7 @@ import type { MentionIdentity } from '../../../lib/personIdentity'
 import { ref, watch } from 'vue'
 
 import { relTime } from '../../../lib/relTime'
-import CheeseAvatar from '../../CheeseAvatar.vue'
+import IdentityView from '../../common/IdentityView.vue'
 
 import DocAgentBox from './DocAgentBox.vue'
 import DocAgentResult from './DocAgentResult.vue'
@@ -173,7 +173,7 @@ function pickHeading(pos: number) {
       <v-menu v-if="agent" v-model="agentOpen" location="bottom end" :close-on-content-click="false" offset="6">
         <template #activator="{ props: menuProps }">
           <button v-bind="menuProps" type="button" class="doc-top-bar__btn doc-top-bar__btn--agent">
-            <CheeseAvatar :size="16" :name="agentName" :handle="agentHandle" />{{ agentName }}
+            <IdentityView :handle="agentHandle" :name="agentName" :agent="true" :size="16" />
           </button>
         </template>
         <div class="doc-top-bar__agent">
