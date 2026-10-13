@@ -178,7 +178,10 @@ def _unread(client, token: str) -> list[dict]:
 
 
 def _decide(client, card: str, action: str, who: str = "alice", **body):
-    # 谁在决定是**认证出来的**（路由读 actor.handle，不看请求体），所以身份由这里给。
+    # 谁在决定有两条通道：认证（路由读 `actor.handle`，只有它算数）与请求体里那一格
+    # （`RejectDecision.decided_by` 必填，但值不被采纳）。两处写同一个人，所以要换人
+    # 就换这里 —— 光改请求体不换认证，判据看的还是认证出来的那个人。
+    body.setdefault("decided_by", who)
     return client.post(
         f"/accept-cards/{card}/{action}",
         json=body,
