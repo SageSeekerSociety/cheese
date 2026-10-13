@@ -530,6 +530,7 @@
   "protectionEmptyHandle": "{what} has an empty handle",
   "handleTooLong": "A handle can't be longer than {max} characters",
   "defaultReviewerNul": "default_reviewer can't contain a NUL byte",
+  "dispatchSeatNul": "The dispatch seat can't contain a NUL byte",
   "protectionOverrideList": "The override list",
   "projectNeedsTeam": "A project has to belong to a team",
   "projectNumberTaken": "This project number is already in use",

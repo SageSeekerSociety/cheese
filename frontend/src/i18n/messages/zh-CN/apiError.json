@@ -530,6 +530,7 @@
   "protectionEmptyHandle": "{what} 里有空的 handle",
   "handleTooLong": "handle 不能超过 {max} 个字符",
   "defaultReviewerNul": "default_reviewer 不能包含 NUL 字节",
+  "dispatchSeatNul": "调度座位不能包含 NUL 字节",
   "protectionOverrideList": "人工放行名单",
   "projectNeedsTeam": "项目需要归属一个团队",
   "projectNumberTaken": "这个项目编号已被使用",
