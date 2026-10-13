@@ -14,7 +14,7 @@
 第二条读的路径。正式上线要校方书面点头，这里只是「先能用」。
 
 门是后台共用的 `PlatformAdminDep` —— 进来先问「是不是平台管理员」，这里不自己判，
-理由和 `admin_common.py` 头上那段一样：判据写两份就会漂开。
+理由和 `admin_deps.py` 头上那段一样：判据写两份就会漂开。
 
 **Secret 只写不回显。** 两个 `GET` 的返回里都没有它；`PUT` 的空串表示「不改已经存
 下的那一个」，因为页面看不到它，也就无从重打。这样改域名或账号名不必先把口令找回
@@ -24,9 +24,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.routes.admin_common import PlatformAdminDep
 from app.api.write_access import ROUTE_DECIDES
 from app.domain.external_problem.schemas import ExternalProblemAccountOut
 from app.domain.external_problem.service import (

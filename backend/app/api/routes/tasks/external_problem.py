@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.request_deps import DbSession
 from app.api.response import Deleted, ok, typed_response
-from app.api.routes.tasks._common import _require_task
+from app.api.task_deps import _require_task
 from app.api.write_access import ROUTE_DECIDES
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
