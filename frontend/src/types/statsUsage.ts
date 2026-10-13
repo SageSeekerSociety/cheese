@@ -90,6 +90,11 @@ export interface StatsUsage {
   top_users?: {
     handle: string
     name: string | null
+    /** 这个人**自己挑过**的头像素材 id；没挑过、或账号已删，是 null（前端画首字母）。
+     *  可选：旧后端还没有它。 */
+    avatar_id?: number | null
+    /** 是不是 AI 队友。判据是绑定关系，不是 handle 长相。可选：旧后端还没有它。 */
+    is_agent?: boolean | null
     tokens: number
     calls: number
     cost_usd: number

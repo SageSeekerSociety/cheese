@@ -29,6 +29,7 @@ from app.domain.admin.services import AdminService
 from app.domain.day_windows import dense_series, utc_day_window
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
+from app.domain.identity.services import IdentityService
 from app.domain.platform_stats.claude_pool import read_claude_pool, snapshot_path
 from app.domain.platform_stats.gaps import GapRepository
 from app.domain.platform_stats.integrations import IntegrationsRepository
@@ -44,7 +45,7 @@ from app.domain.platform_stats.usage_detail import (
 )
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.services import UsageService
-from app.domain.user.services import AccountService
+from app.domain.user.services import AccountService, chosen_avatars_by_handle
 
 #: 用量柱状图上画几根。有上界是这个查询的一部分而不是优化：窗口收时间范围、`limit`
 #: 收行数，两个都少一个都会让这个读在全平台最长的表上无界。
@@ -165,6 +166,15 @@ class PlatformStatsService:
         users, unattributed = await detail.top_users(
             since=since, until=until, limit=TOP_USERS
         )
+        # 这一屏也画人：头像和「是不是队友」都走各自域里那一处，别在这里另写一份
+        # 判据（谁挑过哪张头像在 user 域，谁是队友在 identity 域）。账号已删的
+        # handle 拿不到头像 —— 前端按首字母兜底，不共用一张默认脸。
+        user_handles = [row["handle"] for row in users if row.get("handle")]
+        avatars = await chosen_avatars_by_handle(self._session, user_handles)
+        agents = await IdentityService(self._session).agents_among(user_handles)
+        for row in users:
+            row["avatar_id"] = avatars.get(row["handle"])
+            row["is_agent"] = row["handle"] in agents
         return {
             "days": days,
             "totals": totals,

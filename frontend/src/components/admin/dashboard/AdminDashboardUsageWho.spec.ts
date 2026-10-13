@@ -38,13 +38,15 @@ function row(over: Partial<Row>): Row {
   }
 }
 
-async function mountWho(recent: Row[]) {
+type User = NonNullable<StatsUsage['top_users']>[number]
+
+async function mountWho(recent: Row[], topUsers: User[] = []) {
   const router = createRouter({
     history: createWebHashHistory(),
     routes: [{ path: '/:any(.*)*', component: { template: '<div />' } }],
   })
   await router.push('/')
-  const data = { top_users: [], top_projects: [], recent } as unknown as StatsUsage
+  const data = { top_users: topUsers, top_projects: [], recent } as unknown as StatsUsage
   return render(AdminDashboardUsageWho, {
     props: { data, loading: false },
     global: { plugins: [createVuetify({ components, directives }), i18n, router] },
@@ -72,5 +74,24 @@ describe('AdminDashboardUsageWho · 最近的账本行', () => {
 
     expect(container.textContent).not.toContain('最近的调用')
     expect(getByText(/2 行用量记录/).textContent).not.toMatch(/2 次调用/)
+  })
+})
+
+describe('AdminDashboardUsageWho · 触发最多的人', () => {
+  it('每一行都带头像：挑过的拼 /avatars/{id}，队友走队友的脸', async () => {
+    const { container } = await mountWho([], [
+      { handle: 'lin', name: '林一', avatar_id: 9, is_agent: false, tokens: 5, calls: 2, cost_usd: 0.1, cache_hit: null },
+      { handle: 'cheese-abc', name: '小苔', is_agent: true, tokens: 3, calls: 1, cost_usd: 0, cache_hit: null },
+    ])
+
+    const users = container.querySelectorAll('table')[0]!
+    const rows = Array.from(users.querySelectorAll('tbody tr')) as HTMLElement[]
+    expect(rows.length).toBe(2)
+    // 人：自己挑的那张素材拼出来的图。
+    expect(rows[0].querySelector('.identity-view'), '这一行没走共用身份视图').not.toBeNull()
+    expect(rows[0].querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
+    // 队友（is_agent）走队友的脸，不画人的头像图。
+    expect(rows[1].querySelector('.identity-view')).not.toBeNull()
+    expect(rows[1].querySelector('img')).toBeNull()
   })
 })
