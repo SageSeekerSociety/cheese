@@ -122,12 +122,16 @@
                 <div class="d-flex flex-row align-center">
                   <v-chip color="primary" variant="tonal" size="small"> #{{ submission.version }} </v-chip>
                   <span class="ml-2">
-                    {{
-                      t('tasks.submissionHistory.submittedBy', {
-                        name: submission.submitter.nickname,
-                        time: dayjs(submission.createdAt).format('YYYY-MM-DD HH:mm'),
-                      })
-                    }}
+                    <i18n-t keypath="tasks.submissionHistory.submittedBy" scope="global" tag="span">
+                      <template #name>
+                        <UserRef
+                          :handle="submission.submitter.username"
+                          :name="submission.submitter.nickname"
+                          :avatar-id="submission.submitter.avatarId"
+                        />
+                      </template>
+                      <template #time>{{ dayjs(submission.createdAt).format('YYYY-MM-DD HH:mm') }}</template>
+                    </i18n-t>
                   </span>
                   <div class="flex-grow-1"></div>
                   <v-chip
@@ -176,6 +180,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { useTaskSubmissionHistory } from '@/views/tasks/composables'
 
 const { t } = useI18n()

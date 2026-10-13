@@ -10,6 +10,7 @@
 // 数据和去处都由容器 ProjectOverview 给。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { RoomTask } from '@/cx_types'
+import type { MemberFace, MemberFaces } from '@/lib/memberFaces'
 import type { ProgressItem } from '@/types/projectProgress'
 
 import { computed, ref } from 'vue'
@@ -18,8 +19,9 @@ import dayjs from 'dayjs'
 import ArtifactManifest from '@/components/ArtifactManifest.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 import { myPhraseLabel, phraseLabel } from '@/lib/board'
 import { relTime } from '@/lib/relTime'
@@ -47,7 +49,8 @@ const props = defineProps<{
   /** 项目的任务；还没读到是 null。没读到之前不写「0」也不写「暂无」。 */
   tasks: RoomTask[] | null
   names: Record<string, string>
-  avatars: Record<string, string>
+  /** 名册那一张画人用的表：handle → 显示名 / 自选头像 id / 是不是 AI 队友。 */
+  faces?: MemberFaces
   me: string
   artifactApi: ArtifactApi
 }>()
@@ -63,7 +66,10 @@ const emit = defineEmits<{
   (e: 'retry-progress'): void
 }>()
 
-const nameOf = (handle: string | null | undefined) => (handle ? props.names[handle] || handle : '')
+const faceOf = (handle: string | null | undefined): MemberFace | null => (handle ? props.faces?.[handle] ?? null : null)
+/** 显示名：名册那张表说了算；表里没有（老调用、名册还没到）就退回只带名字的旧表，再退回 handle。 */
+const faceName = (handle: string | null | undefined): string =>
+  faceOf(handle)?.name ?? (handle ? props.names[handle] || handle : '')
 
 // 按看的人自己的钟点写：同一时刻，题目页、问芝士和这里说的是同一天同一分钟。
 const deadlineText = computed(() => {
@@ -207,9 +213,15 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                         :data-user-content="item.kind === 'version' ? item.artifactName : ''"
                         >{{ progressTitle(item) }}</span
                       >
-                      <span v-if="item.by" class="c-faint">
-                        · <span data-user-content>{{ nameOf(item.by) }}</span></span
-                      >
+                      <span v-if="item.by" class="c-faint ov-event__by">
+                        <span>·</span>
+                        <UserRef
+                          :handle="item.by"
+                          :name="faceName(item.by)"
+                          :avatar-id="faceOf(item.by)?.avatarId ?? null"
+                          :agent="faceOf(item.by)?.agent ?? null"
+                        />
+                      </span>
                     </span>
                     <span class="ov-event__when t-meta c-faint">{{ relTime(item.at) }}</span>
                   </button>
@@ -240,15 +252,14 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           <p v-if="tasks && !people.length" class="ov-empty t-body c-muted">{{ t('work.overview.nobody') }}</p>
           <div v-for="person in people" :key="person.owner" class="ov-person">
             <div class="ov-person__who t-body">
-              <UserAvatar
+              <IdentityView
+                :handle="person.owner || null"
+                :name="faceName(person.owner) || t('work.board.noAssignee')"
+                :avatar-id="faceOf(person.owner)?.avatarId ?? null"
+                :agent="faceOf(person.owner)?.agent ?? null"
                 :size="20"
-                :name="nameOf(person.owner) || t('work.board.noAssignee')"
-                :avatar="avatars[person.owner] || ''"
-                :seed="person.owner"
+                :data-user-content="person.owner ? '' : undefined"
               />
-              <span class="ov-person__name" :data-user-content="person.owner ? '' : undefined">{{
-                nameOf(person.owner) || t('work.board.noAssignee')
-              }}</span>
               <span class="c-faint">{{ person.tasks.length }}</span>
             </div>
             <ul class="ov-person__tasks">
@@ -436,6 +447,12 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 .ov-event__title {
   color: var(--ink);
 }
+/* 谁做的：一个「·」加一颗头像+名字的行内 chip，两者之间留一点空。 */
+.ov-event__by {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
 .ov-event__when {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -453,12 +470,6 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   gap: 8px;
   font-weight: 600;
   color: var(--ink);
-}
-.ov-person__name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .ov-task {
   display: flex;

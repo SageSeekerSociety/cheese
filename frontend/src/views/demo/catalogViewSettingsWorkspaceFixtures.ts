@@ -13,6 +13,7 @@
  */
 import type { ProjectArtifact } from '@/api'
 import type { BoardPhrase, ListPayload, MyTeam, ProjectSite, ProjectSiteInfo, RoomTask } from '@/cx_types'
+import type { MemberFaces } from '@/lib/memberFaces'
 import type { NotificationPreferences } from '@/lib/notificationPreferences'
 import type { UserRefTarget } from '@/lib/userRef'
 import type { ChannelEntry } from '@/types/channelDirectory'
@@ -370,6 +371,13 @@ export const TASK_NAMES: Record<string, string> = {
   wangxiaoming: '王小明',
   linxia: '林夏',
   bobi: '波比',
+}
+
+/** 同一张名册，供画人用的表：显示名 / 自选头像 id / 是不是 AI 队友。波比是队友。 */
+export const TASK_FACES: MemberFaces = {
+  wangxiaoming: { name: '王小明', avatarId: null, agent: false },
+  linxia: { name: '林夏', avatarId: null, agent: false },
+  bobi: { name: '波比', avatarId: null, agent: true },
 }
 
 // ---- 最近进展（`ProjectOverviewView` 的 `progress`）------------------------

@@ -72,7 +72,10 @@ function mount(extra: Record<string, unknown> = {}) {
       progressFailed: false,
       tasks: [],
       names: { alice: 'Alice', bob: 'Bob' },
-      avatars: {},
+      faces: {
+        alice: { name: 'Alice', avatarId: null, agent: false },
+        bob: { name: 'Bob', avatarId: null, agent: false },
+      },
       me: 'alice',
       artifactApi,
       ...extra,
@@ -104,7 +107,7 @@ it('谁在做什么：我在最前；停住的、做完的不在里面', () => {
     ],
   })
   const people = view.getByTestId('overview-people')
-  const names = Array.from(people.querySelectorAll('.ov-person__name')).map((el) => el.textContent)
+  const names = Array.from(people.querySelectorAll('.identity-view__name')).map((el) => el.textContent)
   expect(names).toEqual(['Alice', 'Bob'])
   expect(people.textContent).not.toContain('停住的')
   expect(people.textContent).not.toContain('做完的')
@@ -126,6 +129,26 @@ it('最近进展里点一件，去那件任务', async () => {
   const view = mount({ progress: [item] })
   await fireEvent.click(view.getByText('首页加载慢'))
   expect(view.emitted('open-task')).toEqual([[{ taskId: 't9', roomId: 'front' }]])
+})
+
+it('最近进展里「谁做的」画成头像+名字，不再是一串裸名', () => {
+  const item: ProgressItem = {
+    kind: 'accepted',
+    at: new Date().toISOString(),
+    taskId: 't9',
+    taskTitle: '首页加载慢',
+    taskTitleSource: 'human',
+    roomId: 'front',
+    by: 'bob',
+    artifactId: null,
+    artifactName: '',
+    version: null,
+  }
+  const view = mount({ progress: [item] })
+  const by = view.getByTestId('overview-progress').querySelector('.ov-event__by')!
+  expect(by.textContent).toContain('·')
+  // 句子里提到一个人：名字前面带 `@`（UserRef 的惯例）。
+  expect(by.querySelector('.identity-view__name')!.textContent).toBe('@Bob')
 })
 
 it('任务和进展还没读到：不写「0」，也不写「暂无」', () => {

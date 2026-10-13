@@ -7,6 +7,7 @@ import { onMounted } from 'vue'
 import { useOwnAgents } from '@/composables/useOwnAgents'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 
 defineOptions({ name: 'OwnAgentsSettings' })
@@ -39,7 +40,7 @@ onMounted(() => load().finally(releaseGate))
       </p>
       <ul v-if="state.agents.length" class="own-agents__list">
         <li v-for="a in state.agents" :key="a.handle" class="own-agents__row">
-          <span class="own-agents__name">{{ a.name }}</span>
+          <IdentityView class="own-agents__name" :handle="a.handle" :name="a.name" :agent="true" :size="16" />
           <span v-for="m in a.machines" :key="m.name" class="own-agents__machine">
             · {{ m.name }}
             <span class="c-muted">
