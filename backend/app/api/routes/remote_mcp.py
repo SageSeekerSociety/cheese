@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep, require_seated_agent
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.config import settings
 from app.core.errors import (
@@ -243,7 +243,21 @@ class ResourceIn(BaseModel):
     params: dict[str, Any] = {}
 
 
-@router.post("/topics/{topic_id}/mcp/{name}/resources", dependencies=[ROUTE_DECIDES])
+class McpResourceOut(BaseModel):
+    """The MCP server's own JSON-RPC result, passed through as it answered.
+
+    Its shape belongs to the third party's server, so it is declared as what it
+    is — one opaque object, not a schema this platform invented for it.
+    """
+
+    result: dict[str, Any]
+
+
+@router.post(
+    "/topics/{topic_id}/mcp/{name}/resources",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(McpResourceOut),
+)
 async def read_resource(
     topic_id: uuid.UUID,
     name: str,

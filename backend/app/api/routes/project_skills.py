@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import Page, ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
@@ -633,6 +633,40 @@ class TopicSkillsIn(BaseModel):
     enabled: list[str] = Field(default_factory=list)
 
 
+class SkillCatalogItem(BaseModel):
+    """A shipped skill the platform can put in a prompt: its name and what it
+    does. `enabled` only exists on a room's list — a project's catalog is the
+    same items without the per-room switch."""
+
+    name: str
+    description: str
+
+
+class TopicSkillItem(SkillCatalogItem):
+    enabled: bool
+
+
+class SkillCatalogOut(Page[SkillCatalogItem]):
+    """A project's catalog of shipped skills."""
+
+
+class TopicSkillsCatalogOut(Page[TopicSkillItem]):
+    """A room's catalog: the same items, each with its own switch."""
+
+
+class TopicSkillsOut(BaseModel):
+    """What a room switched on, after unknown names were dropped."""
+
+    enabled: list[str]
+
+
+class SkillHealthOut(BaseModel):
+    """Whether a skill can run right now, and why not when it cannot."""
+
+    status: str
+    detail: str
+
+
 def _platform_catalog() -> list[dict]:
     """The shipped skills whose guidance can actually be put in a prompt — a name
     with no `SKILL.md` on disk (`cheese-docs`, built by composition) is left out:
@@ -646,7 +680,7 @@ def _platform_catalog() -> list[dict]:
     return out
 
 
-@router.get("/topics/{topic_id}/skills")
+@router.get("/topics/{topic_id}/skills", **typed_response(TopicSkillsCatalogOut))
 async def list_topic_skills(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -657,7 +691,7 @@ async def list_topic_skills(
     return ok(page(items, len(items)))
 
 
-@router.get("/projects/{project_id}/skill-catalog")
+@router.get("/projects/{project_id}/skill-catalog", **typed_response(SkillCatalogOut))
 async def project_skill_catalog(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -669,7 +703,11 @@ async def project_skill_catalog(
     return ok(page(items, len(items)))
 
 
-@router.put("/topics/{topic_id}/skills", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/topics/{topic_id}/skills",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(TopicSkillsOut),
+)
 async def set_topic_skills(
     topic_id: uuid.UUID,
     body: TopicSkillsIn,
@@ -737,7 +775,7 @@ async def _probe_wolfram() -> dict:
     }
 
 
-@router.get("/topics/{topic_id}/skills/{name}/health")
+@router.get("/topics/{topic_id}/skills/{name}/health", **typed_response(SkillHealthOut))
 async def skill_health(
     topic_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
@@ -746,7 +784,9 @@ async def skill_health(
     return await _skill_health(name)
 
 
-@router.get("/projects/{project_id}/skills/{name}/health")
+@router.get(
+    "/projects/{project_id}/skills/{name}/health", **typed_response(SkillHealthOut)
+)
 async def project_skill_health(
     project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict:

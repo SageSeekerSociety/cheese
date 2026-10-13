@@ -5211,6 +5211,162 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connector/my/devices/{device_id}/skills": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Machine Skills
+         * @description The skills indexed on this machine, as they were last read.
+         */
+        get: operations["list_machine_skills_connector_my_devices__device_id__skills_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/skills/market": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read Skill Market
+         * @description What Anthropic and OpenAI publish, for the dialog's market.
+         *
+         *     It names no machine: this is a public catalogue, not anything about a
+         *     device, so signing in is the whole gate. The vendors' own listings are read
+         *     live (``skill_market``), and a source that is down costs its own list rather
+         *     than the market.
+         */
+        get: operations["read_skill_market_connector_skills_market_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/skills/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Scan Machine Skills
+         * @description Read the machine now, index what it has, and return the index.
+         *
+         *     ``problems`` and ``roots`` come back beside the skills so a screen can say
+         *     why the list is short — a directory that fails the spec, or a machine with
+         *     none of the roots at all — rather than leaving an empty list unexplained.
+         */
+        post: operations["scan_machine_skills_connector_my_devices__device_id__skills_scan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/skills/roots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Machine Skill Roots
+         * @description Record the workspaces to scan, then read the machine again and return it.
+         *
+         *     One call, because a screen only ever does the two together: the person has
+         *     just named a checkout and wants to see what was in it. The paths are handed
+         *     to the machine as argv and it writes its own list — so a path with a space
+         *     needs no quoting, and a path that is not absolute is refused here rather
+         *     than written to mean something else than it looked like.
+         */
+        post: operations["set_machine_skill_roots_connector_my_devices__device_id__skills_roots_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/skills/web": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Fetch Machine Skill
+         * @description Fetch what an address points at, land it on the machine, then read it again.
+         *
+         *     The address is read whole — the folder a GitHub link names, so its
+         *     ``scripts/`` come with it — and checked against the agentskills.io rules
+         *     *before* anything is written, because it lands on somebody's own disk. It is
+         *     written under ``~/.cheese/web-skills/<name>``, which the scan reads like any
+         *     other root, so from here it is adopted, un-adopted and carried exactly like
+         *     a skill the machine already had.
+         *
+         *     ``kind`` widens the address's meaning: a ``plugin`` is a folder bundling
+         *     several skills, and each is landed under its own name.
+         *
+         *     Two calls, not one: without ``confirm`` this is a look, not a write — read,
+         *     judged, and answered with the plan. The person sees the skills and files
+         *     about to reach their disk, and the second call (``confirm``) lands them.
+         *     ``ponytail:`` the confirmed call reads the address again rather than holding
+         *     the first read; a plugin with many skills spends the hour's GitHub requests
+         *     twice per install. Ceiling: a slow confirmed install re-fetches.
+         */
+        post: operations["fetch_machine_skill_connector_my_devices__device_id__skills_web_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/skills/{name}/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set Machine Skill Adoption
+         * @description A person's decision about one skill on their own machine.
+         *
+         *     Adopting lets it be offered when a teammate's skills are picked; un-adopting
+         *     takes that back, and a teammate that had it stops carrying it (``carried_bodies``
+         *     only reads a machine skill's body back while its row is confirmed).
+         */
+        post: operations["set_machine_skill_adoption_connector_my_devices__device_id__skills__name__adopt_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/market/pools": {
         parameters: {
             query?: never;
@@ -5958,8 +6114,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
-        put?: never;
+        /** List Topic Skills */
+        get: operations["list_topic_skills_topics__topic_id__skills_get"];
+        /** Set Topic Skills */
+        put: operations["set_topic_skills_topics__topic_id__skills_put"];
         /** Create Skill */
         post: operations["create_skill_topics__topic_id__skills_post"];
         delete?: never;
@@ -5979,8 +6137,13 @@ export interface paths {
         put?: never;
         /**
          * Preview Import
-         * @description Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and
-         *     lay it out for a manager to look over. Nothing is saved.
+         * @description Read a skill from an uploaded SKILL.md or zip, or a GitHub address, and lay
+         *     it out for a manager to look over. Nothing is saved.
+         *
+         *     A GitHub folder that already holds a ``SKILL.md`` is read as it is; any other
+         *     repository is turned into a draft from its README and entry files
+         *     (``project_skill/repo_to_skill.py``). Either way the shape is ``ReadSkill``,
+         *     so 「预览 → 保存」 downstream does not know the difference.
          */
         post: operations["preview_import_projects__project_id__skills_import_preview_post"];
         delete?: never;
@@ -6056,6 +6219,65 @@ export interface paths {
         put?: never;
         /** Restore Skill */
         post: operations["restore_skill_skills__skill_id__revisions__revision__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/skill-catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Skill Catalog
+         * @description The shipped skills a teammate in this project can be armed with. Project,
+         *     not room: which teammate carries what is a project setting (and only a
+         *     manager may change it — `projects_agents.py`).
+         */
+        get: operations["project_skill_catalog_projects__project_id__skill_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/skills/{name}/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Skill Health */
+        get: operations["skill_health_topics__topic_id__skills__name__health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/skills/{name}/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Skill Health
+         * @description The same probe, asked from a project's settings instead of a room.
+         */
+        get: operations["project_skill_health_projects__project_id__skills__name__health_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6634,6 +6856,35 @@ export interface paths {
          *     away.
          */
         delete: operations["deactivate_project_agent_projects__project_id__agents__agent_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/agents/{agent_id}/editing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Agent Editing
+         * @description Take or give up the courtesy lease that says 「我正在改这个队友」.
+         *
+         *     Not a lock. What refuses a stale save is the ``version`` on the row; this is
+         *     so the second person hears that the first is already here *before* spending
+         *     time on a change that would be refused. It therefore has to be takeable when
+         *     a screen opens and releasable when it closes, which is why it is its own
+         *     address and not a side effect of a save.
+         *
+         *     Whom it admits is ``_may_configure`` — the same three ways that admit a save,
+         *     so it can never say 「你可以编辑」 to somebody a save would refuse.
+         */
+        put: operations["set_agent_editing_projects__project_id__agents__agent_id__editing_put"];
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -7475,6 +7726,33 @@ export interface paths {
         get: operations["room_servers_topics__topic_id__mcp_servers_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/mcp/{name}/resources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Read Resource
+         * @description A room MEMBER's request to one of the project's remote servers for a View.
+         *
+         *     The MCP Apps read path (``ui://`` resources): a previewed third party's HTML
+         *     is fetched under the person who is watching it. It deliberately does NOT use
+         *     the room's agent credential the session proxy above (``proxy``) authenticates
+         *     with — that credential is a session's, and reusing it here would let a
+         *     previewed document act with an agent's standing. The server is one the
+         *     project declares; the project's stored connection authorizes it here.
+         */
+        post: operations["read_resource_topics__topic_id__mcp__name__resources_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -12841,6 +13119,8 @@ export interface components {
         AcceptCardCreate: {
             /** Reviewer Handle */
             reviewer_handle?: string | null;
+            /** Reviewer Handles */
+            reviewer_handles?: string[] | null;
             /**
              * Focus
              * @default
@@ -12974,6 +13254,21 @@ export interface components {
             handle: string;
         };
         /**
+         * AdoptionRequest
+         * @description A person's decision about one skill on their machine.
+         *
+         *     The body is required, unlike the route it replaced: FastAPI reads a model
+         *     parameter as required unless it is given a default, and a silent default here
+         *     would hide the one thing worth saying — which way the decision went.
+         */
+        AdoptionRequest: {
+            /**
+             * Adopted
+             * @default true
+             */
+            adopted: boolean;
+        };
+        /**
          * AgentAskIn
          * @description Ask the room's AI teammate from the document
          *     (``POST /documents/{id}/agent``): a shortcut by its id, or what the person
@@ -13013,6 +13308,47 @@ export interface components {
             /** Compact Percent */
             compact_percent?: number | null;
         };
+        /** AgentEditingHolder */
+        AgentEditingHolder: {
+            /** Handle */
+            handle: string;
+            /** Seconds */
+            seconds: number;
+        };
+        /**
+         * AgentEditingIn
+         * @description Whether the caller is taking or giving up the 「正在编辑」 lease.
+         */
+        AgentEditingIn: {
+            /** Held */
+            held: boolean;
+        };
+        /**
+         * AgentEditingOut
+         * @description Who holds the lease, or null once it is given up.
+         *
+         *     A refusal is a 409, not this — this body is only ever the answer that the
+         *     lease is the caller's (or nobody's).
+         */
+        AgentEditingOut: {
+            editing: components["schemas"]["AgentEditingHolder"] | null;
+        };
+        /** AgentEditingOutEnvelope */
+        AgentEditingOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["AgentEditingOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** AgentInstanceCreate */
         AgentInstanceCreate: {
             configuration?: components["schemas"]["AgentConfiguration"] | null;
@@ -13029,11 +13365,18 @@ export interface components {
         /**
          * AgentInstanceUpdate
          * @description Edit the name or saved configuration of one agent.
+         *
+         *     ``expected_version`` is the version this edit was built from — what the
+         *     screen read before the person started changing it. Given, the save lands
+         *     only while the agent is still at it, and a 409 says somebody wrote first.
+         *     Omitted, the save replaces the configuration unconditionally.
          */
         AgentInstanceUpdate: {
             /** Display Name */
             display_name?: string | null;
             configuration?: components["schemas"]["AgentConfiguration"] | null;
+            /** Expected Version */
+            expected_version?: number | null;
         };
         /**
          * AgentTypeOut
@@ -13894,6 +14237,8 @@ export interface components {
              * @default 0
              */
             displayOrder: number;
+            /** Defaultrole */
+            defaultRole?: string | null;
         };
         /** CreateSpaceDomainGroupRequest */
         CreateSpaceDomainGroupRequest: {
@@ -14011,6 +14356,8 @@ export interface components {
             /** Attachmentids */
             attachmentIds?: number[];
             teaching?: components["schemas"]["TeachingRequest"] | null;
+            /** Defaultrole */
+            defaultRole?: string | null;
         };
         /** CreateTeamInvitationRequest */
         CreateTeamInvitationRequest: {
@@ -15104,6 +15451,18 @@ export interface components {
              */
             url: string;
         };
+        /**
+         * InstallPlanItemOut
+         * @description What a fetch would write for one skill: its name and the files with it.
+         */
+        InstallPlanItemOut: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Files */
+            files: string[];
+        };
         /** IntegrationPatch */
         IntegrationPatch: {
             /** Label */
@@ -15452,6 +15811,61 @@ export interface components {
             /** Idle Deadline */
             idle_deadline: string | null;
         };
+        /** MachineSkillListOut */
+        MachineSkillListOut: {
+            /** Skills */
+            skills: components["schemas"]["MachineSkillOut"][];
+        };
+        /** MachineSkillListOutEnvelope */
+        MachineSkillListOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["MachineSkillListOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * MachineSkillOut
+         * @description One index row on a machine, as the last scan left it.
+         */
+        MachineSkillOut: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Source Root */
+            source_root: string;
+            /** Digest */
+            digest: string;
+            /** State */
+            state: string;
+            /** Adopted */
+            adopted: boolean;
+        };
+        /** MachineSkillOutEnvelope */
+        MachineSkillOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["MachineSkillOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** MachinesOverviewOut */
         MachinesOverviewOut: {
             /** Configured */
@@ -15524,6 +15938,51 @@ export interface components {
         ManagerIn: {
             /** Handle */
             handle: string;
+        };
+        /**
+         * MarketCardOut
+         * @description One card in the market: what a vendor publishes, not anything of ours.
+         */
+        MarketCardOut: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Url */
+            url: string;
+            /** Source */
+            source: string;
+            /** Kind */
+            kind: string;
+        };
+        /**
+         * McpResourceOut
+         * @description The MCP server's own JSON-RPC result, passed through as it answered.
+         *
+         *     Its shape belongs to the third party's server, so it is declared as what it
+         *     is — one opaque object, not a schema this platform invented for it.
+         */
+        McpResourceOut: {
+            /** Result */
+            result: {
+                [key: string]: unknown;
+            };
+        };
+        /** McpResourceOutEnvelope */
+        McpResourceOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["McpResourceOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** MemberCreate */
         MemberCreate: {
@@ -16054,6 +16513,8 @@ export interface components {
             /** Archivedat */
             archivedAt?: number | null;
             teaching?: components["schemas"]["TeachingRequest"] | null;
+            /** Defaultrole */
+            defaultRole?: string | null;
         };
         /** PatchSpaceDomainGroupRequest */
         PatchSpaceDomainGroupRequest: {
@@ -16201,6 +16662,8 @@ export interface components {
             /** Hasendedat */
             hasEndedAt?: boolean | null;
             teaching?: components["schemas"]["TeachingRequest"] | null;
+            /** Defaultrole */
+            defaultRole?: string | null;
         };
         /** PatchTeamMemberRoleRequest */
         PatchTeamMemberRoleRequest: {
@@ -16599,6 +17062,18 @@ export interface components {
         ResolveIn: {
             /** Chosen */
             chosen: string;
+        };
+        /** ResourceIn */
+        ResourceIn: {
+            /** Method */
+            method: string;
+            /**
+             * Params
+             * @default {}
+             */
+            params: {
+                [key: string]: unknown;
+            };
         };
         /** RestoreIn */
         RestoreIn: {
@@ -17086,6 +17561,105 @@ export interface components {
             /** Method */
             method: string;
         };
+        /**
+         * SkillCatalogItem
+         * @description A shipped skill the platform can put in a prompt: its name and what it
+         *     does. `enabled` only exists on a room's list — a project's catalog is the
+         *     same items without the per-room switch.
+         */
+        SkillCatalogItem: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+        };
+        /**
+         * SkillCatalogOut
+         * @description A project's catalog of shipped skills.
+         */
+        SkillCatalogOut: {
+            /** Data */
+            data: components["schemas"]["SkillCatalogItem"][];
+            /** Total */
+            total: number;
+        };
+        /** SkillCatalogOutEnvelope */
+        SkillCatalogOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["SkillCatalogOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * SkillFetchOut
+         * @description The look (``landed: false``) and the landing (``landed: true``) answer
+         *     with the same body: the plan, and — once landed — the fresh index.
+         */
+        SkillFetchOut: {
+            /** Landed */
+            landed: boolean;
+            /** Plan */
+            plan: components["schemas"]["InstallPlanItemOut"][];
+            /** Skills */
+            skills?: components["schemas"]["MachineSkillOut"][];
+            /** Problems */
+            problems?: string[];
+            /** Roots */
+            roots?: string[];
+            /** Workspaces */
+            workspaces?: string[];
+        };
+        /** SkillFetchOutEnvelope */
+        SkillFetchOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["SkillFetchOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * SkillHealthOut
+         * @description Whether a skill can run right now, and why not when it cannot.
+         */
+        SkillHealthOut: {
+            /** Status */
+            status: string;
+            /** Detail */
+            detail: string;
+        };
+        /** SkillHealthOutEnvelope */
+        SkillHealthOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["SkillHealthOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** SkillIn */
         SkillIn: {
             /** Name */
@@ -17115,6 +17689,35 @@ export interface components {
             /** Absorbs */
             absorbs?: string[];
         };
+        /** SkillMarketOut */
+        SkillMarketOut: {
+            /** Skills */
+            skills: components["schemas"]["MarketCardOut"][];
+            /** Plugins */
+            plugins: components["schemas"]["MarketCardOut"][];
+            /** Plugin Total */
+            plugin_total: number;
+            /** Mcp */
+            mcp: components["schemas"]["MarketCardOut"][];
+            /** Notes */
+            notes: string[];
+        };
+        /** SkillMarketOutEnvelope */
+        SkillMarketOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["SkillMarketOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** SkillPatch */
         SkillPatch: {
             /** Title */
@@ -17132,6 +17735,48 @@ export interface components {
              * @default
              */
             reason: string;
+        };
+        /**
+         * SkillRootsRequest
+         * @description The workspaces to scan beside the machine's own homes.
+         */
+        SkillRootsRequest: {
+            /** Roots */
+            roots?: string[];
+        };
+        /**
+         * SkillScanOut
+         * @description A scan's answer: the index plus why it may be short.
+         *
+         *     ``problems`` is a directory the spec refused, ``roots`` and ``workspaces``
+         *     are what was actually walked — an empty list is then explained instead of
+         *     silently empty.
+         */
+        SkillScanOut: {
+            /** Skills */
+            skills: components["schemas"]["MachineSkillOut"][];
+            /** Problems */
+            problems: string[];
+            /** Roots */
+            roots: string[];
+            /** Workspaces */
+            workspaces: string[];
+        };
+        /** SkillScanOutEnvelope */
+        SkillScanOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["SkillScanOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * SlidePageQuoteIn
@@ -17363,12 +18008,16 @@ export interface components {
         TeachingRequest: {
             /** Systemprompt */
             systemPrompt?: string | null;
+            /** Privateprompt */
+            privatePrompt?: string | null;
             /** Currentweek */
             currentWeek?: number | null;
             /** Allowedtopics */
             allowedTopics?: string[];
             /** Avoidincode */
             avoidInCode?: string[];
+            /** Learninggoals */
+            learningGoals?: string[];
             /** Materialids */
             materialIds?: number[];
             /** Knowledgeids */
@@ -17541,6 +18190,70 @@ export interface components {
             /** Handle */
             handle: string;
         };
+        /** TopicSkillItem */
+        TopicSkillItem: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Enabled */
+            enabled: boolean;
+        };
+        /**
+         * TopicSkillsCatalogOut
+         * @description A room's catalog: the same items, each with its own switch.
+         */
+        TopicSkillsCatalogOut: {
+            /** Data */
+            data: components["schemas"]["TopicSkillItem"][];
+            /** Total */
+            total: number;
+        };
+        /** TopicSkillsCatalogOutEnvelope */
+        TopicSkillsCatalogOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["TopicSkillsCatalogOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** TopicSkillsIn */
+        TopicSkillsIn: {
+            /** Enabled */
+            enabled?: string[];
+        };
+        /**
+         * TopicSkillsOut
+         * @description What a room switched on, after unknown names were dropped.
+         */
+        TopicSkillsOut: {
+            /** Enabled */
+            enabled: string[];
+        };
+        /** TopicSkillsOutEnvelope */
+        TopicSkillsOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["TopicSkillsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** TransferTeamOwnerRequest */
         TransferTeamOwnerRequest: {
             /** Userid */
@@ -17708,6 +18421,39 @@ export interface components {
             url: string;
             rect: components["schemas"]["WebRectIn"];
             viewport: components["schemas"]["WebViewportIn"];
+        };
+        /**
+         * WebSkillRequest
+         * @description A skill to fetch from the internet and land on the machine.
+         *
+         *     ``kind`` says what the address points at: ``skill`` is one skill at that
+         *     folder; ``plugin`` is a plugin, whose bundled skills (``skills/*\/SKILL.md``)
+         *     are each landed. It defaults to the older meaning, so the existing callers
+         *     and the hand-typed address in the dialog keep working untouched.
+         *
+         *     ``confirm`` is the gate before writing: left false, the call reads and
+         *     judges everything and answers with what it *would* write, touching nobody's
+         *     disk; only a second call with ``confirm`` true lands it. What lands is a
+         *     script somebody else wrote, running with the caller's own permissions on
+         *     the caller's own machine, so a person gets to see it named first —
+         *     ``claude plugin install`` shows a 「Will install」 list for the same reason.
+         */
+        WebSkillRequest: {
+            /** Url */
+            url: string;
+            /**
+             * Kind
+             * @default skill
+             * @enum {string}
+             */
+            kind: "skill" | "plugin";
+            /** Project Id */
+            project_id?: string | null;
+            /**
+             * Confirm
+             * @default false
+             */
+            confirm: boolean;
         };
         /**
          * WebTextQuoteIn
@@ -28187,6 +28933,198 @@ export interface operations {
             };
         };
     };
+    list_machine_skills_connector_my_devices__device_id__skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineSkillListOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_skill_market_connector_skills_market_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillMarketOutEnvelope"];
+                };
+            };
+        };
+    };
+    scan_machine_skills_connector_my_devices__device_id__skills_scan_post: {
+        parameters: {
+            query?: {
+                project_id?: string | null;
+            };
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillScanOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_machine_skill_roots_connector_my_devices__device_id__skills_roots_post: {
+        parameters: {
+            query?: {
+                project_id?: string | null;
+            };
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SkillRootsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillScanOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    fetch_machine_skill_connector_my_devices__device_id__skills_web_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WebSkillRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillFetchOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_machine_skill_adoption_connector_my_devices__device_id__skills__name__adopt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdoptionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachineSkillOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_pools_market_pools_get: {
         parameters: {
             query?: never;
@@ -29948,6 +30886,72 @@ export interface operations {
             };
         };
     };
+    list_topic_skills_topics__topic_id__skills_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopicSkillsCatalogOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_topic_skills_topics__topic_id__skills_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopicSkillsIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopicSkillsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     create_skill_topics__topic_id__skills_post: {
         parameters: {
             query?: never;
@@ -30216,6 +31220,101 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    project_skill_catalog_projects__project_id__skill_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillCatalogOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skill_health_topics__topic_id__skills__name__health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHealthOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    project_skill_health_projects__project_id__skills__name__health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillHealthOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -31185,6 +32284,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_agent_editing_projects__project_id__agents__agent_id__editing_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentEditingIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentEditingOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -33417,6 +34552,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_resource_topics__topic_id__mcp__name__resources_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResourceIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["McpResourceOutEnvelope"];
                 };
             };
             /** @description Validation Error */

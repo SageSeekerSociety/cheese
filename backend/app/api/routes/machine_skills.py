@@ -48,6 +48,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
+from app.api.response import typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -118,6 +119,73 @@ class WebSkillRequest(BaseModel):
     confirm: bool = False
 
 
+class MachineSkillOut(BaseModel):
+    """One index row on a machine, as the last scan left it."""
+
+    name: str
+    description: str
+    source_root: str
+    digest: str
+    state: str
+    adopted: bool
+
+
+class MachineSkillListOut(BaseModel):
+    skills: list[MachineSkillOut]
+
+
+class SkillScanOut(MachineSkillListOut):
+    """A scan's answer: the index plus why it may be short.
+
+    ``problems`` is a directory the spec refused, ``roots`` and ``workspaces``
+    are what was actually walked — an empty list is then explained instead of
+    silently empty.
+    """
+
+    problems: list[str]
+    roots: list[str]
+    workspaces: list[str]
+
+
+class MarketCardOut(BaseModel):
+    """One card in the market: what a vendor publishes, not anything of ours."""
+
+    name: str
+    description: str
+    url: str
+    source: str
+    kind: str
+
+
+class SkillMarketOut(BaseModel):
+    skills: list[MarketCardOut]
+    plugins: list[MarketCardOut]
+    plugin_total: int
+    mcp: list[MarketCardOut]
+    #: A source that was down costs its own list; this says which.
+    notes: list[str]
+
+
+class InstallPlanItemOut(BaseModel):
+    """What a fetch would write for one skill: its name and the files with it."""
+
+    name: str
+    description: str
+    files: list[str]
+
+
+class SkillFetchOut(BaseModel):
+    """The look (``landed: false``) and the landing (``landed: true``) answer
+    with the same body: the plan, and — once landed — the fresh index."""
+
+    landed: bool
+    plan: list[InstallPlanItemOut]
+    skills: list[MachineSkillOut] = Field(default_factory=list)
+    problems: list[str] = Field(default_factory=list)
+    roots: list[str] = Field(default_factory=list)
+    workspaces: list[str] = Field(default_factory=list)
+
+
 async def _require_actor(resolver: ActorResolverDep) -> tuple[Actor, int]:
     """The signed-in person, and the id their own machines answer to."""
     actor = await resolver.resolve()
@@ -158,7 +226,7 @@ def _skill_view(row: Any) -> dict[str, Any]:
     }
 
 
-@router.get("/my/devices/{device_id}/skills")
+@router.get("/my/devices/{device_id}/skills", **typed_response(MachineSkillListOut))
 async def list_machine_skills(
     device_id: str, db: DbSession, resolver: ActorResolverDep
 ) -> dict[str, Any]:
@@ -169,7 +237,7 @@ async def list_machine_skills(
     return {"skills": [_skill_view(row) for row in rows]}
 
 
-@router.get("/skills/market")
+@router.get("/skills/market", **typed_response(SkillMarketOut))
 async def read_skill_market(resolver: ActorResolverDep) -> dict[str, Any]:
     """What Anthropic and OpenAI publish, for the dialog's market.
 
@@ -182,7 +250,7 @@ async def read_skill_market(resolver: ActorResolverDep) -> dict[str, Any]:
     return await skill_market.catalogue()
 
 
-@router.post("/my/devices/{device_id}/skills/scan")
+@router.post("/my/devices/{device_id}/skills/scan", **typed_response(SkillScanOut))
 async def scan_machine_skills(
     device_id: str,
     db: DbSession,
@@ -201,7 +269,7 @@ async def scan_machine_skills(
     return await _scan_now(db, device_id, project_id)
 
 
-@router.post("/my/devices/{device_id}/skills/roots")
+@router.post("/my/devices/{device_id}/skills/roots", **typed_response(SkillScanOut))
 async def set_machine_skill_roots(
     device_id: str,
     body: SkillRootsRequest,
@@ -274,7 +342,7 @@ async def _scan_now(
     }
 
 
-@router.post("/my/devices/{device_id}/skills/web")
+@router.post("/my/devices/{device_id}/skills/web", **typed_response(SkillFetchOut))
 async def fetch_machine_skill(
     device_id: str,
     body: WebSkillRequest,
@@ -375,7 +443,9 @@ async def _refuse_unlandable(
             raise UnprocessableEntityError(say("skillWebNameTaken"))
 
 
-@router.post("/my/devices/{device_id}/skills/{name}/adopt")
+@router.post(
+    "/my/devices/{device_id}/skills/{name}/adopt", **typed_response(MachineSkillOut)
+)
 async def set_machine_skill_adoption(
     device_id: str,
     name: str,

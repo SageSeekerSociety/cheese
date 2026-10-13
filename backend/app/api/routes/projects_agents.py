@@ -81,7 +81,7 @@ from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ConflictError
 from app.core.sentences import say
@@ -334,7 +334,26 @@ class AgentEditingIn(BaseModel):
     held: bool
 
 
-@router.put("/{project_id}/agents/{agent_id}/editing", dependencies=[ROUTE_DECIDES])
+class AgentEditingHolder(BaseModel):
+    handle: str
+    seconds: int
+
+
+class AgentEditingOut(BaseModel):
+    """Who holds the lease, or null once it is given up.
+
+    A refusal is a 409, not this — this body is only ever the answer that the
+    lease is the caller's (or nobody's).
+    """
+
+    editing: AgentEditingHolder | None
+
+
+@router.put(
+    "/{project_id}/agents/{agent_id}/editing",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(AgentEditingOut),
+)
 async def set_agent_editing(
     project_id: uuid.UUID,
     agent_id: uuid.UUID,

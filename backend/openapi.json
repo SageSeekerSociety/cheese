@@ -18076,6 +18076,316 @@
         }
       }
     },
+    "/connector/my/devices/{device_id}/skills": {
+      "get": {
+        "tags": [
+          "machine-skills"
+        ],
+        "summary": "List Machine Skills",
+        "description": "The skills indexed on this machine, as they were last read.",
+        "operationId": "list_machine_skills_connector_my_devices__device_id__skills_get",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MachineSkillListOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/skills/market": {
+      "get": {
+        "tags": [
+          "machine-skills"
+        ],
+        "summary": "Read Skill Market",
+        "description": "What Anthropic and OpenAI publish, for the dialog's market.\n\nIt names no machine: this is a public catalogue, not anything about a\ndevice, so signing in is the whole gate. The vendors' own listings are read\nlive (``skill_market``), and a source that is down costs its own list rather\nthan the market.",
+        "operationId": "read_skill_market_connector_skills_market_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillMarketOutEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/skills/scan": {
+      "post": {
+        "tags": [
+          "machine-skills"
+        ],
+        "summary": "Scan Machine Skills",
+        "description": "Read the machine now, index what it has, and return the index.\n\n``problems`` and ``roots`` come back beside the skills so a screen can say\nwhy the list is short — a directory that fails the spec, or a machine with\nnone of the roots at all — rather than leaving an empty list unexplained.",
+        "operationId": "scan_machine_skills_connector_my_devices__device_id__skills_scan_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillScanOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/skills/roots": {
+      "post": {
+        "tags": [
+          "machine-skills"
+        ],
+        "summary": "Set Machine Skill Roots",
+        "description": "Record the workspaces to scan, then read the machine again and return it.\n\nOne call, because a screen only ever does the two together: the person has\njust named a checkout and wants to see what was in it. The paths are handed\nto the machine as argv and it writes its own list — so a path with a space\nneeds no quoting, and a path that is not absolute is refused here rather\nthan written to mean something else than it looked like.",
+        "operationId": "set_machine_skill_roots_connector_my_devices__device_id__skills_roots_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "project_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SkillRootsRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillScanOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/skills/web": {
+      "post": {
+        "tags": [
+          "machine-skills"
+        ],
+        "summary": "Fetch Machine Skill",
+        "description": "Fetch what an address points at, land it on the machine, then read it again.\n\nThe address is read whole — the folder a GitHub link names, so its\n``scripts/`` come with it — and checked against the agentskills.io rules\n*before* anything is written, because it lands on somebody's own disk. It is\nwritten under ``~/.cheese/web-skills/<name>``, which the scan reads like any\nother root, so from here it is adopted, un-adopted and carried exactly like\na skill the machine already had.\n\n``kind`` widens the address's meaning: a ``plugin`` is a folder bundling\nseveral skills, and each is landed under its own name.\n\nTwo calls, not one: without ``confirm`` this is a look, not a write — read,\njudged, and answered with the plan. The person sees the skills and files\nabout to reach their disk, and the second call (``confirm``) lands them.\n``ponytail:`` the confirmed call reads the address again rather than holding\nthe first read; a plugin with many skills spends the hour's GitHub requests\ntwice per install. Ceiling: a slow confirmed install re-fetches.",
+        "operationId": "fetch_machine_skill_connector_my_devices__device_id__skills_web_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebSkillRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillFetchOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/skills/{name}/adopt": {
+      "post": {
+        "tags": [
+          "machine-skills"
+        ],
+        "summary": "Set Machine Skill Adoption",
+        "description": "A person's decision about one skill on their own machine.\n\nAdopting lets it be offered when a teammate's skills are picked; un-adopting\ntakes that back, and a teammate that had it stops carrying it (``carried_bodies``\nonly reads a machine skill's body back while its row is confirmed).",
+        "operationId": "set_machine_skill_adoption_connector_my_devices__device_id__skills__name__adopt_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdoptionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MachineSkillOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/market/pools": {
       "get": {
         "tags": [
@@ -21371,6 +21681,98 @@
       }
     },
     "/topics/{topic_id}/skills": {
+      "get": {
+        "tags": [
+          "project-skills"
+        ],
+        "summary": "List Topic Skills",
+        "operationId": "list_topic_skills_topics__topic_id__skills_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicSkillsCatalogOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "project-skills"
+        ],
+        "summary": "Set Topic Skills",
+        "operationId": "set_topic_skills_topics__topic_id__skills_put",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TopicSkillsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TopicSkillsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "project-skills"
@@ -21431,7 +21833,7 @@
           "project-skills"
         ],
         "summary": "Preview Import",
-        "description": "Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and\nlay it out for a manager to look over. Nothing is saved.",
+        "description": "Read a skill from an uploaded SKILL.md or zip, or a GitHub address, and lay\nit out for a manager to look over. Nothing is saved.\n\nA GitHub folder that already holds a ``SKILL.md`` is read as it is; any other\nrepository is turned into a draft from its README and entry files\n(``project_skill/repo_to_skill.py``). Either way the shape is ``ReadSkill``,\nso 「预览 → 保存」 downstream does not know the difference.",
         "operationId": "preview_import_projects__project_id__skills_import_preview_post",
         "parameters": [
           {
@@ -21784,6 +22186,155 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Restore Skill Skills  Skill Id  Revisions  Revision  Restore Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/skill-catalog": {
+      "get": {
+        "tags": [
+          "project-skills"
+        ],
+        "summary": "Project Skill Catalog",
+        "description": "The shipped skills a teammate in this project can be armed with. Project,\nnot room: which teammate carries what is a project setting (and only a\nmanager may change it — `projects_agents.py`).",
+        "operationId": "project_skill_catalog_projects__project_id__skill_catalog_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillCatalogOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/skills/{name}/health": {
+      "get": {
+        "tags": [
+          "project-skills"
+        ],
+        "summary": "Skill Health",
+        "operationId": "skill_health_topics__topic_id__skills__name__health_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillHealthOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/skills/{name}/health": {
+      "get": {
+        "tags": [
+          "project-skills"
+        ],
+        "summary": "Project Skill Health",
+        "description": "The same probe, asked from a project's settings instead of a room.",
+        "operationId": "project_skill_health_projects__project_id__skills__name__health_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillHealthOutEnvelope"
                 }
               }
             }
@@ -23312,6 +23863,70 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Deactivate Project Agent Projects  Project Id  Agents  Agent Id  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/agents/{agent_id}/editing": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Set Agent Editing",
+        "description": "Take or give up the courtesy lease that says 「我正在改这个队友」.\n\nNot a lock. What refuses a stale save is the ``version`` on the row; this is\nso the second person hears that the first is already here *before* spending\ntime on a change that would be refused. It therefore has to be takeable when\na screen opens and releasable when it closes, which is why it is its own\naddress and not a side effect of a save.\n\nWhom it admits is ``_may_configure`` — the same three ways that admit a save,\nso it can never say 「你可以编辑」 to somebody a save would refuse.",
+        "operationId": "set_agent_editing_projects__project_id__agents__agent_id__editing_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "agent_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Agent Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentEditingIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentEditingOutEnvelope"
                 }
               }
             }
@@ -27635,6 +28250,69 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Room Servers Topics  Topic Id  Mcp Servers Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/mcp/{name}/resources": {
+      "post": {
+        "tags": [
+          "remote-mcp"
+        ],
+        "summary": "Read Resource",
+        "description": "A room MEMBER's request to one of the project's remote servers for a View.\n\nThe MCP Apps read path (``ui://`` resources): a previewed third party's HTML\nis fetched under the person who is watching it. It deliberately does NOT use\nthe room's agent credential the session proxy above (``proxy``) authenticates\nwith — that credential is a session's, and reusing it here would let a\npreviewed document act with an agent's standing. The server is one the\nproject declares; the project's stored connection authorizes it here.",
+        "operationId": "read_resource_topics__topic_id__mcp__name__resources_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          },
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResourceIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/McpResourceOutEnvelope"
                 }
               }
             }
@@ -51502,6 +52180,20 @@
             ],
             "title": "Reviewer Handle"
           },
+          "reviewer_handles": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewer Handles"
+          },
           "focus": {
             "type": "string",
             "title": "Focus",
@@ -51876,6 +52568,18 @@
         "title": "AdminAdd",
         "description": "``POST /admin/admins`` 的请求体 —— 一个人。\n\n`handle` 而不是 user id，和这一族表里所有「谁」的写法一致（`author_handle`、\n`assignee_handle`）；名单按 handle 精确匹配，所以长度跟着 `String(64)` 走。\n\n只判「非空、不超长」这些形状上的事：**这个 handle 在平台上存不存在、是不是\nagent** 都要读库，是 `AdminService.add_admin` 的判断 —— 路由拿不到判断权也\n就不会漏掉它。"
       },
+      "AdoptionRequest": {
+        "properties": {
+          "adopted": {
+            "type": "boolean",
+            "title": "Adopted",
+            "default": true
+          }
+        },
+        "type": "object",
+        "title": "AdoptionRequest",
+        "description": "A person's decision about one skill on their machine.\n\nThe body is required, unlike the route it replaced: FastAPI reads a model\nparameter as required unless it is given a default, and a silent default here\nwould hide the one thing worth saying — which way the decision went."
+      },
       "AgentAskIn": {
         "properties": {
           "conversation": {
@@ -51984,6 +52688,95 @@
         "title": "AgentConfiguration",
         "description": "A saved role and optional model; None inherits the project main model.\n\nMCP servers are not here: they belong to the agent's type, and a session\nreads them from there (`agent_instance.services.type_of_seat`)."
       },
+      "AgentEditingHolder": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          },
+          "seconds": {
+            "type": "integer",
+            "title": "Seconds"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handle",
+          "seconds"
+        ],
+        "title": "AgentEditingHolder"
+      },
+      "AgentEditingIn": {
+        "properties": {
+          "held": {
+            "type": "boolean",
+            "title": "Held"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "held"
+        ],
+        "title": "AgentEditingIn",
+        "description": "Whether the caller is taking or giving up the 「正在编辑」 lease."
+      },
+      "AgentEditingOut": {
+        "properties": {
+          "editing": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentEditingHolder"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "editing"
+        ],
+        "title": "AgentEditingOut",
+        "description": "Who holds the lease, or null once it is given up.\n\nA refusal is a 409, not this — this body is only ever the answer that the\nlease is the caller's (or nobody's)."
+      },
+      "AgentEditingOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AgentEditingOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "AgentEditingOutEnvelope"
+      },
       "AgentInstanceCreate": {
         "properties": {
           "configuration": {
@@ -52054,12 +52847,23 @@
                 "type": "null"
               }
             ]
+          },
+          "expected_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Version"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "title": "AgentInstanceUpdate",
-        "description": "Edit the name or saved configuration of one agent."
+        "description": "Edit the name or saved configuration of one agent.\n\n``expected_version`` is the version this edit was built from — what the\nscreen read before the person started changing it. Given, the save lands\nonly while the agent is still at it, and a 409 says somebody wrote first.\nOmitted, the save replaces the configuration unconditionally."
       },
       "AgentTypeOut": {
         "properties": {
@@ -54416,6 +55220,17 @@
             "type": "integer",
             "title": "Displayorder",
             "default": 0
+          },
+          "defaultRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultrole"
           }
         },
         "type": "object",
@@ -54764,6 +55579,17 @@
                 "type": "null"
               }
             ]
+          },
+          "defaultRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultrole"
           }
         },
         "type": "object",
@@ -57444,6 +58270,33 @@
         "type": "object",
         "title": "ImportSource"
       },
+      "InstallPlanItemOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "files": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "files"
+        ],
+        "title": "InstallPlanItemOut",
+        "description": "What a fetch would write for one skill: its name and the files with it."
+      },
       "IntegrationPatch": {
         "properties": {
           "label": {
@@ -58548,6 +59401,133 @@
         ],
         "title": "MachineSandboxOut"
       },
+      "MachineSkillListOut": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/MachineSkillOut"
+            },
+            "type": "array",
+            "title": "Skills"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills"
+        ],
+        "title": "MachineSkillListOut"
+      },
+      "MachineSkillListOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MachineSkillListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "MachineSkillListOutEnvelope"
+      },
+      "MachineSkillOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "source_root": {
+            "type": "string",
+            "title": "Source Root"
+          },
+          "digest": {
+            "type": "string",
+            "title": "Digest"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "adopted": {
+            "type": "boolean",
+            "title": "Adopted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "source_root",
+          "digest",
+          "state",
+          "adopted"
+        ],
+        "title": "MachineSkillOut",
+        "description": "One index row on a machine, as the last scan left it."
+      },
+      "MachineSkillOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MachineSkillOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "MachineSkillOutEnvelope"
+      },
       "MachinesOverviewOut": {
         "properties": {
           "configured": {
@@ -58705,6 +59685,91 @@
           "handle"
         ],
         "title": "ManagerIn"
+      },
+      "MarketCardOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "url",
+          "source",
+          "kind"
+        ],
+        "title": "MarketCardOut",
+        "description": "One card in the market: what a vendor publishes, not anything of ours."
+      },
+      "McpResourceOut": {
+        "properties": {
+          "result": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Result"
+          }
+        },
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "title": "McpResourceOut",
+        "description": "The MCP server's own JSON-RPC result, passed through as it answered.\n\nIts shape belongs to the third party's server, so it is declared as what it\nis — one opaque object, not a schema this platform invented for it."
+      },
+      "McpResourceOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/McpResourceOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "McpResourceOutEnvelope"
       },
       "MemberCreate": {
         "properties": {
@@ -60299,6 +61364,17 @@
                 "type": "null"
               }
             ]
+          },
+          "defaultRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultrole"
           }
         },
         "type": "object",
@@ -60954,6 +62030,17 @@
                 "type": "null"
               }
             ]
+          },
+          "defaultRole": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Defaultrole"
           }
         },
         "type": "object",
@@ -62049,6 +63136,27 @@
           "chosen"
         ],
         "title": "ResolveIn"
+      },
+      "ResourceIn": {
+        "properties": {
+          "method": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Method"
+          },
+          "params": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Params",
+            "default": {}
+          }
+        },
+        "type": "object",
+        "required": [
+          "method"
+        ],
+        "title": "ResourceIn"
       },
       "RestoreIn": {
         "properties": {
@@ -63276,6 +64384,224 @@
         ],
         "title": "SignupConsent"
       },
+      "SkillCatalogItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description"
+        ],
+        "title": "SkillCatalogItem",
+        "description": "A shipped skill the platform can put in a prompt: its name and what it\ndoes. `enabled` only exists on a room's list — a project's catalog is the\nsame items without the per-room switch."
+      },
+      "SkillCatalogOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/SkillCatalogItem"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total"
+        ],
+        "title": "SkillCatalogOut",
+        "description": "A project's catalog of shipped skills."
+      },
+      "SkillCatalogOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SkillCatalogOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SkillCatalogOutEnvelope"
+      },
+      "SkillFetchOut": {
+        "properties": {
+          "landed": {
+            "type": "boolean",
+            "title": "Landed"
+          },
+          "plan": {
+            "items": {
+              "$ref": "#/components/schemas/InstallPlanItemOut"
+            },
+            "type": "array",
+            "title": "Plan"
+          },
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/MachineSkillOut"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Problems"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roots"
+          },
+          "workspaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Workspaces"
+          }
+        },
+        "type": "object",
+        "required": [
+          "landed",
+          "plan"
+        ],
+        "title": "SkillFetchOut",
+        "description": "The look (``landed: false``) and the landing (``landed: true``) answer\nwith the same body: the plan, and — once landed — the fresh index."
+      },
+      "SkillFetchOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SkillFetchOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SkillFetchOutEnvelope"
+      },
+      "SkillHealthOut": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "detail"
+        ],
+        "title": "SkillHealthOut",
+        "description": "Whether a skill can run right now, and why not when it cannot."
+      },
+      "SkillHealthOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SkillHealthOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SkillHealthOutEnvelope"
+      },
       "SkillIn": {
         "properties": {
           "name": {
@@ -63341,6 +64667,87 @@
         ],
         "title": "SkillIn"
       },
+      "SkillMarketOut": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/MarketCardOut"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "plugins": {
+            "items": {
+              "$ref": "#/components/schemas/MarketCardOut"
+            },
+            "type": "array",
+            "title": "Plugins"
+          },
+          "plugin_total": {
+            "type": "integer",
+            "title": "Plugin Total"
+          },
+          "mcp": {
+            "items": {
+              "$ref": "#/components/schemas/MarketCardOut"
+            },
+            "type": "array",
+            "title": "Mcp"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills",
+          "plugins",
+          "plugin_total",
+          "mcp",
+          "notes"
+        ],
+        "title": "SkillMarketOut"
+      },
+      "SkillMarketOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SkillMarketOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SkillMarketOutEnvelope"
+      },
       "SkillPatch": {
         "properties": {
           "title": {
@@ -63398,6 +64805,98 @@
         },
         "type": "object",
         "title": "SkillPatch"
+      },
+      "SkillRootsRequest": {
+        "properties": {
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 20,
+            "title": "Roots"
+          }
+        },
+        "type": "object",
+        "title": "SkillRootsRequest",
+        "description": "The workspaces to scan beside the machine's own homes."
+      },
+      "SkillScanOut": {
+        "properties": {
+          "skills": {
+            "items": {
+              "$ref": "#/components/schemas/MachineSkillOut"
+            },
+            "type": "array",
+            "title": "Skills"
+          },
+          "problems": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Problems"
+          },
+          "roots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Roots"
+          },
+          "workspaces": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Workspaces"
+          }
+        },
+        "type": "object",
+        "required": [
+          "skills",
+          "problems",
+          "roots",
+          "workspaces"
+        ],
+        "title": "SkillScanOut",
+        "description": "A scan's answer: the index plus why it may be short.\n\n``problems`` is a directory the spec refused, ``roots`` and ``workspaces``\nare what was actually walked — an empty list is then explained instead of\nsilently empty."
+      },
+      "SkillScanOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SkillScanOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SkillScanOutEnvelope"
       },
       "SlidePageQuoteIn": {
         "properties": {
@@ -63945,6 +65444,17 @@
             ],
             "title": "Systemprompt"
           },
+          "privatePrompt": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Privateprompt"
+          },
           "currentWeek": {
             "anyOf": [
               {
@@ -63970,6 +65480,13 @@
             },
             "type": "array",
             "title": "Avoidincode"
+          },
+          "learningGoals": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Learninggoals"
           },
           "materialIds": {
             "items": {
@@ -64421,6 +65938,153 @@
         ],
         "title": "TopicMemberCreate"
       },
+      "TopicSkillItem": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "enabled"
+        ],
+        "title": "TopicSkillItem"
+      },
+      "TopicSkillsCatalogOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/TopicSkillItem"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total"
+        ],
+        "title": "TopicSkillsCatalogOut",
+        "description": "A room's catalog: the same items, each with its own switch."
+      },
+      "TopicSkillsCatalogOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TopicSkillsCatalogOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TopicSkillsCatalogOutEnvelope"
+      },
+      "TopicSkillsIn": {
+        "properties": {
+          "enabled": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "title": "TopicSkillsIn"
+      },
+      "TopicSkillsOut": {
+        "properties": {
+          "enabled": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "TopicSkillsOut",
+        "description": "What a room switched on, after unknown names were dropped."
+      },
+      "TopicSkillsOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TopicSkillsOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TopicSkillsOutEnvelope"
+      },
       "TransferTeamOwnerRequest": {
         "properties": {
           "userId": {
@@ -64810,6 +66474,46 @@
         ],
         "title": "WebRegionQuoteIn",
         "description": "网页上框选的一块区域：只记网址和位置，不记页面内容。\n\n这类引用来自没有注入运行时的网页应用（隧道托管的 `cheese serve`），宿主读不到\n里面的元素和文字，能说的只有「在这张网页的这个位置框了一块」。所以它不带文件\n身份（`path`/`source`/`version`）：应用预览本就没有版本可言，网址就是它的身份。"
+      },
+      "WebSkillRequest": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "skill",
+              "plugin"
+            ],
+            "title": "Kind",
+            "default": "skill"
+          },
+          "project_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project Id"
+          },
+          "confirm": {
+            "type": "boolean",
+            "title": "Confirm",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "title": "WebSkillRequest",
+        "description": "A skill to fetch from the internet and land on the machine.\n\n``kind`` says what the address points at: ``skill`` is one skill at that\nfolder; ``plugin`` is a plugin, whose bundled skills (``skills/*/SKILL.md``)\nare each landed. It defaults to the older meaning, so the existing callers\nand the hand-typed address in the dialog keep working untouched.\n\n``confirm`` is the gate before writing: left false, the call reads and\njudges everything and answers with what it *would* write, touching nobody's\ndisk; only a second call with ``confirm`` true lands it. What lands is a\nscript somebody else wrote, running with the caller's own permissions on\nthe caller's own machine, so a person gets to see it named first —\n``claude plugin install`` shows a 「Will install」 list for the same reason."
       },
       "WebTextQuoteIn": {
         "properties": {
