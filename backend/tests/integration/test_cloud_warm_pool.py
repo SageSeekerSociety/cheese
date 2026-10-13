@@ -422,3 +422,25 @@ def test_a_refused_retry_keeps_the_record_and_waits_before_asking_again(
             assert asked == [901]
 
     client.portal.call(lambda: run())
+
+
+def test_a_full_pool_still_asks_again_for_a_failed_cleanup(warm_case, monkeypatch):
+    """A pool with all its machines ready adds none, and must still not leave a
+    machine whose deletion failed running for good."""
+    client, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "connector_public_base", "https://example.invalid")
+
+    async def run():
+        async with client.test_request_factory() as session:
+            # The case's one ready machine fills the pool.
+            _provider_still_has(cloud, 901)
+            stale = _failed_cleanup(901)
+            stale.updated_at = datetime.now(UTC) - timedelta(hours=2)
+            session.add(stale)
+            await session.commit()
+
+            await WarmPoolService(session, cloud).sweep()
+            assert cloud.deleted == [901]
+
+    client.portal.call(lambda: run())
