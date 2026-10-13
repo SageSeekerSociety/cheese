@@ -898,6 +898,11 @@ onBeforeUnmount(() => {
   min-height: 0;
   box-sizing: border-box;
   overflow: auto;
+  /* 「适合视口」按这一格的 clientWidth 算比例。滚动条占宽时（桌面端 WebKit、接了鼠标的
+     macOS），图高刚好卡在这一格高度上下的那几像素里，竖滚动条一出来宽度就窄 10px →
+     比例降一格 → 图变矮、滚动条消失 → 宽度回来 → 比例又升，每帧来回跳。槽位常驻，
+     宽度就不随滚动条变。 */
+  scrollbar-gutter: stable;
   padding: 16px;
 }
 .design-image__overlay {
