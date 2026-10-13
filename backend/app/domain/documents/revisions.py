@@ -35,7 +35,7 @@ from typing import Any
 
 from app.core.sentences import listing, say
 
-#: The script ships to rooms from here; see `agent.skills._NATIVE_SKILL_SRC`.
+#: The script ships to rooms from here; see `skill_library._NATIVE_SKILL_SRC`.
 _SCRIPT = (
     Path(__file__).resolve().parents[3]
     / "sandbox"
