@@ -1448,8 +1448,7 @@
     "fillInTip": "Fewer than three of your own tasks are here; this row makes up the three",
     "collapseTasks": "Collapse this channel's tasks",
     "expandTasks": "Expand this channel's tasks",
-    "collapsedTasks": "{count} tasks under way",
-    "collapsedHere": "The one you have open stays below"
+    "collapsedTasks": "{count} tasks under way"
   },
   "members": {
     "leave": "Leave project",
