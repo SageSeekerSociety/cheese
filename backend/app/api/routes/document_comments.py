@@ -19,8 +19,8 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service, get_consumptions, get_session_host
 from app.api.doc_access import Reached, reach, require_writable
 from app.api.doc_identity import operation_actor
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.routes.topics import DbSession
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.redis import get_redis_client
 from app.core.sentences import say

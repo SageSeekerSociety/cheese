@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service
 from app.domain.agent.chat import ChatService
 from app.domain.delivery.models import NativeInput
@@ -61,6 +62,7 @@ def test_a_task_session_hears_its_work_is_not_kept_until_the_task_starts(client)
 
     channel.arrive = recording
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/task-machine-ws",

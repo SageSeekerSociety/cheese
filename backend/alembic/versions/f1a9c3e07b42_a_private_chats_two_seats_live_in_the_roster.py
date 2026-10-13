@@ -69,12 +69,6 @@ peer 那一席补过一遍，建私聊时 ``TopicMemberService.seed_private`` �
 遍扫不到它们，而那之后没有代码再读那个键。记忆是显式写进去的、不可再生的（结论
 61），所以这一遍把窗口里落下的那批搬过来。幂等，跑完第二遍零行。
 
-降级不做，但删掉的行找得回来：删之前先抄进
-``topic_memberships_unseated_f1a9c3e07b42``，要回滚就
-``INSERT INTO topic_memberships SELECT * FROM topic_memberships_unseated_f1a9c3e07b42``。
-补进去的那一半没有这个待遇，也不需要：新插的席位行和本来就该在的长得一模一样，分不
-出哪些是这一条写的，而要回到上一版靠的是那两列还在，上一版读的就是它们。
-
 发布前在 dev 的副本上对一遍：跑完
 ``SELECT count(*) FROM topics t WHERE t.is_private
   AND (SELECT count(*) FROM topic_memberships tm WHERE tm.topic_id = t.id) <> 2;``
@@ -234,4 +228,9 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级不做，但删掉的行找得回来：删之前先抄进
+    ``topic_memberships_unseated_f1a9c3e07b42``，要回滚就
+    ``INSERT INTO topic_memberships SELECT * FROM topic_memberships_unseated_f1a9c3e07b42``。
+    补进去的那一半没有这个待遇，也不需要：新插的席位行和本来就该在的长得一模一样，分不
+    出哪些是这一条写的，而要回到上一版靠的是那两列还在，上一版读的就是它们。"""
     pass

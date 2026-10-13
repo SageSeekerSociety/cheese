@@ -25,10 +25,10 @@ an Apollo-shaped store":
      `@/services/*`, OR any module that transitively reaches one of those, OR
      it calls `fetch`/`axios` itself — or it reads a business store.
   D  it is tied to where it is mounted, or to a channel other than
-     props/emits: `useRoute`/`useRouter`/`$router`/`vue-router`,
-     `$parent`/`$root`, an event bus, or an `inject(KEY)` with no fallback —
-     mounted outside its provider, that one is `undefined` and the component
-     breaks.
+     props/emits: `useRoute`/`useRouter`/`$router`/`vue-router`, a rendered
+     `<router-view>`/`<router-link>`, `$parent`/`$root`, an event bus, or an
+     `inject(KEY)` with no fallback — mounted outside its provider, that one is
+     `undefined` and the component breaks.
 
   The first letter that applies, worst first, is the grade: a component that
   reads the route AND fetches is D, not C.
@@ -38,7 +38,13 @@ time, so it pulls in no runtime dependency and no component became
 un-standalone by declaring one — a component that only does
 `import type { PreviewSession } from '../api'` has no fetching code in it at
 all. Value imports skip type-only specifiers, `api_reach` skips them too: an
-edge that exists only as a type never enters the transitive closure. (#2174's
+edge that exists only as a type never enters the transitive closure.
+`export type … from` is erased the same way — a barrel that re-exports a type
+is not how a chain gets past it. (The router import is the one place type-only
+still counts, and it does so on purpose: `docs/manual/dev/frontend.md` bans
+`import type { RouteLocationRaw } from 'vue-router'` under
+`frontend/src/components/**` and points at `@/lib/navTarget` as the substitute,
+so the router test reads it and grades D.) (#2174's
 inventory counted them, which is how `PanelPreviewView` was called C while
 containing no fetch of its own; fixing it in this one place fixed both the
 board and the gate at once.)
@@ -53,6 +59,12 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     reaches the API through a chain the regex misses is graded one letter too
     high; a `reach` computed over `.ts` and `.vue` only has the same blind
     spot. `@/` is resolved against `frontend/src`, matching `vite.config.ts`.
+  - An edge is read in both its spellings, `import` and `export … from` (and
+    `export * from`, and `import('…')`), by regex, so a specifier-shaped string
+    inside a string literal counts as an edge too — a comment does not, the
+    comments are stripped first (below). An index barrel is how a chain gets
+    past the file that names it, and leaving the re-export out called a page
+    that fetched through one standalone-ready.
   - A store is recognised by the `useXStore` naming convention. One spelled
     another way is invisible here.
   - Comments are not code. `// 不 import vue-router` is the sentence a file
@@ -63,7 +75,9 @@ WHAT IT COSTS, stated so a grade is read as an estimate and not a verdict:
     `//`); template HTML comments were already dropped by `template_blocks`.
     The same stripping applies to `api_reach`: `lib/loadFailure.ts` names
     `axios` in a comment and was read as a module that fetches, which made
-    every component that imported it C.
+    every component that imported it C. The template half of the router test
+    reads tags by name (`<router-view>`, `<router-link>`), the way
+    `scene-ratchet.py` pairs a page with its view.
   - "Has a fallback" is read off the call: a top-level comma inside
     `inject(...)`. `inject(KEY, undefined)` passes that test and still hands
     back `undefined`; the regex cannot tell a useful fallback from a useless
@@ -90,12 +104,24 @@ from typing import Any
 STANDALONE = "A"
 
 VUE_IMPORT = re.compile(r"""import\s+(type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]""", re.S)
+#: `export … from '…'`, the other spelling of an edge. The clause between
+#: `export` and `from` is captured whole because a braces list decides its own
+#: type-onlyness specifier by specifier.
+VUE_EXPORT_FROM = re.compile(
+    r"""export\s+(type\s+)?(\*|\*\s+as\s+[\w$]+|\{[^}]*\})\s*from\s*['"]([^'"]+)['"]""",
+    re.S,
+)
+#: One entry of an `export { … } from` list, if it is the type-only kind.
+_TYPE_SPECIFIER = re.compile(r"\s*type\s+\S")
 VUE_DYN_IMPORT = re.compile(r"""import\(\s*['"]([^'"]+)['"]\s*\)""")
 SCRIPT_BLOCK = re.compile(r"<script[^>]*>(.*?)</script>", re.S)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 _TAG_START = re.compile(r"</?\s*([A-Za-z][A-Za-z0-9_-]*)")
 STORE_USE = re.compile(r"\buse([A-Za-z0-9_]+)Store\b")
 ROUTER_USE = re.compile(r"\buseRoute\s*\(|\buseRouter\s*\(|\$router\b")
+#: vue-router's two globals as a template tag, normalised (lowercased, dashes
+#: dropped): `<router-view>`, `<RouterView>` and `<routerView>` are one name.
+ROUTER_TAGS = {"routerview", "routerlink"}
 PARENT_USE = re.compile(r"\$parent|\$root")
 BUS_USE = re.compile(r"\beventBus\b|\$eventBus\b")
 INJECT_CALL = re.compile(r"\binject\s*(?:<[^>()]*>)?\s*\(")
@@ -160,19 +186,48 @@ def resolve_spec(spec: str, importer: Path, src: Path) -> Path | None:
 
 
 def specifiers(text: str) -> list[tuple[bool, str]]:
-    """Every import specifier in `text`, as `(is_type_only, specifier)`."""
+    """Every edge in `text`, as `(is_type_only, specifier)`.
+
+    Imports and re-exports both: `export { x } from './x'` and `export * from
+    './x'` pull the target into the module's runtime graph exactly as an import
+    does, which is how an index barrel carries a chain. Reading only `import`
+    made the barrel's edge invisible, and a file that fetched through one was
+    graded A — the same shape of miss as the router test's substring match.
+    """
     out = [(bool(kind), spec) for kind, spec in VUE_IMPORT.findall(text)]
+    out += [
+        (_export_is_type_only(kind, clause), spec)
+        for kind, clause, spec in VUE_EXPORT_FROM.findall(text)
+    ]
     out += [(False, spec) for spec in VUE_DYN_IMPORT.findall(text)]
     return out
+
+
+def _export_is_type_only(leading_type: str | None, clause: str) -> bool:
+    """Is this `export … from` erased at build time?
+
+    `export type { A } from`, `export { type A } from` and `export type * from`
+    are. `export *` and `export * as ns` are not — a module namespace is a
+    runtime value — and a mixed list is not either: it is a runtime edge
+    through the specifiers that are not marked `type`.
+    """
+    if leading_type:
+        return True
+    if not clause.startswith("{"):
+        return False
+    listed = [part for part in clause[1:-1].split(",") if part.strip()]
+    return bool(listed) and all(_TYPE_SPECIFIER.match(part) for part in listed)
 
 
 def api_reach(root: Path) -> set[Path]:
     """Modules under `frontend/src` whose import graph reaches an API root.
 
     Direct reach is a value import of an API root or a bare `fetch`/`axios`;
-    the rest is closed transitively over `.ts` and `.vue` edges. A type-only
-    import is not an edge: it is erased at build time, so a module that only
-    declares a type from the API layer is not a module that reaches it.
+    the rest is closed transitively over `.ts` and `.vue` edges. An import and
+    a re-export (`export { … } from`, `export * from`) are both edges — an
+    index barrel that re-exports a module which fetches is how a chain gets
+    past it — but a type-only one is not: it is erased at build time, so a
+    module that only declares a type from the API layer does not reach it.
 
     `root` is resolved first. Every edge is a `resolve_spec` result, which is
     absolute, and an absolute path is never `relative_to` a relative root: with
@@ -439,6 +494,20 @@ def tag_names(block: str) -> list[str]:
     return names
 
 
+def router_tags(template: str) -> list[str]:
+    """The template tags that need vue-router installed, as written.
+
+    `<router-view>`/`<router-link>` are globals vue-router registers, and only
+    an application that installed it resolves them: in a tree without a router
+    they are a "failed to resolve component" warning and an empty shell. The
+    script half of the grade has always seen them (the import, the composable);
+    the template half saw nothing, so a page whose only tie to the router was
+    the link it rendered was called standalone-ready.
+    """
+    return [name for name in tag_names(template)
+            if name.lower().replace("-", "") in ROUTER_TAGS]
+
+
 def code_of(path: Path, text: str) -> str:
     """The code in a `.ts` or `.vue` file, with its comments gone.
 
@@ -539,15 +608,20 @@ def grade_component(root: Path, path: Path, reach: set[Path] | None = None) -> G
             reasons.append(f"reaches the API layer through {rel}")
 
     stores = {normalise_store(name) for name in STORE_USE.findall(whole)}
+    rendered_router_tags = router_tags(template)
     hard = bool(
         ROUTER_USE.search(whole)
         or "vue-router" in script
+        or rendered_router_tags
         or PARENT_USE.search(whole)
         or BUS_USE.search(whole)
         or bare_injects(script)
     )
     if ROUTER_USE.search(whole) or "vue-router" in script:
         reasons.append("reads the route (useRoute/useRouter/$router/vue-router)")
+    if rendered_router_tags:
+        tag = rendered_router_tags[0]
+        reasons.append(f"renders <{tag}>, which only resolves with a router installed")
     if PARENT_USE.search(whole):
         reasons.append("reads $parent/$root")
     if BUS_USE.search(whole):
@@ -629,6 +703,26 @@ _FIXTURE: dict[str, str] = {
         "const a = `x ${y ? `//q` : ''} z`; const route = useRoute()\n"
         "</script>\n<template><a>{{ a }}{{ route }}</a></template>\n"
     ),
+    "frontend/src/components/RouterLink.vue": (
+        "<script setup lang=\"ts\">\ndefineProps<{ id: string }>()\n</script>\n"
+        "<template><router-link to=\"/x\">{{ id }}</router-link></template>\n"
+    ),
+    "frontend/src/components/ViaBarrel.vue": (
+        "<script setup lang=\"ts\">\nimport { useThing } from './barrel'\n"
+        "const thing = useThing()\n</script>\n<template><div>{{ thing }}</div></template>\n"
+    ),
+    #: The API root has to exist for `@/api` to resolve to it; `is_api_root`
+    #: then reads the path, not the file.
+    "frontend/src/api.ts": "export const api = { get: () => fetch('/x') }\n",
+    "frontend/src/components/barrel.ts": "export { useThing } from './thing'\n",
+    "frontend/src/components/thing.ts": (
+        "import { api } from '@/api'\nexport const useThing = () => api.get()\n"
+    ),
+    "frontend/src/components/TypeBarrel.vue": (
+        "<script setup lang=\"ts\">\nimport type { Thing } from './typeBarrel'\n"
+        "defineProps<{ thing: Thing | null }>()\n</script>\n<template><div /></template>\n"
+    ),
+    "frontend/src/components/typeBarrel.ts": "export type { Thing } from './thing'\n",
     # provide/inject: a fallback makes the component mountable on its own.
     "frontend/src/components/InjectFallback.vue": (
         "<script setup lang=\"ts\">\nimport { inject } from 'vue'\n"
@@ -717,6 +811,15 @@ def self_test() -> int:
             letter("NestedTemplate.vue"),
             "D",
         )
+        router_link = grade_component(root, components / "RouterLink.vue", reach)
+        check("a page whose only router use is the tag it renders is D", router_link.letter, "D")
+        check(
+            "and the tag is the reason",
+            any("renders <router-link>" in reason for reason in router_link.reasons),
+            True,
+        )
+        check("a page that fetches through a re-export barrel is C", letter("ViaBarrel.vue"), "C")
+        check("a barrel that re-exports only a type is not an edge", letter("TypeBarrel.vue"), "A")
         check("inject() with a fallback (generic, factory) mounts alone: A", letter("InjectFallback.vue"), "A")
         check("an inject() with no fallback beside one that has it is still D", letter("InjectBare.vue"), "D")
         check("provide() alone is not tied to where it is mounted: A", letter("ProvideOnly.vue"), "A")
@@ -731,8 +834,10 @@ def self_test() -> int:
         "PASS: frontend_grade self-test (comments are not code: vue-router, $router "
         "and $parent named in // and /* */ comments grade A, a real useRoute() "
         "stays D, and a // inside a string, a regex or a template literal nested in "
-        "${ } is not a comment; inject() with a fallback and provide() alone grade A, "
-        "a bare inject() stays D; a module naming axios only in a comment does not fetch)"
+        "${ } is not a comment; a rendered <router-link> is D, a chain carried by an "
+        "`export … from` barrel is C, and one carrying only a type is A; inject() with "
+        "a fallback and provide() alone grade A, a bare inject() stays D; a module "
+        "naming axios only in a comment does not fetch)"
     )
     return 0
 

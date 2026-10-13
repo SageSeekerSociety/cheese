@@ -2,7 +2,6 @@ import uuid
 from collections.abc import Sequence
 from typing import Protocol
 
-from app.core.errors import NotFoundError
 from app.domain.notification.dto import ResolvedEntityInfoDTO
 from app.domain.project.services import ProjectService
 from app.domain.team.services import TeamService
@@ -191,16 +190,26 @@ class ProjectEntityResolver:
         self, entity_ids: Sequence[str]
     ) -> dict[str, ResolvedEntityInfoDTO | None]:
         # cheesex projects are UUID-keyed (spec: Project = git repo, uuid PK).
-        result: dict[str, ResolvedEntityInfoDTO | None] = {}
+        parsed: list[tuple[str, uuid.UUID]] = []
         for raw_id in entity_ids:
             try:
-                project_uuid = uuid.UUID(raw_id)
+                parsed.append((raw_id, uuid.UUID(raw_id)))
             except (TypeError, ValueError):
                 continue
 
-            try:
-                project = await self._project_service.get_or_404(project_uuid)
-            except NotFoundError:
+        if not parsed:
+            return {}
+
+        # 一次查完整批。逐 id ``get_or_404`` 是一屏 N 次往返 —— 而这里手上本来
+        # 就攥着整页的外键，和 team/user 那两个解析器同一条形状。
+        projects_by_id = await self._project_service.get_projects_by_ids(
+            [project_uuid for _, project_uuid in parsed]
+        )
+
+        result: dict[str, ResolvedEntityInfoDTO | None] = {}
+        for raw_id, project_uuid in parsed:
+            project = projects_by_id.get(project_uuid)
+            if project is None:
                 result[raw_id] = None
                 continue
 

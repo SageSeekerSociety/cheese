@@ -49,8 +49,10 @@ from app.domain.agent.platform_failures import (
     PROMPT_UNDELIVERED_MESSAGE,
     TURN_TIMEOUT_CODE,
     TURN_TIMEOUT_MESSAGE,
+    classify_session_start,
 )
 from app.domain.agent.reads import (
+    Abandoned,
     CaughtUp,
     Completed,
     ControlsMoved,
@@ -63,6 +65,7 @@ from app.domain.agent.reads import (
     Working,
     Writing,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.room.stopwatch import Stopwatch, timed
 from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
 from app.domain.agent.session_host.contract import (
@@ -666,7 +669,9 @@ class RoomSessions:
                 await self._say_waiting(seat, event.reason)
         elif isinstance(event, Ended):
             if seat in self.work and self.live.get(seat) is live:
-                await self._died(live, out_of_reach=event.reason == "out of reach")
+                await self._died(
+                    live, out_of_reach=event.reason == "out of reach", said=event.said
+                )
             return True
         elif isinstance(event, CaughtUp):
             caught.set()
@@ -711,7 +716,9 @@ class RoomSessions:
             return
         await self._hear(live.session, Read(str(work), Reachable(True)))
 
-    async def _died(self, live: Live, *, out_of_reach: bool = False) -> None:
+    async def _died(
+        self, live: Live, *, out_of_reach: bool = False, said: str = ""
+    ) -> None:
         """The turn is over with nobody able to answer it. Say so where the turn
         is, or the room waits on something that will never answer.
 
@@ -722,17 +729,22 @@ class RoomSessions:
         prepared, and saying its process exited then is a sentence the room reads
         as an unexplained crash. Whoever reads either one has the socket, the
         machine and the runner's log to go on; the platform does not, so it says
-        only what it saw.
+        only what it saw. A process its runner recorded ending before it ever
+        started (``said``) is a session that did not start, and the room hears
+        why, as it would had the start itself failed.
         """
         seat = self._seat_of(live.session)
         work = self.work[seat]
+        refused = classify_session_start(said, harness=self.label) if said else None
         await self._consume(
             live.session.project_id,
             seat[0],
             work,
             AgentResult(
                 text=(
-                    say(
+                    refused.content
+                    if refused is not None
+                    else say(
                         "runnerUnresponsive",
                         harness=self.label,
                         seconds=f"{RUNNER_GONE_S:.0f}",
@@ -742,6 +754,8 @@ class RoomSessions:
                 ),
                 session_id=live.conversation,
                 is_error=True,
+                failure_code=refused.code if refused is not None else None,
+                log=said or None,
                 agent_handle=live.acting,
                 harness=self.harness,
             ),
@@ -757,6 +771,12 @@ class RoomSessions:
             # being out of reach is not — a machine still being prepared
             # looks exactly the same, and that one stays "unknown".
             self.dead.add((seat, live.conversation))
+            # Nothing will report on the inputs this work held: the runner that
+            # would have written a completion or a terminal is the process that
+            # is gone. The turn's interval ends with the result above, which is
+            # what puts it out of the orphan sweep's reach, so the room ends
+            # them here or they hold a seat no later message can take.
+            await self._hear(live.session, Read(str(work), Abandoned()))
 
     # --- starting and speaking -----------------------------------------------
 
@@ -1157,7 +1177,6 @@ class RoomSessions:
 
     async def announce(self, topic: uuid.UUID) -> None:
         """Tell the room its session's controls moved."""
-        from app.domain.agent.runtime import get_broker
 
         await get_broker().publish(
             str(topic),

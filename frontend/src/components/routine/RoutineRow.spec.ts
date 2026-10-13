@@ -58,6 +58,16 @@ const base: Routine = {
   output_dir: '周报',
   trigger: 'schedule',
   trigger_text: '每周周一 09:00（Asia/Shanghai）',
+  i18n: {
+    trigger_text: {
+      key: 'routineTriggerWeekly',
+      params: {
+        days: { list: [{ key: 'routineWeekdayMon', params: {} }], quoted: false },
+        time: '09:00',
+        timezone: 'Asia/Shanghai',
+      },
+    },
+  },
   spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
   timezone: 'Asia/Shanghai',
   state: 'active',
@@ -84,6 +94,16 @@ function buttons(container: Element): string[] {
 }
 
 describe('一条规则这一行', () => {
+  it('changes the trigger language on an already rendered row, not its timezone or clock', async () => {
+    const { container } = mount(base)
+    expect(container.textContent).toContain('每周周一 09:00（Asia/Shanghai）')
+    setLocale('en')
+    await waitFor(() => {
+      expect(container.textContent).toContain('Every Monday at 09:00 (Asia/Shanghai)')
+      expect(container.textContent).not.toContain('每周周一')
+    })
+  })
+
   it('右键这一行：弹出行里那几样操作', async () => {
     const { container } = mount(base)
     await fireEvent.contextMenu(container.querySelector('.routine-row')!, { clientX: 20, clientY: 40 })
@@ -154,5 +174,59 @@ describe('一条规则这一行', () => {
     })
     expect(container.textContent).toContain('失败')
     expect(container.textContent).toContain('没有交回结果')
+  })
+
+  // 规则里填的「结果放在 周报/」只是这些文件的落脚路径，频道面板上没有对应的文件夹 ——
+  // 这一格里的每一份都得当场点得开，不然它们在任何地方都打不开。
+  it('房间里那一格：展开执行记录，交回的结果文件点得开', async () => {
+    const ui = mount(base, {
+      open: true,
+      runs: [
+        {
+          id: 'run-1',
+          routine_id: 'r-1',
+          trigger_detail: '计划时间 2026-09-28 09:00。',
+          routine_revision: 1,
+          scheduled_for: '2026-09-28T01:00:00Z',
+          status: 'succeeded',
+          summary: '已汇总',
+          outputs: ['周报/2026-10-11.md'],
+          error: '',
+          created_at: '2026-09-28T01:00:00Z',
+          started_at: '2026-09-28T01:00:00Z',
+          finished_at: '2026-09-28T01:10:00Z',
+        },
+      ],
+    })
+    const file = ui.getByRole('button', { name: '2026-10-11.md' })
+    expect(file.getAttribute('title')).toBe('周报/2026-10-11.md')
+    await fireEvent.click(file)
+    expect(ui.emitted()['open-file']).toEqual([['周报/2026-10-11.md']])
+  })
+
+  // 项目页上没有能开文件的面板：那一页整串指回规则所在的房间，不画成死的路径。
+  it('项目页：结果文件整串指回规则所在的房间', () => {
+    const ui = mount(base, {
+      open: true,
+      roomTo: { name: 'workspace-topic', params: { projectId: 'p1', topicId: 'room-1' } },
+      runs: [
+        {
+          id: 'run-1',
+          routine_id: 'r-1',
+          trigger_detail: '计划时间 2026-09-28 09:00。',
+          routine_revision: 1,
+          scheduled_for: '2026-09-28T01:00:00Z',
+          status: 'succeeded',
+          summary: '已汇总',
+          outputs: ['周报/2026-10-11.md'],
+          error: '',
+          created_at: '2026-09-28T01:00:00Z',
+          started_at: '2026-09-28T01:00:00Z',
+          finished_at: '2026-09-28T01:10:00Z',
+        },
+      ],
+    })
+    expect(ui.container.querySelector('.routine-run__file')).toBeNull()
+    expect(ui.container.querySelector('.routine-run__outputs')?.textContent).toContain('周报/2026-10-11.md')
   })
 })

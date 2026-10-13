@@ -25,12 +25,24 @@ function readPayload(event) {
     const data = event.data.json()
     const projectId = data.projectId
     const topicId = data.topicId
+    // 那条消息在哪条会话里：任务、支线，还是频道自己那条线。芝士在任务或支线里问
+    // 的问题不属于频道主线 —— 落回频道是一页没有这条消息的地方（后端 `push_link`
+    // 是同一条规则）。
+    const taskId = data.taskId
+    const threadId = data.threadId
     return {
       title: data.title || fallback.title,
       body: data.body || '',
-      // 点开就落到那件事本身，而不是首页 —— 推送的作用是把人带回现场。两个 id
-      // 缺一个就退回待办列表：那里一定列着这件事。
-      url: projectId && topicId ? `/projects/${projectId}/topics/${topicId}` : '/inbox',
+      // 点开就落到那件事本身，而不是首页 —— 推送的作用是把人带回现场。项目和频道
+      // 这两个 id 缺一个就退回待办列表：那里一定列着这件事。
+      url:
+        projectId && topicId && taskId
+          ? `/projects/${projectId}/topics/${topicId}/tasks/${taskId}`
+          : projectId && topicId && threadId
+            ? `/projects/${projectId}/topics/${topicId}/threads/${threadId}`
+            : projectId && topicId
+              ? `/projects/${projectId}/topics/${topicId}`
+              : '/inbox',
     }
   } catch {
     return fallback

@@ -102,8 +102,10 @@ class AcceptCard(UuidPk, Timestamps, Base):
     )
     # Routed reviewer (spec C5): the specific person asked to accept.
     reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)
-    # Why this reviewer was suggested (最懂/没参与/有空), for transparency.
-    routing_reason: Mapped[str] = mapped_column(Text, default="")
+    # 审阅重点：交付的人请审阅的人确认的那几件事，至多三条，每条一句
+    # （`cards.clean_focus` 把关）。验证过程在 `change_body` 里，不在这里。列名是
+    # 它从前的名字 routing_reason，那时它说的是「为什么推荐这个审阅人」。
+    focus: Mapped[str] = mapped_column("routing_reason", Text, default="")
     # What this topic CHANGED, in the words of whoever did the work — the one
     # description that survives into permanent history. `change_subject` is the
     # one-line commit title, in the hosted repository's own convention, and

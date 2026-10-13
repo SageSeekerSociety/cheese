@@ -41,8 +41,9 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.db import SessionFactory
 from app.core.sentences import say
 from app.domain.agent.platform_notices import (
     EVENT_GATE_ABANDONED,
@@ -150,7 +151,7 @@ async def condemn(session: AsyncSession, card: AcceptCard) -> None:
 
 
 async def sweep(
-    session_factory: async_sessionmaker,
+    session_factory: SessionFactory,
     *,
     nudge: Callable[[uuid.UUID, str, str, dict], Awaitable[None]] | None = None,
     now: datetime | None = None,

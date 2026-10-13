@@ -6,7 +6,8 @@ from datetime import UTC, datetime, timedelta
 
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, Block, BlockKind
-from app.domain.memory.models import MemoryScope, user_scope_id
+from app.domain.memory.models import user_scope_id
+from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import DbMemoryStore
 from app.domain.project.services import ProjectService
 from app.domain.team.models import (

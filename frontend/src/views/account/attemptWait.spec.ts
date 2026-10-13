@@ -2,11 +2,11 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { attemptMessage } from './attemptWait'
 
+import { ApiError } from '@/api/http'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 
 function refusal(data: Record<string, unknown>, status = 403) {
-  return new BusinessError('English text from the server', status, { name: 'ForbiddenError', message: '', data })
+  return new ApiError(status, 'English text from the server', 'ForbiddenError', undefined, undefined, data)
 }
 
 afterEach(() => setLocale('en'))
@@ -57,7 +57,7 @@ describe('the wait a refused attempt states', () => {
 
   it('leaves any other error to the screen', () => {
     expect(attemptMessage(refusal({ reason: 'invalid_code', attemptsRemaining: 3 }, 401))).toBeNull()
-    expect(attemptMessage(new BusinessError('Not found', 404))).toBeNull()
+    expect(attemptMessage(new ApiError(404, 'Not found'))).toBeNull()
     expect(attemptMessage(new Error('network down'))).toBeNull()
   })
 })

@@ -48,6 +48,7 @@ from app.api.routes.users_common import SudoTicketRequest, _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
+from app.core.client_address import resolved_client_address
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.user.realname_services import UserRealNameService
 
@@ -103,7 +104,6 @@ async def get_user_identity(
     The unmasked name and student ID take a fresh re-authentication: a
     session alone, stolen or left open, only ever reads the masked form.
     """
-    from app.core.client_address import resolved_client_address
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can view identity.")

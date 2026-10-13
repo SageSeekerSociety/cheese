@@ -2,8 +2,8 @@
 screen says them in its reader's language.
 
 A rule a validator enforces on a form a person fills in answers with that
-rule's sentence and key, not the generic "Invalid request parameters"; a
-malformed body nobody types still answers the generic one, with no key.
+rule's sentence and key, not the generic sentence `invalidRequestParameters`; a
+malformed body nobody types still answers that generic one, key and all.
 """
 
 import uuid
@@ -99,5 +99,10 @@ def test_a_malformed_body_still_answers_the_generic_refusal(client):
     )
 
     assert r.status_code == 400
-    assert r.json()["error"]["message"] == "Invalid request parameters"
-    assert "i18n" not in r.json()["error"]
+    # A body the validator cannot read still answers with a key, so the screen
+    # says it in the reader's language instead of the server's English.
+    assert r.json()["error"]["message"] == "请求参数不合法"
+    assert r.json()["error"]["i18n"] == {
+        "key": "invalidRequestParameters",
+        "params": {},
+    }

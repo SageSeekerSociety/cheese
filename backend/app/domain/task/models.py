@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Sequence,
     SmallInteger,
@@ -17,6 +18,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
+from app.domain.task.indexed_rows import LIVE_ROWS, SWEEPABLE_ROWS
 
 task_seq = Sequence("task_seq")
 task_membership_seq = Sequence("task_membership_seq")
@@ -134,6 +136,27 @@ class TaskAccessDomain(Base):
 
 class TaskMembership(Base):
     __tablename__ = "task_membership"
+    __table_args__ = (
+        # 鉴权每次请求都问一次「这道题 × 这个人领没领」
+        # (`app.auth.domains.task`)，可见性判据也为每道候选题和每个读者打同样的
+        # 相关 EXISTS (`visibility_service`)：两者都按 task_id + member_id 取，
+        # 所以这一列 `task_id` 也还上了 `task_membership.task_id` 的外键无索引债。
+        Index(
+            "ix_task_membership_task_member",
+            "task_id",
+            "member_id",
+            postgresql_where=LIVE_ROWS,
+        ),
+        # 一个人名下的全部领取（个人主页计数、队伍变更前的锁检查）按 member_id 取。
+        Index("ix_task_membership_member", "member_id", postgresql_where=LIVE_ROWS),
+        # 截止清扫按 deadline 找「还没交、已过期」的领取，谓词与它同一份
+        # (`indexed_rows.SWEEPABLE_ROWS`)。
+        Index(
+            "ix_task_membership_deadline",
+            "deadline",
+            postgresql_where=SWEEPABLE_ROWS,
+        ),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, task_membership_seq, primary_key=True)
     task_id: Mapped[int] = mapped_column(
@@ -218,6 +241,12 @@ class TaskSubmission(Base):
     """Minimal mapping for task_submission table."""
 
     __tablename__ = "task_submission"
+    __table_args__ = (
+        # 一条领取的历次提交：完成状态那条轴每问一次「手上有活吗」就打一组
+        # EXISTS，题目板、分析视图和提交仓库都按 membership_id 取（`repositories`）。
+        # 这一列也是 `task_submission.membership_id` 的外键索引。
+        Index("ix_task_submission_membership_id", "membership_id"),
+    )
 
     id: Mapped[int] = mapped_column(BigInteger, task_submission_seq, primary_key=True)
     membership_id: Mapped[int] = mapped_column(
@@ -243,6 +272,12 @@ class TaskSubmissionEntry(Base):
     """Minimal mapping for task_submission_entry table."""
 
     __tablename__ = "task_submission_entry"
+    __table_args__ = (
+        # 一版提交的逐项作答，读提交时按 task_submission_id 取
+        # (`repositories.TaskSubmissionEntryRepository.list_by_submission_id`)。
+        # 也是这一列的外键索引。
+        Index("ix_task_submission_entry_submission_id", "task_submission_id"),
+    )
 
     id: Mapped[int] = mapped_column(
         BigInteger, task_submission_entry_seq, primary_key=True
@@ -281,6 +316,11 @@ class TaskSubmissionReview(Base):
     """Minimal mapping for task_submission_review table."""
 
     __tablename__ = "task_submission_review"
+    __table_args__ = (
+        # 一版提交的评审：完成状态那条轴的相关 EXISTS、提交列表和回填都按
+        # submission_id 取。也是这一列的外键索引。
+        Index("ix_task_submission_review_submission_id", "submission_id"),
+    )
 
     id: Mapped[int] = mapped_column(
         BigInteger, task_submission_review_seq, primary_key=True

@@ -95,30 +95,37 @@ def test_context_entry_reports_service_failure_without_direct_retry(tmp_path):
 def test_context_entry_response_compatibility(tmp_path, response, error):
     target = tmp_path / "execution.json"
     requests = []
+    # The socket lives in /tmp, outside tmp_path, and a passing test's tmp_path
+    # is removed and its name handed to the next case (tmp_path_retention_policy
+    # = "failed"). So the next case computes this same address: the file has to
+    # go with this test, as `serve` removes its own.
     with socket.socket(socket.AF_UNIX) as server:
         server.bind(address(target))
-        server.listen(1)
-        server.settimeout(10)
-
-        def respond():
-            with server.accept()[0] as connection:
-                connection.settimeout(10)
-                with connection.makefile("rb") as incoming:
-                    requests.append(incoming.readline())
-                connection.sendall(response)
-
-        worker = threading.Thread(target=respond)
-        worker.start()
         try:
-            result = subprocess.run(
-                [sys.executable, str(Path(context_service.__file__)), str(target)],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
+            server.listen(1)
+            server.settimeout(10)
+
+            def respond():
+                with server.accept()[0] as connection:
+                    connection.settimeout(10)
+                    with connection.makefile("rb") as incoming:
+                        requests.append(incoming.readline())
+                    connection.sendall(response)
+
+            worker = threading.Thread(target=respond)
+            worker.start()
+            try:
+                result = subprocess.run(
+                    [sys.executable, str(Path(context_service.__file__)), str(target)],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+            finally:
+                worker.join(timeout=10)
+            assert not worker.is_alive()
         finally:
-            worker.join(timeout=10)
-        assert not worker.is_alive()
+            os.unlink(address(target))
     assert requests == [b"context\n"]
     if error is None:
         assert result.returncode == 0, result.stderr

@@ -128,9 +128,9 @@
       "loadFailed": "获取分类失败"
     },
     "publishTask": {
-      "createSuccess": "创建任务成功",
-      "createSuccessAndWaitingAudit": "创建任务成功，等待审核",
-      "createFailed": "创建任务失败",
+      "createSuccess": "题目已发布",
+      "createSuccessAndWaitingAudit": "题目已提交，等待审核",
+      "createFailed": "发布题目失败",
       "initializationFailed": "初始化失败",
       "attachmentsUploading": "附件还在上传，请稍候再发布",
       "teaching": {
@@ -275,7 +275,7 @@
   "inviteCodes": {
     "copy": "复制",
     "createdTitle": "这是你的邀请码",
-    "createdBody": "把它发给要邀请的人，他在「我的工作」页填进去就能加入这个空间。",
+    "createdBody": "等空间通过审核，把它发给要邀请的人：他在首页点「用邀请码加入」，填进去就能加入这个空间。审核通过前这个码还不能用。",
     "openSpace": "进入空间",
     "create": "新建",
     "current": "当前使用中的码",
@@ -376,6 +376,14 @@
     },
     "count": "共 {n} 人"
   },
+  "reviewNotice": {
+    "pendingTitle": "空间还在审核中",
+    "pendingBody": "平台管理员审核通过后，这里才能发布题目，邀请码也才能用。审核结果会显示在「空间」页的「我的空间申请」里。",
+    "rejectedTitle": "空间申请被驳回",
+    "rejectedBody": "可以到「空间」页的「我的空间申请」里修改后重新提交。",
+    "rejectedBodyReason": "驳回原因：{reason}。可以到「空间」页的「我的空间申请」里修改后重新提交。",
+    "backToSpaces": "回到空间列表"
+  },
   "manageDenied": {
     "title": "你没有管理权限",
     "body": "成员、数据与设置只有这个空间的所有者和管理员能打开。",
@@ -416,7 +424,7 @@
     "back": "返回空间设置"
   },
   "guidance": {
-    "intro": "这块板的默认。从这里的题建出的项目，AI 队友开新对话时会读它；单道题可以另设一份盖过它。",
+    "intro": "这个空间的默认设置。从这里的题建出的项目，AI 队友开新对话时会读它；单道题可以另设一份盖过它。",
     "save": "保存",
     "saveSuccess": "已保存",
     "saveFailed": "保存失败"
@@ -436,7 +444,7 @@
       "knowledgeIds": "知识条目编号",
       "listHint": "用逗号分隔",
       "materials": "参考资料",
-      "materialsHint": "从这块板的资料库勾选。留空 = 不带课件；「仅管理员」档不在清单里。",
+      "materialsHint": "从这个空间的资料库勾选。留空 = 不带课件；「仅管理员」档不在清单里。",
       "materialsLibrary": "空间资料库",
       "materialsNone": "点击从资料库选择",
       "materialsExpand": "展开资料库清单",
@@ -461,8 +469,8 @@
       "admins": "仅管理员"
     },
     "hint": {
-      "members": "这块板上的人都看得见、都能下载。",
-      "admins": "只有这块板的管理员看得见、能下载。"
+      "members": "这个空间里的人都看得见、都能下载。",
+      "admins": "只有这个空间的管理员看得见、能下载。"
     },
     "cancel": "取消",
     "download": "下载",

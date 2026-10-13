@@ -23,9 +23,6 @@ that work, and an input read there never opens a turn of its own.
 
 What ending means: ``stopped_at``, as the runtime writes when a Stop lands, at
 the moment the work that read it ended.
-
-Downgrade puts nothing back: a re-opened row would make its room busy again
-with a turn nobody is running.
 """
 
 from collections.abc import Sequence
@@ -66,4 +63,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade puts nothing back: a re-opened row would make its room busy again
+    with a turn nobody is running."""
     pass

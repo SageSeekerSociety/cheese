@@ -59,9 +59,9 @@ class RevisionsFailed(RuntimeError):
 def script() -> Any:
     """The skill script, loaded once.
 
-    Public because reading a document's text (`documents.text`) has to load the
-    same one: two loaders would be two copies of the judgement this module's
-    docstring is about.
+    Public because comparing two versions of a document (`documents.compare`)
+    has to load the same one: two loaders would be two copies of the judgement
+    this module's docstring is about.
 
     Imported by path rather than as a package: `sandbox/` is what ships to other
     people's machines and is deliberately not importable as one.

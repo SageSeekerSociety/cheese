@@ -12,11 +12,11 @@ from app.api.deps import get_chat_service
 from app.domain.agent.harness.channel import ScreenSetupError
 from tests.conftest import settle_turn, wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -33,7 +33,7 @@ def _project_and_topic(client, owner: str = "user-1") -> str:
 
 
 def _say_without_summoning(client, topic_id: str, text: str) -> None:
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": text})
         while ws.receive_json()["type"] != "done":
             pass
@@ -164,7 +164,7 @@ def _a_room_with_two_teammates(client) -> tuple[str, str]:
 
 def _say(client, topic_id: str, text: str, author: str = "alice") -> None:
     """Say one thing in the room and wait for whatever it started to be over."""
-    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+    with room_socket(client, topic_id, author) as ws:
         post_message(client, topic_id, author, {"content": text})
         while ws.receive_json()["type"] not in ("done", "error"):
             pass

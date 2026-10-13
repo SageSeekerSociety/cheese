@@ -18,6 +18,27 @@ from starlette.websockets import WebSocketDisconnect
 from app.core.obs import RedactSecrets, configure_logging, scrub_secrets
 
 
+@pytest.fixture(autouse=True)
+def _uvicorn_loggers_at_their_default_level():
+    """Start each test with uvicorn's loggers where a process uvicorn starts
+    has them: at its default level, info.
+
+    Logger levels outlive a test. A uvicorn server another test started in this
+    worker with ``log_level="error"`` leaves ``uvicorn.error`` and
+    ``uvicorn.access`` at ERROR, and the info lines these tests write through
+    them would be dropped before any handler or filter saw them.
+    """
+    loggers = [
+        logging.getLogger(n) for n in ("uvicorn", "uvicorn.error", "uvicorn.access")
+    ]
+    levels = [logger.level for logger in loggers]
+    for logger in loggers:
+        logger.setLevel(logging.INFO)
+    yield
+    for logger, level in zip(loggers, levels, strict=True):
+        logger.setLevel(level)
+
+
 def test_the_filter_is_actually_installed_by_the_real_setup():
     """The wiring, not the mechanism.
 
@@ -40,7 +61,7 @@ def test_the_filter_is_actually_installed_by_the_real_setup():
         pathname=__file__,
         lineno=1,
         msg='%s - "WebSocket %s"',
-        args=("1.2.3.4:5", "/topics/x/chat?token=LIVE-SESSION-TOKEN"),
+        args=("1.2.3.4:5", "/rooms/live?token=LIVE-SESSION-TOKEN"),
         exc_info=None,
     )
     for h in handlers:
@@ -91,12 +112,12 @@ def test_an_exception_line_does_not_carry_the_frame_it_came_from():
 def test_a_session_token_never_reaches_the_log():
     """Browsers cannot set a header on a WebSocket, so every WS carries the token
     in its query string — and the access log prints whole URLs."""
-    url = "/topics/abc/chat?token=eyJhbGciOiJIUzI1NiJ9.body.signature"
+    url = "/rooms/live?token=eyJhbGciOiJIUzI1NiJ9.body.signature"
 
     scrubbed = scrub_secrets(url)
 
     assert "eyJhbGciOiJIUzI1NiJ9" not in scrubbed
-    assert scrubbed == "/topics/abc/chat?token=***"
+    assert scrubbed == "/rooms/live?token=***"
 
 
 @pytest.mark.parametrize(
@@ -196,7 +217,7 @@ def test_the_filter_covers_records_from_other_libraries():
         pathname=__file__,
         lineno=1,
         msg='%s - "WebSocket %s" 403',
-        args=("1.2.3.4:5", "/topics/x/chat?token=SECRETVALUE"),
+        args=("1.2.3.4:5", "/rooms/live?token=SECRETVALUE"),
         exc_info=None,
     )
 
@@ -272,6 +293,25 @@ def test_an_anonymous_request_line_has_no_user_field(client, caplog):
     ]
     line = next(ln for ln in req_lines if ln.get("path") == "/version")
     assert "user" not in line
+
+
+def test_a_healthcheck_knock_leaves_no_request_line(client, caplog):
+    """`/readyz` is asked every 15 seconds by the container and `/healthz` by
+    the rollout — 240 lines an hour that each say nothing happened. `/health`
+    was already skipped for the same reason."""
+    with caplog.at_level(logging.INFO, logger="http"):
+        assert client.get("/healthz").status_code == 200
+        assert client.get("/readyz").status_code in (200, 503)
+        client.get("/version")
+
+    paths = [
+        rec.msg.get("path")
+        for rec in caplog.records
+        if isinstance(rec.msg, dict) and rec.msg.get("event") == "req"
+    ]
+    assert "/version" in paths
+    assert "/readyz" not in paths
+    assert "/healthz" not in paths
 
 
 def test_a_refused_handshake_names_the_path(client, caplog):

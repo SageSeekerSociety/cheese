@@ -61,7 +61,6 @@ vi.mock('../../api', async () => {
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listFiles: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getTerminal: vi.fn().mockResolvedValue({ available: false }),
@@ -73,7 +72,6 @@ vi.mock('../../api', async () => {
   }
 })
 
-import { resetPreviewPointerCache } from '../../lib/previewPointer'
 import WorkPanel from '../WorkPanel.vue'
 
 const POLL_MS = 5_000
@@ -121,7 +119,6 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.useFakeTimers()
   vi.clearAllMocks()
-  resetPreviewPointerCache()
   getPreview.mockResolvedValue({ path: 'report.html', mime: 'text/html', artifact_id: 'a1' })
   readFile.mockResolvedValue({ path: 'report.html', content: '<p>hi</p>' })
   requestPreviewSession.mockResolvedValue({

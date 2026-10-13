@@ -1,6 +1,6 @@
 ---
 name: product-ui-review
-description: Deliver a PDF for the user's review whenever Cheese product interfaces or user-facing copy change, including revisions to an existing interface change. Applies to the delivery report even when a PR and screenshots already exist. Adds the PDF requirement to status-report; use the available PDF skill for artifact creation.
+description: Deliver a PDF for the user's review whenever Cheese product interfaces or user-facing copy change, including revisions to an existing interface change. Applies to the delivery report even when a PR and screenshots already exist. Produce the PDF with the documents skill.
 ---
 
 # Product interface review

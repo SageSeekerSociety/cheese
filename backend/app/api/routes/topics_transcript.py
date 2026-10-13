@@ -16,7 +16,7 @@ would otherwise carry up to 120 × 8 KiB, so a transcript row only says it has
 some (`output_bytes`) and this endpoint hands it over when somebody opens it.
 
 What stays behind, and why. `_actor_in_place` (identity, then the room's roster
--- the shape every `topics_*` module imports it in), `DbSession`, `Block`,
+-- the shape every `topics_*` module imports it in), `Block`,
 `BlockKind`, `BlockOut` and `BlockRepository` are imported from topics.py rather
 than from `app.domain.block.*`. `BlockRepository` for the guard in
 `tests/unit/test_domain_import_guard.py`, which ratchets (route module,
@@ -48,13 +48,13 @@ from datetime import datetime
 from fastapi import APIRouter, Query
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.api.routes.topics import (
     Block,
     BlockKind,
     BlockOut,
     BlockRepository,
-    DbSession,
     _actor_in_place,
 )
 from app.core.errors import NotFoundError
@@ -110,11 +110,9 @@ async def topic_transcript(
         if cursor is None or cursor.conversation_id != place.conversation_id:
             raise NotFoundError(say("cursorEventNotFound"))
     if limit is None:
-        site = [
-            b
-            for b in await repo.list_for_topic(place.conversation_id)
-            if b.kind in kinds and (author is None or b.author == author)
-        ]
+        site = await repo.list_for_topic(
+            place.conversation_id, kinds=kinds, author=author
+        )
         has_more = False
     else:
         result = await repo.page_for_topic(

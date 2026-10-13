@@ -256,9 +256,28 @@
     </template>
     <CommandPalette />
     <DeviceConnect />
-    <!-- 手把手引导的第 1 步。后面四步在 ChatPanel 上（那时人已经在项目里了），这一
-         步必须在壳上：目标 rail ＋ 是壳的一部分，而它只在「还没有项目」时出现。 -->
-    <StartGuide v-if="startGuideStep" :step="startGuideStep" :anchors="START_GUIDE_ANCHORS" @skip="skipGuide" />
+    <!-- 新手引导的后半程：一个浮窗一步步带着把第一件事做完（composables/useProjectTour.ts）。
+         挂在最外层：任务页、支线里也要接着带。 -->
+    <GuideBubble
+      v-if="guideStep"
+      :target="guideStep.target"
+      :ring="!guideStep.area"
+      :title="t(`welcome.guide.${guideStep.key}.title`, { agent: t('work.room.defaultAgentName') })"
+      :text="
+        t(
+          `welcome.guide.${guideStep.key}.${guideStep.failed ? 'textFailed' : guideStep.waiting ? 'textWaiting' : 'text'}`,
+          {
+            agent: t('work.room.defaultAgentName'),
+          }
+        )
+      "
+      :step="guide.stop.value + 1"
+      :total="guide.total"
+      :can-next="!guideStep.action"
+      @next="guide.next()"
+      @back="guide.back()"
+      @skip="guide.skip()"
+    />
     <!-- 右键 rail 上一个项目「退出项目」：和成员页、项目菜单是同一个确认框。 -->
     <LeaveProjectDialog v-if="leavingProjectId" v-model="leaveOpen" :project-id="leavingProjectId" />
   </my-app>
@@ -276,20 +295,22 @@ import { useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
+import { useQuery } from '@tanstack/vue-query'
 
 import { scrollBehavior } from '@/utils/motion'
 import { pendingSudo } from '@/utils/sudo'
 
 import { provideAttachmentSource } from '@/composables/useAttachmentSource'
 import { awaitingCountByProject, useAwaitingCount } from '@/composables/useAwaitingCount'
+import { guideAnchor, useGuideAnchorRevision } from '@/composables/useGuideAnchors'
 import { defaultTeamFor, teamHandleInPath, useNewProjectDialog } from '@/composables/useNewProjectDialog'
 import { providePageChrome } from '@/composables/usePageChrome'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { usePendingConsent } from '@/composables/usePendingConsent'
 import { useProjectMenu } from '@/composables/useProjectMenu'
+import { useProjectTour } from '@/composables/useProjectTour'
 import { providePublicVisitor } from '@/composables/usePublicVisitor'
 import { useSessionRestore } from '@/composables/useSessionRestore'
-import { useStartGuide } from '@/composables/useStartGuide'
 import { useUnreadNotifications } from '@/composables/useUnreadNotifications'
 import { provideUserRefDirectory } from '@/composables/useUserRefDirectory'
 import { useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
@@ -308,7 +329,9 @@ import LeftAppRail from './components/common/Navigation/LeftAppRail.vue'
 import { DEFAULT_SHELL, shellFor, termParams } from './lib/shell'
 import { usePageTitleStore } from './stores/title'
 
-import { type AppVersion, createProject, getAppVersion, listProjects } from '@/api'
+import { type AppVersion, createProject, getAppVersion } from '@/api'
+import { NotificationsApi } from '@/api/notifications'
+import { TeamsApi } from '@/api/teams'
 import { defineCommands } from '@/commands'
 import { copyLink } from '@/commands/copy'
 import CommandPalette from '@/commands/palette/CommandPalette.vue'
@@ -316,12 +339,12 @@ import { installShortcuts, isTypingTarget } from '@/commands/shortcuts'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AppShortcutSheet from '@/components/common/AppShortcutSheet.vue'
+import GuideBubble from '@/components/common/GuideBubble.vue'
 import AppBar from '@/components/common/Navigation/AppBar.vue'
 import MobileAppBar from '@/components/common/Navigation/MobileAppBar.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import SessionRestoreGate from '@/components/common/SessionRestoreGate.vue'
 import { appShortcutSheetOpen } from '@/components/common/shortcutSheet'
-import StartGuide from '@/components/common/StartGuide.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
 import LeaveProjectDialog from '@/components/LeaveProjectDialog.vue'
 import ResourceLimitsNotice from '@/components/ResourceLimitsNotice.vue'
@@ -340,7 +363,6 @@ import { landBootSplash } from '@/lib/desktopSplash'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
 import { randomTeammateName } from '@/lib/projectAgents'
-import { loadCachedProjects, saveCachedProjects } from '@/lib/projectCache'
 import {
   applyProjectOrder,
   type DropEdge,
@@ -349,8 +371,8 @@ import {
   saveProjectOrder,
 } from '@/lib/projectOrder'
 import { myHandle } from '@/me'
-import { NotificationsApi } from '@/network/api/notifications'
-import { TeamsApi } from '@/network/api/teams'
+import { queryClient } from '@/query/client'
+import { projectsQuery, refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
 import { lastOpenedProjectId, useWorkspaceStore } from '@/stores/workspace'
 import { useAppTheme } from '@/theme'
@@ -430,9 +452,9 @@ function endPageMotion(event: AnimationEvent) {
   if (event.target === contentRef.value) contentRef.value?.classList.remove(...MOTION_CLASSES)
 }
 
-// 名字来自各自组件里的 defineOptions({ name })——它们也是唯一接了
-// useCachedResource 的五个页面，「组件还在」和「数据还在」必须成对，不然回到页
-// 面看到的是一屏永远不再刷新的旧数据。
+// 名字来自各自组件里的 defineOptions({ name })。保活的页面离开时组件还在，它的查询
+// 把 `enabled` 绑到页面在不在屏幕上（composables/usePageActive）：离开时不跟着别处的
+// 失效重读，回来时过期了的再读一次。
 const keptAlivePages = ['ProjectDocsView', 'ProfileView']
 
 // 确认身份的弹窗第一次被要用时才加载：大多数会话从不需要它
@@ -457,12 +479,12 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 // Fusion merge (C): 项目来自我们的后端 (/api/projects)，在桌面 rail 上一个项目
 // 一格方头像（Discord 式，取代了原来的元思助手），点开的是我们的完整工作区
 // (话题/群聊/doc/agent)。两端各拿到哪些格子由 Navigation/destinations.ts 说了算。
-const cxProjects = ref<Project[]>(loadCachedProjects(myHandle()))
-
-// 「项目清单问完了」——成功、失败都算问过（和 workspace store 里那个同名标志一个
-// 意思）。第 1 步引导据此说「这个人一个项目都还没有」，不拿「手上是空的」当答案：
-// 冷启动时缓存本来就是空的，用它会先给老用户冒一句「从这里开一个项目」再收回去。
-const cxProjectsSettled = ref(false)
+// 冷打开时上一次的清单从本标签页的存储里先拿出来（query/persist），rail 当场就有。
+const projectsRead = useQuery(
+  computed(() => ({ ...projectsQuery(), enabled: AccountService.loggedIn })),
+  queryClient
+)
+const cxProjects = computed<Project[]>(() => (AccountService.loggedIn ? projectsRead.data.value ?? [] : []))
 
 // 服务端那份清单是 created_at desc，rail 画的是这个人自己拖出来的顺序。两者分开
 // 存：拖过之后再刷新项目列表，排法不会被服务端的顺序盖掉。
@@ -475,30 +497,18 @@ function reorderRail(movedId: string, targetId: string, edge: DropEdge) {
   saveProjectOrder(myHandle(), next)
 }
 
-async function loadCxProjects() {
-  // Public visitors have no project list; a 401 here would interrupt the landing page.
-  if (!AccountService.loggedIn) {
-    cxProjects.value = []
-    cxProjectsSettled.value = true
-    return
-  }
-  try {
-    cxProjects.value = (await listProjects()).data
-    saveCachedProjects(myHandle(), cxProjects.value)
-  } catch {
-    // 一次性提示：之前是一条常驻的 snackbar，现在并进全局 toast（§3.11）。
+// 一次性提示：之前是一条常驻的 snackbar，现在并进全局 toast（§3.11）。
+watch(
+  () => projectsRead.error.value,
+  (error) => {
+    if (!error) return
     const message = cxProjects.value.length ? t('work.projectList.stale') : t('work.projectList.unavailable')
     toast.warning(message, {
       duration: 8000,
-      action: { label: t('work.newProject.retry'), onClick: () => void loadCxProjects() },
+      action: { label: t('work.newProject.retry'), onClick: () => void projectsRead.refetch() },
     })
-  } finally {
-    // 失败也算问完了：这时候 rail 上确实一个项目都没有，和「这个人还没有项目」在界
-    // 面上是同一件事——新建项目那条路本来也照常摆着。
-    cxProjectsSettled.value = true
   }
-}
-onMounted(loadCxProjects)
+)
 
 // 首屏先画外壳（左栏），内容区等第一个路由画好再露出来。路由的懒加载 chunk 还没
 // 到的时候，项目侧栏也还没注册，内容区先按没有侧栏的宽度画出来，侧栏一到整块内容
@@ -556,19 +566,7 @@ onMounted(async () => {
 watch(
   () => workspace.projectId,
   (id) => {
-    if (id && !cxProjects.value.some((p) => p.id === id)) void loadCxProjects()
-  }
-)
-
-// The workspace store reads the same list after something changed it from inside
-// a project — archived, unarchived, handed over. Take its answer instead of
-// showing the rail's older copy until the next reload.
-watch(
-  () => workspace.projects,
-  (list) => {
-    if (!workspace.projectsSettled) return
-    cxProjects.value = list
-    saveCachedProjects(myHandle(), list)
+    if (id && AccountService.loggedIn && !cxProjects.value.some((p) => p.id === id)) void refreshProjects()
   }
 )
 
@@ -592,7 +590,7 @@ watch(
     // 排法是按 handle 存的，所以换了人就得换一份读进来——否则新登录的人看到的是
     // 上一个人的排法，直到下一次整页刷新。
     projectOrder.value = loadProjectOrder(myHandle())
-    void loadCxProjects()
+    if (AccountService.loggedIn) void projectsRead.refetch()
   }
 )
 
@@ -614,7 +612,7 @@ watch(
   () => AccountService.loggedIn && AccountService.user?.id,
   (userId, previous) => {
     if (typeof userId === 'number') {
-      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).data.token).catch(() => {})
+      desktopListenForNotices(userId, async () => (await NotificationsApi.liveToken()).token).catch(() => {})
     } else if (typeof previous === 'number') {
       desktopStopNotices()
     }
@@ -657,7 +655,7 @@ const navSources = computed<NavSources>(() => ({
   projectMenu,
   awaitingCount: awaitingCount.value,
   projectAwaitingCount: (id) => awaitingByProject.value[id] ?? 0,
-  projectLastTopic: (id) => workspace.lastTopicIdFor(id),
+  projectLastPlace: (id) => workspace.placeFor(id),
   unreadActivity: unreadActivity.value > 0,
 }))
 
@@ -702,6 +700,36 @@ useEventListener(window, 'keydown', (event: KeyboardEvent) => {
   event.preventDefault()
   appShortcutSheetOpen.value = true
 })
+// 新手引导此刻在哪一步、指着什么。动作步做到了自己往下走（`settle`），所以页面上一
+// 出现新东西（登记表一变）、服务端的事实一变，就重新判一次。
+const guide = useProjectTour()
+const guideRevision = useGuideAnchorRevision()
+const guideHas = (name: string) => !!guideAnchor(name)
+watch(
+  [guideRevision, guide.facts, guide.active],
+  () => {
+    if (guide.active.value && guide.facts.value) guide.settle({ facts: guide.facts.value, has: guideHas })
+  },
+  { immediate: true }
+)
+const guideStep = computed(() => {
+  void guideRevision.value
+  const step = guide.current.value
+  if (!guide.active.value || !step) return null
+  const hit = step.anchors.find((name) => guideAnchor(name))
+  const target = hit ? guideAnchor(hit) : null
+  const waitingAt = target ? null : (step.waiting ?? []).map(guideAnchor).find(Boolean)
+  const at = target ?? waitingAt
+  if (!at) return null
+  return {
+    key: step.key,
+    target: at,
+    waiting: !target,
+    failed: !!hit && hit === step.failed,
+    area: !!step.area || !target,
+    action: !!step.done,
+  }
+})
 const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // The "+" rail affordance opens an in-app dialog (no native prompt). On confirm
 // we create the project owned by the current user, refresh the rail so the new
@@ -709,16 +737,6 @@ const tabs = computed(() => tabItems(navSources.value, navShell.value))
 // 新建项目 opens (useNewProjectDialog), with that team preselected.
 const { open: newProjectDialog, presetTeam, sourceTask, show: showNewProjectDialog } = useNewProjectDialog()
 
-// 手把手引导的第 1 步：一个项目都还没有，气泡指着 rail 上那颗「＋」。它和后面四步是
-// 同一条链子，只是那四步住在一个项目里（ChatPanel 那层），这一步住在壳上——这时还
-// 没有项目可住。对话框开着时收起来：浮层压上去会挡住人正在填的东西。
-const { skipped: guideSkipped, skip: skipGuide } = useStartGuide()
-const START_GUIDE_ANCHORS = ['rail-add', 'new-project']
-const startGuideStep = computed<'project' | null>(() =>
-  cxProjectsSettled.value && !cxProjects.value.length && !guideSkipped.value && !newProjectDialog.value
-    ? 'project'
-    : null
-)
 // 从一道题建项目时那份「会继承什么」(#944)。取数按 `sourceTask` 走：对话框换个
 // 来源就重新问一次，没来源时不发请求。
 const { inheritance: sourceInheritance, loading: sourceInheritanceLoading } = useTaskInheritance(
@@ -787,9 +805,7 @@ async function loadProjectTeams() {
   teamLoadError.value = null
   newProjectTeamId.value = null
   try {
-    const {
-      data: { teams },
-    } = await TeamsApi.getMyTeams()
+    const { teams } = await TeamsApi.getMyTeams()
     newProjectTeams.value = teams
     if (!teams.length) teamLoadError.value = t('work.newProject.teamsEmpty')
   } catch {
@@ -837,7 +853,7 @@ async function confirmNewProject() {
       newProjectAgentName.value.trim(),
       newProjectId.value
     )
-    await loadCxProjects()
+    await refreshProjects()
     newProjectDialog.value = false
     if (newProjectForgeKind.value === 'github_app') {
       router.push(`/projects/${project.id}/settings/repository`)

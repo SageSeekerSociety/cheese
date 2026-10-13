@@ -1,8 +1,9 @@
 /** 输入框里的 `@` 补全：这个房间的人、话题、群播，以及项目的资料库。
  *
- * 从 `components/room/RoomComposer.vue` 里搬出来的（#2143），一行没改。搬出来是
- * 因为它**自己去拉资料库**——那一步不该发生在 `src/components` 下
- * （`.claude/rules/architecture.md`：件只管画，取数在页面或 composable 里）。
+ * 从 `components/room/RoomComposer.vue` 里搬出来的（#2143）。菜单、候选和高亮的判断
+ * 都在这里；**资料库那一级的数据由宿主给进来**（`deps.listLibrary`），这一层自己不认识
+ * 接口，所以它装得进任何一件输入框——改消息的那个框就是靠这一条才接得上的。
+ * （`.claude/rules/architecture.md`：件只管画，取数在页面或 composable 里。）
  *
  * 两级菜单不是装饰：一个项目的文件会比房间里的人多得多，平铺进候选等于把「@ 一个
  * 人」这件事挤掉。所以没打字的时候资料库只是一行入口（`category`），走进去才列
@@ -17,7 +18,6 @@ import type { Topic } from '../cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
-import { listProjectLibrary } from '../api'
 import { t } from '../i18n'
 import { IMAGE_SUFFIXES, suffixOf } from '../lib/fileKind'
 
@@ -81,6 +81,9 @@ const broadcastItems = (): MentionItem[] => [
 /** 这一格里「算不算图片」比预览域宽：gif / webp 浏览器也画得出来，而这里只是分组。 */
 const PICKER_IMAGE_SUFFIXES = new Set([...IMAGE_SUFFIXES, 'gif', 'webp'])
 
+/** 一次从资料库取几份候选；菜单里最多摆 12 份，图片和文件分两组，多取一些。 */
+const LIBRARY_PICKS = 24
+
 export interface MentionPickerDeps {
   /** 正文。挑中一项之后由这里改它。 */
   draft: Ref<string>
@@ -89,8 +92,15 @@ export interface MentionPickerDeps {
   topicList: () => Topic[]
   /** 挑完人、点完按钮之后要把光标还给输入框——这是最烦人的一处。 */
   focus: () => void
-  /** 挑中的是一份文件：它不是一个能 @ 的人，是附在这条消息上的一样东西。 */
-  onAddLibraryFile: (path: string) => void
+  /** 挑中的是一份文件：它不是一个能 @ 的人，是附在这条消息上的一样东西。
+   *  不填的宿主没有地方放附件（比如改消息的那个框）——它也不接 `listLibrary`，
+   *  所以文件那一类根本出不来。 */
+  onAddLibraryFile?: (path: string) => void
+  /** 资料库那一级的数据：按打的字去服务端取一页文件。
+   *  **这一层自己不取数**，由宿主给进来（`.claude/rules/architecture.md`：件只管画，
+   *  取数在页面或 composable 里）；不填就没有资料库那一级——改消息的那个框没有地方放
+   *  附件，它连这一级都不开。 */
+  listLibrary?: (projectId: string, query: string, limit: number) => Promise<LibraryFile[]>
   /** 用键盘换高亮之后把那一项滚进视野（菜单自己有高度上限、自己滚）。 */
   scrollActiveIntoView: () => void
 }
@@ -134,16 +144,25 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     ]
   }
 
-  async function loadLibrary() {
+  // 按打的字去服务端找：资料库可以很大，不整份拉下来再筛。晚到的旧回答不盖住新的
+  // （`librarySequence`）。
+  let librarySequence = 0
+  async function loadLibrary(q: string) {
+    const list = deps.listLibrary
     const projectId = deps.topic()?.project_id
-    if (!projectId || libraryFor.value === projectId) return
-    libraryFor.value = projectId
+    const key = `${projectId}\n${q}`
+    if (!list || !projectId || libraryFor.value === key) return
+    libraryFor.value = key
+    const sequence = ++librarySequence
     try {
-      libraryFiles.value = (await listProjectLibrary(projectId)).data
+      const rows = await list(projectId, q, LIBRARY_PICKS)
+      if (sequence === librarySequence) libraryFiles.value = rows
     } catch {
       // 挑文件是输入栏里的一个便利，不是这条消息发不出去的理由。
-      libraryFiles.value = []
-      libraryFor.value = null
+      if (sequence === librarySequence) {
+        libraryFiles.value = []
+        libraryFor.value = null
+      }
     }
   }
 
@@ -157,13 +176,18 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
   watch(
     () => query.value !== null,
     (open) => {
-      if (open) void loadLibrary()
       // 菜单关了就回到一级：下一次打 @ 的人不该落在上一次翻到的地方。
-      else level.value = 'root'
+      if (!open) level.value = 'root'
+    }
+  )
+  // immediate: 草稿是恢复出来的（上次在这个房间打了一半的 @），输入区建起来的那一刻
+  // 菜单就已经是开着的。只等「变成开着」的话，这一次永远等不到，菜单开着却一份文件
+  // 都列不出来。
+  watch(
+    query,
+    (q) => {
+      if (q !== null) void loadLibrary(q)
     },
-    // immediate: 草稿是恢复出来的（上次在这个房间打了一半的 @），输入区建起来的
-    // 那一刻菜单就已经是开着的。只等「变成开着」的话，这一次永远等不到，菜单开着
-    // 却一份文件都列不出来。
     { immediate: true }
   )
 
@@ -238,7 +262,7 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
       // 文件不是一个能 @ 的人：挑中它是把它附在这条消息上，所以那个 @ 连同半个
       // 名字都从正文里拿掉，文件去待发条里待着。
       deps.draft.value = deps.draft.value.replace(/@([^\s@]*)$/, '')
-      deps.onAddLibraryFile(item.insert)
+      deps.onAddLibraryFile?.(item.insert)
       void nextTick(deps.focus)
       return
     }

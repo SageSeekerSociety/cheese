@@ -80,11 +80,20 @@ export function useChatScroll(
   // the growth. Judged by distance alone, that event read as "the reader scrolled up":
   // atBottom went false, the observer stopped following, and the topic was left a
   // screen or more above its newest message.
+  //
+  // It moves scrollTop UP the same way, and `lastTop` alone reads that as the reader
+  // too: the content above shrinks (rows that were off screen take their real height,
+  // or a long reply folds down to a reading height) while the reply below keeps
+  // growing. So an upward move counts as the reader only when the content height did
+  // not change in that same frame — the shrink and the growth move scrollTop, the
+  // reader does not.
   let lastTop = 0
+  let lastHeight = 0
 
   function place(el: HTMLElement, top: number) {
     el.scrollTop = top
     lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
   }
 
   // 把这一栏钉在底部——在用户停在那儿的时候。时间线的高度会在切话题的第一帧**之后**
@@ -169,10 +178,14 @@ export function useChatScroll(
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
     const movedUp = el.scrollTop < lastTop
+    const relaid = el.scrollHeight !== lastHeight
     lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
     // Pinned and not scrolled up: still pinned, however far the content grew below
-    // (see `lastTop`). The resize observer follows it to the new bottom.
-    atBottom.value = isAtBottom(el) || (atBottom.value && !movedUp)
+    // (see `lastTop`). The resize observer follows it to the new bottom. An upward move
+    // in a frame where the content height moved is the browser's anchoring, not the
+    // reader.
+    atBottom.value = isAtBottom(el) || (atBottom.value && !(movedUp && !relaid))
     if (!showingNewest()) return
     scrollMemory.set(topicId, { top: el.scrollTop, atBottom: atBottom.value })
   }

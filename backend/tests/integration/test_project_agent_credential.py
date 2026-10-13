@@ -13,10 +13,15 @@ changes role or leaves. Inside the project it is a member — the same reach a
 member has, and refused where a member is refused.
 """
 
+import asyncio
 import uuid
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.pool import NullPool
+
 from app.core.sandbox_auth import mint_project_agent_credential, mint_scoped_token
-from tests.conftest import seed_user
+from tests.conftest import TEST_DATABASE_URL, seed_user
 from tests.integration.conftest import (
     join_project_team,
     post_project,
@@ -260,6 +265,66 @@ def test_an_expired_credential_is_refused(client):
         f"/topics/{tid}/weekly", json={"body": "x"}, headers=_cred(expired)
     )
     assert gated.status_code == 401
+
+
+# --- 失效: 撤销与并发写 -----------------------------------------------------------
+
+
+async def _settings_blob(project_id: str) -> str:
+    """The whole settings blob, as a concurrent settings writer reads it: one
+    value it will write back whole, whenever its transaction gets there."""
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    try:
+        async with engine.connect() as conn:
+            row = await conn.execute(
+                text("SELECT settings::text FROM projects WHERE id = :pid"),
+                {"pid": project_id},
+            )
+            return row.scalar_one()
+    finally:
+        await engine.dispose()
+
+
+async def _put_settings_blob(project_id: str, blob: str) -> None:
+    """That writer's flush, on its own connection — exactly the other writer a
+    revoke competes with in production."""
+    engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text(
+                    "UPDATE projects SET settings = CAST(:blob AS json) WHERE id = :pid"
+                ),
+                {"pid": project_id, "blob": blob},
+            )
+    finally:
+        await engine.dispose()
+
+
+def test_revocation_outlives_a_settings_writer_that_flushes_late(client):
+    """A write-back of the whole settings blob cannot revive what a revoke
+    retired.
+
+    Every settings writer reads the blob whole and writes it back whole, with no
+    lock and no version, so one that read before a revoke landed and flushed
+    after it is the ordinary case, not a rare one. The generation used to live in
+    that blob: the late write carried the old one back, every credential the
+    revoke had just retired verified again, and nothing logged a word."""
+    pid = _project(client, "alice")
+    headers = _steward(client, "alice")
+    token = _issued_token(client, pid)
+    assert _acts_as_cheese(client, pid, token)
+
+    # What the other writer had read, before the revoke landed.
+    stale = asyncio.run(_settings_blob(pid))
+
+    revoked = client.delete(f"/projects/{pid}/agent-credential", headers=headers)
+    assert revoked.status_code == 200, revoked.text
+
+    # ...and what it flushes afterwards.
+    asyncio.run(_put_settings_blob(pid, stale))
+
+    assert not _acts_as_cheese(client, pid, token)
 
 
 # --- 权限: 和这个项目的成员一样大 -------------------------------------------------

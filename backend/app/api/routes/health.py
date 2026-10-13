@@ -10,8 +10,11 @@ from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy import text
 
 from app.api.routes.admin_common import PlatformAdminDep
+from app.core import alerting
 from app.core.config import settings
 from app.core.db import PROBE_TIMEOUT_S
+from app.core.loop_lag import STALL_S, lag_status
+from app.core.metrics import registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["health"])
@@ -66,6 +69,7 @@ async def health_report() -> dict[str, Any]:
     checks["database"], checks["redis"] = await dependency_probe()
     checks["routes"] = _check_routes()
     checks["event_loop"] = _check_event_loop()
+    checks["alerting"] = _check_alerting()
 
     overall = (
         "healthy"
@@ -161,6 +165,7 @@ def _check_routes() -> dict[str, Any]:
     of endpoints, and only the caller finds out. Required, so `/readyz` turns
     it into a 503 and the rollout keeps such a build away from traffic.
     """
+    # deferred-import: breaks the cycle app.main -> route modules -> health
     from app.main import FAILED_ROUTE_MODULES
 
     if FAILED_ROUTE_MODULES:
@@ -181,7 +186,6 @@ def _check_event_loop() -> dict[str, Any]:
     stall of a few seconds — the read times out — which is how the cause used
     to be read as Redis being unwell.
     """
-    from app.core.loop_lag import STALL_S, lag_status
 
     lag = lag_status()
     return {
@@ -190,7 +194,32 @@ def _check_event_loop() -> dict[str, Any]:
     }
 
 
+def _check_alerting() -> dict[str, Any]:
+    """Whether this deployment can reach a human when something breaks.
+
+    Reported, never required: a box whose webhook is unset still answers every
+    request, and failing readiness over a missing setting would trade an
+    invisible gap for a real outage.
+
+    Outside production an unset webhook is the normal state — dev and test do
+    not open Feishu — so it reads `skipped`. In production it reads `down`,
+    because that is the one deployment where "no alerts" means nobody ever
+    hears about an outage. Nothing else looks: `alerting.send` is a no-op when
+    the webhook is unset, and neither this report nor the boot path said so, so
+    the whole channel could be off while every page read healthy.
+    """
+    if alerting.configured():
+        return {"status": "up"}
+    if settings.environment != "production":
+        return {"status": "skipped"}
+    return {
+        "status": "down",
+        "error": "FEISHU_ALERT_WEBHOOK is unset: alerts reach nobody",
+    }
+
+
 async def _check_database() -> dict[str, Any]:
+    # deferred-import: tests patch probe_engine on app.core.db
     from app.core.db import pool_status, probe_engine
 
     try:
@@ -230,7 +259,6 @@ async def get_metrics(_admin: PlatformAdminDep) -> dict[str, Any]:
     No scraper is configured to read it today, so nothing external breaks when
     it goes behind the gate.
     """
-    from app.core.metrics import registry
 
     return registry.export()
 

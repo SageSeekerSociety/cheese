@@ -188,7 +188,6 @@ export function installPanelAnswers(frame: Frame): void {
     url: null,
   }))
   answer(`/projects/${DEMO_PROJECT}/git/diff`, () => ({ diff: changes ? diffOf(changes) : '' }))
-  answer(`/projects/${DEMO_PROJECT}/git/log`, () => ({ data: [], total: 0 }))
   answer(`/projects/${DEMO_PROJECT}/files`, () => ({
     data: changes ? filesOf(changes) : [],
     total: changes ? changes.files.length : 0,

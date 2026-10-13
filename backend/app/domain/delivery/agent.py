@@ -17,10 +17,13 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.conversation.services import project_of, room_of
 from app.domain.delivery.ledger import DeliveryEvent, dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.project.models import Project
+from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -64,6 +67,7 @@ def work_interval_is_over():
     the turn models on the delivery side would close a domain cycle (C3 in
     backend/.importlinter).
     """
+    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
     from app.domain.agent.runtime import AgentTurnRepository
 
     return AgentTurnRepository.interval_is_over(
@@ -115,8 +119,7 @@ async def record_task_instruction(
     id, which is what the runner runs a turn in, and the agent is the one working
     the task (its own pick, else its room's) — the one that answers there.
     """
-    from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.project.models import Project
+    # deferred-import: Topic is bound at the top of this module already
     from app.domain.topic.models import Topic
 
     project = await session.get(Project, task.project_id)
@@ -231,6 +234,7 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                 )
             )
         await session.commit()
+    # deferred-import: breaks the cycle agent.runtime -> delivery.agent
     from app.domain.agent.runtime import addressed_to_agent
 
     for delivery_id, attempt, topic_id, instance_id, seat, content in claimed:
@@ -247,7 +251,66 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
     return len(claimed)
 
 
-async def run_attempt(sessions, delivery_id, attempt_id, work):
+#: The states of an input the session was never reached for: `claimed` is
+#: between taking the row and fencing the send, `pending` is where an attempt
+#: that never began the send puts it back. `sending` — and `uncertain` after it
+#: — mean the session may have been reached, and the module's own rule holds:
+#: never permission to inject the instruction a second time.
+_NEVER_SENT = ("pending", "claimed")
+
+
+async def redispatch_undelivered(
+    sessions, *, conversation_id: uuid.UUID, chat, runner
+) -> int:
+    """Send this conversation, now, the inputs the platform still owes it.
+
+    A delivery whose turn died before the session was reached goes back to
+    ``pending`` with a backoff (``run_attempt``), and it waits for the next
+    dispatch anyone happens to make in this project to pick it up — there is no
+    such next dispatch in a room nobody else is doing anything in. A task told
+    to start is the shape this has: the room shows that its session did not
+    start, the card offers a retry, and the instruction sits on the ledger
+    because the only way to send it again later is for something unrelated to
+    happen first.
+
+    Someone asking for that retry is asking for the turn now, which is what
+    this does. Only rows the session was never reached for are taken, and only
+    this conversation's: an interrupted sending attempt stays withheld
+    (module docstring). How long an instruction given up on waits before its
+    own sweep fails it is untouched (`GIVE_UP_AFTER`) — this moves the wait
+    that a person asked to skip, not that one.
+    """
+    stamp = now()
+    async with sessions() as session:
+        owed = list(
+            (
+                await session.scalars(
+                    select(Delivery.id).where(
+                        Delivery.conversation_id == conversation_id,
+                        Delivery.agent_instance_id.is_not(None),
+                        Delivery.state.in_(_NEVER_SENT),
+                        Delivery.sent_at.is_(None),
+                        Delivery.attempts > 0,
+                        or_(
+                            Delivery.lease_until.is_(None),
+                            Delivery.lease_until <= stamp,
+                        ),
+                    )
+                )
+            ).all()
+        )
+        if not owed:
+            return 0
+        # The backoff is the only thing holding these back, and it is a wait no
+        # person asked for.
+        await session.execute(
+            update(Delivery).where(Delivery.id.in_(owed)).values(retry_at=None)
+        )
+        await session.commit()
+    return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
+
+
+async def run_attempt(sessions, delivery_id, attempt_id, work, *, chat):
     """Renew admission ownership while queued; settle only this claimed attempt."""
 
     async def renew():
@@ -296,6 +359,10 @@ async def run_attempt(sessions, delivery_id, attempt_id, work):
                         "automatic replay is withheld"
                     )
                 row.lease_until = None
+                # The turn that writes a finished task up is over, however it
+                # went: the task closes now (`room_task.closing`).
+                if row.state != "pending" and (row.payload or {}).get(CLOSES_TASK):
+                    await close_after_summary(session, row.conversation_id, chat)
             await session.commit()
 
 

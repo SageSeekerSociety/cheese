@@ -17,6 +17,8 @@ import LibraryNameDialog from '@/views/library/LibraryNameDialog.vue'
 const UI: CatalogNeed[] = ['vuetify']
 
 const FILE: LibraryFile = {
+  type: 'file',
+  rank: '1',
   path: '合同/2026/报价说明.md',
   bytes: 2048,
   modified: 1_790_000_000,

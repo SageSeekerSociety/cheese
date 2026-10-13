@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
@@ -35,7 +36,7 @@ async def finish_deferred_message(
     take_recovery,
 ):
     import app.domain.agent.chat as chat_module
-    import app.domain.agent.room.turn as turn_module
+    import app.domain.agent.turn.intake.preparation as turn_module
     from app.domain.agent import pending_messages
 
     monkeypatch.setattr(pending_messages, "_runner", get_work_runner())
@@ -85,10 +86,11 @@ async def finish_deferred_message(
         runtime = channel.next_process()
         take_recovery(chat, runtime)
         chat = ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(machine.workspace),
-            compute=ComputePool([runtime], channel.name),
+            compute=ComputePool([runtime]),
         )
         take_recovery(chat, runtime)
         app.dependency_overrides[get_chat_service] = lambda: chat
@@ -99,19 +101,19 @@ async def finish_deferred_message(
         runner = get_work_runner()
         queued, released = asyncio.Event(), asyncio.Event()
         if mode == "ordinary-removed":
-            admit = runner._admit
+            admit = runner._intake._admit
 
-            async def paused_admit(service, room, turn):
+            async def paused_admit(service, room, turn, agent=None):
                 if turn == ordinary_id:
                     queued.set()
                     await released.wait()
-                return await admit(service, room, turn)
+                return await admit(service, room, turn, agent)
 
-            monkeypatch.setattr(runner, "_admit", paused_admit)
+            monkeypatch.setattr(runner._intake, "_admit", paused_admit)
         else:
             from app.domain.agent_instance.services import AgentInstanceService
 
-            assemble = chat._assemble_turn
+            assemble = chat.turn_preparation.prepare
             lookup = AgentInstanceService.get_in_project
             held_blocks = turn_module.held_blocks
             held_seats = []
@@ -139,7 +141,7 @@ async def finish_deferred_message(
                     held_seats.append(kwargs["recipient_handle"])
                 return await held_blocks(session, **kwargs)
 
-            monkeypatch.setattr(chat, "_assemble_turn", tracked_assembly)
+            monkeypatch.setattr(chat.turn_preparation, "prepare", tracked_assembly)
             monkeypatch.setattr(AgentInstanceService, "get_in_project", paused_lookup)
             monkeypatch.setattr(turn_module, "held_blocks", observed_holds)
         allow.set()

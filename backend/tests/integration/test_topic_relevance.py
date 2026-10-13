@@ -20,14 +20,16 @@ import uuid
 import pytest
 
 from tests.ask_fixtures import active_ask, question_row
+from tests.conftest import seed_user
 from tests.delivery import delivery_headers, delivery_task_id
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
+    inbox,
     join_project_team,
     open_task,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -82,7 +84,7 @@ def _card(client, tid: str, reviewer: str) -> str:
 
 def _say(client, tid: str, speaker: str, text: str) -> None:
     """Post a human message, no agent turn — mentions fire on the block persist."""
-    with client.websocket_connect(chat_ws_url(tid, speaker)) as ws:
+    with room_socket(client, tid, speaker) as ws:
         post_message(client, tid, speaker, {"content": text})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
@@ -152,6 +154,7 @@ def test_an_at_neither_puts_you_in_the_channel_nor_awaits_you(client):
     channel, and never lights `awaits_me`, read or not: 芝士 @s people on every
     report and card, and a dot that is always on says nothing."""
     pid = _project(client)
+    seed_user(client, "bob")
     tid = _topic(client, pid, "T", created_by="alice")
     _say(client, tid, "alice", "<@bob> 看一下这个")
 
@@ -159,13 +162,12 @@ def test_an_at_neither_puts_you_in_the_channel_nor_awaits_you(client):
     assert row["joined"] is False
     assert row["awaits_me"] is False
 
-    alerts = client.get(
-        f"/projects/{pid}/alerts", headers=session_auth_headers("bob")
-    ).json()["data"]["data"]
-    mention = next(a for a in alerts if a["kind"] == "MENTION")
+    [mention] = inbox(client, "bob", "MENTION")
     assert (
-        client.post(
-            f"/alerts/{mention['id']}/read", headers=session_auth_headers("bob")
+        client.patch(
+            f"/notifications/{mention['id']}",
+            json={"read": True},
+            headers={"Authorization": f"Bearer {seed_user(client, 'bob')}"},
         ).status_code
         == 200
     )
@@ -244,6 +246,31 @@ def test_a_decision_asked_on_a_card_awaits_on_its_channel(client):
         headers=session_auth_headers("bob"),
     )
     assert r.status_code == 200, r.text
+    assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is False
+
+
+def test_a_question_asked_on_a_card_awaits_on_its_channel(client):
+    """芝士在一条活里问的一道题，照样是这个频道在等你回答。
+
+    和上面那条决策请求同一条规矩：一个频道是它全部对话的和，侧栏那一格要亮。题落在
+    那条活自己的线上（通知的落点也是它，见 `test_cheese_question_notice`）—— 题在哪
+    条线上，和谁在等它，是两件事；少了任务这一头，人就看得见「有一条待办」而侧栏
+    一处都不亮。
+    """
+    pid = _project(client)
+    tid = _topic(client, pid, "T", created_by="alice")
+    # bob 是这条活的协作者：题问的是他，答它的也是他（任务里只有参与的人说得了话）。
+    card = open_task(
+        client, tid, "报名表单字段精简", owner="alice", contributors=["bob"]
+    )
+    question_row(client, card["id"], asked="bob")
+
+    assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is True
+    # 题问的是 bob：这个点不为频道里其他任何人亮。
+    assert _seen_by(client, pid, "alice")["T"]["awaits_me"] is False
+
+    # 答了就灭：频道等的是那道题，题了结，这一格跟着走。
+    _say(client, card["id"], "bob", "按部门")
     assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is False
 
 

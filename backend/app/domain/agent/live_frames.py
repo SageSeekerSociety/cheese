@@ -11,6 +11,8 @@ written any more.
 
 import uuid
 
+from app.domain.agent.realtime.broker import get_broker
+
 
 async def publish_live(
     topic_id: uuid.UUID,
@@ -18,7 +20,6 @@ async def publish_live(
     agent_handle: str,
     blocks: list[dict],
 ) -> None:
-    from app.domain.agent.runtime import get_broker
 
     await get_broker().publish(
         str(topic_id),

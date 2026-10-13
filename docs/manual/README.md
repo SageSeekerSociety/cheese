@@ -14,27 +14,35 @@
 │
 ├── 开始使用
 │   ├── 快速开始 quickstart.md
-│   └── 与芝士协作 working-with-cheese.md
+│   └── 把一件事交给芝士并验收 working-with-cheese.md
 ├── 教程（按任务分组，一篇教一件事；分组和顺序以 docs/site/src/structure.mjs 为准）
-│   ├── 组队协作：team-project / invite-to-project / join-a-team / split-work
+│   ├── 组队协作：team-project / join-a-team / invite-to-project
 │   ├── 做题目：solve-a-challenge / ask-about-a-challenge / team-challenge / resubmit
 │   ├── 出题目：publish-a-challenge / guide-the-teammate
-│   ├── 成果：review-changes / publish-a-site
-│   └── 环境：use-your-computer
+│   ├── 成果：publish-a-site
+│   ├── 环境：use-your-computer
+│   └── 扩展芝士：connect-a-service / add-a-skill
 ├── 使用 Cheese
-│   ├── 赛题 challenges.md
+│   ├── 题目 challenges.md
+│   ├── 空间 spaces.md
 │   ├── 团队 teams.md
 │   ├── 项目 projects.md
 │   ├── 频道 rooms.md
 │   ├── AI 队友 agents.md
 │   ├── 任务 tasks.md
+│   ├── 待办与通知 inbox.md
+│   ├── 定时与触发 routines.md
 │   ├── 文件与成果 files.md
 │   ├── 提交 submissions.md
 │   ├── 验收与采纳 accept.md
-│   ├── 设备与环境 devices.md
+│   ├── 环境 environment.md
+│   ├── 自有设备 devices.md
 │   ├── 额度 quota.md
 │   ├── 反馈中心 feedback.md
-│   └── 发布成果 sites.md
+│   ├── 发布成果 sites.md
+│   ├── 连接与集成 connections.md
+│   ├── 技能 skills.md
+│   └── 账号与登录 account.md
 └── 常见问题
     └── 常见问题与排障 troubleshooting.md
 ```
@@ -56,7 +64,7 @@
 | 页面 | 负责什么 | 边界与相关页面 |
 |---|---|---|
 | `quickstart.md` | 创建项目、自动进入第一个频道、让芝士处理任务并找到成果的最小闭环 | 不绑定具体角色，不展开赛题流程或全部设置；深入内容链接项目、频道、AI 队友和教程 |
-| `working-with-cheese.md` | 描述目标、提供上下文、补充要求、查看进度、调整方向、验收结果的方法 | 不做按钮大全，不重复队友配置和设备连接；链接 AI 队友、任务、验收与采纳 |
+| `working-with-cheese.md` | 把一件事交给芝士并验收：在频道里说明要做的事、转为任务并开始、中途补充要求、审阅后采纳或退回；也是用户文档的样板页 | 不做按钮大全，不重复队友配置和设备连接；链接 AI 队友、任务、验收与采纳 |
 
 ### 教程 {#tutorials}
 
@@ -67,25 +75,25 @@
 - 开头用一个场景说明用户将完成什么，以及完成后会得到什么结果。
 - 主流程使用一条经过验证的默认路径从头走到尾，尽量不要在正文中同时展开多种可选方案。
 - 主体是要对芝士说什么、它会交回什么；界面路径压成一行，完整点击步骤留在功能页。
-- 用户分不清自己是否走对的地方，说明此刻应该看到什么。具体写法见 `cheese-docs-writing` skill 的「教程」一节。
+- 用户分不清自己是否走对的地方，说明此刻应该看到什么。具体写法见 `cheese-docs-writing` skill。
 - 只解释完成当前流程必需的概念；更完整的设置、权限、限制和替代路径链接到对应功能主页面。
 - 教程必须能够独立带用户完成当前任务，不能只给出一串功能页链接。
 
 | 页面 | 负责什么 | 边界与相关页面 |
 |---|---|---|
-| `team-project.md` | 建团队、拉同学进来 → 在「综合」里转为任务 → 和芝士写任务文档 → 开始 → 中途改要求 → 验收 → 交出去 | 团队、项目、任务、验收的完整规则链接功能页 |
+| `team-project.md` | 建团队、请同学加入 → 在团队下建项目 → 每人把自己那部分转为任务 → 协作者与转交 → 在「全部任务」和「总览」看进度 | 单个任务从写要求到采纳归 `working-with-cheese.md`；团队、项目、任务的完整规则链接功能页 |
+| `join-a-team.md` | 用链接申请、搜索申请或在「待办」接受邀请加入团队；组长一侧的建团队与批准在 `team-project.md` | 团队规则见 `teams.md` |
 | `invite-to-project.md` | 不建团队，按用户名或邮箱把一个人邀请进项目 | 项目成员规则见 `projects.md` |
-| `join-a-team.md` | 用链接申请、搜索申请或在「待办」接受邀请加入团队 | 团队规则见 `teams.md` |
-| `split-work.md` | 同一频道里每人负责一个任务，用协作者、转交、「全部任务」和「总览」推进 | 任务规则见 `tasks.md` |
-| `solve-a-challenge.md` | 加入空间 → 看题 → 领取 → 在题目建的项目里和芝士做 → 提交 | 详细规则链接空间与题目、提交 |
+| `solve-a-challenge.md` | 加入空间 → 看题 → 领取 → 在题目建的项目里和芝士做 → 提交 | 详细规则链接题目、提交 |
 | `ask-about-a-challenge.md` | 在题目页用「问芝士」弄懂题目、要提示不要答案 | 额度见 `quota.md` |
-| `team-challenge.md` | 以团队身份领取团队题目，一起做、一起交 | 详细规则链接空间与题目、团队、提交 |
+| `team-challenge.md` | 以团队身份领取团队题目，一起做、一起交 | 详细规则链接题目、团队、提交 |
 | `resubmit.md` | 看评审结果，和芝士改完，提交新版本 | 提交规则见 `submissions.md` |
-| `publish-a-challenge.md` | 建空间、发邀请码、发布题目、批准领取、评审提交 | 详细规则链接空间与题目、提交 |
-| `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `challenges.md` |
-| `review-changes.md` | 找到待审阅的改动，审阅、追问、采纳或退回 | 按钮的完整说明见 `accept.md` |
+| `publish-a-challenge.md` | 建空间、发邀请码、发布题目、批准领取、评审提交 | 详细规则链接空间、提交 |
+| `guide-the-teammate.md` | 写整块板和单道题的「给 AI 队友的指导」 | 字段说明见 `spaces.md` |
 | `publish-a-site.md` | 让芝士做网页、预览、采纳、发布和更新网站 | 限制见 `sites.md` |
-| `use-your-computer.md` | 可选：接入自己的电脑或服务器，给频道或任务换环境；用自己的 Claude Code | 接入与隔离的完整说明见 `devices.md` |
+| `use-your-computer.md` | 接入自己的 Mac 或 Windows 电脑，让频道改用它，把本地数据交给芝士 | 服务器接入、隔离和自己的 Claude Code 见 `devices.md`；任务环境见 `environment.md` |
+| `connect-a-service.md` | 以 Notion 为例：让芝士在项目里声明 MCP 服务、在项目设置里连接、让芝士读页面、断开 | 连接的种类、状态和权限见 `connections.md` |
+| `add-a-skill.md` | 以组会周报为例：新建一项技能、让芝士照着做、修改技能 | 提议、导入、版本规则见 `skills.md` |
 
 ### 使用 Cheese {#feature-pages}
 
@@ -93,18 +101,25 @@
 
 | 页面 | 完整解释的内容 | 不负责的内容与去向 |
 |---|---|---|
-| `challenges.md` | 赛题分类与全部赛题、详情、参与 / 领取、从赛题创建项目、材料呈现、参与状态与权限、发布与审核 | 项目设置见 `projects.md`；提交见 `submissions.md` |
+| `challenges.md` | 给做题的人：加入空间、题目列表、题目页、问芝士、领取与批准、无法领取、题目的项目 | 管理空间与出题见 `spaces.md`；提交见 `submissions.md` |
+| `spaces.md` | 给管理空间的人：新建空间、邀请码、成员与角色、发布题目的表单、审核题目、领取者与评审、资料库、给 AI 队友的指导 | 做题的一侧见 `challenges.md`；评审细节见 `submissions.md` |
 | `teams.md` | 创建团队、邀请成员、加入申请、已发送邀请、团队成员管理、招募广场当前边界 | 项目成员归 `projects.md`；AI 队友归 `agents.md` |
 | `projects.md` | 创建项目、与赛题的关系、所属团队、项目成员与邀请、主要入口与「总览」、上游仓库、项目与成果的关系 | 文件操作归 `files.md`；队友配置归 `agents.md`；赛题提交归 `submissions.md` |
-| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目总览和频道说明 | 队友配置与触发规则归 `agents.md`；设备和环境规则归 `devices.md`；任务列表归 `tasks.md` |
+| `rooms.md` | 新建频道、加入与退出、频道通知、默认 AI 队友、页面区域、频道总览、支线、置顶、频道成员、重命名与归档、消息与执行的关系、环境入口、项目目标和频道说明 | 队友配置与触发规则归 `agents.md`；环境规则归 `environment.md`，自有设备归 `devices.md`；任务列表归 `tasks.md`；定时与触发归 `routines.md` |
 | `agents.md` | 创建与配置 AI 队友、真实表单字段、设置默认队友、在频道成员中调整队友、触发处理消息、运行方式、模型、已验证限制 | 不承担完整入门流程、设备连接或进度管理；不承诺未验证的记忆机制 |
-| `tasks.md` | 看任务的几处入口、「全部任务」的分组与状态、「待办」里的理由、任务名称、任务详情、与频道执行过程的关系 | 不重复项目介绍、队友配置或最终提交 |
+| `tasks.md` | 看任务的几处入口、「全部任务」的分组与状态、任务名称、任务详情、与频道执行过程的关系 | 「待办」里每一种理由归 `inbox.md`；不重复项目介绍、队友配置或最终提交 |
+| `inbox.md` | 「待办」的入口和数字、「等你处理」的每一种理由、「动态」、「提醒我」、通知渠道（站内、浏览器推送、邮件、桌面端）、通知设置与免打扰 | 单个频道的通知级别归 `rooms.md`；任务状态归 `tasks.md` |
+| `routines.md` | 定时与触发规则的建立、确认、管理和每一次执行在频道里的样子 | 频道本身归 `rooms.md`；环境在线与否归 `environment.md` |
 | `files.md` | 上传及限制、文件进入时间线、查找生成文件、查看与编辑成果、单文件下载、成果相关的「改动 / 现场 / 预览」入口 | Site 发布归 `sites.md`；赛题提交归 `submissions.md`；不编造整个项目打包下载 |
 | `submissions.md` | 学生提交条件、入口、表单与文件要求、已验证的提交限制；发布者查看提交与提交记录 | 与 Agent 交付的验收与采纳分开；不把单一赛题的限制推断成所有赛题通用规则 |
 | `accept.md` | Agent 交付后的验收、采纳、实际入口与操作结果 | 不负责赛题提交或普通文件下载；未验证的验收与合并关系不能写成正式规则 |
-| `devices.md` | 设置 → 设备、添加与安装、登录、网页批准、在线 / 离线状态、AI 队友的环境及更换 | 不解释 tokens；不能把选择设备写成选择本地目录 |
+| `environment.md` | 两种环境与沙箱规格、每位 AI 队友的环境和项目 → 频道 → 任务三层的新会话默认、项目的环境分布、环境准备失败、云端资源紧张 | 接入设备和隔离归 `devices.md`；计费归 `quota.md` |
+| `devices.md` | 接入 Mac / Windows 电脑和服务器、网页批准、提供给团队、隔离环境与整台电脑、用自己的 Claude Code、设备离线 | 环境的选择归 `environment.md`；不能把选择设备写成选择本地目录 |
 | `quota.md` | 团队「额度」页、个人「芝士额度」、耗尽提示和当前可操作范围 | 设备连接归 `devices.md`；不编造自行调整或发放额度入口 |
 | `sites.md` | 导出与发布中的 Site 发布、发布结果与管理入口、当前能力和限制 | 普通文件下载归 `files.md`；不承诺整个项目导出 |
+| `account.md` | 创建账号、登录方式、第一次用第三方账号登录、添加邮箱、通行密钥、密码与安全、两步验证、桌面端登录、个人资料与个人主页、实名信息、界面语言与外观 | 通知设置归 `inbox.md`；设备归 `devices.md`；芝士额度归 `quota.md` |
+| `connections.md` | 个人连接（邮箱、飞书）与项目连接（GitHub、MCP 服务）：在哪里管理、用谁的账号、连接状态、芝士能做什么、断开 | 连接 GitHub 仓库的步骤归 `projects.md`；完整的 Notion 流程归 `connect-a-service.md` |
+| `skills.md` | 项目技能的字段、芝士怎么用、平台自带的技能、手写 / 芝士提议 / 导入三种来源、版本与删除、权限 | 一步步新建技能归 `add-a-skill.md` |
 
 上表定义的是页面职责，不代表其中每一个字段、状态、权限和限制都已经完成事实验证。正文只能写入经过验证的行为。
 
@@ -140,7 +155,7 @@
 
 例如，不要沿用“没有 @ 的消息它收不到”这类已经与当前行为不一致的说法。应只描述经过验证的行为，并把完整触发规则集中维护在 `agents.md`。
 
-操作型功能页通常包含：一句话目标、开始前的条件、操作步骤、完成后的结果、限制和相关排障入口。`working-with-cheese.md` 可以按协作方法组织，常见问题按问题组织，不必机械套用同一模板。
+每类页面的骨架、步骤和画面的写法见 `cheese-docs-writing` skill，样板页是 `working-with-cheese.md`。
 
 ## 内容源、frontmatter 与导航 {#source-and-navigation}
 
@@ -171,7 +186,7 @@ order: 1
 
 标题 slug 使用小写字母、数字和连字符，全页唯一。修改标题文字时保留原 slug，避免中文标题自动生成的锚点随措辞变化失效。
 
-页面改名、拆分或删除时，先检查产品入口、其他文档、Agent 引用和外部链接是否仍指向旧地址。只有已被实际引用的旧地址需要保留兼容入口或配置重定向；未正式发布且没有任何引用的页面，可以在更新内部链接后直接迁移。
+页面改名、拆分或删除时，先检查产品入口、其他文档、Agent 引用和外部链接是否仍指向旧地址。只有已被实际引用的旧地址需要保留兼容入口或配置重定向；未正式发布且没有任何引用的页面，可以在更新内部链接后直接迁移。重定向写在 `docs/site/src/structure.mjs` 的 `REDIRECTS` 里，目标可以是 `页面#锚点`，指到接手这件事的那一节。一节搬到别的页面而原页面还在时，键写成 `原页面#锚点`：原页面打开时把这个锚点转到新地址。
 
 `llms.txt` 按标题、Markdown 地址和节首摘要帮助模型定位答案。每节先写有信息量的摘要句，不以列表或“首先我们来看一下”开头。核心步骤应能独立看懂，链接提供进一步说明，不能代替答案本身。
 

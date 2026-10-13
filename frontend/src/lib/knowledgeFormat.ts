@@ -12,9 +12,8 @@
 import type { Knowledge, KnowledgeType } from '@/types'
 import type { MaterialType } from '@/types/materials'
 
-import dayjs from 'dayjs'
-
 import i18n, { t } from '@/i18n'
+import { absDate, absDateTime, calendarDaysAgo, clockTime } from '@/lib/dateText'
 
 /** 工具栏「资料类型」那一栏的选项：类型码本身就是请求里要的值，显示名走 `knowledgeTypeLabel`。 */
 export const RESOURCE_TYPE_OPTIONS: KnowledgeType[] = ['TEXT', 'MATERIAL', 'LINK', 'CODE']
@@ -122,9 +121,9 @@ export function uploadTypeIcon(type: KnowledgeType): string {
   }
 }
 
-/** 卡片右下角那个「几月几号」。没有年份：卡上是「最近」的语境。 */
+/** 卡片右下角那个「几月几号」。同年只给月日，跨年补上那一年。 */
 export function formatDay(timestamp: number): string {
-  return dayjs(timestamp).format('MM/DD')
+  return absDate(timestamp)
 }
 
 /** 详情里那一行「添加时间」：要年份，要分钟。 */
@@ -138,36 +137,19 @@ export function formatDetailDate(timestamp: number): string {
   })
 }
 
-/** 原始讨论里那句话的时间。今天只给时刻，本周给星期，更久以前给日期。 */
+/** 原始讨论里那句话的时间。今天只给时刻，昨天给日词加时刻，更久以前给日期。 */
 export function formatMessageTime(timestamp: number): string {
-  const now = dayjs()
-  const messageTime = dayjs(timestamp)
+  const days = calendarDaysAgo(timestamp)
 
-  if (now.diff(messageTime, 'day') === 0) {
+  if (days <= 0) {
     // 今天
-    return messageTime.format('HH:mm')
-  } else if (now.diff(messageTime, 'day') === 1) {
+    return clockTime(timestamp)
+  } else if (days === 1) {
     // 昨天
-    return t('teams.knowledge.yesterday', { time: messageTime.format('HH:mm') })
-  } else if (now.diff(messageTime, 'day') < 7) {
-    // 本周
-    return messageTime.format('ddd HH:mm')
+    return t('teams.knowledge.yesterday', { time: clockTime(timestamp) })
   } else {
-    // 更久以前
-    return messageTime.format('MM-DD HH:mm')
-  }
-}
-
-/** 材料的大小。B / KB / MB / GB 四档，两位小数。 */
-export function formatFileSize(size: number): string {
-  if (size < 1024) {
-    return `${size} B`
-  } else if (size < 1024 * 1024) {
-    return `${(size / 1024).toFixed(2)} KB`
-  } else if (size < 1024 * 1024 * 1024) {
-    return `${(size / (1024 * 1024)).toFixed(2)} MB`
-  } else {
-    return `${(size / (1024 * 1024 * 1024)).toFixed(2)} GB`
+    // 更早：给日期，跨年带年份
+    return absDateTime(timestamp)
   }
 }
 
@@ -203,7 +185,8 @@ export function fileTypeIcon(file: File): string {
   } else if (file.type.startsWith('audio/')) {
     return 'mdi-file-music-outline'
   } else if (file.type.includes('pdf')) {
-    return 'mdi-file-pdf-outline'
+    // mdi-file-pdf-box：@mdi/font 7.4.47 里没有 -outline 那一个，写了也是一片空白。
+    return 'mdi-file-pdf-box'
   } else if (file.type.includes('word') || file.type.includes('document')) {
     return 'mdi-file-word-outline'
   } else {

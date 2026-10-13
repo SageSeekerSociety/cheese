@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
+from pywebpush import webpush
+
 from app.core.config import settings
 from app.core.db import SessionFactory
+from app.domain.notification.legacy_queue import import_legacy_queue
+from app.domain.notification.outbox import drain_channel
 from app.domain.notification.push import PushSubscriptionRepository
 
 logger = logging.getLogger(__name__)
@@ -21,7 +26,6 @@ def _send_one(*, endpoint: str, p256dh: str, auth: str, body: str) -> int:
     `pywebpush` 是同步库（内部用 requests），所以调用方把它丢进线程里 —— 一次投递
     要做一次椭圆曲线加密再打一次 HTTP，放在事件循环上会把整个后端卡住。
     """
-    from pywebpush import webpush
 
     response = webpush(
         subscription_info={
@@ -49,7 +53,6 @@ def _status_of(exc: Exception) -> int:
 
 
 async def send_push(sessions, item):
-    import asyncio
 
     async with sessions() as session:
         subscriptions = await PushSubscriptionRepository(session).for_user(
@@ -90,8 +93,6 @@ async def send_push(sessions, item):
 
 
 async def drain_push_queue(sessions: SessionFactory) -> dict[str, int]:
-    from app.domain.notification.legacy_queue import import_legacy_queue
-    from app.domain.notification.outbox import drain_channel
 
     try:
         await import_legacy_queue(

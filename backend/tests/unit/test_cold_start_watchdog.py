@@ -17,11 +17,8 @@ import asyncio
 
 import pytest
 
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic

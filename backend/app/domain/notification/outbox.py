@@ -95,6 +95,10 @@ class ChannelIntentHandler:
                             "body": body,
                             "projectId": delivery.payload.get("projectId"),
                             "topicId": delivery.payload.get("topicId"),
+                            # 那条消息在哪条会话里（任务 / 支线）：推送点开要回到
+                            # 它，不是回到频道（`push.push_link` 是同一条规则）。
+                            "taskId": delivery.payload.get("taskId"),
+                            "threadId": delivery.payload.get("threadId"),
                         },
                     )
                 )
@@ -182,10 +186,12 @@ async def drain_channel(sessions, *, channel, batch_size, max_attempts):
         failure = None
         try:
             if channel == "email":
+                # deferred-import: cycle notification.maintenance -> notification.outbox
                 from app.domain.notification.maintenance import send_email
 
                 await send_email(sessions, payload)
             else:
+                # deferred-import: tests patch app.domain.notification.push_delivery
                 from app.domain.notification.push_delivery import send_push
 
                 counts["expired"] += await send_push(sessions, payload)

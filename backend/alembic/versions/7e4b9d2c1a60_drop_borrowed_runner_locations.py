@@ -57,6 +57,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The cleared locations named runners their rows did not own; there is
-    # nothing to put back.
+    """The cleared locations named runners their rows did not own; there is
+    nothing to put back."""
     pass

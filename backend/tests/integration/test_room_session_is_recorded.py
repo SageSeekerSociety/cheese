@@ -13,6 +13,7 @@
 
 import uuid
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from tests.conftest import StubChannel, settle_turn, stub_compute, wait_work_idle
 from tests.integration.conftest import open_task, post_project, session_auth_headers
@@ -66,6 +67,7 @@ def _started(client, room_id: str, title: str = "一件活") -> str:
 
 def _service(client, tmp_path, screen: _Screen) -> ChatService:
     return ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",

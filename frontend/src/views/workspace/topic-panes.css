@@ -1,0 +1,68 @@
+/* 话题页的左右两栏：专注模式里对话栏的进出、对话收起后的窄边、两栏之间的分隔线。
+ * TopicView 用 `scoped src` 引这一份（和 accept-card.css 同一个办法）。 */
+
+/* 专注模式：对话栏是一只侧抽屉（§9：整块进出 --dur-slow，走掉快一档）。动的是
+   flex-basis；`!important` 是为了压过模板上那条内联的 `flex: 0 0 N%`。 */
+.focus-chat-enter-active,
+.focus-chat-leave-active {
+  overflow: hidden;
+}
+.focus-chat-enter-active {
+  transition:
+    flex-basis var(--dur-slow) var(--ease-out),
+    opacity var(--dur-slow) var(--ease-out);
+}
+.focus-chat-leave-active {
+  transition:
+    flex-basis var(--dur-base) var(--ease-in),
+    opacity var(--dur-base) var(--ease-in);
+}
+.focus-chat-enter-from,
+.focus-chat-leave-to {
+  flex-basis: 0% !important;
+  opacity: 0;
+}
+.focus-chat-enter-active > :deep(*),
+.focus-chat-leave-active > :deep(*) {
+  width: var(--chat-frozen-w);
+  min-width: var(--chat-frozen-w);
+}
+/* 对话和面板之间那条可拖的线。看得见的只有 1px，和页面上别的分隔线一样重；能抓
+   的范围左右各多 4px（::before），不然一条细线很难按准。它原来是一条 5px 的灰带，
+   比屏幕上任何一条线都粗，悬停还变琥珀——琥珀留给主操作。 */
+.chat-rail {
+  display: flex;
+  position: relative;
+  flex: 0 0 44px;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 8px;
+  border-right: 1px solid var(--line);
+}
+/* 对话收着时来了新回复：未读点（琥珀只给未读，§1.6）。 */
+.chat-rail__news {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  pointer-events: none;
+}
+.pane-resizer {
+  position: relative;
+  z-index: var(--z-raised);
+  flex: 0 0 1px;
+  cursor: col-resize;
+  background: var(--line);
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.pane-resizer::before {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+}
+.pane-resizer:hover {
+  background: var(--faint);
+}

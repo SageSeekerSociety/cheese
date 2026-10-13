@@ -411,3 +411,11 @@ def test_a_session_whose_work_is_not_kept_does_not_ask_to_sync_it(
     (tmp_path / "execution.token").write_text(_bound_token())
     with pytest.raises(RuntimeError):
         client.checkpoint("checkpoint-2")
+
+
+def test_a_session_that_never_held_a_sandbox_has_nothing_to_sync(monkeypatch):
+    """回合结束时还没拿到过机器的会话，没有任何东西在机器上，检查点不去问谁，也不报错。"""
+    monkeypatch.delenv("CHEESE_TOKEN", raising=False)
+    client = executor_transport.RemoteClient({"kind": "deferred", "workspace": "/w"})
+
+    assert client.checkpoint("checkpoint-1") == {}

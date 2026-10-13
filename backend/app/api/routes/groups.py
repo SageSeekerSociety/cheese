@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
@@ -235,7 +236,6 @@ async def create_group_target(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
-    from datetime import UTC, datetime
 
     name = payload.get("name")
     intro = payload.get("intro", "")
@@ -289,7 +289,6 @@ async def update_group_target(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: GroupTargetService = Depends(get_target_service),
 ) -> dict:
-    from datetime import UTC, datetime
 
     name = payload.get("name")
     intro = payload.get("intro")

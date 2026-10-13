@@ -33,9 +33,10 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.day_windows import dense_series, utc_day, utc_day_window
 from app.domain.docs_site.models import DocsQuestion, DocsVisit
-from app.domain.feature_stats import pricing, stats
-from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
+from app.domain.feature_stats import stats
+from app.domain.usage import pricing
 
 logger = logging.getLogger(__name__)
 

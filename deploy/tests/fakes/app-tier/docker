@@ -16,6 +16,19 @@ if [ "${1:-}" = exec ] && [[ "$*" == *SigCgt* ]]; then
   exit 0
 fi
 
+# deploy/schema-map.py run in an image: the tables and columns its models map.
+# The release's (`compose … run … backend python -`) is APP_TIER_RELEASE_SCHEMA;
+# a running owner's (`exec -i <owner> python -`) is APP_TIER_OWNER_SCHEMA, and
+# the same as the release's unless a test sets it.
+if [[ " $* " == *" python - "* ]]; then
+  cat >/dev/null
+  [ -n "${APP_TIER_DOCKER_LOG:-}" ] && printf '%s\n' "$*" >> "$APP_TIER_DOCKER_LOG"
+  schema="${APP_TIER_RELEASE_SCHEMA-topics topics.id}"
+  [ "${1:-}" != exec ] || schema="${APP_TIER_OWNER_SCHEMA-$schema}"
+  for object in $schema; do printf 'schema-map %s\n' "$object"; done
+  exit 0
+fi
+
 if [ "${1:-}" = exec ] && [ -n "${APP_TIER_CLOUD_DEVICES:-}" ]; then
   printf '%s\n' "$APP_TIER_CLOUD_DEVICES"
   exit 0

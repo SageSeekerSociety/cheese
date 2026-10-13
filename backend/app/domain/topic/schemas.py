@@ -67,7 +67,8 @@ class TopicOut(BaseModel):
     # Derived per query, so only the endpoints that ask for it
     # (list_topics/get_topic) fill it in; elsewhere it stays None.
     last_activity_at: datetime | None = None
-    # 成员动态：此刻谁在这个房间里忙——有一轮在跑的 AI 队友（`agent/activity.py`）。
+    # 成员动态：此刻谁在这个房间里忙——有一轮在跑的 AI 队友。
+    # 来源：`agent/realtime/activity.py`。
     # 房间自己没有状态，有的是成员在做什么。只有 list/get 话题时填。
     #
     # 不带打字的人。侧栏不画他们（`useTopicRail`），而打字条目的 `expires_in` 是「还

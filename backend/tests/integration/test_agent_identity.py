@@ -15,19 +15,17 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
-from app.domain.memory.models import (
-    MemoryEntry,
-    MemoryScope,
-    agent_project_scope_id,
-)
+from app.domain.memory.models import MemoryEntry, agent_project_scope_id
+from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
+    inbox,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -93,7 +91,7 @@ def _turn(client, topic_id: str, content: str = "hi") -> str:
     """
     addressed = content if "<@" in content else f"@芝士 {content}"
     thread = in_thread(client, topic_id, "alice")
-    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+    with room_socket(client, thread, "alice") as ws:
         post_message(client, thread, "alice", {"content": addressed})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
@@ -169,6 +167,37 @@ def test_the_summon_receipt_carries_the_same_agent(client):
         time.sleep(0.02)
     else:
         raise AssertionError("the 👀 receipt never landed")
+
+
+def test_each_named_teammate_leaves_its_own_seen_receipt(client):
+    """一条消息点了两位队友，两位各留一个 👀 —— 几个队友看到就是几个。
+
+    第一位被消息直接召唤，👀 由它自己那一轮落；第二位是被投递账本叫醒的，它
+    同样读了那条消息，所以也欠它一个自己的 👀（`delivery/receipts.py`）。
+    """
+    project_id, topic_id = _project_and_topic(client)
+    own = _own_agent(client, topic_id)
+    ops = _seat_second_agent(client, project_id, topic_id, "ops")
+
+    thread = in_thread(client, topic_id, "alice")
+    with room_socket(client, thread, "alice") as ws:
+        post_message(
+            client, thread, "alice", {"content": f"<@{own}> <@{ops}> 一起看看"}
+        )
+        while True:
+            if ws.receive_json()["type"] in ("done", "error"):
+                break
+
+    for _ in range(200):
+        blocks = client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+        landed = [b["reactions"] for b in blocks if b["reactions"]]
+        if landed:
+            seen = next(r for r in landed[0] if r["emoji"] == "👀")
+            if seen["count"] == 2:
+                assert set(seen["authors"]) == {own, ops}
+                return
+        time.sleep(0.02)
+    raise AssertionError("each named teammate's 👀 never landed")
 
 
 def _remember(client, project_id: str, fact: str, *, seat: str | None = None) -> None:
@@ -269,13 +298,6 @@ def _post_without_summon(client, topic_id: str, content: str, author: str) -> No
     post_message(client, topic_id, author, {"content": content})
 
 
-def _notifs(client, project_id: str, handle: str) -> list[dict]:
-    return client.get(
-        f"/projects/{project_id}/alerts",
-        headers=session_auth_headers(handle),
-    ).json()["data"]["data"]
-
-
 def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     """The two paths differ on purpose.
 
@@ -299,10 +321,10 @@ def test_naming_an_agent_notifies_it_while_a_broadcast_does_not(client, bearer):
     )
 
     _post_without_summon(client, topic_id, "<@all> 大家看一下", author="alice")
-    assert _notifs(client, project_id, "ops") == []
+    assert inbox(client, "ops", "MENTION") == []
 
     _post_without_summon(client, topic_id, "<@ops> 帮忙看下告警", author="alice")
-    assert len(_notifs(client, project_id, "ops")) == 1
+    assert len(inbox(client, "ops", "MENTION")) == 1
 
 
 def test_human_members_are_not_mistaken_for_agents(client):

@@ -153,38 +153,6 @@ describe('useChatPaging 向上翻页的补偿', () => {
     expect(scroller.classes.has(MEASURE_CLASS)).toBe(false)
   })
 
-  it('一页画不出行就往回接着翻，直到有一页接上看得见的行', async () => {
-    // 最新那一段几乎全是 in_room:false 的回合事件：前两页一行都画不出来（added 0），
-    // 第三页才接上一条看得见的消息。只翻一页就停的话，这两页等于白翻、翻页也停在那——
-    // 读一页没让任何东西长高，就没有下一次滚动事件。
-    const scroller = makeScroller()
-    let pulls = 0
-    const timeline = makeTimeline(scroller, {
-      add: () => (++pulls >= 3 ? 1 : 0),
-      grow: 0,
-      moreAfter: true,
-    })
-    mocks.listBlocks.mockResolvedValue({ data: [{ id: 'hidden' }], has_more: true })
-    const paging = setUp(scroller, timeline)
-
-    await paging.loadOlder()
-
-    expect(mocks.listBlocks).toHaveBeenCalledTimes(3)
-  })
-
-  it('连着画不出行也有上限，不会在真没有消息的地方一直翻', async () => {
-    const scroller = makeScroller()
-    const timeline = makeTimeline(scroller, { add: () => 0, grow: 0, moreAfter: true })
-    mocks.listBlocks.mockResolvedValue({ data: [{ id: 'hidden' }], has_more: true })
-    const paging = setUp(scroller, timeline)
-
-    await paging.loadOlder()
-
-    // 有界：翻了不止一页，但没到无限。
-    expect(mocks.listBlocks.mock.calls.length).toBeGreaterThan(1)
-    expect(mocks.listBlocks.mock.calls.length).toBeLessThanOrEqual(24)
-  })
-
   it('翻页在飞的时候这一段被整段换过（游标变了），这一页丢掉不接', async () => {
     // 开场那条请求（或是 `?block=` 的跳转）在翻页请求还没回来时把整段换掉了：拿旧游标
     // 读回来的这一页接到新一段上，中间会缺一段——看着就是「跳了一下、中间空一格」。

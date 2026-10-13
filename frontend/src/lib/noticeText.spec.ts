@@ -1,7 +1,7 @@
 // 平台在房间里说的那一行，跟着读者选的语言走 —— 已经在屏幕上的行，切换语言当场重画。
 import type { Component } from 'vue'
 import type { Block } from '@/cx_types'
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 
 import { computed, defineComponent, h, nextTick } from 'vue'
 import { createMemoryHistory, createRouter } from 'vue-router'

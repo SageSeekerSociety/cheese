@@ -20,9 +20,16 @@ import {
   ARTIFACT_VERSIONS_WITHOUT_FILE,
   teamProfile,
 } from './catalogSharedFixtures'
+import { VIEW_SPACE_TASKS_ENTRIES } from './catalogSpaceTasks'
+import { VIEW_ACCOUNT_ENTRIES } from './catalogViewAccount'
+import { VIEW_ADMIN_ENTRIES } from './catalogViewAdmin'
+import { VIEW_ADMIN_STATS_ENTRIES } from './catalogViewAdminStats'
+import { VIEW_SETTINGS_WORKSPACE_ENTRIES } from './catalogViewSettingsWorkspace'
 
 import ArtifactVersionList from '@/views/artifact/ArtifactVersionList.vue'
+import SpaceReviewNoticeView from '@/views/spaces/detail/SpaceReviewNoticeView.vue'
 import TeamProfile from '@/views/teams/TeamProfile.vue'
+import WelcomeView from '@/views/welcome/WelcomeView.vue'
 
 /** 两件都要 Vuetify 的画法、一套语言包，卡片按钮还要一条 name 指得上的路由。 */
 const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
@@ -31,6 +38,17 @@ const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
 const join = async () => {}
 
 export const VIEW_ENTRIES: CatalogEntry[] = [
+  // 账号那一组整页（登录进门到设置密码的每一屏）单放一册，展开进来。
+  ...VIEW_ACCOUNT_ENTRIES,
+  // 后台那一组整页（方案与额度、棘轮、运行记录、协议、统计）各单放一册，展开进来。
+  ...VIEW_ADMIN_ENTRIES,
+  ...VIEW_ADMIN_STATS_ENTRIES,
+  // 空间与题目那一组整页（空间设置四栏、发题页、被拒进门，和题目详情下三个页签）也在
+  // 自己那一册里，展开进来。
+  ...VIEW_SPACE_TASKS_ENTRIES,
+  // 账号设置的那几屏（通用、通知、资料、实名、密码与安全、这台设备）和项目工作台的那几
+  // 屏（浏览频道、全部任务、项目总览）也在自己那一册里，展开进来。
+  ...VIEW_SETTINGS_WORKSPACE_ENTRIES,
   {
     id: 'artifact-version-list',
     title: 'ArtifactVersionList',
@@ -68,6 +86,43 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'welcome-view',
+    title: 'WelcomeView',
+    about: '新账号的新手引导：五个问题一屏一问，右边的「你的项目」随回答长出来；点「建好项目」才把回答交给页面去建。',
+    file: 'src/views/welcome/WelcomeView.vue',
+    component: WelcomeView,
+    needs: UI_T_R,
+    args: {
+      me: { username: 'lin', nickname: '林小满', work_role: null, organization: null },
+      desktop: false,
+      busy: false,
+      failure: '',
+    },
+    states: [
+      {
+        name: '第一次进来',
+        note: '从称呼问起，名字预填账号上的昵称；不想答可以跳过引导。',
+        props: {},
+        expect: '芝士怎么称呼你？',
+      },
+      {
+        name: '从帮助菜单再走一遍',
+        note: '称呼答过了，从身份问起，上次选的身份已经按下。',
+        props: {
+          again: true,
+          me: { username: 'lin', nickname: '林小满', work_role: 'teacher', organization: '中国人民大学' },
+        },
+        expect: '你主要用知是做什么？',
+      },
+      {
+        name: '没建成',
+        note: '建项目失败时就地说原因，人留在这一页，可以再点一次。',
+        props: { failure: '没建成项目：代码仓库服务响应超时' },
+        expect: '代码仓库服务响应超时',
+      },
+    ],
+  },
+  {
     id: 'team-profile',
     title: 'TeamProfile',
     about:
@@ -100,6 +155,29 @@ export const VIEW_ENTRIES: CatalogEntry[] = [
         note: '申请交出去之后停在原地等：这一格说的就是「已提交申请，等待团队管理员审批」，没有别的东西可按。',
         props: { team: teamProfile({ joinStatus: 'pending' }) },
         expect: '已提交申请，等待团队管理员审批',
+      },
+    ],
+  },
+  {
+    id: 'space-review-notice',
+    title: 'SpaceReviewNoticeView',
+    about:
+      '所有者打开自己那块还没过审的空间时看到的一屏：说清它在审核中还是被驳回了（驳回带原因），出去的路回空间列表 —— 「我的空间申请」在那里。',
+    file: 'src/views/spaces/detail/SpaceReviewNoticeView.vue',
+    component: SpaceReviewNoticeView,
+    needs: UI_T_R,
+    states: [
+      {
+        name: '待审核',
+        note: '刚建好、还没人审：这里还发不了题，邀请码也还用不了。',
+        props: { status: 'PENDING' },
+        expect: '空间还在审核中',
+      },
+      {
+        name: '被驳回，带原因',
+        note: '审核人写了原因就照写，再说去哪里改了重交。',
+        props: { status: 'REJECTED', reason: '空间名称没说清是哪门课' },
+        expect: '空间名称没说清是哪门课',
       },
     ],
   },

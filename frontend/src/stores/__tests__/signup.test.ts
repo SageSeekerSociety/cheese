@@ -3,10 +3,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useSignupStore } from '../signup'
 
-import { UserApi } from '@/network/api/users'
+import { UserAuthApi } from '@/api/userAuth'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: {
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
     register: vi.fn(),
     sendEmailCode: vi.fn(),
   },
@@ -17,8 +17,8 @@ describe('signup store invite-code flow', () => {
     sessionStorage.clear()
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    vi.mocked(UserApi.sendEmailCode).mockResolvedValue({} as never)
-    vi.mocked(UserApi.register).mockResolvedValue({ data: { user: {} } } as never)
+    vi.mocked(UserAuthApi.sendEmailCode).mockResolvedValue({} as never)
+    vi.mocked(UserAuthApi.register).mockResolvedValue({ user: {} } as never)
   })
 
   it('validates the invite before email and carries it into registration', async () => {
@@ -33,11 +33,11 @@ describe('signup store invite-code flow', () => {
       consent: { documents: { terms: '1.0', privacy: '1.0' }, method: 'dialog' },
     })
 
-    expect(UserApi.sendEmailCode).toHaveBeenCalledWith('user@example.com', 'invite-once')
+    expect(UserAuthApi.sendEmailCode).toHaveBeenCalledWith('user@example.com', 'invite-once')
 
     await store.signup('123456')
 
-    expect(UserApi.register).toHaveBeenCalledWith(
+    expect(UserAuthApi.register).toHaveBeenCalledWith(
       expect.objectContaining({
         emailCode: '123456',
         inviteCode: 'invite-once',

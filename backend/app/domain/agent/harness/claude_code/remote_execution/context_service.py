@@ -1,8 +1,11 @@
 """Reuse the central MCP process for prompt-time context synchronization."""
 
 import hashlib
+import json
 import os
 import socket
+import socketserver
+import threading
 from contextlib import contextmanager
 
 
@@ -24,7 +27,6 @@ def call(target):
         # The resident service emits this exact success response on every turn.
         if raw == b'{"ok": true}\n':
             return True
-        import json
 
         result = json.loads(raw)
         if "error" in result:
@@ -36,9 +38,6 @@ def call(target):
 
 @contextmanager
 def serve(target, synchronize):
-    import json
-    import socketserver
-    import threading
 
     class Server(socketserver.UnixStreamServer):
         # socketserver's default queue of 5 refuses a burst of prompts that
@@ -95,6 +94,7 @@ def serve(target, synchronize):
 def _address_lock(path):
     """Serialize taking and releasing one address. Held on the directory rather
     than on a lock file of its own, which would be left behind for every room."""
+    # deferred-import: POSIX-only module; absent on Windows
     import fcntl
 
     descriptor = os.open(os.path.dirname(path), os.O_RDONLY)

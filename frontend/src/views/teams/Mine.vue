@@ -1,73 +1,10 @@
 <template>
-  <v-container class="teams-container" fluid>
-    <v-row>
-      <v-col cols="12">
-        <v-card flat class="my-teams-card" :title="t('teams.mine.title')">
-          <template #text>
-            <!-- 加载状态 -->
-            <div v-if="isLoadingMyTeams" class="d-flex flex-column align-center py-5">
-              <v-progress-circular
-                indeterminate
-                color="primary"
-                :size="40"
-                :width="3"
-                class="mb-3"
-              ></v-progress-circular>
-              <p class="text-body-2 text-medium-emphasis text-center">{{ t('teams.mine.loading') }}</p>
-            </div>
-
-            <!-- 错误状态 -->
-            <div v-else-if="loadMyTeamsError" class="d-flex flex-column align-center py-5">
-              <v-avatar size="50" class="mb-3 bg-error-lighten-5">
-                <v-icon icon="mdi-alert-circle" size="large" color="error"></v-icon>
-              </v-avatar>
-              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('teams.mine.loadFailed') }}</p>
-              <p class="text-body-2 text-center text-medium-emphasis mb-3">{{ t('teams.mine.loadFailedHint') }}</p>
-              <BaseButton kind="secondary" size="sm" prepend-icon="mdi-refresh" @click="fetchMyTeams">
-                {{ t('teams.mine.reload') }}
-              </BaseButton>
-            </div>
-
-            <!-- 空状态 -->
-            <div v-else-if="!myTeams.length" class="d-flex flex-column align-center py-5">
-              <v-avatar size="50" class="mb-3 bg-surface-light">
-                <v-icon icon="mdi-account-group" size="large" color="on-surface-variant"></v-icon>
-              </v-avatar>
-              <p class="text-subtitle-1 font-weight-medium text-center mb-1">{{ t('teams.mine.emptyTitle') }}</p>
-              <p class="text-body-2 text-center text-medium-emphasis">{{ t('teams.mine.emptyHint') }}</p>
-            </div>
-
-            <!-- 小队列表 -->
-            <v-list v-else class="my-teams-list pa-0">
-              <v-list-item
-                v-for="team in myTeams"
-                :key="team.id"
-                :title="team.name"
-                :subtitle="team.intro"
-                data-user-content
-                :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
-                rounded="md"
-                class="my-team-item mb-2"
-              >
-                <template #prepend>
-                  <UserAvatar
-                    kind="org"
-                    :avatar="getAvatarUrl(team.avatarId)"
-                    :name="team.name"
-                    size="40"
-                    class="mr-3"
-                  />
-                </template>
-                <template #append>
-                  <v-icon icon="mdi-chevron-right" color="on-surface-variant"></v-icon>
-                </template>
-              </v-list-item>
-            </v-list>
-          </template>
-        </v-card>
-      </v-col>
-    </v-row>
-  </v-container>
+  <MineView
+    :is-loading-my-teams="isLoadingMyTeams"
+    :load-my-teams-error="loadMyTeamsError"
+    :my-teams="myTeams"
+    @fetch-my-teams="fetchMyTeams"
+  />
 </template>
 
 <script setup lang="ts">
@@ -75,12 +12,9 @@ import type { Team } from '@/types'
 
 import { onMounted, ref } from 'vue'
 
-import { getAvatarUrl } from '@/utils/materials'
+import MineView from './MineView.vue'
 
-import BaseButton from '@/components/base/BaseButton.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
-import { t } from '@/i18n'
-import { TeamsApi } from '@/network/api/teams'
+import { TeamsApi } from '@/api/teams'
 
 const myTeams = ref<Team[]>([])
 const isLoadingMyTeams = ref(false)
@@ -91,9 +25,7 @@ const fetchMyTeams = async () => {
   loadMyTeamsError.value = false
 
   try {
-    const {
-      data: { teams },
-    } = await TeamsApi.getMyTeams()
+    const { teams } = await TeamsApi.getMyTeams()
     // 自己名下的项目不是一个团队，在侧栏「团队」之上单独一行，不列在这里。
     myTeams.value = teams.filter((team) => !team.personal)
   } catch (error) {
@@ -108,29 +40,3 @@ onMounted(async () => {
   await fetchMyTeams()
 })
 </script>
-
-<style scoped>
-.my-teams-card {
-  overflow: hidden;
-}
-
-.border {
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-}
-
-.my-team-item {
-  transition:
-    background-color 0.2s ease,
-    border-color 0.2s ease;
-  border: 1px solid transparent;
-}
-
-.my-team-item:hover {
-  background-color: rgba(var(--v-theme-primary), 0.04);
-  border-color: rgba(var(--v-theme-primary), 0.1);
-}
-
-.bg-error-lighten-5 {
-  background-color: rgba(var(--v-theme-error), 0.1);
-}
-</style>

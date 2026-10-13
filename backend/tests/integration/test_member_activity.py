@@ -7,15 +7,17 @@ connect), and the sidebar reads the same entries off ``GET /topics``. Neither
 leaks into another room, even one the same member sits in.
 """
 
+import asyncio
 import uuid
 
+from app.domain.block.models import AuthorType, Block, BlockKind
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     join_project_team,
     new_project,
     post_message,
     room_agent_seat,
+    room_socket,
     session_auth_headers,
 )
 
@@ -35,7 +37,7 @@ def _activity(frame: dict) -> bool:
 def _snapshot(client, room: str, handle: str) -> list[dict]:
     """Who a socket opened now is told is busy. Nothing is sent when nobody is,
     so the ping's answer marks the end of what the connect brought."""
-    with client.websocket_connect(chat_ws_url(room, handle)) as ws:
+    with room_socket(client, room, handle) as ws:
         ws.send_json({"type": "ping"})
         frames = _until(ws, lambda f: f["type"] == "pong")
     snapshots = [f for f in frames if f["type"] == "activity_snapshot"]
@@ -74,8 +76,8 @@ def _header(client, room: str) -> list[dict]:
 def test_a_person_typing_reaches_the_other_members_of_that_room_only(client):
     _, room, other = _two_rooms(client)
     with (
-        client.websocket_connect(chat_ws_url(room, "bob")) as bob,
-        client.websocket_connect(chat_ws_url(room, "alice")) as alice,
+        room_socket(client, room, "bob") as bob,
+        room_socket(client, room, "alice") as alice,
     ):
         alice.send_json({"type": "typing"})
         seen = _until(bob, _activity)[-1]
@@ -98,8 +100,8 @@ def test_a_person_typing_reaches_the_other_members_of_that_room_only(client):
 def test_a_message_landing_ends_its_authors_typing(client):
     _, room, _ = _two_rooms(client)
     with (
-        client.websocket_connect(chat_ws_url(room, "bob")) as bob,
-        client.websocket_connect(chat_ws_url(room, "alice")) as alice,
+        room_socket(client, room, "bob") as bob,
+        room_socket(client, room, "alice") as alice,
     ):
         alice.send_json({"type": "typing"})
         _until(bob, _activity)
@@ -116,8 +118,8 @@ def test_a_message_landing_ends_its_authors_typing(client):
 def test_the_member_is_the_sockets_owner_not_a_field_of_the_frame(client):
     _, room, _ = _two_rooms(client)
     with (
-        client.websocket_connect(chat_ws_url(room, "bob")) as bob,
-        client.websocket_connect(chat_ws_url(room, "alice")) as alice,
+        room_socket(client, room, "bob") as bob,
+        room_socket(client, room, "alice") as alice,
     ):
         alice.send_json({"type": "typing", "member": "bob"})
         seen = _until(bob, _activity)[-1]
@@ -136,7 +138,7 @@ def test_an_agent_turn_is_that_agent_working_in_that_room_only(client, stub_hook
     seat = room_agent_seat(client, room)
     # 芝士 is called in a 支线 of the room and works there.
     thread = in_thread(client, room, "alice")
-    with client.websocket_connect(chat_ws_url(thread, "alice")) as ws:
+    with room_socket(client, thread, "alice") as ws:
         post_message(client, thread, "alice", {"content": "@芝士 跑一下测试"})
         started = _until(ws, lambda f: _activity(f) and f["kind"] == "working")[-1]
         assert started["member"] == seat
@@ -154,17 +156,101 @@ def test_an_agent_turn_is_that_agent_working_in_that_room_only(client, stub_hook
     assert _snapshot(client, thread, "bob") == []
 
 
+def _waits(client, project_id: str, room: str) -> list[dict]:
+    rows = client.get(
+        f"/topics?project_id={project_id}", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    return next(t for t in rows if t["id"] == room)["waits"]
+
+
+def _said(client, project_id: str, conversation: str, handle: str, meta: dict) -> None:
+    """Someone said something in a conversation, as the room stores it."""
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                Block(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(conversation),
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author=handle,
+                    content="…",
+                    meta=meta,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+
+
+def _mentioned(client, project_id: str, room: str, handle: str, seat: str) -> None:
+    """Someone @-ed ``seat`` in the room's main line: the room waits on it."""
+    _said(
+        client,
+        project_id,
+        room,
+        handle,
+        {"agent_recipient": {"handle": seat, "mentioned": True}},
+    )
+
+
+def test_a_teammate_working_in_the_rooms_thread_is_not_waited_on(client, stub_hooks):
+    """在支线里跑的轮次就是这间房在干活：芝士在这条频道没有自己那条线，人 @ 它、
+    它答话都在支线里。只认主线的话，一条跑过五分钟的支线轮次会让它上面那间房显示成
+    「没人管」，侧栏那一格就红起来 —— 这就是「停一会就弹一个红点头像」。
+
+    `activity` 照旧只放主线（那一格画的是这间房自己那条线），去重只作用在 `waits` 上。
+    """
+    project_id, room, other = _two_rooms(client)
+    seat = room_agent_seat(client, room)
+    thread = in_thread(client, room, "alice")
+    _mentioned(client, project_id, room, "alice", seat)
+    # 人 @ 了它还没等到回答，这间房此刻等的是它。
+    assert [w["member"] for w in _waits(client, project_id, room)] == [seat]
+
+    def turn(topic, prompt, reply, agent=None):
+        stub_hooks.starts(topic)
+        stub_hooks.acknowledges(topic, prompt)
+        stub_hooks.uses(topic, "Bash", command="sleep 60")
+
+    stub_hooks.emit_turn = turn
+    with room_socket(client, thread, "alice") as ws:
+        post_message(client, thread, "alice", {"content": "@芝士 跑一下测试"})
+        _until(ws, lambda f: _activity(f) and f["kind"] == "working")
+
+        # 轮次在这间房的支线里跑着 = 它在管这间房，房间不再等它。
+        assert _waits(client, project_id, room) == []
+        # 可它没在这间房的主线上干活，那一格画的东西照旧。
+        assert _listed(client, project_id, room) == []
+        assert _waits(client, project_id, other) == []
+
+        stub_hooks.stops(uuid.UUID(thread), "好了")
+        _until(ws, lambda f: _activity(f) and f["kind"] == "working")
+    # 轮次结束，房间不再当它在忙；可上一句「好了」写在支线里 —— 支线里的那句话
+    # 就是这间房的回答（`test_an_agent_reply_in_a_thread_ends_the_rooms_wait`），
+    # 这支线轮次从头到尾都没让房间重新等它。
+    _said(
+        client,
+        project_id,
+        thread,
+        seat,
+        {"in_room": False, "progress": True},
+    )
+    assert _waits(client, project_id, room) == []
+
+
 def test_sync_answers_with_the_rooms_live_state_even_when_nobody_is_busy(client):
     """A reconnecting client keeps what it showed and reconciles against this
     answer, so it has to come whether or not anything is going on."""
     _, room, other = _two_rooms(client)
-    with client.websocket_connect(chat_ws_url(room, "bob")) as bob:
+    with room_socket(client, room, "bob") as bob:
         bob.send_json({"type": "sync"})
         idle = _until(bob, lambda f: f["type"] == "room_state")[-1]
         assert idle["turn_ids"] == []
         assert idle["members"] == []
 
-        with client.websocket_connect(chat_ws_url(room, "alice")) as alice:
+        with room_socket(client, room, "alice") as alice:
             alice.send_json({"type": "typing"})
             _until(bob, _activity)
             bob.send_json({"type": "sync"})
@@ -172,7 +258,7 @@ def test_sync_answers_with_the_rooms_live_state_even_when_nobody_is_busy(client)
             assert _who(busy["members"]) == [("alice", "typing")]
 
             # The other room's answer says nothing about this one.
-            with client.websocket_connect(chat_ws_url(other, "bob")) as elsewhere:
+            with room_socket(client, other, "bob") as elsewhere:
                 elsewhere.send_json({"type": "sync"})
                 there = _until(elsewhere, lambda f: f["type"] == "room_state")[-1]
                 assert there["members"] == []

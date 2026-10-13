@@ -66,6 +66,7 @@ export function useSaveState(options: UseSaveStateOptions = {}): SaveState {
   const error = ref('')
   const dirty = computed(() => options.dirty?.() ?? false)
   let hideTimer: ReturnType<typeof setTimeout> | undefined
+  let generation = 0
 
   function clearHideTimer() {
     if (hideTimer !== undefined) {
@@ -75,6 +76,7 @@ export function useSaveState(options: UseSaveStateOptions = {}): SaveState {
   }
 
   function reset() {
+    generation += 1
     clearHideTimer()
     saving.value = false
     saved.value = false
@@ -83,23 +85,26 @@ export function useSaveState(options: UseSaveStateOptions = {}): SaveState {
 
   async function run<T>(action: () => Promise<T>): Promise<T | undefined> {
     if (saving.value) return undefined
+    const current = generation
     clearHideTimer()
     saving.value = true
     saved.value = false
     error.value = ''
     try {
       const result = await action()
+      if (current !== generation) return undefined
       saved.value = true
       if (feedback === 'toast') toast.success(savedMessage)
       else hideTimer = setTimeout(() => (saved.value = false), options.savedDuration ?? SAVED_VISIBLE_MS)
       return result
     } catch (e) {
+      if (current !== generation) return undefined
       const message = describeError(e)
       if (feedback === 'toast') toast.error(message)
       else error.value = message
       return undefined
     } finally {
-      saving.value = false
+      if (current === generation) saving.value = false
     }
   }
 

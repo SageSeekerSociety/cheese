@@ -15,7 +15,7 @@ import yaml
 
 from app.core.config import settings
 from app.domain.agent.market import subscription_model_alias, subscription_model_ids
-from app.domain.feature_stats import pricing
+from app.domain.usage import pricing
 
 _CONFIG = Path(__file__).resolve().parents[3] / "deploy" / "gateway" / "config.yaml"
 

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent import execution
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.memory.keywords import match_content, query_terms
 from app.domain.topic.models import Topic
 
@@ -124,8 +126,6 @@ def agent_checkout_search(
         return []
 
     async def search(terms: list[str]) -> list[dict]:
-        from app.domain.agent import execution
-        from app.domain.agent_session.services import AgentSessionService
 
         try:
             place = await AgentSessionService(session).place(

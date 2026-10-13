@@ -110,7 +110,9 @@ class TaskVisibilityService:
                 ),
             ),
         )
-        result = await self._session.execute(stmt)
+        # One row is enough to answer, and there can be several: a person whose
+        # team's claim was rejected may claim again through another team.
+        result = await self._session.execute(stmt.limit(1))
         return result.scalar_one_or_none() is not None
 
     async def _is_domain_allowed(self, *, task_id: int, domain: str) -> bool:

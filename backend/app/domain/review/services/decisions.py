@@ -31,7 +31,10 @@ from app.domain.topic.models import Topic, TopicStatus
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.project.protection import branch_protection_of
+from app.domain.review import github_pr
 from app.domain.review import services as pkg
+from app.domain.review.github_pr import GitHubPRRateLimited
 from app.domain.review.services._shared import (
     EVENT_CARD_REDESCRIBED,
     EVENT_CARD_VOIDED,
@@ -85,7 +88,6 @@ async def mark_ready(
     client = await self._app_pr_client(topic)
     if client is None:
         return {"ready": False, "reason": "这个项目没有绑定 GitHub"}
-    from app.domain.review.github_pr import GitHubPRRateLimited
 
     try:
         view = await client.pr_view(task.pr_number)
@@ -210,8 +212,8 @@ async def push_fix(
     )
     cards = [c for c in cards if c.pr_number is not None]
     if drop_dependency:
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
-        from app.domain.review import github_pr
 
         task = await TaskService(self._session).get(place_id)
         if task is None or task.pr_number is None:
@@ -264,8 +266,6 @@ async def push_fix(
     if creds is None:
         return {"pushed": False, "reason": f"拿不到可用的 GitHub 凭据：{reason}"}
 
-    from app.domain.review import github_pr
-
     client = await self._status_client(topic.project_id)
     try:
         status = await client.pull_request_status(
@@ -305,6 +305,8 @@ async def reject(
 
     await self._cancel_queued_accept(card)
     card.status = AcceptStatus.rejected
+    # 退回也是结局：等验收人动手的那几句一起收掉。
+    await self._settle_the_card(card, "rejected")
     card.decided_by = decided_by
     card.decided_at = datetime.now(UTC)
     notes.record(card, None, note)
@@ -332,6 +334,9 @@ async def revoke(
         raise ValidationError(say("revokeAcceptForbidden"))
 
     card.status = AcceptStatus.revoked
+    # 已采纳的卡上通常没有积着的话（采纳那一拍就收过了）；这里管的是这张卡还有
+    # 别的话躺在谁的收件箱里的情况，收一遍是空转。
+    await self._settle_the_card(card, "voided")
     card.decided_by = decided_by
     card.decided_at = datetime.now(UTC)
 
@@ -383,7 +388,6 @@ async def merge_despite_checks(
     已经不在了、或者卡面压根没显示过任何版本的时候，这个签名就落到了别的东西
     上。
     """
-    from app.domain.project.protection import branch_protection_of
 
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending or card.pr_merged_at is not None:
@@ -465,6 +469,7 @@ async def _override_github_checks(
     who = await identity.attribution(
         self._session, topic, card=card, decided_by=decided_by
     )
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
     if who.author:
@@ -587,6 +592,8 @@ async def void(
             f"合并还是关闭：{card.pr_url or '（无链接）'}{reason}"
         )
     card.status = AcceptStatus.revoked
+    # 作废是结局：等验收人动手的那几句一起收掉。
+    await self._settle_the_card(card, "voided")
     notes.record(card, notes.NoteCode.voided, archive.prefix_note(card.note, headline))
     # 只在空的时候补：作废人始终写在 note 里，已有的决议痕迹不覆盖。
     if card.decided_by is None:

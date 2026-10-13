@@ -425,13 +425,14 @@ async def test_dependency_delivery_needs_the_matching_native_receipt(
     parent, child = await seed(db_factory, delivered=False)
     await assign_parent(db_factory, child.id)
     await retarget_completed_dependencies(db_factory)
+    runner = Mock()
     chat = ChatService(
+        work_runner=runner,
         session_factory=db_factory,
         base_system_prompt="Synthetic agent",
         workspace_root="/unused-dependency-receipt-test",
         compute=stub_compute(),
     )
-    runner = Mock()
     monkeypatch.setattr("app.api.deps.get_work_runner", lambda: runner)
     await pr_poll.deliver_dependency_notices(chat)
     attempt = runner.submit.call_args.kwargs

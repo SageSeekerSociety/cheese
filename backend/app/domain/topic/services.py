@@ -45,8 +45,8 @@ from app.domain.identity.handles import (
 from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.living_doc.services import Documents
 from app.domain.notification.services import ProjectNotificationService
-from app.domain.project.repositories import ProjectRepository
 from app.domain.repository import service as ws
+from app.domain.review.archive import close_cards_for_archived_topic
 from app.domain.review.services import AcceptService
 from app.domain.room_task.models import (
     PLACEHOLDER_TITLE,
@@ -56,11 +56,15 @@ from app.domain.room_task.models import (
 )
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.team.models import TeamMemberRole
+from app.domain.team.services import team_service
+from app.domain.thread.models import Thread
 from app.domain.topic.models import (
     NotifyLevel,
     RoomCleanup,
     Topic,
     TopicKind,
+    TopicProgress,
     TopicRole,
     TopicStatus,
 )
@@ -72,6 +76,7 @@ from app.domain.topic.repositories import (
     Unread,
 )
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import usernames_by_ids
 
 
 @overload
@@ -155,7 +160,10 @@ class TopicService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TopicRepository(session)
-        self._projects = ProjectRepository(session)
+        # deferred-import: breaks the cycle project.services -> topic.services
+        from app.domain.project.services import ProjectService
+
+        self._projects = ProjectService(session)
         self._blocks = BlockRepository(session)
         self._members = TopicMemberService(session)
         # 与我的相关性 asks three other domains the same question at once, and
@@ -194,6 +202,7 @@ class TopicService:
         Always an answer: a project is created with its 芝士, so the agent a new
         room starts with is a saved row with an identity of its own.
         """
+        # deferred-import: agent_instance_handle already bound at the top of this module
         from app.domain.identity.handles import agent_instance_handle
 
         return agent_instance_handle((await self.resolve_agent(topic)).instance_id)
@@ -324,10 +333,8 @@ class TopicService:
         Read lazily — only when the rungs above came up empty — so an ordinary
         topic-create still costs no extra query.
         """
+        # deferred-import: tests replace this name on app.domain.project.services
         from app.domain.project.services import ProjectService
-        from app.domain.team.models import TeamMemberRole
-        from app.domain.team.services import team_service
-        from app.domain.user.services import usernames_by_ids
 
         team_id = await ProjectService(self._session).team_for_project(project_id)
         if team_id is None:
@@ -706,7 +713,6 @@ class TopicService:
         # 孤儿卡修复 (2026-08-10): 归档必须同时终结这个话题上还没决议的验收卡。
         # 一张骑着 PR 的卡不是"停着"——轮询器每 60 秒还在拿 GitHub 凭据跟进它。
         # 去向与理由见 review/archive.py 的模块 docstring。
-        from app.domain.review.archive import close_cards_for_archived_topic
 
         overview_room = await self._where_said(topic)
         await close_cards_for_archived_topic(
@@ -844,13 +850,13 @@ class TopicService:
             created_by=created_by,
             teammate=recipient_seat((block.meta or {}).get("agent_recipient")),
             origin_block_id=await self._main_line_message(block),
+            source_block_id=block.id,
         )
         return parent, task
 
     async def _main_line_message(self, block: Block) -> uuid.UUID:
         """The main-line message ``block`` is under: itself, or the message its
         支线 hangs under. A task from either shows under that message."""
-        from app.domain.thread.models import Thread
 
         thread = await self._session.get(Thread, block.conversation_id)
         return thread.root_block_id if thread is not None else block.id
@@ -897,6 +903,7 @@ class TopicService:
         teammate: str | None = None,
         named_by_teammate: bool = False,
         origin_block_id: uuid.UUID | None = None,
+        source_block_id: uuid.UUID | None = None,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
@@ -914,7 +921,8 @@ class TopicService:
 
         ``origin_block_id`` is the main-line message the task was made from;
         the task shows under it. A task made on its own is announced in the
-        main line instead.
+        main line instead. ``source_block_id`` is the message whose words it
+        came from, wherever that is; the task's page quotes it.
 
         The owner is the person named, else the person creating it, else — when
         no person is identifiable — the room's owner, then the project's. A task
@@ -957,6 +965,7 @@ class TopicService:
             created_by=created_by,
         )
         task.upgraded_from_block_id = origin_block_id
+        task.source_block_id = source_block_id
         if named and named_by_teammate:
             task.title_calibrated = True
             tasks.record_title(task, reason="teammate", by=teammate)
@@ -1075,6 +1084,44 @@ class TopicService:
         if row is None:
             return [], None
         return [dict(item) for item in row.items], row.updated_at
+
+    async def save_progress(
+        self,
+        conversation_id: uuid.UUID,
+        items: list[dict],
+        *,
+        turn_id: uuid.UUID | None = None,
+    ) -> TopicProgress:
+        """进度层 (#187) 的写侧: overwrite this topic's checklist.
+
+        The write counterpart of `get_progress`, served here so a route no
+        longer reaches ``TopicProgressRepository`` itself for the one row it
+        writes.
+        """
+        return await TopicProgressRepository(self._session).save(
+            conversation_id, items, turn_id=turn_id
+        )
+
+    async def names_in_projects(
+        self, project_ids: list[uuid.UUID], *, viewer: str
+    ) -> list[Topic]:
+        """These projects' rooms, named, as ``viewer`` may see them.
+
+        ``GET /topics/names`` — the command palette's cross-project room
+        search. The route used to build ``TopicRepository`` for it; the query
+        and its ordering ("最后活动时间 desc") are unchanged, only the caller is.
+        """
+        return await self._repo.names_in_projects(project_ids, viewer=viewer)
+
+    async def cleanup_operation(self, topic: Topic) -> RoomCleanup | None:
+        """The room's scheduled cleanup, or None when it has none.
+
+        ``RoomCleanup`` lives on this side of the boundary, so the route asks
+        the service for the row instead of naming the model in a ``db.get``.
+        """
+        if not topic.cleanup_id:
+            return None
+        return await self._session.get(RoomCleanup, topic.cleanup_id)
 
     def require_doc_writable(self, place: Place) -> None:
         """归档后工作面冻结 (spec §6.3): an archived room's document takes no

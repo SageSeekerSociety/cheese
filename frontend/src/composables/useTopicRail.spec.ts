@@ -5,15 +5,16 @@
 // 人的两条记录，不是两个人：按 handle 比字符串去重，它就会被画成两个头像，一绿一红。
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { render } from '@testing-library/vue'
-import { createPinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import { useTopicRail } from './useTopicRail'
 
 import { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 const CHEESE_SEAT = 'cheese-0000000000a1'
 const KIMI_SEAT = 'cheese-0000000000b2'
@@ -54,10 +55,15 @@ function topic(id: string, extra: Partial<Topic>): Topic {
 }
 
 /** 挂一条侧栏，把每一行画出来的头像（状态 + 名字）摆进 DOM。 */
-function mount(topics: Topic[]) {
+async function mount(topics: Topic[]) {
+  // 名册在项目缓存里：打开 p1、名册已经读回来。
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  seedProjects([])
+  seedProject('p1', { topics, members: TEAM, unread: {}, privateUnread: {}, notifyLevels: {} })
+  useWorkspaceStore().openProject('p1')
   const Host = defineComponent({
     setup() {
-      useWorkspaceStore().members = TEAM
       const rail = useTopicRail({ topics, selectedProjectId: 'p1', selectedTopicId: null })
       return () =>
         h(
@@ -70,7 +76,9 @@ function mount(topics: Topic[]) {
         )
     },
   })
-  return render(Host, { global: { plugins: [createPinia()] } })
+  const view = render(Host, { global: { plugins: [pinia] } })
+  await nextTick()
+  return view
 }
 
 const marksOf = (container: Element, room: string) =>
@@ -82,8 +90,8 @@ const marksOf = (container: Element, room: string) =>
 describe('侧栏一行上的成员头像', () => {
   beforeEach(() => setLocale('zh-CN'))
 
-  it('同一位在干活、又被等着，只画一个——而且是红色那个', () => {
-    const { container } = mount([
+  it('同一位在干活、又被等着，只画一个——而且是红色那个', async () => {
+    const { container } = await mount([
       topic('t-1', {
         activity: [{ member: 'cheese', kind: 'working', since: 1 }],
         waits: [{ member: CHEESE_SEAT, reason: 'failed', since: '2026-10-01T00:00:00Z' }],
@@ -93,8 +101,8 @@ describe('侧栏一行上的成员头像', () => {
     expect(marksOf(container, 't-1')).toEqual([{ state: 'stalled', name: '小知' }])
   })
 
-  it('两位队友各画一个，在等的那位在前', () => {
-    const { container } = mount([
+  it('两位队友各画一个，在等的那位在前', async () => {
+    const { container } = await mount([
       topic('t-1', {
         activity: [{ member: 'cheese-kimi', kind: 'working', since: 1 }],
         waits: [{ member: CHEESE_SEAT, reason: 'failed', since: '2026-10-01T00:00:00Z' }],

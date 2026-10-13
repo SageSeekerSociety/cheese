@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import uuid
+from typing import Any
 from urllib.parse import quote
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,11 +13,12 @@ from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
     NotFoundError,
+    UpstreamUnavailableError,
     ValidationError,
 )
 from app.core.sentences import say
 from app.domain.agent import execution
-from app.domain.agent.device_hub import DeviceNotReady, DeviceOffline
+from app.domain.agent.device_hub import DeviceCallError, DeviceNotReady, DeviceOffline
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
     binding_for_project,
@@ -26,6 +28,7 @@ from app.domain.project.forge import (
     status_client,
     tokens_for_project,
 )
+from app.domain.repository import merge3
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
@@ -62,6 +65,31 @@ def clean_path(path: str) -> str:
     return path
 
 
+def _landed_head(task: Task) -> str | None:
+    """The head the task's landed delivery left, while that is still the task's
+    code: the task closed on it, or is being written up after its last step.
+
+    A task that goes on after a step lands works on a new branch from the latest
+    code (`TaskService.next_step`), so the landed head is the step before it,
+    already on the default branch, and its files are not the open step's."""
+    if task.status != TaskStatus.open or task.closing_since is not None:
+        return task.delivered_head
+    return None
+
+
+#: The operations that ask for a task's whole working copy rather than one
+#: file in it. Their ``not_found`` can only mean the task's directory is
+#: missing, which is all an executor installed before ``not_found`` carried
+#: ``missing`` can say: it answers a file operation the same way whether the
+#: directory or the file is gone, and that answer stays "not on the machine".
+_WHOLE_COPY = ("tree", "diff")
+
+
+class _NoWorkingCopy(NotFoundError):
+    """No machine holds the task's working copy and its branch is pushed: one
+    file is read from the branch, and nothing can be written to it."""
+
+
 class ProjectFiles:
     def __init__(
         self,
@@ -96,32 +124,62 @@ class ProjectFiles:
 
     async def source(self, requested: str):
         task = await self.task()
-        return (
-            "live"
-            if requested == "live" and task and task.status == TaskStatus.open
-            else "committed"
+        if requested != "live" or task is None or task.status != TaskStatus.open:
+            return "committed"
+        if await self._working_copy(task) is None and await self._pushed(task):
+            # No machine holds a working copy of it, and the next one starts
+            # from the branch (`cheese worktree`): its files are the committed
+            # ones, and they are read, not edited, until a machine has them.
+            return "committed"
+        return "live"
+
+    async def _working_copy(self, task: Task):
+        room = await self.session.get(Topic, task.room_id)
+        if room is None:
+            return None
+        return await AgentSessionService(self.session).working_copy(
+            task.id, str(room.resource_id or room.id)
         )
+
+    async def _pushed(self, task: Task) -> bool:
+        """Whether the task has a version on the forge to start a copy from."""
+        return bool(
+            _landed_head(task)
+            or (
+                task.branch_name
+                and await self._head(self.project_id, self.session, task.branch_name)
+            )
+        )
+
+    async def _without_working_copy(self, task: Task, operation: str) -> dict[str, Any]:
+        """The task's files and changes while no machine holds them: what a new
+        working copy would start from, its branch. A task that has pushed
+        nothing yet has no files and no changes of its own."""
+        if not await self._pushed(task):
+            if operation not in _WHOLE_COPY:
+                raise NotFoundError(say("taskFileNotOnMachine"))
+            return {"tree": {"files": []}, "diff": {"diff": ""}}[operation]
+        if operation == "tree":
+            return {"files": (await self.files("committed"))[0]}
+        if operation == "diff":
+            return {"diff": await self.diff("committed")}
+        raise _NoWorkingCopy(say("taskFileNotOnMachine"))
 
     async def live(self, operation: str, **params):
         task = await self.task()
         if task is None:
             raise ValidationError(say("taskRequired"))
-        room = await self.session.get(Topic, task.room_id)
-        # Executors are pinned per room; sessions record their leases separately.
-        target = next(
-            (
-                place.lease
-                for place in await AgentSessionService(self.session).places_in_room(
-                    task.room_id
-                )
-                if room is not None
-                and place.resource_id == str(room.resource_id or room.id)
-                and (place.lease or {}).get("kind") == "device"
-            ),
-            None,
-        )
-        if not target or target.get("kind") != "device":
-            raise GatewayUnavailableError(say("taskMachineNotConnected"))
+        found = await self._working_copy(task)
+        if found is None:
+            # No session of this task has taken a machine yet, so no machine
+            # holds a working copy of it: the same as a machine without one.
+            return await self._without_working_copy(task, operation)
+        target, lost = found
+        if lost:
+            # Its cloud sandbox was destroyed with its home (idle, or given up
+            # with its host), and the lease still names it until the task's
+            # next tool call places it in a new one.
+            raise UpstreamUnavailableError(say("taskSandboxReleased"))
         await self._release()
         try:
             # Interactive file requests must not inherit the agent's 11-minute
@@ -134,7 +192,13 @@ class ProjectFiles:
                 )
         except (TimeoutError, DeviceOffline, DeviceNotReady) as exc:
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+        except DeviceCallError as exc:
+            raise UpstreamUnavailableError(
+                say("taskMachineFailed", error=str(exc))
+            ) from exc
         if result.get("error") == "not_found":
+            if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
+                return await self._without_working_copy(task, operation)
             raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
@@ -142,8 +206,9 @@ class ProjectFiles:
 
     async def revision(self):
         task = await self.task()
-        if task and task.delivered_head:
-            return task.delivered_head
+        landed = _landed_head(task) if task else None
+        if landed:
+            return landed
         branch = (
             task.branch_name
             if task
@@ -282,7 +347,7 @@ class ProjectFiles:
         task = await self.task()
         if task is None or not task.branch_name:
             return None
-        head = task.delivered_head or await self._head(
+        head = _landed_head(task) or await self._head(
             self.project_id, self.session, task.branch_name
         )
         if not head:
@@ -469,31 +534,58 @@ class ProjectFiles:
         path = clean_path(path)
         source = await self.source(source)
         if source == "live":
-            first = await self.live("read", path=path, size=2 * 1024 * 1024)
-            chunks = [base64.b64decode(first["data"])]
-            offset = len(chunks[0])
-            while offset < first["bytes"]:
-                part = await self.live(
-                    "read",
-                    path=path,
-                    offset=offset,
-                    size=2 * 1024 * 1024,
-                    version=first["version"],
-                )
-                chunk = base64.b64decode(part["data"])
-                if not chunk:
-                    raise ConflictError(say("fileChangedWhileReading"))
-                chunks.append(chunk)
-                offset += len(chunk)
-            return b"".join(chunks), source
+            try:
+                return await self._live_bytes(path), source
+            except _NoWorkingCopy:
+                source = "committed"
         head = await self.revision()
         return await self._blob(await self._entry(path, head)), source
+
+    async def _live_bytes(self, path: str) -> bytes:
+        first = await self.live("read", path=path, size=2 * 1024 * 1024)
+        chunks = [base64.b64decode(first["data"])]
+        offset = len(chunks[0])
+        while offset < first["bytes"]:
+            part = await self.live(
+                "read",
+                path=path,
+                offset=offset,
+                size=2 * 1024 * 1024,
+                version=first["version"],
+            )
+            chunk = base64.b64decode(part["data"])
+            if not chunk:
+                raise ConflictError(say("fileChangedWhileReading"))
+            chunks.append(chunk)
+            offset += len(chunk)
+        return b"".join(chunks)
+
+    async def raw_at(self, path: str, revision: str) -> bytes | None:
+        """The file as one commit has it; None when that commit has no such file."""
+        try:
+            entry = await self._entry(clean_path(path), revision)
+        except NotFoundError:
+            return None
+        return await self._blob(entry)
+
+    async def base_revision(self) -> str | None:
+        """The commit this task's work started from: the merge base with the
+        branch it goes into, which is the last version taken in."""
+        comparison = await self.comparison()
+        if not comparison:
+            return None
+        return (comparison.get("merge_base_commit") or {}).get("sha")
 
     async def text(self, path: str, source: str):
         path = clean_path(path)
         source = await self.source(source)
+        read = None
         if source == "live":
-            read = await self.live("read", path=path, size=MAX_TEXT_BYTES)
+            try:
+                read = await self.live("read", path=path, size=MAX_TEXT_BYTES)
+            except _NoWorkingCopy:
+                source = "committed"
+        if read is not None:
             size, version = read["bytes"], read["version"]
             data = base64.b64decode(read["data"])
         else:
@@ -523,6 +615,43 @@ class ProjectFiles:
         return await self.live(
             "write", path=clean_path(path), content=content, version=version
         )
+
+    async def save(
+        self, path: str, content: str, version: str | None, base: str | None
+    ) -> dict:
+        """A person's save, merged with whatever changed the file since they read it.
+
+        `base` is the text they read, the one `version` names. When the file
+        moved on in between, their edits and the other ones are merged against
+        it: a clean merge is written, overlapping edits come back as a 409
+        carrying the regions to pick from and the version to save over. Without
+        a `base` (or one that is not the text `version` names) there is nothing
+        to merge against, and the save is refused as before. Answers the saved
+        version and the text it replaced.
+        """
+        try:
+            saved = await self.write(path, content, version)
+            return {**saved, "previous": base, "merged": False}
+        except ConflictError:
+            if base is None or content_version(base.encode()) != version:
+                raise
+        now = await self.text(path, "live")
+        theirs, theirs_version = now.get("content"), now.get("version")
+        if theirs is None:
+            raise ConflictError(say("taskFileChangedReload"))
+        regions = merge3.merge(base, content, theirs)
+        merged = merge3.merged_text(regions)
+        if merged is None:
+            raise ConflictError(
+                say("taskFileEditsOverlap"),
+                data={
+                    "regions": [region.as_dict() for region in regions],
+                    "version": theirs_version,
+                    "base": theirs,
+                },
+            )
+        saved = await self.write(path, merged, theirs_version)
+        return {**saved, "previous": theirs, "merged": True, "content": merged}
 
     async def write_bytes(self, path: str, data: bytes, version: str):
         task = await self.task()

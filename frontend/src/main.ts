@@ -40,13 +40,18 @@ import router from './router'
 import i18n from '@/i18n'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
+import { installRefChipKeys } from '@/lib/refChip'
 // Plugins
 import { registerPlugins } from '@/plugins'
 import vuetify from '@/plugins/vuetify'
+import { persistProjectList } from '@/query/persist'
 import AccountService from '@/services/account'
 import { watchForStaleBuild } from '@/services/staleBuild'
 
 AccountService.init()
+
+// 上次的项目清单先放回缓存，左边栏冷打开时当场就有。
+persistProjectList()
 
 // In the desktop app the frame is not selectable text and has no browser menu.
 behaveAsDesktopApp()
@@ -60,6 +65,9 @@ watchForStaleBuild()
 // 现场即事实记录: browser-side errors report into the open topic's 现场 so
 // agents (who can't read a user's console) can debug them. See errorReporter.ts.
 installErrorReporter(app)
+
+// 消息和文档里的 @人、#话题、文件 chip：Enter / 空格按下去和点一下一样（lib/refChip.ts）。
+installRefChipKeys()
 
 watch(
   i18n.global.locale,

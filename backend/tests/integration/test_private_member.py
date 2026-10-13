@@ -1,10 +1,10 @@
 """私聊 (spec §1) + 成员页 (spec §7.2)."""
 
 from tests.integration.conftest import (
-    chat_ws_url,
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -46,7 +46,7 @@ def test_private_chat_get_or_create_and_hidden_from_tree(client):
     #
     # **不打 @**：私聊是两席的房间，对面那一席是 agent，说话就是对着它说的。那一位
     # 以前是浏览器算好发上来的，现在由服务端自己认（I13）。
-    with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
+    with room_socket(client, private["id"], "user-1") as ws:
         post_message(client, private["id"], "user-1", {"content": "设个偏好"})
         frames = []
         while True:
@@ -131,7 +131,7 @@ def test_a_dm_between_two_people_summons_nobody(client, bearer):
         headers=owner_headers,
     ).json()["data"]
 
-    with client.websocket_connect(chat_ws_url(private["id"], "user-1")) as ws:
+    with room_socket(client, private["id"], "user-1") as ws:
         post_message(client, private["id"], "user-1", {"content": "只说给 alice 听"})
         frames = []
         while True:

@@ -4,12 +4,12 @@ import { createPinia, setActivePinia } from 'pinia'
 import { describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn().mockResolvedValue({ data: { tasks: [], page: { page_start: null, page_size: 20, has_more: false } } }),
-  update: vi.fn().mockResolvedValue({ data: {} }),
+  list: vi.fn().mockResolvedValue({ tasks: [], page: { hasMore: false, nextStart: null } }),
+  update: vi.fn().mockResolvedValue({}),
 }))
 /** 驳回时那个「填原因」对话框：用例里决定人填了什么。 */
 const promptAnswer = vi.hoisted(() => ({ value: '' }))
-vi.mock('@/network/api/tasks', () => ({ TasksApi: mocks }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: mocks }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 // 页头只是个壳（面包屑要真路由和导航 store）；这里只留它的标题与操作区插槽。
@@ -59,28 +59,26 @@ describe('审核题目', () => {
     // 既验「要求显示出来了」，也验「页面确实去要了」—— 页面不点名，这里就会
     // 渲染成「无提交要求」，断言随之失败。
     mocks.list.mockImplementation(async (params: { querySubmissionSchema?: boolean }) => ({
-      data: {
-        tasks: [
-          {
-            id: 101,
-            name: '带提交要求的题',
-            intro: '随便一句简介',
-            description: '',
-            creator: { id: 1, nickname: '出题人', avatarId: null },
-            createdAt: Date.now(),
-            deadline: null,
-            submitterType: 'USER',
-            resubmittable: false,
-            editable: false,
-            teamLockingPolicy: 'NO_LOCK',
-            requireRealName: false,
-            category: null,
-            topics: [],
-            submissionSchema: params?.querySubmissionSchema ? [{ prompt: '提交文件', type: 'FILE' }] : [],
-          },
-        ],
-        page: { page_start: null, page_size: 20, has_more: false },
-      },
+      tasks: [
+        {
+          id: 101,
+          name: '带提交要求的题',
+          intro: '随便一句简介',
+          description: '',
+          creator: { id: 1, nickname: '出题人', avatarId: null },
+          createdAt: Date.now(),
+          deadline: null,
+          submitterType: 'USER',
+          resubmittable: false,
+          editable: false,
+          teamLockingPolicy: 'NO_LOCK',
+          requireRealName: false,
+          category: null,
+          topics: [],
+          submissionSchema: params?.querySubmissionSchema ? [{ prompt: '提交文件', type: 'FILE' }] : [],
+        },
+      ],
+      page: { hasMore: false, nextStart: null },
     }))
 
     const pinia = createPinia()
@@ -99,28 +97,26 @@ describe('审核题目', () => {
 
   it('驳回必须写原因：只填空格不发请求，写了才把原因带上', async () => {
     mocks.list.mockResolvedValue({
-      data: {
-        tasks: [
-          {
-            id: 202,
-            name: '待驳回的题',
-            intro: '',
-            description: '',
-            creator: { id: 1, nickname: '出题人', avatarId: null },
-            createdAt: Date.now(),
-            deadline: null,
-            submitterType: 'USER',
-            resubmittable: false,
-            editable: false,
-            teamLockingPolicy: 'NO_LOCK',
-            requireRealName: false,
-            category: null,
-            topics: [],
-            submissionSchema: [],
-          },
-        ],
-        page: { page_start: null, page_size: 20, has_more: false },
-      },
+      tasks: [
+        {
+          id: 202,
+          name: '待驳回的题',
+          intro: '',
+          description: '',
+          creator: { id: 1, nickname: '出题人', avatarId: null },
+          createdAt: Date.now(),
+          deadline: null,
+          submitterType: 'USER',
+          resubmittable: false,
+          editable: false,
+          teamLockingPolicy: 'NO_LOCK',
+          requireRealName: false,
+          category: null,
+          topics: [],
+          submissionSchema: [],
+        },
+      ],
+      page: { hasMore: false, nextStart: null },
     })
     const pinia = createPinia()
     setActivePinia(pinia)

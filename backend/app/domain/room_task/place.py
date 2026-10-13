@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session.models import AgentSession
+from app.domain.living_doc.services import Documents
 from app.domain.room_task.models import Task
 from app.domain.thread.models import Thread
 from app.domain.topic.models import Topic
@@ -95,7 +97,6 @@ class PlaceResolver:
 async def living_doc_of(session: AsyncSession, place: Place):
     """The conversation's living document. Only a task has one, and not until
     it is asked for; a channel, a private chat and a 支线 have none."""
-    from app.domain.living_doc.services import Documents
 
     if place.task is None or place.task.document_id is None:
         return None
@@ -120,12 +121,16 @@ async def doc_text_of(
     return text
 
 
-async def session_keeps_work(session: AsyncSession, session_id: str | None) -> bool:
+async def session_keeps_work(
+    session: AsyncSession, session_id: str | uuid.UUID | None
+) -> bool:
     """Whether the agent session ``session_id`` may carry its work into the
     project (`Place.keeps_work`): what a machine credential naming it asks
     before it is handed what pushes. One naming no session, or a session that
-    is gone, has no 支线 or unstarted task to answer for, and keeps its work."""
-    from app.domain.agent_session.models import AgentSession
+    is gone, has no 支线 or unstarted task to answer for, and keeps its work.
+
+    ``session_id`` is whatever the caller holds — a claim read off a token, or
+    the id of the session row it looked up, which is a UUID."""
 
     try:
         row = await session.get(AgentSession, uuid.UUID(str(session_id)))

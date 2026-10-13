@@ -13,6 +13,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.core.config import settings
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import CLAUDE_CODE, PI
@@ -59,6 +60,7 @@ async def test_a_project_whose_harness_this_machine_lacks_runs_the_next_one(
     factory = business_db_factory
     screen = StubChannel()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -94,6 +96,7 @@ async def test_a_room_whose_machine_runs_none_of_the_listed_harnesses_does_not_r
     factory = business_db_factory
     screen = StubChannel()
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",

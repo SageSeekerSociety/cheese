@@ -18,43 +18,38 @@ from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import bind_resource_token
 from app.core.sentences import say
 from app.domain.agent import execution
-from app.domain.agent.compute_configs import (
-    ComputeChoice,
-    choice_label,
-    place_choice,
-    room_choice,
-    works_tasks_of,
-)
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
+from app.domain.agent.environment import VM, Sandbox, SelfHosted, spec_of
+from app.domain.agent.environment_failures import tell_failed
 from app.domain.agent.harness.channel import mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
 from app.domain.agent.machine_address import device_api_base, site_forward, ws_url
-from app.domain.agent.market import COMPUTE_DEVICE, COMPUTE_TIERS
+from app.domain.agent.market import cloud_provisionable
+from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
 from app.domain.agent_instance.own import owned_by_session
-from app.domain.agent_session.models import AgentSession
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, room_column, room_of
-from app.domain.device.supply import (
-    Supply,
-    Visibility,
-    default_visibility,
-    sandbox_unavailable,
-)
+from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.device import sandbox as device_sandbox
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.machine import lease_claim
+from app.domain.machine.environments import device_for_spec, environment_of
 from app.domain.machine.lease_claim import still_preparing
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.models import CloudHost
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_wait import (
     EXECUTOR_SETUP_FAILED,
-    LOST_KEY,
     SANDBOX_LOST,
     SANDBOX_PREPARING,
     VM_PREPARING,
@@ -66,57 +61,40 @@ from app.domain.machine.services import (
     CloudPoolFull,
     HostPool,
 )
-from app.domain.policy import gate
+from app.domain.notification.models import NotificationType
 from app.domain.project.environment import EnvironmentConfig, pin_environment
+from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
-from app.domain.topic.models import TopicKind
+from app.domain.team.models import Team
+from app.domain.topic.models import Topic, TopicKind, TopicStatus
 from app.domain.topic.services import TopicService
 from app.domain.usage.compute import ComputeRefused
+from app.domain.user.models import User
 from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
 
 
 def presentation(row):
-    request = row.execution_request or {}
+    """A session and the machine it holds, for the pages that show it. A
+    sandbox on one of the platform's machines does not say which one: that is
+    the platform's scheduling and nobody's to read."""
     lease = row.work_lease
     shown = None
     if lease:
         online = device_hub.is_online(lease["device_id"])
-        # A cloud session's sandbox is on one of the platform's hosts. Which one,
-        # and where on it, is the platform's scheduling and nobody's to read.
-        on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
         shown = (
             {"status": lease.get("status", "ready"), "online": online}
-            if on_cloud
+            if lease.get("platform")
             else {**lease, "online": online}
         )
     return {
         "id": str(row.id),
         "agent_handle": row.agent_handle,
         "harness": row.harness,
-        "choice": request.get("choice"),
         "lease": shown,
     }
-
-
-async def _visibility_of(
-    db, devices, topic_id, device_id: str | None
-) -> Visibility | None:
-    """What an agent of room ``topic_id`` on this machine can see of it
-    (``DeviceService.room_visibility``): the whole machine, or its own sandbox.
-    ``None`` for a device id stands for an enrolled machine the platform picks
-    when the session leases, which binds nothing and so gets the default;
-    ``None`` back is a machine that is gone. A session's whole cloud VM is its
-    own machine, all of it."""
-    if device_id is None:
-        return default_visibility()
-    if await devices.get_device(device_id) is None:
-        return None
-    if await _whole_vm(db, device_id):
-        return Visibility.host
-    return await devices.room_visibility(topic_id, device_id)
 
 
 async def _whole_vm(db, device_id: str) -> bool:
@@ -128,53 +106,6 @@ async def _whole_vm(db, device_id: str) -> bool:
     )
 
 
-async def _roommates_device(db, topic, resource: str) -> str | None:
-    """这一个房间这一代上，已经在用的那台机器——房间里别的会话的手。
-
-    一个话题一个容器（2026-09-28 决定，推翻结论 60）：同一个房间里的会话落在同一台
-    机器上。所以「自动选一台」的房间不是每条会话各挑一台在线的——那正是同一间房里
-    两个队友会站在两台机器上的那条路。房间里已经有手在这台上，这就是这台。
-
-    只认**这一代**：房间重开会换代（``resource_id``），上一代残留的租约不是本次的
-    手，它的机器也不再是房间的机器。
-    """
-    leases = await db.scalars(
-        select(AgentSession.work_lease)
-        .where(
-            of_room(AgentSession.conversation_id, topic.id),
-            AgentSession.work_lease.is_not(None),
-        )
-        .order_by(AgentSession.placed_at, AgentSession.id)
-    )
-    for lease in leases:
-        if (
-            lease.get("kind") == "device"
-            and lease.get("status", "ready") == "ready"
-            and lease.get("room_resource_id") == resource
-            and lease.get("device_id")
-        ):
-            return lease["device_id"]
-    return None
-
-
-async def room_machine_visibility(db, topic, project_settings) -> Visibility | None:
-    """How much of a self-hosted machine the agents in this room can see.
-
-    #282 / #358 原则八: whole-machine access is never granted silently, so the
-    room shows it whenever its agents have it. 一个话题一个容器（2026-09-28 决定，
-    推翻结论 60）：一间房里所有会话看的是同一台机器，而那台机器由房间那一项算出
-    来——包括还没开工的房间，那正是它开工时会拿到的那一台。
-    """
-    choice = room_choice(topic, project_settings)
-    if choice.profile != COMPUTE_DEVICE:
-        return None
-    # 「系统挑一台」的房间：挑中的那台就是房间里的手已经站着的那台。
-    device_id = choice.device_id or await _roommates_device(
-        db, topic, str(topic.resource_id or topic.id)
-    )
-    return await _visibility_of(db, sql_device_service(db), topic.id, device_id)
-
-
 async def _session_teammate(db, project, handle: str):
     """The saved teammate whose session is keyed ``handle``, or None.
 
@@ -182,7 +113,6 @@ async def _session_teammate(db, project, handle: str):
     under, so this asks the same lookup that turns a session back into its
     author when it runs (``for_handle``). None for a handle that names no
     teammate (a room-derived one)."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     try:
         return await AgentInstanceService(db).for_handle(project, handle)
@@ -195,7 +125,6 @@ async def _agent_name(db, project, topic, handle: str) -> dict:
     its saved teammate's, else the one the room falls back to. Beside it,
     whether that is still the name it was born with, which a screen shows in
     its reader's language."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     teammate = await _session_teammate(db, project, handle)
     agent = (
@@ -215,8 +144,6 @@ async def screen_agent_name(
     """The name a screen's agent goes by, the way a room names it (see
     ``_agent_name``). Empty when the screen names no room that still exists;
     the page then shows the handle."""
-    from app.domain.project.models import Project
-    from app.domain.topic.models import Topic
 
     project = await db.get(Project, project_id) if project_id else None
     topic = await db.get(Topic, topic_id) if topic_id else None
@@ -228,7 +155,6 @@ async def screen_agent_name(
 async def _session_author(db, project, handle: str) -> str:
     """The seat the session keyed ``handle`` acts under: its teammate's, or the
     room-derived handle itself, which is its own seat."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     teammate = await _session_teammate(db, project, handle)
     if teammate is None:
@@ -240,8 +166,6 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
     """Who works on each of these devices now: every agent session whose lease
     is there, in a room that is not archived, with its project, room and agent.
     """
-    from app.domain.project.models import Project
-    from app.domain.topic.models import Topic, TopicStatus
 
     out: dict[str, list[dict]] = {device_id: [] for device_id in device_ids}
     if not device_ids:
@@ -269,8 +193,10 @@ async def device_users(db, device_ids: list[str]) -> dict[str, list[dict]]:
     return out
 
 
-async def tell_device_owner(db, *, topic, row, device, lease) -> None:
-    """Tell a device's owner that an agent session started working on it.
+async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> None:
+    """Tell a device's owner that an agent session started working on it,
+    and whether it runs there over the whole machine (``whole``: a
+    self-hosted environment) rather than in a sandbox.
 
     Notice only, no approval (#1900 step 5). One per session start: the event
     is the lease's work resource, so a later tool on the same lease, or the
@@ -278,12 +204,8 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     owner who is a person in that room sees it on the room's roster already
     and is not told.
     """
-    from app.domain.delivery.addressing import Event, Hand, address
-    from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
-    from app.domain.notification.models import NotificationType
-    from app.domain.team.models import Team
+    # deferred-import: tests replace this name on app.domain.topic_membership.services
     from app.domain.topic_membership.services import TopicMemberService
-    from app.domain.user.models import User
 
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
@@ -294,10 +216,6 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
     team = await db.get(Team, project.team_id)
     named = await _agent_name(db, project, topic, row.agent_handle)
     agent = named["agent_name"]
-    visibility = await _visibility_of(
-        db, sql_device_service(db), topic.id, device.device_id
-    )
-    access = visibility is Visibility.host
     await deliver(
         db,
         DeliveryEvent(
@@ -317,11 +235,11 @@ async def tell_device_owner(db, *, topic, row, device, lease) -> None:
                 "agentNameSource": named["agent_name_source"],
                 "deviceId": device.device_id,
                 "deviceName": device.name,
-                "machineAccess": access,
+                "machineAccess": whole,
                 # The sentence an email carries (`notification.maintenance`).
                 "content": f"{agent} 开始在「{device.name}」上工作："
                 f"{project.name} · {topic.title}"
-                + ("，能访问整台机器" if access else ""),
+                + ("，能访问整台机器" if whole else ""),
             },
             occurred_at=datetime.now(UTC),
         ),
@@ -342,7 +260,6 @@ WORKING = say("switchWhileWorking")
 
 
 async def _room_is_working(db, topic_id) -> bool:
-    from app.domain.agent.models import AgentTurn
 
     running = await db.scalar(
         select(AgentTurn.id)
@@ -412,7 +329,7 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
 async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     """One best-effort checkpoint (``checkpoint``) of each of the room's
     sessions on its machine, all at once, before the room's cleanup stops them
-    (``topic.retire``, which is handed this by whoever starts its sweep). The
+    (``room_cleanup.retire``, which is handed this by whoever starts its sweep). The
     cleanup goes on whatever they answer: what a lost checkpoint loses is held
     by the snapshot of the session's last turn."""
     rows = list(
@@ -539,16 +456,14 @@ class ExecutorSetupFailed(RuntimeError):
         return lines[-1] if lines else "Executor setup failed"
 
 
-async def _sandboxed(db, topic_id, device_id: str) -> bool:
-    """Whether a session of room ``topic_id``'s executor on ``device_id`` runs
-    in a sandbox of its own: whenever the room's access to that machine is
-    ``isolated`` (``DeviceService.room_visibility``), on Cloud machines and
-    enrolled ones alike. Not on a session's whole cloud VM: the machine is the
-    session's, and so are root and Docker."""
-    if await _whole_vm(db, device_id):
+async def _sandboxed(environment: Sandbox | SelfHosted, db, device_id: str) -> bool:
+    """Whether a session's executor on ``device_id`` runs in a sandbox of its
+    own: whenever its environment is a sandbox, on the platform's machines and
+    people's alike, except inside a whole VM of its own, where the VM is the
+    sandbox. A self-hosted machine is the one place it runs without one."""
+    if isinstance(environment, SelfHosted):
         return False
-    visibility = await sql_device_service(db).room_visibility(topic_id, device_id)
-    return visibility is Visibility.isolated
+    return not await _whole_vm(db, device_id)
 
 
 async def _platform_machine(db, device_id: str) -> bool:
@@ -565,6 +480,16 @@ async def restart_executor(db, row, lease):
     expired."""
     topic = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
     project = await ProjectService(db).get_or_404(topic.project_id)
+    task = (
+        await db.get(Task, row.conversation_id)
+        if row.conversation_id != topic.id
+        else None
+    )
+    chosen = (
+        SelfHosted(kind="self_hosted", device_id=own)
+        if (own := _own_host(row)) is not None
+        else await environment_of(db, row, topic, task, project)
+    )
     author = await _session_author(db, project, row.agent_handle)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
     token = bind_resource_token(
@@ -594,7 +519,7 @@ async def restart_executor(db, row, lease):
         device_id=lease["device_id"],
         project_id=project.id,
         work_resource=work_resource,
-        sandbox=await _sandboxed(db, topic.id, lease["device_id"]),
+        sandbox=await _sandboxed(chosen, db, lease["device_id"]),
         platform_machine=await _platform_machine(db, lease["device_id"]),
         setup=_executor_env(
             {"CHEESE_ENVIRONMENT": json.dumps(environment)},
@@ -610,95 +535,37 @@ async def restart_executor(db, row, lease):
     )
 
 
-async def request_choice(
-    db,
-    *,
-    topic_id,
-    actor,
-    choice,
-    task=None,
-    if_idle=False,
-):
-    """Point a room — or one of its tasks — and its sessions at another work
-    computer.
-
-    A room has one choice, and every session working on it moves together: the
-    room's own, and those of its tasks that have no choice of their own. A task
-    with one keeps it when the room changes; changing the task's moves only the
-    task's sessions. A person opening the picker, or a turn with its own
-    credential (``PUT /topics/{id}/compute-profile``), changes the same thing.
-
-    Each session first gets one best-effort checkpoint on the machine it
-    leaves (``_move_session``), and moves whether or not it went through. The
-    choice is written once every session has moved; a session that could not
-    move (its machine is still being prepared) leaves the choice where it was,
-    and the sessions already moved walk back on their next turn — ``_attempt``
-    resolves from the choice, not from the copy on the session row. With
-    ``if_idle`` a room in the middle of a turn is not switched at all
-    (``SessionWorking``).
-    """
-    # Whether the choice holds, may happen by itself and who pays were answered
-    # by the route (pool connected, device ownership, the tier gate, the right to
-    # spend on Cloud); this only moves. 「系统挑一台」 is written as it is too: the
-    # first session that needs hands picks, the rest follow it
-    # (``_roommates_device``).
-    await TopicService(db).lock_for_execution(topic_id)
-    sessions = await AgentSessionService(db).ids_on_choice(
-        topic_id, task.id if task is not None else None
-    )
-    for session_id in sessions:
-        await _move_session(
-            db,
-            topic_id=topic_id,
-            session_id=session_id,
-            actor=actor,
-            choice=choice,
-            if_idle=if_idle,
-        )
-    topic = await TopicService(db).lock_for_execution(topic_id)
-    if task is not None:
-        await db.refresh(task)
-        task.compute_config = choice.model_dump()
-    else:
-        topic.compute_config = choice.model_dump()
-    await db.commit()
-    return {"choice": choice.model_dump(), "sessions": len(sessions)}
-
-
-async def _move_session(
+async def switch_environment(
     db,
     *,
     topic_id,
     session_id,
     actor,
-    choice,
+    environment: Sandbox | SelfHosted,
     if_idle=False,
 ):
-    """Point one session at a new work computer, after one best-effort
-    checkpoint on the machine it leaves.
+    """Give one agent another execution environment in its conversation,
+    after one best-effort checkpoint on the machine it leaves.
 
-    The checkpoint runs there with no transaction open, and the session moves
-    whether or not it went through (``checkpoint``). A session leaving its
-    cloud sandbox gives its home on the host back to the pool. With
-    ``if_idle`` a session whose room is mid-turn is left alone
-    (``SessionWorking``).
-    """
-    # 房间那一把锁：这一条会话的租约和房间的算力选择在同一行上改，拿着它读、拿着
-    # 它写，别的请求看到的是「搬之前」或者「搬之后」，没有中间态。
+    Only this agent moves: every agent in a conversation has its own. The
+    checkpoint runs there with no transaction open, and the agent moves whether
+    or not it went through (``checkpoint``). A session leaving a sandbox on the
+    platform's machines gives its place there back. With ``if_idle`` a session
+    whose room is mid-turn is left alone (``SessionWorking``). Whether the
+    environment may be chosen at all was answered by the caller
+    (``environments.check_allowed``)."""
+    # 房间那一把锁：这一条会话的租约和它的执行环境拿着它读、拿着它写，别的请求
+    # 看到的是「搬之前」或者「搬之后」，没有中间态。
     await TopicService(db).lock_for_execution(topic_id)
-    row = await AgentSessionService(db).by_id(session_id, lock=True)
+    sessions = AgentSessionService(db)
+    row = await sessions.by_id(session_id, lock=True)
     if row is None or await room_of(db, row.conversation_id) != topic_id:
         raise NotFoundError("Session not found")
+    current = await sessions.environment(row.conversation_id, row.agent_handle)
+    if current is not None and current.environment == environment.model_dump():
+        return
     request = row.execution_request or {}
     old = row.work_lease
-    previous = request.get("choice")
-    if previous and ComputeChoice.model_validate(previous).model_dump(
-        exclude={"name"}
-    ) == choice.model_dump(exclude={"name"}):
-        if choice.profile == "cloud" and not request.get("authorized_by"):
-            row.execution_request = {**request, "authorized_by": asdict(actor)}
-            await db.commit()
-        return
     if still_preparing(old):
         raise ConflictError(say("machineAllocationInProgress"))
     if if_idle and await _room_is_working(db, topic_id):
@@ -713,7 +580,7 @@ async def _move_session(
         await db.commit()
         await checkpoint(old, start)
         await TopicService(db).lock_for_execution(topic_id)
-        row = await AgentSessionService(db).by_id(session_id, lock=True)
+        row = await sessions.by_id(session_id, lock=True)
         if row is None:
             raise NotFoundError("Session not found")
         request = row.execution_request or {}
@@ -722,25 +589,25 @@ async def _move_session(
             raise ConflictError(say("workComputerJustSwitched"))
         if still_preparing(old):
             raise ConflictError(say("machineAllocationInProgress"))
-    on_cloud = (request.get("choice") or {}).get("profile") == "cloud"
-    if on_cloud:
-        await HostPool(db).leave(session_id)
-    # A machine that is not the platform's keeps the room's directories; the
-    # room's cleanup finds them there by this lease.
-    kept = [] if old is None or on_cloud else [old]
+    on_platform = bool((old or {}).get("platform"))
+    # A place on the platform's machines is given back, whether or not the
+    # sandbox there was ever handed to the session.
+    await HostPool(db).leave(session_id)
+    # A person's machine keeps the session's directories; the room's cleanup
+    # finds them there by this lease.
+    kept = [] if old is None or on_platform else [old]
+    await sessions.set_environment(
+        row.conversation_id,
+        row.agent_handle,
+        environment.model_dump(),
+        chosen_by=asdict(actor),
+    )
     row.execution_request = {
         "generation": str(uuid.uuid4()),
-        "choice": choice.model_dump(),
-        "authorized_by": asdict(actor),
         "retained_leases": [*request.get("retained_leases", []), *kept],
     }
     row.work_lease = None
     await db.commit()
-
-
-# The room names a machine whose owner has since unbound it. It cannot come back
-# under that id (a re-bind enrols a new one), so the room needs another choice.
-UNBOUND = "这个房间选的工作电脑已经解绑，需要重新选择工作电脑；对话和平台工具仍可用。"
 
 
 # A tool that arrives while its session's machine is still being prepared
@@ -750,6 +617,12 @@ UNBOUND = "这个房间选的工作电脑已经解绑，需要重新选择工作
 # operation deadline. It is kept well inside the 300s the HTTP front gives any
 # response.
 PREPARING_WAIT_S = 50.0
+# How long a request that will not wait for a machine being prepared may still
+# take to be answered: one attempt at its hands, which a ready machine answers
+# well inside this (dev, 2026-10: under 4 s). Past it the request answers that
+# the machine is being prepared; holding it for the waiting bound instead kept
+# a session that asked not to wait from starting for 50 s.
+ANSWER_S = 10.0
 # How often a waiting request looks at the signal it waits on. Each look is
 # one row read and the hub's in-memory online set.
 PREPARING_POLL_S = 1.0
@@ -867,29 +740,21 @@ async def _attempt(
     ):
         raise ForbiddenError("Execution credential does not own this session")
     project = await ProjectService(db).get_or_404(topic.project_id)
-    request = row.execution_request or {
-        "generation": str(uuid.uuid4()),
-        "authorized_by": None,
-    }
-    # 房间的选择就是这条会话的选择（2026-09-28 决定，推翻结论 60）。这一行上那份
-    # ``choice`` 是**副本**，不是来源：手落在哪台机器上由房间那一项答，把它写回来是
-    # 为了让读的人（名册、算力分布、清理清单）看到这一行与会话此刻真正在用的东西一
-    # 致，而不是让解析去问它——两处各存一份、解析时听谁的那个问题，就是这条决定要
-    # 消掉的东西。
-    # A task's session uses the task's own choice when it has one.
+    request = row.execution_request or {"generation": str(uuid.uuid4())}
     task = (
         await db.get(Task, row.conversation_id)
         if row.conversation_id != topic_id
         else None
     )
-    choice = place_choice(topic, task, project.settings)
     # A member's own coding agent works on the machine its session runs on,
-    # the owner's (`owner_provider`), whatever the room chose: both ends of it
-    # are that one machine.
+    # the owner's (`owner_provider`), whatever was chosen for it: both ends of
+    # it are that one machine, and it is the owner's own.
     own_host = _own_host(row)
-    if own_host is not None:
-        choice = ComputeChoice(profile=COMPUTE_DEVICE, device_id=own_host)
-    request = {**request, "choice": choice.model_dump()}
+    environment = (
+        SelfHosted(kind="self_hosted", device_id=own_host)
+        if own_host is not None
+        else await environment_of(db, row, topic, task, project)
+    )
     row.execution_request = request
     generation = request["generation"]
     lease = row.work_lease
@@ -914,59 +779,29 @@ async def _attempt(
         if datetime.fromisoformat(lease["claim_until"]) > now:
             await db.commit()
             return _Preparing(
-                "工作电脑正在准备；对话和平台工具仍可用。",
+                say("environmentPreparing"),
                 partial(lease_claim.moved, db, session_id, lease.get("claim")),
             )
     devices = sql_device_service(db)
+    if lease and await devices.get_device(lease["device_id"]) is None:
+        # Its machine was unbound (a re-bind enrols a new device id): nothing on
+        # it can be reached again.
+        row.work_lease = lease = None
+    spec = spec_of(environment.spec) if isinstance(environment, Sandbox) else None
+    if isinstance(environment, Sandbox) and spec is None:
+        await db.commit()
+        return {"unavailable": str(say("environmentSpecGone"))}
     selected = None
-    if choice.profile == COMPUTE_DEVICE:
-        if lease and await devices.get_device(lease["device_id"]) is None:
-            # Its machine was unbound (a re-bind enrols a new device id): nothing
-            # on it can be reached again, and returning to it would report the
-            # room offline for good while its owner sees the machine online.
-            row.work_lease = lease = None
-        # 这条会话手上那台第一（租约是它现在真正在用的那台），房间点名的那台其次，
-        # 再没有就问房间里的队友——同一个房间里的会话落在同一台机器上，所以「系统挑
-        # 一台」不该由谁先来谁挑一台在线的来决定（``_roommates_device``）。
-        device_id = (
-            own_host
-            or (lease or {}).get("device_id")
-            or choice.device_id
-            or await _roommates_device(db, topic, resource)
-        )
-        selected = await devices.get_device(device_id) if device_id else None
-        if selected is None and device_id and device_id == choice.device_id:
-            await db.commit()
-            return {"unavailable": UNBOUND}
+    if isinstance(environment, SelfHosted):
+        selected = await devices.get_device(environment.device_id)
         if selected is None:
-            selected = await devices.first_healthy_device(
-                topic.project_id, hub.is_online
-            )
-        if (
-            own_host is None
-            and task is not None
-            and not lease
-            and selected is not None
-            and not await works_tasks_of(
-                db, selected.device_id, project, task.owner_handle
-            )
-        ):
-            # 「系统挑一台」 for a task picks among the computers that may work
-            # it: someone else's own computer works only its owner's tasks.
-            selected = None
-            for device in await devices.list_devices_for_project(topic.project_id):
-                if _reachable(hub, device.device_id) and await works_tasks_of(
-                    db, device.device_id, project, task.owner_handle
-                ):
-                    selected = device
-                    break
-        if selected is None or not _reachable(hub, selected.device_id):
             await db.commit()
-            return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
+            return {"unavailable": str(say("selfHostedUnbound"))}
+        if not _reachable(hub, selected.device_id):
+            await db.commit()
+            return {"unavailable": str(say("selfHostedOffline", machine=selected.name))}
         if selected.supply != Supply.self_hosted:
-            raise ForbiddenError(
-                "Choose self-hosted equipment or request a Cloud lease"
-            )
+            raise ForbiddenError("A self-hosted environment names a platform machine")
         if own_host is not None:
             # The owner's machine need not be bound to the project: it works
             # for its owner's own agent, in any project the owner is in.
@@ -977,49 +812,55 @@ async def _attempt(
             raise ForbiddenError("Device no longer serves this project")
         if await devices.get_hosted_device(selected.device_id) is None:
             raise ForbiddenError("Device is not hosted")
-        # A room meant to be isolated never runs over the whole machine
-        # instead: a machine whose system has no isolated environment yet
-        # refuses it here, saying what to do, and the install on the machine
-        # refuses the same way (`bootstrap.sandbox_argv`) for one this process
-        # has not heard from. The conversation and platform tools go on.
-        unavailable = sandbox_unavailable(hub.target(selected.device_id))
-        if unavailable is not None and await _sandboxed(
-            db, topic_id, selected.device_id
-        ):
+    elif spec is not None and not spec.platform:
+        selected = await device_for_spec(
+            db,
+            spec=spec.name,
+            project=project,
+            task=task,
+            held=(lease or {}).get("device_id"),
+            # A machine whose link dropped moments ago is called, and the call
+            # waits for it (`_reachable`).
+            is_online=partial(_reachable, hub),
+        )
+        if selected is None:
             await db.commit()
-            return {"unavailable": str(unavailable)}
-    approver = project.owner_handle or ""
-    if selected is not None:
-        from app.domain.user.models import User
-
-        owner = await db.get(User, selected.owner_user_id)
-        if owner is not None:
-            approver = owner.username
-    call = gate.Call(
-        resource=gate.Resource.machine,
-        subject=selected.device_id if selected is not None else choice.profile,
-        label=selected.name if selected is not None else choice_label(choice),
-        tier=COMPUTE_TIERS[choice.profile],
-        approver=approver,
-    )
-    verdict = gate.check(call, gate.policy_of(project.settings), claims.get("a", ""))
-    authorized = request.get("authorized_by")
-    if isinstance(verdict, gate.Proposal):
-        raise ForbiddenError(say("machineTierNotAllowed"))
+            return {"unavailable": str(say("specDevicesUnavailable"))}
     work_resource = (lease or {}).get("resource_id") or generation
-    if choice.profile == "cloud":
+    if selected is not None and isinstance(environment, Sandbox):
+        try:
+            await HostPool(db, hub=hub).keep_on_device(
+                session_id,
+                topic=topic,
+                device_id=selected.device_id,
+                spec=environment.spec,
+                resource_id=work_resource,
+            )
+        except SandboxRemoving:
+            # Its idle sandbox is being destroyed: the next attempt, once it is
+            # gone, places the session in a new one.
+            await db.commit()
+            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
+    cloud_host = None
+    if selected is None and not cloud_provisionable(settings):
+        await db.commit()
+        return {"unavailable": str(say("platformSpecUnavailable"))}
+    if selected is None:
+        chosen = await sessions.environment(row.conversation_id, row.agent_handle)
+        chooser = (chosen.chosen_by if chosen is not None else None) or None
         allocation_actor = (
-            Actor(**authorized)
-            if isinstance(authorized, dict)
+            Actor(**chooser)
+            if isinstance(chooser, dict)
             else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
         )
         pool = HostPool(db, hub=hub)
+        whole_machine = spec is not None and spec.name == VM
         try:
             cloud_host = await pool.place(
                 session_id,
                 actor=allocation_actor,
                 resource_id=work_resource,
-                whole_machine=choice.whole_machine,
+                whole_machine=whole_machine,
             )
         except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
             await db.commit()
@@ -1044,7 +885,6 @@ async def _attempt(
         if row is None or (row.execution_request or {}).get("generation") != generation:
             raise ConflictError("Execution request changed during provisioning")
     else:
-        assert selected is not None
         device_id = selected.device_id
     # Placement records the session host before the screen that asks opens.
     assert row.runtime_location is not None
@@ -1054,7 +894,7 @@ async def _attempt(
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
     api = await device_api_base(db, device_id, settings.connector_public_base)
-    sandbox = await _sandboxed(db, topic_id, device_id)
+    sandbox = await _sandboxed(environment, db, device_id)
     platform_machine = await _platform_machine(db, device_id)
     # Existing leases can outlive a deploy that changes the host's API address.
     # Ping/prepare must dial the current configured base, just like a new lease.
@@ -1073,6 +913,8 @@ async def _attempt(
         "resource_id": work_resource,
         "room_resource_id": resource,
         "device_id": device_id,
+        # On one of the platform's machines, which nobody is shown.
+        "platform": cloud_host is not None,
         "status": "preparing",
         "claim": claim,
         "claim_until": (now + timedelta(seconds=lease_claim.CLAIM_TTL_S)).isoformat(),
@@ -1133,8 +975,9 @@ async def _attempt(
             holding=holding,
             claim=claim,
             now=now,
-            cloud_host_id=cloud_host.id if choice.profile == "cloud" else None,
+            cloud_host_id=cloud_host.id if cloud_host is not None else None,
             owner_device=selected is not None,
+            own=isinstance(environment, Sandbox),
             tells_agent=tells_agent,
         )
     )
@@ -1142,6 +985,7 @@ async def _attempt(
     work.add_done_callback(_installed)
     outcome = await asyncio.shield(work)
     if outcome is _CLOUD_PREPARING:
+        assert cloud_host is not None
         return _Preparing(
             VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
             partial(_cloud_progress, db, hub, cloud_host.id),
@@ -1191,6 +1035,7 @@ async def _install(
     now,
     cloud_host_id,
     owner_device,
+    own,
     tells_agent=False,
 ):
     """Bring the session's executor up under ``claim`` and record the outcome."""
@@ -1231,11 +1076,10 @@ async def _install(
                     "workspace": info["workspace"],
                     "mcp_servers": info["mcp_servers"],
                     # Whether nothing but this session works in what the
-                    # executor can write: its own sandbox. The executor route
-                    # lets a session whose work is not kept run freely only
-                    # there (`routes/execution.py`). A whole VM is not one: a
-                    # room's sessions land on the room's machine.
-                    "own": sandbox,
+                    # executor can write: a sandbox of its own, a whole VM
+                    # included. The executor route lets a session whose work is
+                    # not kept run freely only there (`routes/execution.py`).
+                    "own": own,
                     "url": f"{host_api}/topics/{topic_id}/execution/session-{resource}",
                 }
                 target.pop("claim")
@@ -1257,8 +1101,15 @@ async def _install(
                 row.work_lease = {**holding, "claim_until": now.isoformat()}
             await db.commit()
             if isinstance(exc, launch.SandboxRefused):
-                # The machine cannot make the room's sandbox, and said why.
-                return {"unavailable": str(exc)}
+                # The machine cannot make a sandbox and said why, in words for
+                # its owner. That is a fact about the machine, kept where its
+                # owner reads it; no sandbox is placed there again, and the next
+                # attempt places this one on another device of its spec.
+                await sql_device_service(db).record_sandbox_check(
+                    device_id, isolates=False, reason=device_sandbox.kept(exc.said)
+                )
+                await db.commit()
+                return _Preparing(say("environmentPreparing"), _another_attempt)
             if isinstance(exc, ExecutorSetupFailed):
                 logger.warning("executor installation failed: %s", exc)
                 return {
@@ -1269,7 +1120,7 @@ async def _install(
                 # same answer as when it is away before setup starts (above).
                 if cloud_host_id is not None:
                     return _CLOUD_PREPARING
-                return {"unavailable": "工作电脑未连接；对话和平台工具仍可用。"}
+                return {"unavailable": str(say("environmentDeviceOffline"))}
             raise
         current = await TopicService(db).lock_for_execution(room_id)
         row = await sessions.by_id(session_id, lock=True)
@@ -1297,7 +1148,7 @@ async def _install(
         )
         if device is not None:
             await tell_device_owner(
-                db, topic=current, row=row, device=device, lease=target
+                db, topic=current, row=row, device=device, lease=target, whole=not own
             )
         ready_line = None
         if cloud_host_id is not None and target["status"] == "ready":
@@ -1312,7 +1163,6 @@ async def _install(
                 if settled.get("state") == "failed":
                     # The people waiting are told where they wait, with the
                     # way to the settings; the teammate is told here.
-                    from app.domain.agent.environment_failures import tell_failed
 
                     line = await tell_failed(
                         db,

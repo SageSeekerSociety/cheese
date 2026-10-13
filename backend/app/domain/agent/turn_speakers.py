@@ -3,7 +3,8 @@
 名单在 `_assemble_turn` 里定：窗口里说话的这几位，加上这一轮**替谁在做事的**
 那一位。周期任务那一轮的主人就是后者 —— 他本人没在窗口里说过话（那一轮的内容
 是平台写完塞进投递的，没有一条他自己署名的消息），可这一轮跑的是他交代的活。
-只读不收的话，他这一轮改过的偏好下一轮还是旧的。
+只读不收的话，他这一轮改过的偏好下一轮还是旧的。任务自己的会话里，任务的负责人
+也是后者：实况文档写给他看，按他的习惯写，而他不一定在这一轮说过话。
 
 这个域不必认识周期任务：写投递的调度器知道主人是谁，把 `routineOwner` 留在
 payload 里，认这一个键就够了。
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.platform_notices import EVENT_ROUTINE_RUN
 from app.domain.block.models import Block
+from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import names_a_person
 
 
@@ -28,6 +30,7 @@ async def turn_speakers(
     delivery_id: uuid.UUID | None,
     pending: Sequence[Block],
     private_owner: str | None,
+    task_owner: str | None = None,
 ) -> tuple[str, ...]:
     """本轮说话的这几位（去重，按第一次出现的先后），记忆按这份名单读、也按它收。
 
@@ -42,6 +45,7 @@ async def turn_speakers(
                 *(b.author for b in pending),
                 *((private_owner,) if private_owner else ()),
                 *((owner,) if owner else ()),
+                *((task_owner,) if task_owner else ()),
             )
             if names_a_person(handle)
         )
@@ -62,7 +66,6 @@ async def routine_owner(
     """
     if delivery_id is None:
         return None
-    from app.domain.delivery.models import Delivery
 
     row = await session.get(Delivery, delivery_id)
     payload = (row.payload if row is not None else None) or {}
@@ -77,7 +80,6 @@ async def is_routine_run(session: AsyncSession, delivery_id: uuid.UUID | None) -
     也可以写（存它的结果），之后有人追问的那几轮照支线的规矩只读。"""
     if delivery_id is None:
         return False
-    from app.domain.delivery.models import Delivery
 
     row = await session.get(Delivery, delivery_id)
     payload = (row.payload if row is not None else None) or {}

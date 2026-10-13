@@ -6,12 +6,9 @@ chip 指的是这一份资料，它换了个名字，还是它。
 
 import asyncio
 import uuid
-from pathlib import Path
 
-from app.core.config import settings
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.library import records as library_records
-from app.domain.library.models import LibraryFileRecord
 from tests.integration.conftest import post_project, session_auth_headers
 
 
@@ -35,10 +32,22 @@ def _put_in(client, project_id: str, name: str, data: bytes, folder=None) -> str
     return r.json()["data"]["path"]
 
 
-def _names(client, project_id: str) -> list[str]:
-    r = client.get(f"/projects/{project_id}/library")
+def _level(client, project_id: str, **params) -> tuple[list[dict], str | None]:
+    r = client.get(f"/projects/{project_id}/library", params=params)
     assert r.status_code == 200, r.text
-    return sorted(row["path"] for row in r.json()["data"]["data"])
+    return r.json()["data"]["data"], r.json()["data"]["next"]
+
+
+def _names(client, project_id: str, dir: str = "") -> list[str]:
+    """Every file under ``dir``, by walking its folders one level at a time."""
+    rows, _ = _level(client, project_id, dir=dir, limit=200)
+    names: list[str] = []
+    for row in rows:
+        if row["type"] == "folder":
+            names += _names(client, project_id, row["path"])
+        else:
+            names.append(row["path"])
+    return sorted(names)
 
 
 def _raw(client, project_id: str, name: str):
@@ -241,49 +250,3 @@ def test_same_name_at_the_same_time_loses_neither(client):
     assert sorted(
         _raw(client, str(project_id), name).content for name in names
     ) == sorted(contents)
-
-
-def test_a_file_from_before_its_key_was_stored_still_reads_replaces_and_moves(client):
-    """加 `blob_key` 之前写下的那些行：字节还在当时的目录里，照样读、替换、挪动。"""
-    project_id = _project(client)
-    old = Path(settings.workspace_root) / ".library" / project_id / "旧/合同.docx"
-    old.parent.mkdir(parents=True, exist_ok=True)
-    old.write_bytes(b"v1")
-
-    async def recorded() -> None:
-        async with client.test_factory() as session:
-            session.add(
-                LibraryFileRecord(
-                    project_id=uuid.UUID(project_id),
-                    name="旧/合同.docx",
-                    bytes=2,
-                    sha256="0" * 64,
-                    added_by="user-1",
-                )
-            )
-            await session.commit()
-
-    asyncio.run(recorded())
-    assert _raw(client, project_id, "旧/合同.docx").content == b"v1"
-
-    replaced = client.put(
-        f"/projects/{project_id}/library",
-        params={"path": "旧/合同.docx"},
-        files={"file": ("合同.docx", b"v2", "application/octet-stream")},
-    )
-    assert replaced.status_code == 200, replaced.text
-    assert _move(client, project_id, "旧", "归档").status_code == 200
-
-    assert _names(client, project_id) == ["归档/合同.docx"]
-    assert _raw(client, project_id, "归档/合同.docx").content == b"v2"
-    versions = client.get(
-        f"/projects/{project_id}/library/versions", params={"path": "归档/合同.docx"}
-    ).json()["data"]["versions"]
-    first = next(v for v in versions if not v["current"])
-    assert (
-        client.get(
-            f"/projects/{project_id}/library/raw",
-            params={"path": "归档/合同.docx", "version": first["id"]},
-        ).content
-        == b"v1"
-    )

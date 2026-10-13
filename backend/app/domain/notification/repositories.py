@@ -32,11 +32,10 @@ class NotificationRepository:
         的名字（`add`），投递账本写给知是的那些只有 `receiver_id`
         （`notification/handlers.py`）。两边同住一张表，读的时候各认各的那一列。
 
-        少了这一句，房间里的一次 @ 会同时落进知是的铃铛，而那边渲染不了它：前端
-        按 `type` 找模板，`MENTION` 那一个读的是 `payload` 里的
-        `mentioner`/`discussionTitle`/`discussionId`，项目通知一个都没有（文字在
-        `title`/`body` 上），渲染出来是一句「有人提到了你 / 在讨论 未知讨论 中提到
-        了你」，还不带跳转；未读数却照加，知是那边一点「全部已读」还会把项目角标
+        少了这一句，项目收件箱的一行（`cheese_notify` 发的变更提醒、决策请求）会
+        同时落进知是的铃铛，而那边渲染不了它：前端按 `type` 找模板，模板读的是
+        `payload` 里的字段，项目通知的文字却在 `title`/`body` 上，渲染出来是一行
+        读不出内容的空壳；未读数却照加，知是那边一点「全部已读」还会把项目角标
         一起清掉。
 
         按 id 点名的那几条（取一条、标一条、删一条）不带这一句：那是**已经拿着
@@ -292,12 +291,58 @@ class NotificationRepository:
         *,
         recipient_handle: str,
         unread_only: bool = False,
+        limit: int,
+        at_or_before: Notification | None = None,
     ) -> list[Notification]:
+        """这个项目的收件箱里我看得见的那几页信，新的在前。
+
+        `limit` 必填：这条读以前没有上界，一个项目跑久了它会一直长（一次把整个
+        历史拉回来）。分页是键集，不是 offset —— 收件箱的头一直在长，一边翻一边
+        有新信写进来，offset 会漏行也会重行。
+
+        `at_or_before` 是下一页从这里开始的那一行（含它自己）。键是
+        `(created_at, id)` 两列：`created_at` 会撞（同一秒写下的好几条，广播展开
+        出来的一批正是这样），单靠它分不干净，`id` 补上第二列就有了全序。
+        """
         stmt = self._mine_in(select(Notification), project_id, recipient_handle)
         if unread_only:
             stmt = stmt.where(Notification.read.is_(False))
-        stmt = stmt.order_by(Notification.created_at.desc())
+        if at_or_before is not None:
+            stmt = stmt.where(
+                or_(
+                    Notification.created_at < at_or_before.created_at,
+                    and_(
+                        Notification.created_at == at_or_before.created_at,
+                        Notification.id <= at_or_before.id,
+                    ),
+                )
+            )
+        stmt = stmt.order_by(
+            Notification.created_at.desc(), Notification.id.desc()
+        ).limit(limit)
         return list((await self._session.scalars(stmt)).all())
+
+    async def count_for_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        recipient_handle: str,
+        unread_only: bool = False,
+    ) -> int:
+        """上面那条读的总数，和它同一套过滤条件。
+
+        `list_for_project` 现在只回一页，所以 `total` 不能再拿这一页的条数充数 ——
+        那正是分页之前的写法（`page(items, len(items))`），一加上限它就开始说谎。
+        一条 `count(*)` 走的是同一个 `(project_id, recipient_handle)` 索引。
+        """
+        stmt = self._mine_in(
+            select(func.count()).select_from(Notification),
+            project_id,
+            recipient_handle,
+        )
+        if unread_only:
+            stmt = stmt.where(Notification.read.is_(False))
+        return int((await self._session.scalar(stmt)) or 0)
 
     async def list_inbox(
         self,

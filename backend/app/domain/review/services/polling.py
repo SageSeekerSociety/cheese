@@ -3,6 +3,7 @@ the merge state, the seen-head guard, credentials and task closing."""
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -17,6 +18,7 @@ from app.domain.review import (
     notes,
     pr_signals,
 )
+from app.domain.review.merge_state import RED_CONCLUSIONS
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
@@ -30,6 +32,8 @@ from app.domain.topic.models import Topic, TopicStatus
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.project.protection import branch_protection_of
+from app.domain.review import github_pr
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES,
@@ -43,6 +47,7 @@ from app.domain.review.services._shared import (
     logger,
     notice,
 )
+from app.domain.review.task_landing import delivery_landed
 
 
 def _seen_head(card: AcceptCard, head_sha: str | None, action: str) -> str | None:
@@ -135,6 +140,7 @@ async def _refresh_github_unseen_head(
 
 
 async def _status_client(self: pkg.AcceptService, project_id: uuid.UUID):
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import status_client
 
     return _remote(self, await status_client(project_id, self._session))
@@ -171,7 +177,6 @@ async def _refresh_stale_card(
     connections on one row with one waiting on the other is a hang, not a
     refresh. Every attribute needed later is read before the rollback
     (expired attributes reload with sync IO an AsyncSession cannot do)."""
-    from app.domain.project.protection import branch_protection_of
 
     card_id = card.id
     number = card.pr_number
@@ -221,6 +226,7 @@ async def _app_credentials(
     self: pkg.AcceptService, topic: Topic
 ) -> tuple[_GitHubCredentials | None, str]:
     """The platform App's installation tokens for this project's repo."""
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import tokens_for_project
 
     tokens = await tokens_for_project(topic.project_id, self._session)
@@ -313,16 +319,68 @@ async def refresh_stale_pr_snapshots(
     `Forge.refresh_snapshot`）。轮询器做的另外两件**不做** —— 不发事件、
     不合并 (那是它的职责，`advance_pr_card` 的 docstring)。任何失败都吞掉：
     读卡不能因为 GitHub 抖一下就 500，快照下一轮重试就是。
+
+    过期的几张卡并排重算，每张各用一个会话；同一张卡同一时刻只算一份，几个
+    读者一起等它。这次读最多等 `accept_pr_snapshot_read_wait_s`：没算完的接着
+    在后台算完、写回去，下一次读就是新的。一张接一张地等过 GitHub，一次读卡
+    曾经要 40 秒。
     """
-    for card in cards:
-        try:
-            await self._refresh_stale_pr_snapshot(card)
-        except Exception:  # noqa: BLE001 — a read never fails over a poll
-            logger.warning(
-                "card %s: refreshing a stale merge snapshot failed",
-                card.id,
-                exc_info=True,
-            )
+    stale = [card for card in cards if _snapshot_is_due(self, card)]
+    if not stale:
+        return
+    sessions = async_sessionmaker(self._session.bind, expire_on_commit=False)
+    running = {card.id: _refresh_once(sessions, card.id) for card in stale}
+    done, _ = await asyncio.wait(
+        running.values(), timeout=settings.accept_pr_snapshot_read_wait_s
+    )
+    for card in stale:
+        if running[card.id] in done:
+            await self._session.refresh(card)
+
+
+#: The refresh under way for each card. A room's card list is read by every
+#: open page of it every 15 s; they share one round of GitHub calls per card.
+_refreshing: dict[uuid.UUID, asyncio.Task[None]] = {}
+
+
+def _snapshot_is_due(self: pkg.AcceptService, card: AcceptCard) -> bool:
+    if card.status != AcceptStatus.pending or card.pr_number is None:
+        return False
+    age = self._merge_snapshot_age_s(card)
+    return age is None or age >= settings.accept_pr_snapshot_floor_s
+
+
+def _refresh_once(
+    sessions: async_sessionmaker, card_id: uuid.UUID
+) -> asyncio.Task[None]:
+    task = _refreshing.get(card_id)
+    if task is None:
+        task = asyncio.get_running_loop().create_task(
+            _refresh_in_own_session(sessions, card_id),
+            name=f"refresh merge snapshot {card_id}",
+        )
+        _refreshing[card_id] = task
+    return task
+
+
+async def _refresh_in_own_session(
+    sessions: async_sessionmaker, card_id: uuid.UUID
+) -> None:
+    """One card's refresh on a session of its own: the read that started it may
+    have answered and closed its own by the time GitHub does."""
+    try:
+        async with sessions() as session:
+            svc = pkg.AcceptService(session)
+            card = await svc._repo.get(card_id)
+            if card is not None:
+                await svc._refresh_stale_pr_snapshot(card)
+                await session.commit()
+    except Exception:  # noqa: BLE001 — a read never fails over a poll
+        logger.warning(
+            "card %s: refreshing a stale merge snapshot failed", card_id, exc_info=True
+        )
+    finally:
+        _refreshing.pop(card_id, None)
 
 
 def _merge_snapshot_age_s(self: pkg.AcceptService, card: AcceptCard) -> float | None:
@@ -341,10 +399,7 @@ def _merge_snapshot_age_s(self: pkg.AcceptService, card: AcceptCard) -> float | 
 
 
 async def _refresh_stale_pr_snapshot(self: pkg.AcceptService, card: AcceptCard) -> None:
-    if card.status != AcceptStatus.pending or card.pr_number is None:
-        return
-    age = self._merge_snapshot_age_s(card)
-    if age is not None and age < settings.accept_pr_snapshot_floor_s:
+    if not _snapshot_is_due(self, card):
         return
     topic = await self._topic_or_404(card.topic_id)
     if topic.status == TopicStatus.archived:
@@ -442,8 +497,6 @@ async def _advance_github_card(
         notes.clear(card)
         await self._session.flush()
 
-    from app.domain.review import github_pr
-
     client = await self._status_client(topic.project_id)
     try:
         await self._poll_pr_card(
@@ -476,13 +529,17 @@ async def _advance_github_card(
 
 async def _mark_task_merged(
     self: pkg.AcceptService, card: AcceptCard, *, delivered_head: str | None = None
-) -> None:
+) -> bool:
+    """Record ``card``'s merge on its task; False when it does not land there.
+
+    A merge the task has already had does not land again — see
+    `task_landing._already_landed`. A caller that has words for a batch that
+    just landed says them on this answer."""
     if card.task_id is None:
-        return
-    from app.domain.review.task_landing import delivery_landed
+        return False
 
     task = await TaskService(self._session).require_in_room(card.topic_id, card.task_id)
-    await delivery_landed(
+    return await delivery_landed(
         self._session,
         task,
         by=card.decided_by,
@@ -496,6 +553,7 @@ async def _app_pr_client(self: pkg.AcceptService, topic: Topic):  # noqa: ANN202
     """The App-token client for this project's upstream, or None when the
     project has no GitHub side at all (no installation, or an upstream that
     is not a GitHub https remote)."""
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import proposal_client
 
     return _remote(self, await proposal_client(topic.project_id, self._session))
@@ -548,19 +606,20 @@ async def _poll_pr_card(
             # The review remains a return. GitHub establishes a separate
             # fact about the batch, including the head that actually landed.
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
-            await self._mark_task_merged(card, delivered_head=status.head_sha)
+            landed = await self._mark_task_merged(card, delivered_head=status.head_sha)
             await self._session.flush()
-            self._notify_merge_result(
-                topic,
-                say("acceptDoneAfterReturn", pr=number),
-                task_id=card.task_id,
-                meta=notice(
-                    EVENT_ACCEPT_DONE,
-                    severity=SEVERITY_INFO,
-                    who=WHO_PLATFORM,
-                    detail=card.pr_url or "",
-                ),
-            )
+            if landed:
+                self._notify_merge_result(
+                    topic,
+                    say("acceptDoneAfterReturn", pr=number),
+                    task_id=card.task_id,
+                    meta=notice(
+                        EVENT_ACCEPT_DONE,
+                        severity=SEVERITY_INFO,
+                        who=WHO_PLATFORM,
+                        detail=card.pr_url or "",
+                    ),
+                )
             return
         await self._settle_external_merge(card=card, topic=topic, status=status)
         return
@@ -625,12 +684,20 @@ async def _poll_pr_card(
     # 红检查按 runs 本身判，不按 verdict 的 reasons：一个和 main 冲突的 PR
     # 的 verdict 是 dirty（冲突最优先），但它上面的红检查照样是芝士要修的
     # 事 —— 三件事互不蕴含，谁都不许把别人吞掉（pr_signals 的规矩）。
+    # 词表用 `merge_state.RED_CONCLUSIONS`：`cancelled` 不算红（它没有结论），
+    # 一个只剩「已取消」的 PR 不该把人叫起来说「CI 未通过」——卡面照旧标出来。
     has_red_check = any(
-        r.conclusion in ("failure", "timed_out", "cancelled", "action_required")
-        for r in runs
-        if r.status == "completed"
+        r.conclusion in RED_CONCLUSIONS for r in runs if r.status == "completed"
     )
-    if has_red_check or kinds & {"required_check_failed", "check_failed"}:
+    checks_red = has_red_check or bool(
+        kinds & {"required_check_failed", "check_failed"}
+    )
+    if not checks_red and card.note_code is notes.NoteCode.checks_failed:
+        # 同一个 head 上的红已经不在了（重跑转绿、被顶替的取消运行收掉了）：
+        # 「检查未通过」那句说的是过去。不清它，看板一直摆在「修复检查」、验收
+        # 人的黄灯不亮 —— head 没动，上面换 head 时那次清理永远轮不到它。
+        notes.clear(card)
+    if checks_red:
         # 检查红了 → 事件到做活的 agent，带哪个检查红、日志怎么取。
         # `check_state` 是取失败详情（job 链接 + 日志片段）的那条路。
         try:

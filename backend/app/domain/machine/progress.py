@@ -19,21 +19,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.agent.announce import announce
+from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent_session.models import AgentSession
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
-from app.domain.machine.models import CloudHostHome
+from app.domain.machine.models import SandboxHome
 from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
 from app.domain.run_record.service import as_payload as run_record_payload
 from app.domain.run_record.service import record as keep_record
 
 
-async def _conversation(session: AsyncSession, home: CloudHostHome) -> uuid.UUID:
+async def _conversation(session: AsyncSession, home: SandboxHome) -> uuid.UUID:
     """The conversation the sandbox is for: its session's. A task's session
     works in the task's own conversation, while ``home.topic_id`` names the
     room its machine belongs to."""
     if home.session_id is not None:
-        from app.domain.agent_session.models import AgentSession
-
         owner = await session.get(AgentSession, home.session_id)
         if owner is not None:
             return owner.conversation_id
@@ -60,7 +60,7 @@ async def say_in(
 
 
 async def _line(
-    session: AsyncSession, home: CloudHostHome, content: str, meta: dict
+    session: AsyncSession, home: SandboxHome, content: str, meta: dict
 ) -> dict | None:
     """Say it in the conversation: a person has something to do."""
     return await say_in(
@@ -72,7 +72,7 @@ async def _line(
 
 
 async def _record(
-    session: AsyncSession, home: CloudHostHome, content: str, meta: dict
+    session: AsyncSession, home: SandboxHome, content: str, meta: dict
 ) -> dict | None:
     """Keep it as a run record of the conversation the sandbox is for."""
     kept = await keep_record(
@@ -86,7 +86,7 @@ async def _record(
 
 async def tell_preparing(
     session: AsyncSession,
-    home: CloudHostHome,
+    home: SandboxHome,
     sentence: str = "sandboxPreparing",
     *,
     whole_machine: bool = False,
@@ -102,7 +102,7 @@ async def tell_preparing(
 
 
 async def tell_ready(
-    session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
+    session: AsyncSession, home: SandboxHome, whole_machine: bool = False
 ) -> dict | None:
     return await _record(
         session,
@@ -118,7 +118,7 @@ async def tell_ready(
 
 
 async def tell_replaced(
-    session: AsyncSession, home: CloudHostHome, whole_machine: bool = False
+    session: AsyncSession, home: SandboxHome, whole_machine: bool = False
 ) -> dict | None:
     return await _record(
         session,
@@ -128,7 +128,7 @@ async def tell_replaced(
     )
 
 
-async def tell_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
+async def tell_lost(session: AsyncSession, home: SandboxHome) -> dict | None:
     """The sandbox's host stopped answering and the pool gave up on it: the
     session works in a new sandbox from what was pushed."""
     return await _line(
@@ -140,7 +140,7 @@ async def tell_lost(session: AsyncSession, home: CloudHostHome) -> dict | None:
 
 
 async def tell_released(
-    session: AsyncSession, home: CloudHostHome, minutes: int
+    session: AsyncSession, home: SandboxHome, minutes: int
 ) -> dict | None:
     return await _record(
         session,
@@ -150,7 +150,7 @@ async def tell_released(
     )
 
 
-async def tell_unpaid(session: AsyncSession, home: CloudHostHome) -> dict | None:
+async def tell_unpaid(session: AsyncSession, home: SandboxHome) -> dict | None:
     return await _line(
         session,
         home,
@@ -160,7 +160,7 @@ async def tell_unpaid(session: AsyncSession, home: CloudHostHome) -> dict | None
 
 
 async def tell_vm_released(
-    session: AsyncSession, home: CloudHostHome, minutes: int
+    session: AsyncSession, home: SandboxHome, minutes: int
 ) -> dict | None:
     return await _record(
         session,
@@ -177,7 +177,6 @@ def _vm(whole_machine: bool) -> dict:
 
 
 async def publish_line(topic_id: uuid.UUID, payload: dict | None) -> None:
-    from app.domain.agent.runtime import get_broker
 
     if payload is None:
         return

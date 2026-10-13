@@ -10,9 +10,16 @@ That placement makes this the only point that can:
   - meter a subscription turn's real cost (the subscription path deliberately
     skips LiteLLM — no per-call key to meter, and re-originating from our own
     client would change what the provider sees),
-  - enforce a cap BEFORE forwarding, so an exhausted budget cannot overspend:
-    per-project via the backend's /llm/admission (#218), plus the rolling
-    token window as the deployment-wide backstop,
+  - enforce the per-project budget BEFORE forwarding via the backend's
+    /llm/admission (#218), and hold the rolling token window as the
+    deployment-wide backstop: it refuses a turn once the window's COMPLETED
+    turns plus an estimate of the turns now in flight reach the cap, so
+    concurrent turns cannot all pass on a stale `used() < cap`. It is a
+    backstop, not an exact ceiling: a turn already past admission runs to its
+    end, so the window can overshoot by the difference between a turn's
+    reserved estimate and what it really cost. Projects the backend routes to
+    the API-key pool are not under this window at all — the gateway meters
+    them,
   - send a project that admission places on the API-key pool to LiteLLM
     instead, with the project's virtual key; the platform's credential must
     never reach the gateway.
@@ -45,6 +52,7 @@ sent to ChatGPT is not env: it is a file beside the ChatGPT accounts
 """
 
 import asyncio
+import fcntl
 import hmac
 import json
 import logging
@@ -100,6 +108,11 @@ USAGE_LOG = Path(os.environ.get("CHEESE_USAGE_LOG", "/var/log/cheese/usage.jsonl
 # 0 disables the backstop cap. Set per deployment from the subscription's ceiling.
 TOKEN_CAP = int(os.environ.get("CHEESE_TOKEN_CAP", "0"))
 CAP_WINDOW_S = int(os.environ.get("CHEESE_CAP_WINDOW_S", str(5 * 3600)))
+# Tokens to hold against the cap while a turn runs: its real cost is unknown
+# until it ends, so without this the window misses every in-flight turn and
+# concurrent turns overshoot together. 0 = derive one per request (see
+# `_reserve_estimate`).
+CAP_RESERVE_TOKENS = int(os.environ.get("CHEESE_CAP_RESERVE_TOKENS", "0"))
 # Shared with the backend (SANDBOX_TOKEN): verifies the caller's scoped token,
 # and is the proxy's own credential towards the backend.
 SCOPED_SECRET = os.environ.get("CHEESE_SCOPED_SECRET", "")
@@ -119,7 +132,52 @@ ADMISSION_CACHE_S = float(os.environ.get("CHEESE_ADMISSION_CACHE_S", "30"))
 # silently served from the subscription it did not ask for.
 GATEWAY_BASE = os.environ.get("CHEESE_GATEWAY_BASE", "")  # "http://host:port"
 
+# fds of the single-writer lock, held open for the process's life so the flock
+# survives until the process exits (the OS then releases it).
+_LOCKS: list[int] = []
+
+
+def _take_single_writer_lock(log: Path) -> None:
+    """Make the one-writer-per-usage-log invariant explicit (README).
+
+    Two proxies sharing a USAGE_LOG_DIR window their totals separately and can
+    reach about N×cap, and neither notices. Compose's fixed container_name
+    pins this in practice; this turns a hand-started second instance from a
+    silent doubling into a logged error. It does not exit: a stale or
+    misread lock must not leave the platform metering nothing."""
+    lock = log.with_name(log.name + ".lock")
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o644)
+    except OSError as exc:
+        logger.warning("cannot open the usage-log lock %s: %s", lock, exc)
+        return
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        try:
+            held = lock.read_text().strip()
+        except OSError:
+            held = ""
+        logger.error(
+            "another metering proxy already writes %s (pid %s); this instance "
+            "shares its log and the two rolling windows will diverge — one "
+            "writer per usage log, see deploy/metering-proxy/README.md",
+            log,
+            held or "unknown",
+        )
+        os.close(fd)
+        return
+    try:
+        os.truncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode())
+    except OSError:
+        pass
+    _LOCKS.append(fd)
+
+
 METER = Meter(USAGE_LOG, CAP_WINDOW_S)
+_take_single_writer_lock(USAGE_LOG)
 # The platform's Claude credential: the one thing that authenticates a
 # subscription request. Sessions never hold it. See PlatformCredential.
 CREDENTIAL = PlatformCredential(
@@ -129,11 +187,31 @@ CREDENTIAL = PlatformCredential(
         )
     )
 )
-CLAUDE_ACCOUNTS = ClaudeAccounts(CREDENTIAL)
+# The pool is published beside the ledger — the one directory the backend can
+# read (mounted read-only for usage ingest). Nothing else carries it: the
+# accounts exist only on this box. See ClaudeAccounts.snapshot.
+CLAUDE_ACCOUNTS = ClaudeAccounts(
+    CREDENTIAL, snapshot_path=USAGE_LOG.parent / "accounts.json"
+)
 
 
 def load(loader):
     install_retry()
+    # Publish once at start, so the board sees the pool from the moment the
+    # proxy is up rather than from the first model call after a restart.
+    CLAUDE_ACCOUNTS.snapshot()
+
+
+def _record_usage(project_id, topic_id, usage, model):
+    """Meter a turn, then refresh the pool the board reads.
+
+    The two belong together: the snapshot's `retry_after` is a countdown, so it
+    is only as fresh as the last write, and metering is the one thing that
+    happens on every served turn. Cooldown changes publish on their own (every
+    state change writes through `ClaudeAccounts._save`).
+    """
+    METER.record(project_id, topic_id, usage, model)
+    CLAUDE_ACCOUNTS.snapshot()
 
 
 # The proxy's own credential rides every admission call: only a caller holding
@@ -381,6 +459,10 @@ def _refuse(
     and nothing is held for the length of a turn, the body is consumed and
     dropped as soon as the refusal goes out.
     """
+    # Marked so the observers can tell this refusal apart from an answer the
+    # upstream itself gave: both leave a non-200 on a /v1/messages flow, and
+    # only the second one means a model call failed.
+    flow.metadata["cheese_refused_here"] = True
     flow.request.stream = False
     flow.response = http.Response.make(
         status,
@@ -480,12 +562,23 @@ def _leave_through_egress(flow: http.HTTPFlow, credential=None) -> bool:
         )
         return False
     if EGRESS_HEALTH.unreachable(egress):
+        # Marked so response() can record it: a turn that never made a model call
+        # is exactly what the run records could not show before (2026-10-12
+        # 07:12 UTC, #1447 — the room stalled and nothing was recorded).
+        flow.metadata["cheese_egress_offline"] = True
+        # Retryable, with a wait — not a give-up. An egress is far more often
+        # offline for a reboot or a dropped tunnel than for good, and the
+        # verdict here is re-taken every few seconds, so a turn that waits rides
+        # it out and answers. Telling the client not to retry ends the seat's
+        # whole reply instead, and the room then sits until a person wakes it
+        # (2026-10-12, #1451). `retry-after` is what makes the waiting cheap:
+        # the client pauses that long rather than backing off on its own.
         _refuse(
             flow,
             503,
             "api_error",
             EGRESS_OFFLINE_MESSAGE,
-            {"x-should-retry": "false"},
+            {"retry-after": str(EGRESS_OFFLINE_RETRY_AFTER_S)},
         )
         return False
     flow.server_conn.via = ("http", (egress.host, egress.port))
@@ -504,16 +597,27 @@ _REFUSED_EGRESS: dict[str, Egress] = {}
 _EGRESS_AUTH_BY_CLIENT: dict[str, str] = {}
 
 # What a turn is told when the machine its credential must leave through does
-# not answer. 503 with x-should-retry: false is the one answer Claude Code
-# gives up on at once; a 502 from a connection that never opened was retried
-# ten times, each attempt waiting out a TCP connect timeout, and the room sat
-# silent for minutes. The backend recognises the phrase "subscription egress
-# is offline" and shows its own notice for it (`platform_failures`), which
-# takes only short lines: Claude Code prints this inside the JSON error body.
+# not answer. 503 with a `retry-after`, so the client waits and asks again
+# rather than failing the turn: the machine is usually back within a turn. It
+# used to be `x-should-retry: false`, the one answer Claude Code gives up on at
+# once — right while an outage looked permanent, wrong for a reboot, and it cost
+# the seat its whole reply and needed a person to wake the room (2026-10-12,
+# #1451). The cost of waiting is that the room stays quiet until the turn either
+# answers or runs out of retry budget; that trade is deliberate.
+# The backend recognises the phrase "subscription egress is offline" and shows
+# its own notice for it (`platform_failures`), which takes only short lines:
+# Claude Code prints this inside the JSON error body.
 EGRESS_OFFLINE_MESSAGE = (
     "cheese: the subscription egress is offline, so no model call was made. "
     "It works again once that machine is back online."
 )
+#: How long a turn waits before asking again while no egress answers. The
+#: verdict on an offline egress is re-taken every EGRESS_DOWN_FOR_S seconds, so
+#: one wait already covers a machine that is back; the client's own retry budget
+#: (about three minutes of 5xx) covers the rest. Short enough that a machine
+#: returning from a reboot is used inside the same turn, long enough not to
+#: hammer a machine that is still away.
+EGRESS_OFFLINE_RETRY_AFTER_S = 30
 #: One attempt to open a connection to an egress may take this long. Over the
 #: tailnet a healthy one answers in well under a second.
 EGRESS_CONNECT_TIMEOUT_S = 4.0
@@ -1361,6 +1465,13 @@ def _route(
                 f"in the last {CAP_WINDOW_S // 3600}h",
             )
             return
+        if TOKEN_CAP > 0:
+            # Hold an estimate of this turn's cost while it runs, so turns
+            # admitted together cannot all pass on the same used()<cap and
+            # overshoot it together. Released in response()/error().
+            flow.metadata["cheese_cap_reservation"] = METER.reserve(
+                _reserve_estimate(flow, TOKEN_CAP)
+            )
         if verdict is not None:
             # The subscription pool serves the haiku family itself, so the
             # CLI's own background requests stay on it.
@@ -1390,26 +1501,221 @@ def _route(
             flow.request.stream = retain
 
 
-class GatewayStream(StreamingUsageExtractor):
-    """Reuse the bounded SSE line reader; retain only completion/error flags."""
+class StreamWatch(StreamingUsageExtractor):
+    """One streamed SSE response, as a run record has to be able to describe it.
 
-    def __init__(self) -> None:
-        super().__init__()
+    The bounded reader above does the parsing, and a metered lane reads the usage
+    it scrapes along the way. What every lane needs from a stream is the pair of
+    facts a drop is judged on: how many events arrived, and whether the SERVER
+    ever ended the body.
+
+    Those are two different questions — the gateway lane's failures are bodies
+    that ended without saying `message_stop` — so they are two flags, not one.
+    mitmproxy hands the tee an empty chunk on ResponseEndOfMessage and on nothing
+    else (proxy/layers/http, `state_stream_response_body`), so `mark_ended` is
+    only reached by a body that ended where HTTP says it ends; one that stops
+    under us — the caller gives up, the upstream connection dies, the proxy is
+    released — never gets there, and that is what makes it safe to act on a
+    failed answer without ever acting on a caller that has left.
+
+    `error_text` is the upstream's own words out of an SSE error event: kept no
+    longer than it takes to classify, and never reported (it can quote a
+    provider's response back at us).
+    """
+
+    def __init__(self, encoding: str = "") -> None:
+        super().__init__(encoding)
+        self.events = 0
         self.complete = False
         self.failed = False
+        self.ended = False
+        self.error_text = ""
+
+    def mark_ended(self) -> None:
+        """The tee was handed the sentinel: the server ended the body itself."""
+        self.ended = True
+        self.close()
 
     def _consume(self, raw: bytes) -> None:
+        # The usage scrape comes first and is NOT optional: this override shadows
+        # the base class's, and a turn that is metered wrong is a worse bug than
+        # an unrecorded drop. Everything below only observes.
+        super()._consume(raw)
         if not raw.startswith(b"data:"):
             return
         try:
             event = json.loads(raw[5:])
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            # The same bytes the metering tolerates. Its own `_consume` catches
+            # this pair; this one runs per line on the way past, so anything
+            # that escapes it escapes the tee and takes the response with it.
             return
-        if isinstance(event, dict):
-            self.complete |= event.get("type") == "message_stop"
-            self.failed |= event.get("type") == "error" or isinstance(
-                event.get("error"), dict
+        if not isinstance(event, dict):
+            return
+        self.events += 1
+        self.complete |= event.get("type") == "message_stop"
+        error = event.get("error")
+        if event.get("type") == "error" or isinstance(error, dict):
+            self.failed = True
+            said = error.get("message") if isinstance(error, dict) else None
+            if not self.error_text and isinstance(said, str):
+                self.error_text = said[:400]
+
+
+# How an upstream failure reads once nothing but its text is left — mitmproxy's
+# flow.error on the subscription lane, or the SSE error event LiteLLM relays on
+# the gateway lane. The same classes the gateway reads off the exception objects
+# (deploy/gateway/provider_http_timing.py), read here from the only thing this
+# proxy is left with. Ordered: a TLS failure is also a connection failure, and a
+# read timeout over a dead socket is still a timeout.
+_UPSTREAM_FAILURE_TEXT: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("dns", ("name or service not known", "getaddrinfo", "nodename nor servname", "dns")),
+    ("tls", ("certificate", "ssl", "tls")),
+    ("rate_limit", ("rate limit", "rate_limit", "too many requests", "429")),
+    (
+        "http_auth",
+        ("proxy authentication", "authentication required", "unauthorized"),
+    ),
+    ("timeout", ("timed out", "timeout")),
+    (
+        "transport",
+        (
+            "connection reset",
+            "connection closed",
+            "closed connection",
+            "server disconnected",
+            "peer closed",
+            "incomplete",
+            "protocol error",
+        ),
+    ),
+    (
+        "connection",
+        ("connection refused", "connect error", "connection error", "cannot connect"),
+    ),
+)
+
+
+def _failure_category(said: str) -> str:
+    low = said.lower()
+    for category, needles in _UPSTREAM_FAILURE_TEXT:
+        if any(needle in low for needle in needles):
+            return category
+    return "unknown"
+
+
+def _cut_reason(
+    flow: http.HTTPFlow, watch: StreamWatch | None
+) -> tuple[str, str]:
+    """(upstream failure class, which side ended the turn first).
+
+    mitmproxy leaves the reason in flow.error: "Client disconnected." when the
+    CALLER gave up (its http layer's ErrorCode.CLIENT_DISCONNECTED), the proxy's
+    own killed message when the proxy was released or restarted mid-turn, and the
+    upstream's message otherwise. What the model itself said is more specific than
+    any of those and wins when there is one.
+
+    The two halves are read apart by the record: the class says what to look up
+    on the upstream's status page, and who hung up first says whether this was a
+    model failure at all or a caller that had already given up. ``watch`` may be
+    None — a call that never got a response has no tee — and the flow's own
+    error is then the only evidence there is."""
+    said = getattr(getattr(flow, "error", None), "msg", "") or ""
+    low = said.lower()
+    if "client disconnected" in low:
+        return "", "client"
+    if "killed" in low:
+        return "", "proxy"
+    text = (watch.error_text if watch else "") or said
+    return _failure_category(text), "upstream"
+
+
+#: A model call, as the client writes it. A precise suffix rather than the
+#: substring other conditions in this file use: "/v1/messages/count_tokens"
+#: contains "/v1/messages" and is not a model call, and here that difference
+#: decides whether a failure is recorded as a lost turn.
+def _is_message_call(path: str) -> bool:
+    return path.split("?", 1)[0].rstrip("/").endswith("/v1/messages")
+
+
+def _answer_request_id(flow: http.HTTPFlow) -> str | None:
+    """Whatever id the answer carried, so a record can be joined to the
+    upstream's own: LiteLLM names its call, Anthropic names the request."""
+    resp = flow.response
+    if resp is None:
+        return None
+    return resp.headers.get("x-litellm-call-id") or resp.headers.get("request-id")
+
+
+# Bytes per token the reserve estimate assumes when it reads a buffered body.
+_BYTES_PER_TOKEN = 4
+
+
+def _reserve_estimate(flow: http.HTTPFlow, cap: int) -> int:
+    """What to hold against the cap while this turn runs.
+
+    Not the turn's cost — that is unknown until it ends — but a bound the
+    deployment can live with: the request body's own tokens when the body was
+    buffered, otherwise a sixteenth of the cap. Clamped to the cap so a single
+    turn never reserves the whole window and wedges everyone behind it."""
+    if CAP_RESERVE_TOKENS > 0:
+        return max(1, min(cap, CAP_RESERVE_TOKENS))
+    body = _buffered_body(flow)
+    estimate = len(body) // _BYTES_PER_TOKEN if body else cap // 16
+    return max(1, min(cap, estimate))
+
+
+def _buffered_body(flow: http.HTTPFlow) -> bytes:
+    """The request body only if it is already in memory, else b"".
+
+    A message request's body is streamed (see ``requestheaders``): reading a
+    streamed message's content here would pull the whole grown conversation
+    back into RAM, which is exactly what streaming it avoids."""
+    try:
+        return flow.request.raw_content or b""
+    except (AttributeError, ValueError):
+        return b""
+
+
+def _meter_subscription_stream(
+    flow: http.HTTPFlow, *, interrupted: bool = False
+) -> None:
+    """Land a subscription SSE turn on the meter exactly once.
+
+    mitmproxy drives the response stream's end-of-stream sentinel only on
+    ResponseEndOfMessage (proxy/layers/http, ``state_stream_response_body``).
+    A turn interrupted before that — the user aborts, the client disconnects,
+    an upstream drop, a release that recreates the proxy — never reaches the
+    sentinel, and its already-seen input_tokens and cache_creation (the bulk of
+    a turn's cost) would vanish silently. ``error()`` reaches here for exactly
+    those turns; ``extractor.recorded`` keeps a clean sentinel and a later
+    error on the same flow from metering twice.
+
+    Records through ``_record_usage``, not ``METER.record`` directly: the
+    account pool's snapshot is published on every recorded turn, and a turn
+    metered here is still a turn served."""
+    extractor = flow.metadata.get("cheese_sub_stream")
+    if extractor is None or extractor.recorded:
+        return
+    extractor.recorded = True
+    extractor.close()
+    project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
+    if extractor.usage:
+        _record_usage(project_id, topic_id, extractor.usage, extractor.model)
+        if interrupted:
+            logger.warning(
+                "subscription turn's stream was interrupted before its end; "
+                "metered the usage seen so far: %s",
+                extractor.usage,
             )
+    else:
+        # A turn that ran and cost nothing on the meter is the cap silently
+        # switched off; say so rather than skip it.
+        logger.warning(
+            "no usage found in a subscription message response "
+            "(content-encoding %r); the turn is not metered",
+            flow.metadata.get("cheese_sub_encoding", ""),
+        )
 
 
 def responseheaders(flow: http.HTTPFlow) -> None:
@@ -1422,7 +1728,11 @@ def responseheaders(flow: http.HTTPFlow) -> None:
     the SSE incrementally by a StreamingUsageExtractor as chunks pass through, so
     no full body is ever materialised. A non-streaming JSON message (small, and
     not held for the turn's duration) is left buffered so response() can meter it
-    the simple way. Everything else just streams straight through."""
+    the simple way. Everything else just streams straight through.
+
+    The extractor is left on the flow: a stream that is interrupted never
+    reaches this tee's end-of-stream sentinel, so error() has to land its
+    usage instead (see `_meter_subscription_stream`)."""
     resp = flow.response
     if resp is None:
         return
@@ -1460,14 +1770,14 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         if "/v1/messages" in flow.request.path and "event-stream" in resp.headers.get(
             "content-type", ""
         ):
-            extractor = GatewayStream()
+            extractor = StreamWatch()
             flow.metadata["cheese_gateway_stream"] = extractor
 
             def observe(chunk: bytes) -> bytes:
                 if chunk:
                     extractor.feed(chunk)
-                else:
-                    extractor.close()
+                else:  # end-of-stream sentinel: the gateway ended the body
+                    extractor.mark_ended()
                 return chunk
 
             resp.stream = observe
@@ -1476,25 +1786,19 @@ def responseheaders(flow: http.HTTPFlow) -> None:
         return
     is_message_200 = "/v1/messages" in flow.request.path and resp.status_code == 200
     if is_message_200 and "event-stream" in resp.headers.get("content-type", ""):
-        project_id, topic_id = flow.metadata.get("cheese_attr") or ("", "")
         encoding = resp.headers.get("content-encoding", "")
-        extractor = StreamingUsageExtractor(encoding)
+        extractor = StreamWatch(encoding)
+        # Kept on the flow so error() can land an interrupted turn's usage too,
+        # and so the encoding survives into the "not metered" warning.
+        flow.metadata["cheese_sub_stream"] = extractor
+        flow.metadata["cheese_sub_encoding"] = encoding
 
         def tee(chunk: bytes) -> bytes:
             if chunk:
                 extractor.feed(chunk)
             else:  # end-of-stream sentinel
-                extractor.close()
-                if extractor.usage:
-                    METER.record(project_id, topic_id, extractor.usage, extractor.model)
-                else:
-                    # A turn that ran and cost nothing on the meter is the cap
-                    # silently switched off; say so rather than skip it.
-                    logger.warning(
-                        "no usage found in a subscription message response "
-                        "(content-encoding %r); the turn is not metered",
-                        encoding,
-                    )
+                extractor.mark_ended()
+                _meter_subscription_stream(flow)
             return chunk
 
         resp.stream = tee
@@ -1540,6 +1844,8 @@ def _log_gateway_timing(flow: http.HTTPFlow) -> None:
                 "failed": bool(getattr(flow, "error", None))
                 or bool(stream and (stream.failed or not stream.complete)),
                 "stream_complete": stream.complete if stream else None,
+                "stream_ended": stream.ended if stream else None,
+                "stream_events": stream.events if stream else None,
                 "error_type": type(flow.error).__name__
                 if getattr(flow, "error", None)
                 else None,
@@ -1548,53 +1854,25 @@ def _log_gateway_timing(flow: http.HTTPFlow) -> None:
     )
 
 
+#: Model-failure reports in flight at once. A burst must not grow a thread per
+#: turn, so anything past this is dropped with a warning.
+_FAILURE_REPORT_CAPACITY = 8
 _failure_reports: set[asyncio.Task] = set()
 
 
-def _report_gateway_failure(flow: http.HTTPFlow) -> None:
-    """Report model failures through the existing authenticated error intake.
+def _post_backend_errors(project: str, topic: str, errors: list[dict]) -> None:
+    """Hand model failures to the backend's authenticated error intake.
 
-    A clean HTTP 200 can contain an SSE error or end before message_stop.
-    Client disconnects use error(), not response(), and are not model failures.
-    Reporting must not hold up the stream or retain request/response contents.
+    Fire and forget. What is posted is scalars about how a turn ended — never a
+    body, a header, a prompt or a credential.
     """
-    resp = flow.response
-    if resp is None or "/v1/messages" not in flow.request.path:
-        return
-    stream = flow.metadata.get("cheese_gateway_stream")
-    if resp.status_code >= 500 or resp.status_code in (401, 403):
-        kind, message = (
-            "GatewayHTTPError",
-            f"Model gateway returned HTTP {resp.status_code}",
-        )
-    elif stream and (stream.failed or not stream.complete):
-        kind, message = (
-            "GatewayStreamError",
-            "Model response stream failed before completion",
-        )
-    else:
-        return
-    project, topic = flow.metadata.get("cheese_attr") or ("", "")
-    request_id = resp.headers.get("x-litellm-call-id")
-    logger.error("%s: %s (request_id=%s)", kind, message, request_id)
     if not ADMISSION_URL or not SCOPED_SECRET or not project or not topic:
         return
-    if len(_failure_reports) >= 8:
+    if len(_failure_reports) >= _FAILURE_REPORT_CAPACITY:
         logger.warning("model failure report capacity exceeded")
         return
     body = json.dumps(
-        {
-            "project_id": project,
-            "topic_id": topic,
-            "errors": [
-                {
-                    "message": message,
-                    "exc_type": kind,
-                    "where": "model gateway",
-                    "request_id": request_id,
-                }
-            ],
-        }
+        {"project_id": project, "topic_id": topic, "errors": errors}
     ).encode()
     endpoint = ADMISSION_URL.removesuffix("/llm/admission") + "/backend-errors"
 
@@ -1617,9 +1895,228 @@ def _report_gateway_failure(flow: http.HTTPFlow) -> None:
             # Do not print an HTTP error body: it may echo credentials.
             logger.warning("model failure report could not reach backend")
 
-    task = asyncio.create_task(report())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        # No event loop to post from. Never worth an exception: a record is
+        # useful, a proxy that dies while recording one is not.
+        logger.warning("model failure report skipped: no running event loop")
+        return
+    task = loop.create_task(report())
     _failure_reports.add(task)
     task.add_done_callback(_failure_reports.discard)
+
+
+#: What a cut stream is recorded as, in both lanes. Kept free of numbers on
+#: purpose: the intake fingerprints a record on its message, so a count baked in
+#: here would turn one recurring failure into a brand new one every time the cut
+#: landed somewhere else. How many events had already gone out is a field of its
+#: own (``received_events``), which the record page can show without splitting it.
+#:
+#: "partial output is not replayed" is a decision, not a description of what
+#: happened: events already forwarded to the caller can carry tool calls it has
+#: run, and asking the model again would run them twice. Checked on 2026-10-12:
+#: nothing resumes a partial answer today — ``deploy/gateway/retry_stream.py``
+#: only holds a retry's HTTP client open, it does not continue one.
+_CUT_STREAM_MESSAGE = (
+    "Model response stream was cut before the upstream ended it; "
+    "partial output is not replayed"
+)
+
+
+def _report_cut_turn(
+    flow: http.HTTPFlow,
+    key: str,
+    kind: str,
+    where: str,
+) -> None:
+    """Record a turn whose answer stream stopped short of its end. Both hooks.
+
+    mitmproxy treats ``response`` and ``error`` as alternatives per flow, but not
+    as an either-or that covers the flow: a caller hanging up mid-answer runs
+    ``error``, and the flow can still reach ``response`` afterwards if the
+    upstream then ends the body (its http layer runs the response hook from
+    ``send_response``, which the error path did not consume). So both hooks call
+    in, and ``cheese_turn_reported`` keeps one flow to one record — from
+    whichever hook saw the failure first.
+
+    A stream that ended properly, after message_stop, is not a failure. Neither
+    is a flow that carries no stream at all: those go to ``_report_lost_call``.
+    """
+    watch = flow.metadata.get(key)
+    if watch is None or flow.metadata.get("cheese_turn_reported"):
+        return
+    if watch.ended and watch.complete and not watch.failed:
+        return
+    upstream, ended_by = _cut_reason(flow, watch)
+    if ended_by == "client":
+        # The caller gave up first. Recorded — this is the shape that used to
+        # leave no trace at all — but named as what it is, so it is not counted
+        # as a model failure the room has to act on.
+        record = {
+            "message": "The caller disconnected before the answer finished",
+            "exc_type": "ClientAbandonedTurn",
+            "where": where,
+            "request_id": _answer_request_id(flow),
+            "received_events": watch.events,
+            "ended_by": "client",
+        }
+    else:
+        record = {
+            "message": _CUT_STREAM_MESSAGE,
+            "exc_type": kind,
+            "where": where,
+            "request_id": _answer_request_id(flow),
+            "received_events": watch.events,
+            "upstream_failure": upstream or None,
+            "ended_by": ended_by,
+        }
+    flow.metadata["cheese_turn_reported"] = True
+    logger.warning(
+        "%s: %s (ended_by=%s events=%s upstream=%s request_id=%s)",
+        record["exc_type"],
+        where,
+        record["ended_by"],
+        record["received_events"],
+        record.get("upstream_failure") or "-",
+        record["request_id"],
+    )
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    _post_backend_errors(project, topic, [record])
+
+
+def _report_lost_call(flow: http.HTTPFlow, kind: str, where: str) -> None:
+    """Record a model call that never got as far as a stream — the other half
+    of what the gateway lane used to swallow.
+
+    Only ``error`` sees these. A request that fails on its way out — the gateway
+    not resolvable or not accepting connections, the subscription upstream out
+    of reach — leaves no response for the response hook to describe, so the turn
+    failed in silence. A caller giving up before the answer also leaves no
+    response, and is left alone: nothing tells it apart from an ordinary
+    cancelled request, and recording every cancelled request would bury the
+    drops.
+    """
+    if (
+        flow.response is not None
+        or flow.metadata.get("cheese_turn_reported")
+        or not _is_message_call(flow.request.path)
+    ):
+        return
+    upstream, ended_by = _cut_reason(flow, None)
+    if ended_by == "client":
+        return
+    flow.metadata["cheese_turn_reported"] = True
+    record: dict = {
+        "message": f"The model was never reached: {kind}",
+        "exc_type": kind,
+        "where": where,
+        "request_id": flow.id,
+        "ended_by": ended_by,
+    }
+    if upstream:
+        record["upstream_failure"] = upstream
+    logger.warning(
+        "%s: %s (ended_by=%s upstream=%s flow=%s)",
+        kind,
+        where,
+        ended_by,
+        upstream or "-",
+        flow.id,
+    )
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    _post_backend_errors(project, topic, [record])
+
+
+def _report_gateway_failure(flow: http.HTTPFlow) -> None:
+    """Report a gateway-lane model failure through the existing error intake.
+
+    A clean HTTP 200 can contain an SSE error or end before message_stop, so the
+    status code alone never answered "did the model answer". What does:
+
+    * a 5xx, 401 or 403 is the gateway's own answer, and is recorded as such;
+    * a streaming 200 is checked by ``_report_cut_turn`` against the stream the
+      tee watched — including the cut that leaves ``failed`` False and
+      ``complete`` False because not one event ever arrived, which used to be
+      reported as no failure at all;
+    * a body cut mid-flight never reaches this hook: mitmproxy raises the
+      protocol error instead and runs ``error``.
+    """
+    resp = flow.response
+    if resp is None or not _is_message_call(flow.request.path):
+        return
+    if resp.status_code >= 500 or resp.status_code in (401, 403):
+        auth = resp.status_code in (401, 403)
+        record = {
+            "message": f"Model gateway returned HTTP {resp.status_code}",
+            "exc_type": "GatewayHTTPError",
+            "where": "model gateway",
+            "request_id": _answer_request_id(flow),
+            "upstream_failure": "http_auth" if auth else "http_error",
+            "ended_by": "gateway",
+        }
+        flow.metadata["cheese_turn_reported"] = True
+        logger.error("%s: %s", record["exc_type"], record["message"])
+        project, topic = flow.metadata.get("cheese_attr") or ("", "")
+        _post_backend_errors(project, topic, [record])
+        return
+    _report_cut_turn(
+        flow, "cheese_gateway_stream", "GatewayStreamError", "model gateway"
+    )
+
+
+def _report_subscription_refusal(flow: http.HTTPFlow) -> None:
+    """Record a subscription turn that never reached the model, or that the
+    upstream refused.
+
+    The subscription lane had no observer at all before this: a turn that made
+    no model call left nothing anywhere to read, which is how a 503 that stopped
+    a whole room went into nobody's records (2026-10-12 07:12 UTC, #1447).
+    """
+    resp = flow.response
+    if resp is None or not _is_message_call(flow.request.path):
+        return
+    if flow.metadata.get("cheese_egress_offline"):
+        exc_type, category = "SubscriptionEgressOffline", "egress_offline"
+        message = "The subscription egress was offline, so no model call was made"
+    elif flow.metadata.get("cheese_refused_here"):
+        # A refusal of our own — the cap, a missing credential, a malformed
+        # request. The client was answered, nothing was dropped, and recording
+        # these would bury the drops.
+        return
+    elif resp.status_code == 429:
+        exc_type, category = "SubscriptionRateLimited", "rate_limit"
+        message = "The subscription upstream rate-limited the turn"
+    elif resp.status_code in (401, 403):
+        exc_type, category = "SubscriptionHTTPError", "http_auth"
+        message = "The subscription upstream refused the platform's credential"
+    elif resp.status_code >= 500:
+        exc_type, category = "SubscriptionHTTPError", "http_error"
+        message = "The subscription upstream returned a server error"
+    else:
+        return
+    flow.metadata["cheese_turn_reported"] = True
+    logger.warning(
+        "%s: %s (status=%s flow=%s)",
+        exc_type,
+        "model subscription",
+        resp.status_code,
+        flow.id,
+    )
+    project, topic = flow.metadata.get("cheese_attr") or ("", "")
+    _post_backend_errors(
+        project,
+        topic,
+        [
+            {
+                "message": message,
+                "exc_type": exc_type,
+                "where": "model subscription",
+                "request_id": _answer_request_id(flow) or flow.id,
+                "upstream_failure": category,
+            }
+        ],
+    )
 
 
 def _answer_a_missed_binding(flow: http.HTTPFlow) -> bool:
@@ -1728,8 +2225,25 @@ def error(flow: http.HTTPFlow) -> None:
     if attempt:
         CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
         attempt.close()
+    # This flow is over, whichever way it ended: drop its cap reservation. The
+    # SSE path released its own reservation in response(); a turn that errored
+    # before ever responding has one to drop here.
+    METER.release(flow.metadata.pop("cheese_cap_reservation", None))
     if flow.metadata.get("cheese_pool") == GATEWAY:
         _log_gateway_timing(flow)
+        _report_cut_turn(
+            flow, "cheese_gateway_stream", "GatewayStreamError", "model gateway"
+        )
+        _report_lost_call(flow, "GatewayUnreachable", "model gateway")
+    else:
+        # A subscription stream interrupted before its end never reached the
+        # tee's sentinel; meter whatever it did produce.
+        _meter_subscription_stream(flow, interrupted=True)
+        if not flow.metadata.get("cheese_chatgpt_account"):
+            _report_cut_turn(
+                flow, "cheese_sub_stream", "SubscriptionStreamError", "model subscription"
+            )
+            _report_lost_call(flow, "SubscriptionUnreachable", "model subscription")
     chatgpt_account = flow.metadata.get("cheese_chatgpt_account")
     via = getattr(flow.server_conn, "via", None)
     if chatgpt_account and via:
@@ -1759,6 +2273,10 @@ def response(flow: http.HTTPFlow) -> None:
     if attempt:
         CLAUDE_ACCOUNTS.release(attempt.account, flow.id)
         attempt.close()
+    # The turn is over: whatever it reserved against the cap is no longer in
+    # flight. (An SSE turn metered itself at its sentinel; a non-streaming JSON
+    # message is metered further down this function.)
+    METER.release(flow.metadata.pop("cheese_cap_reservation", None))
     if _answer_a_missed_binding(flow):
         return
     if flow.metadata.get("cheese_chatgpt_turn") and flow.response is not None:
@@ -1771,6 +2289,20 @@ def response(flow: http.HTTPFlow) -> None:
             return
         _report_gateway_failure(flow)
         return
+    # A subscription turn that never reached the model, or that the upstream
+    # refused, is recorded before anything else looks at the body: the metering
+    # below only ever sees 200s.
+    if flow.response is not None and flow.response.status_code != 200:
+        _report_subscription_refusal(flow)
+    elif (
+        flow.metadata.get("cheese_sub_stream") is not None
+        and "event-stream" in flow.response.headers.get("content-type", "")
+    ):
+        # The upstream ended the body itself — but without finishing the answer.
+        # `_report_cut_turn` lets a stream that ended after message_stop pass.
+        _report_cut_turn(
+            flow, "cheese_sub_stream", "SubscriptionStreamError", "model subscription"
+        )
     # SSE turns are metered incrementally in the responseheaders streaming tee;
     # the only body still buffered here is a non-streaming JSON message.
     if "/v1/messages" not in flow.request.path or not flow.response:
@@ -1786,4 +2318,4 @@ def response(flow: http.HTTPFlow) -> None:
         return
     usage, model = payload.get("usage", {}), payload.get("model", "")
     if usage:
-        METER.record(project_id, topic_id, usage, model)
+        _record_usage(project_id, topic_id, usage, model)

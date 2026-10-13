@@ -46,6 +46,11 @@ from app.domain.task.submission_state import (
     refresh_completion_status,
     refresh_completion_status_for_submission,
 )
+
+# Moved to ``task_service`` to keep this module under its size cap; re-exported
+# so ``from app.domain.task.services import TaskService`` still resolves (and it
+# is used below by ``ensure_task_visible_for_ordinary_user``).
+from app.domain.task.task_service import TaskService
 from app.domain.task.visibility_service import TaskVisibilityService
 from app.domain.team.models import Team
 from app.domain.user.repositories import UserRealNameRepository
@@ -64,100 +69,6 @@ class _FallbackTeam:
     avatar_id: int | None
 
 
-class TaskService:
-    def __init__(self, repo: TaskRepository) -> None:
-        self._repo = repo
-
-    async def get_task(self, task_id: int) -> Task | None:
-        return await self._repo.get_by_id(task_id)
-
-    @classmethod
-    def of(cls, session: AsyncSession) -> "TaskService":
-        return cls(TaskRepository(session=session))
-
-    async def list_joined(self, user_id: int, *, limit: int = 30) -> Sequence[Task]:
-        """The tasks ``user_id`` takes part in, across every space."""
-        return await self._repo.list_joined(user_id, limit=limit)
-
-    async def enumerate_tasks(
-        self,
-        *,
-        space_id: int,
-        category_id: int | None = None,
-        approved: int | None = None,
-        owner_id: int | None = None,
-        keywords: str | None = None,
-        topics: Sequence[int] | None = None,
-        joined: bool | None = None,
-        current_user_id: int | None = None,
-        viewer_user_id: int | None = None,
-        viewer_email_domain: str | None = None,
-        viewer_is_space_admin: bool = False,
-        apply_space_task_visibility: bool = False,
-        visible_task_limit: int | None = None,
-        lifecycle: str | None = None,
-        limit: int = 20,
-        offset: int = 0,
-        sort_by: str = "publishedAt",
-        sort_order: str = "desc",
-    ) -> Sequence[Task]:
-        return await self._repo.list_tasks(
-            space_id=space_id,
-            category_id=category_id,
-            approved=approved,
-            owner_id=owner_id,
-            keywords=keywords,
-            topics=topics,
-            joined=joined,
-            current_user_id=current_user_id,
-            viewer_user_id=viewer_user_id,
-            viewer_email_domain=viewer_email_domain,
-            viewer_is_space_admin=viewer_is_space_admin,
-            apply_space_task_visibility=apply_space_task_visibility,
-            visible_task_limit=visible_task_limit,
-            lifecycle=lifecycle,
-            limit=limit,
-            offset=offset,
-            sort_by=sort_by,
-            sort_order=sort_order,
-        )
-
-    async def count_tasks(
-        self,
-        *,
-        space_id: int,
-        category_id: int | None = None,
-        approved: int | None = None,
-        owner_id: int | None = None,
-        keywords: str | None = None,
-        topics: Sequence[int] | None = None,
-        joined: bool | None = None,
-        current_user_id: int | None = None,
-        viewer_user_id: int | None = None,
-        viewer_email_domain: str | None = None,
-        viewer_is_space_admin: bool = False,
-        apply_space_task_visibility: bool = False,
-        visible_task_limit: int | None = None,
-        lifecycle: str | None = None,
-    ) -> int:
-        return await self._repo.count_tasks(
-            space_id=space_id,
-            category_id=category_id,
-            approved=approved,
-            owner_id=owner_id,
-            keywords=keywords,
-            topics=topics,
-            joined=joined,
-            current_user_id=current_user_id,
-            viewer_user_id=viewer_user_id,
-            viewer_email_domain=viewer_email_domain,
-            viewer_is_space_admin=viewer_is_space_admin,
-            apply_space_task_visibility=apply_space_task_visibility,
-            visible_task_limit=visible_task_limit,
-            lifecycle=lifecycle,
-        )
-
-
 class TaskMembershipService:
     def __init__(
         self,
@@ -172,6 +83,25 @@ class TaskMembershipService:
         self._space_repo = space_repo
         self._space_rank_repo = space_rank_repo
         self._team_repo = team_repo
+
+    @classmethod
+    def of(
+        cls,
+        session: AsyncSession,
+        *,
+        realname_repo: UserRealNameRepository | None = None,
+        space_repo: SpaceRepository | None = None,
+        space_rank_repo: SpaceUserRankRepository | None = None,
+        team_repo: "TeamRepository | None" = None,
+    ) -> "TaskMembershipService":
+        """路由工厂用的构造：同域的成员仓库在这里建，跨域的由调用方传进来。"""
+        return cls(
+            repo=TaskMembershipRepository(session=session),
+            realname_repo=realname_repo,
+            space_repo=space_repo,
+            space_rank_repo=space_rank_repo,
+            team_repo=team_repo,
+        )
 
     async def list_memberships_for_task(
         self,
@@ -770,6 +700,24 @@ class TaskSubmissionService:
         # 单元测试那种「四个仓库全是 AsyncMock」的构造：那里没有库可写，也就不推。
         self._session = session
 
+    @classmethod
+    def of(
+        cls,
+        session: AsyncSession,
+        *,
+        attachments: AttachmentService,
+    ) -> "TaskSubmissionService":
+        """路由工厂用的构造：同域的四个仓库在这里建，附件服务由调用方传进来。"""
+        return cls(
+            submission_repo=TaskSubmissionRepository(session=session),
+            entry_repo=TaskSubmissionEntryRepository(session=session),
+            review_repo=TaskSubmissionReviewRepository(session=session),
+            membership_repo=TaskMembershipRepository(session=session),
+            schema_repo=TaskSubmissionSchemaRepository(session=session),
+            attachments=attachments,
+            session=session,
+        )
+
     async def _build_member_summary(self, membership: TaskMembership) -> dict:
         """Build a minimal TaskParticipantSummaryDTO-like dict."""
         return {
@@ -1191,6 +1139,23 @@ class TaskSubmissionReviewService:
         # 行。路由工厂永远传 session；为 None 只在单元测试那种全 AsyncMock 的构造里
         # 出现，那里没有库可写。
         self._session = session
+
+    @classmethod
+    def of(
+        cls,
+        session: AsyncSession,
+        *,
+        rank_service: SpaceRankService | None = None,
+    ) -> "TaskSubmissionReviewService":
+        """路由工厂用的构造：同域的四个仓库在这里建，排名服务由调用方传进来。"""
+        return cls(
+            review_repo=TaskSubmissionReviewRepository(session=session),
+            submission_repo=TaskSubmissionRepository(session=session),
+            membership_repo=TaskMembershipRepository(session=session),
+            task_repo=TaskRepository(session=session),
+            rank_service=rank_service,
+            session=session,
+        )
 
     async def get_review_dto(self, submission_id: int) -> dict:
         review = await self._review_repo.get_by_submission_id(submission_id)

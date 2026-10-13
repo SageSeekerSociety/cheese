@@ -1,14 +1,18 @@
 // 任务页要的那份任务：它本身、负责人能做的几件事（开始、转交、关闭）、做它的电脑，
 // 以及「与开始时相比」。对话不在这里：任务的对话就是房间那一栏，换了一段会话来读。
 import type { RoomTask, TopicMemberRow } from '@/cx_types'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { Environment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
-import { ApiError, getTopicComputeProfile } from '@/api'
-import { closeTask, compareDocumentVersions, getTask, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
+import { ApiError, setEnvironmentDefault, setSessionEnvironment } from '@/api'
+import { closeTask, compareDocumentVersions, renameTask, reopenTask, startTask, updateTask } from '@/api/tasks'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { environmentQuery, roomTaskQuery } from '@/query/room'
 
 export interface TaskComparison {
   before: string
@@ -17,31 +21,44 @@ export interface TaskComparison {
 
 export function useTaskPage(opts: { taskId: () => string | undefined; people: () => TopicMemberRow[] }) {
   const ME = myHandle()
-  const task = ref<RoomTask | null>(null)
-  const loading = ref(false)
-  const loadError = ref<string | null>(null)
+  // 别处已经读过这一件（侧栏、任务清单、对话里那一块带着的）就先照着它画，读回来再原地
+  // 换——不先清空成一个转圈（`query/room`）。
+  const read = useQuery(
+    computed(() => {
+      const id = opts.taskId() ?? ''
+      return { ...roomTaskQuery(id), enabled: !!id }
+    }),
+    queryClient
+  )
+  const task = computed<RoomTask | null>(() => read.data.value ?? null)
+  const loading = computed(() => !!opts.taskId() && read.isPending.value)
+  const loadError = computed<string | null>(() => {
+    const e = read.error.value
+    if (!e || read.data.value) return null
+    return e instanceof ApiError && e.status === 404 ? t('work.task.notFound') : t('work.task.loadFailed')
+  })
 
-  async function load(silent = false) {
-    const id = opts.taskId()
-    if (!id) return
-    if (!silent) loading.value = true
-    loadError.value = null
-    try {
-      const payload = await getTask(id)
-      if (opts.taskId() === id) task.value = payload
-    } catch (e) {
-      if (opts.taskId() !== id) return
-      loadError.value = e instanceof ApiError && e.status === 404 ? t('work.task.notFound') : t('work.task.loadFailed')
-    } finally {
-      if (opts.taskId() === id) loading.value = false
-    }
+  /**
+   * 改动的回答就是更新的那一份，整行：直接写进去。正在路上的那次读是改之前发出的，
+   * 作废。第一次读还没回来时（页面先照着清单里那一行画的）也写：这一行就是此刻的样子。
+   */
+  async function apply(changed: RoomTask) {
+    const key = keys.roomTask(changed.id)
+    await queryClient.cancelQueries({ queryKey: key, exact: true })
+    queryClient.setQueryData<RoomTask>(key, (held) => ({ ...held, ...changed }))
   }
 
+  /**
+   * 再读一次这件任务。`changed`：刚有了会改变它的事（推送说任务变了、一轮做完），正在
+   * 路上的那次读是那之前发出的，作废另读；否则正在读的那一次还没回来就等它。
+   */
+  async function load(changed = false) {
+    if (opts.taskId()) await read.refetch({ cancelRefetch: changed })
+  }
+
+  /** 换到另一件任务：上一件的报错、比较、电脑都不带过来。 */
   function reset() {
-    task.value = null
-    loadError.value = null
-    machine.value = null
-    machineError.value = false
+    machineWanted.value = false
     comparing.value = false
     comparison.value = null
     startError.value = null
@@ -66,7 +83,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     starting.value = true
     startError.value = null
     try {
-      task.value = { ...task.value, ...(await startTask(task.value.id, reviewer)) }
+      await apply(await startTask(task.value.id, reviewer))
     } catch (e) {
       startError.value = e instanceof ApiError && e.message ? e.message : t('work.task.startFailed')
     } finally {
@@ -80,7 +97,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value) return false
     actionError.value = null
     try {
-      task.value = { ...task.value, ...(await closeTask(task.value.id, conclusion.trim() || undefined)) }
+      await apply(await closeTask(task.value.id, conclusion.trim() || undefined))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -91,7 +108,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value) return false
     actionError.value = null
     try {
-      task.value = { ...task.value, ...(await reopenTask(task.value.id)) }
+      await apply(await reopenTask(task.value.id))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -102,7 +119,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value || !owner) return false
     actionError.value = null
     try {
-      task.value = { ...task.value, ...(await updateTask(task.value.id, { owner_handle: owner })) }
+      await apply(await updateTask(task.value.id, { owner_handle: owner }))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -116,7 +133,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value || !name) return false
     actionError.value = null
     try {
-      task.value = { ...task.value, ...(await renameTask(task.value.id, name)) }
+      await apply(await renameTask(task.value.id, name))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -129,7 +146,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     if (!task.value) return false
     actionError.value = null
     try {
-      task.value = { ...task.value, ...(await updateTask(task.value.id, { contributor_handles: handles })) }
+      await apply(await updateTask(task.value.id, { contributor_handles: handles }))
       return true
     } catch (e) {
       actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
@@ -137,17 +154,43 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     }
   }
 
-  // ---- 做它的电脑：负责人那一格点开时才读 ----
-  const machine = ref<TopicComputeProfile | null>(null)
-  const machineError = ref(false)
+  // ---- 做这件事的队友：负责人换；不选（null）就是跟着房间的那位 ----
+  async function setAgent(handle: string | null): Promise<boolean> {
+    if (!task.value) return false
+    actionError.value = null
+    try {
+      await apply(await updateTask(task.value.id, { agent_handle: handle }))
+      return true
+    } catch (e) {
+      actionError.value = e instanceof ApiError && e.message ? e.message : t('work.task.actionFailed')
+      return false
+    }
+  }
+
+  // ---- 它的会话在哪个环境里：负责人那一格点开时才读（和房间名册同一份）----
+  const machineWanted = ref(false)
+  const machineRead = useQuery(
+    computed(() => {
+      const id = task.value?.id ?? ''
+      return { ...environmentQuery(id), enabled: !!id && machineWanted.value }
+    }),
+    queryClient
+  )
+  const machine = computed<TopicEnvironment | null>(() => (machineWanted.value ? machineRead.data.value ?? null : null))
+  const machineError = computed(() => machineWanted.value && machineRead.isError.value)
+  // 它的会话各换各的环境；「新会话默认」只管以后开工的。
+  function setMachine(sessionId: string, env: Environment) {
+    if (!task.value) return Promise.resolve({})
+    return setSessionEnvironment(task.value.id, sessionId, env)
+  }
+  function setMachineDefault(env: Environment) {
+    if (!task.value) return Promise.resolve({})
+    return setEnvironmentDefault(task.value.id, env)
+  }
   async function loadMachine() {
     if (!task.value) return
-    machineError.value = false
-    try {
-      machine.value = await getTopicComputeProfile(task.value.id)
-    } catch {
-      machineError.value = true
-    }
+    if (!machineWanted.value) machineWanted.value = true
+    else await machineRead.refetch()
   }
 
   // ---- 与开始时相比 ----
@@ -181,6 +224,7 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     isOwner,
     takesPart,
     setCollaborators,
+    setAgent,
     isOpen,
     people,
     starting,
@@ -194,6 +238,8 @@ export function useTaskPage(opts: { taskId: () => string | undefined; people: ()
     machine,
     machineError,
     loadMachine,
+    setMachine,
+    setMachineDefault,
     comparing,
     comparison,
     compareError,

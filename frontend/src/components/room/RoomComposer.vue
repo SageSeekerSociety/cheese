@@ -20,8 +20,8 @@ import { computed, nextTick, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
-import { vGuideAnchor } from '@/composables/useStartGuide'
 
 import { pastedTextName } from '../../lib/attachments'
 import {
@@ -29,6 +29,7 @@ import {
   mentionsAgent as containsAgentMention,
   withAgentMention as addAgentMention,
 } from '../../lib/composerMentions'
+import { searchLibraryFiles } from '../../lib/libraryApi'
 import { myHandle } from '../../me'
 
 import ComposerActions from './ComposerActions.vue'
@@ -42,6 +43,12 @@ import i18n, { t } from '@/i18n'
 
 const props = defineProps<{
   topic: Topic | null
+  /**
+   * 项目本体那一栏的输入框：界面导览指的是它（登记 `composer-input` /
+   * `composer-summon`）。支线、任务里的输入框不登记，否则后挂上的那只会把名字抢走，
+   * 导览就圈着旁边那栏的输入框。
+   */
+  guided?: boolean
   /** @ 得到的人：这个房间里的，加上项目里还没进这个房间的。 */
   mentionPool: MentionPoolEntry[]
   /** @ 得到的话题，用来把「@话题名」展开成 <#id>。 */
@@ -51,6 +58,8 @@ const props = defineProps<{
   agentName: string
   /** 和芝士私聊：每条都是说给它听的，没有「交给它」这颗按钮。 */
   alwaysSummon: boolean
+  /** 和 AI 队友私聊时为 false：只有它一位，⌘/Ctrl+Enter 没有可交的人，就是发送。 */
+  handOff?: boolean
   /** 输入框那一行提示语。 */
   hint: string
   /** 已经传上去、等着跟下一条一起发出去的附件。 */
@@ -174,6 +183,9 @@ const picker = useRoomMentionPicker({
   topicList: () => props.topicList,
   focus: () => composerInput.value?.focus?.(),
   onAddLibraryFile: (path) => emit('add-library-file', path),
+  // 资料库那一级的数据从这里进去：这个件本来就够得着接口层（它还要发、还要传，
+  // 见 `lib/attachments.ts`），composable 本身够不着，也不该够着。
+  listLibrary: searchLibraryFiles,
   // ↑/↓ 换完之后把那一项滚进视野。菜单自己有高度上限、自己滚，所以这件事问它。
   scrollActiveIntoView: () => mentionMenu.value?.scrollActiveIntoView(),
 })
@@ -231,6 +243,15 @@ function mentionsAgent(expanded: string): boolean {
 const summonOn = computed(() => props.alwaysSummon || mentionsAgent(expandMentions(draft.value)))
 // 这个房间的芝士是谁，现在知道了吗。
 const summonReady = computed(() => props.agentSeat !== null)
+// ⌘/Ctrl+Enter「发送并交给它」：和 AI 队友私聊时没有可交的人，这个组合键就是发送，
+// 提示也不说交给谁。任务里照旧有：那里的 @ 选的是这件事交给哪一位。
+const handOff = computed(() => summonReady.value && props.handOff !== false)
+const keysTitle = computed(() => {
+  if (!enterSends.value) return t('work.room.composer.pasteHint')
+  return handOff.value
+    ? t('work.room.composer.keysHint', { name: props.agentName })
+    : t('work.room.composer.keysHintSend')
+})
 
 // 名册还没到的时候不能替人写这个 @：召唤与否是浏览器按**能不能把名字解析成
 // handle** 算出来的，此刻解析不出来，写进去的 @ 只是一行字，消息照发、它照样不
@@ -321,7 +342,7 @@ function onComposerKey(e: KeyboardEvent) {
   if (!t || t.tagName !== 'TEXTAREA' || document.activeElement !== t) return
   // ⌘/Ctrl+Enter = 发送并交给芝士，正文里一个 @ 都不用打。判断排在 @-菜单前面：
   // 打到一半的 @ 不该把这个已经说清楚的「交给它」变成一次选人。
-  if ((e.metaKey || e.ctrlKey) && summonReady.value) {
+  if ((e.metaKey || e.ctrlKey) && handOff.value) {
     e.preventDefault()
     sendDraft({ summon: true })
     return
@@ -423,7 +444,7 @@ defineExpose({
     <!-- 输入区是一个控件，不是浮在页面上的几个零件：一个圆角描边的盒子把
              「待发的图片 + 输入框 + 动作」框成一块。盒子自己就是和时间线之间的
              分隔，所以上面那条 divider 没了。 -->
-    <div v-guide-anchor="'composer-input'" class="composer-box">
+    <div v-guide-anchor="guided ? 'composer-input' : ''" class="composer-box">
       <!-- 这条消息带着的东西：回复的那条在最前，后面是待发的附件。 -->
       <ComposerChipRow
         :reply-label="replyLabel"
@@ -447,13 +468,14 @@ defineExpose({
         density="comfortable"
         class="composer-input"
         :placeholder="hint"
-        :title="enterSends ? t('work.room.composer.keysHint', { name: agentName }) : t('work.room.composer.pasteHint')"
+        :title="keysTitle"
         @keydown="onComposerKey"
         @paste="onPaste"
         @compositionstart="onCompositionStart"
         @compositionend="onCompositionEnd"
       />
       <ComposerActions
+        :guided="!!guided"
         :uploading="attsUploading"
         :can-send="canSend"
         :show-image-picker="!mdAndUp"

@@ -69,6 +69,7 @@ class TopicMemberService:
         """Does ``actor`` manage this channel: its creator, or someone who
         manages the project? A team always has an owner, so every channel has
         someone who can."""
+        # deferred-import: cycle membership.services -> topic_membership.services
         from app.domain.membership.services import MemberService
 
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
@@ -174,6 +175,7 @@ class TopicMemberService:
         batch: whoever manages the project manages all of them."""
         if not topics:
             return set()
+        # deferred-import: cycle membership.services -> topic_membership.services
         from app.domain.membership.services import MemberService
 
         if await MemberService(self._session).manages(topics[0].project_id, actor):
@@ -188,6 +190,7 @@ class TopicMemberService:
         counts = await self._repo.counts_for_topics([t.id for t in topics])
         roots = [t for t in topics if t.kind == TopicKind.root]
         if roots:
+            # deferred-import: cycle membership.roster -> topic_membership.services
             from app.domain.membership.roster import roster
 
             everyone = len(await roster(self._session, roots[0].project_id))
@@ -237,6 +240,7 @@ class TopicMemberService:
     async def project_people(self, project_id: uuid.UUID) -> list[str]:
         """Everyone in the project who is a person: whom a channel's work may be
         handed to."""
+        # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import roster
 
         return [
@@ -550,6 +554,7 @@ class TopicMemberService:
             # keys a memory pool inside ITS project — so another project's
             # teammate must not be seated here: nothing in this project would
             # address it, and its token would write as this room's default.
+            # deferred-import: cycle agent_instance -> topic_membership
             from app.domain.agent_instance.services import AgentInstanceService
 
             owner = await AgentInstanceService(self._session).project_of_seat(handle)
@@ -590,6 +595,7 @@ class TopicMemberService:
         """May ``actor`` archive this channel or name who manages it without
         being in it: its owner, or whoever manages the project. Seeing what is
         said in a private channel still takes a seat (:meth:`manages`)."""
+        # deferred-import: cycle membership.services -> topic_membership.services
         from app.domain.membership.services import MemberService
 
         member = await self._repo.get(topic_id=topic.id, member_handle=actor)
@@ -647,6 +653,7 @@ class TopicMemberService:
         """Whoever manages the project joins a private channel they are not in.
         Nobody else joins one: its people bring the others in. Returns whether
         they were seated now, so the caller says so in the channel."""
+        # deferred-import: cycle membership.services -> topic_membership.services
         from app.domain.membership.services import MemberService
 
         topic = await self._channel(topic_id)
@@ -674,6 +681,7 @@ class TopicMemberService:
         manages the project, as Slack leaves it to a workspace's owners and
         admins. 综合 is everyone in the project and is never private.
         """
+        # deferred-import: cycle membership.services -> topic_membership.services
         from app.domain.membership.services import MemberService
 
         topic = await self._channel(topic_id)
@@ -696,6 +704,7 @@ class TopicMemberService:
         """Whether ``handle`` may open a new channel here: anyone in the
         project but an external member, who was invited in to take part, not
         to arrange it."""
+        # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import roster
 
         return not any(
@@ -704,6 +713,7 @@ class TopicMemberService:
         )
 
     async def _on_project(self, project_id: uuid.UUID, handle: str) -> bool:
+        # deferred-import: cycle membership.roster -> topic_membership.services
         from app.domain.membership.roster import roster
 
         return any(m.handle == handle for m in await roster(self._session, project_id))

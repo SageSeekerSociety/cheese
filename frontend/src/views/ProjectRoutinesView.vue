@@ -14,14 +14,14 @@ import type { Topic } from '../cx_types'
 import { computed, getCurrentInstance, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
+import { useProjectAgentName } from '@/composables/useProjectAgentName'
 import { useRoutineList } from '@/composables/useRoutineList'
 
 import { listTopics } from '../api'
 
+import ProjectRoutinesViewView from './ProjectRoutinesViewView.vue'
+
 import { useCommands } from '@/commands'
-import AppPage from '@/components/common/AppPage.vue'
-import RoutineBoard from '@/components/routine/RoutineBoard.vue'
-import RoutineFormDialog from '@/components/routine/RoutineFormDialog.vue'
 import { t } from '@/i18n'
 import { focusRow } from '@/lib/focusRow'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -33,6 +33,7 @@ const route = useRoute()
 // 是孤立渲染的，那里没有路由、没有 store，照样画，只是人名不可点、画 handle。
 const app = getCurrentInstance()?.appContext.config.globalProperties
 const workspace = app?.$pinia ? useWorkspaceStore() : null
+const agentName = useProjectAgentName()
 
 /** 人名 → 显示名：行里的人名只画字（`UserRef`），名册在这里查一次。 */
 const userNames = computed(() =>
@@ -131,39 +132,31 @@ useCommands(() => [
 </script>
 
 <template>
-  <AppPage :title="t('navigation.project.routines')">
-    <div>
-      <p class="t-body c-muted mb-6">{{ t('routines.intro') }}</p>
-
-      <RoutineBoard
-        :routines="routines"
-        :runs="runs"
-        :open-id="openId"
-        :busy="busy"
-        :loading="loading"
-        :error="error"
-        :room-names="roomNames"
-        :user-names="userNames"
-        @navigate="go"
-        @confirm="(r) => act(r, 'confirm')"
-        @pause="(r) => act(r, 'pause')"
-        @resume="(r) => act(r, 'resume')"
-        @run-now="(r) => act(r, 'run-now')"
-        @edit="startEdit"
-        @delete="remove"
-        @toggle-runs="(r) => toggleRuns(r)"
-      />
-    </div>
-
-    <RoutineFormDialog
-      :model-value="formOpen"
-      :routine="editing"
-      :rooms="rooms"
-      :default-room="defaultRoom"
-      :saving="saving"
-      :error="formError"
-      @update:model-value="(open) => (open ? (formOpen = true) : closeForm())"
-      @save="submit"
-    />
-  </AppPage>
+  <ProjectRoutinesViewView
+    :agent-name="agentName"
+    :routines="routines"
+    :runs="runs"
+    :open-id="openId"
+    :busy="busy"
+    :loading="loading"
+    :error="error"
+    :room-names="roomNames"
+    :user-names="userNames"
+    :rooms="rooms"
+    :default-room="defaultRoom"
+    :form-open="formOpen"
+    :editing="editing"
+    :saving="saving"
+    :form-error="formError"
+    @navigate="go"
+    @confirm="(r) => act(r, 'confirm')"
+    @pause="(r) => act(r, 'pause')"
+    @resume="(r) => act(r, 'resume')"
+    @run-now="(r) => act(r, 'run-now')"
+    @edit="startEdit"
+    @delete="remove"
+    @toggle-runs="(r) => toggleRuns(r)"
+    @update:model-value="(open) => (open ? (formOpen = true) : closeForm())"
+    @save="submit"
+  />
 </template>

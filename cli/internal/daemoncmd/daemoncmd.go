@@ -51,6 +51,7 @@ func Commands() []*cobra.Command {
 		linkCmd(&cfgPath, withConfig),
 		statusCmd(&cfgPath, withConfig),
 		claudeCmd(&cfgPath, withConfig),
+		sandboxCmd(),
 		runCmd(&cfgPath, withConfig),
 		updateCmd(&cfgPath, withConfig),
 		uninstallCmd(&cfgPath, withConfig),

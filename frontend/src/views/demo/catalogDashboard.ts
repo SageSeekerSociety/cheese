@@ -34,6 +34,7 @@ import AdminDashboardPipeline from '@/components/admin/dashboard/AdminDashboardP
 import AdminDashboardPlatform from '@/components/admin/dashboard/AdminDashboardPlatform.vue'
 import AdminDashboardProduct from '@/components/admin/dashboard/AdminDashboardProduct.vue'
 import AdminDashboardUsage from '@/components/admin/dashboard/AdminDashboardUsage.vue'
+import AdminDashboardUsageWho from '@/components/admin/dashboard/AdminDashboardUsageWho.vue'
 
 /** KPI 卡上的 `to` 是 router-link：不装路由那一格挂载即抛。 */
 const UI: CatalogNeed[] = ['vuetify', 'i18n', 'router']
@@ -145,7 +146,8 @@ export const DASHBOARD_ENTRIES: CatalogEntry[] = [
   {
     id: 'admin-dashboard-usage',
     title: 'AdminDashboardUsage',
-    about: '用量那一屏：窗口内的 token 与调用、每天一条线、最花的项目、成本，和额度燃尽那三个名单。',
+    about:
+      '用量那一屏：窗口内的 token 与调用、每天一条线、最花的项目、成本，额度燃尽那三个名单，和订阅通路身后的 Claude 账号池。',
     file: 'src/components/admin/dashboard/AdminDashboardUsage.vue',
     component: AdminDashboardUsage,
     needs: UI,
@@ -157,6 +159,24 @@ export const DASHBOARD_ENTRIES: CatalogEntry[] = [
         expect: '额度燃尽',
       },
       { name: '首次加载', note: LOADING, props: { data: null, days: 30, loading: true } },
+    ],
+  },
+  {
+    id: 'admin-dashboard-usage-who',
+    title: 'AdminDashboardUsageWho',
+    about:
+      '用量那一屏的下半：谁触发了多少、各项目用了哪些模型、最近的用量记录（网关行标「汇总」），每张都带缓存命中率。',
+    file: 'src/components/admin/dashboard/AdminDashboardUsageWho.vue',
+    component: AdminDashboardUsageWho,
+    needs: UI,
+    states: [
+      {
+        name: '三张表',
+        note: '命中率是 — 的那几行没有记缓存，不画成 0%；平台自己发起的用量单独一句，不算在任何人头上。',
+        props: { data: DASH_USAGE, loading: false },
+        expect: '林同学',
+      },
+      { name: '首次加载', note: LOADING, props: { data: null, loading: true } },
     ],
   },
   {

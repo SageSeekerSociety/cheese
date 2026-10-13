@@ -7,20 +7,22 @@ either; an agent's `todo_write` edits its checklist message through this same
 function.
 
 An edit does what sending the new text would have done, through the same
-code: the text is rewritten as it would have been stored, and whoever it newly
-@s is notified. The room sees the edit as a `block_updated` frame carrying the
-whole block, whose `meta.edited_at` it renders as 「已编辑」. An agent that
-already read the message is told it changed, the way a message reaches it.
+code: the text is rewritten as it would have been stored, whoever it newly
+@s is notified, and a teammate it newly names gets a turn of its own — the
+same delivery, on the same ledger, that a message naming it records (I13). The
+room sees the edit as a `block_updated` frame carrying the whole block, whose
+`meta.edited_at` it renders as 「已编辑」. An agent that already read the message
+is told it changed, the way a message reaches it.
 """
 
 import uuid
-from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Protocol, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.chat import announce_mentions, text_as_sent
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.authorship import is_participant
 from app.domain.block.models import (
@@ -33,22 +35,62 @@ from app.domain.block.models import (
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import is_task
+from app.domain.delivery.agent import dispatch_pending, record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.notification.models import NotificationType
 from app.domain.room_task.services import TaskService
 
 if TYPE_CHECKING:
     from app.domain.agent.chat import ChatService
-    from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
 
 
-async def edit_message(
+class EditedText(Protocol):
+    """Normalization facts the block edit consumes, not their room/seat resolver."""
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def roster(self) -> list[dict] | None: ...
+
+    @property
+    def by_agent(self) -> bool: ...
+
+
+_EffectSent = TypeVar("_EffectSent", bound=EditedText, contravariant=True)
+
+
+class MentionEffects(Protocol[_EffectSent]):
+    """What an edit does about the names in its new text, before it commits.
+
+    Answers whether it started a teammate's turn: the caller lets the ledger out
+    once the edit is committed and shown, the way sending does.
+    """
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        sent: _EffectSent,
+        block: Block,
+        author: str,
+        /,
+        *,
+        before: str,
+    ) -> bool: ...
+
+
+async def edit_message[Sent: EditedText](
     session: AsyncSession,
-    broker: "InProcessBroker",
+    publish: Callable[[str, dict], Awaitable[None]],
     block_id: uuid.UUID,
     *,
     editor: str,
     content: str,
     chat: "ChatService",
     runner: "AgentWorkRunner",
+    normalize_text: Callable[[AsyncSession, Block, str, str], Awaitable[Sent]],
+    notify_mentions: MentionEffects[Sent],
     checklist: dict | None = None,
 ) -> dict:
     """Replace the text of ``editor``'s own message, commit, and tell the room.
@@ -65,19 +107,18 @@ async def edit_message(
     text = content.strip()
     if not text:
         raise ValidationError("content must not be blank")
-    sent = await text_as_sent(session, block, editor, text)
+    sent = await normalize_text(session, block, editor, text)
     before = block.content
     already_read = consumed_turn(block) is not None
     await blocks.replace_content(block, sent.text, checklist=checklist)
+    summoned = False
     if sent.roster is not None:
-        await announce_mentions(
+        summoned = await notify_mentions(
             session,
-            sent.room,
+            sent,
             block,
             editor,
-            sent.roster,
             before=before,
-            flag_unresolved=sent.by_agent,
         )
     # A room's agent hears of an edit to a message it read; a task's message
     # was never the room's, and its own session is told through the ledger.
@@ -95,16 +136,17 @@ async def edit_message(
     payload["reactions"] = await blocks.reactions_for_block(block.id)
     await session.commit()
     # A card's lines go out on the card's channel, where they are shown.
-    await broker.publish(
+    await publish(
         str(block.conversation_id), {"type": "block_updated", "block": payload}
     )
     if notice is not None:
         await chat.notify_running_turn(
             block.conversation_id, _said(notice), blocks=[notice.id]
         )
-    if relayed:
-        from app.domain.delivery.agent import dispatch_pending
-
+    # What somebody else now has to run: a card's line relayed to its task, and
+    # a teammate the new text named. Both wait in the ledger, and both are
+    # picked up here — after the commit, so whoever wakes reads the new text.
+    if relayed or summoned:
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
     return payload
 
@@ -154,9 +196,6 @@ async def _tell_the_card(
 ) -> None:
     """What the owner says in a task reaches the task's own session; an edit
     goes the same way, saying it is one."""
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
-    from app.domain.notification.models import NotificationType
 
     task = await TaskService(session).get(task_id)
     if task is None:

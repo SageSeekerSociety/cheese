@@ -275,7 +275,7 @@
   "inviteCodes": {
     "copy": "Copy",
     "createdTitle": "Here is your invite code",
-    "createdBody": "Send it to whoever you want to invite. They enter it on the \"My work\" page and join this space.",
+    "createdBody": "Once the space passes review, send it to whoever you want to invite: they choose \"Join with a code\" on the home page and enter it. The code doesn't work until the space is approved.",
     "openSpace": "Open space",
     "create": "New",
     "current": "Code in use",
@@ -375,6 +375,14 @@
       "memberHint": "Take part: challenges and announcements"
     },
     "count": "{n} people"
+  },
+  "reviewNotice": {
+    "pendingTitle": "This space is still under review",
+    "pendingBody": "Once a platform admin approves it, you can publish challenges here and its invite code starts working. The result shows up under \"My space applications\" on the Spaces page.",
+    "rejectedTitle": "This space application was rejected",
+    "rejectedBody": "You can edit and resubmit it under \"My space applications\" on the Spaces page.",
+    "rejectedBodyReason": "Reason: {reason}. You can edit and resubmit it under \"My space applications\" on the Spaces page.",
+    "backToSpaces": "Back to spaces"
   },
   "manageDenied": {
     "title": "You can't manage this space",

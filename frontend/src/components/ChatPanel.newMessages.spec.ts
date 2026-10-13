@@ -8,12 +8,12 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false, total: 0, oldest_id: null }),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [] }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
-  chatWsUrl: () => 'ws://test/chat',
 }))
 
 import ChatPanel from './ChatPanel.vue'
@@ -133,12 +133,9 @@ describe('往上翻着时来了新消息', () => {
     arrive(said('a'))
     await flush()
     await fireEvent.click(pill(container)!)
-    await vi.advanceTimersByTimeAsync(400)
-    expect(pane.scrollTo).toHaveBeenCalled()
-    // 平滑滚动落了地：滚动事件到，位置回到最底下，提示才收起。
-    Object.defineProperty(pane, 'scrollTop', { configurable: true, value: 4000 - 600, writable: true })
-    pane.dispatchEvent(new Event('scroll'))
     await flush()
+    // 落在最底下（不是半路），提示收起。
+    expect(pane.scrollTop).toBeGreaterThanOrEqual(pane.scrollHeight - pane.clientHeight)
     expect(pill(container)).toBeNull()
   })
 })

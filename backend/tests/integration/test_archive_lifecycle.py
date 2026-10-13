@@ -16,10 +16,10 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.errors import ConflictError
 from app.domain.agent.models import AgentTurn
-from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.services import ProjectService
-from app.domain.topic import retire
+from app.domain.room_cleanup import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered
@@ -64,10 +64,17 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
         assert room.cleanup_due_at == room.archived_at + timedelta(seconds=900)
 
 
+# The machines these tests clean up on are enrolled ones, as every machine a
+# room ran on is until it is removed; a machine with no record is gone, and the
+# cleanup skips it ("removed", "released-host" and "away" are set up per test).
+KNOWN_MACHINES = ("fixture", "center", "host-dev", "some-other-host")
+
+
 async def archived_room(client, monkeypatch):
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as session:
         await registered(session, "owner")
+        await enrolled(session, *KNOWN_MACHINES)
         project = await ProjectService(session).create(name="P", owner_handle="owner")
         room = await TopicService(session).create(
             project_id=project.id, title="Room", created_by="owner"
@@ -430,12 +437,18 @@ async def test_inventory_retains_every_session_work_allocation(client, monkeypat
 
 
 async def enrolled(session, *device_ids: str) -> None:
-    """Give each machine a device record, as enrolling one does."""
+    """Give each machine a device record, as enrolling one does; a machine
+    already enrolled keeps the one it has."""
     from app.domain.device.models import DeviceRow
     from app.domain.device.supply import Supply
 
     owner = await registered(session, "owner")
-    for device_id in device_ids:
+    known = set(
+        await session.scalars(
+            select(DeviceRow.device_id).where(DeviceRow.device_id.in_(device_ids))
+        )
+    )
+    for device_id in (d for d in device_ids if d not in known):
         session.add(
             DeviceRow(
                 device_id=device_id,
@@ -490,6 +503,52 @@ async def test_a_lease_on_an_offline_machine_still_waits_for_it(client, monkeypa
         operation = await session.get(RoomCleanup, cleanup_id)
         with pytest.raises(RuntimeError, match="offline"):
             await retire._inventory(session, operation, {})
+
+
+async def _sweep_with_device(client, monkeypatch, device_id: str, *, enrolled_too):
+    """Archive a room whose inventory named ``device_id``, which never answers."""
+    from app.domain.agent.device_hub import DeviceOffline
+
+    _room_id, cleanup_id = await archived_room(client, monkeypatch)
+    async with client.test_factory() as session:
+        resource_id = str((await session.get(RoomCleanup, cleanup_id)).resource_id)
+        if enrolled_too:
+            await enrolled(session, device_id)
+            await session.commit()
+
+    async def offline(device, *args, **kwargs):
+        raise DeviceOffline(device)
+
+    monkeypatch.setattr(retire.device_hub, "exec", offline)
+    monkeypatch.setattr(
+        retire,
+        "_inventory",
+        AsyncMock(
+            return_value=[
+                {"kind": "device", "device_id": device_id, "resource_id": resource_id}
+            ]
+        ),
+    )
+    return _sweep(client)
+
+
+async def test_a_machine_removed_after_the_inventory_does_not_hold_the_cleanup(
+    client, monkeypatch
+):
+    """The inventory named a pool host that the pool later released, which
+    took its device record with it. Nothing of the room is left there, so the
+    cleanup finishes instead of waiting for a machine that cannot come back."""
+    assert await _sweep_with_device(
+        client, monkeypatch, "released-host", enrolled_too=False
+    ) == {"completed": 1, "pending": 0}
+
+
+async def test_an_offline_machine_named_by_the_inventory_is_still_waited_for(
+    client, monkeypatch
+):
+    assert await _sweep_with_device(
+        client, monkeypatch, "away-host", enrolled_too=True
+    ) == {"completed": 0, "pending": 1}
 
 
 async def test_a_lease_without_its_home_is_cleaned_by_the_rooms_inventory(
@@ -734,8 +793,9 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
             (other_project.id, other_room.id, str(uuid.uuid4())),
         ):
             session.add(
-                CloudHostHome(
+                SandboxHome(
                     host_id=host.id,
+                    spec="standard",
                     project_id=project,
                     topic_id=topic,
                     room_resource_id=resource,
@@ -766,7 +826,7 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
     async with client.test_factory() as session:
         homes = list(
             await session.scalars(
-                select(CloudHostHome.topic_id).where(CloudHostHome.host_id == host_id)
+                select(SandboxHome.topic_id).where(SandboxHome.host_id == host_id)
             )
         )
         assert homes == [other_room.id]
@@ -811,8 +871,9 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
         await session.flush()
         # Placed on a host that never came up: no directory anywhere.
         session.add(
-            CloudHostHome(
+            SandboxHome(
                 host_id=host.id,
+                spec="standard",
                 project_id=operation.project_id,
                 topic_id=room_id,
                 room_resource_id=str(operation.resource_id),
@@ -844,7 +905,7 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
         assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
         assert (
             await session.scalar(
-                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+                select(SandboxHome.id).where(SandboxHome.topic_id == room_id)
             )
         ) is None
 

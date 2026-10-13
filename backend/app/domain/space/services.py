@@ -2,7 +2,7 @@ import secrets
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.space.material_service import member_readable_material_ids
@@ -173,6 +173,15 @@ class SpaceLabels:
         return {space_id: SpaceLabel(name=name) for space_id, name in rows.items()}
 
 
+#: The first category a new space gets, named in its creator's UI language
+#: (``User.language``; unset reads as Chinese, as everywhere a person is
+#: addressed). Its name is ordinary data the owner can rename afterwards.
+DEFAULT_CATEGORY: Final[dict[str, tuple[str, str]]] = {
+    "zh-CN": ("默认分类", "新建空间时自动创建的分类"),
+    "en": ("General", "Created with the space"),
+}
+
+
 class SpaceService:
     def __init__(
         self,
@@ -203,6 +212,55 @@ class SpaceService:
         self._knowledge_service = knowledge_service
         self._material_service = material_service
         self._session = session
+
+    @classmethod
+    def for_routes(
+        cls,
+        session: "AsyncSession",
+        *,
+        task_repo: "TaskRepository | None" = None,
+        knowledge_service: "KnowledgeService | None" = None,
+        material_service: "MaterialService | None" = None,
+    ) -> "SpaceService":
+        """The board service the space routes hand out — wired here rather than in
+        the route.
+
+        Assembling it needs nine ``space.repositories``; a route that builds them
+        itself reaches past this domain's service layer (architecture guard C2),
+        so the wiring lives with the repositories it wires. ``task_repo`` /
+        ``knowledge_service`` / ``material_service`` are passed in by the caller
+        because the write side of ``teaching``'s references reaches into those
+        domains, and this module keeps those out of its runtime imports.
+        """
+        return cls(
+            repo=SpaceRepository(session),
+            category_repo=SpaceCategoryRepository(session),
+            admin_repo=SpaceAdminRelationRepository(session),
+            rank_repo=SpaceUserRankRepository(session),
+            task_repo=task_repo,
+            classification_topics_repo=SpaceClassificationTopicsRepository(session),
+            domain_group_repo=SpaceDomainGroupRepository(session),
+            domain_group_domain_repo=SpaceDomainGroupDomainRepository(session),
+            member_repo=SpaceMemberRepository(session),
+            invite_code_repo=SpaceInviteCodeRepository(session),
+            knowledge_service=knowledge_service,
+            material_service=material_service,
+            session=session,
+        )
+
+    @classmethod
+    def for_visibility(cls, session: "AsyncSession") -> "SpaceService":
+        """Wired for the two plain reads a visibility gate needs — the board
+        (``get_space``) and one person's membership (``is_member``).
+
+        ``require_reviewed_space`` runs on every board request, so this build
+        stays small: the full constructor's other repositories are not needed to
+        answer "does this board exist / is this person in it".
+        """
+        return cls(
+            repo=SpaceRepository(session),
+            category_repo=SpaceCategoryRepository(session),
+        )
 
     # ------------------------------------------------------------------
     # Classification topics
@@ -274,6 +332,39 @@ class SpaceService:
             return None
         return await self._rank_repo.get_rank(space_id=space_id, user_id=user_id)
 
+    async def is_member(self, *, space_id: int, user_id: int) -> bool:
+        return await self._repo.is_member(space_id=space_id, user_id=user_id)
+
+    @staticmethod
+    def admin_role_name(role: int) -> str:
+        """The name the API shows for an admin relation's stored role.
+
+        Lives beside the enum so a route can label a row without importing
+        ``SpaceAdminRole`` to read it off the model.
+        """
+        if role == SpaceAdminRole.OWNER.value:
+            return "OWNER"
+        return "ADMIN"
+
+    @staticmethod
+    def admin_role_from_name(name: str) -> SpaceAdminRole | None:
+        """The stored role for a client-supplied role name (``OWNER``/``ADMIN``).
+
+        ``None`` for anything else, so the caller keeps its own error message.
+        Beside the enum so a route can turn the name into the value
+        ``add_admin`` / ``update_admin_role`` expect without importing
+        ``SpaceAdminRole`` itself.
+        """
+        return {
+            "OWNER": SpaceAdminRole.OWNER,
+            "ADMIN": SpaceAdminRole.ADMIN,
+        }.get(name.upper())
+
+    async def invite_codes_by_ids(
+        self, code_ids: Sequence[int]
+    ) -> dict[int, SpaceInviteCode]:
+        return await self._require_invite_code_repo().get_by_ids(code_ids)
+
     # ------------------------------------------------------------------
     # Space lifecycle
     # ------------------------------------------------------------------
@@ -289,6 +380,7 @@ class SpaceService:
         owner_id: int,
         task_templates: list,
         visible_task_limit: int | None = None,
+        language: str | None = None,
     ) -> Space:
         self._validate_strings(name=name)
         if not isinstance(intro, str) or not isinstance(description, str):
@@ -306,12 +398,15 @@ class SpaceService:
             visible_task_limit=visible_task_limit,
         )
 
-        # Default category "General". It declares no 壳, so projects under it
-        # run the default one unless a 题目 or the project itself says otherwise.
+        # The default category. It declares no 壳, so projects under it run
+        # the default one unless a 题目 or the project itself says otherwise.
+        category_name, category_description = DEFAULT_CATEGORY.get(
+            language or "zh-CN", DEFAULT_CATEGORY["zh-CN"]
+        )
         default_category = await self._category_repo.create_category(
             space_id=space.id,
-            name="General",
-            description="Auto generated default category",
+            name=category_name,
+            description=category_description,
             display_order=0,
         )
         space.default_category_id = default_category.id

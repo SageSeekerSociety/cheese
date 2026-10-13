@@ -31,9 +31,9 @@ import { firstStepAccepted, landingAfterSignIn, upgradeAfterEmailCodeSignIn } fr
 import { forgetPendingCode, pendingCode, rememberCodeSent } from './pendingCode'
 import VerifyView from './VerifyView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { postLoginTarget } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -58,7 +58,7 @@ async function submit() {
   error.value = ''
   submitting.value = true
   try {
-    const { data } = await UserApi.signInWithEmailCode({ email: pending.value.email, code: code.value })
+    const data = await UserAuthApi.signInWithEmailCode({ email: pending.value.email, code: code.value })
     rememberSignIn('email_code')
     forgetPendingCode()
     if (data.requires2FA) {
@@ -71,7 +71,7 @@ async function submit() {
     const upgrade = upgradeAfterEmailCodeSignIn(data.user!.id, data.passkeyEnrollment)
     router.replace(await landingAfterSignIn(upgrade, postLoginTarget(route.query)))
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.failed'))
+    error.value = attemptMessage(e) ?? axiosErrorMessage(e, t('account.verifyEmail.failed'))
     code.value = ''
     waitFor(e)
   } finally {
@@ -91,13 +91,13 @@ async function resend() {
   error.value = ''
   resending.value = true
   try {
-    await UserApi.requestSignInCode(pending.value.email)
+    await UserAuthApi.requestSignInCode(pending.value.email)
     rememberCodeSent(pending.value.email)
     pending.value = pendingCode()
     now.value = Date.now()
     toast.success(t('account.verifyEmail.resent'))
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.verifyEmail.resendFailed'))
+    error.value = attemptMessage(e) ?? axiosErrorMessage(e, t('account.verifyEmail.resendFailed'))
   } finally {
     resending.value = false
   }

@@ -1,28 +1,50 @@
 """What a task's delivery landing does to the task.
 
 A task may deliver several times. The card says whether this delivery is the
-last step (``AcceptCard.completes_task``): the last one closes the task, any
-other leaves it open and moves it onto a branch cut from the project's latest
-code, for its AI teammate to carry on from. Either way the discussion the task
-came from hears what landed.
+last step (``AcceptCard.completes_task``). Any step but the last leaves the
+task open and moves it onto a branch cut from the project's latest code, for
+its AI teammate to carry on from. The last one has the AI teammate write the
+task up, and the task closes when that turn ends (`room_task.closing`). Either
+way the discussion the task came from hears what landed, and a merged PR is
+watched on the default branch for a while (`landing_watch`).
 
 Every path that sees a delivery merge comes through here — an accept click,
 the merge queue, the poller, a PR merged by hand — so none of them can keep
-closing a task the card said goes on.
+closing a task the card said goes on, and none of them can land one merge on
+a task twice.
 """
 
 import logging
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.live_frames import show_once_committed
 from app.core.sentences import say
-from app.domain.room_task.checkouts import after_close
+from app.domain.agent.harness.prompt import task_next_step_prompt, task_summary_prompt
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.schemas import BlockOut
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.notification.models import NotificationType
+from app.domain.project.models import Project
+from app.domain.review.landing_models import TaskLanding
+from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.thread.services import open_thread
+from app.domain.topic.models import Topic, TopicStatus
 
 logger = logging.getLogger(__name__)
+
+#: How long a merge is watched on the default branch: its checks there, and a
+#: deployment that includes it. A repository's CI on main and a deploy after it
+#: take well under this; what has not happened by then is not reported.
+WATCH_FOR = timedelta(hours=2)
 
 
 async def delivery_landed(
@@ -33,29 +55,32 @@ async def delivery_landed(
     head: str | None,
     pr_number: int | None,
     completes: bool,
-) -> None:
-    """``task``'s delivery merged. ``completes``: it was the task's last step."""
+) -> bool:
+    """``task``'s delivery merged. ``completes``: it was the task's last step.
+
+    Says whether the merge landed on the task this time: one that has already
+    landed there does not land twice (`_already_landed`)."""
+    if await _already_landed(session, task, pr_number):
+        return False
     now = datetime.now(UTC)
     task.accepted_at = now
     task.accepted_by = by or task.accepted_by
     if head:
         task.delivered_head = head[:64]
+    if pr_number is not None:
+        await _watch(session, task, pr_number, now)
     goes_on = not completes and task.status == TaskStatus.open
     if goes_on:
         await TaskService(session).next_step(task)
-        await _tell_next_step(session, task)
-    elif task.status != TaskStatus.closed:
-        task.status = TaskStatus.closed
-        task.closed_at = now
-        after_close(session, task.room_id)
+        await tell_agent(
+            session, task, task_next_step_prompt(title=task.title, task_id=task.id)
+        )
+    elif task.status == TaskStatus.open and task.closing_since is None:
+        task.closing_since = now
+        await tell_agent(
+            session, task, task_summary_prompt(title=task.title), closes=True
+        )
     await session.flush()
-    # The room's row in the sidebar is what changed (its task count/status), so
-    # name the room for the client's per-row refetch.
-    _after_commit(
-        session,
-        task.room_id,
-        {"type": "state", "resource": "topics", "id": str(task.room_id)},
-    )
     await tell_origin(
         session,
         task,
@@ -66,6 +91,53 @@ async def delivery_landed(
         else say("taskLanded", title=said_title(task), pr=pr_number)
         if pr_number is not None
         else say("taskLandedNoPr", title=said_title(task)),
+    )
+    return True
+
+
+async def _already_landed(
+    session: AsyncSession, task: Task, pr_number: int | None
+) -> bool:
+    """Whether this merge has already landed on ``task``: a row in
+    `task_landings`, written by every landing that has a PR.
+
+    A merge nobody has landed leaves no row, and lands as it always did. A
+    merge that did leaves one — and landing it a second time would drag a
+    task that has since gone on from the next step, or been reopened, back
+    into a write-up window it has already been through.
+
+    Deliveries with no PR of their own (an artifact, a URL out of the task's
+    folder) leave no row and are not held back."""
+    if pr_number is None:
+        return False
+    return await _landing_exists(session, task.id, pr_number)
+
+
+async def _landing_exists(
+    session: AsyncSession, task_id: uuid.UUID, pr_number: int
+) -> bool:
+    return (
+        await session.scalar(
+            select(TaskLanding.id).where(
+                TaskLanding.task_id == task_id, TaskLanding.pr_number == pr_number
+            )
+        )
+    ) is not None
+
+
+async def _watch(
+    session: AsyncSession, task: Task, pr_number: int, now: datetime
+) -> None:
+    """Start watching the merge of ``pr_number`` on the default branch, once."""
+    if await _landing_exists(session, task.id, pr_number):
+        return
+    session.add(
+        TaskLanding(
+            task_id=task.id,
+            pr_number=pr_number,
+            landed_at=now,
+            watch_until=now + WATCH_FOR,
+        )
     )
 
 
@@ -86,12 +158,6 @@ async def tell_origin(session: AsyncSession, task: Task, content: str) -> None:
 
 
 async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
-    from app.domain.agent_instance.services import AgentInstanceService
-    from app.domain.block.models import AuthorType, Block, BlockKind
-    from app.domain.identity.handles import agent_instance_handle
-    from app.domain.project.models import Project
-    from app.domain.thread.services import open_thread
-    from app.domain.topic.models import Topic, TopicStatus
 
     if task.upgraded_from_block_id is None:
         return
@@ -125,40 +191,37 @@ async def _tell_origin(session: AsyncSession, task: Task, content: str) -> None:
     )
     session.add(said)
     await session.flush()
-    _after_commit(
+    show_once_committed(
         session, said.conversation_id, {"type": "user_block", "block": _out(said)}
     )
-    _after_commit(session, task.room_id, {"type": "state", "resource": "threads"})
+    show_once_committed(session, task.room_id, {"type": "state", "resource": "threads"})
 
 
 def _out(block) -> dict:
-    from app.domain.block.schemas import BlockOut
 
     return BlockOut.model_validate(block).model_dump(mode="json")
 
 
-def _after_commit(session: AsyncSession, channel, frame: dict) -> None:
-    """Send ``frame`` to the pages open on ``channel`` once this commits."""
-    from app.domain.agent.announce import SHOW_ONCE_COMMITTED
+async def tell_agent(
+    session: AsyncSession, task: Task, content: str, *, closes: bool = False
+) -> None:
+    """The task's AI teammate hears ``content`` on its next turn. ``closes``:
+    the task closes when that turn ends."""
 
-    session.info.setdefault(SHOW_ONCE_COMMITTED, []).append((str(channel), frame))
-
-
-async def _tell_next_step(session: AsyncSession, task: Task) -> None:
-    """The task's AI teammate hears that a step landed and it goes on."""
-    from app.domain.agent.harness.prompt import task_next_step_prompt
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
-    from app.domain.notification.models import NotificationType
-
+    payload: dict[str, object] = {
+        "projectId": str(task.project_id),
+        "topicId": str(task.room_id),
+    }
+    if closes:
+        payload[CLOSES_TASK] = True
     await record_task_instruction(
         session,
         DeliveryEvent(
             id=uuid.uuid4(),
             type=NotificationType.ROOM_NOTICE,
-            payload={"projectId": str(task.project_id), "topicId": str(task.room_id)},
+            payload=payload,
             occurred_at=datetime.now(UTC),
         ),
         task=task,
-        content=task_next_step_prompt(title=task.title, task_id=task.id),
+        content=content,
     )

@@ -9,27 +9,24 @@ resumable session id on the topic.
 DB writes happen in short transactions around the (long) streaming call so we
 never hold a transaction open across the model round-trip.
 
-One turn, assembled and run, is ``room/turn.py`` (``RoomTurns``).
+Turn intake, transport steps, durable writes and live state have separate owners.
 """
 
 import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 
+from sqlalchemy import select as _select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import BaseError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent import death_evidence, own_calls, own_limit
-from app.domain.agent.announce import answer_questions
-from app.domain.agent.ask import publish_answered
-from app.domain.agent.cli_notices import cli_notice
+from app.domain.agent import death_evidence, own_limit, turn_inputs
 from app.domain.agent.compute import ComputePool
 
 # 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
@@ -39,7 +36,7 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.event_lines import (
     _CHANGE_FILES_LISTED,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _change_summary_meta,  # noqa: F401 — 测试仍从 chat.py 导它
-    _Changeset,
+    _Changeset,  # noqa: F401 — 测试仍从 chat.py 导它
     _diff_file_stats,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_change_summary,  # noqa: F401 — 测试仍从 chat.py 导它
     _format_tool_event,  # noqa: F401 — 测试仍从 chat.py 导它
@@ -57,7 +54,6 @@ from app.domain.agent.gateway import LlmGateway
 # 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
 # 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
-    OWN_ROUTE,
     _gateway_project_env,
     _model_kwargs,
     _schedule_deferred_drain,
@@ -71,25 +67,7 @@ from app.domain.agent.harness.prompt import (
     publication_prompt,
     strip_platform_notice,
 )
-
-# 兼容门面：屏幕订阅送进来的那一条线（读一条事件、落块、重试与整理的提示、关
-# 这一轮的书）搬去了 `hook_stream.py`（那里有它们各自的文档）。这里重新导出，
-# `app.domain.agent.chat` 仍是既有调用点与测试的导入路径；`ChatService` 上留一行
-# 同名委托，调用点一格没动。带 noqa 的名字本文件不用，只是给外部留的导入路径。
-from app.domain.agent.hook_stream import (
-    _OUT_OF_CREDIT_MARKERS,  # noqa: F401
-    _TOOL_ACTION,  # noqa: F401
-    _consume_hook_event,
-    _HookWorkState,
-    _is_out_of_credit,  # noqa: F401 — 搬走的判决，测试仍从 chat.py 导它
-    _keep_note,  # noqa: F401 — 搬走后本文件不用，只是给外部留的导入路径
-    _note_compaction,  # noqa: F401
-    _note_reachability,
-    _note_retry,  # noqa: F401
-    _restate_note,  # noqa: F401
-    _turn_failure_notice,  # noqa: F401
-    _with_log,  # noqa: F401
-)
+from app.domain.agent.input_registration import confirm_receipt, input_registrar
 
 # 兼容门面：记忆的对账与整理（连同它们按房间记的四份状态）搬去了
 # `memory_ledger.py`（那里有整簇的文档）。`ChatService` 上留
@@ -110,20 +88,19 @@ from app.domain.agent.mentions import (
     MENTION_ALL,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     MENTION_HERE,  # noqa: F401
     PersonMentions,  # noqa: F401
-    _expand_mention_names,
+    _expand_mention_names,  # noqa: F401 — 现有测试仍使用此导出
     _resolve_mentions,  # noqa: F401
     _topic_refs,  # noqa: F401
-    announce_mentions,
-    person_mentions,
-    project_refs_text,
+    project_refs_text,  # noqa: F401 — 现有发送路由仍使用此导出
+)
+from app.domain.agent.pending_messages import (
+    finish_work,
+    finish_work_termination,
+    nudge_messages,
 )
 from app.domain.agent.platform_notices import (
-    EVENT_TURN_FAILED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
     delivery_checking_notice,
     delivery_fallback_notice,
-    notice,
 )
 from app.domain.agent.prewarm import SeatPrewarm
 from app.domain.agent.profiles import ProfileRegistry
@@ -135,78 +112,73 @@ from app.domain.agent.prompt import (
     _PROGRESS_MARK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _REPLAY_NOTICE_AT,  # noqa: F401
     _REPLAY_NOTICE_EVERY,  # noqa: F401
-    _addressed_to,
     _compaction_notice,  # noqa: F401 — 测试仍从 chat.py 导它
-    _is_pending_input,  # noqa: F401
-    _pending_input_blocks,
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
     live_inputs,
     read_images,
 )
 
-# 兼容门面：不碰实例状态的问答（这一轮谁答、项目 key 带多少额度、这条记忆改动
-# 说进哪间房）搬去了 `queries.py`。这里重新导出，`app.domain.agent.chat` 仍是既有
-# 调用点与测试的导入路径；`ChatService` 上留一行同名委托，调用点一格没动。
+# Canonical read/policy implementations; gateway consumers retain their narrow calls.
 from app.domain.agent.queries import (
-    _acting_handle,
     _agent_at,
     _agent_handle,
-    _bail_notice,
-    _block_payload,
     _gateway_budget_target,
     _pass_policy_gate,
     _Proposed,
-    _resolved_agent,
-    _session_agent,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.recovery import SessionRecovery
+from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-from app.domain.agent.room.turn import RoomTurns, _is_dm, room_roster
 
-# 兼容门面：这一轮往房间里落下的那些行（事件块、步骤的判决、变更汇总）搬去了
-# `room_events.py`（那里有它们各自的文档）。这里重新导出，`app.domain.agent.chat`
-# 仍是既有调用点与测试的导入路径；`ChatService` 上留一行同名委托，调用点一格没动。
-# 带 noqa 的常量本文件不用，只是给外部留的导入路径。
+# Compose the actual changeset/event owners with this root's session capability.
 from app.domain.agent.room_events import (
-    _CHANGE_COMMIT_WALK,  # noqa: F401 — 搬走的常量，这里仍然导得出来
     _known_commits,
-    _mark_step_failed,
-    _persist_change_summary,
-    _persist_room_event,
-    _persist_subagent_result,
-    _persist_tool_event,
-    _record_step_output,
     _turn_changeset,
     post_system_event,
 )
+from app.domain.agent.seat_admission import seat_admission
 from app.domain.agent.service import (
-    AgentCompacting,
-    AgentEvent,
-    AgentResult,
-    AgentRetrying,
-    AgentToolResult,
     AgentUsage,
 )
+from app.domain.agent.session_turn_events import SessionTurnEvents
 from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
-from app.domain.agent.turn_usage import record_turn_usage, reported_usage
+from app.domain.agent.turn.intake.assistant import AssistantMessages
+from app.domain.agent.turn.intake.completion import TurnCompletion
+from app.domain.agent.turn.intake.events import (
+    _persist_change_summary,
+)
+from app.domain.agent.turn.intake.hooks import HookEvents
+from app.domain.agent.turn.intake.human import HumanMessages
+from app.domain.agent.turn.intake.native_turns import NativeTurns
+from app.domain.agent.turn.intake.notes import _note_reachability
+from app.domain.agent.turn.intake.preparation import TurnPreparation
+from app.domain.agent.turn.intake.rooms import room_roster
+
+# 这一进程正在跑的活（按房间/按轮次的进程内状态，``hook_work`` / 座位锁 /
+# 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
+# 持有者。状态与处理器之间只有「处理器读状态」一个方向。
+from app.domain.agent.turn.state.inputs import _pending_input_blocks
+from app.domain.agent.turn.state.live import LiveWork
+
+# 一轮还跑着的时候平台往它里面说的两句话（沉默、清单停在原地），连同各自的扫底。
+# 用 `TurnNotices` 收窄到 `ChatService` 对外的几样，所以这里不用反向被 import。
+from app.domain.agent.turn.steps import reminders
+from app.domain.agent.turn.steps.send import SendEffects
+from app.domain.agent.turn.store.completion import CompletionEffects
+from app.domain.agent.turn_usage import record_turn_usage
 from app.domain.agent.work_policy import work_policy
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import (
     AgentInstanceService,
     ResolvedAgent,
-    memory_pool,
 )
+from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import (
-    AuthorType,
-    Block,
-    BlockKind,
-    prompted_turn,
-)
 from app.domain.block.repositories import BlockRepository
-from app.domain.block.schemas import BlockOut
+from app.domain.conversation.services import threads_of_rooms
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -220,24 +192,20 @@ from app.domain.delivery.receipts import (
     complete_work_inputs,
     terminate_work_inputs,
 )
-from app.domain.idempotency import store as idem
-from app.domain.idempotency.keys import action_key
-from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
-    looks_like_agent_handle,
     names_a_person,
     recipient_seat,
 )
 from app.domain.policy import gate
-from app.domain.project.models import Project
+from app.domain.project.reads import load_project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
-from app.domain.room_task.place import Place, PlaceResolver
+from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
-from app.domain.topic.models import Topic, TopicStatus
-from app.domain.topic.repositories import TopicRepository
-from app.domain.topic_membership.services import TopicMemberService
+from app.domain.topic.models import TopicStatus
+from app.domain.topic.reads import load_topic
+from app.domain.user.services import language_of
 
 CHEESE_AUTHOR = "cheese"
 
@@ -246,22 +214,6 @@ CHEESE_AUTHOR = "cheese"
 REPLAYS_AT_ONCE = 4
 
 logger = logging.getLogger(__name__)
-
-
-# Persistent, clickable action cards (§3.1.1 控件): each cheese action 芝士 takes
-# is recorded as a system event block (shown in the conversation) tagged
-# refs=["action:<resource>"], which the UI renders as a card linking to it.
-# NOTE: no "doc" entry — a doc edit already lands the SAME 「编辑了文档」
-# event every human edit gets (via the save path). One fact, one line,
-# whoever the author is (用户拍板: 芝士不需要专属提示行).
-#
-# No "accept" entry either, for the same reason: filing a card and correcting
-# one each announce themselves (EVENT_CARD_FILED / EVENT_CARD_REDESCRIBED), and
-# those lines say who is now waiting on what. A generic 「芝士 提交了验收卡」 next
-# to them is the same fact told twice, worse.
-_ACTION_LABEL = {
-    "notify": "actionNotify",
-}
 
 
 # HTTP statuses worth an automatic re-run: timeouts, throttling, server-side
@@ -273,16 +225,7 @@ _TRANSIENT_HTTP = {408, 429, 500, 502, 503, 504, 529}
 _CONVERSATION_ROOMS_KEPT = 2048
 
 
-def _parse_uuid(raw: str | None) -> uuid.UUID | None:
-    if not raw:
-        return None
-    try:
-        return uuid.UUID(raw)
-    except ValueError:
-        return None
-
-
-class ChatService(SessionRecovery, RoomTurns):
+class ChatService(SessionRecovery):
     def __init__(
         self,
         *,
@@ -290,10 +233,12 @@ class ChatService(SessionRecovery, RoomTurns):
         base_system_prompt: str,
         workspace_root: str,
         compute: ComputePool,
+        work_runner: SessionTurnEvents,
         profiles: ProfileRegistry | None = None,
         gateway: LlmGateway | None = None,
     ):
         self._sessions = session_factory
+        self._turn_preparation: TurnPreparation | None = None
         self._base_prompt = base_system_prompt
         # For the turn-meta disk line only; sandbox mounting still goes through
         # the compute pool below.
@@ -304,12 +249,13 @@ class ChatService(SessionRecovery, RoomTurns):
         # itself out of an SDK client, and building compute out of nothing is
         # exactly what no longer exists.
         self._compute = compute
-        # Seats a reachable machine said are gone (recover_sessions),
-        # until a session answers on them again (FB-56 legacy③).
-        self._dead_sessions: set[tuple] = set()
-        # Liveness only, keyed by durable input UUID. Settlement never depends
-        # on this process cache; cold-start inputs are not mid-turn unread probes.
-        self._unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
+        self._work_runner = work_runner
+        # 这一进程正在跑的活：按房间/按轮次键住的进程内状态（`hook_work`、
+        # `active_turn_ids`、座位锁与房间锁、几张 note 表、`dead_sessions`……）
+        # 全在 `turn/state/live.py` 那片叶子里。本对象唯一持有它，处理器按一个方向读
+        # 它——见那里的文档；不是服务依赖（`_compute`/`_sessions` 那种），而是
+        # 这台进程此刻手上正接着什么。
+        self.live = LiveWork()
         # Per-project ExecutionProfile (model + provider). None → always the
         # agent's built-in default (tests / single-profile deploys).
         self._profiles = profiles
@@ -331,6 +277,7 @@ class ChatService(SessionRecovery, RoomTurns):
             gateway_lock=self._gateway_lock,
             base_prompt=base_system_prompt,
             host=self,
+            live=self.live,
         )
         #: Brings a seat that went quiet up to date (`agent.prewarm`).
         self.prewarm = SeatPrewarm(self)
@@ -342,119 +289,129 @@ class ChatService(SessionRecovery, RoomTurns):
         )
         # Keep the publication contract present before native skills are invoked.
         self._skills = NATIVE_CHAT_GUIDANCE
-        # Prompt construction is serialized per (topic, agent) seat: two agents
-        # addressed in one room run their turns in parallel, while one agent's
-        # turns still queue — a second turn of the SAME seat would assemble
-        # while the first is mid-run, claim its pending messages, and starting
-        # its session would park the one that is working. The lock is released
-        # as soon as an interactive provider injects the prompt; non-interactive
-        # providers still hold it while running because they cannot accept a
-        # second message into a live screen.
-        self._seat_locks: dict[tuple[uuid.UUID, str], asyncio.Lock] = {}
-        # Room-level locks for the few operations that are nobody's turn:
-        # swapping the room's environment mid-turn and memory consolidation on
-        # the root topic.
-        self._topic_locks: dict[uuid.UUID, asyncio.Lock] = {}
-        # Work currently attributed to each active session. Mid-session delivery
-        # captures this id before writing to the lower layer, then stamps the
-        # message only after the exact UserPromptSubmit receipt.
-        # A SET per topic: several seats can have a live turn in one room, so
-        # every reader below answers "is THIS turn among the live ones" rather
-        # than "is this THE one".
-        self._active_turn_ids: dict[uuid.UUID, set[uuid.UUID]] = {}
-        self._hook_work: dict[tuple[uuid.UUID, uuid.UUID], _HookWorkState] = {}
-        # 房间里此刻那个会话是哪位队友的（最近一次 AgentSessionInfo 说的）。会话
-        # 自己开一轮时没有人告诉我们它是谁的，就按这个认。
-        self._room_session_agents: dict[uuid.UUID, str] = {}
-        # The notice each open turn is keeping current: a streak of retries, a
-        # wait for its machine. One line per streak, restated as it moves on.
-        self._retry_notes: dict[uuid.UUID, uuid.UUID] = {}
-        self._waiting_notes: dict[uuid.UUID, uuid.UUID] = {}
-        self._compact_notes: dict[uuid.UUID, uuid.UUID] = {}
-        # Where each live session's model traffic goes, remembered from the last
-        # turn the platform assembled for it. A turn the session starts by itself
-        # rides the same screen and therefore the same supply, and has no prompt
-        # of its own to resolve one from. Insertion-ordered and trimmed from the
-        # front: nothing tells this service a screen is gone, so without a bound
-        # this is a dict that only ever grows in a process that runs for weeks.
-        # Losing an entry costs the accuracy of one label, never a wrong charge.
-        self._session_route: dict[uuid.UUID, str] = {}
-        self._conversation_rooms: dict[
-            uuid.UUID, tuple[uuid.UUID, uuid.UUID | None, bool]
-        ] = {}
-        # The model each session was launched on, kept beside its route and for
-        # the same reason: a self-started turn has no prompt to resolve it from.
-        self._session_model: dict[uuid.UUID, str] = {}
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
-        # Each room's replay of what its sessions said while nobody listened
-        # (`recover_sessions`), for as long as it runs. A turn in the room waits
-        # for it (`replaying`); nothing else does.
-        self._replays: dict[uuid.UUID, asyncio.Task] = {}
         self._replay_slots = asyncio.Semaphore(REPLAYS_AT_ONCE)
+
+    @property
+    def hook_events(self) -> HookEvents:
+        return HookEvents(
+            sessions=self._sessions,
+            live=self.live,
+            work_runner=self._work_runner,
+            messages=self.messages,
+            completion=self.turn_completion,
+            begin_turn=self.native_turns.begin,
+            save_session=self._save_session_pointer,
+            resolve_room=self._room_of_conversation,
+            close_interval=self._close_turn_interval,
+            activity=self._set_hook_activity,
+            thread_replied=self.thread_replied,
+            policy=self.work_policy,
+        )
+
+    async def _close_turn_interval(
+        self, topic_id: uuid.UUID, turn_id: uuid.UUID
+    ) -> None:
+        """A native Stop may clear the seat after earlier queue nudges failed.
+
+        Interval ownership and scheduling stay with this composition root.
+        """
+        await self._close_open_turns(topic_id, turn_id)
+        nudge_messages(self, topic_id)
+
+    async def dismiss(self, topic_id: uuid.UUID, seat: str) -> None:
+        """Stop the work the teammate on rosters as ``seat`` still has running
+        in this room: one taken off the room, whose every call there is now
+        refused. What it wrote so far stays."""
+        async with self._sessions() as session:
+            topic = await load_topic(session, topic_id)
+            project = topic and await load_project(session, topic.project_id)
+            agent = project and await AgentInstanceService(session).for_seat_handle(
+                project, seat
+            )
+            # It sat in the room for the room's 支线 too: their work stops as well.
+            threads = list(await threads_of_rooms(session, [topic_id]))
+        if agent is not None:
+            for conversation in (topic_id, *threads):
+                await self._compute.dismiss(conversation, agent.handle)
+
+    async def stop_work(self, conversation_id: uuid.UUID) -> None:
+        """Stop whatever a teammate is still doing in this conversation, a
+        task that has just closed. What it wrote so far stays."""
+        await self._compute.stop_work(conversation_id)
+
+    async def stop_work_in_closed_tasks(self) -> int:
+        """Stop the work this process's sessions still do in closed tasks
+        (`turn_inputs.stop_work_in_closed_tasks`)."""
+        return await turn_inputs.stop_work_in_closed_tasks(
+            self._sessions, self._compute
+        )
+
+    @property
+    def turn_preparation(self) -> TurnPreparation:
+        if self._turn_preparation is None:
+            self._turn_preparation = TurnPreparation(
+                self._sessions,
+                compute=self._compute,
+                memory=self._memory,
+                base_prompt=self._base_prompt,
+                skills=self._skills,
+                model_options=self._model_kwargs,
+                refuse=self._refuse_turn,
+                live=self.live,
+                send_effects=SendEffects(
+                    post_system_event=self.post_system_event,
+                    consume_hook_event=self.hook_events.accept,
+                    known_commits=partial(_known_commits, self._sessions),
+                    register_input=self._input_registrar,
+                    open_interval=turn_inputs.open_interval_with_input,
+                    retire_failed=turn_inputs.retire_failed,
+                    stamp_delivery=turn_inputs.stamp_delivered,
+                ),
+            )
+        return self._turn_preparation
+
+    @staticmethod
+    def _refuse_turn(message: str) -> BaseError:
+        return ValidationError(message)
+
+    @property
+    def messages(self) -> AssistantMessages:
+        # Composition only: this stateless writer uses the service's real state
+        # and transactions; it owns no copied live work or compatibility entry.
+        return AssistantMessages(
+            self._sessions, self.live, room_roster, self.thread_replied
+        )
+
+    @property
+    def turn_completion(self) -> TurnCompletion:
+        # Composition only: actual stop SQL/commit belongs to the store; gateway
+        # scheduling and session/compute affinity remain owned by this root.
+        return TurnCompletion(
+            self._sessions,
+            gateway_enabled=self._gateway is not None,
+            charge_spend=self.charge_turn_spend,
+            defer_drain=self._schedule_deferred_drain,
+            effects=CompletionEffects(
+                complete_inputs=complete_work_inputs,
+                record_usage=record_turn_usage,
+                own_waiting=own_limit.after_turn,
+            ),
+            post_event=self.post_system_event,
+            room_of_conversation=self._room_of_conversation,
+            turn_changeset=partial(_turn_changeset, self._sessions),
+            persist_summary=partial(_persist_change_summary, self._sessions, self.live),
+        )
+
+    @property
+    def human_messages(self) -> HumanMessages:
+        return HumanMessages(self._sessions, self.thread_replied)
 
     @property
     def session_factory(self) -> async_sessionmaker:
         return self._sessions
-
-    def _lock_for(self, topic_id: uuid.UUID) -> asyncio.Lock:
-        lock = self._topic_locks.get(topic_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._topic_locks[topic_id] = lock
-        return lock
-
-    def _seat_lock_for(self, topic_id: uuid.UUID, agent_handle: str) -> asyncio.Lock:
-        key = (topic_id, agent_handle)
-        lock = self._seat_locks.get(key)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._seat_locks[key] = lock
-        return lock
-
-    def _mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
-        self._active_turn_ids.setdefault(topic_id, set()).add(work_id)
-
-    def _mark_turn_inactive(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
-        active = self._active_turn_ids.get(topic_id)
-        if active is None:
-            return
-        active.discard(work_id)
-        if not active:
-            self._active_turn_ids.pop(topic_id, None)
-
-    def _consuming_work_id(
-        self,
-        topic_id: uuid.UUID,
-        matches: Callable[[_HookWorkState], bool] | None = None,
-        *,
-        strict: bool = False,
-    ) -> uuid.UUID | None:
-        """The live turn an inbound message belongs to, if unambiguous.
-
-        Today turns on a topic serialize, so the active set holds at most one
-        id and this is that id (a missing hook state cannot rule it out, which
-        preserves the old single-slot tolerance; ``strict`` is for callers
-        that must NOT deliver without a state). When several turns are live
-        — parallel agents in one room — only an exact ``matches`` hit decides,
-        and only when exactly one hits: delivering to a guessed turn is worse
-        than holding the message for none.
-        """
-        active = self._active_turn_ids.get(topic_id)
-        if not active:
-            return None
-        if matches is None:
-            return next(iter(active)) if len(active) == 1 else None
-        hits = []
-        for work_id in active:
-            state = self._hook_work.get((topic_id, work_id))
-            if state is None:
-                if not strict:
-                    hits.append(work_id)
-            elif matches(state):
-                hits.append(work_id)
-        return hits[0] if len(hits) == 1 else None
 
     async def _turn_seat_handle(
         self,
@@ -467,7 +424,7 @@ class ChatService(SessionRecovery, RoomTurns):
         """The conversation handle whose seat this turn serializes on.
 
         Resolved BEFORE the seat lock is taken, from the same facts
-        `_assemble_turn` will resolve the running agent from: an explicitly
+        `TurnPreparation.prepare` will resolve the running agent from: an explicitly
         addressed instance, the recipient the message was stamped with at
         posting, the oldest pending message's addressee (a platform turn picks
         that conversation up), and finally the room's default agent. The two
@@ -476,7 +433,6 @@ class ChatService(SessionRecovery, RoomTurns):
         """
         if recipient_handle is not None:
             return recipient_handle
-        from app.domain.agent_instance.models import AgentInstance
 
         async with self._sessions() as session:
             instance_id = recipient_instance_id
@@ -506,7 +462,7 @@ class ChatService(SessionRecovery, RoomTurns):
             place = await PlaceResolver(session).conversation(topic_id)
             if place is None:
                 raise NotFoundError("Topic not found")
-            agent = await self._agent_at(session, place)
+            agent = await _agent_at(session, place)
             return agent.handle
 
     @asynccontextmanager
@@ -516,15 +472,14 @@ class ChatService(SessionRecovery, RoomTurns):
         work_id: uuid.UUID,
         seat_handle: str,
     ) -> AsyncIterator[None]:
-        from app.domain.agent.seat_admission import seat_admission
 
-        async with seat_admission(self._seat_lock_for(topic_id, seat_handle)):
-            self._mark_turn_active(topic_id, work_id)
+        async with seat_admission(self.live.seat_lock_for(topic_id, seat_handle)):
+            self.live.mark_turn_active(topic_id, work_id)
             try:
                 yield
             finally:
-                if (topic_id, work_id) not in self._hook_work:
-                    self._mark_turn_inactive(topic_id, work_id)
+                if (topic_id, work_id) not in self.live.hook_work:
+                    self.live.mark_turn_inactive(topic_id, work_id)
 
     async def converse(
         self,
@@ -541,7 +496,6 @@ class ChatService(SessionRecovery, RoomTurns):
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -567,19 +521,10 @@ class ChatService(SessionRecovery, RoomTurns):
         platform_wrote_this = (
             is_resume or nudge_event is not None or not names_a_person(author)
         )
-        # 平台指令那一档：下面 `_converse_impl` 用它保证这段指令不会被房间里的待读
-        # 消息挤掉。重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
+        # 平台指令那一档：`TurnPreparation.converse` 保证指令不被待读消息挤掉。
+        # 重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
         # 一段话重新递上来，两边都拼就是同一句说两遍。
         platform_turn = platform_wrote_this and not is_resume
-        # Record the arrival-time state before persistence and acknowledgements.
-        # If live work ends during either operation, queueing is still a fallback
-        # from the user's attempted live handoff and must be reported.
-        live_delivery_expected = (
-            summon
-            and not is_resume
-            and nudge_event is None
-            and self.has_running_turn(topic_id)
-        )
         if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
@@ -615,7 +560,7 @@ class ChatService(SessionRecovery, RoomTurns):
                 user_block_id,
                 user_block_ids,
                 _duplicate,
-            ) = await self.post_user_message(
+            ) = await self.human_messages.post_user_message(
                 topic_id,
                 author=author,
                 content=content,
@@ -637,27 +582,33 @@ class ChatService(SessionRecovery, RoomTurns):
             # transaction. Neither accepting the human message here nor an RPC
             # acknowledgement proves the native session read the input.
 
-        # A turn is already running on this topic. Don't queue behind it —
-        # hand the message to the session that is running RIGHT NOW.
-        #
-        # The platform used to be stricter than the tool it drives: an
-        # interactive Claude Code accepts input while it works and folds it into
-        # the run, but we serialized turns on top of that, so one slow command
-        # made every later message wait the whole turn out. Injecting instead
-        # gets the message in front of 芝士 in seconds.
-        #
-        # Only the hooks-driven backends can take it (they own a live screen).
-        # If the handoff fails, the message remains pending and runs through the
-        # normal queue, but that degradation must be visible in the room.
-        if user_block_id is not None and (
-            live_delivery_expected or self.has_running_turn(topic_id)
-        ):
+        # 收件人：点名的实例（恢复/重发那一类），或落库时记在消息上的那位。
+        # 注入、降级判断和座位锁共用一个答案，所以只解析一次。
+        recipient_handle = None
+        if recipient_instance_id is not None:
+            async with self._sessions() as session:
+                instance = await session.get(AgentInstance, recipient_instance_id)
+                if instance is None or not instance.is_active:
+                    raise self._refuse_turn(say("addressedAgentUnavailable"))
+                recipient_handle = instance.handle
+        seat_handle = await self._turn_seat_handle(
+            topic_id,
+            user_block_id=user_block_id,
+            recipient_handle=recipient_handle,
+        )
+
+        # A turn is already running for THIS seat: hand the message to it rather
+        # than queue behind it. 判据是收件人自己那一席在不在跑，不是房间里有没有
+        # 人在跑 —— 另一位队友在跑、收件人空闲时，排队本来就是正常路径，不记降级。
+        # 这一支进去就说明本来指望实时递交，所以除了真递进去，剩下的都是降级。
+        if user_block_id is not None and self.has_running_turn(topic_id, seat_handle):
             delivered = await self.merge_into_running_turn(
                 topic_id,
                 user_block_ids,
                 content,
                 author,
                 attachments,
+                recipient_handle=seat_handle,
             )
             if isinstance(delivered, InputReconciliationPending):
                 checking, checking_meta = delivery_checking_notice()
@@ -682,22 +633,8 @@ class ChatService(SessionRecovery, RoomTurns):
                 topic_id, fallback_text, turn_id, meta=fallback_meta
             )
 
-        recipient_handle = None
-        if recipient_instance_id is not None:
-            from app.domain.agent_instance.models import AgentInstance
-
-            async with self._sessions() as session:
-                instance = await session.get(AgentInstance, recipient_instance_id)
-                if instance is None or not instance.is_active:
-                    raise ValidationError("The addressed agent is unavailable")
-                recipient_handle = instance.handle
-        seat_handle = await self._turn_seat_handle(
-            topic_id,
-            user_block_id=user_block_id,
-            recipient_handle=recipient_handle,
-        )
         async with self._prompt_lock(topic_id, turn_id, seat_handle):
-            async for frame in self._converse_impl(
+            async for frame in self.turn_preparation.converse(
                 topic_id=topic_id,
                 content=content,
                 turn_id=turn_id,
@@ -705,7 +642,6 @@ class ChatService(SessionRecovery, RoomTurns):
                 user_block_id=user_block_id,
                 is_resume=is_resume,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 platform_turn=platform_turn,
                 delivery_id=delivery_id,
                 recipient_instance_id=recipient_instance_id,
@@ -721,7 +657,6 @@ class ChatService(SessionRecovery, RoomTurns):
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         recipient_handle: str | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -732,14 +667,13 @@ class ChatService(SessionRecovery, RoomTurns):
             recipient_handle=recipient_handle,
         )
         async with self._prompt_lock(topic_id, turn_id, seat_handle):
-            async for frame in self._converse_impl(
+            async for frame in self.turn_preparation.converse(
                 topic_id=topic_id,
                 content=content,
                 turn_id=turn_id,
                 author=author,
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
@@ -774,7 +708,7 @@ class ChatService(SessionRecovery, RoomTurns):
         providers resolve that path into a native image block before the model
         sees the message; a remote device first stages the exact bytes and acks
         the file write."""
-        consuming_turn_id = self._consuming_work_id(
+        consuming_turn_id = self.live.consuming_work_id(
             topic_id,
             lambda state: (
                 recipient_handle is None
@@ -784,9 +718,12 @@ class ChatService(SessionRecovery, RoomTurns):
         )
         if consuming_turn_id is None:
             return None
-        state = self._hook_work.get((topic_id, consuming_turn_id))
+        state = self.live.hook_work.get((topic_id, consuming_turn_id))
         async with self._sessions() as session:
             stored, replied = await live_inputs(session, user_block_ids)
+            # 中途插进来的话也带着平台自己那几句，同样按正在说话的那个人的
+            # 语言走（`user.language`）。
+            language = await language_of(session, author)
         lines, images = live_input_lines(
             author,
             content,
@@ -795,8 +732,8 @@ class ChatService(SessionRecovery, RoomTurns):
             replied=replied,
             recipient=state.acting_agent if state else None,
         )
-        state = self._hook_work.get((topic_id, consuming_turn_id))
-        line = publication_prompt("\n".join(lines))
+        state = self.live.hook_work.get((topic_id, consuming_turn_id))
+        line = publication_prompt("\n".join(lines), language)
         registrar = self._input_registrar(
             InputEffects(
                 held_block_ids=tuple(user_block_ids),
@@ -859,76 +796,13 @@ class ChatService(SessionRecovery, RoomTurns):
 
     async def remind_silent_turns(self) -> int:
         """Queue an internal reminder while a room response is still running."""
-        now = datetime.now(UTC)
-        due = [
-            state
-            for state in self._hook_work.values()
-            # Background inspections have their own notification policy. Only
-            # work answering a person owes a periodic chat update.
-            if state.reply_to is not None
-            and (
-                now
-                - max(
-                    state.last_chat_at or state.started_at,
-                    state.last_progress_reminder_at
-                    or (state.last_chat_at or state.started_at),
-                )
-            ).total_seconds()
-            >= settings.chat_progress_reminder_after_s
-            and state.work_id in self._active_turn_ids.get(state.topic_id, ())
-        ]
+        return await reminders.remind_silent_turns(self, datetime.now(UTC))
 
-        async def remind(state: _HookWorkState) -> bool:
-            if self._hook_work.get(
-                (state.topic_id, state.work_id)
-            ) is not state or state.work_id not in self._active_turn_ids.get(
-                state.topic_id, ()
-            ):
-                return False
-            silent_for = now - (state.last_chat_at or state.started_at)
-            minutes = int(silent_for.total_seconds() // 60)
-            try:
-                # Repeats every `chat_progress_reminder_after_s` of continued
-                # silence. A publication clears this and `last_chat_at` together,
-                # so speaking is what stops the reminders; tool output and
-                # duplicate send requests are not speaking.
-                state.last_progress_reminder_at = now
-                # A blocked terminal must not hold up reminders in other rooms.
-                async with asyncio.timeout(5):
-                    delivered = await self.notify_running_turn(
-                        state.topic_id,
-                        f"You have published nothing to this room for {minutes} "
-                        "minutes and the person who asked is still waiting. If "
-                        "this turn is still running, call chat_send now with "
-                        "what you know so far and what you are waiting on — a "
-                        "room that shows nothing cannot be told apart from one "
-                        "that is stuck. If your plan has changed, also update "
-                        "it with todo_write. Ignore this only if the turn is "
-                        "already finished.",
-                    )
-                # THAT a reminder fired was already visible — the periodic
-                # loop logs `chat progress reminder: <count>` on any cycle whose
-                # result is worth reporting (app/core/background.py). What a
-                # count cannot carry is which room, which turn, how long it had
-                # been dark, and whether the transport took it, and those are
-                # the four things needed to tell 「the agent was reminded and
-                # stayed quiet」 from 「the reminder never reached it」.
-                logger.info(
-                    "chat progress reminder topic=%s turn=%s silent_min=%d "
-                    "delivered=%s",
-                    state.topic_id,
-                    state.work_id,
-                    minutes,
-                    delivered,
-                )
-                return delivered is True
-            except Exception:  # noqa: BLE001 — one room must not stop the sweep
-                logger.exception(
-                    "chat progress reminder failed (topic=%s)", state.topic_id
-                )
-                return False
-
-        return sum(await asyncio.gather(*(remind(state) for state in due)))
+    async def remind_stale_checklists(self) -> int:
+        """Ask a running turn whose own checklist stopped moving to write it
+        again. Both sweeps share one interval: each asks whether something
+        visible about this turn has stopped moving."""
+        return await reminders.remind_stale_checklists(self, datetime.now(UTC))
 
     async def notify_running_turn(
         self,
@@ -962,7 +836,7 @@ class ChatService(SessionRecovery, RoomTurns):
         reads the doc fresh anyway, and the next turn does not — a reused
         session keeps the system prompt it was started with.
         """
-        consuming_turn_id = self._consuming_work_id(
+        consuming_turn_id = self.live.consuming_work_id(
             topic_id,
             lambda state: (
                 recipient_seat is None or state.acting_agent == recipient_seat
@@ -976,7 +850,7 @@ class ChatService(SessionRecovery, RoomTurns):
             InputEffects(held_block_ids=tuple(blocks), block_ids=tuple(blocks)),
             probe_unread=bool(blocks),
         )
-        state = self._hook_work.get((topic_id, consuming_turn_id))
+        state = self.live.hook_work.get((topic_id, consuming_turn_id))
         seat_agent = (
             (state.agent_instance_handle or state.acting_agent) if state else None
         )
@@ -1014,7 +888,7 @@ class ChatService(SessionRecovery, RoomTurns):
         produce output forever with its input queue frozen. What it cannot do is
         answer anybody, so this is the check that has a person behind it.
         """
-        pending = self._unread_inputs.get(topic_id)
+        pending = self.live.unread_inputs.get(topic_id)
         return min(pending.values()) if pending else None
 
     def _input_registrar(
@@ -1024,12 +898,11 @@ class ChatService(SessionRecovery, RoomTurns):
         probe_unread: bool = False,
         fence_delivery: bool = False,
     ) -> InputRegistrar:
-        from app.domain.agent.input_registration import input_registrar
 
         return input_registrar(
             self._sessions,
             effects,
-            self._unread_inputs,
+            self.live,
             probe_unread=probe_unread,
             fence_delivery=fence_delivery,
         )
@@ -1040,13 +913,11 @@ class ChatService(SessionRecovery, RoomTurns):
         No in-memory candidate is needed. Commit failure propagates so the same
         journal input is retried, even by a newly reconstructed ChatService.
         """
-        from app.domain.agent.input_registration import confirm_receipt
 
-        await confirm_receipt(self, receipt)
+        await confirm_receipt(self._sessions, self.live, receipt)
 
     async def confirm_work_completion(self, completion: WorkCompletion) -> None:
         """Settle a journaled completion without process-local work context."""
-        from app.domain.agent.pending_messages import finish_work
 
         await finish_work(self, completion, complete_work_inputs)
 
@@ -1058,9 +929,12 @@ class ChatService(SessionRecovery, RoomTurns):
         ``completed_at`` and consumes blocks. This one only frees the seat so a
         new input can be taken.
         """
-        from app.domain.agent.pending_messages import finish_work_termination
 
         await finish_work_termination(self, termination, terminate_work_inputs)
+
+    async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
+        """End the inputs of a work whose session died inside it. See turn_inputs."""
+        await turn_inputs.end_inputs_of_abandoned_work(self._sessions, work_id)
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
@@ -1081,13 +955,13 @@ class ChatService(SessionRecovery, RoomTurns):
         side by side, so another seat working leaves this one free. A turn
         whose agent is not known yet counts as anybody's.
         """
-        active = self._active_turn_ids.get(topic_id)
+        active = self.live.active_turn_ids.get(topic_id)
         if not active:
             return False
         if agent_handle is None:
             return True
         for work_id in active:
-            state = self._hook_work.get((topic_id, work_id))
+            state = self.live.hook_work.get((topic_id, work_id))
             if state is None or state.agent_instance_handle in (None, agent_handle):
                 return True
         return False
@@ -1135,7 +1009,7 @@ class ChatService(SessionRecovery, RoomTurns):
     @asynccontextmanager
     async def edit_environment(self, topic_id: uuid.UUID) -> AsyncIterator[None]:
         """Prevent a new prompt from racing an explicit environment change."""
-        lock = self._lock_for(topic_id)
+        lock = self.live.lock_for(topic_id)
         if lock.locked() or self.has_running_turn(topic_id):
             raise ValidationError(say("roomBusyFinishBeforeEnvironment"))
         async with lock:
@@ -1152,7 +1026,7 @@ class ChatService(SessionRecovery, RoomTurns):
         turn gets no start of its own and will get no ending either. Asking by
         turn id is the difference between a handover and an assumption.
         """
-        return turn_id in self._active_turn_ids.get(topic_id, ())
+        return turn_id in self.live.active_turn_ids.get(topic_id, ())
 
     async def post_system_event(
         self,
@@ -1187,9 +1061,8 @@ class ChatService(SessionRecovery, RoomTurns):
         """End the one open interval the Stop names (FB-56). Never raises — a
         Stop that cannot update the bookkeeping must still land the message it
         carries. An id that names no live row closes nothing."""
+        # deferred-import: UTC is bound at the top of this module already
         from datetime import UTC, datetime
-
-        from app.domain.agent.repositories import AgentTurnRepository
 
         try:
             async with self._sessions() as session:
@@ -1201,28 +1074,19 @@ class ChatService(SessionRecovery, RoomTurns):
         except Exception:  # noqa: BLE001 — the Stop matters more than the row
             logger.exception("could not close open turns for topic %s", topic_id)
 
-    async def _turn_credits_refused(self, turn_id: uuid.UUID) -> bool:
-        """Was `turn_id` ever stamped refused-for-credits by admission? What
-        the turn's own end (`StopFailure`) reads to decide whose wording —
-        the platform's or Claude Code's — the room gets."""
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        try:
-            async with self._sessions() as session:
-                return await AgentTurnRepository(session).credits_refused(turn_id)
-        except Exception:  # noqa: BLE001 — a failed read must not break the notice
-            logger.exception("could not read credits-refused stamp for %s", turn_id)
-            return False
-
     def row_is_dead(
         self, topic_id: uuid.UUID, agent_handle: str, session_id: str | None
     ) -> bool:
         """Is THIS row's conversation known dead (FB-56 legacy③)?"""
-        return death_evidence.row_is_dead(self, topic_id, agent_handle, session_id)
+        return death_evidence.row_is_dead(
+            self.live, self._compute, topic_id, agent_handle, session_id
+        )
 
     def seat_state(self, topic_id: uuid.UUID, agent_handle: str) -> str:
         """One of "live" / "dead" / "unknown" for the seat (FB-56 legacy③)."""
-        return death_evidence.seat_state(self, topic_id, agent_handle)
+        return death_evidence.seat_state(
+            self.live, self._compute, topic_id, agent_handle
+        )
 
     def has_live_screen(
         self, topic_id: uuid.UUID, agent_handle: str | None = None
@@ -1262,11 +1126,11 @@ class ChatService(SessionRecovery, RoomTurns):
         session that stopped reading, and replays like one.
         """
         deadline = time.monotonic() + timeout_s
-        while any(self._unread_inputs.values()) and time.monotonic() < deadline:
+        while any(self.live.unread_inputs.values()) and time.monotonic() < deadline:
             await asyncio.sleep(0.2)
         # A replay still running reads its sessions too; the next process
         # replays them again from where this one landed.
-        replays = list(self._replays.values())
+        replays = list(self.live.replays.values())
         for replay in replays:
             replay.cancel()
         await asyncio.gather(*replays, return_exceptions=True)
@@ -1297,7 +1161,7 @@ class ChatService(SessionRecovery, RoomTurns):
                     # An event names who ACTED: the seat its session authors
                     # under. The pointer is keyed by the agent that seat
                     # belongs to, the key the next turn reads it back under
-                    # (the resume lookup in `_assemble_turn`); written under
+                    # (the resume lookup in `TurnPreparation.prepare`); written under
                     # the seat, it is never found and every cold start opens
                     # a new conversation. A room-derived seat, the shared one
                     # and an event that names nobody are the room's agent.
@@ -1308,17 +1172,14 @@ class ChatService(SessionRecovery, RoomTurns):
                         )
                         if owner is not None
                         else None
-                    ) or await self._agent_at(session, place)
+                    ) or await _agent_at(session, place)
                     # 事件没说骨架，就问这个项目跑的是哪个——同一个答法，和开
                     # 这一轮用的那一个（结论 28）。
                     harness = harness or harness_for(owner.settings if owner else None)
                     # Lock the pointer row before moving it: the active-source
-                    # guard in `hook_stream._bind_user_entry` holds the same
-                    # lock while it validates and mutates, so the two sides of
+                    # guard in `turn.intake.native_entries` holds the same lock
+                    # while it validates and mutates, so the two sides of
                     # a session change serialize on the row itself (FB-56 P2-1).
-                    from sqlalchemy import select as _select
-
-                    from app.domain.agent_session.models import AgentSession as _AS
 
                     await session.execute(
                         _select(_AS.id)
@@ -1329,7 +1190,7 @@ class ChatService(SessionRecovery, RoomTurns):
                         )
                         .with_for_update()
                     )
-                    self._dead_sessions.discard(
+                    self.live.dead_sessions.discard(
                         (place.conversation_id, agent.handle, session_id)
                     )
                     await AgentSessionService(session).remember(
@@ -1353,25 +1214,23 @@ class ChatService(SessionRecovery, RoomTurns):
     ) -> None:
         """Project subscription activity onto the existing realtime protocol."""
         del project_id
-        from app.domain.agent.runtime import get_broker
 
         # 「谁在干活」要和块署名答同一个名字：块落在 acting seat 上，所以
         # 帧也带它。轮次开账前（自起的轮次，账还没开）状态不在，退回运行时
         # 给的会话座位。
-        state = self._hook_work.get((topic_id, work_id))
+        state = self.live.hook_work.get((topic_id, work_id))
         agent = (state.acting_agent if state is not None else None) or agent_handle
         if active:
-            self._mark_turn_active(topic_id, work_id)
+            self.live.mark_turn_active(topic_id, work_id)
             frame = {"type": "turn_started", "turn_id": str(work_id), "agent": agent}
         else:
-            self._mark_turn_inactive(topic_id, work_id)
+            self.live.mark_turn_inactive(topic_id, work_id)
             frame = {"type": "turn_finished", "turn_id": str(work_id), "agent": agent}
         await get_broker().publish(str(topic_id), frame)
         if not active:
             # The agent has said what it understood: the moment to check the
             # name a task got from its opening line (room_task/naming.py).
             naming.nudge(topic_id, "turn")
-            from app.domain.agent.pending_messages import nudge_messages
 
             nudge_messages(self, topic_id)
 
@@ -1393,7 +1252,7 @@ class ChatService(SessionRecovery, RoomTurns):
         self, conversation_id: uuid.UUID
     ) -> tuple[uuid.UUID, uuid.UUID | None, bool]:
         """``_room_of_conversation``, and whether the conversation is a 支线."""
-        known = self._conversation_rooms.get(conversation_id)
+        known = self.live.conversation_rooms.get(conversation_id)
         if known is not None:
             return known
         async with self._sessions() as session:
@@ -1403,14 +1262,15 @@ class ChatService(SessionRecovery, RoomTurns):
             if place is not None
             else (conversation_id, None, False)
         )
-        if len(self._conversation_rooms) >= _CONVERSATION_ROOMS_KEPT:
-            self._conversation_rooms.pop(next(iter(self._conversation_rooms)))
-        self._conversation_rooms[conversation_id] = answer
+        if len(self.live.conversation_rooms) >= _CONVERSATION_ROOMS_KEPT:
+            self.live.conversation_rooms.pop(next(iter(self.live.conversation_rooms)))
+        self.live.conversation_rooms[conversation_id] = answer
         return answer
 
     async def thread_replied(self, conversation_id: uuid.UUID) -> None:
         """A message landed in ``conversation_id``: when that is a 支线, its
         channel's main line shows the 支线 grown."""
+        # deferred-import: tests replace this name on app.domain.agent.staleness
         from app.domain.agent.staleness import announce_stale
 
         room, _inner, thread = await self._conversation_place(conversation_id)
@@ -1419,201 +1279,40 @@ class ChatService(SessionRecovery, RoomTurns):
 
     def forget_conversation(self, conversation_id: uuid.UUID) -> None:
         """A task moved to another room: read its room again next time."""
-        self._conversation_rooms.pop(conversation_id, None)
+        self.live.conversation_rooms.pop(conversation_id, None)
 
-    async def _begin_self_started_turn(
+    @property
+    def native_turns(self) -> NativeTurns:
+        return NativeTurns(
+            self._sessions,
+            self.live,
+            self._open_session_turn,
+            partial(_known_commits, self._sessions),
+        )
+
+    async def _open_session_turn(
         self,
-        project_id: uuid.UUID,
         topic_id: uuid.UUID,
         turn_id: uuid.UUID,
         *,
-        opened: bool = False,
-        agent_handle: str | None = None,
-        session_id: str | None = None,
-    ) -> "_HookWorkState | None":
-        """Give a turn the session started for itself the context to end like
-        any other: an interval a sweep can find, and everything its Stop needs.
-
-        Without this, a self-started turn's Stop landed the message and then did
-        nothing at all — no usage row, no conclusion cards settled, no change
-        summary, and no interval to close, because none was ever opened. The
-        room could not even tell you the turn had happened.
-
-        署名是这个房间的席位 handle。退场的是那个谁也没写过的作者值（字面量就是
-        「会话」两个字，结论 13），不是这条记录 —— 一个 worker 做完唤醒主线程，
-        那是同一个 handle 两条线程之间的一条便条，发件人就在这儿。
-
-        Read rather than assembled: there is no prompt to build here, so this
-        takes only what turn END needs, and takes it in one transaction. Two
-        fields are deliberately not read — `roster` stays None so the message
-        path loads it (passing [] would mean 私聊 and flag every @ as a
-        non-member), and `pending_ids` stays empty because nothing was fed to
-        this turn. A message that merges into it mid-flight is stamped consumed
-        by its own receipt (`confirm_prompt_receipt`), not from here.
-
-        ``opened`` is a turn whose interval already exists: one a previous
-        process of ours fed and delivered, which outlived it and is found again
-        by recovery. It gets the same context and no second row, and what the
-        process that assembled it wrote on that row: where its model traffic
-        went, the message it answers, and when it really started.
-
-        ``agent_handle`` is the agent whose session this is, when the caller
-        knows it. Recovery does — it is on the session's own key — and must pass
-        it: the room's fallback is the project default, and a teammate's turn
-        recorded under the default authors every block of that turn under the
-        wrong seat.
-
-        Returns None if the place is gone or the bookkeeping write fails; the
-        event that triggered this still lands, exactly as it did before.
-        """
-        from app.api.deps import get_work_runner
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        try:
-            async with self._sessions() as session:
-                place = await PlaceResolver(session).conversation(topic_id)
-                if place is None:
-                    return None
-                topic = place.room
-                project = await ProjectRepository(session).get(project_id)
-                if project is None:
-                    return None
-                agents = AgentInstanceService(session)
-                agent = (
-                    await self._agent_at(session, place)
-                    if place.task is not None and agent_handle is None
-                    else await self._session_agent(agents, topic, project, agent_handle)
-                )
-                agent_pool = memory_pool(topic.project_id, agent)
-                # 署这个会话所属队友的名，不是房间的默认队友：一间坐着几位队友
-                # 的房间里，别人的会话自己开的一轮署成默认那位，现场和「正在处
-                # 理」就会把干活的人认错。
-                acting_agent = await self._acting_handle(session, place.room_id, agent)
-                # Read whether or not this process opened it: a session keeps
-                # working across a backend restart, and the process that fed or
-                # first saw the turn wrote what it knew on the row.
-                row = await AgentTurnRepository(session).get(turn_id)
-            if not opened:
-                await get_work_runner().open_turn_the_session_started(
-                    self,
-                    topic_id,
-                    turn_id,
-                    author=acting_agent,
-                    agent_handle=agent.handle,
-                    session_id=session_id,
-                )
-        except Exception:  # noqa: BLE001 — the event matters more than the row
-            logger.exception(
-                "could not open the turn a session started for itself "
-                "(topic=%s, work=%s)",
-                topic_id,
-                turn_id,
-            )
-            return None
-        state = _HookWorkState(
-            project_id=project_id,
-            topic_id=topic_id,
-            work_id=turn_id,
-            pending_ids=set(),
-            reply_to=row.reply_to if row is not None else None,
-            roster=None,
-            topic_refs=[],
-            continuation_id=turn_id,
-            # "native" when this process has never assembled a turn for this
-            # session (a screen recovered on the way up, say). It is the answer
-            # that cannot invent spend: the gateway's log is drained by whatever
-            # turn closes next, which is exactly what happened before any of
-            # this existed.
-            route=(row.route if row is not None else None)
-            or self._session_route.get(topic_id, "native"),
-            model=self._session_model.get(topic_id, ""),
-            acting_agent=acting_agent,
-            agent_pool=agent_pool,
-            user_text="",
-            started_at=row.started_at if row is not None else datetime.now(UTC),
-            agent_instance_handle=agent.handle,
-            known_commits=asyncio.ensure_future(
-                self._known_commits(project_id, place.room_id)
-            ),
-            self_started=not opened,
-        )
-        self._hook_work[(topic_id, turn_id)] = state
-        if opened:
-            # The session announced this turn's start to the process that fed
-            # it, so this one never heard it: without this a message sent now
-            # would start a turn beside it instead of joining it.
-            # The single-slot world OVERWROTE the slot here, silently dropping
-            # a stale leftover; keep that hygiene by pruning ids whose hook
-            # state is gone — a genuinely live turn always has its state and
-            # survives, which is what several agents in one room will need.
-            self._active_turn_ids[topic_id] = {
-                work_id
-                for work_id in self._active_turn_ids.get(topic_id, ())
-                if (topic_id, work_id) in self._hook_work
-            } | {turn_id}
-        return state
-
-    async def _announce_action(self, state: _HookWorkState, resource: str) -> None:
-        """Say in the room what 芝士 just did, the moment it did it — once per
-        kind of action per turn, however many times the turn does it.
-
-        Asked of the room rather than remembered, so a turn another backend
-        picks up halfway does not announce twice, or forget what came before.
-        """
-        from app.domain.agent.runtime import get_broker
-
-        landed = landing(
-            EventAbout.room, project_id=state.project_id, room_id=state.topic_id
-        )
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            if await blocks.has_action(state.topic_id, state.work_id, resource):
-                return
-            block = await blocks.add(
-                project_id=landed.project_id,
-                conversation_id=landed.conversation_id,
-                author=state.acting_agent,
-                author_type=AuthorType.platform,
-                content=say(_ACTION_LABEL[resource], actor=f"<@{state.acting_agent}>"),
-                kind=BlockKind.event,
-                turn_id=state.work_id,
-                meta={"platform": True, "action": resource},
-            )
-            await session.commit()
-            payload = _block_payload(BlockOut.model_validate(block))
-        await get_broker().publish(
-            str(state.topic_id), {"type": "event_block", "block": payload}
-        )
-
-    async def _note_turn_context(
-        self,
-        turn_id: uuid.UUID,
-        *,
-        route: str,
-        reply_to: uuid.UUID | None,
+        author: str,
         agent_handle: str,
+        session_id: str | None,
     ) -> None:
-        """Best-effort, like the delivery stamp: losing it costs a turn picked
-        up by another backend its reply link and the accuracy of one route
-        label. It lands after the interval exists, so the row carries this
-        turn's exact seat and route — what death evidence is matched against,
-        never a room-level guess."""
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        try:
-            async with self._sessions() as session:
-                await AgentTurnRepository(session).note_context(
-                    turn_id, route=route, reply_to=reply_to, agent_handle=agent_handle
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — bookkeeping must not stop a turn
-            logger.exception("could not record the context of turn %s", turn_id)
+        await self._work_runner.open_turn_the_session_started(
+            self,
+            topic_id,
+            turn_id,
+            author=author,
+            agent_handle=agent_handle,
+            session_id=session_id,
+        )
 
     async def sweep_memory_dreams(self) -> dict:
         """巡检一圈：哪些项目该整理记忆了，逐个跑（`periodic_jobs` 里的一个）。
 
         这一簇连同它按房间记的那四份状态搬去了 `memory_ledger.py`——判据、串行
-        和「派到哪个会话上」的文档都在那里。这里留一行委托：`core/background.py`
+        和「派到哪个会话上」的文档都在那里。这里留一行委托：`app/domain/agent/periodic.py`
         的周期任务和测试都按这个入口叫它。
         """
         return await self._memory.sweep()
@@ -1622,800 +1321,8 @@ class ChatService(SessionRecovery, RoomTurns):
         """跑一次记忆整理（dream）；不该跑就什么都不做（`memory_ledger.py`）。"""
         return await self._memory.run_dream(project_id=project_id)
 
-    async def _consume_hook_event(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        event: AgentEvent,
-        eid: str | None,
-        result_text_seen: bool,
-        platform_unsolicited: bool,
-    ) -> None:
-        """Persist and broadcast one event (hook_stream.py)."""
-        from app.api.deps import get_work_runner
-
-        return await _consume_hook_event(
-            self,
-            self._sessions,
-            self._hook_work,
-            self._retry_notes,
-            self._waiting_notes,
-            self._compact_notes,
-            self._room_session_agents,
-            self._active_turn_ids,
-            get_work_runner(),
-            project_id,
-            topic_id,
-            turn_id,
-            event,
-            eid,
-            result_text_seen,
-            platform_unsolicited,
-        )
-
-    async def _delivered_unread(
-        self, session: AsyncSession, state: _HookWorkState
-    ) -> list[uuid.UUID]:
-        """This agent's inputs that a delivered prompt carried and no Stop has
-        stamped yet.
-
-        A clean Stop means the session got through every prompt written into it,
-        so these are read — whichever turn fed them. `state.pending_ids` cannot
-        answer that alone: it lives in this process, and a backend replaced
-        mid-turn hands the session's Stop to a process that never saw the
-        prompt, so the batch went unstamped and every later turn re-sent it.
-        Undelivered prompts stay out: the session never heard them.
-        """
-        from app.domain.agent.repositories import AgentTurnRepository
-
-        handle = state.agent_instance_handle
-        if handle is None:
-            return []
-        history = await BlockRepository(session).turn_history(state.topic_id)
-        fed = {
-            block.id: turn
-            for block in _pending_input_blocks(history)
-            if (turn := prompted_turn(block)) is not None
-            and _addressed_to(block, handle)
-        }
-        delivered = await AgentTurnRepository(session).delivered(set(fed.values()))
-        return [block_id for block_id, turn in fed.items() if turn in delivered]
-
-    async def _forget_room_claims(self, topic_id: uuid.UUID) -> None:
-        """A session failed and this process holds no turn for it — the
-        backend was replaced before the session produced anything here. Which
-        agent's batch it was is unknown, so every delivered claim in the room
-        is withdrawn: the cost is a replay, never a lost message."""
-        try:
-            async with self._sessions() as session:
-                blocks = BlockRepository(session)
-                history = await blocks.turn_history(topic_id)
-                await blocks.forget_prompted_turn(
-                    [
-                        block.id
-                        for block in _pending_input_blocks(history)
-                        if prompted_turn(block) is not None
-                    ]
-                )
-                await session.commit()
-        except Exception:  # noqa: BLE001 — the failure notice matters more
-            logger.exception("could not withdraw delivered claims (topic=%s)", topic_id)
-
-    async def _close_hook_work(
-        self, state: _HookWorkState, result: AgentResult
-    ) -> list[dict]:
-        """Commit accounting and prompt consumption after the session stops."""
-        usage = reported_usage(state.route, result)
-        # One row PER MODEL, never one lump: a gateway-routed turn's spend can
-        # cover several models in one drain, and collapsing them under
-        # `settings.agent_model` is exactly how mimo disappeared from `by_model`.
-        usages: list[AgentUsage] = []
-        if self._gateway is not None and state.route == "gateway":
-            drained = await self.charge_turn_spend(
-                state.project_id, state.topic_id, state.work_id
-            )
-            if drained:
-                usages = drained
-            else:
-                # Both the turn-end drain and its settle retry saw nothing.
-                # LiteLLM batch-writes spend logs, so "nothing yet" is not
-                # "nothing" — land it in the background rather than hold the
-                # turn open or write the spend off. This is the ONLY place the
-                # numbers exist: an interactive session reports no usage of its
-                # own, which is why `usage` is None here in the first place.
-                self._schedule_deferred_drain(
-                    state.project_id, state.topic_id, state.work_id
-                )
-        elif usage is not None:
-            usages = [usage]
-
-        action_frames: list[dict] = []
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            # Exact native completion locks its input rows before touching blocks.
-            # A synthetic error or an identity-less result cannot release a hold.
-            if (
-                not result.is_error
-                and result.input_work_completed
-                and result.session_id
-                and result.harness
-                and result.agent_handle == state.acting_agent
-            ):
-                await complete_work_inputs(
-                    session,
-                    project_id=state.project_id,
-                    conversation_id=state.topic_id,
-                    recipient_handle=result.agent_handle,
-                    harness=result.harness,
-                    native_session_id=result.session_id,
-                    work_id=state.work_id,
-                )
-            await record_turn_usage(
-                session,
-                state,
-                usages,
-                gateway_charged=state.route == "gateway" and self._gateway is not None,
-            )
-            # What this session was fed, including by a process that is gone.
-            # Settled either way: a failed session must also drop the batches
-            # an earlier process fed it, or a later clean Stop would read them
-            # as heard — and a self-started turn's own set is always empty.
-            fed = list(
-                state.pending_ids | set(await self._delivered_unread(session, state))
-            )
-            if result.is_error:
-                await blocks.forget_prompted_turn(fed)
-            elif result.harness is None:
-                # Non-native providers do not register NativeInput batches.
-                await blocks.mark_consumed(fed, state.work_id)
-            waiting = (
-                await own_limit.after_turn(session, state, result)
-                if state.route == OWN_ROUTE
-                else None
-            )
-            await session.commit()
-        if waiting is not None:
-            await self.post_system_event(
-                state.topic_id,
-                waiting,
-                state.work_id,
-                meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
-            )
-
-        # A task's changes are its branch's, shown on the task; the room's
-        # change summary reads the room's checkout.
-        _room, inner_id = await self._room_of_conversation(state.topic_id)
-        changeset = (
-            await self._turn_changeset(
-                state.project_id,
-                state.topic_id,
-                None if state.known_commits is None else await state.known_commits,
-            )
-            if inner_id is None
-            else None
-        )
-        if changeset is not None:
-            payload = await self._persist_change_summary(
-                project_id=state.project_id,
-                topic_id=state.topic_id,
-                turn_id=state.work_id,
-                changeset=changeset,
-            )
-            if payload is not None:
-                action_frames.append({"type": "event_block", "block": payload})
-        return action_frames
-
-    async def post_user_message(
-        self,
-        topic_id: uuid.UUID,
-        *,
-        author: str,
-        content: str,
-        turn_id: uuid.UUID | None,
-        reply_to: str | None,
-        attachments: list[dict] | None = None,
-        client_id: str | None = None,
-        quoted_context: dict | None = None,
-    ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
-        """Persist a person's message (+ attachment blocks), its @mention notices
-        and the questions it answers in one short transaction, outside any turn lock.
-        Returns (payloads, anchor_block_id, all_block_ids, duplicate) — the
-        anchor is what 芝士's reply threads under; all ids are consumed together
-        after a mid-session delivery receipt. ``duplicate`` means the browser
-        retried a delivery whose durable result is being echoed again.
-        """
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            # A room's own line, or a task's conversation in it.
-            place = await PlaceResolver(session).conversation(topic_id)
-            if place is None:
-                raise NotFoundError("Topic not found")
-            topic = place.room
-            delivery_key = (
-                action_key(place.conversation_id, "chat_message", author, client_id)
-                if client_id
-                else None
-            )
-            if delivery_key and not await idem.claim(
-                session,
-                delivery_key,
-                action="chat_message",
-                scope_id=str(place.conversation_id),
-            ):
-                stored = await idem.stored_result(session, delivery_key)
-                if stored is None:
-                    raise RuntimeError("committed chat delivery has no stored result")
-                return (
-                    list(stored["payloads"]),
-                    uuid.UUID(stored["anchor_block_id"]),
-                    [uuid.UUID(value) for value in stored["block_ids"]],
-                    True,
-                )
-            if delivery_key:
-                assert client_id is not None
-                legacy_blocks = await blocks.client_delivery(
-                    place.room_id, author=author, client_id=client_id
-                )
-                if legacy_blocks:
-                    anchor = next(
-                        block
-                        for block in legacy_blocks
-                        if (block.meta or {}).get("client_id") == client_id
-                    )
-                    payloads = [
-                        _block_payload(BlockOut.model_validate(block))
-                        for block in legacy_blocks
-                    ]
-                    block_ids = [block.id for block in legacy_blocks]
-                    await idem.record_result(
-                        session,
-                        delivery_key,
-                        {
-                            "payloads": payloads,
-                            "anchor_block_id": str(anchor.id),
-                            "block_ids": [str(block_id) for block_id in block_ids],
-                        },
-                    )
-                    await session.commit()
-                    return payloads, anchor.id, block_ids, True
-            created_blocks: list[Block] = []
-            project = await ProjectRepository(session).get(topic.project_id)
-            if project is None:
-                raise NotFoundError("Project not found")
-            await own_calls.seat_if_named(session, project, topic, content, author)
-            agent = await self._agent_at(session, place)
-            mentions = await person_mentions(
-                session, topic, content, agent, dm=_is_dm(topic)
-            )
-            agent_handles, by_seat = mentions.agent_handles, mentions.by_seat
-            # 私聊是两席的房间（结论 19）：说话就是对着对方说的，不需要 @。以前这
-            # 一句是浏览器替服务端说的 —— DM 界面把帧上的 `summon` 置真发上来，
-            # 于是「这条消息点了谁的名」有两个答案，其中一个在客户端手上。点名归
-            # 服务端算（I13），所以这里自己认下私聊这一档。
-            #
-            # 判据是**对面那一席是不是 agent**，不是「这是不是私聊」：两个人的私聊
-            # 也是私聊，而它没有 agent 可点名 —— 认成「点了名」就等于把芝士叫进两
-            # 个人的私密对话里说话。对面是谁只有名册一个出处（`private_seats`，
-            # 它答的 owner 那一席恒是人，所以只看 peer）；名册不是恰好两席时它答
-            # None，这条消息就不点名，和这间房其余各处的退路同向。
-            seats = (
-                await TopicMemberService(session).private_seats(topic.id)
-                if _is_dm(topic)
-                else None
-            )
-            recipient = {
-                "instance_id": str(agent.instance_id),
-                "handle": agent.handle,
-                # In a task the owner talks to its agent and nobody else, so
-                # every message is addressed to it, as in a private chat with one.
-                "mentioned": place.task is not None
-                or (seats is not None and looks_like_agent_handle(seats[1])),
-            }
-            anchor_id: uuid.UUID | None = None
-            answered: list[Block] = []
-            attribution_id = turn_id
-            # B3: a reply threads under a block IN THIS TOPIC. A client that
-            # kept a stale reply target across a topic switch would otherwise
-            # write a cross-topic edge into the conversation tree — invisible on
-            # screen (the reader's timeline can't resolve the parent, so no
-            # reply cue renders) and wrong in the data that 记忆/摘要 rebuild
-            # from. Drop the edge, keep the message: losing the thread link is
-            # recoverable, refusing the send is not.
-            reply_uuid = _parse_uuid(reply_to)
-            if reply_uuid is not None:
-                parent = await blocks.get(reply_uuid)
-                if parent is None or parent.conversation_id != place.conversation_id:
-                    logger.warning(
-                        "dropped cross-topic reply_to (topic=%s, reply_to=%s)",
-                        topic_id,
-                        reply_to,
-                    )
-                    reply_uuid = None
-            if content:
-                content, roster = mentions.content, mentions.roster
-                # WHICH agent was addressed, not merely whether one was. The
-                # flag alone left `handle`/`instance_id` naming whoever the room
-                # pointed at, so @-ing the second teammate ran the first one's
-                # turn. A room holds members; the one addressed answers, exactly
-                # as for a person.
-                addressed = next(
-                    (h for h in agent_handles if f"<@{h}>" in content), None
-                )
-                if addressed is not None:
-                    recipient["mentioned"] = True
-                    named = by_seat.get(addressed)
-                    if named is not None:
-                        recipient["instance_id"] = str(named.id)
-                        recipient["handle"] = named.handle
-                    # A seat still under the room-derived handle names no
-                    # instance, and that seat IS the agent the room points at,
-                    # so the recipient resolved above is already the right one.
-                refused = await own_calls.refused(session, project, recipient, author)
-                user_block = await blocks.add(
-                    project_id=topic.project_id,
-                    conversation_id=place.conversation_id,
-                    author=author,
-                    author_type=AuthorType.participant,
-                    content=content,
-                    kind=BlockKind.message,
-                    turn_id=turn_id,
-                    reply_to=reply_uuid,  # B3: thread under another
-                    # The sender's own id for this send, echoed straight back on
-                    # the broadcast. A client that showed the message the instant
-                    # it was typed (§14.1 实时) needs to recognise its own copy
-                    # coming home; matching on text cannot do that, because this
-                    # method rewrites the text on the way in.
-                    meta={
-                        "agent_recipient": recipient,
-                        **({"client_id": client_id} if client_id else {}),
-                        **(
-                            {"quoted_context": quoted_context}
-                            if quoted_context is not None
-                            else {}
-                        ),
-                    },
-                )
-                if attribution_id is None:
-                    attribution_id = user_block.id
-                    user_block.turn_id = attribution_id
-                await own_calls.say_refused(session, place, user_block, refused)
-                await announce_mentions(session, topic, user_block, author, roster)
-                # A reply to an agent's question goes to that agent (`recipient`).
-                answered = await answer_questions(session, user_block, recipient)
-                if len(agent_handles) > 1:
-                    # `agent_recipient` 是单数：它起的是第一位点到的那一轮。同一条
-                    # 消息点到的其余几位各记一条投递，和 agent 点名走同一本账。
-                    from app.domain.delivery.mention import record_mentions
-                    from app.domain.thread.services import answered_in
-
-                    await record_mentions(
-                        session,
-                        project_id=topic.project_id,
-                        room_id=place.room_id,
-                        conversation_id=await answered_in(session, user_block),
-                        block_id=user_block.id,
-                        author=author,
-                        content=content,
-                        quoted_context=quoted_context,
-                        by_agent=False,
-                        occurred_at=datetime.now(UTC),
-                        skip=frozenset({addressed} if addressed else ()),
-                    )
-                anchor_id = user_block.id
-                created_blocks.append(user_block)
-            # 图片输入: each image = an attachment block. content = the worktree
-            # path (a REAL file, uploaded before this message), mime_type = how
-            # to render it — structured fields, never parsed out of prose.
-            for index, att in enumerate(attachments or []):
-                att_block = await blocks.add(
-                    project_id=topic.project_id,
-                    conversation_id=place.conversation_id,
-                    author=author,
-                    author_type=AuthorType.participant,
-                    content=str(att.get("path") or ""),
-                    kind=BlockKind.attachment,
-                    mime_type=str(att.get("mime") or "") or None,
-                    turn_id=attribution_id,
-                    # An image-only send still honors the reply thread (B3).
-                    reply_to=None if content else reply_uuid,
-                    meta={
-                        "agent_recipient": recipient,
-                        **(
-                            {"client_id": client_id}
-                            if not content and index == 0 and client_id
-                            else {}
-                        ),
-                    },
-                )
-                if attribution_id is None:
-                    attribution_id = att_block.id
-                    att_block.turn_id = attribution_id
-                if anchor_id is None:
-                    anchor_id = att_block.id
-                created_blocks.append(att_block)
-            if anchor_id is None:  # guarded by the route, but never crash a turn
-                raise NotFoundError("empty message")
-            payloads = [
-                _block_payload(BlockOut.model_validate(block))
-                for block in created_blocks
-            ]
-            block_ids = [block.id for block in created_blocks]
-            if delivery_key:
-                await idem.record_result(
-                    session,
-                    delivery_key,
-                    {
-                        "payloads": payloads,
-                        "anchor_block_id": str(anchor_id),
-                        "block_ids": [str(block_id) for block_id in block_ids],
-                    },
-                )
-            await session.commit()
-        await publish_answered(place.conversation_id, answered)
-        # A person's words are what a task gets named by (room_task/naming.py).
-        if names_a_person(author) and place.task is not None:
-            naming.nudge(place.task.id, "message")
-        await self.thread_replied(place.conversation_id)
-        return payloads, anchor_id, block_ids, False
-
-    async def ack_summon(
-        self, user_block_id: uuid.UUID, topic_id: uuid.UUID, by: str | None = None
-    ) -> dict | None:
-        """Add the 👀 receipt of the agent running the turn (``by``, else the
-        room's seat) to the summoning user message (idempotent) and return the
-        WS reaction payload. Best-effort: a failed receipt must never kill the
-        turn."""
-        try:
-            async with self._sessions() as session:
-                blocks = BlockRepository(session)
-                await blocks.add_reaction_if_absent(
-                    user_block_id,
-                    "👀",
-                    by or await self._agent_handle(session, topic_id),
-                )
-                reactions = await blocks.reactions_for_block(user_block_id)
-                await session.commit()
-            return {"block_id": str(user_block_id), "reactions": reactions}
-        except Exception:  # noqa: BLE001 — the turn matters more than the ack
-            logger.exception("failed to 👀-ack block %s", user_block_id)
-            return None
-
-    @staticmethod
-    async def _session_agent(
-        agents: AgentInstanceService,
-        topic: Topic,
-        project: Project,
-        agent_handle: str | None,
-    ) -> ResolvedAgent:
-        return await _session_agent(agents, topic, project, agent_handle)
-
-    async def _resolved_agent(
-        self, session: AsyncSession, topic: Topic
-    ) -> ResolvedAgent:
-        return await _resolved_agent(session, topic)
-
-    async def _agent_at(self, session: AsyncSession, place: Place) -> ResolvedAgent:
-        return await _agent_at(session, place)
-
-    async def _acting_handle(
-        self, session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent
-    ) -> str:
-        return await _acting_handle(session, topic_id, agent)
-
-    @staticmethod
-    async def _private_owner(session: AsyncSession, topic: Topic) -> str | None:
-        """私聊里那位人类，名册上 owner 那一席；不是私聊、或名册已经不是两席时 None。
-
-        个人记忆按他记（`MemoryScope.user`），会话开场也按他开。出处只有名册一处：
-        一间私聊就是两席的房间（结论 19），谁坐在里面由加席位、撤席位决定。
-
-        答的只是「人是哪一位」。「这间房是不是私聊」是另一个问题，由 `_is_dm` 答
-        （这个文件里 `is_private` 唯一的读点）：席位不齐的时候这里答 None，而那间
-        房仍然是私聊，名册和地点都不因为席位不齐就变回房间的那一套。
-        """
-        if not _is_dm(topic):
-            return None
-        seats = await TopicMemberService(session).private_seats(topic.id)
-        return seats[0] if seats is not None else None
-
     async def _agent_handle(self, session: AsyncSession, topic_id: uuid.UUID) -> str:
         return await _agent_handle(session, topic_id)
-
-    async def _persist_assistant_message(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        text: str,
-        turn_id: uuid.UUID | None,
-        reply_to: uuid.UUID | None,
-        roster: list[dict] | None,
-        topic_refs: list[dict],
-        eid: str | None = None,
-        eids: tuple[str, ...] = (),
-        platform_unsolicited: bool = False,
-        continuation_id: uuid.UUID | None = None,
-        at: datetime | None = None,
-        inner_id: uuid.UUID | None = None,
-        publish: bool = False,
-        author: str | None = None,
-        publication_id: str | None = None,
-        own_output: bool = False,
-        extra_meta: dict | None = None,
-        closing: bool = False,
-    ) -> dict | None:
-        """Persist output immediately; only explicit publications enter chat.
-
-        Terminal output remains in activity without notifying mentioned members.
-        ``eid`` (the harness's own id for the event) is stamped into meta so a
-        record read twice lands once; ``eids`` carries every id a message was
-        delivered under, and any one of them matching an existing block means
-        this message already landed.
-
-        Returns None when ``continuation_id`` says this exact message already
-        landed in an earlier attempt at the same work (④ 重发): the re-sent
-        turn re-narrating "我先看一下 X" must not post a second copy of it. The
-        caller treats None as "nothing to broadcast".
-
-        ``own_output`` 告诉轮次输入账目：这一条是作者自己跑出来的产出，不是谁对
-        房间说的一句待读的话。默认不必填 —— 「署名是 agent 且落在某一轮里」已经
-        答得出这件事。填它的是那种平台填不出轮次号的写入端（远程控制里芝士问出
-        口的那句话）。
-
-        ``closing`` 说这一条是轮次收尾的结果文本。它照例就是这一轮最后说过的那
-        段话，已经作为一条消息落过了；和那段一字不差时不再落第二遍。比对的是库
-        里这一轮最后一段，不是内存账目——发版交接后接手的后端没有账目。"""
-        # 有些「助手消息」根本不是芝士说的 —— 是它脚下的 CLI 把自己的英文提示
-        # 当成助手输出印了出来。拦在这里而不是调用方:每一条写入路都经过这个方法,
-        # 拦在门口才不会有一条漏网。
-        as_progress = not publish
-        as_notice = None if publish else cli_notice(text)
-        if as_notice is not None:
-            line, notice_meta = as_notice
-            return await self._persist_room_event(
-                project_id=project_id,
-                topic_id=topic_id,
-                content=line,
-                meta=notice_meta,
-                turn_id=turn_id,
-                eid=eid,
-                platform_unsolicited=platform_unsolicited,
-                in_room=True,
-                author_type=AuthorType.platform,
-                inner_id=inner_id,
-            )
-        meta: dict | None = (
-            {"in_room": False, "progress": True} if as_progress else None
-        )
-        if eid:
-            meta = {**(meta or {}), "eid": eid}
-        if len(eids) > 1:
-            meta = {**(meta or {}), "eids": list(eids)}
-        if platform_unsolicited:
-            meta = {**(meta or {}), "platform_unsolicited": True}
-        if extra_meta:
-            meta = {**(meta or {}), **extra_meta}
-        known_ids = [e for e in dict.fromkeys((eid, *eids)) if e]
-        async with self._sessions() as session:
-            blocks = BlockRepository(session)
-            publication_key = None
-            publication_input = {
-                "text": text,
-                "reply_to": str(reply_to) if reply_to else None,
-            }
-            if publication_id is not None:
-                publication_key = action_key(
-                    topic_id, "chat-publish", author or "", publication_id
-                )
-                if not await idem.claim(
-                    session,
-                    publication_key,
-                    action="chat-publish",
-                    scope_id=str(topic_id),
-                ):
-                    previous = await idem.stored_result(session, publication_key)
-                    if previous is None or previous["input"] != publication_input:
-                        from app.core.errors import ConflictError
-
-                        raise ConflictError("request_id was used for another message")
-                    return previous["block"]
-            if known_ids and await blocks.has_any_eid(topic_id, known_ids):
-                return None
-            # `has_any_eid` alone is a SELECT followed by an INSERT, and the same
-            # hook event reaches this method from two places at once — the turn's
-            # own attribution and the platform-unsolicited path. Both read "not
-            # there", both write, and the room gets the message twice ~15ms
-            # apart, the two rows carrying the SAME eid (measured across the
-            # dev database: every duplicated 芝士 message has this shape).
-            # ON CONFLICT DO NOTHING is what actually decides; the read above
-            # stays because it also catches a copy landed by an earlier turn,
-            # which no claim of ours would.
-            if known_ids and not await idem.claim(
-                session,
-                action_key(topic_id, "block-eid", *sorted(known_ids)),
-                action="message",
-                scope_id=str(topic_id),
-            ):
-                return None
-            # Claim BEFORE writing, in the SAME session: the key and the block
-            # commit together, so "key present" and "message posted" cannot
-            # disagree no matter where the process dies.
-            if continuation_id is not None and not await idem.claim(
-                session,
-                action_key(
-                    continuation_id, "progress" if as_progress else "message", text
-                ),
-                action="message",
-                scope_id=str(topic_id),
-            ):
-                return None
-            topic = await TopicRepository(session).get(topic_id)
-            if roster is None:
-                # The reconcile/backfill caller holds no roster. Load it here
-                # instead of passing []: [] means 私聊 (no member list at all),
-                # and conflating the two flagged every @ in a recovered message
-                # as a non-member while silently dropping its notification.
-                roster = await room_roster(session, project_id, topic)
-            text = _expand_mention_names(text, roster, topic_refs)
-            if (
-                closing
-                and turn_id is not None
-                and await blocks.last_said_in_turn(topic_id, turn_id) == text
-            ):
-                return None
-            author = author or await self._agent_handle(session, topic_id)
-            # 「关于什么」由 `inner_id` 推出，调用方不另声明：调用方说出这条事件
-            # 关于什么的方式**就是**递不递一张卡下来（变更提醒从不递）。再收一个
-            # about 形参，是同一个事实在一处声明两遍——不加 `about_kind` 列的同一条理由。
-            landed = landing(
-                EventAbout.task if inner_id is not None else EventAbout.room,
-                project_id=project_id,
-                room_id=topic_id,
-                task_id=inner_id,
-            )
-            block = await blocks.add(
-                project_id=landed.project_id,
-                conversation_id=landed.conversation_id,
-                author=author,
-                author_type=AuthorType.participant,
-                content=text,
-                kind=BlockKind.event if as_progress else BlockKind.message,
-                reply_to=reply_to,
-                turn_id=turn_id,
-                meta=meta,
-                created_at=at,
-                own_output=own_output,
-            )
-            # <@handle> mentions in 芝士's message → strong notify (the token is
-            # the single source of truth: what's shown = who's notified).
-            # Hallucinated handles get flagged in 现场, never silently no-op.
-            if topic is not None and not as_progress:
-                await announce_mentions(
-                    session, topic, block, author, roster, flag_unresolved=True
-                )
-            payload = _block_payload(BlockOut.model_validate(block))
-            if publication_key is not None:
-                await idem.record_result(
-                    session,
-                    publication_key,
-                    {"input": publication_input, "block": payload},
-                )
-            await session.commit()
-        if publish:
-            # The caller attributes the publication to a turn when it can; an
-            # agent running off this process (a remote executor) publishes over
-            # HTTP, where the runner knows no live work and hands in None. Its
-            # turn still exists here, so fall back — but carefully, because a
-            # room seats several agents: crediting agent A's publication to
-            # agent B's turn would silence B's reminder while A's room stays
-            # dark.
-            # So: the publisher's own live turn first; an unambiguous single
-            # live turn next (covers tokens that don't name an agent seat);
-            # nothing when two agents' turns are live and neither is the
-            # publisher's. Without a fallback at all, every remote publication
-            # missed `last_chat_at` and the sweep kept "reminding" a turn that
-            # had just spoken, counting the silence from turn start.
-            conversation_id = inner_id or topic_id
-            work_id = turn_id or self._attributed_work_id(conversation_id, author)
-            state = (
-                self._hook_work.get((conversation_id, work_id))
-                if work_id is not None
-                else None
-            )
-            if state is not None:
-                state.last_chat_at = datetime.now(UTC)
-                state.last_progress_reminder_at = None
-        return payload
-
-    def _attributed_work_id(self, topic_id: uuid.UUID, author: str) -> uuid.UUID | None:
-        """Which live hook work a room publication with no turn id belongs to."""
-        live = [s for (t, _), s in self._hook_work.items() if t == topic_id]
-        own = [s for s in live if s.acting_agent == author]
-        if len(own) == 1:
-            return own[0].work_id
-        if len(own) > 1:
-            active = self._active_turn_ids.get(topic_id, ())
-            hits = [s.work_id for s in own if s.work_id in active]
-            return hits[0] if len(hits) == 1 else None
-        if len(live) == 1:
-            return live[0].work_id
-        return None
-
-    async def _persist_tool_event(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        name: str,
-        tool_input: dict,
-        platform: bool,
-        turn_id: uuid.UUID | None,
-        eid: str | None = None,
-        platform_unsolicited: bool = False,
-        inner_id: uuid.UUID | None = None,
-        author: str | None = None,
-        at: datetime | None = None,
-    ) -> dict | None:
-        return await _persist_tool_event(
-            self._sessions,
-            self._hook_work,
-            project_id=project_id,
-            topic_id=topic_id,
-            name=name,
-            tool_input=tool_input,
-            platform=platform,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-            inner_id=inner_id,
-            author=author,
-            at=at,
-        )
-
-    async def _mark_step_failed(self, block_id: uuid.UUID, error: str) -> dict | None:
-        return await _mark_step_failed(
-            self._sessions,
-            block_id,
-            error,
-        )
-
-    async def _record_step_output(self, block_id: uuid.UUID, text: str) -> dict | None:
-        return await _record_step_output(
-            self._sessions,
-            block_id,
-            text,
-        )
-
-    async def _note_retry(
-        self,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        event: AgentRetrying,
-        *,
-        author: str | None,
-        inner_id: uuid.UUID | None,
-        channel: str,
-    ) -> None:
-        """Say the turn is retrying a failed request (hook_stream.py)."""
-        return await _note_retry(
-            self._sessions,
-            self._retry_notes,
-            topic_id,
-            turn_id,
-            event,
-            author=author,
-            inner_id=inner_id,
-            channel=channel,
-        )
-
-    async def _note_compaction(
-        self, turn_id: uuid.UUID, event: AgentCompacting, *, channel: str
-    ) -> None:
-        """Restate the turn's compaction line as over (hook_stream.py)."""
-        return await _note_compaction(
-            self._sessions, self._compact_notes, turn_id, event, channel=channel
-        )
 
     async def _note_reachability(
         self,
@@ -2428,139 +1335,12 @@ class ChatService(SessionRecovery, RoomTurns):
         """Say the turn is waiting for its machine (hook_stream.py)."""
         return await _note_reachability(
             self._sessions,
-            self._hook_work,
-            self._waiting_notes,
+            self.live,
             project_id,
             topic_id,
             work_id,
             reachable,
             reason,
-        )
-
-    async def _keep_note(
-        self,
-        notes: dict[uuid.UUID, uuid.UUID],
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        content: str,
-        meta: dict,
-        *,
-        author: str | None,
-        inner_id: uuid.UUID | None,
-        channel: str,
-    ) -> None:
-        """Land the turn's notice of this kind, or restate it (hook_stream.py)."""
-        return await _keep_note(
-            self._sessions,
-            notes,
-            topic_id,
-            turn_id,
-            content,
-            meta,
-            author=author,
-            inner_id=inner_id,
-            channel=channel,
-        )
-
-    async def _restate_note(
-        self, block_id: uuid.UUID, content: str, meta: dict, channel: str
-    ) -> None:
-        """Restate a notice already on the timeline (hook_stream.py)."""
-        return await _restate_note(self._sessions, block_id, content, meta, channel)
-
-    async def _persist_room_event(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        content: str,
-        meta: dict,
-        turn_id: uuid.UUID | None,
-        eid: str | None = None,
-        platform_unsolicited: bool = False,
-        in_room: bool = False,
-        author_type: AuthorType = AuthorType.participant,
-        inner_id: uuid.UUID | None = None,
-        author: str | None = None,
-        at: datetime | None = None,
-    ) -> dict | None:
-        return await _persist_room_event(
-            self._sessions,
-            self._hook_work,
-            project_id=project_id,
-            topic_id=topic_id,
-            content=content,
-            meta=meta,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-            in_room=in_room,
-            author_type=author_type,
-            inner_id=inner_id,
-            author=author,
-            at=at,
-        )
-
-    async def _persist_subagent_result(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        event: AgentToolResult,
-        turn_id: uuid.UUID | None,
-        eid: str | None = None,
-        platform_unsolicited: bool = False,
-        inner_id: uuid.UUID | None = None,
-    ) -> dict | None:
-        return await _persist_subagent_result(
-            self._sessions,
-            self._hook_work,
-            project_id=project_id,
-            topic_id=topic_id,
-            event=event,
-            turn_id=turn_id,
-            eid=eid,
-            platform_unsolicited=platform_unsolicited,
-            inner_id=inner_id,
-        )
-
-    async def _turn_changeset(
-        self,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        known_commits: set[str] | None,
-    ) -> _Changeset | None:
-        return await _turn_changeset(
-            self._sessions,
-            project_id,
-            topic_id,
-            known_commits,
-        )
-
-    async def _known_commits(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> set[str] | None:
-        return await _known_commits(
-            self._sessions,
-            project_id,
-            topic_id,
-        )
-
-    async def _persist_change_summary(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None,
-        changeset: _Changeset,
-    ) -> dict | None:
-        return await _persist_change_summary(
-            self._sessions,
-            self._hook_work,
-            project_id=project_id,
-            topic_id=topic_id,
-            turn_id=turn_id,
-            changeset=changeset,
         )
 
     async def _pass_policy_gate(
@@ -2650,64 +1430,3 @@ class ChatService(SessionRecovery, RoomTurns):
             topic_id,
             turn_id,
         )
-
-    async def _bail_notice(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID,
-        session: AsyncSession,
-        text: str,
-    ) -> dict:
-        return await _bail_notice(
-            project_id=project_id,
-            topic_id=topic_id,
-            turn_id=turn_id,
-            session=session,
-            text=text,
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class SentText:
-    """A message's text as sending it would have stored it, and how it was sent."""
-
-    room: Topic
-    text: str
-    # The names its mentions were read against; None where that way of sending
-    # announces no mentions at all (a card's conversation).
-    roster: list[dict] | None
-    by_agent: bool
-
-
-async def text_as_sent(
-    session: AsyncSession, block: Block, author: str, content: str
-) -> SentText:
-    """What sending ``content`` as ``author`` where ``block`` is would have
-    stored. An edit stores exactly that, by calling the same code.
-
-    On a card it is `say_on_task`'s rewrite, for anyone. In the room the author
-    is an agent when it holds one of the room's agent seats, the question the
-    publication routes ask; its text goes through both halves of the
-    publication rewrite, with the arguments a publication passes (no roster, no
-    topic list). A person's goes through `person_mentions`, as
-    `post_user_message` does."""
-    place = await PlaceResolver(session).conversation(block.conversation_id)
-    if place is None:
-        raise NotFoundError("Topic not found")
-    topic = place.room
-    by_agent = await TopicMemberService(session).holds_an_agent_seat(topic, author)
-    if place.task is not None:
-        text = await project_refs_text(session, topic.project_id, topic.id, content)
-        return SentText(topic, text, None, by_agent)
-    if by_agent:
-        text = await project_refs_text(session, topic.project_id, topic.id, content)
-        roster = await room_roster(session, topic.project_id, topic)
-        return SentText(topic, _expand_mention_names(text, roster, []), roster, True)
-    project = await ProjectRepository(session).get(topic.project_id)
-    if project is None:
-        raise NotFoundError("Project not found")
-    agent = await AgentInstanceService(session).for_topic(topic, project)
-    mentions = await person_mentions(session, topic, content, agent, dm=_is_dm(topic))
-    return SentText(topic, mentions.content, mentions.roster, False)

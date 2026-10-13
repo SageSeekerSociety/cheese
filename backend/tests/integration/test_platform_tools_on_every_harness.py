@@ -41,10 +41,10 @@ from app.domain.agent.harness.codex.tools import RemoteTools
 from app.domain.agent.harness.pi.machine import Machine
 from app.domain.agent.harness.pi.runner import Runner as PiRunner
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 from tests.support.room_machine import NO_MACHINE
 
@@ -265,7 +265,7 @@ def _next(ws, kind: str) -> dict:
 
 def test_a_checklist_reaches_the_room_the_same_way(client, room, harness):
     _, topic = room
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         said = harness("todo_write", {"todos": PLAN})
         message = _next(ws, "assistant_block")
     assert message["content"] == "✓ 读现有实现\n✱ 改接口\n○ 补测试"
@@ -280,7 +280,7 @@ def test_an_edit_reaches_the_room_the_same_way(client, room, harness):
     harness("chat_send", {"content": "先看 issue"})
     blocks = client.get(f"/topics/{topic}/blocks").json()["data"]["data"]
     [sent] = [b for b in blocks if b["content"] == "先看 issue"]
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         harness(
             "chat_edit", {"message_id": sent["id"], "content": "先看 issue，再写测试"}
         )
@@ -298,7 +298,9 @@ def test_a_message_through_any_harness_silences_the_reminder(
     the same way from every harness — or one harness is reminded forever, or
     never."""
     from app.domain.agent import chat as chat_module
-    from app.domain.agent.room import turn as turn_module
+    from app.domain.agent.turn.intake import assistant as assistant_module
+    from app.domain.agent.turn.steps import send as send_module
+    from app.domain.agent.turn.store import session_inputs as session_inputs_module
 
     _, topic = room
     chat = client.app.dependency_overrides[get_chat_service]()
@@ -310,7 +312,9 @@ def test_a_message_through_any_harness_silences_the_reminder(
             return clock
 
     monkeypatch.setattr(chat_module, "datetime", Clock)
-    monkeypatch.setattr(turn_module, "datetime", Clock)
+    monkeypatch.setattr(send_module, "datetime", Clock)
+    monkeypatch.setattr(session_inputs_module, "datetime", Clock)
+    monkeypatch.setattr(assistant_module, "datetime", Clock)
     threshold = settings.chat_progress_reminder_after_s
     notices: list[str] = []
 
@@ -326,7 +330,7 @@ def test_a_message_through_any_harness_silences_the_reminder(
         stub_hooks.says(topic_id, "Internal output")
 
     monkeypatch.setattr(stub_hooks, "emit_turn", begin)
-    with client.websocket_connect(chat_ws_url(topic, "alice")) as ws:
+    with room_socket(client, topic, "alice") as ws:
         post_message(client, topic, "alice", {"content": "@芝士 检查一下"})
         while True:
             frame = ws.receive_json()

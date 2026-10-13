@@ -81,7 +81,11 @@ function tokenDecorations(doc: PMNode, names: () => RefNames): DecorationSet {
       // the doc keeps `<&path>` verbatim, the reader sees 「(文件图标) name」.
       // (prosemirror-view has no Decoration.replace — widget/inline/node only.)
       decos.push(
-        Decoration.widget(from, () => refChip(ref.kind, ref.id, names()), { side: 1 }),
+        // 只读时它是一颗能 Tab 到的按钮；能编辑时不是 —— 光标在字里用方向键走，每颗 chip
+        // 一个 Tab 停点会把焦点从正在写的地方拉走。
+        Decoration.widget(from, (view) => refChip(ref.kind, ref.id, names(), { focusable: !view.editable }), {
+          side: 1,
+        }),
         Decoration.inline(from, from + ref.length, { style: 'display: none' })
       )
     }

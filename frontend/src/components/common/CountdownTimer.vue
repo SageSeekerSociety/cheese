@@ -15,6 +15,8 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import dayjs from 'dayjs'
 
+import { deadlineState } from '@/utils/tasks'
+
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -31,7 +33,8 @@ const updateCountdown = () => {
   const deadline = dayjs(props.deadline)
   const diff = deadline.diff(now)
 
-  if (diff > 0) {
+  // 过没过和「我的进度」读同一个 `deadlineState`，两处不会一边「今天截止」一边「已截止」。
+  if (!deadlineState(deadline.valueOf(), now.valueOf())?.passed) {
     const durationObj = dayjs.duration(diff)
     countdown.value = {
       days: (durationObj.days() + durationObj.months() * 30).toString().padStart(2, '0'),

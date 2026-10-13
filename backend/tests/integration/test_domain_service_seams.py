@@ -81,7 +81,7 @@ async def _card(session, topic_id, *, status: AcceptStatus, pr_number=None):
     card = await AcceptCardRepository(session).add(
         topic_id=topic_id,
         reviewer_handle="alice",
-        routing_reason="",
+        focus="",
         status=status,
     )
     if pr_number is not None:

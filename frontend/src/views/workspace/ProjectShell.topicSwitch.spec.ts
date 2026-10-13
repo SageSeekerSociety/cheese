@@ -51,6 +51,8 @@ const pendingB = vi.hoisted(() => ({
 }))
 
 // 聊天栏底部的技能提议卡也会读一次；这里没有提议。
+// 项目推送在 query/projectFeed.spec 里测；这里的页面不需要那条连接。
+vi.mock('@/query/projectFeed', () => ({ useProjectFeed: () => {} }))
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
 }))
@@ -62,7 +64,9 @@ vi.mock('@/api/projectSkills', () => ({
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   // The roster's work computers: a neighbour of what this test is about.
-  getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
+  getTopicEnvironment: vi.fn(() => new Promise(() => {})),
+  // 页面取一份采纳卡（对话栏那一条和「改动」页顶部共用）：这里没有卡。
+  getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   // 频道概览里的任务：这里没有。
   listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
   listTopicMembers: vi.fn((topicId: string) =>
@@ -104,14 +108,17 @@ import ProjectShell from './ProjectShell.vue'
 import TopicView from './TopicView.vue'
 
 import i18n from '@/i18n'
+import { seedProject } from '@/test/seedQueries'
 
 function setup() {
+  // 项目框每 30 秒问一次的那几份：刚读过，这一刻不问。
+  seedProject('p1', { topics: [TOPIC_A, TOPIC_B], unread: {}, privateUnread: {}, notifyLevels: {} }, 'alice')
   store.value = reactive({
     topics: [TOPIC_A, TOPIC_B],
     members: [],
     unreadMap: {},
     chatPct: 50,
-    rememberTopic: vi.fn(),
+    rememberPlace: vi.fn(),
     loadingTopics: false,
     accessDenied: null,
     error: null,
@@ -119,9 +126,6 @@ function setup() {
     agentName: 'Cheese',
     activeTopicId: null,
     activeDmPeer: null,
-    placeById: (id: string) => [TOPIC_A, TOPIC_B].find((t) => t.id === id) ?? null,
-    isResolvingPlace: () => false,
-    loadPlace: vi.fn(async () => {}),
     markRead: vi.fn(),
     openProject: vi.fn(),
     refreshTopics: vi.fn(),

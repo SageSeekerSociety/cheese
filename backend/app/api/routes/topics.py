@@ -2,7 +2,7 @@
 
 import shutil
 import uuid
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
@@ -11,25 +11,28 @@ from pydantic import BaseModel, Field, StringConstraints
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.conditional import etag_for_json, if_none_match_hits
+from app.api.conditional import conditional_json
 from app.api.deps import (
     get_broker,
     get_chat_service,
     get_work_runner,
 )
+from app.api.message_effects import announce_edited_message
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.room_task_rows import tasks_under_blocks
+from app.api.routes.projects import rail_tasks
+from app.api.routes.topics_rows import CardRow, TopicRow
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.activity import WORKING
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.project_feed import TOPICS, tell_project
+from app.domain.agent.realtime.activity import WORKING
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -41,15 +44,15 @@ from app.domain.block.models import (
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import REPLY_LOOKBACK, MemberWait, MemberWaits, StuckCard
-from app.domain.conversation.services import room_of
+from app.domain.conversation.services import room_of, threads_of_rooms
+from app.domain.delivery.agent import redispatch_undelivered
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review import archive
-from app.domain.review.models import AcceptCard
-from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
 from app.domain.room_task.models import LockKind
 from app.domain.room_task.place import Place
@@ -59,14 +62,7 @@ from app.domain.room_task.services import (
 )
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
-from app.domain.thread.services import onto_rooms, thread_opening, threads_of_rooms
-from app.domain.topic.models import Topic
-from app.domain.topic.repositories import (
-    SortOrder,
-    TopicProgressRepository,
-    TopicRepository,
-    TopicSortField,
-)
+from app.domain.thread.services import onto_rooms, thread_opening
 from app.domain.topic.schemas import (
     CheckResultIn,
     LockIn,
@@ -75,15 +71,18 @@ from app.domain.topic.schemas import (
     TopicCreate,
     TopicOut,
 )
-from app.domain.topic.services import TopicRelevance, TopicService
+from app.domain.topic.services import (
+    SortOrder,
+    TopicRelevance,
+    TopicService,
+    TopicSortField,
+)
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.repositories import UsageRepository
 from app.domain.usage.services import UsageService
 from app.domain.webhook import service as webhook_service
 
 router = APIRouter(prefix="/topics", tags=["topics"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _actor_in_place(resolver: ActorResolver, place: Place) -> Actor:
@@ -125,6 +124,7 @@ async def create_topic(
     # The caller can configure or enter this room as soon as it gets the ID.
     # Dependency teardown commits after the response, which races that request.
     await db.commit()
+    await tell_project(topic.id, TOPICS)
     return response
 
 
@@ -144,12 +144,19 @@ async def _awaiting_an_answer(
     db: AsyncSession, room_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, str | None]:
     """Which channels wait on an answer, and from whom: their own line's
-    question, or one 芝士 asked in one of their 支线."""
-    thread_rooms = await threads_of_rooms(db, room_ids)
-    found = await BlockRepository(db).awaiting_an_answer([*room_ids, *thread_rooms])
+    question, or one 芝士 asked in one of their tasks or 支线.
+
+    一个频道那一格认的是它全部的对话 —— 它自己那条线、它的任务、它的支线（决策请求
+    走的是同一条规矩，`notification/repositories.decision_topic_ids`）：芝士在一条活
+    里问的那道题，题落在那条活自己的线上，可这个频道也在等那个人回答。少了任务这一
+    头，人就看得见「有一条待办」而侧栏一处都不亮。
+    """
+    inner_rooms = await threads_of_rooms(db, room_ids)
+    inner_rooms.update(await TaskService(db).tasks_of_rooms(room_ids))
+    found = await BlockRepository(db).awaiting_an_answer([*room_ids, *inner_rooms])
     return {
         place: who
-        for place, who in onto_rooms(found, thread_rooms).items()
+        for place, who in onto_rooms(found, inner_rooms).items()
         if place in room_ids
     }
 
@@ -167,7 +174,26 @@ def _asks_me(
     return {tid for tid, who in asked.items() if who == viewer}
 
 
-async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[AcceptCard]:
+async def _working_in_threads(
+    db: AsyncSession, broker: InProcessBroker, room_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, set[str]]:
+    """{房间: 正在它的某条支线里干活的队友} —— 一次查完一个项目。
+
+    一条支线是这间房自己的：芝士在这条频道没有自己那条线，人 @ 它、它回话，都发生
+    在那条消息的支线里（`_answering_in`）。所以「谁在管这间房」不只看主线，这份是
+    主线之外那一半，用来把 `waits` 里已经在处理的成员去掉（`_topic_out`）。哪条支线
+    属于哪个房间以数据库为准，不是 broker 记的那份：broker 只在一条支线里装过轮次时
+    才认得它（`RoomActivity.note_thread`）。
+    """
+    if not room_ids:
+        return {}
+    threads = await threads_of_rooms(db, room_ids)
+    return broker.activity.working_in(
+        {str(thread_id): room_id for thread_id, room_id in threads.items()}
+    )
+
+
+async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> Sequence[CardRow]:
     """这些房间（连同名下的活）上还没结算的验收卡，一次查完。
 
     房间自己那张（`_own_cards`）和「卡停在检查红上」（`_stuck_on_checks`）都从
@@ -180,14 +206,14 @@ async def _live_cards(db: AsyncSession, room_ids: list[uuid.UUID]) -> list[Accep
     if not room_ids:
         return []
     # 结算过的也带上最近一周的：「退回了还没重递」要靠它看出来（`_stuck_on_checks`）。
-    return await AcceptCardRepository(db).list_recent_for_places(
+    return await AcceptService(db).list_recent_for_places(
         room_ids,
         open_statuses=archive.OPEN_CARD_STATUSES,
         settled_since=datetime.now(UTC) - REPLY_LOOKBACK,
     )
 
 
-def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
+def _own_cards(cards: Sequence[CardRow]) -> dict[uuid.UUID, CardRow]:
     """每个房间**自己**那张还没结算的验收卡。
 
     `task_id is None` 才是房间自己的卡：一条活递的卡把房间记在 `topic_id` 上，不
@@ -201,13 +227,13 @@ def _own_cards(cards: list[AcceptCard]) -> dict[uuid.UUID, AcceptCard]:
     }
 
 
-def _latest_per_place(cards: list[AcceptCard]) -> dict[tuple, AcceptCard]:
+def _latest_per_place(cards: Sequence[CardRow]) -> dict[tuple, CardRow]:
     """同一个地方（房间自己，或某一条活）只留最新那张：旧卡被新卡顶掉后可能还没
     结算，它说的不代表现在。"""
     return {(c.topic_id, c.task_id): c for c in cards}
 
 
-def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
+def _stuck_on_checks(cards: Sequence[CardRow]) -> dict[uuid.UUID, StuckCard]:
     """房间（连同名下的活）里，最新那张卡停在「检查红 / 冲突，要 AI 修」上的。
 
     同一个地方（房间自己，或某一条活）只看最新那张：旧卡被新卡顶掉后可能还没结算，
@@ -222,17 +248,18 @@ def _stuck_on_checks(cards: list[AcceptCard]) -> dict[uuid.UUID, StuckCard]:
 
 
 def _topic_out(
-    topic: Topic,
+    topic: TopicRow,
     running_ids: set[uuid.UUID],
     last_activity: dict[uuid.UUID, datetime],
     relevance: dict[uuid.UUID, TopicRelevance] | None = None,
-    cards: dict[uuid.UUID, AcceptCard] | None = None,
+    cards: Mapping[uuid.UUID, CardRow] | None = None,
     now: datetime | None = None,
     managed_ids: set[uuid.UUID] | None = None,
     asked: Mapping[uuid.UUID, str | None] | None = None,
     asks_me: set[uuid.UUID] | None = None,
     activity: list[dict] | None = None,
     waits: list[MemberWait] | None = None,
+    working_in_threads: set[str] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
@@ -260,8 +287,13 @@ def _topic_out(
         if entry["kind"] == WORKING
     ]
     # A member working here right now is not one the room is waiting on: it is
-    # the one handling it.
+    # the one handling it. 在支线里跑的轮次同样算「在管这间房」：芝士在这条频道
+    # 没有自己那条线，它答一条主线上的消息就是在那条消息的支线里说
+    # （`_answering_in`），只认主线的话，一条跑了五分钟的支线轮次会让它上面这间房
+    # 显示成「没人管」（`useTopicRail` 的 REPLY_STALL_MS）。`activity` 本身照旧只放
+    # 主线 —— 侧栏那一格画的是这间房自己那条线。
     working = {a.member for a in out.activity if a.kind == WORKING}
+    working.update(working_in_threads or ())
     out.waits = [
         MemberWaitOut(member=w.member, reason=w.reason, since=w.since, pr=w.pr)
         for w in waits or []
@@ -286,26 +318,19 @@ def _topic_out(
     return data
 
 
-#: 侧栏每 30 秒轮询一次整份话题清单。它是**登录用户**的私有视图（每一行都带「与我的
-#: 相关性」），所以只能是 `private`；`no-cache` 要求每次带 `If-None-Match` 回来问一句，
-#: 命中 ETag 就回 304、空 body —— 没有变化的那些轮询不再把一个几百 KB 的清单重传一遍。
-#: 和 `admin_members` 那份名单同一个形状。
-TOPICS_LIST_CACHE_CONTROL = "private, no-cache"
-
-
 @router.get("", response_model=None)
 async def list_topics(
     project_id: uuid.UUID,
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
-    response: Response,
     sort: TopicSortField | None = None,
     order: SortOrder = "asc",
     active_since: datetime | None = None,
     if_none_match: Annotated[str | None, Header()] = None,
-) -> dict | Response:
+) -> Response:
     """The project's topics.
 
     `sort=last_activity_at` orders by when something last HAPPENED in each topic
@@ -314,9 +339,11 @@ async def list_topics(
     only moves when the topic's own fields change.
 
     Every row also carries what it is to the caller (`joined`/`awaits_me`) —
-    this is the endpoint the sidebar lists from.
+    this is the endpoint the sidebar lists from — and the tasks the sidebar
+    hangs under it (`my_tasks`, see `projects.rail_tasks`), so the sidebar never
+    reads the whole project's tasks for the few that are the caller's.
 
-    条件请求：`ETag` 由整份信封的规范化 JSON 算出（`etag_for_json`），`If-None-Match`
+    条件请求：`ETag` 由整份信封的规范化 JSON 算出（`conditional_json`），`If-None-Match`
     命中就回 304、空 body。清单里每一行都是「数据库 + 在跑的会话」推出来的：一个房间的
     徽章会因为成员刚被拉进来、一张验收卡刚落地、某个队友刚开始干活而变，而这些都不动
     `updated_at`，所以「有没有变」只能靠整份 body 的指纹来判，不能靠某一列的时间戳。
@@ -350,32 +377,30 @@ async def list_topics(
     waits = await MemberWaits(db).for_rooms(
         [t.id for t in topics], now=now, stuck_rooms=_stuck_on_checks(live)
     )
+    # 支线里在跑的轮次也是「在管这间房」，`waits` 里这些成员要去掉（一次查完）。
+    threads_working = await _working_in_threads(db, broker, [t.id for t in topics])
+    rails = await rail_tasks(db, chat, actor, [t.id for t in topics])
     items = [
-        _topic_out(
-            t,
-            running_ids,
-            last_activity,
-            relevance,
-            cards,
-            now,
-            managed,
-            asked,
-            asks_me,
-            activity=broker.activity.snapshot(str(t.id)),
-            waits=waits.get(t.id),
-        )
+        {
+            **_topic_out(
+                t,
+                running_ids,
+                last_activity,
+                relevance,
+                cards,
+                now,
+                managed,
+                asked,
+                asks_me,
+                activity=broker.activity.snapshot(str(t.id)),
+                waits=waits.get(t.id),
+                working_in_threads=threads_working.get(t.id),
+            ),
+            "my_tasks": rails[t.id],
+        }
         for t in topics
     ]
-    payload = ok(page(items, total))
-    etag = etag_for_json(payload)
-    cache_headers = {
-        "Cache-Control": TOPICS_LIST_CACHE_CONTROL,
-        "ETag": f'"{etag}"',
-    }
-    if if_none_match and if_none_match_hits(if_none_match, etag):
-        return Response(status_code=304, headers=cache_headers)
-    response.headers.update(cache_headers)
-    return payload
+    return conditional_json(ok(page(items, total)), if_none_match)
 
 
 @router.get("/names")
@@ -400,7 +425,7 @@ async def list_topic_names(db: DbSession, resolver: ActorResolverDep) -> dict:
     projects = await ProjectRepository(db).list_visible_to(
         handle=who.handle, user_id=who.user_id
     )
-    topics = await TopicRepository(db).names_in_projects(
+    topics = await TopicService(db).names_in_projects(
         [p.id for p in projects], viewer=who.handle
     )
     return ok(
@@ -426,6 +451,7 @@ async def get_topic(
     db: DbSession,
     runner: Annotated[AgentWorkRunner, Depends(get_work_runner)],
     broker: Annotated[InProcessBroker, Depends(get_broker)],
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
 ) -> dict:
     """One room's header.
@@ -465,19 +491,25 @@ async def get_topic(
     waits = await MemberWaits(db).for_rooms(
         [topic.id], now=datetime.now(UTC), stuck_rooms=_stuck_on_checks(live)
     )
+    threads_working = await _working_in_threads(db, broker, [topic.id])
+    rails = await rail_tasks(db, chat, actor, [topic.id])
     return ok(
-        _topic_out(
-            topic,
-            runner.running_topic_ids(),
-            last_activity,
-            relevance,
-            cards,
-            managed_ids=managed,
-            asked=asked,
-            asks_me=_asks_me(asked, _viewer(actor)),
-            activity=broker.activity.snapshot(str(topic.id)),
-            waits=waits.get(topic.id),
-        )
+        {
+            **_topic_out(
+                topic,
+                runner.running_topic_ids(),
+                last_activity,
+                relevance,
+                cards,
+                managed_ids=managed,
+                asked=asked,
+                asks_me=_asks_me(asked, _viewer(actor)),
+                activity=broker.activity.snapshot(str(topic.id)),
+                waits=waits.get(topic.id),
+                working_in_threads=threads_working.get(topic.id),
+            ),
+            "my_tasks": rails[topic.id],
+        }
     )
 
 
@@ -491,10 +523,15 @@ async def list_topic_blocks(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     limit: Annotated[int | None, Query(ge=1, le=500)] = None,
     before: uuid.UUID | None = None,
     after: uuid.UUID | None = None,
     around: uuid.UUID | None = None,
+    kind: Annotated[list[BlockKind] | None, Query()] = None,
+    author: Annotated[str | None, Query(min_length=1, max_length=120)] = None,
+    shown: bool | None = None,
+    stored_after: Annotated[int | None, Query(ge=0)] = None,
 ) -> dict:
     """The topic's conversation timeline, oldest-first.
 
@@ -515,13 +552,37 @@ async def list_topic_blocks(
     - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
     - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
       conversation opened at one message (a search hit, a quoted reply)
+    - `?limit=N&stored_after=<seq>` → the N blocks stored next after the one
+      numbered so, in the order they were stored: what a page holding
+      everything up to that number missed (the rooms socket's `newest`).
+      `has_newer` says more were stored after them.
+
+    Filters narrow the timeline inside the paging, so a page holds `limit` rows
+    of what was asked for and `has_more` counts the same set (filtering a page
+    afterwards returns fewer rows and pages through holes):
+
+    - `kind` (repeatable): only these kinds of block;
+    - `author`: only blocks signed by this handle;
+    - `shown=true`: only what the room's conversation shows
+      (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only
+      what it keeps out of the room (an agent's steps, notices for an agent).
+
+    Cursors still name any block of the conversation, shown or not.
+
+    Each block carries what a reader draws with it, so the page is whole on its
+    own: `reactions`, the 支线 under a main-line message (`thread`), a routine's
+    run (`routine_run`), and `tasks` — the tasks made from a message, under it,
+    and the task a room-line row says began there (`room_task_rows`), as the
+    room's task list has them.
     """
-    if sum(c is not None for c in (before, after, around)) > 1:
+    if sum(c is not None for c in (before, after, around, stored_after)) > 1:
         raise ValidationError(say("cursorOneAnchor"))
-    if limit is None and (after is not None or around is not None):
+    if limit is None and (
+        after is not None or around is not None or stored_after is not None
+    ):
         raise ValidationError(say("cursorNeedsLimit"))
     place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
+    actor = await _actor_in_place(resolver, place)
     repo = BlockRepository(db)
 
     async def cursor_of(block_id: uuid.UUID | None) -> Block | None:
@@ -539,8 +600,9 @@ async def list_topic_blocks(
     older_than = await cursor_of(before)
     newer_than = await cursor_of(after)
     centre = await cursor_of(around)
+    narrow = {"kinds": kind, "author": author, "shown": shown}
     if limit is None:
-        blocks = await repo.list_for_topic(place.conversation_id)
+        blocks = await repo.list_for_topic(place.conversation_id, **narrow)
         if older_than is not None:
             blocks = [
                 b
@@ -550,28 +612,36 @@ async def list_topic_blocks(
         has_more = has_newer = False
     elif centre is not None:
         above = await repo.page_for_topic(
-            place.conversation_id, limit=limit // 2, before=centre
+            place.conversation_id, limit=limit // 2, before=centre, **narrow
         )
         below = await repo.page_for_topic(
-            place.conversation_id, limit=limit - limit // 2, after=centre
+            place.conversation_id, limit=limit - limit // 2, after=centre, **narrow
         )
-        blocks = [*above.items, centre, *below.items]
+        # The block it opens at is in the window only if the filters keep it.
+        kept = [centre] if await repo.holds(centre, **narrow) else []
+        blocks = [*above.items, *kept, *below.items]
         has_more, has_newer = above.has_more, below.has_more
+    elif stored_after is not None:
+        page_result = await repo.page_for_topic(
+            place.conversation_id, limit=limit, stored_after=stored_after, **narrow
+        )
+        blocks = page_result.items
+        has_more, has_newer = True, page_result.has_more
     elif newer_than is not None:
         page_result = await repo.page_for_topic(
-            place.conversation_id, limit=limit, after=newer_than
+            place.conversation_id, limit=limit, after=newer_than, **narrow
         )
         blocks = page_result.items
         # Paging down from a block means that block is above this page.
         has_more, has_newer = True, page_result.has_more
     else:
         page_result = await repo.page_for_topic(
-            place.conversation_id, limit=limit, before=older_than
+            place.conversation_id, limit=limit, before=older_than, **narrow
         )
         blocks = page_result.items
         # Paging up from a block means that block is below this page.
         has_more, has_newer = page_result.has_more, older_than is not None
-    total = await repo.count_for_topic(place.conversation_id)
+    total = await repo.count_for_topic(place.conversation_id, **narrow)
     # Emoji reactions ride the same payload — ONE batch query, no per-block N+1.
     # Scoped to THIS page's ids, so paging saves the database work too, not just
     # the bytes on the wire.
@@ -590,9 +660,21 @@ async def list_topic_blocks(
         if place.inner_id is None
         else {}
     )
+    # The tasks made from these messages, and the ones these rows say began:
+    # the page draws their cards without reading the room's whole task list.
+    carried = await tasks_under_blocks(
+        db,
+        chat,
+        actor,
+        room_id=place.room_id,
+        project_id=place.project_id,
+        blocks=blocks,
+    )
     items = []
     for b in blocks:
         item = BlockOut.model_validate(b).model_dump(mode="json")
+        if b.id in carried:
+            item["tasks"] = carried[b.id]
         if b.id in reactions:
             item["reactions"] = reactions[b.id]
         if b.id in threads:
@@ -759,7 +841,7 @@ async def topic_usage(
 _GATE_OUTPUT_TAIL = 2000
 
 
-def _card_snapshot(card: AcceptCard) -> dict:
+def _card_snapshot(card: CardRow) -> dict:
     return {
         "id": str(card.id),
         "status": str(card.status),
@@ -813,10 +895,9 @@ async def topic_status(
     topics = TopicService(db)
     place = await topics.place_or_404(topic_id)
     await _actor_in_place(resolver, place)
+    filed, _ = await AcceptService(db).list_for_topic(place.room_id)
     cards = [
-        card
-        for card in await AcceptCardRepository(db).list_for_topic(place.room_id)
-        if place.task is None or card.task_id == place.task.id
+        card for card in filed if place.task is None or card.task_id == place.task.id
     ]
     credits = await UsageService(db).project_credits(place.project_id)
     turn = runner.topic_work(topic_id)
@@ -986,7 +1067,7 @@ async def write_topic_progress(
     if plans_the_turn:
         work = runner.live_work_for_topic(place.conversation_id)
         turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-        await TopicProgressRepository(db).save(
+        await TopicService(db).save_progress(
             place.conversation_id, items, turn_id=turn_id
         )
         await db.commit()
@@ -998,8 +1079,10 @@ async def write_topic_progress(
     if current is not None:
         message = await edit_message(
             db,
-            get_broker(),
+            get_broker().publish,
             current.id,
+            normalize_text=text_as_sent,
+            notify_mentions=announce_edited_message,
             editor=actor.handle,
             content=text,
             chat=chat,
@@ -1007,7 +1090,7 @@ async def write_topic_progress(
             checklist=checklist,
         )
         return ok({"items": items, "message_id": message["id"], "posted": False})
-    message = await chat._persist_assistant_message(
+    message = await chat.messages.persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
         inner_id=place.thread_id,
@@ -1049,7 +1132,7 @@ async def summon_agent(
     在时间线上了——补发一条一模一样的，读的人要自己分辨哪条是真的。
 
     两种情况下它什么都不做，并如实说明是哪一种：房间已经在干活（正在跑的那一轮
-    会自己把没 @ 的消息接过去），或者根本没有待读的东西（有人先 @ 过了）。两种
+    会自己把没 @ 的消息接过去），或者根本没有待读的东西，也没有欠着的输入。两种
     都不是错误，只是这一下不需要花钱。
     """
     place = await TopicService(db).place_or_404(topic_id)
@@ -1063,6 +1146,16 @@ async def summon_agent(
     if chat.has_running_turn(place.conversation_id):
         return ok({"started": False, "reason": "working"})
     if not await chat.has_unread_input(place.conversation_id):
+        # 房间里没有待读的消息，不等于这一下没事可做：平台自己欠这个频道的输入
+        # （任务的开始指令那类）也在账本上等着，等的是退避时间。点「重试」的意思
+        # 就是「现在」—— 不然那句话只能等这个项目里碰巧发生的下一件事把它捎上。
+        if await redispatch_undelivered(
+            chat.session_factory,
+            conversation_id=place.conversation_id,
+            chat=chat,
+            runner=runner,
+        ):
+            return ok({"started": True})
         return ok({"started": False, "reason": "nothing_pending"})
     # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
     # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
@@ -1091,7 +1184,6 @@ async def summon_agent(
             if seat
             else say("pendingHandedOver", actor=f"<@{actor.handle}>")
         ),
-        provision_actor=actor,
     )
     return ok({"started": True})
 
@@ -1156,8 +1248,8 @@ async def record_weekly(
 ) -> dict:
     """记一份周报到周报集 (spec §7.1) —— 项目文档页的「周报集」就是从这条读的。
 
-    一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是章程和话题文档
-    的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
+    一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是任务和它们的实况
+    文档的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
     列 —— 它是这一条记录的属性，没有第二处会读它。
 
     `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
@@ -1203,56 +1295,6 @@ async def record_weekly(
     return ok(out)
 
 
-@router.post("/{topic_id}/read")
-async def mark_topic_read(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """已读位: bump the caller's read cursor on a room or on one of its tasks
-    (opening either clears its unread badge, Feishu-style). ``topic_id`` is
-    the conversation's id; the door is its room's.
-
-    The cursor is per person, so whose it is comes from the verified
-    credential — ``handle`` in the body is only an assertion checked against
-    it (it used to BE the identity, letting anyone move anyone's cursor)."""
-    room_id = await room_of(db, topic_id)
-    topic = await TopicService(db).get_or_404(room_id)
-    actor = await resolver.resolve(topic_id=room_id, project_id=topic.project_id)
-    await resolver.authorize_topic(actor, project_id=topic.project_id, topic_id=room_id)
-    handle = await resolver.resolve_recipient(
-        requested=(body.get("handle") or "").strip() or None,
-        project_id=topic.project_id,
-        allow_anonymous=False,
-    )
-    await TopicService(db).mark_read(topic_id, handle)
-    return ok({"topic_id": str(topic_id), "handle": handle})
-
-
-@router.put("/{topic_id}/notify-level")
-async def set_topic_notify_level(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
-) -> dict:
-    """这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO
-    时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。"""
-    topic = await TopicService(db).get_or_404(topic_id)
-    actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
-    await resolver.authorize_topic(
-        actor, project_id=topic.project_id, topic_id=topic_id
-    )
-    handle = await resolver.resolve_recipient(
-        requested=None, project_id=topic.project_id, allow_anonymous=False
-    )
-    level = str(body.get("level") or "")
-    until = _parse_moment(body.get("muted_until"))
-    await TopicService(db).set_notify_level(topic_id, handle, level, until)
-    return ok(
-        {
-            "topic_id": str(topic_id),
-            "level": level,
-            "muted_until": until.isoformat() if until else None,
-        }
-    )
-
-
 @router.post("/{topic_id}/archive")
 async def archive_topic(
     topic_id: uuid.UUID,
@@ -1269,23 +1311,23 @@ async def archive_topic(
         raise ForbiddenError(say("archiveSignIn"))
     await TopicMemberService(db).require_administrator(topic_id, actor.handle)
     topic = await TopicService(db).archive(topic_id, by=actor.handle)
-    return ok(TopicOut.model_validate(topic).model_dump(mode="json"))
+    out = TopicOut.model_validate(topic).model_dump(mode="json")
+    await db.commit()
+    await tell_project(topic_id, TOPICS)
+    return ok(out)
 
 
 @router.get("/{topic_id}/cleanup")
 async def cleanup_status(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.topic.models import RoomCleanup
 
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id, enforce=True
     )
-    operation = (
-        await db.get(RoomCleanup, topic.cleanup_id) if topic.cleanup_id else None
-    )
+    operation = await TopicService(db).cleanup_operation(topic)
     if operation is None:
         return ok({"state": "not_scheduled"})
     return ok(

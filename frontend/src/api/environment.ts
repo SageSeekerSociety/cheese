@@ -1,4 +1,5 @@
-// 项目的工作环境里不在 api.ts 的那一部分：「让芝士看看」。
+// 项目和房间的工作环境：配置、套用，和「让芝士看看」。
+import type { EnvironmentConfig, EnvironmentStatus, ProjectEnvironmentInfo } from '../cx_types'
 import type { EnvironmentDiagnosis } from '../types/environment'
 
 import { request } from './http'
@@ -9,4 +10,26 @@ export function diagnoseRoomEnvironment(projectId: string, roomId: string): Prom
     `/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}/diagnose`,
     { method: 'POST' }
   )
+}
+
+export function getProjectEnvironment(projectId: string): Promise<ProjectEnvironmentInfo> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`)
+}
+export function saveProjectEnvironment(
+  projectId: string,
+  config: Omit<EnvironmentConfig, 'revision'>
+): Promise<EnvironmentConfig> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment`, {
+    method: 'PUT',
+    body: JSON.stringify(config),
+  })
+}
+export function getRoomEnvironment(projectId: string, roomId: string): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}`)
+}
+export function applyRoomEnvironment(projectId: string, roomId: string, latest: boolean): Promise<EnvironmentStatus> {
+  return request(`/projects/${encodeURIComponent(projectId)}/environment/rooms/${encodeURIComponent(roomId)}/apply`, {
+    method: 'POST',
+    body: JSON.stringify({ latest }),
+  })
 }

@@ -28,22 +28,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
+from app.domain.memory import scopes
 from app.domain.memory.files import MemoryFileScope
-
-
-class MemoryScope(enum.StrEnum):
-    # 关于某个人的记忆: 某个项目里的某个 agent 实例对这个人的认识。它属于那个实
-    # 例, 不属于那个人, 也不跟着人跨项目走 (结论 8) —— A 项目的芝士对他的判断,
-    # B 项目的芝士读不到。scope_id 是 `<项目>:<agent handle>:<这个人的 handle>`,
-    # 见 `user_scope_id`。
-    user = "user"
-    skill = "skill"  # 技能记忆: 领域知识/文档模板/场景包配置
-    # 芝士 记忆: 一个 agent 在一个项目里学到的东西。People working on a project
-    # each remember their own things; agents do too. Keyed per agent so a
-    # project hosting several 芝士 doesn't pool one's operational trivia with
-    # another's product decisions — and, like everything else about an agent,
-    # it stays inside the project it was learned in.
-    agent_project = "agent_project"
 
 
 class MemoryLayer(enum.StrEnum):
@@ -79,10 +65,10 @@ def project_scope_prefix(project_id: str | uuid.UUID) -> str:
     return f"{project_id}:"
 
 
-def project_of_scope(scope: MemoryScope, scope_id: str) -> uuid.UUID | None:
+def project_of_scope(scope: scopes.MemoryScope, scope_id: str) -> uuid.UUID | None:
     """The project a pool belongs to, read back out of its key; None for a
     scope that is not keyed by a project, or a key that is not in that shape."""
-    if scope not in (MemoryScope.agent_project, MemoryScope.user):
+    if scope not in (scopes.MemoryScope.agent_project, scopes.MemoryScope.user):
         return None
     try:
         return uuid.UUID(scope_id.split(":", 1)[0])
@@ -91,7 +77,7 @@ def project_of_scope(scope: MemoryScope, scope_id: str) -> uuid.UUID | None:
 
 
 def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> str:
-    """scope_id for :attr:`MemoryScope.agent_project`.
+    """scope_id for :attr:`scopes.MemoryScope.agent_project`.
 
     ``scope_id`` is one plain string shared by every scope, so the two parts
     are joined rather than given columns of their own. A handle cannot contain
@@ -103,7 +89,7 @@ def agent_project_scope_id(project_id: str | uuid.UUID, agent_handle: str) -> st
 def user_scope_id(
     project_id: str | uuid.UUID, agent_handle: str, person_handle: str
 ) -> str:
-    """scope_id for :attr:`MemoryScope.user` — one agent's notes on one person.
+    """scope_id for :attr:`scopes.MemoryScope.user` — one agent's notes on one person.
 
     Three parts, because all three are needed to say whose knowledge this is:
     the instance owns it, and an instance only exists inside its project
@@ -114,7 +100,7 @@ def user_scope_id(
 
 
 def user_scope_about(person_handle: str) -> str:
-    """The tail every :attr:`MemoryScope.user` pool about this person ends with.
+    """The tail every :attr:`scopes.MemoryScope.user` pool about this person ends with.
 
     A person's own profile page asks the one question that is not about a
     single pool — "what has been learned about me, anywhere" — and a suffix is
@@ -172,8 +158,8 @@ class MemoryEntry(UuidPk, Timestamps, Base):
         Index("ix_memory_entries_pool_layer", "scope", "scope_id", "layer"),
     )
 
-    scope: Mapped[MemoryScope] = mapped_column(
-        Enum(MemoryScope, native_enum=False, length=16), index=True
+    scope: Mapped[scopes.MemoryScope] = mapped_column(
+        Enum(scopes.MemoryScope, native_enum=False, length=16), index=True
     )
     # Which pool: the composite keys built by `agent_project_scope_id` /
     # `user_scope_id`, or a skill name. 200 because the longest key

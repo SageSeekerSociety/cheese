@@ -108,4 +108,20 @@ describe('设置浮层', () => {
     expect(box.value).toBe('')
     expect(onClose).not.toHaveBeenCalled()
   })
+
+  it('它关掉的那一下 Esc 标记为已消费，Esc 栈不会再跟着关第二层', async () => {
+    const onClose = mount(1280, 'profile')
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    window.dispatchEvent(event)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(event.defaultPrevented).toBe(true)
+  })
+
+  it('已经被里层消费的 Esc 它不再处理', async () => {
+    const onClose = mount(1280, 'profile')
+    const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    event.preventDefault()
+    window.dispatchEvent(event)
+    expect(onClose).not.toHaveBeenCalled()
+  })
 })

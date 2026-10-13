@@ -71,7 +71,6 @@ vi.mock('../../api', async () => {
     getPreview: vi.fn().mockResolvedValue(null),
     requestPreviewSession: vi.fn().mockResolvedValue({ url: 'https://p.example/s', grant: 'g' }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getForgeConnection: vi.fn().mockResolvedValue({ kind: 'forgejo', connected: true, repo: 'o/r', url: null }),
     getGitDiff: vi.fn().mockResolvedValue({ diff: '' }),
     getTranscript: vi.fn().mockResolvedValue({ data: [], total: 0 }),

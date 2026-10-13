@@ -1,6 +1,7 @@
 """P3 Phase B: the 现场 viewer WS authz, cheese-gate screen attribution, and the
 「我的设备」management routes (real app + DB, the shared device_hub singleton)."""
 
+import asyncio
 import contextlib
 import json
 import time
@@ -9,7 +10,11 @@ import uuid
 import pytest
 from starlette.websockets import WebSocketDisconnect
 
+from app.api.routes import connector
+from app.common.auth import create_access_token
 from app.domain.agent.device_hub import HubScreen, device_hub
+from app.domain.user.repositories import UserRepository
+from app.domain.user.sessions import SessionService
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, session_auth_headers, session_token
 
@@ -108,6 +113,78 @@ def test_outsider_cannot_watch_screen(client):
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(url) as ws:
                 ws.receive_bytes()  # server closes 1008 before any data
+    finally:
+        _unregister(screen)
+
+
+def _signed_in_viewer(client, handle: str) -> tuple[int, uuid.UUID, str]:
+    """A real sign-in for ``handle``, and the page's access token for it.
+
+    ``session_token`` names a handle and no session, so there is nothing to
+    revoke: only a token minted from a started session can be asked whether it
+    still lasts."""
+    holder: dict = {}
+
+    async def seed() -> None:
+        async with client.test_factory() as db:  # type: ignore[attr-defined]
+            users = UserRepository(db)
+            user = await users.get_by_username(handle) or await users.create_user(
+                username=handle, email=f"{handle}@example.com"
+            )
+            started = await SessionService(db).start(
+                user.id, "password", ip="127.0.0.1", user_agent="test"
+            )
+            holder.update(user_id=user.id, sid=started.session_id)
+            await db.commit()
+
+    asyncio.run(seed())
+    token = create_access_token(holder["user_id"], handle, sid=holder["sid"])
+    return holder["user_id"], holder["sid"], token
+
+
+def _revoke(client, user_id: int, sid: uuid.UUID) -> None:
+    async def revoke() -> None:
+        async with client.test_factory() as db:  # type: ignore[attr-defined]
+            await SessionService(db).revoke(user_id, sid)
+            await db.commit()
+
+    asyncio.run(revoke())
+
+
+def test_a_viewer_whose_sign_in_ended_stops_driving_the_screen(client, monkeypatch):
+    """The handshake is not the last word: a sign-in revoked mid-view must end
+    the view, or the pane stays drivable by a session the device list already
+    says has ended. The viewer keeps sending frames for longer than the
+    interval, so a check that rode on the frames themselves would come with the
+    last of them, or never.
+
+    The interval is 25s in production; its length is not what this pins, so it
+    is shortened to keep the test quick."""
+    monkeypatch.setattr(connector, "VIEW_RECHECK_EVERY_S", 0.2)
+    project = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
+    user_id, sid, page = _signed_in_viewer(client, "alice")
+    screen = _register_screen(
+        project_id=uuid.UUID(project["id"]), topic_id=None, handle="agent-x"
+    )
+    try:
+        url = f"/connector/session/{screen.sid}/screen?token={page}"
+        with client.websocket_connect(url) as ws:
+            ws.send_json({"type": "resize", "cols": 100, "rows": 30})
+            for _ in range(100):
+                if screen.viewers:
+                    break
+                time.sleep(0.02)
+            assert screen.viewers, "the authorized viewer should be attached"
+
+            _revoke(client, user_id, sid)
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and screen.viewers:
+                ws.send_json({"type": "resize", "cols": 100, "rows": 30})
+                time.sleep(0.02)
+            assert not screen.viewers, "the view outlived the sign-in that opened it"
+            with pytest.raises(WebSocketDisconnect) as closed:
+                ws.receive_bytes()
+            assert closed.value.code == 4401
     finally:
         _unregister(screen)
 

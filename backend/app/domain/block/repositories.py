@@ -7,15 +7,18 @@ from datetime import UTC, datetime
 from typing import Literal, overload
 
 from sqlalchemy import (
+    DateTime,
     Text,
     Uuid,
     and_,
     any_,
     bindparam,
     cast,
+    column,
     func,
     or_,
     select,
+    table,
     text,
     true,
     tuple_,
@@ -26,7 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
 from app.domain.block.authorship import is_participant, participant_blocks
-from app.domain.block.indexed_rows import COALESCED_ROWS, EID, QUESTION_ROWS
+from app.domain.block.indexed_rows import (
+    COALESCED_ROWS,
+    EID,
+    QUESTION_ROWS,
+    SHOWN_ROWS,
+)
 from app.domain.block.models import (
     AGENT_NOTICE_META_KEY,
     CHECKLIST_META_KEY,
@@ -43,6 +51,12 @@ from app.domain.block.models import (
 from app.domain.conversation.services import of_room
 from app.domain.identity.handles import agent_handle_column, looks_like_agent_handle
 
+# When a task's owner pressed 「开始」. A bare table: ``room_task`` depends on
+# this domain.
+_tasks = table(
+    "tasks", column("id", Uuid), column("started_at", DateTime(timezone=True))
+)
+
 
 @dataclass(frozen=True)
 class BlockPage:
@@ -50,6 +64,26 @@ class BlockPage:
 
     items: list[Block]
     has_more: bool
+
+
+def _narrow(
+    stmt,
+    *,
+    kinds: Collection[BlockKind] | None = None,
+    author: str | None = None,
+    shown: bool | None = None,
+):
+    """A conversation read narrowed the way `GET /topics/{id}/blocks` filters:
+    to some kinds, to one author, and to what the room shows (`shown=True`) or
+    keeps out of it (`False`). `SHOWN_ROWS` goes in as its literal text, so a
+    shown read can use `ix_blocks_shown`."""
+    if kinds is not None:
+        stmt = stmt.where(Block.kind.in_(list(kinds)))
+    if author is not None:
+        stmt = stmt.where(Block.author == author)
+    if shown is not None:
+        stmt = stmt.where(SHOWN_ROWS if shown else text(f"NOT ({SHOWN_ROWS.text})"))
+    return stmt
 
 
 class BlockRepository:
@@ -142,6 +176,13 @@ class BlockRepository:
 
     async def get(self, block_id: uuid.UUID) -> Block | None:
         return await self._session.get(Block, block_id)
+
+    async def many(self, block_ids: Collection[uuid.UUID]) -> list[Block]:
+        """These blocks, those that exist, in no particular order."""
+        if not block_ids:
+            return []
+        stmt = select(Block).where(Block.id.in_(list(block_ids)))
+        return list((await self._session.scalars(stmt)).all())
 
     async def contents(self, block_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
         """{block id: 正文} —— 一次查完。"""
@@ -464,7 +505,8 @@ class BlockRepository:
         判据是 #1084 定的那一条：**最近一条提问消息没有作答记录**。不需要新增
         存储，因为回答本来就记在提问那一块上（`meta.answer_log`，答过它的每一句
         回话）。取「最近一条」而不是「有没有任何一条」：已回答的旧提问不该让这段
-        对话长期停留在待处理。
+        对话长期停留在待处理。任务的负责人点了「开始」，在那之前问的题也不再算：
+        开始就是他说这件事讨论够了。
 
         等谁也记在那一块上（`meta.asked`，提问那一刻写下的）。None 是「这道题指不
         到具体的人」。只关心停没停的调用方照样拿它做 `in`。走 `ix_blocks_questions`。
@@ -521,6 +563,25 @@ class BlockRepository:
                 # leaves those rows alone — see `e5a1c7d3b284`).
                 continue
             rows.append((place_id, meta, at, asker, block_id))
+        if not rows:
+            return {}
+        # 「开始」 is the owner saying the task is discussed enough: what was asked
+        # in it before then no longer holds it, so a started task reads 已开始 /
+        # 运行中 rather than 待回答 until a question is asked after it.
+        started: dict[uuid.UUID, datetime] = {
+            task_id: at
+            for task_id, at in (
+                await self._session.execute(
+                    select(_tasks.c.id, _tasks.c.started_at).where(
+                        _tasks.c.id.in_([place_id for place_id, *_ in rows]),
+                        _tasks.c.started_at.is_not(None),
+                    )
+                )
+            ).all()
+        }
+        rows = [
+            row for row in rows if row[0] not in started or row[2] > started[row[0]]
+        ]
         if not rows:
             return {}
         # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
@@ -584,8 +645,9 @@ class BlockRepository:
         record the answer on.
 
         A reply to a question (`reply_to` — what clicking one of its options
-        sends) answers that question, whoever sends it and however many have
-        answered it already. A reply to any other message answers nothing.
+        sends) answers that question, but only while it is unanswered: a
+        question takes one answer, so a reply to one already answered records
+        nothing. A reply to any other message answers nothing.
 
         A message that replies to nothing answers the open questions in its
         conversation that wait on its author — asked of him, or of nobody in
@@ -604,7 +666,16 @@ class BlockRepository:
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
-            return [parent] if parent is not None else []
+            if parent is None:
+                return []
+            # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
+            # 经答过的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
+            # `_awaiting_an_answer` 一致：`answer_log` 非空即已答过；`answered` 是
+            # 旧行上的同义标记。
+            meta = parent.meta or {}
+            if meta.get("answer_log") or meta.get("answered"):
+                return []
+            return [parent]
         spoke_before = (
             select(func.max(Block.created_at))
             .where(
@@ -644,8 +715,16 @@ class BlockRepository:
             if not (block.meta or {}).get("answer_log")
         ]
 
-    async def list_for_topic(self, conversation_id: uuid.UUID) -> list[Block]:
-        """Timeline view: blocks of a topic, oldest first (spec §5).
+    async def list_for_topic(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        kinds: Collection[BlockKind] | None = None,
+        author: str | None = None,
+        shown: bool | None = None,
+    ) -> list[Block]:
+        """Timeline view: blocks of a topic, oldest first (spec §5), narrowed
+        as `_narrow` says.
 
         Excludes doc_node tree blocks and inline comments — those belong to the
         document view, not the conversation timeline.
@@ -654,13 +733,9 @@ class BlockRepository:
         walks — otherwise the full view and the paged view could disagree about
         the order of blocks stamped in the same instant.
         """
-        stmt = (
-            select(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-            )
-            .order_by(Block.created_at, Block.id)
-        )
+        stmt = select(Block).where(Block.conversation_id == conversation_id)
+        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
+        stmt = stmt.order_by(Block.created_at, Block.id)
         return list((await self._session.scalars(stmt)).all())
 
     async def turn_history(self, conversation_id: uuid.UUID) -> list[Block]:
@@ -811,8 +886,16 @@ class BlockRepository:
         author: str | None = None,
         whole_room: uuid.UUID | None = None,
         also: Collection[uuid.UUID] = (),
+        shown: bool | None = None,
+        stored_after: int | None = None,
     ) -> BlockPage:
         """The newest `limit` blocks, or a page before/after a cursor.
+
+        ``stored_after`` reads the blocks stored after the one numbered so
+        (`Block.seq`), in the order they were stored: what a page that holds
+        everything up to that number has not seen. Not the same as ``after``,
+        which goes by date: a block dated before the cursor but stored after it
+        is in this page and not in that one.
 
         ``whole_room`` reads every conversation of that room instead of one —
         its main line, its 支线 and its tasks — for a search that has to find
@@ -850,8 +933,7 @@ class BlockRepository:
         # caller is the difference between paging and pretending to — filtering
         # a page after the fact returns fewer rows than asked for and reports
         # has_more against the wrong set.
-        if kinds is not None:
-            stmt = stmt.where(Block.kind.in_(list(kinds)))
+        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
         if query:
             # Literal matching: a pasted log containing % or _ is not SQL syntax.
             pattern = (
@@ -868,8 +950,6 @@ class BlockRepository:
             )
         if reply_to is not None:
             stmt = stmt.where(Block.reply_to == reply_to)
-        if author is not None:
-            stmt = stmt.where(Block.author == author)
         if before is not None:
             # Row-value comparison: `(created_at, id) < (:ts, :id)` in one go,
             # so the cursor test matches the ORDER BY key exactly. There is no
@@ -884,30 +964,56 @@ class BlockRepository:
             stmt = stmt.where(
                 tuple_(Block.created_at, Block.id) > (after.created_at, after.id)
             )
+        if stored_after is not None:
+            stmt = stmt.where(Block.seq > stored_after)
         # One row past the window tells us whether more blocks remain, without
         # a second COUNT query.
-        order = (
-            (Block.created_at, Block.id)
-            if after is not None
-            else (Block.created_at.desc(), Block.id.desc())
-        )
+        if stored_after is not None:
+            order: tuple = (Block.seq,)
+        elif after is not None:
+            order = (Block.created_at, Block.id)
+        else:
+            order = (Block.created_at.desc(), Block.id.desc())
         stmt = stmt.order_by(*order).limit(limit + 1)
         rows = list((await self._session.scalars(stmt)).all())
         has_more = len(rows) > limit
         rows = rows[:limit]
-        if after is None:
+        if after is None and stored_after is None:
             rows.reverse()  # callers render oldest-first, same as list_for_topic
         return BlockPage(items=rows, has_more=has_more)
 
-    async def count_for_topic(self, conversation_id: uuid.UUID) -> int:
+    async def count_for_topic(
+        self,
+        conversation_id: uuid.UUID,
+        *,
+        kinds: Collection[BlockKind] | None = None,
+        author: str | None = None,
+        shown: bool | None = None,
+    ) -> int:
         stmt = (
             select(func.count())
             .select_from(Block)
-            .where(
-                Block.conversation_id == conversation_id,
-            )
+            .where(Block.conversation_id == conversation_id)
         )
+        stmt = _narrow(stmt, kinds=kinds, author=author, shown=shown)
         return int((await self._session.scalar(stmt)) or 0)
+
+    async def holds(
+        self,
+        block: Block,
+        *,
+        kinds: Collection[BlockKind] | None = None,
+        author: str | None = None,
+        shown: bool | None = None,
+    ) -> bool:
+        """Whether ``block`` is one a read narrowed this way would return."""
+        stmt = _narrow(
+            select(Block.id).where(Block.id == block.id),
+            kinds=kinds,
+            author=author,
+            shown=shown,
+        )
+        return (await self._session.scalar(stmt)) is not None
 
     async def count_messages(
         self,

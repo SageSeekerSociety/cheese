@@ -19,11 +19,13 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
+from tests.conftest import seed_user
 from tests.integration.conftest import (
-    chat_ws_url,
+    inbox,
     join_project_team,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -189,18 +191,11 @@ def _project_with_a_roster(client, owner: str, member: str) -> str:
 
 def _send(client, topic_id: str, content: str, author: str) -> None:
     """人在房间里说一句话（不唤醒芝士）：@ 的通知在这条消息落库时就发出去了。"""
-    with client.websocket_connect(chat_ws_url(topic_id, author)) as ws:
+    with room_socket(client, topic_id, author) as ws:
         post_message(client, topic_id, author, {"content": content})
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break
-
-
-def _alerts(client, project_id: str, handle: str) -> list[dict]:
-    return client.get(
-        f"/projects/{project_id}/alerts",
-        headers=session_auth_headers(handle),
-    ).json()["data"]["data"]
 
 
 def _texts(client, topic_id: str, reader: str) -> list[str]:
@@ -227,9 +222,10 @@ def test_a_dm_has_no_member_list_even_when_its_roster_is_not_two_seats(client):
     _seat_by_hand(client, dm, "intruder-1")
     assert _seats(client, dm) is None, "前提：这间私聊的名册已经不是两席"
 
+    seed_user(client, "mentor-1")
     _send(client, dm, "@mentor-1 这段先别说出去", author="user-1")
 
-    assert _alerts(client, project_id, "mentor-1") == []
+    assert inbox(client, "mentor-1", "MENTION") == []
     # 名册解析不到，@ 原样留在正文里（渲染成「未能通知 …：项目中没有这个成员」）。
     assert "@mentor-1 这段先别说出去" in _texts(client, dm, "user-1")
 

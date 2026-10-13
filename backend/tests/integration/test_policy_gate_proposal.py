@@ -1,32 +1,24 @@
-"""要一台自托管机器撞上档位策略：机主读到的是一条提议，机器没有被占用。
+"""一轮要用的模型撞上档位策略：产物是一条到人手上的提议，请求没有发出去。
 
-闸门本身的四条判据在 `tests/unit/test_policy_gate.py`（纯的）。这里走的是提议**真
-的到人手上**那一段：房间里落下一条事件，寻址点到机主，账本把它投进机主的收件箱
-（结论 40 后半 = P24 的寻址 + P25 的投递，不是第三条通道）。
-
-顺带守住「这次调用没有发生」：绑定不写，房间的算力选择不动——提议不是一次先斩后
-奏的执行加一句通知。
+闸门本身的判据在 `tests/unit/test_policy_gate.py`（纯的）。这里走的是提议**真的到
+人手上**那一段：房间里落下一条事件，寻址点到该点头的人，账本把它投进收件箱。
 """
 
 import asyncio
 import uuid
 
-import pytest
 from sqlalchemy import select
 
-from app.domain.agent.device_hub import device_hub
 from app.domain.agent.platform_notices import EVENT_POLICY_PROPOSAL
 from app.domain.block.models import Block, BlockKind
-from app.domain.device.supply import Supply
-from app.domain.device.wiring import sql_device_service
 from app.domain.notification.models import Notification
 from app.domain.user.repositories import UserRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -60,33 +52,6 @@ def _topic(client, pid: str) -> str:
     ).json()["data"]["id"]
 
 
-def _device_owned_by(client, pid: str, owner_user_id: int, name: str) -> str:
-    async def _seed() -> str:
-        async with client.test_factory() as session:
-            service = sql_device_service(session)
-            code = await service.start(name)
-            device = await service.approve(
-                code,
-                owner_user_id=owner_user_id,
-                supply=Supply.self_hosted,
-            )
-            await service.assign_to_project(
-                device.device_id, uuid.UUID(pid), actor_user_id=owner_user_id
-            )
-            await session.commit()
-            return device.device_id
-
-    return asyncio.run(_seed())
-
-
-def _topic_binding(client, tid: str):
-    async def _read():
-        async with client.test_factory() as session:
-            return await sql_device_service(session).topic_binding(uuid.UUID(tid))
-
-    return asyncio.run(_read())
-
-
 def _room_events(client, tid: str) -> list[Block]:
     async def _read() -> list[Block]:
         async with client.test_factory() as session:
@@ -110,91 +75,6 @@ def _inbox(client, user_id: int) -> list[Notification]:
             return list(rows)
 
     return asyncio.run(_read())
-
-
-@pytest.fixture
-def gated_project(client, monkeypatch):
-    """一个只允许 `included` 档自己发生、超档变提议的项目，外加一台别人的机器。"""
-    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    _user_id(client, "andyl")
-    owner_id = _user_id(client, "xiaowang")
-    pid = _project(client)
-    tid = _topic(client, pid)
-    device_id = _device_owned_by(client, pid, owner_id, "小王的工作站")
-    saved = client.put(
-        f"/projects/{pid}/tier-policy",
-        json={"allowed_tiers": ["included"], "over_tier": "propose"},
-        headers=session_auth_headers("andyl"),
-    )
-    assert saved.status_code == 200, saved.text
-    return pid, tid, device_id, owner_id
-
-
-def test_asking_for_a_self_hosted_machine_reaches_its_owner_as_a_proposal(
-    client, gated_project
-):
-    pid, tid, device_id, owner_id = gated_project
-
-    response = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": device_id},
-        headers=session_auth_headers("andyl"),
-    )
-
-    assert response.status_code == 200, response.text
-    proposal = response.json()["data"]["proposal"]
-    assert proposal is not None
-    assert proposal["approver"] == "xiaowang"
-
-    # 房间里留下的是一条事件，写着这一步等谁。
-    events = _room_events(client, tid)
-    proposals = [
-        block
-        for block in events
-        if (block.meta or {}).get("event_type") == EVENT_POLICY_PROPOSAL
-    ]
-    assert len(proposals) == 1
-    assert "小王的工作站" in proposals[0].content
-    assert "xiaowang" in proposals[0].content
-
-    # 机主收到了它——走的是平台唯一那条投递路径，不是给提议新开的通道。
-    assert [n for n in _inbox(client, owner_id)] != []
-
-
-def test_a_proposal_does_not_take_the_machine(client, gated_project):
-    """提议不是先斩后奏：绑定没写，房间的算力选择也没动。"""
-    pid, tid, device_id, _owner_id = gated_project
-    before = client.get(f"/topics/{tid}/compute-profile").json()["data"]["current"]
-
-    response = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": device_id},
-        headers=session_auth_headers("andyl"),
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["proposal"] is not None
-    assert _topic_binding(client, tid) is None
-    after = client.get(f"/topics/{tid}/compute-profile").json()["data"]
-    assert after["current"] == before
-
-
-def test_an_unrestricted_project_still_takes_the_machine(client, monkeypatch):
-    """默认不限档 —— 今天的行为一点没变，闸门对它是透明的。"""
-    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    owner_id = _user_id(client, "xiaowang")
-    pid = _project(client)
-    tid = _topic(client, pid)
-    device_id = _device_owned_by(client, pid, owner_id, "小王的工作站")
-
-    response = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": device_id},
-    )
-
-    assert response.status_code == 200, response.text
-    assert response.json()["data"]["proposal"] is None
-    assert _topic_binding(client, tid).device_id == device_id
 
 
 def test_the_policy_a_project_saved_is_the_policy_it_reads_back(client):
@@ -236,11 +116,7 @@ def test_an_unknown_disposition_is_refused(client):
     assert response.status_code == 422
 
 
-# --- 轮次这一侧：决定一个房间占谁的机器、用哪个模型的那段代码 ------------------
-#
-# 上面几条走的是「人主动去点算力选择器」。下面这几条走的是默认路径：没人碰过选择
-# 器的房间，第一轮由轮次组装自己解析出机器和模型。闸门必须也在那里，否则被闸住的
-# 只剩少数手动情形，而项目设了策略之后随便 @ 一句芝士照样把机器占掉。
+# --- 轮次这一侧：决定一轮用哪个模型的那段代码 ------------------------------
 
 
 def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") -> list:
@@ -251,7 +127,7 @@ def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") 
     """
     # 芝士 answers in a 支线 of the room; the room's machine is what it takes.
     thread = in_thread(client, topic_id, who)
-    with client.websocket_connect(chat_ws_url(thread, who)) as ws:
+    with room_socket(client, thread, who) as ws:
         post_message(client, thread, who, {"content": f"@芝士 {text}"})
         frames = []
         while True:
@@ -293,131 +169,10 @@ def _gated(client, *, allowed: list[str], over_tier: str) -> tuple[str, str, int
     return pid, tid, owner_id
 
 
-def test_a_room_nobody_configured_still_passes_the_gate(client, stub_hooks):
-    """没人打开过算力选择器的房间：占机器的那一刻照样撞闸门。
-
-    `included` 之外一档都不许，而机器无论解析成自有设备（byo）还是 Cloud
-    （premium）都在档外 —— 于是第一轮把机器占下来之前就变成了一条提议。
-    """
-    _pid, tid, owner_id = _gated(client, allowed=["included"], over_tier="propose")
-
-    frames = _say(client, tid)
-
-    proposals = _proposals(client, tid)
-    assert len(proposals) == 1
-    assert "环境" in proposals[0].content
-    # 产物是一条提议，不是一次报错：这一轮以房间里那条提议加一个 done 收场，发消
-    # 息的人在流里读到的就是它。
-    assert _errors(frames) == []
-    assert frames[-1]["type"] == "done"
-    assert [
-        f
-        for f in frames
-        if f["type"] == "event_block" and "环境" in f["block"]["content"]
-    ]
-    # 这一轮没有发生：没有请求发出去，机器也没有被绑走。
-    assert stub_hooks.last_prompt is None
-    assert _topic_binding(client, tid) is None
-    # 这个项目一台机器也没接，平台挑不出那一台，所以点头的是项目的主人。有机器的
-    # 情形在下面那条里——点头的是**那台机器的主人**，哪怕没人碰过选择器。
-    assert _inbox(client, owner_id) != []
-
-
-def test_the_owner_of_the_machine_the_platform_would_pick_is_the_one_asked(
-    client, stub_hooks, monkeypatch
-):
-    """结论 40「要那台机器的主人点头」在默认路径上也成立。
-
-    没人打开过算力选择器的房间——绝大多数房间——平台在第一轮自己挑一台在线的项目
-    机器，而那台机器完全可能是别的成员的。被问的必须是他，不是项目的主人：花的是
-    他的电和带宽，也只有他点得了这个头。
-    """
-    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    project_owner_id = _user_id(client, "andyl")
-    machine_owner_id = _user_id(client, "xiaowang")
-    pid = _project(client)
-    tid = _topic(client, pid)
-    _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
-    # 项目默认是「自有设备 · 自动选择」：没点名任何一台，平台第一轮自己挑。
-    saved = client.put(
-        f"/projects/{pid}/compute-configs",
-        json={"default": {"name": "自有设备 · 自动选择", "profile": "device"}},
-        headers=session_auth_headers("andyl"),
-    )
-    assert saved.status_code == 200, saved.text
-    gated = client.put(
-        f"/projects/{pid}/tier-policy",
-        json={"allowed_tiers": ["included"], "over_tier": "propose"},
-        headers=session_auth_headers("andyl"),
-    )
-    assert gated.status_code == 200, gated.text
-
-    frames = _say(client, tid)
-
-    proposals = _proposals(client, tid)
-    assert len(proposals) == 1
-    assert "小王的工作站" in proposals[0].content
-    assert "xiaowang" in proposals[0].content
-    assert _errors(frames) == []
-    assert _inbox(client, machine_owner_id) != []
-    assert _inbox(client, project_owner_id) == []
-    # 这次调用没有发生：机器没被绑走，也没有请求发出去。
-    assert _topic_binding(client, tid) is None
-    assert stub_hooks.last_prompt is None
-
-
-def test_the_picker_and_the_turn_ask_for_the_same_machine_once(
-    client, stub_hooks, monkeypatch
-):
-    """两条路走到同一台机器，是一条提议，不是两条。
-
-    在算力选择器里点「小王的工作站」撞上策略 → 一条提议；绑定因此没写，于是同一个
-    人回房间 @ 一句芝士，轮次组装自己解析，解析出来的还是那台机器。两处说的是同一
-    个诉求（同一个房间、同一台机器、同一档），所以房间里只该有一条「等谁点头」、
-    小王只该收到一条通知（结论 15 / I11「一次」）。
-    """
-    monkeypatch.setattr(device_hub, "is_online", lambda _device_id: True)
-    _user_id(client, "andyl")
-    machine_owner_id = _user_id(client, "xiaowang")
-    pid = _project(client)
-    tid = _topic(client, pid)
-    device_id = _device_owned_by(client, pid, machine_owner_id, "小王的工作站")
-    saved = client.put(
-        f"/projects/{pid}/compute-configs",
-        json={"default": {"name": "自有设备 · 自动选择", "profile": "device"}},
-        headers=session_auth_headers("andyl"),
-    )
-    assert saved.status_code == 200, saved.text
-    gated = client.put(
-        f"/projects/{pid}/tier-policy",
-        json={"allowed_tiers": ["included"], "over_tier": "propose"},
-        headers=session_auth_headers("andyl"),
-    )
-    assert gated.status_code == 200, gated.text
-
-    picked = client.put(
-        f"/topics/{tid}/compute-profile",
-        json={"profile": "device", "device_id": device_id},
-        headers=session_auth_headers("andyl"),
-    )
-    assert picked.status_code == 200, picked.text
-    assert picked.json()["data"]["proposal"]["approver"] == "xiaowang"
-
-    frames = _say(client, tid)
-
-    assert len(_proposals(client, tid)) == 1
-    assert len(_inbox(client, machine_owner_id)) == 1
-    # 第二次问同一件事也不是报错：房间里不再多一条，这一轮照样以 done 收场。
-    assert _errors(frames) == []
-    assert frames[-1]["type"] == "done"
-    assert stub_hooks.last_prompt is None
-
-
 def test_a_turn_whose_model_is_over_tier_sends_no_request(client, stub_hooks):
     """判据②：超档且处置为变提议时，产物是一条提议，一个请求也没发出去。
 
-    机器那两档都放行，撞闸门的只剩模型 —— 项目默认模型是 `included` 档，而这里恰
-    好不允许这一档自己发生。
+    项目默认模型是 `included` 档，而这里恰好不允许这一档自己发生。
     """
     _pid, tid, owner_id = _gated(
         client, allowed=["byo", "premium", "frontier"], over_tier="propose"
@@ -457,8 +212,11 @@ def test_the_same_proposal_is_made_once_no_matter_how_often_it_is_asked(
     """结论 15 / I11「一次」：同一条提议不随每一轮重发。
 
     撞上策略的调用会反复发生——房间里每来一条消息就解析一次。人要收到的只有一条。
+    项目默认模型在 `included` 档，这里不许它自己发生。
     """
-    _pid, tid, owner_id = _gated(client, allowed=["included"], over_tier="propose")
+    _pid, tid, owner_id = _gated(
+        client, allowed=["byo", "premium", "frontier"], over_tier="propose"
+    )
 
     frames = [
         _say(client, tid, "第一句"),

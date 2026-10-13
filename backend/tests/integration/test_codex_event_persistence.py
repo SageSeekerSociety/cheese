@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.codex.backlog import CodexBacklog
@@ -35,6 +36,7 @@ async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
     async def deliver(item_id):
         # A fresh service and assembler represent a backend reconnect/replay.
         service = ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=factory,
             base_system_prompt="fixture",
             workspace_root=str(tmp_path),
@@ -54,7 +56,7 @@ async def test_replayed_codex_reply_is_not_persisted_twice(client, tmp_path):
                 },
             }
         )[0]
-        await service._consume_hook_event(
+        await service.hook_events.accept(
             project_id,
             topic_id,
             uuid.uuid4(),
@@ -165,6 +167,7 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
     # that teammate, whoever the room's current agent is.
     seat = client.portal.call(teammate)
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="fixture",
         workspace_root=str(tmp_path),
@@ -178,7 +181,7 @@ async def test_late_session_event_preserves_original_teammate_and_harness(
         }
     )[0]
     client.portal.call(
-        lambda: service._consume_hook_event(
+        lambda: service.hook_events.accept(
             project_id,
             topic_id,
             uuid.uuid4(),
@@ -255,6 +258,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
 
     def service(compute=None):
         return ChatService(
+            work_runner=session_turn_deps.get_work_runner(),
             session_factory=client.test_request_factory,
             base_system_prompt="fixture",
             workspace_root=str(tmp_path),
@@ -264,7 +268,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
     first = service()
 
     async def commit_then_disconnect(*args):
-        await first._consume_hook_event(*args)
+        await first.hook_events.accept(*args)
         raise ConnectionError("reader died after database commit")
 
     reader = Subscription(session, path, remote, commit_then_disconnect, AsyncMock())
@@ -273,7 +277,7 @@ async def test_reply_committed_before_reader_crash_is_not_duplicated(client, tmp
     assert len(CodexBacklog(path).unread()) == 1
     remote.return_value = {"events": []}
     restarted = Subscription(
-        session, path, remote, service()._consume_hook_event, AsyncMock()
+        session, path, remote, service().hook_events.accept, AsyncMock()
     )
     assert client.portal.call(lambda: restarted.drain()) == 1
     assert not CodexBacklog(path).unread()

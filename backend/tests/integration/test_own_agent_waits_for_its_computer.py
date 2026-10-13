@@ -86,7 +86,10 @@ async def _own_agent_and_laptop(factory, project_id, topic_id):
 
 async def _admit(chat, topic_id, block_id, instance_id):
     async with initial_admission.admitted_initial(
-        chat,
+        chat.session_factory,
+        chat.live.seat_lock_for,
+        chat._turn_seat_handle,
+        chat.post_system_event,
         topic_id,
         None,
         user_block_id=block_id,

@@ -88,8 +88,9 @@ class Project(UuidPk, Timestamps, Base):
         ),
         nullable=True,
     )
-    # The project's overview: what the project is, read by every conversation's
-    # AI teammate and shown at the top of 综合's overview. A document of the
+    # The project's goals: what it is to achieve, by when, and what it leaves
+    # out for now; read by every conversation's AI teammate and shown at the top
+    # of 综合's overview. A document of the
     # project's own that the library does not list.
     overview_document_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
@@ -128,6 +129,15 @@ class Project(UuidPk, Timestamps, Base):
     intent: Mapped[str] = mapped_column(Text, default="", server_default="")
     # Free-form policy: branch protection approvals, notify level, etc.
     settings: Mapped[dict] = mapped_column(JSON, default=dict)
+    # The project's agent-credential generation, so that revoking advances it
+    # with `UPDATE ... SET col = col + 1` — atomically, in the database. It used
+    # to live in `settings`, which every settings writer replaces whole; one
+    # that read before a revoke landed and flushed after it would put the old
+    # generation back and every credential the revoke had just retired worked
+    # again.
+    agent_credential_epoch: Mapped[int] = mapped_column(
+        Integer, default=0, server_default="0", nullable=False
+    )
     # Set while the owner has archived the project: it leaves every member's
     # project list, every write to it is refused (``ProjectArchivedError``), and
     # its rooms are archived with it so nothing keeps running. NULL = in use.

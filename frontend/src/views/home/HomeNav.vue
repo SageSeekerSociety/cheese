@@ -22,12 +22,12 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
+import { SpacesApi } from '@/api/spaces'
+import { TeamsApi } from '@/api/teams'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
-import { SpacesApi } from '@/network/api/spaces'
-import { TeamsApi } from '@/network/api/teams'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
@@ -65,7 +65,7 @@ function setTeamsHere(next: Team[]) {
 async function loadTeams() {
   const read = ++teamsRead
   try {
-    const mine = (await TeamsApi.getMyTeams()).data.teams
+    const mine = (await TeamsApi.getMyTeams()).teams
     if (read === teamsRead) teams.value = mine
   } catch {
     // 读不到就不列：这是一份目录，不是这一页的内容。
@@ -74,7 +74,7 @@ async function loadTeams() {
 
 async function loadSpaces() {
   try {
-    const { data } = await SpacesApi.list({ pageSize: 50, sort_by: 'created_at', sort_order: 'desc' })
+    const data = await SpacesApi.list({ pageSize: 50, sort_by: 'created_at', sort_order: 'desc' })
     spaces.value = data.spaces.map((space) => ({ id: space.id, name: space.name }))
   } catch {
     // 同上。

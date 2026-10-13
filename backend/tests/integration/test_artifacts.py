@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from app.core.config import settings
-from tests.integration.conftest import chat_ws_url, post_project
+from tests.integration.conftest import post_project, room_socket
 
 
 @pytest.fixture(autouse=True)
@@ -165,7 +165,7 @@ def test_a_shown_file_reaches_the_room_live(client):
     # The reader is usually in the room while 芝士 works: the card appears then,
     # not on the next reload.
     _pid, tid = _topic(client, owner="alice")
-    with client.websocket_connect(chat_ws_url(tid, "alice")) as ws:
+    with room_socket(client, tid, "alice") as ws:
         block = client.post(f"/topics/{tid}/shown", json={"path": "report.html"})
         frame = ws.receive_json()
     assert frame == {"type": "assistant_block", "block": block.json()["data"]}

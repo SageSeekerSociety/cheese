@@ -15,8 +15,7 @@ import pytest
 
 from app.domain.agent.device_hub import HubScreen
 from app.domain.agent.device_provider import DeviceChannel
-from app.domain.agent.harness.claude_code import device_launch
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
 
 _FLAG = "--append-system-prompt-file"
 _STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"

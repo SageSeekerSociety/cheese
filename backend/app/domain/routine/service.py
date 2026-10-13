@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import listing, say, with_keys
+from app.domain.agent.announce import settle_proposal
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
@@ -31,19 +32,23 @@ from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_INFO,
-    WHO_CHEESE,
+    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
+from app.domain.agent.realtime.broker import get_broker
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.block.schemas import BlockOut
 from app.domain.delivery.agent import dispatch_pending, instance_for_seat, record_agent
 from app.domain.delivery.ledger import DeliveryEvent
 from app.domain.delivery.models import Delivery
 from app.domain.feedback import claims as feedback_claims
 from app.domain.feedback import triage as feedback_triage
-from app.domain.library import records as library_records
+from app.domain.library import listing as library_listing
 from app.domain.notification.models import NotificationLevel, NotificationType
+from app.domain.notification.services import ProjectNotificationService
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.room_task.models import Task
 from app.domain.routine import schedule
@@ -55,6 +60,9 @@ from app.domain.routine.models import (
     RoutineTrigger,
     RunStatus,
 )
+from app.domain.routine.reads import runs_under
+from app.domain.routine.trigger import describe_trigger
+from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import answered_in
 from app.domain.topic.models import Topic, TopicStatus
 from app.domain.topic_membership.services import TopicMemberService
@@ -102,14 +110,6 @@ def _clean_dir(raw: str) -> str:
     if any(part in ("", ".", "..") for part in path.split("/")) and path:
         raise ValidationError(say("routineOutputDirInvalid"))
     return path
-
-
-def describe_trigger(routine: Routine) -> str:
-    trigger = RoutineTrigger(routine.trigger)
-    if trigger is RoutineTrigger.schedule:
-        return schedule.describe(routine.spec, routine.timezone)
-    scope = "本房间" if routine.spec.get("scope") == "room" else "整个项目"
-    return f"{TRIGGER_LABELS[trigger]}（{scope}）"
 
 
 def _validate(trigger: str, spec: dict, tz: str) -> dict:
@@ -235,7 +235,7 @@ class RoutineService:
         self._session.add(row)
         await self._session.flush()
         if by_agent:
-            line = say("routineProposed", title=row.title)
+            line = say("routineProposedBy", who=f"<@{by}>", title=row.title)
             self._session.add(
                 Block(
                     id=uuid.uuid4(),
@@ -251,7 +251,8 @@ class RoutineService:
                             **notice(
                                 EVENT_ROUTINE_PROPOSED,
                                 severity=SEVERITY_INFO,
-                                who=WHO_CHEESE,
+                                # It waits on a person confirming it.
+                                who=WHO_HUMAN,
                                 detail=self.summary_text(row),
                                 detail_label=say("labelRoutineToConfirm"),
                             ),
@@ -297,7 +298,26 @@ class RoutineService:
             raise ValidationError(say("routineAlreadyConfirmed"))
         self._activate(row, confirmed_by=by)
         await self._session.flush()
+        await self._settled(
+            row,
+            say(
+                "routineProposalConfirmedBy",
+                who=f"<@{row.proposed_by}>",
+                title=row.title,
+            ),
+        )
         return row
+
+    async def _settled(self, row: Routine, content: str) -> None:
+        """A person decided on a teammate's draft: its line in the room says so."""
+        await settle_proposal(
+            self._session,
+            row.topic_id,
+            event_type=EVENT_ROUTINE_PROPOSED,
+            key="routine_id",
+            value=row.id,
+            content=content,
+        )
 
     async def pause(self, row: Routine) -> Routine:
         if row.state != RoutineState.active.value:
@@ -359,6 +379,15 @@ class RoutineService:
         return run
 
     async def delete(self, row: Routine) -> None:
+        if row.state == RoutineState.draft.value:
+            await self._settled(
+                row,
+                say(
+                    "routineProposalDeletedBy",
+                    who=f"<@{row.proposed_by}>",
+                    title=row.title,
+                ),
+            )
         await self._session.delete(row)
         await self._session.flush()
 
@@ -395,7 +424,6 @@ class RoutineService:
                 .with_for_update(skip_locked=True)
             )
         )
-        from app.domain.notification.services import ProjectNotificationService
 
         stopped = 0
         for room in rooms:
@@ -627,7 +655,9 @@ async def _fire(
                         severity=SEVERITY_INFO,
                         who=WHO_PLATFORM,
                         detail=content,
-                        detail_label=say("labelRoutineWork"),
+                        detail_label=say(
+                            "labelRoutineWorkFor", who=f"<@{routine.agent_handle}>"
+                        ),
                     ),
                     "routine_id": str(routine.id),
                     "routine_run_id": str(run.id),
@@ -726,16 +756,16 @@ async def _events_for(
     in_room = routine.spec.get("scope") == "room"
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
-        for entry in await library_records.listing(session, routine.project_id):
-            when = datetime.fromtimestamp(entry["modified"], UTC)
-            if when >= since:
-                found.append(
-                    (
-                        f"library:{entry['path']}:{int(entry['modified'])}",
-                        f"资料库新增了《{entry['path']}》。",
-                        when,
-                    )
+        for name, when in await library_listing.added_since(
+            session, routine.project_id, since
+        ):
+            found.append(
+                (
+                    f"library:{name}:{int(when.timestamp())}",
+                    f"资料库新增了《{name}》。",
+                    when,
                 )
+            )
     elif trigger is RoutineTrigger.task_closed:
         query = select(Task).where(
             Task.project_id == routine.project_id,
@@ -913,7 +943,6 @@ async def _announce_finished(session: AsyncSession) -> list[Block]:
     """Tell how each settled run went: its message in the main line, and its
     owner. The messages returned changed; the caller publishes them once
     this commits."""
-    from app.domain.notification.services import ProjectNotificationService
 
     rows = list(
         await session.execute(
@@ -977,11 +1006,6 @@ async def publish_run_messages(
     line under it of its 支线."""
     if not message_ids:
         return
-    from app.domain.agent.runtime import get_broker
-    from app.domain.block.repositories import BlockRepository
-    from app.domain.block.schemas import BlockOut
-    from app.domain.routine.reads import runs_under
-    from app.domain.thread import reads as thread_reads
 
     broker = get_broker()
     async with sessions() as session:

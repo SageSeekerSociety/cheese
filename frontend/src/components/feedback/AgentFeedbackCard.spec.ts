@@ -13,7 +13,10 @@ import AgentFeedbackCard from './AgentFeedbackCard.vue'
 
 import { dismissFeedbackProposal } from '@/api'
 import i18n, { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { expectRoom, forgetRoomSnapshots, settleRoom } from '@/query/snapshot'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 const proposal = {
   block_id: 'b1',
@@ -46,13 +49,23 @@ vi.mock('@/api', async (importOriginal) => ({
 beforeEach(() => {
   setLocale('zh-CN')
   setActivePinia(createPinia())
+  forgetRoomSnapshots()
+  queryClient.clear()
 })
 
-async function mount() {
+function render_() {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useWorkspaceStore().members = [{ user_handle: 'cheese-a3689921fba8', name: 'Cedar', agent: true }] as never
-  const view = render(AgentFeedbackCard, {
+  seedProjects([])
+  seedProject('p1', {
+    topics: [],
+    members: [{ user_handle: 'cheese-a3689921fba8', name: 'Cedar', agent: true }] as never,
+    unread: {},
+    privateUnread: {},
+    notifyLevels: {},
+  })
+  useWorkspaceStore().openProject('p1')
+  return render(AgentFeedbackCard, {
     props: { topicId: 't1' },
     global: {
       plugins: [
@@ -66,9 +79,29 @@ async function mount() {
       ],
     },
   })
+}
+
+async function mount() {
+  const view = render_()
   await vi.waitFor(() => expect(view.getByText('云端工作电脑反复创建失败')).toBeTruthy())
   return view
 }
+
+/** 离开这个房间再进来：订阅已经发出去了，快照还没到。 */
+function reenter() {
+  expectRoom('t1', 't1')
+  return render_()
+}
+
+const snapshot = (feedback_proposals: FeedbackProposal[]) =>
+  ({
+    members: [],
+    feedback_proposals,
+    skill_proposals: [],
+    tasks: { open: [], recent: [] },
+    pins: [],
+    threads: [],
+  }) as never
 
 describe('房间里的反馈卡', () => {
   it('写的是队友的名字，不是它的 handle；反馈标题只出现一次', async () => {
@@ -99,5 +132,27 @@ describe('房间里的反馈卡', () => {
     const view = await mount()
     await fireEvent.click(view.getByRole('button', { name: /不用/ }))
     await vi.waitFor(() => expect(view.getAllByText('云端工作电脑反复创建失败')).toHaveLength(1))
+  })
+})
+
+describe('再进这个房间', () => {
+  it('上次在这里的卡不等订阅回来就在，和对话一起出现；快照说它已经没了就收起', async () => {
+    ;(await mount()).unmount()
+
+    const view = reenter()
+    expect(view.getByText('云端工作电脑反复创建失败')).toBeTruthy()
+
+    settleRoom('t1', 't1', snapshot([]))
+    await vi.waitFor(() => expect(view.queryByText('云端工作电脑反复创建失败')).toBeNull())
+  })
+
+  it('在这里「不用」掉的卡，再进来不会先冒出来一下', async () => {
+    const first = await mount()
+    await fireEvent.click(first.getByRole('button', { name: /不用/ }))
+    await vi.waitFor(() => expect(first.queryByText('云端工作电脑反复创建失败')).toBeNull())
+    first.unmount()
+
+    const view = reenter()
+    expect(view.queryByText('云端工作电脑反复创建失败')).toBeNull()
   })
 })

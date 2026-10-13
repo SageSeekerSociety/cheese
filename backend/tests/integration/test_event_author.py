@@ -21,10 +21,10 @@ import uuid
 from app.core.sandbox_auth import mint_scoped_token
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -51,7 +51,7 @@ def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
 
 def _say(client, topic_id: str, text: str, *, summon: bool) -> None:
     # 叫不叫它写在正文里：帧上没有这一位，后端从 @ 解析。
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(
             client, topic_id, "user-1", {"content": f"@芝士 {text}" if summon else text}
         )
@@ -153,7 +153,7 @@ def test_a_text_and_an_image_sent_together_both_reach_the_next_turn(client, stub
     assert upload.status_code == 200, upload.text
     att = upload.json()["data"]
 
-    with client.websocket_connect(chat_ws_url(topic_id, "user-1")) as ws:
+    with room_socket(client, topic_id, "user-1") as ws:
         post_message(
             client,
             topic_id,

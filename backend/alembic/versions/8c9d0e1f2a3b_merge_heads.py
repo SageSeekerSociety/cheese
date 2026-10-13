@@ -16,4 +16,4 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    pass
+    raise NotImplementedError("8c9d0e1f2a3b 无法反向，恢复整库转储")

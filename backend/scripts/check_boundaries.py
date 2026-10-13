@@ -33,7 +33,7 @@ Everything else is import-linter's own machinery: the contracts live in
 is enough to reproduce a verdict by hand. This script adds the two things above
 and nothing more.
 
-    ... --self-test   plant each violation the three contracts exist to catch,
+    ... --self-test   plant each violation the eight contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
                       code is unchanged. The record's shape is fixed in
@@ -65,7 +65,16 @@ ROOT_PACKAGE = "app"
 #: run fewer contracts and still report success — a check that narrowed itself
 #: is indistinguishable from a tree that got cleaner. Adding or renaming a
 #: contract means editing this tuple, which is the tripwire working.
-CONTRACT_IDS = ("api-domain-core", "routes-touch-no-models", "domains-acyclic")
+CONTRACT_IDS = (
+    "api-domain-core",
+    "routes-touch-no-models",
+    "domains-acyclic",
+    "turn-layers",
+    "turn-no-composition-imports",
+    "realtime-no-turn",
+    "turn-storage-purity",
+    "routes-independent",
+)
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
 
@@ -183,6 +192,133 @@ def _contract_rows(report, options) -> list[dict[str, Any]]:
     return rows
 
 
+def _module_file(module: str) -> Path | None:
+    """Find the source file for an import-linter module name."""
+    stem = Path.cwd() / module.replace(".", "/")
+    for candidate in (stem.with_suffix(".py"), stem / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _source_location(importer: str, imported: str, line_numbers=()) -> str:
+    """Turn import-linter's module/line pair into a clickable repo location."""
+    path = _module_file(importer)
+    lines = [int(line) for line in line_numbers if isinstance(line, int)]
+    line = str(lines[0]) if lines else "?"
+    if path is None:
+        shown = importer.replace(".", "/") + ".py"
+    else:
+        relative = path.relative_to(Path.cwd()).as_posix()
+        shown = f"backend/{relative}" if Path.cwd().name == "backend" else relative
+    return f"{shown}:{line} ({importer} -> {imported})"
+
+
+def _failure_locations(report) -> list[str]:
+    """Extract file:line locations from import-linter's failed metadata."""
+    locations: list[str] = []
+    seen: set[str] = set()
+
+    def add(importer: str, imported: str, line_numbers=()) -> None:
+        location = _source_location(importer, imported, line_numbers)
+        if location not in seen:
+            seen.add(location)
+            locations.append(location)
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("line_numbers") and isinstance(value.get("importer"), str):
+                add(value["importer"], value["imported"], value["line_numbers"])
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, (list, tuple, set)):
+            # C3 exposes cycle-breaker pairs as a set of (importer, imported).
+            if (
+                isinstance(value, tuple)
+                and len(value) == 2
+                and all(isinstance(item, str) for item in value)
+            ):
+                for detail in report.graph.get_import_details(
+                    importer=value[0], imported=value[1]
+                ):
+                    add(value[0], value[1], (detail["line_number"],))
+            else:
+                for child in value:
+                    walk(child)
+
+    for _contract, check in report.get_contracts_and_checks():
+        if not check.kept:
+            metadata = getattr(check, "metadata", {})
+            walk(metadata)
+            for module in sorted(metadata.get("undeclared_modules", ())):
+                add(module, "undeclared turn layer", (1,))
+    return locations
+
+
+_BOUNDARY_FIXES = {
+    "C1": (
+        "C1 layers: api -> domain -> core, no imports upward. Move the dependency "
+        "down into the owning domain/core module, or call the lower layer through "
+        "the declared service seam; do not add a reverse import."
+    ),
+    "C2": (
+        "C2 routes do not import a domain's models directly. Replace the model import "
+        "with that domain's service call; the service owns model access and writes."
+    ),
+    "C3": (
+        "C3 sibling domains are acyclic. Remove one edge from the reported cycle, "
+        "or expose a declared seam instead of importing the sibling directly."
+    ),
+    "T1": (
+        "T1 turn layers are intake -> steps -> store -> state. Put the module in its "
+        "declared layer and import only downward."
+    ),
+    "T2": (
+        "T2 turn code must not import chat/runtime/API directly. Pass composed facts "
+        "through the service seam."
+    ),
+    "T3": (
+        "T3 realtime must not reach turn execution or composition. Keep broker "
+        "plumbing separate from turn orchestration."
+    ),
+    "T4": (
+        "T4 turn storage/state must not reach upper layers or realtime. Move "
+        "orchestration up and keep storage focused on persistence."
+    ),
+    "C4": (
+        "C4 route modules are independent of one another. Move what both routes "
+        "need into a neutral module (app/api/request_deps.py for request "
+        "dependencies, a domain service for behaviour) and import it from both."
+    ),
+}
+
+
+def _boundary_failure_message(config_path: Path, report, frozen: int) -> str:
+    failed = []
+    for contract, check in report.get_contracts_and_checks():
+        if not check.kept:
+            failed.append(
+                _BOUNDARY_FIXES.get(contract.name.split(" ", 1)[0], contract.name)
+            )
+    locations = _failure_locations(report)
+    location_text = "\n".join(f"  {location}" for location in locations)
+    return (
+        "a boundary broke. The exceptions already known are frozen in "
+        f"{config_path.name} ({frozen} entries).\n"
+        + "\n".join(f"{fix}" for fix in failed)
+        + (
+            f"\nViolations (fix the import at this file:line):\n{location_text}"
+            if location_text
+            else ""
+        )
+        + "\nRun `cd backend && uv run python scripts/check_boundaries.py` to recheck. "
+        "After removing a stale frozen edge, run `cd backend && uv run python "
+        "scripts/boundary_baseline.py --update`; never use --update to freeze a new "
+        "violation. Rule: `.claude/rules/architecture.md`, `Backend: the import "
+        "graph is checked, not assumed`."
+    )
+
+
 def _baseline_entries(options) -> list[tuple[str, str]]:
     """(contract id, raw expression) for every frozen exception."""
     entries = []
@@ -216,7 +352,13 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
         )
         from importlinter.application.user_options import UserOptions
     except Exception as exc:  # pragma: no cover - depends on the installed version
-        return CANNOT_JUDGE, f"import-linter is not usable here: {exc!r}", None
+        return (
+            CANNOT_JUDGE,
+            f"import-linter is not usable here: {exc!r}. A system python3 "
+            "does not have the project's dependencies; run `cd backend && uv run "
+            "python scripts/check_boundaries.py`",
+            None,
+        )
 
     try:
         parsed = read_configuration(str(config_path))
@@ -244,7 +386,12 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
 
     wildcards = [entry for entry in _baseline_entries(options) if "*" in entry[1]]
     if wildcards:
-        listing = "\n".join(f"  [{cid}] {expr}" for cid, expr in wildcards)
+        source_lines = config_path.read_text(encoding="utf-8").splitlines()
+        line_of = {line.strip(): i for i, line in enumerate(source_lines, 1)}
+        listing = "\n".join(
+            f"  {config_path}:{line_of.get(expr, '?')} [{cid}] {expr}"
+            for cid, expr in wildcards
+        )
         return (
             BROKEN,
             (
@@ -253,7 +400,12 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
                 "Name the module and its target exactly. A wildcard exemption\n"
                 "silences every future violation of that contract while looking\n"
                 "like one considered exception — the ratchet has to be able to\n"
-                "say which pair it is holding open."
+                "say which pair it is holding open.\n"
+                "Restore the exact frozen importer -> imported pair in "
+                f"{config_path.name}; do not widen ignore_imports. Recheck with "
+                "`cd backend && uv run python scripts/check_boundaries.py`. "
+                "Rule: .claude/rules/architecture.md, "
+                "Backend: the import graph is checked, not assumed."
             ),
             None,
         )
@@ -273,14 +425,7 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
         frozen = len(_baseline_entries(options))
         return (
             BROKEN,
-            (
-                "a boundary broke. The exceptions already known are frozen in "
-                f"{config_path.name} ({frozen} entries); one of them is now unused "
-                "if you removed an offending import, and the report above names "
-                "whatever is left over.\n"
-                "For the contract that broke: every module named there must be "
-                "reported, not read."
-            ),
+            _boundary_failure_message(config_path, report, frozen),
             rows,
         )
     return OK, "", rows
@@ -325,12 +470,12 @@ def main() -> int:
     if code == CANNOT_JUDGE:
         print(f"cannot judge: {message}", file=sys.stderr)
         _cannot_judge(message)
+    if code == BROKEN:
+        print(f"broken: {message}", file=sys.stderr)
     if _as_json():
         _emit(_record(code, rows, message))
     elif code == OK:
         print(f"PASS: module boundaries held ({config_path.name})")
-    else:
-        print(f"broken: {message}", file=sys.stderr)
     return code
 
 
@@ -338,7 +483,7 @@ def main() -> int:
 # Self test. Every contract above was red on the day it was written, so the
 # tree passing it proves nothing about whether it still fires — the baseline
 # would make a contract that stopped matching anything look identical to a
-# clean repo. These plant the three violations the contracts exist to catch,
+# clean repo. These plant the violations the contracts exist to catch,
 # in the smallest tree that satisfies their declarations, and require each one
 # to come back red for the stated reason.
 # ---------------------------------------------------------------------------
@@ -349,17 +494,40 @@ _SEED = {
     "app/api/deps.py": "def get_db():\n    ...\n",
     "app/api/routes/__init__.py": "",
     "app/api/routes/demo.py": "from app.domain.bar.services import read_bar\n",
+    "app/api/routes/other.py": "",
+    "app/api/shared.py": "",
     "app/core/__init__.py": "",
     "app/domain/__init__.py": "",
     "app/domain/bar/__init__.py": "",
     "app/domain/bar/models.py": "class Bar:\n    ...\n",
     "app/domain/bar/services.py": "def read_bar():\n    ...\n",
+    "app/domain/agent/__init__.py": "",
+    "app/domain/agent/chat.py": "",
+    "app/domain/agent/runtime.py": "",
+    "app/domain/agent/fixture_bridge.py": "",
+    "app/domain/agent/run_records.py": "",
+    "app/domain/agent/realtime/__init__.py": "",
+    "app/domain/agent/realtime/broker.py": "",
+    "app/domain/agent/turn/__init__.py": "",
+    "app/domain/agent/turn/intake/__init__.py": "",
+    "app/domain/agent/turn/steps/__init__.py": "",
+    "app/domain/agent/turn/store/__init__.py": "",
+    "app/domain/agent/turn/state/__init__.py": "",
 }
 
 #: (what it plants, files beyond the seed, expected exit code, a needle the
 #: output must carry — so a red run is red for the reason claimed and not
 #: because the tree failed to build)
-_CASES: list[tuple[str, dict[str, str], int, str | None]] = [
+_IMPORT_INTAKE = "import app.domain.agent.turn.intake\n"
+_IMPORT_STEPS = "import app.domain.agent.turn.steps\n"
+_IMPORT_STORE = "import app.domain.agent.turn.store\n"
+_IMPORT_STATE = "import app.domain.agent.turn.state\n"
+_IMPORT_BRIDGE = "import app.domain.agent.fixture_bridge\n"
+_IMPORT_BROKER = "import app.domain.agent.realtime.broker\n"
+_IMPORT_RECORDS = "import app.domain.agent.run_records\n"
+
+
+_CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
     (
         "a route reaching a model directly (C2)",
         {
@@ -370,12 +538,14 @@ _CASES: list[tuple[str, dict[str, str], int, str | None]] = [
         },
         BROKEN,
         "app.api.routes is not allowed to import app.domain.bar.models",
+        ("routes-touch-no-models",),
     ),
     (
         "core reaching up into api (C1)",
         {"app/core/jobs.py": "from app.api.deps import get_db\n"},
         BROKEN,
         "app.core is not allowed to import app.api",
+        ("api-domain-core",),
     ),
     (
         "two sibling domains in a cycle (C3)",
@@ -390,49 +560,121 @@ _CASES: list[tuple[str, dict[str, str], int, str | None]] = [
         },
         BROKEN,
         "No cycles are allowed in app.domain",
+        ("domains-acyclic",),
     ),
     (
         "a tree inside every declared boundary",
         {},
         OK,
         None,
+        (),
+    ),
+    (
+        "steps importing intake directly (T1)",
+        {"app/domain/agent/turn/steps/execute.py": _IMPORT_INTAKE},
+        BROKEN,
+        None,
+        ("turn-layers",),
+    ),
+    (
+        "steps reaching intake through a bridge (T1 transitive)",
+        {
+            "app/domain/agent/turn/steps/execute.py": _IMPORT_BRIDGE,
+            # Crossing a turn sibling and coming back also creates a C3 cycle.
+            "app/domain/agent/fixture_bridge.py": _IMPORT_INTAKE,
+        },
+        BROKEN,
+        None,
+        ("turn-layers", "domains-acyclic"),
+    ),
+    (
+        "an unclassified turn module (T1 exhaustive)",
+        {"app/domain/agent/turn/extra.py": ""},
+        BROKEN,
+        None,
+        ("turn-layers",),
+    ),
+    (
+        "intake importing chat directly (T2)",
+        {"app/domain/agent/turn/intake/messages.py": "import app.domain.agent.chat\n"},
+        BROKEN,
+        None,
+        ("turn-no-composition-imports",),
+    ),
+    (
+        "intake reaching chat indirectly is deliberately allowed (T2)",
+        {
+            "app/domain/agent/turn/intake/messages.py": _IMPORT_BRIDGE,
+            "app/domain/agent/fixture_bridge.py": "import app.domain.agent.chat\n",
+        },
+        OK,
+        None,
+        (),
+    ),
+    (
+        "realtime reaching intake through a bridge (T3 transitive)",
+        {
+            "app/domain/agent/realtime/broker.py": _IMPORT_BRIDGE,
+            "app/domain/agent/fixture_bridge.py": _IMPORT_INTAKE,
+        },
+        BROKEN,
+        None,
+        ("realtime-no-turn",),
+    ),
+    (
+        "storage reaching realtime through run records (T4 transitive)",
+        {
+            "app/domain/agent/turn/store/events.py": _IMPORT_RECORDS,
+            "app/domain/agent/run_records.py": _IMPORT_BROKER,
+        },
+        BROKEN,
+        None,
+        ("turn-storage-purity",),
+    ),
+    (
+        "one route importing another (C4)",
+        {"app/api/routes/demo.py": "import app.api.routes.other\n"},
+        BROKEN,
+        None,
+        ("routes-independent",),
+    ),
+    (
+        "two routes meeting through a shared helper (C4 transitive)",
+        {
+            "app/api/routes/demo.py": "import app.api.shared\n",
+            "app/api/shared.py": "import app.api.routes.other\n",
+        },
+        BROKEN,
+        None,
+        ("routes-independent",),
+    ),
+    (
+        "routes sharing a neutral module that imports no route remain allowed (C4)",
+        {
+            "app/api/routes/demo.py": "import app.api.shared\n",
+            "app/api/routes/other.py": "import app.api.shared\n",
+        },
+        OK,
+        None,
+        (),
+    ),
+    (
+        "real downward layers and a steps publisher remain allowed",
+        {
+            "app/domain/agent/turn/intake/messages.py": _IMPORT_STEPS,
+            "app/domain/agent/turn/steps/__init__.py": _IMPORT_STORE + _IMPORT_BROKER,
+            "app/domain/agent/turn/store/__init__.py": _IMPORT_STATE,
+        },
+        OK,
+        None,
+        (),
     ),
 ]
 
-#: A config that declares nothing, and one that declares all three contracts
+#: A config that declares nothing, and one that declares all eight contracts
 #: but freezes an exception as a wildcard — the one thing this format must not
 #: accept, and which import-linter itself honours happily.
 _THIN_CONFIG = "[importlinter]\nroot_package = app\n"
-_WILDCARD_CONFIG = """\
-[importlinter]
-root_package = app
-include_external_packages = False
-
-[importlinter:contract:api-domain-core]
-name = C1
-type = layers
-layers =
-    app.api
-    app.domain
-    app.core
-ignore_imports =
-    app.api.** -> app.domain.**
-
-[importlinter:contract:routes-touch-no-models]
-name = C2
-type = forbidden
-source_modules =
-    app.api.routes
-forbidden_modules =
-    app.domain.*.models
-allow_indirect_imports = true
-
-[importlinter:contract:domains-acyclic]
-name = C3
-type = acyclic_siblings
-ancestors =
-    app.domain
-"""
 
 
 def _invoke(tmp: Path, *extra: str) -> tuple[int, str, str]:
@@ -491,6 +733,13 @@ def _record_problem(
     if len(lines) != 1:
         return f"expected one line on stdout, got {len(lines)}: {lines!r}", None
     record = json.loads(lines[0])
+    if expected == BROKEN:
+        for needle in (
+            "scripts/check_boundaries.py",
+            "Backend: the import graph is checked, not assumed",
+        ):
+            if needle not in _err:
+                return f"missing repair guidance on stderr: {needle!r}", record
     if record.get("id") != CHECK_ID:
         return f"record names {record.get('id')!r}", record
     want = _STATUS_OF_EXIT[expected]
@@ -509,6 +758,11 @@ def _tail(output: str, lines: int = 25) -> str:
 
 def self_test() -> int:
     failures: list[str] = []
+    # Only self-tests need the project's default declaration. Normal --config,
+    # --json and --help must not read it before judge can report exit 2.
+    wildcard_config = DEFAULT_CONFIG.read_text().replace(
+        "ignore_imports =\n", "ignore_imports =\n    app.api.** -> app.domain.**\n", 1
+    )
 
     def report(what: str, code: int, output: str, expected: int, needle: str | None):
         verdict = "ok"
@@ -523,21 +777,84 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory(prefix="boundary-selftest-") as raw:
         sandbox = Path(raw)
 
-        for index, (what, files, expected, needle) in enumerate(_CASES):
+        for index, (what, files, expected, needle, _broken) in enumerate(_CASES):
             tmp = sandbox / f"case{index}"
             tmp.mkdir()
-            report(what, *_run(None, files, tmp), expected, needle)
+            code, output = _run(None, files, tmp)
+            report(what, code, output, expected, needle)
+            if expected == BROKEN:
+                report(
+                    f"{what}: repair command and rule chapter",
+                    code,
+                    output,
+                    expected,
+                    "scripts/check_boundaries.py` to recheck",
+                )
+                for contract_id in _broken:
+                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4")[
+                        CONTRACT_IDS.index(contract_id)
+                    ]
+                    report(
+                        f"{what}: specific fix",
+                        code,
+                        output,
+                        expected,
+                        _BOUNDARY_FIXES[prefix],
+                    )
+                report(
+                    f"{what}: rule chapter",
+                    code,
+                    output,
+                    expected,
+                    "Backend: the import graph is checked, not assumed",
+                )
+                if index == 0:
+                    report(
+                        f"{what}: file and line",
+                        code,
+                        output,
+                        expected,
+                        "app/api/routes/demo.py:1",
+                    )
+                if index == 6:
+                    report(
+                        f"{what}: undeclared source",
+                        code,
+                        output,
+                        expected,
+                        "app/domain/agent/turn/extra.py:1",
+                    )
 
         # A config with its declarations trimmed. This is the shape a silent
         # narrowing takes: valid INI, valid contracts, fewer of them.
         tmp = sandbox / "thin"
         tmp.mkdir()
         report(
-            "a declaration that lost two of its three contracts",
+            "a declaration that lost all eight contracts",
             *_run(_THIN_CONFIG, {}, tmp),
             CANNOT_JUDGE,
             "missing",
         )
+
+        # Every individual contract is mandatory, not just a nonempty config.
+        import configparser
+
+        for contract_id in CONTRACT_IDS:
+            config = configparser.ConfigParser()
+            config.read(DEFAULT_CONFIG)
+            config.remove_section(f"importlinter:contract:{contract_id}")
+            import io
+
+            contents = io.StringIO()
+            config.write(contents)
+            missing_tmp = sandbox / f"missing-{contract_id}"
+            missing_tmp.mkdir()
+            report(
+                f"missing mandatory contract {contract_id}",
+                *_run(contents.getvalue(), {}, missing_tmp),
+                CANNOT_JUDGE,
+                f"missing ['{contract_id}']",
+            )
 
         # No config at all. Nothing to judge, and 2 is not a pass.
         tmp = sandbox / "absent"
@@ -566,9 +883,63 @@ def self_test() -> int:
         tmp.mkdir()
         report(
             "an exception written as a wildcard",
-            *_run(_WILDCARD_CONFIG, {}, tmp),
+            *_run(wildcard_config, {}, tmp),
             BROKEN,
             "wildcard",
+        )
+
+        # Copy the checker away from its default config. --config must remain
+        # independent of that file, and an absent default must be judged, not
+        # crash while importing self-test fixture constants.
+        detached = sandbox / "detached"
+        detached.mkdir()
+        _plant(None, {}, detached)
+        alternate = detached / "explicit.ini"
+        (detached / DEFAULT_CONFIG.name).rename(alternate)
+        copied = detached / "scripts" / HERE.name
+        copied.parent.mkdir()
+        shutil.copy(HERE, copied)
+        detached_cases = [
+            ("help with no default config", ("--help",), OK, False),
+            ("missing default config", ("--json",), CANNOT_JUDGE, True),
+            (
+                "explicit config with no default config",
+                ("--config", str(alternate), "--json"),
+                OK,
+                True,
+            ),
+        ]
+        for what, arguments, expected, has_record in detached_cases:
+            result = subprocess.run(
+                [sys.executable, str(copied), *arguments],
+                cwd=detached,
+                capture_output=True,
+                text=True,
+            )
+            report(what, result.returncode, result.stderr, expected, None)
+            if has_record:
+                try:
+                    output_lines = result.stdout.strip().splitlines()
+                    assert len(output_lines) == 1
+                    record = json.loads(output_lines[0])
+                    assert record["id"] == CHECK_ID
+                    assert record["status"] == _STATUS_OF_EXIT[expected]
+                except (AssertionError, KeyError, ValueError) as exc:
+                    failures.append(f"{what}: invalid single-line JSON: {exc!r}")
+        # A non-file at the default path also must not be touched by --config.
+        (detached / DEFAULT_CONFIG.name).mkdir()
+        result = subprocess.run(
+            [sys.executable, str(copied), "--config", str(alternate), "--json"],
+            cwd=detached,
+            capture_output=True,
+            text=True,
+        )
+        report(
+            "explicit config with unreadable default path",
+            result.returncode,
+            result.stdout + result.stderr,
+            OK,
+            None,
         )
 
         # Every planted tree again under --json: the record has to agree with
@@ -577,19 +948,33 @@ def self_test() -> int:
         # cleaner tree.
         json_cases = [
             (f"case{index}", what, expected)
-            for index, (what, _f, expected, _n) in enumerate(_CASES)
+            for index, (what, _f, expected, _n, _broken) in enumerate(_CASES)
         ]
         json_cases.append(
-            ("thin", "a declaration that lost two of its three contracts", CANNOT_JUDGE)
+            ("thin", "a declaration that lost all eight contracts", CANNOT_JUDGE)
         )
         json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
         json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))
+        json_cases.extend(
+            (f"missing-{cid}", f"missing mandatory contract {cid}", CANNOT_JUDGE)
+            for cid in CONTRACT_IDS
+        )
         for where, what, expected in json_cases:
             problem, record = _record_problem(sandbox / where, expected)
             if problem is None and where.startswith("case"):
                 ids = [row.get("file") for row in record.get("details", [])]
                 if ids != list(CONTRACT_IDS):
                     problem = f"details name {ids}, want {list(CONTRACT_IDS)}"
+                else:
+                    expected_broken = set(_CASES[int(where[4:])][4])
+                    broken = {
+                        row["file"] for row in record["details"] if not row["kept"]
+                    }
+                    if broken != expected_broken:
+                        problem = (
+                            f"broken contracts {sorted(broken)}, "
+                            f"want {sorted(expected_broken)}"
+                        )
             if (
                 problem is None
                 and where == "wildcard"
@@ -614,10 +999,10 @@ def self_test() -> int:
         )
         return 1
     print(
-        "PASS: check_boundaries self-test (3 contracts fire on the violation they "
+        "PASS: check_boundaries self-test (8 contracts fire on the violation they "
         "exist to catch; an absent, a trimmed and a wildcarded declaration each "
         "come back not-passing; every case agrees with the exit code under --json, "
-        "on one line of stdout, naming all three contracts)"
+        "on one line of stdout, naming all eight contracts)"
     )
     return 0
 

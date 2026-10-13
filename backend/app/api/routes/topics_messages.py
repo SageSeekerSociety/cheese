@@ -72,13 +72,9 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import (
-    BlockOut,
-    BlockRepository,
-    DbSession,
-    _actor_in_place,
-)
+from app.api.routes.topics import BlockOut, BlockRepository, _actor_in_place
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -96,6 +92,9 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
+from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.input_identity import InputReconciliationPending
+from app.domain.delivery.note import send_note
 from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in
 from app.domain.topic.services import TopicService
@@ -140,7 +139,7 @@ async def send_chat_message(
     if task is not None:
         if actor.via == "cheese":
             if resolver.credential_conversation() != task.id:
-                raise ForbiddenError(say("taskOwnerOnly"))
+                raise ForbiddenError(say("taskOwnSessionSpeaks"))
             return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
         if not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
@@ -170,7 +169,7 @@ async def send_chat_message(
     if not content and not attachments:
         raise ValidationError(say("messageOrAttachment"))
     # The turn a person's message starts is named after the block it anchors.
-    anchor_id = await get_broker().receive_message(
+    anchor_id = await get_work_runner().receive_message(
         chat,
         place.conversation_id,
         author=actor.handle,
@@ -180,7 +179,6 @@ async def send_chat_message(
         quoted_context=body.quoted_context.model_dump(mode="json")
         if body.quoted_context
         else None,
-        provision_actor=actor,
         client_id=str(body.request_id),
     )
     stored = await BlockRepository(db).get(anchor_id)
@@ -205,7 +203,7 @@ async def _publish_as_agent(
     runner = get_work_runner()
     work = runner.live_work_for_topic(place.conversation_id)
     turn_id = uuid.UUID(work["turn_id"]) if work is not None else None
-    payload = await chat._persist_assistant_message(
+    payload = await chat.messages.persist_assistant_message(
         project_id=place.project_id,
         topic_id=place.room_id,
         inner_id=place.inner_id,
@@ -224,7 +222,6 @@ async def _publish_as_agent(
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
     )
-    await chat.thread_replied(place.conversation_id)
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     # A task's session names nobody into its task: only its owner speaks there.
@@ -240,7 +237,7 @@ async def _summon_the_named(
 
     消息先落库、先广播，再记投递：被点名的那位醒来时，房间里已经有它要读的那一行。
     """
-    from app.domain.delivery.agent import dispatch_pending
+    # deferred-import: tests patch this name on app.domain.delivery.mention
     from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 
     async with chat.session_factory() as session:
@@ -308,7 +305,6 @@ async def leave_a_note(
     它不落时间线：便条进的是那条线程正在跑的那一轮（`notify_running_turn`），不是
     房间里的一条消息。那边这一刻没有在跑的轮次就没人接住，如实回 `delivered: false`。
     """
-    from app.domain.delivery.note import send_note
 
     place = await TopicService(db).place_or_404(topic_id)
     actor = await _actor_in_place(resolver, place)
@@ -330,7 +326,6 @@ async def leave_a_note(
         to_thread=to_thread,
         content=body.get("content") or "",
     )
-    from app.domain.delivery.input_identity import InputReconciliationPending
 
     if isinstance(delivered, InputReconciliationPending):
         return ok(

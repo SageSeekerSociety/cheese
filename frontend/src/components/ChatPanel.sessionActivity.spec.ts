@@ -1,4 +1,4 @@
-import type { Block, Topic, WsServerFrame } from '@/cx_types'
+import type { Block, Topic, TopicProgress, WsServerFrame } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -9,21 +9,26 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
+vi.mock('../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: (...args: unknown[]) => listTopicMembers(...args),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    chatWsUrl: () => 'ws://test/chat',
   }
 })
 
 import ChatPanel from './ChatPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 const topic: Topic = {
   id: 'session-activity-topic',
@@ -209,5 +214,22 @@ describe('session activity', () => {
     await view.rerender({ topic: { ...topic, id: 'another-topic' } as Topic, topicList: [topic] })
     await flush()
     expect(view.emitted('working')?.at(-1)).toEqual([false])
+  })
+
+  // 任务概览右边那一列「芝士这一轮在做哪一步」：它改一次清单，任务的连接就推来新的一份，
+  // 概览读的那一格当场就是它，不再隔几秒去问一次。
+  it('a checklist pushed on the conversation is what its overview reads', async () => {
+    const vuetify = createVuetify({ components, directives })
+    render(ChatPanel, {
+      props: { topic, topicList: [topic] },
+      global: { plugins: [vuetify, i18n] },
+    })
+    await flush()
+
+    const items = [{ id: '1', subject: 'Write the fix', status: 'in_progress' as const }]
+    FakeWebSocket.instances.at(-1)!.emit({ type: 'todo', items })
+    await flush()
+
+    expect(queryClient.getQueryData<TopicProgress>(keys.roomProgress(topic.id))?.items).toEqual(items)
   })
 })

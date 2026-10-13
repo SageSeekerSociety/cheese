@@ -10,44 +10,32 @@ from dataclasses import asdict
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_profile_registry, get_work_runner
 from app.api.response import ok
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.sentences import notice_keys, say
-from app.domain.agent.market import (
-    COMPUTE_CLOUD,
-    COMPUTE_DEVICE,
-    ai_listings,
-    compute_default_name,
-    compute_listings,
-    visibility_listings,
-)
+from app.domain.agent.environment import STANDARD, VM
+from app.domain.agent.market import ai_listings, compute_listings
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent.runtime import AgentWorkRunner
 
 router = APIRouter(prefix="/market", tags=["market"])
 
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 Runner = Annotated[AgentWorkRunner, Depends(get_work_runner)]
 
 
 @router.get("/pools")
 async def list_pools(registry: Registry) -> dict:
-    """The full catalog: every AI pool and compute pool on offer, each with its
-    tier, price, and whether it's available to select. Powers the 市场 browse
-    view; a project selects from these in its settings."""
+    """The full catalog: every AI pool and sandbox spec on offer, each with
+    its tier, price, and whether it's available to select. Powers the 市场
+    browse view; a project selects from these in its settings."""
     return ok(
         {
             "ai": [asdict(p) for p in ai_listings(registry)],
             "compute": [asdict(p) for p in compute_listings(settings)],
-            # #282 §四 / #358: the whole-machine sub-choice under a self-hosted
-            # machine, carried with its capability copy so a picker (and the room
-            # badge) renders the honest warning rather than hiding it.
-            "visibility": [asdict(v) for v in visibility_listings()],
         }
     )
 
@@ -57,17 +45,17 @@ async def list_pools(registry: Registry) -> dict:
 
 @router.get("/nodes")
 async def list_nodes(runner: Runner) -> dict:
-    """节点看板: the compute pools this deployment can run a turn on, with
-    liveness and current load (in-flight turns).
+    """节点看板: the sandbox specs this deployment can place an agent's
+    environment on, with liveness and current load (in-flight turns).
 
     Built from the same catalogue the 市场 browses, so the board cannot show a
-    node the picker does not offer — it used to show exactly one, the platform's
-    own container host, which was the one pool the catalogue never listed."""
-    default_name = compute_default_name(settings)
-    # What makes each pool live, in its own terms — the mono line under the card.
+    node the picker does not offer."""
+    # What makes each spec live, in its own terms — the mono line under the card.
+    cloud = (say("nodeCloudOnline"), say("nodeCloudOffline"))
     detail = {
-        COMPUTE_DEVICE: (say("nodeDeviceOnline"), say("nodeDeviceOffline")),
-        COMPUTE_CLOUD: (say("nodeCloudOnline"), say("nodeCloudOffline")),
+        STANDARD: cloud,
+        VM: cloud,
+        "devices_of": (say("nodeDeviceOnline"), say("nodeDeviceOffline")),
     }
     nodes = [
         {
@@ -75,7 +63,7 @@ async def list_nodes(runner: Runner) -> dict:
             "label": pool.label,
             "kind": pool.id,
             "online": pool.available,
-            "current": pool.id == default_name,
+            "current": pool.default,
             "detail": detail[pool.id][0 if pool.available else 1],
             "description": pool.description,
             **notice_keys(detail=detail[pool.id][0 if pool.available else 1]),
@@ -89,7 +77,7 @@ async def list_nodes(runner: Runner) -> dict:
         {
             "nodes": nodes,
             "active_turns_total": runner.active_work_count(),
-            "current_provider": default_name,
+            "current_provider": STANDARD,
         }
     )
 

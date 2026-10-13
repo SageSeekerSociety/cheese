@@ -71,6 +71,11 @@ const controlId = computed(() => props.id ?? `base-field-${uid}`)
 const hintId = computed(() => (props.hint ? `${controlId.value}-hint` : undefined))
 const errorId = computed(() => (props.error ? `${controlId.value}-error` : undefined))
 const counterId = computed(() => (props.counter ? `${controlId.value}-counter` : undefined))
+// 标签的 id 必须是「控件 id + `-label`」：Vuetify 的 v-text-field / v-textarea / v-select /
+// v-autocomplete / v-combobox 都在自己的 <input> 上挂 `aria-labelledby="<id>-label"`，
+// 指向它自己那个标签；控件不带 `label`（标签在这里、在框外）时那个 id 落空，读屏和测试
+// 就找不到名字。让我们的标签顶上这个 id，名字就是框外这行字。原生 <input> 不挂它，照旧认 `for`。
+const labelId = computed(() => `${controlId.value}-label`)
 
 /** 三个描述行里出现的那些 id，按顺序拼给 `aria-describedby`。 */
 const describedby = computed(
@@ -91,7 +96,7 @@ const fieldSlotProps = computed(() => ({
 <template>
   <div class="base-field">
     <div v-if="label" class="base-field__head">
-      <label class="base-field__label" :for="controlId">
+      <label :id="labelId" class="base-field__label" :for="controlId">
         {{ label }}
         <template v-if="required">
           <!-- The star is decoration; the words after it are what a screen reader reads. -->

@@ -10,6 +10,7 @@ import { useDisplay } from 'vuetify'
 
 import {
   ApiError,
+  checkSandbox,
   listMyDevices,
   listMyTeams,
   registerDeviceForTeam,
@@ -32,9 +33,11 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import DeviceTeamsPicker from '@/components/settings/DeviceTeamsPicker.vue'
 import { t } from '@/i18n'
 import { screenAgentName } from '@/lib/agentNames'
+import { renderNoticeMessage } from '@/lib/noticeText'
 import { relTime } from '@/lib/relTime'
 import accountService from '@/services/account'
 import { lastSeenOf, systemOf } from '@/types/devices'
+import { sandboxOf } from '@/types/deviceSandbox'
 import { claudeLoginOf, modelServiceOf } from '@/types/ownAgents'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
@@ -128,6 +131,20 @@ function recheckClaudeCode() {
   }
 }
 
+// 能不能给会话沙箱，是电脑连上时自己答的；机主照提示改了之后，页面列出它时让在线的电脑再答一次。
+function recheckSandbox() {
+  for (const { device_id: id, online } of devices.value) {
+    const d = devices.value.find((x) => x.device_id === id)
+    if (!d || !online || !('sandbox' in d)) continue
+    checkSandbox(id)
+      .then((sandbox) => {
+        const row = devices.value.find((x) => x.device_id === id)
+        if (row) Object.assign(row, { sandbox })
+      })
+      .catch(() => {})
+  }
+}
+
 async function load() {
   // Client-side gate: the device UI is only meaningful for a signed-in human. When
   // signed out we show the gate banner instead of firing an inevitably-401 request.
@@ -137,6 +154,7 @@ async function load() {
   try {
     devices.value = (await listMyDevices()).devices
     recheckClaudeCode()
+    recheckSandbox()
     // Team names for the read-only chips — best-effort, never blocks the list.
     myTeams.value = await listMyTeams().catch(() => [])
   } catch (e) {
@@ -439,6 +457,14 @@ function claudePlan(plan: string | null | undefined): string {
             </i18n-t>
           </div>
 
+          <!-- 它说过自己给不了会话沙箱：频道里的人只知道这台不行，原因和办法在这里给机主。 -->
+          <div v-if="sandboxOf(d)?.isolates === false" class="device__meta" data-testid="device-sandbox">
+            {{ t('account.devices.sandboxUnavailable') }}
+            <div v-if="sandboxOf(d)?.reason" class="device__reason">
+              {{ renderNoticeMessage(sandboxOf(d)?.reason, '') }}
+            </div>
+          </div>
+
           <!-- 这台设备在给哪些团队、以及自己名下的项目用：每一枚链到那个团队的设备页，「修改」在这里改。 -->
           <div class="device__block">
             <div class="device__label">{{ t('account.devices.teams') }}</div>
@@ -655,6 +681,11 @@ function claudePlan(plan: string | null | undefined): string {
 
 .device__meta code {
   font-family: var(--font-mono);
+}
+
+/* What the machine said, with a command to copy: it wraps anywhere rather than overflow. */
+.device__reason {
+  overflow-wrap: anywhere;
 }
 
 .device__block {

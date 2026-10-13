@@ -31,6 +31,10 @@ const { room, members } = vi.hoisted(() => ({
   members: [] as { user_handle: string; role: string; name: string; agent: boolean }[],
 }))
 
+vi.mock('../../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     members,
@@ -50,11 +54,9 @@ vi.mock('@/api', async () => {
     getPrivateChat: vi.fn().mockResolvedValue(room),
     listProjectAgents: vi.fn().mockResolvedValue({ data: [] }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
-    chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
   }
 })

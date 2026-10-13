@@ -20,6 +20,7 @@ from app.domain.agent.harness.claude_code.device_launch import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
     DEVICE_TUNNEL_PROBE,
+    ClaudeLaunch,
 )
 from app.domain.agent.harness.claude_code.protocol import accepts_inputs
 from app.domain.agent.harness.claude_code.remote_execution import (
@@ -31,14 +32,14 @@ from app.domain.agent.harness.claude_code.remote_execution import (
 from app.domain.agent.harness.claude_code.remote_execution.private import (
     target as private_execution_target,
 )
-from app.domain.agent.harness.claude_code.runner import ended
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
+from app.domain.agent.harness.claude_code.runner import NEVER_STARTED, ended
 from app.domain.agent.harness.claude_code.subscription import Subscription
 
 __all__ = [
     "CLAUDE_MIN_VERSION",
     "CLAUDE_PINNED_VERSION",
     "DEVICE_TUNNEL_PROBE",
+    "NEVER_STARTED",
     "ClaudeLaunch",
     "Subscription",
     "accepts_inputs",

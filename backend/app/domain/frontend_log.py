@@ -92,6 +92,11 @@ def event_content(err: FrontendErrorIn) -> str:
 def event_meta(err: FrontendErrorIn) -> dict:
     meta: dict = {
         "event_type": "frontend_error",
+        # 管理后台「一种事一行」认的就是这个键（run_record/admin 的 `_key`），和
+        # 摄入去重用的是同一个身份。不写它，那张表退回「抹掉数字的那句话」认事，而
+        # 这条报错的话里写着出事的页面——路径里带着项目和话题的 uuid，抹数字抹不到。
+        # 同一个 bug 于是每个房间各占一行，次数也就说不出它铺开了多远。
+        "fingerprint": fingerprint(err),
         "severity": SEVERITY_ERROR,
         "who": WHO_HUMAN,
     }

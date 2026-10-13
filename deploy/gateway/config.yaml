@@ -118,10 +118,106 @@ model_list:
       cheese_selectable: true
       cheese_label: GLM-5.2
 
+  # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
+  # when every RUC key fails or is cooling down. RUC admits 3 parallel
+  # requests per key and the limits are independent, so each of its keys is a
+  # deployment of its own; a 429 on one is retried on another before the
+  # request leaves RUC. RUC sends each key to one of its vLLM nodes, and each
+  # node has a prompt cache of its own, so a conversation keeps its key
+  # (router_settings below) and misses only when it moves: to another key while
+  # its own is busy, or to DeepSeek's API. Every
+  # row carries the same cheese keys because the catalogue reads whichever
+  # row /model/info lists first.
+  - model_name: deepseek-flash
+    litellm_params: &ruc_deepseek_flash_params
+      # anthropic/, not deepseek/: the pinned DeepSeek adapter sends Messages
+      # requests to {api_base}/anthropic/v1/messages, DeepSeek's own path. This
+      # upstream serves Messages at /v1/messages and answers that path with a
+      # 500 after about 130 s. Plain http because that is all it serves.
+      model: anthropic/deepseek-flash
+      # The endpoint admits campus addresses only; the dev box reaches it
+      # through 119pve (docs/infrastructure.md, "Campus model API"). Its
+      # address and key are box settings: it is a service of another team,
+      # not ours to publish.
+      api_base: os.environ/RUC_DEEPSEEK_API_BASE
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_1
+      order: 1
+      # Used internally without a price of its own. The official rates are the
+      # estimate, so the budget brake behaves the same on either backend; that
+      # holds only while RUC's cache hits as DeepSeek's does, which needs
+      # Claude Code's billing line kept out of the prompt
+      # (system_billing_line.py).
+      input_cost_per_token: 0.0000003
+      output_cost_per_token: 0.0000012
+      cache_read_input_token_cost: 0.000000006
+    # Each row merges its own copy: LiteLLM writes the deployment id into
+    # model_info, and one mapping shared by alias gives every key the same id,
+    # so a 429 on one key cools them all down.
+    model_info: &ruc_deepseek_flash_info
+      cheese_selectable: true
+      cheese_label: DeepSeek V4.1 Flash
+      # Accepted here without error; low and high gave the same reasoning
+      # length when measured on 2026-10-08, so on this backend they are moot.
+      cheese_efforts: [low, high]
+      supports_reasoning: true
+      supports_vision: true
+      # Accepted a 952,366-token prompt on 2026-10-08; same limit as the
+      # official route, for the same reason.
+      max_input_tokens: 920000
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_2
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_3
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_4
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_5
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_6
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_7
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_8
+    model_info:
+      <<: *ruc_deepseek_flash_info
+  - model_name: deepseek-flash
+    litellm_params:
+      <<: *ruc_deepseek_flash_params
+      api_key: os.environ/RUC_DEEPSEEK_API_KEY_9
+    model_info:
+      <<: *ruc_deepseek_flash_info
+
   - model_name: deepseek-flash
     litellm_params:
       model: deepseek/deepseek-flash
       api_key: os.environ/DEEPSEEK_API_KEY
+      order: 2
     model_info:
       cheese_selectable: true
       cheese_label: DeepSeek V4.1 Flash
@@ -263,6 +359,14 @@ general_settings:
     host: litellm-redis
     port: 6379
 
+router_settings:
+  # A conversation, named by Claude Code's session header, stays on the
+  # deployment it first used, so it keeps hitting one RUC node's prompt cache.
+  # A busy or cooling key moves it to another, where it stays; a request that
+  # falls over to DeepSeek's API does not pin it there.
+  model_group_affinity_config:
+    deepseek-flash: [session_affinity]
+
 litellm_settings:
   # The whole point: a row per call. LiteLLM sums those rows into daily totals
   # per key and model, which the backend drains into resource_usage. Without
@@ -272,6 +376,9 @@ litellm_settings:
   # Requests routed to ChatGPT carry the Claude Code session as `session_id`,
   # which is what keeps a conversation on one Codex machine and its prompt
   # cache hitting (#2597, `chatgpt_session.py`).
-  callbacks: ["cheese_chatgpt_session.handler"]
+  # Upstreams that are not Anthropic get requests without Claude Code's
+  # billing line, whose per-request hash otherwise defeats their prefix cache
+  # (`system_billing_line.py`).
+  callbacks: ["cheese_chatgpt_session.handler", "cheese_billing_line.handler"]
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true

@@ -43,9 +43,9 @@ from app.core.config import settings
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant.models import AssistantMessage
-from app.domain.feature_stats import pricing
 from app.domain.task.models import Task, TaskMembership
 from app.domain.team.models import Team
+from app.domain.usage import pricing
 from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
@@ -660,6 +660,48 @@ def test_my_tasks_reports_only_what_the_asker_takes_part_in(client, gateway):
     tool_result = json.dumps(gateway.requests[-1]["messages"][-1], ensure_ascii=False)
     assert "我领的那道" in tool_result
     assert "别人的那道" not in tool_result
+
+
+def test_it_names_my_own_deadline_on_my_own_clock(client, gateway):
+    """The challenge closes at one time, the asker's approved claim at
+    another; 芝士 is told both, on the clock the asker's browser reported —
+    the clock their task page shows — not as a UTC date."""
+    me = _auth(client, "asker")
+    zone = client.put(
+        "/users/me/timezone", json={"timezone": "America/Los_Angeles"}, headers=me
+    )
+    assert zone.status_code == 200, zone.text
+    closes = datetime(2030, 10, 25, 6, 59, tzinfo=UTC)
+    mine = datetime(2030, 10, 24, 8, 30, tzinfo=UTC)
+    task_id = _task(client, deadline=closes)
+    user_id, _, _ = _ledger_user(client, "asker")
+
+    async def approve() -> None:
+        async with client.test_factory() as s:
+            now = datetime.now(UTC)
+            s.add(
+                TaskMembership(
+                    task_id=task_id,
+                    member_id=user_id,
+                    approved=0,
+                    is_team=False,
+                    deadline=mine,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(approve())
+    conversation = _start(client, task_id, me)
+    gateway.script = [("text", "10 月 24 日。")]
+
+    assert _ask(client, conversation, "我什么时候截止？", me).status_code == 200
+
+    told = json.dumps(gateway.requests[0], ensure_ascii=False)
+    assert "你的提交截止：2030-10-24 01:30" in told
+    assert "题目截止：2030-10-24 23:59" in told
+    assert "2030-10-25" not in told
 
 
 def test_the_retired_task_advice_is_gone(client, gateway):

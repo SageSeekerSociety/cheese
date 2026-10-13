@@ -1,11 +1,19 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
+import { useQuery } from '@tanstack/vue-query'
 
 import { provideTopicMemory } from '@/composables/useTopicMemory'
 
+import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { trackNavigations } from '@/lib/navigationProgress'
+import { warmPagesWhenIdle } from '@/lib/routePrefetch'
+import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { notifyLevelsQuery, privateUnreadQuery, topicsQuery, unreadQuery } from '@/query/project'
+import { useProjectFeed } from '@/query/projectFeed'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectAccessNotice from '@/views/workspace/ProjectAccessNotice.vue'
@@ -23,27 +31,40 @@ const PROJECT_FRAME_TITLE = 'project-frame'
 
 const props = defineProps<{ projectId: string }>()
 const route = useRoute()
+const router = useRouter()
 const store = useWorkspaceStore()
 // The topic page below is rebuilt per topic; what it keeps across topics lives here.
 provideTopicMemory()
 
+// 点下去到新内容出现之间，路由在等目标那一页的懒加载 chunk（见 lib/routePrefetch.ts
+// 开头）。那一段里屏幕上一动不动，点一下像是没点到；这个计数让内容区当场给出反馈。
+const { navigating } = trackNavigations(router)
+
 // The route is the single source of truth for "what am I looking at" — the
 // store only mirrors it so background refreshes know which badge not to light.
+const ids = computed(() => routeIds(route.params))
 watch(
-  () => [routeIds(route.params).topicId, route.params.peer, props.projectId] as const,
-  ([topicId, peer, projectId]) => {
+  () => [ids.value.topicId, ids.value.taskId, route.params.peer, props.projectId] as const,
+  ([topicId, taskId, peer, projectId]) => {
     store.activeTopicId = typeof topicId === 'string' ? topicId : null
     store.activeDmPeer = typeof peer === 'string' ? peer : null
-    // 正待着的这个房间记在这个项目名下：下次从 rail 点回来，直接落回它。带上
-    // projectId 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
-    if (typeof topicId === 'string' && projectId) store.rememberTopic(projectId, topicId)
+    // 正待着的这个地方记在这个项目名下：下次从 rail 点回来，直接落回它。在任务页
+    // 上记的是那件任务（房间也一起记，任务页画不出来时退回它）。带上 projectId
+    // 一起看，是因为深链接进来时 topicId 一开始就有、项目这时候才到位。
+    if (typeof topicId === 'string' && projectId) {
+      store.rememberPlace(projectId, {
+        kind: typeof taskId === 'string' ? 'task' : 'channel',
+        id: typeof taskId === 'string' ? taskId : topicId,
+        room: topicId,
+      })
+    }
   },
   { immediate: true }
 )
 
 watch(
   () => props.projectId,
-  (id) => void store.openProject(id),
+  (id) => store.openProject(id),
   { immediate: true }
 )
 
@@ -59,22 +80,51 @@ watch(
 )
 onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 
-// 实时性: poll unread badges so messages landing in OTHER topics light up
-// without a manual refresh. The same tick refreshes the topic list, so the
-// sidebar's 芝士还在跑 呼吸点 fades for topics you are not watching too.
-let pollTimer: number | undefined
-function refreshVisible() {
-  if (document.visibilityState === 'hidden') return
-  void store.refreshUnread()
-  void store.refreshTopics()
-}
+// 频道清单、未读、提醒档位：框架这一层一直看着它们。别的房间里有人说话、改了名、
+// 芝士开始或停下，项目推一帧过来，变了的那一份重读（query/projectFeed）。
+// 地址上的项目换不出来（没登录、没有这个项目或看不到）时，这一层也不拿短名去请求。
+const me = myHandle()
+const reachable = computed(() => !store.projectRefused)
+useQuery(
+  computed(() => ({ ...topicsQuery(props.projectId), enabled: reachable.value })),
+  queryClient
+)
+useQuery(
+  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me && reachable.value })),
+  queryClient
+)
+useQuery(
+  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me && reachable.value })),
+  queryClient
+)
+useQuery(
+  computed(() => ({ ...notifyLevelsQuery(props.projectId), enabled: reachable.value })),
+  queryClient
+)
+useProjectFeed(
+  computed(() => (reachable.value ? props.projectId : '')),
+  me || null
+)
+
+// 这个框架底下这几页的代码，趁空闲先下下来：侧栏那一行「总览/资料库」、侧栏和总览
+// 里的任务行，点下去就是它们。按页名热，因为框架这一层拿不到每一页的地址参数
+//（另一个话题、另一个任务），也不该为了预热编一份出来（见 routePrefetch 的 warmPage）。
+const IDLE_WARM_PAGES = ['workspace-overview', 'project-library', 'workspace-task', 'project-tasks']
+// 刚进页面这几秒先不热：人到了就是要动手的，四份代码包一起下会跟他第一下抢那条路
+//（实测把「总览切资料库」的列表推后了 ~600 ms，比不热还慢）。等页面静下来再热，热的
+// 还是这四页，受益的是后面的切换。按下和悬浮那两处预取不在这里，它们跟着指针走。
+const IDLE_WARM_DELAY_MS = 2500
+let startIdleWarm: number | undefined
+let stopIdleWarm: (() => void) | undefined
+
 onMounted(() => {
-  pollTimer = window.setInterval(refreshVisible, 30_000)
-  document.addEventListener('visibilitychange', refreshVisible)
+  startIdleWarm = window.setTimeout(() => {
+    stopIdleWarm = warmPagesWhenIdle(router, IDLE_WARM_PAGES)
+  }, IDLE_WARM_DELAY_MS)
 })
 onUnmounted(() => {
-  document.removeEventListener('visibilitychange', refreshVisible)
-  if (pollTimer !== undefined) window.clearInterval(pollTimer)
+  if (startIdleWarm !== undefined) window.clearTimeout(startIdleWarm)
+  stopIdleWarm?.()
 })
 
 // 工作台报错统一走全局 toast：store.error 一旦有值就弹一条并清空，避免同一条
@@ -91,6 +141,16 @@ watch(
 
 <template>
   <div class="project-shell fill-height">
+    <!-- 跳转还在路上（见 script 里的 trackNavigations）：内容区顶上一条进度条，点下去
+         当帧就出现。不换掉现在这一页——换掉等于把屏幕上已有的东西闪一下；也不给每页
+         各做一套骨架，那一帧里还不知道要去的是哪一页长什么样。 -->
+    <v-progress-linear
+      v-if="navigating"
+      class="project-shell__progress"
+      indeterminate
+      color="primary"
+      :aria-label="t('shell.loading')"
+    />
     <!-- Screen-reader heading for the frame. Text from the same store the top
          bar reads (the `project-frame` dynamic title), so the two can never
          drift. Hidden: on desktop the project name lives in the sidebar's top
@@ -111,7 +171,16 @@ watch(
 
 <style scoped>
 .project-shell {
+  position: relative;
   width: 100%;
   overflow: hidden;
+}
+/* 贴着内容区上沿，不占位置：出现和消失都不该让下面那一页动一下。 */
+.project-shell__progress {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: 2;
+  margin: 0;
 }
 </style>

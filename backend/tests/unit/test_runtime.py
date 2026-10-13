@@ -3,20 +3,23 @@
 import asyncio
 import contextlib
 import errno
+import logging
 import time
 import uuid
 
 import pytest
 from sqlalchemy import select
 
-from app.core.sentences import from_descriptor
+from app.core.errors import NotFoundError
+from app.core.sentences import from_descriptor, say
 from app.domain.agent.models import AgentTurn
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
-from app.domain.identity.actor import Actor
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.realtime.subscriber_queue import SubscriberOverflow
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.turn.store.events import persist_room_event
+from app.domain.block.models import Block
+from app.domain.policy.gate import OverTier
+from app.domain.topic.models import Topic
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn, open_turn_ids, turn_row
@@ -94,6 +97,56 @@ async def test_broker_fans_out_then_stops_on_unsubscribe():
 
 
 @pytest.mark.anyio
+async def test_a_subscriber_that_falls_behind_is_cut_off(caplog):
+    """A connection reading slower than the room publishes is dropped from the
+    channel and handed a sentinel to hang up on. Holding its frames instead is
+    how one stuck browser grows the process without bound — and its pings keep
+    being answered, so nothing else would ever notice."""
+    broker = InProcessBroker(max_subscriber_bytes=64)
+    big = {"type": "delta", "text": "x" * 200}
+    with caplog.at_level(logging.WARNING, logger="cheesex.runtime"):
+        async with broker.subscribe("c") as slow, broker.subscribe("c") as fast:
+            await broker.publish("c", big)
+            # One frame always fits an empty queue: the budget bounds a
+            # backlog, not a single block the room happened to publish.
+            assert (await asyncio.wait_for(fast.get(), 1))["text"] == "x" * 200
+            # `fast` gave its bytes back by reading; `slow` has not, so the
+            # second frame is one it can no longer be afforded.
+            await broker.publish("c", big)
+            assert (await asyncio.wait_for(fast.get(), 1))["text"] == "x" * 200
+
+            assert slow.overflowed is True
+            assert (await slow.get())["text"] == "x" * 200
+            assert isinstance(await slow.get(), SubscriberOverflow)
+
+            # The sentinel is the last thing it is ever given: it is off the
+            # channel, so the next frame goes only to the connection that is
+            # keeping up.
+            await broker.publish("c", {"type": "delta", "text": "later"})
+            assert slow.empty()
+            assert (await asyncio.wait_for(fast.get(), 1))["text"] == "later"
+            assert broker._subs["c"] == {fast}
+    assert any("broker_subscriber_overflow" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
+async def test_replay_is_trimmed_rather_than_cutting_a_new_subscriber_off(caplog):
+    """A catch-up replay too large for the budget keeps the newest frames and
+    drops the oldest. A fresh connection must not be hung up on by a buffer it
+    did not cause: refused on every connect, it would reconnect forever."""
+    broker = InProcessBroker(max_subscriber_bytes=64)
+    await broker.publish("c", {"type": "turn_started", "turn_id": "t"})
+    await broker.publish("c", {"type": "delta", "text": "old"})
+    await broker.publish("c", {"type": "delta", "text": "x" * 200})
+    with caplog.at_level(logging.WARNING, logger="cheesex.runtime"):
+        async with broker.subscribe("c", replay=True) as q:
+            assert q.overflowed is False
+            replayed = [q.get_nowait()["text"] for _ in range(q.qsize())]
+    assert replayed == ["x" * 200]
+    assert any("broker_replay_trimmed" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.anyio
 async def test_reaction_frames_fan_out_but_never_buffer():
     # Reactions are standalone state updates (they can fire between turns):
     # delivered live, but never buffered — otherwise an idle channel would look
@@ -113,11 +166,11 @@ async def test_reaction_frames_fan_out_but_never_buffer():
 async def test_what_an_agent_is_writing_is_live_only(monkeypatch):
     """A draft goes to whoever watches the room now and is kept nowhere: a
     client that joins mid-turn is not handed an old one."""
-    from app.domain.agent import runtime as agent_runtime
+    from app.domain.agent import live_frames
     from app.domain.agent.live_frames import publish_live
 
     broker = InProcessBroker()
-    monkeypatch.setattr(agent_runtime, "get_broker", lambda: broker)
+    monkeypatch.setattr(live_frames, "get_broker", lambda: broker)
     topic, turn = uuid.uuid4(), uuid.uuid4()
     await broker.publish(str(topic), {"type": "turn_started", "turn_id": str(turn)})
     async with broker.subscribe(str(topic)) as q:
@@ -255,7 +308,6 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
         ],
         db_factory,
     )
-    actor = Actor("owner", 1, "token")
 
     runner.submit(
         chat,
@@ -263,14 +315,12 @@ async def test_cloud_wait_is_terminal_without_spending_a_retry(db_factory):
         author="owner",
         content="保留这条消息",
         addressed=addressed_to_agent("cheese-seat"),
-        provision_actor=actor,
     )
     async with asyncio.timeout(HANG_S):
         while not chat.ran or runner.active_work_count():
             await asyncio.sleep(0.01)
 
     assert runner.recent_work()[0]["status"] == "waiting"
-    assert chat.kwargs["provision_actor"] is actor
     # A cloud wait is terminal: no second turn is spun up behind it.
     assert len(runner.recent_work()) == 1
 
@@ -490,6 +540,136 @@ async def test_runner_publishes_friendly_error_on_failure(db_factory):
         )
         frame = await _next_frame(q, "error")
     assert frame["type"] == "error"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    ("failure", "expected_refusal"),
+    [
+        pytest.param(OverTier("refusal sentinel"), True, id="expected-refusal"),
+        pytest.param(
+            NotFoundError("internal sentinel"), False, id="unexpected-base-error"
+        ),
+    ],
+)
+async def test_runner_preserves_the_expected_error_family(
+    db_factory, failure, expected_refusal
+):
+    """The original refusal family stays distinct from an internal BaseError.
+
+    Admission, execution, publication and interval closure are real; converse
+    supplies only the exception. A crash's event goes through the durable store.
+    """
+    broker = InProcessBroker()
+    runner = AgentWorkRunner(broker)
+    topic_id = await a_topic(db_factory)
+    async with db_factory() as session:
+        topic = await session.get(Topic, topic_id)
+        assert topic is not None
+        project_id = topic.project_id
+
+    class _FailingChat(WorkChat):
+        session_factory = db_factory
+
+        def __init__(self):
+            self.calls: list[dict] = []
+            self.events: list[dict] = []
+
+        def replaying(self, topic_id):
+            return None
+
+        async def converse(self, **kwargs):
+            self.calls.append(kwargs)
+            raise failure
+            yield  # pragma: no cover — makes this an async generator
+
+        async def post_system_event(self, topic_id, content, turn_id=None, meta=None):
+            async def resolve_author(session, topic_id):
+                return "u"
+
+            payload = await persist_room_event(
+                db_factory,
+                resolve_author=resolve_author,
+                acting_agent=None,
+                project_id=project_id,
+                topic_id=topic_id,
+                content=content,
+                meta=meta or {},
+                turn_id=turn_id,
+                author="u",
+            )
+            assert payload is not None
+            self.events.append(payload)
+            return payload
+
+    chat = _FailingChat()
+    frames: list[dict] = []
+    async with broker.subscribe(str(topic_id)) as queue:
+        runner.submit(
+            chat,
+            topic_id,
+            author="u",
+            content="hi",
+            addressed=addressed_to_agent("cheese-seat"),
+        )
+        async with asyncio.timeout(HANG_S):
+            while True:
+                frame = await queue.get()
+                frames.append(frame)
+                if frame["type"] == "done":
+                    break
+        await runner.drain()
+        while not queue.empty():
+            frames.append(await queue.get())
+
+    assert len(chat.calls) == 1
+    assert runner.active_work_count() == 0
+    recent = runner.recent_work()
+    assert len(recent) == 1
+    record = recent[0]
+    assert record["status"] == ("error" if expected_refusal else "crashed")
+    errors = [frame for frame in frames if frame["type"] == "error"]
+    assert len(errors) == 1
+    assert sum(frame["type"] == "done" for frame in frames) == 1
+    error = errors[0]
+    events = [frame for frame in frames if frame["type"] == "event_block"]
+    async with db_factory() as session:
+        intervals = list(
+            (
+                await session.scalars(
+                    select(AgentTurn).where(AgentTurn.conversation_id == topic_id)
+                )
+            ).all()
+        )
+        rows = list(
+            (
+                await session.scalars(
+                    select(Block).where(Block.conversation_id == topic_id)
+                )
+            ).all()
+        )
+    assert len(intervals) == 1
+    assert intervals[0].stopped_at is not None
+    assert await open_turn_ids(db_factory) == set()
+    if expected_refusal:
+        assert record["detail"] == failure.message
+        assert error["message"] == failure.message
+        assert events == chat.events == rows == []
+        assert not error.get("persisted", False)
+    else:
+        assert "internal sentinel" not in repr(frames)
+        assert error["message"] == say("turnCrashed")
+        assert error["persisted"] is True
+        assert len(events) == len(chat.events) == len(rows) == 1
+        event = events[0]
+        row = rows[0]
+        assert event["block"]["id"] == str(row.id)
+        assert row.content == error["message"]
+        assert row.meta["who"] == "human"
+        assert frames.index(event) < frames.index(error)
+        assert frames.index(error) < next(
+            i for i, frame in enumerate(frames) if frame["type"] == "done"
+        )
 
 
 @pytest.mark.anyio
@@ -1128,7 +1308,7 @@ class _SweepChat:
         self._live_screen = live_screen
         self._seat_state = seat_state or ("live" if live_screen else "dead")
         # Conversations with real termination evidence — the double's stand-in
-        # for ChatService._dead_sessions. A seat flag is NOT evidence (FB-56):
+        # for ``LiveWork.dead_sessions``. A seat flag is NOT evidence (FB-56):
         # a row closes only when its own conversation is in here.
         self._dead_sessions = set(dead_sessions)
         self.texts: list[str] = []

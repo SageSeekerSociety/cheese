@@ -31,10 +31,14 @@ agent 是同一句话，分岔只在**怎么送到**，那是 `identity/arrival.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.sentences import notice_message
+from app.core.errors import ValidationError
+from app.core.live_frames import show_once_committed
+from app.core.sentences import notice_message, with_keys
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
     SEVERITY_INFO,
@@ -42,6 +46,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     WHO_PLATFORM,
 )
+from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -87,6 +92,7 @@ async def announce(
     points_at: Event = NAMES_NOBODY,
     event_id: uuid.UUID | None = None,
     task_id: uuid.UUID | None = None,
+    about_card: uuid.UUID | None = None,
     published_by_caller: bool = False,
 ) -> Block | None:
     """把 `content` 说进房间，并投给这条事件点到的那些人。
@@ -104,6 +110,11 @@ async def announce(
     得出一个更长命的身份的调用点才填它：同一件事被问第二遍仍然是同一条事件，那个
     id 不能每次新建（`domain/policy/proposals.py`）。
 
+    `about_card` 是这句话说的那张验收卡：随投递一起记下（`payload.cardId`），卡的
+    那次决定据此把这一批提示一起结掉（`delivery/ledger.py` 的 `settle_card`）。
+    一张卡的话有好几句、投出去还各投各的，所以「谁和谁是一批」只能由这个参数说。
+    说**结局**的那几条（合了、作废了）不要填它：它们是决定之后才要说的话。
+
     提交之后这一行当场推给开着那段对话的页面（`live_notices`）。
     `published_by_caller` 是调用方自己拿返回的 block 去推、要和它自己的帧排好先后
     的那几处（`post_system_event`：先说失败，再发 `error` 帧）：那里不再推第二遍。
@@ -115,7 +126,6 @@ async def announce(
         return None
     if task_id is not None:
         # A task's conversation, or a 支线's: either way one inside this room.
-        from app.core.errors import ValidationError
 
         inner = await PlaceResolver(session).conversation(task_id)
         if inner is None or inner.inner_id is None or inner.room_id != place.room_id:
@@ -145,14 +155,10 @@ async def announce(
         content=content,
         meta=meta or {},
         points_at=points_at,
+        about_card=about_card,
         event_id=event_id,
     )
     return block
-
-
-#: `session.info` 里的一格：这个会话落下、提交之后要当场推给页面的那几行，各带
-#: 它所在那段对话的频道。推送本身在 broker 那一侧（`runtime`），这里只记下来。
-SHOW_ONCE_COMMITTED = "notices_shown_once_committed"
 
 
 def _show_once_committed(session: AsyncSession, block: Block) -> None:
@@ -167,9 +173,75 @@ def _show_once_committed(session: AsyncSession, block: Block) -> None:
         "type": "event_block",
         "block": BlockOut.model_validate(block).model_dump(mode="json"),
     }
-    session.info.setdefault(SHOW_ONCE_COMMITTED, []).append(
-        (str(block.conversation_id), frame)
+    show_once_committed(session, block.conversation_id, frame)
+
+
+async def settle_proposal(
+    session: AsyncSession,
+    room_id: uuid.UUID,
+    *,
+    event_type: str,
+    key: str,
+    value: uuid.UUID,
+    content: str | Callable[[dict], str],
+) -> None:
+    """一条「芝士提议了什么、等人确认」的行，在人定下来以后改成定下来的样子。
+
+    那一行写着「等人处理」和一颗「去确认」；人保存了、拒了或删了之后它还那样写，
+    读的人就会以为那件事还在等。所以同一行原地改：`content` 说结果，`who` 清空
+    （没人在管了），`state` 记成 `over`，前端据此不再画「去确认」。开着这个房间的
+    页面在提交之后收到改过的这一行。`content` 也可以按那一行原来的 `meta` 给出
+    （同一件东西的「新增」和「修改」两种提议，结果说法不同）。
+    """
+    rows = await session.scalars(
+        select(Block).where(
+            Block.conversation_id == room_id,
+            Block.kind == BlockKind.event,
+            Block.meta["event_type"].as_string() == event_type,
+            Block.meta[key].as_string() == str(value),
+        )
     )
+    for block in rows:
+        if (block.meta or {}).get("state") == "over":
+            continue
+        said = content(block.meta or {}) if callable(content) else content
+        block.content = said
+        block.meta = with_keys(
+            {**(block.meta or {}), "who": "", "state": "over"}, content=said
+        )
+        await session.flush()
+        show_once_committed(
+            session,
+            block.conversation_id,
+            {
+                "type": "block_updated",
+                "block": BlockOut.model_validate(block).model_dump(mode="json"),
+            },
+        )
+
+
+def _asked_where(place: Place) -> dict[str, str]:
+    """这道题问在哪条会话里：一个任务的、一条支线的，还是频道自己那条线。
+
+    空字典 = 频道自己那条线。芝士在哪条会话里问，那条消息就落在哪条会话的时间线上
+    （`landing` 用的是同一个落点），投递读的就是这里：链接指向频道，就是把人送到一
+    页没有这条消息的地方 —— 他点开只看到「这条消息已不存在」。
+
+    `push.push_link` 和前端的通知渲染器都按这两个 id 决定落点。
+    """
+    if place.task_id is not None:
+        return {"taskId": str(place.task_id)}
+    if place.thread_id is not None:
+        return {"threadId": str(place.thread_id)}
+    return {}
+
+
+def _people_of_the_task(place: Place) -> tuple[str, ...]:
+    """一道题落在整条活上时等它的那些人：这条活的人（`Task.people`）。
+
+    频道和支线里没有「这条活的人」，那里返回空 —— 题不落在谁头上，就谁也不通知。
+    """
+    return place.task.people if place.task is not None else ()
 
 
 async def notify_question(
@@ -191,8 +263,11 @@ async def notify_question(
     共用一个码，前端就无法区分该按哪一种渲染。
 
     这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：这件事**停在这个问题
-    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人，None 是「这个问题指
-    不到具体的人」（平台发起的轮次），那就谁也不通知。
+    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人；None 是「这道题没
+    落在某一个人头上」（平台发起的轮次），这时它落在**整条活**上 —— 等回答的是这条
+    活的人：负责人和协作者（`_people_of_the_task`），一道题问给几个人，就是这几个人
+    各自的待办。频道和支线没有「这条活的人」，那里仍旧谁也不通知：一条多数人不需要
+    处理的通知发给整个名册，代价是他们此后关闭这个渠道。
     """
     await deliver(
         session,
@@ -211,12 +286,22 @@ async def notify_question(
                 "agentName": await _agent_name(session, place.project_id, asker),
                 # 那条提问消息：通知据它定位到房间里的那一行。
                 "blockId": str(block.id),
+                # 这条消息在哪条会话里 —— 任务或支线里问的题，通知点开要回到那条
+                # 线，不是回到频道（`_asked_where`）。
+                **_asked_where(place),
             },
             # 问出口的那一刻，不是走到这一行的那一刻 —— 收下整个 block 而不是它的
             # id，就是为了这个时刻拿得到。
             occurred_at=block.created_at,
         ),
-        address(Event(asked=asked), Hand.participant),
+        address(
+            # 题落在某一个人头上时就只有他：`asked` 有值，别人不等它。
+            Event(
+                asked=asked,
+                asked_also=() if asked else _people_of_the_task(place),
+            ),
+            Hand.participant,
+        ),
     )
 
 
@@ -322,7 +407,6 @@ async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
     One `cheese_ask` call sends one notice for all its questions (keyed by the
     first, `meta.notice_id`); it is settled only once none of them is open.
     """
-    from sqlalchemy import select
 
     done = []
     for notice in {(q.meta or {}).get("notice_id") or str(q.id) for q in questions}:
@@ -352,7 +436,6 @@ async def _agent_name(session: AsyncSession, project_id, seat: str) -> str:
 
 async def instance_of_seat(session: AsyncSession, project_id, seat: str):
     """The agent instance behind ``seat`` in this project, or None."""
-    from app.domain.agent_instance.services import AgentInstanceService
 
     for instance in await AgentInstanceService(session).list_for_project(project_id):
         if agent_instance_handle(instance.id) == seat:
@@ -369,6 +452,7 @@ async def _notify(
     meta: dict,
     points_at: Event,
     event_id: uuid.UUID | None = None,
+    about_card: uuid.UUID | None = None,
 ) -> None:
     await deliver(
         session,
@@ -388,6 +472,9 @@ async def _notify(
                 **notice_message(block.meta),
                 "eventType": str(meta.get("event_type") or ""),
                 "severity": str(meta.get("severity") or SEVERITY_INFO),
+                # 这一批提示说的是哪张卡 —— 卡的决定把这一批一起结掉
+                # （`delivery/ledger.py` 的 `settle_card`）。
+                **({"cardId": str(about_card)} if about_card is not None else {}),
             },
             occurred_at=block.created_at,
         ),

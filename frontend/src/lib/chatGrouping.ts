@@ -96,11 +96,8 @@ export function runEdgeBetween(prev: Block | undefined, cur: Block, opts: { brok
  * 发件箱里的那几条还没有落库时间，按「现在」算：接在自己刚说的那段后面就贴上去。
  * `index > 0` 的那几条接在发件箱上一条下面，不再单独判断。
  */
-export function outboxEdgeAfter(
-  last: Block | undefined,
-  opts: { mine: boolean; brokenAbove: boolean; now?: Date }
-): RunEdge {
-  if (!last || last.kind === 'event' || opts.brokenAbove) return 'start'
+export function outboxEdgeAfter(last: Block | undefined, opts: { mine: boolean; now?: Date }): RunEdge {
+  if (!last || last.kind === 'event') return 'start'
   if (!opts.mine) return 'start'
   const now = opts.now ?? new Date()
   if (dayKey(last.created_at) !== dayKey(now.toISOString())) return 'start'

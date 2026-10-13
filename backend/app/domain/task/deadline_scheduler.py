@@ -5,34 +5,14 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import SessionFactory
+from app.domain.task.indexed_rows import SWEEPABLE_ROWS
 from app.domain.task.models import TaskMembership
 from app.domain.task.submission_state import (
     COMPLETION_STATUS_FAILED,
-    COMPLETION_STATUS_NOT_SUBMITTED,
-    COMPLETION_STATUS_REJECTED_RESUBMITTABLE,
     has_work_in_hand,
 )
 
 logger = logging.getLogger(__name__)
-
-#: `PENDING_REVIEW` is deliberately NOT here. A deadline is the last moment to
-#: hand work in, and someone in that state handed it in; what has not happened
-#: since is the review. Failing them makes the platform punish a person for a
-#: queue they do not control, and `analytics_view_service` agrees about which
-#: side of the line that state is on: it counts `PENDING_REVIEW` among
-#: `SUBMITTED_STATUSES`, next to `SUCCESS` and `FAILED`, not among the ongoing
-#: ones. `SUCCESS` is not here either — someone whose work passed is past this
-#: question. The two states below are the ones where nothing is in hand: never
-#: submitted, or sent back and not resubmitted — and they are exactly the two a
-#: membership without work in hand can carry
-#: (`app.domain.task.submission_state`). With the axis now driven by submissions
-#: and reviews, this set and `~has_work_in_hand` below say the same thing; the
-#: conjunction is kept because a wrong write fails a person for work they did,
-#: and a guard that only skips is the cheaper mistake.
-_SWEEPABLE_STATUSES = [
-    COMPLETION_STATUS_REJECTED_RESUBMITTABLE,
-    COMPLETION_STATUS_NOT_SUBMITTED,
-]
 
 PAGE_SIZE = 100
 
@@ -61,8 +41,11 @@ async def check_and_fail_expired_deadlines(session: AsyncSession) -> int:
                 and_(
                     TaskMembership.deadline.isnot(None),
                     TaskMembership.deadline < now,
-                    TaskMembership.completion_status.in_(_SWEEPABLE_STATUSES),
-                    TaskMembership.deleted_at.is_(None),
+                    # Same text as `ix_task_membership_deadline`'s predicate, so
+                    # the planner can prove the query implies the index. Written
+                    # as bound parameters it could not, and the index was passed
+                    # by; see `indexed_rows`.
+                    SWEEPABLE_ROWS,
                     # The status alone cannot tell "never handed in" from
                     # "handed in and the review has not caught up" — only a
                     # membership with nothing in hand is out of time.

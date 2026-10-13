@@ -1,9 +1,9 @@
 """B3: replying to a message threads the reply under it (reply_to)."""
 
 from tests.integration.conftest import (
-    chat_ws_url,
     post_message,
     post_project,
+    room_socket,
 )
 
 
@@ -31,7 +31,7 @@ def _post(client, ws, tid, content, reply_to=None):
 
 def test_reply_threads_under_parent(client):
     tid = _topic(client)
-    with client.websocket_connect(chat_ws_url(tid, "u")) as ws:
+    with room_socket(client, tid, "u") as ws:
         parent = _post(client, ws, tid, "根消息")
         child = _post(client, ws, tid, "这是回复", reply_to=parent["id"])
     assert parent["reply_to"] is None

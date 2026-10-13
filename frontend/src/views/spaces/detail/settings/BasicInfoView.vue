@@ -22,7 +22,8 @@
     </div>
 
     <div class="srow srow--field">
-      <label class="srow__k" for="space-name">{{ t('spaces.settings.basic.name') }}</label>
+      <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+      <label id="space-name-label" class="srow__k" for="space-name">{{ t('spaces.settings.basic.name') }}</label>
       <v-text-field
         id="space-name"
         v-model="name"
@@ -35,7 +36,7 @@
     </div>
 
     <div class="srow srow--field">
-      <label class="srow__k" for="space-intro">{{ t('spaces.settings.basic.intro') }}</label>
+      <label id="space-intro-label" class="srow__k" for="space-intro">{{ t('spaces.settings.basic.intro') }}</label>
       <v-textarea
         id="space-intro"
         v-model="intro"

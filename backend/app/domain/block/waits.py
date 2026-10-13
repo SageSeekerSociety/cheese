@@ -19,19 +19,30 @@ from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import String, Uuid, any_, bindparam, or_, select
+from sqlalchemy import String, Uuid, any_, bindparam, or_, select, true
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.authorship import participant_blocks
-from app.domain.block.indexed_rows import FAILED_TURN_ROWS, MACHINE_EVENT_ROWS
+from app.domain.block.indexed_rows import (
+    AGENT_CHECK_ROWS,
+    FAILED_TURN_ROWS,
+    LAST_SAID_ROWS,
+    MACHINE_EVENT_ROWS,
+    UNANSWERED_ROWS,
+)
 from app.domain.block.models import (
     CONSUMED_TURN_META_KEY,
     PROMPTED_TURN_META_KEY,
     Block,
     BlockKind,
 )
-from app.domain.conversation.services import of_rooms, room_column
+from app.domain.conversation.services import (
+    conversations_of,
+    of_rooms,
+    room_column,
+    threads_of_rooms,
+)
 from app.domain.identity.handles import agent_handle_column, recipient_seat
 from app.domain.run_record.models import RunRecord
 
@@ -39,23 +50,6 @@ from app.domain.run_record.models import RunRecord
 #: answered a week ago is not that any more, and without a bound these queries
 #: scan every message the project ever had.
 REPLY_LOOKBACK = timedelta(days=7)
-
-#: Platform events that hand work to an agent: review comments on a PR, a red
-#: check, a merge that will not go in, a rejected card. Each says the agent is
-#: to fix it (`platform_notices`).
-CHECKS_FOR_THE_AGENT = (
-    "pr_review",
-    "pr_conflict",
-    "ci_failed",
-    "gate_failed",
-    "gate_blocked",
-    "gate_abandoned",
-    "merge_refused",
-    "accept_conflict",
-    "upstream_conflict",
-    "migration_collision",
-    "card_rejected",
-)
 
 #: The reason a failed turn is reported under.
 FAILED = "failed"
@@ -158,23 +152,43 @@ class MemberWaits:
     async def _last_said(
         self, topic_ids: list[uuid.UUID], since: datetime
     ) -> dict[tuple[uuid.UUID, str], datetime]:
-        """{(room, agent): when it last said something on the room's own line}."""
+        """{(room, agent): when it last said something of the room's own} — the
+        room's main line and its 支线.
+
+        A 支线 is where the room is answered: a channel has no line of 芝士's
+        own, so what it replies to a message in the channel's main line is said
+        in that message's 支线 and nowhere else. A task's is not: a task is a
+        board of its own with a card of its own, and what is said on one is not
+        the room's own doings.
+        """
+        threads = await threads_of_rooms(self._session, topic_ids)
+        # 筛选条件用字面量（`indexed_rows.LAST_SAID_ROWS`），和部分索引的谓词逐字
+        # 相同 —— ORM 那版把 `kind`、`author_type`、署名前缀都绑成参数，缓存下来的
+        # 通用计划看不见它们，就证不出这条查询蕴含索引的 WHERE，索引被绕过（实测）。
+        # 支线顺着房间一起进同一个数组参数，不是另起一次查询也不是子查询：形状
+        # 不变，索引才照样用得上（`_among`、`conversations_of`）。
         stmt = (
             select(Block.conversation_id, Block.author, Block.created_at)
             .where(
-                _among(Block.conversation_id, topic_ids, Uuid),
-                Block.kind == BlockKind.message,
+                _among(Block.conversation_id, [*topic_ids, *threads], Uuid),
                 Block.created_at >= since,
-                participant_blocks(),
-                agent_handle_column(Block.author),
+                LAST_SAID_ROWS,
             )
             .order_by(Block.conversation_id, Block.author, Block.created_at.desc())
             .distinct(Block.conversation_id, Block.author)
         )
-        return {
-            (room, author): at
-            for room, author, at in (await self._session.execute(stmt)).all()
-        }
+        said: dict[tuple[uuid.UUID, str], datetime] = {}
+        for row in (await self._session.execute(stmt)).all():
+            conversation, author, at = row[0], row[1], row[2]
+            room: uuid.UUID | None = threads.get(conversation, conversation)
+            if room is None or author is None:
+                continue
+            # 支线里的那句和主线上的那句归到同一个房间：同一个队友两处都说过时，留晚的
+            # 那句 —— `_answered` 比的就是「这个人有没有比那条消息更晚说过话」。
+            held = said.get((room, author))
+            if held is None or at > held:
+                said[(room, author)] = at
+        return said
 
     @staticmethod
     def _answered(
@@ -198,14 +212,12 @@ class MemberWaits:
         a stuck one is not swallowed. A platform notice is not the agent
         answering, and people talking to each other wake nobody.
         """
+        # 同上：条件是字面量（`indexed_rows.UNANSWERED_ROWS`），`CAST(...)` 的形状也是
+        # 索引谓词的那一份。
         stmt = select(Block.conversation_id, Block.created_at, Block.meta).where(
             _among(Block.conversation_id, topic_ids, Uuid),
-            Block.kind == BlockKind.message,
             Block.created_at >= since,
-            participant_blocks(),
-            ~agent_handle_column(Block.author),
-            Block.meta["agent_recipient"]["mentioned"].as_boolean(),
-            Block.meta[CONSUMED_TURN_META_KEY].as_string().is_(None),
+            UNANSWERED_ROWS,
         )
         found = []
         for room, at, meta in (await self._session.execute(stmt)).all():
@@ -229,31 +241,43 @@ class MemberWaits:
         """
         if not topic_ids:
             return []
-        under_room = (
-            of_rooms(Block.conversation_id, topic_ids),
-            Block.created_at >= since,
-        )
         room = room_column(Block.conversation_id).label("room")
         events = (
             select(room, Block.created_at)
             .where(
-                *under_room,
+                of_rooms(Block.conversation_id, topic_ids),
+                Block.created_at >= since,
                 ~participant_blocks(),
-                Block.meta["event_type"].as_string().in_(CHECKS_FOR_THE_AGENT),
+                AGENT_CHECK_ROWS,
             )
             .order_by(room, Block.created_at.desc())
             .distinct(room)
         )
-        touched = (
-            select(room, Block.author, Block.created_at)
-            .where(*under_room, participant_blocks(), agent_handle_column(Block.author))
-            .order_by(room, Block.created_at.desc())
-            .distinct(room)
+        # The newest agent line in each conversation, read from the end of its
+        # run in `ix_blocks_conversation_created_at`, and the newest of those per
+        # room picked here. An agent at work writes most of a busy room's week,
+        # so reading all of it to keep one row per room read most of the table.
+        conversations = conversations_of(topic_ids)
+        newest = (
+            select(Block.author, Block.created_at)
+            .where(
+                Block.conversation_id == conversations.c.id,
+                Block.created_at >= since,
+                participant_blocks(),
+                agent_handle_column(Block.author),
+            )
+            .order_by(Block.created_at.desc())
+            .limit(1)
+            .lateral()
         )
-        last_touch = {
-            room: (author, at)
-            for room, author, at in (await self._session.execute(touched)).all()
-        }
+        touched = select(
+            conversations.c.room_id, newest.c.author, newest.c.created_at
+        ).join(newest, true())
+        last_touch: dict[uuid.UUID, tuple[str, datetime]] = {}
+        for at_room, author, at in (await self._session.execute(touched)).all():
+            held = last_touch.get(at_room)
+            if held is None or at > held[1]:
+                last_touch[at_room] = (author, at)
         found = []
         for room, at in (await self._session.execute(events)).all():
             member, touch = last_touch.get(room, (None, None))

@@ -7,9 +7,14 @@ import math
 import os
 import select
 import shlex
+import socket
 import subprocess
+import sys
+import threading
 import time
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import unquote, urlsplit
 
 # How long a request waits out a platform endpoint that is not listening.
@@ -66,9 +71,10 @@ READ_ONLY_REFUSED = (
 # 而这一次要把改动带出机器（同步、项目的 MCP 服务），或者机器不归它独占、它只能读
 # （`routes/execution.py`）。两种都不是故障。
 SCRATCH_REFUSED = (
-    "这个会话的改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器不归这个"
-    "会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这不是故障，重试"
-    "结果一样；要改项目，创建一个任务。"
+    "这个会话在支线或还没开始的任务里，改动留不下：不能同步改动，也不能用项目的 MCP "
+    "服务；工作机器不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。"
+    "这由会话所在的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；要改项目，"
+    "创建一个任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -130,13 +136,13 @@ def _link_interrupted(response) -> bool:
 # starts: the platform says nothing else until the machine is ready or the wait
 # gives up, and a call silent that long reads as a dead shell or a lost machine.
 MACHINE_PREPARING = (
-    "工作电脑正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
+    "执行环境正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
 )
 
 
 # What the wait gives up with when the last answer it had was a timed-out
 # request rather than the platform's own word on the machine.
-MACHINE_STILL_PREPARING = "工作电脑仍在准备，对话和平台工具仍可用"
+MACHINE_STILL_PREPARING = "执行环境仍在准备，对话和平台工具仍可用"
 
 
 class MachineOutOfReach(RuntimeError):
@@ -162,7 +168,8 @@ DEFERRED_WORKSPACE = "/unavailable-project"
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
-    """Sleep before the next attempt, or say the window is over.
+    """Sleep before the next attempt, or say the window is over. Hand-written,
+    not tenacity: this file runs on machines with the standard library only.
 
     ONLY for a connection that was refused: `http.client` raises that before it
     writes anything, which is what makes the replay safe. A failure any later —
@@ -324,8 +331,6 @@ def dial_runner(path: str, timeout: float):
     """The runner holding this session, at the socket it gave the session
     (`SESSION_SOCKET`). On Windows that names the file holding the runner's
     loopback port and the token it wants before a request (`driven/runner.py`)."""
-    import socket
-    import sys
 
     if sys.platform == "win32":
         with open(path) as named:
@@ -353,7 +358,6 @@ def register_project_hooks(config, hooks):
     session's hooks changed. A target with no settings of its own (Codex: the
     executor runs the hooks around its calls) has nothing to change.
     """
-    from pathlib import Path
 
     target_file = config.get("target_file")
     if not config.get("central_config") or not target_file:
@@ -424,8 +428,6 @@ def session_servers(target: dict) -> list[str]:
 
 class RemoteClient:
     def __init__(self, config, *, shared_connection=False):
-        import threading
-        from types import SimpleNamespace
 
         self.config = config
         self.transport = SimpleNamespace() if shared_connection else threading.local()
@@ -503,7 +505,10 @@ class RemoteClient:
     def connection(self):
         # Shell forwarding exits before creating a client; keep its startup
         # independent of HTTP, TLS and proxy discovery imports.
+        # deferred-import: shell forwarding exits before a client is made
         import http.client
+
+        # deferred-import: shell forwarding exits before a client is made
         from urllib.request import getproxies, proxy_bypass
 
         if getattr(self.transport, "connection", None) is not None:
@@ -672,6 +677,19 @@ class RemoteClient:
                 shlex.join(command),
             ]
         return command
+
+    def take_now(self):
+        """Take this session's hands as they are, without waiting for a
+        machine being prepared. False when the platform cannot hand them out
+        at this moment (the machine still being prepared, gone, or refused);
+        a platform that failed to answer at all still raises."""
+        try:
+            self.acquire(deadline=time.monotonic())
+        except PlatformHTTPError:
+            raise
+        except RuntimeError:
+            return False
+        return True
 
     def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the
@@ -921,8 +939,6 @@ class RemoteClient:
                         )
             target_file = self.config.get("target_file")
             if target_file and changed_lease:
-                from pathlib import Path
-
                 tree = self.call("context_fs", {"operation": "tree"})
                 if tree.get("unsupported_imports") or tree.get("unsupported_paths"):
                     raise RuntimeError(
@@ -1103,7 +1119,11 @@ class RemoteClient:
     def checkpoint(self, request_id):
         """A turn's Stop checkpoint: its work synced into the project. A
         session whose work is not kept (a 支线, a task not yet started) has none
-        to sync, and the executor route would refuse it."""
-        if keeps_nothing(self.execution_token()):
+        to sync, and the executor route would refuse it. Nor does a session
+        that never held a sandbox: its turn did nothing on a machine. (One
+        whose sandbox was destroyed while idle is the route's to answer.)"""
+        if self.config.get("kind") == "deferred" or keeps_nothing(
+            self.execution_token()
+        ):
             return {}
         return self.control({"subtype": "checkpoint", "request_id": request_id})

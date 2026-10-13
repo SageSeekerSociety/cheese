@@ -11,8 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Security from './Security.vue'
 
+import { UserApi } from '@/api/users'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
 const CHROME_ON_WINDOWS =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
@@ -32,13 +32,13 @@ function session(id: string, userAgent: string, current: boolean, loginMethod = 
   }
 }
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
-    get2FAStatus: vi.fn().mockResolvedValue({ data: { enabled: false } }),
-    getUserPasskeys: vi.fn().mockResolvedValue({ data: { passkeys: [] } }),
+    get2FAStatus: vi.fn().mockResolvedValue({ enabled: false }),
+    getUserPasskeys: vi.fn().mockResolvedValue({ passkeys: [] }),
     listSessions: vi.fn(),
     revokeSession: vi.fn().mockResolvedValue({}),
-    revokeOtherSessions: vi.fn().mockResolvedValue({ data: { revokedCount: 1 } }),
+    revokeOtherSessions: vi.fn().mockResolvedValue({ revokedCount: 1 }),
   },
 }))
 vi.mock('@/api', () => ({
@@ -68,9 +68,7 @@ beforeEach(() => {
   setLocale('en')
   vi.stubGlobal('visualViewport', new EventTarget())
   vi.mocked(UserApi.listSessions).mockResolvedValue({
-    data: {
-      sessions: [session('here', CHROME_ON_WINDOWS, true), session('phone', SAFARI_ON_IPHONE, false, 'oauth:github')],
-    },
+    sessions: [session('here', CHROME_ON_WINDOWS, true), session('phone', SAFARI_ON_IPHONE, false, 'oauth:github')],
   } as never)
 })
 afterEach(() => {
@@ -92,12 +90,7 @@ describe('signed-in devices', () => {
 
   it('marks a device trusted to skip two-step verification', async () => {
     vi.mocked(UserApi.listSessions).mockResolvedValue({
-      data: {
-        sessions: [
-          session('here', CHROME_ON_WINDOWS, true),
-          session('phone', SAFARI_ON_IPHONE, false, 'password', true),
-        ],
-      },
+      sessions: [session('here', CHROME_ON_WINDOWS, true), session('phone', SAFARI_ON_IPHONE, false, 'password', true)],
     } as never)
     const view = await renderPage()
 

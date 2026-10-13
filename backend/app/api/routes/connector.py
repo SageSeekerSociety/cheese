@@ -39,9 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
-from app.common.auth import verify_access_token
+from app.api.request_deps import DbSession
+from app.api.write_access import ROUTE_DECIDES
+from app.common.auth import AccessClaims, verify_access_token
+from app.core import background
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -55,18 +57,26 @@ from app.domain.agent.device_hub import (
     ViewerTransport,
     device_hub,
 )
-from app.domain.agent.harness.claude_code import owner_login
-from app.domain.device import owner_reads
+from app.domain.agent.device_storage import keep_device_room_files
+from app.domain.agent.harness.claude_code import executor_launch, owner_login
+from app.domain.device import owner_reads, sandbox
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
 from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
+from app.domain.local_fs.enforcement import push_grants_on_connect
+from app.domain.machine.session_work import (
+    checkpoint_room,
+    device_users,
+    screen_agent_name,
+)
+from app.domain.project.services import ProjectService
 from app.domain.team.repositories import TeamRepository
+from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_device_service(db: DbSession) -> DeviceService:
@@ -94,30 +104,54 @@ _recovering = asyncio.Semaphore(_RECOVERY_AT_ONCE)
 
 
 async def recover_business_state(device_id: str) -> None:
-    from app.core.background import spawn
+    # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
-    from app.domain.local_fs.enforcement import push_grants_on_connect
 
     # The machine enforces its own copy of its directory grants, so it is sent
     # the current set as it connects, before anything else waits. It is not
     # behind the queue below: a revoke made while the machine was away is in
     # force on it only once this lands. And not behind the session-owner check:
     # every backend may send it, since the set is replaced whole on the machine.
-    spawn(
+    background.spawn(
         push_grants_on_connect(async_session_factory, device_hub, device_id),
         name="local grants device reconnect",
     )
     # Whether its owner's own Claude Code is logged in for the platform: only
     # the machine knows, and a session of it is placed by the answer.
-    spawn(
+    background.spawn(
         owner_login.refresh_on_connect(async_session_factory, device_hub, device_id),
         name="claude login device reconnect",
+    )
+    # Whether it can give a session a sandbox: settled now, as it joins, rather
+    # than first found out when a room runs a command there.
+    background.spawn(
+        _check_sandbox(async_session_factory, device_id),
+        name="sandbox check device reconnect",
     )
     async with _recovering:
         await _recover_business_state(device_id)
 
 
+async def _check_sandbox(session_factory, device_id: str) -> None:
+    """Ask a machine as it connects whether it can give a session a sandbox,
+    and keep the answer. One that goes again before answering is asked on its
+    next connection."""
+    try:
+        async with session_factory() as session:
+            service = sql_device_service(session)
+            device = await service.get_device(device_id)
+            if device is None:
+                return
+            await sandbox.refresh(
+                service, device_hub, device, executor_launch.sandbox_check_script()
+            )
+            await session.commit()
+    except Exception:
+        logger.warning("sandbox not checked on %s", device_id, exc_info=True)
+
+
 async def _recover_business_state(device_id: str) -> None:
+    # deferred-import: tests patch this name on app.api.deps
     from app.api.deps import get_chat_service, get_work_runner
 
     # Every backend watches devices come and go, but only the one running the
@@ -146,27 +180,28 @@ async def _recover_business_state(device_id: str) -> None:
     except Exception:  # noqa: BLE001 — recovery cannot reject a healthy device
         logger.exception("hook subscription recovery failed for device %s", device_id)
     # Restore screen ownership before cleanup looks for sessions to close.
-    from app.core.background import spawn
+    # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
-    from app.domain.machine.session_work import checkpoint_room
-    from app.domain.topic.retire import sweep_retired_storage
 
-    spawn(
+    # deferred-import: tests patch this name on app.domain.room_cleanup.retire
+    from app.domain.room_cleanup.retire import sweep_retired_storage
+
+    background.spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
         name="cleanup device reconnect",
     )
     # A machine offline when a task of its rooms closed still has the checkout.
+    # deferred-import: tests patch this name on app.domain.room_task.checkouts
     from app.domain.room_task.checkouts import remove_closed_checkouts
 
-    spawn(
+    background.spawn(
         remove_closed_checkouts(async_session_factory, device_id=device_id),
         name="closed task checkouts device reconnect",
     )
     # Rooms from before rooms had an executor are told their files are kept
     # before anything archives them (`agent/device_storage.py`).
-    from app.domain.agent.device_storage import keep_device_room_files
 
-    spawn(
+    background.spawn(
         keep_device_room_files(async_session_factory, device_id),
         name="kept room files device reconnect",
     )
@@ -412,7 +447,6 @@ async def _note_seen(db: AsyncSession, device_id: str) -> None:
     with the server is torn down by cancelling this handler, and a database
     write cut short there leaves the connection broken for its next user.
     Committed at once, like the read that opened the link."""
-    from app.domain.device.wiring import sql_device_service
 
     try:
         await sql_device_service(db).note_last_seen(device_id, datetime.now(UTC))
@@ -438,8 +472,25 @@ class _WebSocketViewerTransport:
         await self._websocket.send_bytes(data)
 
 
+async def _sign_in_lasts(session: AsyncSession, claims: AccessClaims) -> bool:
+    """Whether the sign-in the token names may still act at all.
+
+    ``verify_access_token`` reads the signature and the expiry and nothing
+    else, so a token outlives its session -- deliberately, for the length of a
+    request. A connection is the caller that outlives it by far more: signed
+    out, revoked from the device list, password changed or reset, idle past
+    the timeout, or theft suspected, the session ends and the token keeps
+    working until it expires. A token that names no session has none to ask
+    about, and one that names no person has no session to look up.
+    """
+    if claims.sid is None or claims.user_id is None:
+        return True
+    sign_ins = SessionService(session)
+    return await sign_ins.live_handle(claims.user_id, claims.sid) is not None
+
+
 async def _may_view_screen(
-    session: AsyncSession, screen: HubScreen, token: str | None
+    session: AsyncSession, screen: HubScreen, claims: AccessClaims | None
 ) -> bool:
     """Only a logged-in human who shares the screen's project (a project member/owner)
     or its topic (a topic-roster member) may watch its 现场 (P1 authz shape). Browsers
@@ -448,11 +499,12 @@ async def _may_view_screen(
     A screen working in a private channel, or in one of its tasks, is that
     channel's: only someone seated in it watches, project managers included —
     the same door as the channel's own routes (``authorize_topic``).
+
+    Asked at the handshake and again on the viewer's clock, which is why the
+    caller holds the claims rather than the token: what a lasting view stands
+    on is the sign-in, not the 15-minute access token it was opened with.
     """
-    if not token:
-        return False
-    claims = verify_access_token(token)
-    if claims is None:
+    if claims is None or not await _sign_in_lasts(session, claims):
         return False
     # Membership is keyed by handle.
     handle = claims.handle
@@ -481,6 +533,12 @@ def _as_int(value: object, default: int) -> int:
     return n if 0 < n <= 10000 else default
 
 
+#: How often a live viewer is asked again whether it may still watch and type:
+#: often enough that a sign-in which ended stops driving the machine, rarely
+#: enough to cost nothing while a screen is only being watched.
+VIEW_RECHECK_EVERY_S = 25.0
+
+
 @router.websocket("/session/{sid}/screen")
 async def viewer_socket(
     websocket: WebSocket,
@@ -502,10 +560,19 @@ async def viewer_socket(
     Nothing is forwarded before the viewer has attached, so keystrokes cannot
     reach a pane that was never subscribed.
 
+    The door is asked again every ``VIEW_RECHECK_EVERY_S`` while the view lasts:
+    the handshake is not the last word, so a view ends with the sign-in and the
+    membership that opened it rather than at the next reconnect.
+
     Unknown-screen and not-authorized close identically (1008) so a screen id
     can't be enumerated."""
     screen = device_hub.screen(sid)
-    authorized = screen is not None and await _may_view_screen(db, screen, token)
+    claims = verify_access_token(token or "")
+    authorized = (
+        screen is not None
+        and claims is not None
+        and await _may_view_screen(db, screen, claims)
+    )
     # Release the authz read-transaction before the viewer's (long-lived) relay loop.
     # A WS-injected ``get_db`` session lives until the socket closes, so leaving the
     # transaction open would park it `idle in transaction` for the whole view — the
@@ -521,9 +588,30 @@ async def viewer_socket(
     transport: ViewerTransport = _WebSocketViewerTransport(websocket)
     device_id = screen.device_id
     attached = False  # attach (and subscribe) only once the viewer reports its size
+    incoming: asyncio.Task[Any] | None = None  # a receive must not be cancelled
+    # The review is a clock of its own, never a per-keystroke errand: the viewer
+    # typing steadily is exactly the one whose sign-in must not lapse unnoticed,
+    # so a busy view is asked as often as an idle one. The tick is made once a
+    # period and is not remade when a frame arrives.
+    review = asyncio.create_task(asyncio.sleep(VIEW_RECHECK_EVERY_S))
     try:
         while True:
-            message = await websocket.receive()
+            if incoming is None:
+                incoming = asyncio.create_task(websocket.receive())
+            done, _ = await asyncio.wait(
+                {incoming, review}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if review in done:
+                review = asyncio.create_task(asyncio.sleep(VIEW_RECHECK_EVERY_S))
+                if not await _may_view_screen(db, screen, claims):
+                    await websocket.close(code=4401, reason="this sign-in has ended")
+                    break
+                # The same footgun as the check before the handshake: a read left
+                # open parks this socket's session `idle in transaction`.
+                await db.commit()
+                continue
+            message = incoming.result()
+            incoming = None
             if message["type"] == "websocket.disconnect":
                 break
             text = message.get("text")
@@ -554,6 +642,9 @@ async def viewer_socket(
     except WebSocketDisconnect:
         pass
     finally:
+        review.cancel()
+        if incoming is not None:
+            incoming.cancel()
         if attached:
             await device_hub.detach_viewer(device_id, sid, transport)
 
@@ -579,7 +670,6 @@ async def _require_user(resolver: ActorResolverDep) -> int:
 async def _device_screens(db: AsyncSession, device_id: str) -> list[dict[str, Any]]:
     """The device's currently-open screens (agents), for the UI to open their 现场,
     each with the name its agent goes by."""
-    from app.domain.machine.session_work import screen_agent_name
 
     out: list[dict[str, Any]] = []
     for screen in device_hub.all_online_screens():
@@ -633,6 +723,11 @@ async def my_devices(
         # they enrolled themselves runs it; a cloud machine says nothing.
         if device.supply == Supply.self_hosted:
             view["claude_code"] = await owner_login.status(db, device.device_id)
+            # Whether it can give a session a sandbox, and if not the machine's
+            # own reason, worded for its owner: theirs to act on.
+            view["sandbox"] = sandbox.status(
+                await service.sandbox_check(device.device_id)
+            )
         # Its system, as its connector last said (`windows`, `darwin`,
         # `linux`), for the page to name a command that runs there; None
         # while it has not been heard from.
@@ -665,6 +760,31 @@ async def check_my_claude_code(
             await owner_login.remember(db, device_id, login)
             await db.commit()
     return await owner_login.status(db, device_id)
+
+
+# The handler decides: only the machine's owner, a person, may ask it.
+@router.post("/my/devices/{device_id}/sandbox", dependencies=[ROUTE_DECIDES])
+async def check_my_sandbox(
+    device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> dict[str, Any] | None:
+    """Ask one of the caller's machines again whether it can give a session a
+    sandbox: after its owner changed what it lacked, the page asks rather than
+    leaving the answer from its last connection standing."""
+    user_id = await _require_user(resolver)
+    owned = {d.device_id: d for d in await service.list_owned(user_id)}
+    device = owned.get(device_id)
+    if device is None or device.supply != Supply.self_hosted:
+        raise NotFoundError(say("deviceNotYours"))
+    if device_hub.is_online(device_id):
+        try:
+            await sandbox.refresh(
+                service, device_hub, device, executor_launch.sandbox_check_script()
+            )
+            await db.commit()
+        except Exception:
+            # Gone or slow to answer: what it said last still stands.
+            logger.warning("sandbox not checked on %s", device_id, exc_info=True)
+    return sandbox.status(await service.sandbox_check(device_id))
 
 
 @router.patch("/my/devices/{device_id}")
@@ -727,8 +847,6 @@ async def team_devices(
     user_id = await _require_user(resolver)
     if not await TeamRepository(db).is_team_member(team_id, user_id):
         raise ForbiddenError(say("notTeamMember"))
-    from app.domain.machine.session_work import device_users
-    from app.domain.project.services import ProjectService
 
     names = {p.id: p.name for p in await ProjectService(db).list_for_team(team_id)}
     devices = await service.list_devices_for_team(team_id)

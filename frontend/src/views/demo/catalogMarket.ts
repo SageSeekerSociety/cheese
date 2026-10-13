@@ -68,7 +68,7 @@ export const MARKET_ENTRIES: CatalogEntry[] = [
         name: '有数据',
         note: '模型一组、工作电脑一组；暂未开通的那张淡一档，默认项挂「默认」。',
         props: {},
-        expect: 'GPU 云主机',
+        expect: '虚拟机沙箱',
       },
       {
         name: '加载中',

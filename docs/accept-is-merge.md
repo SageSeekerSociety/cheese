@@ -29,8 +29,16 @@ task machine.
    Cheese reads their results.
 5. Acceptance checks the reviewer, required approvals, project policy and the
    revision shown in the browser, then calls the forge's merge API.
-6. A successful merge records delivery and closes the task. The room remains
-   active for further work.
+6. A successful merge records delivery. A step that is not the task's last
+   moves the task onto a new branch from the latest code; the last one gives
+   the task's AI teammate one turn to update the task document and post a
+   summary, and the task closes when that turn ends (`room_task.closing`).
+   The room remains active for further work.
+7. For two hours after the merge the platform watches the merge commit on the
+   default branch (`review.landing_watch`): a check that fails there and passed
+   on the commit before it reopens the task for its AI teammate to fix and
+   tells the owner; a deployment the forge records that includes the commit
+   is said in the task. Nothing is said while either is still running.
 
 The pull request belongs to `Task.pr_number`. Cards refer to that task's request;
 revising a card does not create another request. `cheese push-fix` lets the

@@ -3,18 +3,17 @@
 import type { App, Ref } from 'vue'
 
 import { createApp, defineComponent, h, nextTick, ref } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { useCachedResource } from '../useCachedResource'
-import { holdRevealGate, provideRevealGate } from '../useRevealGate'
+import { holdRevealGate, holdRevealUntil, provideRevealGate } from '../useRevealGate'
 
-import { clearPageCache } from '@/lib/pageCache'
+import { queryClient } from '@/query/client'
 
 const apps: App[] = []
 
 afterEach(() => {
   while (apps.length) apps.pop()?.unmount()
-  clearPageCache()
   vi.useRealTimers()
 })
 
@@ -105,12 +104,13 @@ describe('useRevealGate', () => {
     expect(() => release()).not.toThrow()
   })
 
-  it('a cached resource holds the page until its first answer, and not when it is already cached', async () => {
+  it('a section reading server data holds the page until its first answer, and not when it is already cached', async () => {
     const answer = deferred<string>()
     let revealed!: Ref<boolean>
     const Section = defineComponent({
       setup() {
-        useCachedResource('gate:k', () => answer.promise)
+        const read = useQuery({ queryKey: ['gate', 'k'], queryFn: () => answer.promise }, queryClient)
+        holdRevealUntil(() => !read.isPending.value)
         return () => h('section')
       },
     })

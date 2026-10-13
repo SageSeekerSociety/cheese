@@ -9,7 +9,7 @@ defineProps<{
   windowed: boolean
   /** 当前窗口（天）。 */
   days: StatsDays
-  /** 「更新于 HH:MM」。 */
+  /** 「更新于 HH:MM（北京时间）」。 */
   stamp: string
 }>()
 

@@ -23,7 +23,6 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.delivery.addressing import Event
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.room_task.models import Task
 from tests.conftest import seed_user, wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -32,6 +31,8 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.integration.test_accept_pr import _accept as _accept_with_a_pr
+from tests.integration.test_accept_pr import _ready_card, app_world  # noqa: F401
 
 _SUBJECT = "chore(test): file an accept card"
 
@@ -73,7 +74,7 @@ def _file_card(client, room: str, reviewer: str = "alice"):
         json={
             "change_subject": _SUBJECT,
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
 
@@ -142,33 +143,6 @@ def test_one_person_wearing_both_hats_hears_about_it_once(client):
     assert len(_notices(client, alice)) == 1
 
 
-def test_an_agent_reviewer_reads_it_in_the_room_instead_of_the_mailbox(client):
-    """卡递给 agent：房间里那一行照落，提需求的人照收，agent 的收件箱是空的。
-
-    agent 有用户行，handle 解析得出用户 id，所以它以前照样收到一条站内信 —— 一条
-    谁都不会打开的记录，没有报错也没有人看得见。同一条事件对人和 agent 说的是同一
-    句话（谁该收到），分岔只在怎么送到（`identity/arrival.py`）。
-    """
-    project_id, room = _room_and_project(client)
-    agent = agent_instance_handle(uuid.uuid4())
-    agent_token = seed_user(client, agent)
-    reporter = seed_user(client, "bob")
-    _set_reporter(client, room, "bob")
-    # 2026-09-27: 递卡那道门现在先问「这个人在不在房间里」
-    # (`_require_reviewer_in_room`)。这张卡递给的是一位 agent —— 一张卡只有房间会
-    # 放进来的人才接得住，所以让他像真实参与者一样进项目，量到的才是「agent 的收件
-    # 箱是空的」那件事，不是名册。
-    join_project_team(client, project_id, agent)
-
-    assert _file_card(client, room, reviewer=agent).status_code == 200
-
-    (event,) = _filed_events(client, room)
-    assert agent in event["content"]
-    (row,) = _notices(client, reporter)
-    assert row["contextMetadata"]["content"] == event["content"]
-    assert _notices(client, agent_token) == []
-
-
 def test_a_notice_that_names_nobody_reaches_nobody(client):
     """驳回同样在房间里留一行，但它没点名收件人，所以谁的铃也不响。
 
@@ -194,6 +168,87 @@ def test_a_notice_that_names_nobody_reaches_nobody(client):
         (b.get("meta") or {}).get("event_type") == "card_rejected" for b in blocks
     )
     assert len(_notices(client, alice)) == 1
+
+
+# ===================== 卡一有决定，「等你」那几句就收掉 =====================
+
+
+def _unread(client, token: str) -> list[dict]:
+    return [row for row in _notices(client, token) if row["read"] is False]
+
+
+def _decide(client, card: str, action: str, **body):
+    return client.post(
+        f"/accept-cards/{card}/{action}",
+        json=body,
+        headers=session_auth_headers("alice"),
+    )
+
+
+def test_rejecting_the_card_clears_the_wait_from_both_inboxes(client):
+    """驳回之后，那两句「等你」不该还躺在谁的收件箱里。
+
+    递卡投出去的那一条说的是「待你审阅」；卡一旦有了结局，它就不成立了 —— 可通
+    知是一条事件记录，它会一直留到人自己去点「已读」。所以决定的那几处按**卡号**
+    把这类提示一起结掉（`about_card` → `ledger.settle_card`），标成已读并记下结
+    局。结的是已读，不是删掉：那句话还查得到，只是不再等人。
+    """
+    alice = seed_user(client, "alice")
+    reporter = seed_user(client, "bob")
+    room = _room(client)
+    _set_reporter(client, room, "bob")
+    card = _file_card(client, room).json()["data"]["id"]
+    assert len(_unread(client, alice)) == 1
+    assert len(_unread(client, reporter)) == 1
+
+    r = _decide(client, card, "reject", decided_by="alice", note="口径和上一版对不上")
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    for token in (alice, reporter):
+        (row,) = _notices(client, token)
+        assert row["read"] is True
+        assert row["contextMetadata"]["outcome"] == "rejected"
+
+
+def test_accepting_the_card_clears_the_wait_from_the_reviewers_inbox(client, request):
+    """走完整的 GitHub 那条路：点采纳、合并、卡落到已采纳，提醒跟着收掉。"""
+    # 借 `test_accept_pr` 的那套世界：真项目 + 假 GitHub + 卡骑着 PR。
+    world = request.getfixturevalue("app_world")
+    alice = seed_user(client, "alice")
+    _, _, card, _, head = _ready_card(client, world)
+    assert len(_unread(client, alice)) == 1
+
+    world["fake"].check_state_by_sha[head] = ("success", "green")
+    r = _accept_with_a_pr(client, card)
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    (row,) = _notices(client, alice)
+    assert row["read"] is True
+    assert row["contextMetadata"]["outcome"] == "accepted"
+
+
+def test_only_the_decided_card_s_wait_is_cleared(client):
+    """按卡号结，不按房间结：另一个房间那张卡还等着人动。
+
+    两条提示的收件人相同、房间不同 —— 分得开它们的只有卡号。
+    """
+    alice = seed_user(client, "alice")
+    pid, room = _room_and_project(client)
+    other = client.post(
+        "/topics", json={"project_id": pid, "title": "另一件事"}
+    ).json()["data"]["id"]
+    card = _file_card(client, room).json()["data"]["id"]
+    assert _file_card(client, other).status_code == 200
+    assert len(_unread(client, alice)) == 2
+
+    r = _decide(client, card, "reject", decided_by="alice", note="重来")
+    assert r.status_code == 200, r.text
+    wait_work_idle()
+
+    (left,) = _unread(client, alice)
+    assert left["contextMetadata"]["topicId"] == other
 
 
 @pytest.mark.parametrize(

@@ -1,5 +1,6 @@
-// 键盘够得着消息的动作条：消息行可聚焦，焦点落在一条上就亮出这条动作条，Tab 从行
-// 走进条里的按钮，Esc / 焦点离开整列再收起——收起的只是条，人还停在原来那一条上。
+// 键盘够得着消息的动作条：焦点落在一条消息上就亮出这条动作条，Enter 从行走进条里的
+// 按钮，Esc / 焦点离开整列再收起——收起的只是条，人还停在原来那一条上。在消息之间怎么
+// 走、Tab 怎么进出这一列，见 ChatPanel.listKeyboard.spec.ts。
 import type { Topic } from '../../cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -10,16 +11,18 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 
+vi.mock('../../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
-    chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
     toggleReaction: vi.fn(),
   }
@@ -115,8 +118,9 @@ describe('消息动作条的键盘可达性', () => {
   it('消息行可以聚焦，且不真的多出一条动作条', async () => {
     const { container } = await mount()
     expect(barCount(container)).toBe(1)
-    expect(row(container, 'a1').getAttribute('tabindex')).toBe('0')
-    expect(row(container, 'a2').getAttribute('tabindex')).toBe('0')
+    row(container, 'a1').focus()
+    expect(document.activeElement).toBe(row(container, 'a1'))
+    expect(barCount(container)).toBe(1)
   })
 
   it('焦点落在一条消息上，这条动作条亮出来并停在它上面', async () => {
@@ -130,14 +134,14 @@ describe('消息动作条的键盘可达性', () => {
     expect(barCount(container)).toBe(1)
   })
 
-  it('Tab 从一行走进这条动作条里的按钮', async () => {
+  it('Enter 从一行走进这条动作条里的按钮', async () => {
     const { container } = await mount()
     const r = row(container, 'a1')
     useKeyboard()
     r.focus()
     await flush()
     expect(barShown(container)).toBe(true)
-    fireEvent.keyDown(r, { key: 'Tab' })
+    fireEvent.keyDown(r, { key: 'Enter' })
     await flush()
     const active = document.activeElement as HTMLElement
     expect(bar(container).contains(active)).toBe(true)
@@ -150,7 +154,7 @@ describe('消息动作条的键盘可达性', () => {
     useKeyboard()
     r.focus()
     await flush()
-    fireEvent.keyDown(r, { key: 'Tab' })
+    fireEvent.keyDown(r, { key: 'Enter' })
     await flush()
     fireEvent.keyDown(document.activeElement as HTMLElement, { key: 'Escape' })
     await flush()

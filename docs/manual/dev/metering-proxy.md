@@ -61,10 +61,11 @@ covers:
 | 平台没有 Claude 登录 | 400 `invalid_request_error` | `cheese: the platform has no Claude login…` |
 | 登录过期、正在续 | 503 `api_error` | `…has expired and is being renewed; retry shortly` |
 | 问不到准入（fail-open）且没有凭证 | 503 `api_error` | `…could not say where this request goes…` |
+| 凭据的出口机不接受连接 | 503 `api_error`，带 `retry-after` | `…the subscription egress is offline, so no model call was made…` |
 
 额度用完照 Claude Code 网关约定里「用户的额度到顶」那一种回（`_refuse_reached_cap`）：`x-should-retry: false`，`anthropic-ratelimit-unified-status: rejected`，`-overage-disabled-reason: org_spend_cap_reached`，利用率与阈值都写 1；准入给了 `reopens_at` 时再加 `retry-after` 和两个 `-reset`。带上 disabled-reason，Claude Code 把 `message` 原样打出来、不重试；只回一个 429，它会当成限流，重试十次，还打出「Server is temporarily limiting requests (not your usage limit)」，意思正好反了。`representative-claim` 和 `overage-status` 故意不带：带了它会换成自己的一句话，把我们的原因丢掉。网关那两条要改写：LiteLLM 的 `/v1/messages` 不管什么原因，429 一律给 Anthropic 信封、`error.type` 写 `rate_limit_error`，原因只在 `message` 里（`_answer_a_reached_gateway_cap` 按 `message` 认）。`max_budget` 那条是因为账本要等回合结束才记上花费，额度见底时拦下回合的往往是它；订阅账号用完那条是因为回合内怎么重试都过不去，换模型才行。别的 429 是真限流，原样交给调用方。
 
-为什么过期给 503、没有给 400：Claude Code 对 5xx 会静默重试约三分钟，对 400 不重试。续期是等得好的，用 503；要人去登录的，用 400 立刻停下来把话说清楚。
+为什么过期给 503、没有给 400：Claude Code 对 5xx 会静默重试约三分钟，对 400 不重试。续期是等得好的，用 503；要人去登录的，用 400 立刻停下来把话说清楚。出口机离线同理：机器多半几十秒就回来，用 503 让客户端等它，并带 `retry-after`（`EGRESS_OFFLINE_RETRY_AFTER_S`，30 秒）给这份等待一个节奏——早先这里带的是 `x-should-retry: false`，整轮直接失败、房间要等人叫醒（#1451）。
 
 **坑**：拒之前必须把 `request.body` 的流关掉（`_refuse` 里统一做）。mitmproxy 里「设响应」和「流式转发正文」互斥，一旦同时成立就抛 `Can't set a response and enable streaming at the same time`，而且这是致命错误——整个连接死掉，调用方等超时，看到的不是拒绝原因而是平台卡住。只有带正文的请求会走到那条分支，所以 GET 的拒绝一直好好的，被拒的 `POST /v1/messages` 全崩。源码注释里记着实测：48 小时内 68 个被拒的回合、0 个 503 送达、350 次崩溃。代价是被拒的正文要缓冲而不是流式——但那条路既不转发也不长期持有。
 
@@ -109,6 +110,14 @@ covers:
 - 重启时 `Meter._restore` 先把这本账读回来——读不回来，滚动窗口一重启就归零，上限就形同虚设。
 - 后端从 `SUBSCRIPTION_USAGE_LOG` 读同一本账（`backend/app/domain/usage/subscription_ingest.py`，`SOURCE="subscription-proxy"`）：4096 字节头部指纹认轮转，一批 2000 行，只吃完整行，同一事务里用 `IngestCheckpoint` 保证恰好一次，四个桶都计。`SUBSCRIPTION_USAGE_LOG` 不设就不进账。
 - `USAGE_LOG_DIR`（部署侧卷的挂载点）与 `SUBSCRIPTION_USAGE_LOG`（后端读的路径）是两处配置，平台里没有任何东西检查它们指的是同一本账。配错的表现是「代理在写、平台什么都没记」，这是一处只能靠人守的一致性。
+
+## 账号池快照 accounts.json {#pool-snapshot}
+
+- 池子（`ClaudeAccounts`）的状态原先只活在这台机器上。每次状态变化，它另写一份 `accounts.json`，放在**账本同一个目录**里（`USAGE_LOG.parent`）——那是后端唯一读得到的目录：`docker-compose.subscription.yml` 已经把它只读挂进后端，所以不需要新开一条后端到这台机器的通路。内容是 `written_at`、`retry_after` 和每张账号的 `{name, state, until, failures}`，**没有任何凭据内容**；账号名是管理员可见的标识。
+- 什么时候写：每次冷却状态变化（`_save`）、每个被计量的回合（`billing_addon._record_usage`）、以及 addon 起来时各一次——都搭现有的那两条路，没有新定时器。只挂在计费那一路会漏掉冷却开始的那一刻：把账号打成 429 的那次调用本身不产生用量行。
+- 写是原子的（同目录临时文件 + `os.replace`，0600），失败只记一条 warning：这一份是给人看的状态，写不下去不该影响转运。
+- 状态三个值：`available` 没有冷却记录、`cooling` 带解冻时刻 `until`（Unix 秒，**绝对**时刻）、`disabled` 是额度用尽且没有重置时刻、要人工重置。有哪几张账号由 `accounts()` 定：主凭据，加上 `accounts/*/credential` 每个子目录一张。
+- 后端读它的是 `backend/app/domain/platform_stats/claude_pool.py`，接在 `/admin/stats/usage` 的 `claude_accounts` 上，画法见[看板](/dev/boards#platform-stats)。读不到、读不懂时返回一个原因**代号**而不是报错（开发环境不跑订阅版代理是常态）；超过一小时没写入仍返回那些行，另标 `stale`——行上的时刻是绝对的，池子静止时文件本来就不该变。
 
 ## 非模型端点与网关路观测 {#control-answers}
 

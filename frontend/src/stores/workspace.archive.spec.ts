@@ -35,31 +35,39 @@ const overview = (status: string) => ({ id: 'root', project_id: 'p', kind: 'root
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.clearAllMocks()
+  vi.mocked(getProject).mockResolvedValue(project(true))
 })
 
 async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 0))
+  for (let i = 0; i < 10; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
 }
 
-it('an archived project opens to the archived state, and its name is read when that screen asks', async () => {
-  vi.mocked(listTopics).mockResolvedValue({ data: [overview('archived')], total: 1 })
-  vi.mocked(getProject).mockResolvedValue(project(true))
+async function opened(status: string) {
+  vi.mocked(listTopics).mockResolvedValue({ data: [overview(status)], total: 1 })
   const store = useWorkspaceStore()
-  await store.openProject('p')
+  store.openProject('p')
   await settle()
-  expect(store.accessDenied).toBe('archived')
-  expect(getProject).not.toHaveBeenCalled()
+  return store
+}
 
-  await store.loadOpenedProject()
+it('an archived project opens to the archived state, with its name', async () => {
+  // 归档了的项目不在「我的项目」清单里：名字只能从项目本身读。
+  vi.mocked(listProjects).mockResolvedValue({ data: [], total: 0 })
+  const store = await opened('archived')
+  expect(store.accessDenied).toBe('archived')
+  expect(store.projectName).toBe('毕业设计')
+})
+
+it('a project in use opens normally, named from the project list', async () => {
+  vi.mocked(listProjects).mockResolvedValue({ data: [project(false)], total: 1 })
+  const store = await opened('active')
+  expect(store.accessDenied).toBeNull()
   expect(store.projectName).toBe('毕业设计')
 })
 
 it('unarchiving it brings the project back as if opened afresh', async () => {
-  vi.mocked(listTopics).mockResolvedValue({ data: [overview('archived')], total: 1 })
+  const store = await opened('archived')
   vi.mocked(unarchiveProject).mockResolvedValue(project(false))
-  const store = useWorkspaceStore()
-  await store.openProject('p')
-  await settle()
   vi.mocked(listTopics).mockResolvedValue({ data: [overview('active')], total: 1 })
   vi.mocked(listProjects).mockResolvedValue({ data: [project(false)], total: 1 })
 
@@ -72,10 +80,7 @@ it('unarchiving it brings the project back as if opened afresh', async () => {
 })
 
 it('a write refused because the project was archived meanwhile switches to that state', async () => {
-  vi.mocked(listTopics).mockResolvedValue({ data: [overview('active')], total: 1 })
-  const store = useWorkspaceStore()
-  await store.openProject('p')
-  await settle()
+  const store = await opened('active')
   vi.mocked(createTopic).mockRejectedValue(new ApiError(409, '项目已归档，取消归档后才能修改', 'ProjectArchivedError'))
 
   await store.create('新房间')

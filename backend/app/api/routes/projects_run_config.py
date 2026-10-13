@@ -28,21 +28,17 @@ What stays behind, and why. `ProjectService`, `MemberService`, `ok`,
 stay, so each is imported here from the module that owns it
 (`app.domain.project.services`, `app.domain.membership.services`,
 `app.api.response`, `app.api.auth`, `app.core.config`, `app.core.errors`) rather
-than re-exported through projects.py. Two names do come from there: `DbSession`
-is projects.py's own alias for the session dependency, and `ProjectRepository`
-is a repository the handlers that stay also read -- and the one the guard in
-`tests/unit/test_domain_import_guard.py` freezes under projects.py -- so it is
-taken from there the way `topics_compute.py` takes its own pair from topics.py.
+than re-exported through projects.py. `DbSession` comes from there as its alias
+for the session dependency. Project reads and settings writes go through
+`ProjectService`, which owns persistence rather than exposing a repository
+through a sibling route.
 The imports the block alone used (`ProjectDefaultModelUpdate`, the
 `compute_configs` triple, the `market` triple, `HostPool`, `gate` and
 `model_choices`) left projects.py with it; ruff's F401 is what found the
 complete list.
 
-No frozen edge moves and no contract grows. The block reads no domain *model*
-module -- C2 freezes `app.api.routes.projects -> app.domain.*.models`, and no
-import of that shape is in it -- and no *repository* module directly: it reaches
-`ProjectRepository` through projects.py, so the pair the guard freezes stays
-exactly where it was. `.importlinter` is untouched.
+The block reads no domain model or repository module; project persistence stays
+behind the domain service. No new frozen edge is needed.
 
 Ordering. This module sorts after `projects_artifacts.py` (`projects_a` <
 `projects_r`) and before `push.py`, so its paths mount later in the route table
@@ -64,26 +60,25 @@ the same prefix and tags, is all it takes.
 import uuid
 
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.projects import DbSession, ProjectRepository
-from app.core.config import settings
+from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
-from app.domain.agent.compute_configs import (
-    ProjectComputeConfigs,
-    project_configs,
-    validate_choice,
+from app.domain.agent.environment import (
+    default_environment,
+    dump,
+    parse,
+    project_default,
 )
-from app.domain.agent.market import (
-    COMPUTE_CLOUD,
-    COMPUTE_TIERS,
-    cloud_vm_provisionable,
-    compute_selectable,
-)
-from app.domain.agent_instance.configuration import model_choices
-from app.domain.machine.services import HostPool
+from app.domain.agent_instance.configuration import model_choices, project_pool
+from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
+from app.domain.machine.environments import check_allowed, offered_specs
+from app.domain.machine.session_reports import device_sessions, project_distribution
 from app.domain.membership.services import MemberService
 from app.domain.policy import gate
 from app.domain.project.schemas import ProjectDefaultModelUpdate
@@ -98,7 +93,6 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 
 def _default_model_state(project_settings: dict | None, access: ModelAccess) -> dict:
-    from app.domain.agent_instance.configuration import model_choices, project_pool
 
     # Each model says whether the team's plan allows it and, when not, which
     # plan would; the picker shows that plan and does not offer the model.
@@ -130,7 +124,7 @@ async def get_default_model(
 ) -> dict:
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     access = await UsageService(db).model_access(project.team_id)
@@ -154,12 +148,13 @@ async def save_default_model(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
-    from app.domain.agent_instance.configuration import model_choices
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
 
     access = await UsageService(db).model_access(project.team_id)
-    valid = {c["id"]: c for c in model_choices(values)}
+    valid = {c["id"]: c for c in model_choices(project.settings)}
+    patch: dict[str, object] = {}
+    remove: list[str] = []
     for field, key in (
         ("model", "default_model"),
         ("subagent_model", "default_subagent_model"),
@@ -168,33 +163,35 @@ async def save_default_model(
             continue
         chosen = getattr(body, field)
         if chosen is None:
-            values.pop(key, None)
+            remove.append(key)
         elif chosen not in valid:
             raise ValidationError(say("modelUnavailableNamed", model=repr(chosen)))
         elif not access.allows(valid[chosen]["tier"]):
             raise ValidationError(say("modelNotInPlan", label=valid[chosen]["label"]))
         else:
-            values[key] = chosen
-    project.settings = values
-    await db.flush()
-    state = _default_model_state(project.settings, access)
+            patch[key] = chosen
+    settings = await service.merge_settings(project, patch, remove=remove)
+    state = _default_model_state(settings, access)
     state["can_manage"] = True
     return ok(state)
 
 
-# --- Compute pool (design §3): which machine runs this project's sandbox ---
+# --- Execution environment: what a new agent in this project gets ---
 
 
 @router.get("/{project_id}/compute-configs")
 async def get_compute_configs(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    """The environment a new agent in this project gets, where its agents
+    are now, the sandbox specs it is offered and the people's computers it
+    has."""
+    # deferred-import: tests replace this name on app.domain.agent.device_hub
     from app.domain.agent.device_hub import device_hub
-    from app.domain.device.wiring import sql_device_service
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     can_manage = True
@@ -202,28 +199,37 @@ async def get_compute_configs(
         await MemberService(db).require_manager(project_id, actor)
     except ForbiddenError:
         can_manage = False
-    devices = await sql_device_service(db).list_devices_for_project(project_id)
-    from app.domain.machine.session_reports import project_distribution
-
+    devices = [
+        device
+        for device in await sql_device_service(db).list_devices_for_project(project_id)
+        if device.supply is Supply.self_hosted
+    ]
+    specs = await offered_specs(db, project)
+    labels = {spec["spec"]: spec["label"] for spec in specs}
+    distribution = await project_distribution(db, project_id)
     return ok(
         {
-            **project_configs(project.settings).model_dump(),
+            "default": dump(project_default(project.settings) or default_environment()),
             "can_manage": can_manage,
-            # Where the project's agents are working now; the default only
-            # decides for agents that have not started.
-            "distribution": await project_distribution(db, project_id),
             "devices": [
                 {
                     "device_id": d.device_id,
                     "name": d.name,
                     "online": device_hub.is_online(d.device_id),
+                    "owned": actor.via == "token" and actor.user_id == d.owner_user_id,
                 }
                 for d in devices
             ],
-            "cloud_available": any(
-                p.id == COMPUTE_CLOUD for p in compute_selectable(settings)
-            ),
-            "cloud_vm_available": cloud_vm_provisionable(settings),
+            "specs": specs,
+            # Where the project's agents are now; the default only decides for
+            # agents that have not needed an environment yet.
+            "distribution": {
+                "sandboxes": [
+                    {**entry, "label": labels.get(entry["spec"], entry["spec"])}
+                    for entry in distribution["sandboxes"]
+                ],
+                "devices": distribution["devices"],
+            },
         }
     )
 
@@ -238,11 +244,10 @@ async def list_device_sessions(
     """The project's agent sessions on one self-hosted device, for a project
     manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
 
-    Each switch then goes through the room's own route, with its checks. A
+    Each switch then goes through the session's own route, with its checks. A
     session in a room the caller cannot open is counted in ``hidden`` and not
     listed, so its room's title stays in that room.
     """
-    from app.domain.machine.session_reports import device_sessions
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -260,27 +265,32 @@ async def list_device_sessions(
     return ok({"sessions": listed, "hidden": hidden})
 
 
-@router.put("/{project_id}/compute-configs")
+class ComputeConfigsIn(BaseModel):
+    default: dict
+
+
+@router.put("/{project_id}/compute-configs", dependencies=[ROUTE_DECIDES])
 async def save_compute_configs(
     project_id: uuid.UUID,
-    body: ProjectComputeConfigs,
+    body: ComputeConfigsIn,
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
+    """What a new agent in this project gets. A manager's choice; nobody
+    already working moves."""
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    service = ProjectService(db)
+    project = await service.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     await MemberService(db).require_manager(project_id, actor)
-    await validate_choice(db, project_id, body.default)
-    await HostPool(db).admit_choice(project_id, actor, body.default)
-    values = dict(project.settings or {})
-    values.pop("compute_profile", None)
-    values["compute_configs"] = body.model_dump()
-    project.settings = values
-    await db.flush()
-    return ok(body.model_dump())
+    environment = parse(body.default)
+    await check_allowed(db, project, environment, actor)
+    await service.merge_settings(
+        project, {"execution_environment": environment.model_dump()}
+    )
+    return ok({"default": dump(environment)})
 
 
 # --- 档位策略 (结论 3 后半 / 40 后半): 哪几档可以自己发生，超档怎么办 -----
@@ -307,7 +317,6 @@ async def get_tier_policy(
             gate.OVER_TIER_KEY: policy.over_tier,
             "tiers": sorted(
                 {choice["tier"] for choice in model_choices(project.settings)}
-                | set(COMPUTE_TIERS.values())
             ),
         }
     )
@@ -326,14 +335,16 @@ async def set_tier_policy(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
+    patch: dict[str, object] = {}
+    remove: list[str] = []
     if gate.ALLOWED_TIERS_KEY in body:
         tiers = body.get(gate.ALLOWED_TIERS_KEY)
         if tiers is None:
-            values.pop(gate.ALLOWED_TIERS_KEY, None)
+            remove.append(gate.ALLOWED_TIERS_KEY)
         elif isinstance(tiers, list) and all(isinstance(t, str) for t in tiers):
-            values[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
+            patch[gate.ALLOWED_TIERS_KEY] = sorted({t.strip() for t in tiers if t})
         else:
             raise ValidationError(say("allowedTiersInvalid"))
     if gate.OVER_TIER_KEY in body:
@@ -342,7 +353,6 @@ async def set_tier_policy(
             raise ValidationError(
                 say("overTierInvalid", values=str(sorted(gate.DISPOSITIONS)))
             )
-        values[gate.OVER_TIER_KEY] = disposition
-    project.settings = values
-    await db.flush()
+        patch[gate.OVER_TIER_KEY] = disposition
+    await service.merge_settings(project, patch, remove=remove)
     return await get_tier_policy(project_id, db, resolver)

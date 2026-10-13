@@ -38,5 +38,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Nothing to put back: the rows named backends this build cannot run.
+    """Nothing to put back: the rows named backends this build cannot run."""
     pass

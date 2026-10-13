@@ -23,11 +23,77 @@ HTTP 路由不属于任何领域，它每直接摸一次别人的 repository，�
 import uuid
 from collections.abc import Iterable
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.block.models import BlockKind
+from app.domain.block.indexed_rows import SHOWN_ROWS
+from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+
+
+async def message_reply_target(
+    session: AsyncSession, block_id: uuid.UUID
+) -> Block | None:
+    """Load the same-session reply target for conversation-edge validation."""
+    return await BlockRepository(session).get(block_id)
+
+
+async def client_delivery_bundle(
+    session: AsyncSession,
+    conversation_id: uuid.UUID,
+    *,
+    author: str,
+    client_id: str,
+) -> list[Block]:
+    """Read the ordered bundle already landed by a browser delivery."""
+    return await BlockRepository(session).client_delivery(
+        conversation_id, author=author, client_id=client_id
+    )
+
+
+async def turn_history(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> list[Block]:
+    """Read the canonical turn-history ordering in the caller's transaction."""
+    return await BlockRepository(session).turn_history(conversation_id)
+
+
+async def earlier_message_count(
+    session: AsyncSession, conversation_id: uuid.UUID, *, excluding: list[uuid.UUID]
+) -> int:
+    """Count the conversation's messages apart from the offered input batch."""
+    return await BlockRepository(session).count_messages(
+        conversation_id, excluding=excluding
+    )
+
+
+async def output_event_exists(
+    session: AsyncSession, conversation_id: uuid.UUID, eid: str
+) -> bool:
+    """Read whether this conversation already materialized an output event."""
+    return await BlockRepository(session).has_eid(conversation_id, eid)
+
+
+async def turn_action_exists(
+    session: AsyncSession, conversation_id: uuid.UUID, turn_id: uuid.UUID, resource: str
+) -> bool:
+    """Read the durable once-per-action predicate in the writer's transaction."""
+    return await BlockRepository(session).has_action(conversation_id, turn_id, resource)
+
+
+async def any_output_event_exists(
+    session: AsyncSession, conversation_id: uuid.UUID, eids: list[str]
+) -> bool:
+    """Recognize every id carried by a coalesced output in the same transaction."""
+    return await BlockRepository(session).has_any_eid(conversation_id, eids)
+
+
+async def last_turn_output(
+    session: AsyncSession, conversation_id: uuid.UUID, work_id: uuid.UUID
+) -> str | None:
+    """Read the turn's last said text, including progress, for closing dedupe."""
+    return await BlockRepository(session).last_said_in_turn(conversation_id, work_id)
 
 
 async def latest_preview(
@@ -37,6 +103,16 @@ async def latest_preview(
     boundary."""
     block = await BlockRepository(db).latest_artifact(conversation_id)
     return BlockOut.model_validate(block) if block is not None else None
+
+
+async def newest_shown_seq(db: AsyncSession, conversation_id: uuid.UUID) -> int | None:
+    """The number (`Block.seq`) of the last block stored in this conversation
+    that the room shows (`shown`); None for one that shows nothing yet."""
+    return await db.scalar(
+        select(func.max(Block.seq)).where(
+            Block.conversation_id == conversation_id, SHOWN_ROWS
+        )
+    )
 
 
 async def weeklies_for_project(

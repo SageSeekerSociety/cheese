@@ -15,15 +15,23 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
-from app.api.deps import get_broker
-from app.api.response import ok, page
+from app.api.deps import get_broker, get_chat_service
+from app.api.request_deps import DbSession
+from app.api.response import Page, ok, page, typed_response
 from app.core.config import settings
-from app.core.db import get_db
-from app.core.errors import ConflictError, NotFoundError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
+from app.domain.agent.chat import ChatService
+from app.domain.agent.file_edits import announce_editor_save
 from app.domain.block.shown import add_shown_block
 from app.domain.documents import catalogue, editor
 from app.domain.identity.actor import Actor
@@ -42,8 +50,6 @@ from app.domain.topic.services import TopicService
 logger = logging.getLogger("cheesex.room_files")
 
 router = APIRouter(tags=["room-files"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _in_room(
@@ -83,6 +89,39 @@ def _bytes_response(data: bytes, name: str, version: str) -> Response:
             "X-Cheese-Version": version,
         },
     )
+
+
+class RoomFileOut(BaseModel):
+    """文件区里的一份文件：路径、大小、最后一次改动的时间。"""
+
+    path: str
+    bytes: int
+    modified_at: str
+
+
+class RoomFileListOut(Page[RoomFileOut]):
+    """文件区的清单：``data`` 是文件，``truncated`` 说清单是不是全部。"""
+
+    truncated: bool
+
+
+@router.get("/topics/{topic_id}/files", **typed_response(RoomFileListOut))
+async def list_files(
+    topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """这个房间自己的文件：路径、大小、最后一次改动，最近改的在最前。
+
+    这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫
+    什么名字。定时任务交回的结果、芝士交付的文档、人贴进来的截图都落在同一个目录下，
+    这份清单就是那个目录本身，也是界面上看得见它的那一处。
+
+    `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
+    """
+    place, _ = await _in_room(db, resolver, topic_id)
+    items, total = await asyncio.to_thread(
+        library.list_room_files, place.project_id, place.room_id
+    )
+    return ok({**page(items, total), "truncated": total > len(items)})
 
 
 @router.get("/topics/{topic_id}/files/raw")
@@ -334,6 +373,7 @@ async def editor_saves_file(
     link: str,
     request: Request,
     db: DbSession,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
     authorization: Annotated[str | None, Header()] = None,
 ) -> JSONResponse:
     """The editor telling us a document changed: 2 when the last person closed
@@ -363,6 +403,7 @@ async def editor_saves_file(
         return JSONResponse({"error": 1})
     users = payload.get("users") or []
     author = str(users[0]) if users else target.handle
+    aside: str | None = None
     if await room_files.saved_by_session(
         db, target.room_id, target.path, target.key, data
     ):
@@ -380,6 +421,13 @@ async def editor_saves_file(
             base_version=target.version,
             editor_key=target.key,
         )
+    except UnprocessableEntityError as exc:
+        # Over the ceiling: a refusal, and the editor has to hear why. Left to
+        # itself it arrives as a 422 whose body is not `{"error": 0}` — "not
+        # saved" without a reason. Answer in the shape it reads instead.
+        logger.warning("office editor save refused: %s", exc)
+        await db.rollback()
+        return JSONResponse({"error": 1, "message": str(exc)}, status_code=403)
     except ConflictError:
         # Somebody else saved this file after the editor opened it. Writing
         # over it would drop their change without anyone seeing; dropping this
@@ -389,18 +437,24 @@ async def editor_saves_file(
         mark = f"（{author} 的修改）"
         aside = f"{stem}{mark}.{ext}" if dot else f"{target.path}{mark}"
         await db.rollback()
-        await room_files.save_room_file(
-            db,
-            project_id=target.project_id,
-            room_id=target.room_id,
-            path=aside,
-            data=data,
-            author=author,
-            author_kind="human",
-            source="editor",
-            note=f"保存时 {target.path} 已被别人改过，这一份另存在这里",
-            editor_key=target.key,
-        )
+        try:
+            await room_files.save_room_file(
+                db,
+                project_id=target.project_id,
+                room_id=target.room_id,
+                path=aside,
+                data=data,
+                author=author,
+                author_kind="human",
+                source="editor",
+                note=f"保存时 {target.path} 已被别人改过，这一份另存在这里",
+                editor_key=target.key,
+            )
+        except UnprocessableEntityError as exc:
+            # Same ceiling, same answer — the copy beside it is a file too.
+            logger.warning("office editor save refused: %s", exc)
+            await db.rollback()
+            return JSONResponse({"error": 1, "message": str(exc)}, status_code=403)
         place = await TopicService(db).place_or_404(target.room_id)
         shown = await add_shown_block(
             db,
@@ -417,5 +471,13 @@ async def editor_saves_file(
             str(place.room_id),
             {"type": "assistant_block", "block": shown.model_dump(mode="json")},
         )
+    # The AI teammate may hold the version it read; tell it before its next
+    # step, the same as a person's save of a task file.
+    said = await announce_editor_save(
+        db, room_id=target.room_id, who=author, path=target.path, aside=aside
+    )
     await db.commit()
+    if said is not None:
+        line, told = said
+        await chat.notify_running_turn(target.room_id, told, blocks=[line.id])
     return JSONResponse({"error": 0})

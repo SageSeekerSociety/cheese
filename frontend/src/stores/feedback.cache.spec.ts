@@ -51,7 +51,7 @@ function card(id: string, supports = 0): FeedbackCard {
 }
 
 function count(over: Partial<FeedbackCounts> = {}): FeedbackCounts {
-  return { all: 0, hot: 0, active: 0, resolved: 0, unread: 0, ...over }
+  return { all: 0, hot: 0, active: 0, resolved: 0, deployed: 0, unread: 0, ...over }
 }
 
 function page(items: FeedbackCard[], counts: Partial<FeedbackCounts> = {}) {

@@ -21,6 +21,7 @@ from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.models import ChannelDelivery
 from app.domain.notification.letter import letter_for
+from app.domain.notification.push import push_link
 from app.domain.room_task.presentation import NeedsYou
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -29,6 +30,7 @@ from tests.conftest import seed_user
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
+    open_task,
     post_message,
     post_project,
     room_agent_headers,
@@ -224,8 +226,33 @@ def test_the_person_who_started_the_turn_hears_the_question(
     assert row["contextMetadata"]["question"] == "预算按哪个口径统计"
     assert row["contextMetadata"]["topicId"] == room
     assert row["contextMetadata"]["topicTitle"] == "预算复核"
+    # 题问在支线里：通知记的也是那条支线，点开才落得到那条消息上（频道主线上没有它）。
+    assert row["contextMetadata"]["threadId"] == thread
     assert row["read"] is False
     assert _questions(client, alice) == []  # 未发起这一轮的人不接收
+
+
+def test_a_question_asked_in_a_task_points_back_at_that_task(client):
+    """芝士在任务里问的那道题：通知落回那个任务，不是它所在的频道。
+
+    实况：首页「动态」里点那条提问，落到了频道主线上 —— 而那条消息在任务自己的线上，
+    房间页按 `?block=` 找不到它，只显示一句「这条消息已不存在」。题在哪条会话里，
+    通知就落在哪条会话里（`taskId` 和那条消息的 `conversation_id` 是同一个落点）。
+    """
+    alice = seed_user(client, "alice")
+    pid, room = _room(client)
+    task = open_task(client, room)["id"]
+
+    _ask_an_old_question(client, task, asked="alice")
+
+    (row,) = _questions(client, alice)
+    assert row["contextMetadata"]["taskId"] == task
+    assert "threadId" not in row["contextMetadata"]
+    # 「在哪个房间」还是那个频道：里面说的是它，落点是它里面的那条会话。
+    assert row["contextMetadata"]["topicId"] == room
+    assert push_link(row["contextMetadata"]) == (
+        f"/projects/{pid}/topics/{room}/tasks/{task}"
+    )
 
 
 def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
@@ -233,9 +260,10 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
 ):
     """平台发起的轮次（resume、各类提醒）作者是 system。
 
-    这种轮次里的提问指不到具体的人，因此不通知任何人：把一条多数人不需要处理的
-    通知发给全部成员，代价是他们此后关闭这个渠道。题照样挂在房间里等回答 ——
-    等的只是没有名字。
+    频道和支线里没有「这条活的人」，所以这种轮次里的提问指不到具体的人，也就谁也不
+    通知：把一条多数人不需要处理的通知发给整个名册，代价是他们此后关闭这个渠道。
+    题照样挂在房间里等回答 —— 等的只是没有名字。问在一条活里的题不在这一条上：那
+    里等它的人有名字（下面那条）。
     """
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
@@ -251,6 +279,36 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
 
     assert _questions(client, alice) == []
     assert _questions(client, bob) == []
+
+
+def test_a_question_in_a_tasks_platform_turn_reaches_the_tasks_people(
+    client, stub_hooks, monkeypatch
+):
+    """平台开的轮次里问在一条活里的题，等它的是这条活的人。
+
+    实况：这条活是平台自己点「开始」开起来的，芝士在里面问了一道题，负责人和协作者
+    谁都没收到 —— 题上没记着某一个人，平台就当它谁都不等。可它问在一条活里：活是
+    他们两个人的，答它的也是他们，两个人各收一条。频道里与这条活无关的人不收。
+    """
+    alice = seed_user(client, "alice")
+    bob = seed_user(client, "bob")
+    carol = seed_user(client, "carol")
+    pid, room = _room(client)
+    join_project_team(client, pid, "bob")
+    # 频道里与这条活无关的人：他在名册里，但这条活不是他的。
+    join_project_team(client, pid, "carol")
+    task = open_task(client, room, owner="alice", contributors=["bob"])["id"]
+
+    with active_ask(
+        client, stub_hooks, monkeypatch, task, platform_turn=True
+    ) as headers:
+        _ask(client, task, headers)
+
+    for token in (alice, bob):
+        (row,) = _questions(client, token)
+        assert row["contextMetadata"]["taskId"] == task
+        assert row["read"] is False
+    assert _questions(client, carol) == []
 
 
 def test_a_question_with_no_turn_at_all_is_asked_and_reaches_nobody(client):

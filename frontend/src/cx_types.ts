@@ -1,5 +1,6 @@
 // Shared types matching the backend API contract (CheeseX Phase 0).
 
+import type { components } from './api/openapi'
 import type { AgentControlState } from './types/agentControl'
 import type { AskBlockMeta } from './types/ask'
 import type { DeviceScreen } from './types/deviceSessions'
@@ -12,20 +13,26 @@ export type { WaitingItem } from './types/waiting'
 import type { MemberActivity, MemberWait } from '@/lib/memberActivity'
 import type { Shell } from '@/lib/shell'
 
+type Schemas = components['schemas']
+
 export interface Project {
   id: string
   name: string
+  /** 项目在地址里的名字（`/projects/<slug>/…`）；后端 `ProjectOut` 一直下发，漏了它读出来是 `unknown`。 */
+  slug?: string
+  /** 这个项目用哪种 AI 模式；后端 `ProjectOut` 一直下发，前端目前只声明不读。 */
+  ai_mode?: string
   created_at: string
   // 建项目的人自己写的「打算做什么」（#946 片 C）。空串 = 建的时候没答，或跳过了。
   intent?: string
-  // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
+  // The project's root topic (= 本体 / 大本营).
   root_topic_id?: string
   /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
   owner_handle?: string | null
   /** 这个项目归哪个团队。顶栏那颗 ← 在没记到来路时拿它当兜底。 */
   team_id?: number | null
-  /** 所属团队的 handle，团队页的地址（`/teams/<handle>`）。 */
-  team_handle?: string | null
+  team_handle?: string | null // 所属团队的 handle，团队页的地址（`/teams/<handle>`）
+  team_name?: string | null // 所属团队的名字，侧栏项目名上面那一行写的就是它
   /**
    * 当前这个人能不能管理这个项目的外部成员（邀请、撤回、移出）：项目所有者，或者
    * 所属团队的所有者、管理员。后端按同一条规则再判一次，这里只决定给不给按钮。
@@ -89,7 +96,7 @@ export interface Topic {
   // 上已经有一条「已升级为话题」的活引用了，时间线不必再标一次「已派出」。
   upgraded_from_block_id?: string | null
   // 此刻谁在这个房间里忙：在输入框里打字的人、有一轮在跑的 AI 队友。房间自己没有
-  // 状态，有的是成员在做什么（backend `agent/activity.py`）。只有 list/get 话题时才带。
+  // 状态，有的是成员在做什么（backend `agent/realtime/activity.py`）。只有 list/get 话题时才带。
   activity?: MemberActivity[]
   // 我在不在这个频道里（「综合」总在）。侧栏只列加入了的，加入了才能在主线说话。
   joined?: boolean
@@ -167,12 +174,11 @@ export interface Block {
   author_type: AuthorType
   author: string
   content: string
-  // 双树 + 引用 (spec §5): conversation tree, document tree, citations, and the
-  // live link an upgraded block points to.
+  // Its place in the order the conversation's blocks were stored: a page that
+  // missed some asks for those after the largest it holds. Absent on a message
+  // this page is still sending.
+  seq?: number
   reply_to?: string | null
-  struct_parent?: string | null
-  node_type?: string | null
-  struct_order?: number | null
   anchor_quote?: string | null
   // Render-by-type: mimeType of an artifact block (set on kind=artifact).
   mime_type?: string | null
@@ -186,7 +192,6 @@ export interface Block {
   meta?: BlockMeta | null
   // Aggregated emoji reactions (Slack chips), kept fresh by `reaction` frames.
   reactions?: ReactionAgg[]
-  upgraded_to_topic_id?: string | null
   created_at: string
 }
 
@@ -238,8 +243,7 @@ export interface RoomTask {
   project_id: string
   room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
-  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了
-  // 会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
+  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
@@ -259,7 +263,7 @@ export interface RoomTask {
   pr_number?: number | null
   pr_url?: string | null
   delivered_head?: string | null
-  // 最近一次采纳。最后一步采纳后任务关闭；还开着的任务可能已经采纳过前几步。
+  // 最近一次采纳。最后一步采纳后，AI 队友写完总结任务就关闭；还开着的任务可能已经采纳过前几步。
   accepted_by?: string | null
   accepted_at?: string | null
   closed_at?: string | null
@@ -268,6 +272,7 @@ export interface RoomTask {
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
   awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
@@ -454,10 +459,10 @@ export interface TopicMemberRow {
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
   name_source?: 'default' | 'human'
-  // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
-  // null，画彩色首字母。别拿它去取 /avatars/default。
+  // 这个人**自己挑的**头像素材 id（同 ProjectMemberRow.avatar_id）：没挑过是 null，画彩色首字母，别拿它取 /avatars/default。
   avatar_id?: number | null
   agent?: boolean
+  instance_handle?: string // 队友自己的 handle（`cheese`），同 ProjectMemberRow；人没有这一项
 }
 
 // GET /api/projects/{id}/inbox?target_handle=
@@ -519,8 +524,8 @@ export type MemberTopic = Pick<Topic, 'id' | 'title' | 'status'>
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
   handle: string
-  /** 他在这个项目里的来路：所有者、团队成员、外部成员；查不到是 null。 */
-  source?: 'owner' | 'team' | 'external' | null
+  /** 他在这个项目里的来路：所有者、团队成员、外部成员、AI 队友（带 instance_handle）；查不到是 null。 */
+  source?: 'owner' | 'team' | 'external' | 'agent' | null
   topics_started: MemberTopic[]
   topics_active?: MemberTopic[]
   weekly_contributions?: number
@@ -530,8 +535,8 @@ export interface MemberSummary {
 
 // ---- 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2, §8.4) ----
 
-/** How the person is in a project: its owner, through its team, or invited alone. */
-export type ProfileProjectRole = 'owner' | 'team' | 'external'
+/** How the person is in a project: its owner, through its team, invited alone, or as its AI teammate. */
+export type ProfileProjectRole = 'owner' | 'team' | 'external' | 'agent'
 
 // One project the person is in, as the viewer may see it.
 export interface ProfileProject {
@@ -606,13 +611,6 @@ export interface ProfileTopic {
 }
 
 // ---- 执行面板 (Phase 4 tool drawers) ----
-
-// One git commit row (GET /projects/{id}/git/log).
-export interface GitCommit {
-  hash: string
-  author: string
-  message: string
-}
 
 // A file in the project workspace (GET /projects/{id}/files).
 export interface WorkspaceFile {
@@ -738,7 +736,7 @@ export interface AcceptCard {
   task_id?: string | null
   topic_id: string
   reviewer_handle: string
-  routing_reason: string
+  focus: string
   // 提交与 PR 规范: the commit subject + body this topic will be squash-merged
   // under. Null on a card filed without them (the platform then falls back to
   // the topic title).
@@ -816,7 +814,7 @@ export interface Notification {
 
 // A pool listing in the 市场 catalog / a project's settings selector.
 export interface PoolListing {
-  kind: 'ai' | 'compute' | 'visibility'
+  kind: 'ai' | 'compute'
   id: string
   label: string
   tier: string
@@ -838,8 +836,8 @@ export interface MarketPools {
 export interface MarketNode {
   id: string
   label: string
-  // Which compute pool this node IS — the same id the 市场 catalogue lists.
-  kind: 'device' | 'cloud'
+  // Which sandbox spec this node IS — the same id the 市场 catalogue lists.
+  kind: 'standard' | 'vm' | 'devices_of'
   online: boolean
   // Whether an unconfigured topic lands on this node.
   current: boolean
@@ -1080,181 +1078,37 @@ export interface ProjectAgent {
 //   * 原型那个 `source: 'user' | 'agent'` 不存在 —— 它是 `author_is_agent`。
 //     一个由人来发、但由 agent 发现的反馈（提案卡）不是「agent 提交的」，
 //     它有两个字段（`author_handle` + `submitted_by_handle`）才说得清。
-export type FeedbackKind = 'bug' | 'suggestion' | 'other'
+//
+// 下面这些是后端 OpenAPI 生成类型（`src/api/openapi.d.ts`）的别名：字段、可空和
+// 必有与否都以 `backend/app/domain/feedback/schemas.py` 为准，改字段改那边，再跑
+// 两次导出（见 `frontend/scripts/gen-api-types.mjs`）。读字段时要记住的两件事：
+//   * `author_avatar_id` 为 null 的意思是「画彩色首字母」，不要退回
+//     `/avatars/default`，那会让没挑过头像的人共用一张脸。
+//   * 评论的 `reply_count` 是服务端数的整栋楼回复数，不是这一页带回来几条；
+//     「展开更多」靠它和手上条数比较。
+export type FeedbackKind = Schemas['FeedbackKind']
 /** 四级：收录 → 处理 → 解决 → 部署。权威顺序在服务端 `STATUS_LADDER`。 */
-export type FeedbackStatus = 'received' | 'in_progress' | 'resolved' | 'deployed' | 'declined'
-export type FeedbackVisibility = 'public' | 'private'
-export type FeedbackPriority = 'low' | 'normal' | 'high' | 'urgent'
-
-/** 列表里的一行。计数由后端一并算好（见 `schemas.FeedbackCard`）。 */
-export interface FeedbackCard {
-  id: string
-  /** 「FB-1042」。人念的和粘贴的是这个，`id` 是 uuid，只用来发请求。 */
-  display_id: string
-  kind: FeedbackKind
-  title: string
-  summary: string
-  status: FeedbackStatus
-  priority: FeedbackPriority
-  visibility: FeedbackVisibility
-  /** 安全问题：管理员标的标记，比 private 更窄（见 services.may_see）。 */
-  security: boolean
-  author_handle: string
-  author_is_agent: boolean
-  /** 作者**自己挑过**的头像素材 id，前端用 `getAvatarUrl` 拼成 `/avatars/{id}`。
-   *  没挑过是 null —— 后端已经判掉了全局默认头像那一种（`chosen_avatar_ids`），
-   *  所以 null 的含义就是「画彩色首字母」，**不要**退回 `/avatars/default`：
-   *  那会让所有没挑过头像的人共用同一张脸。 */
-  author_avatar_id: number | null
-  /** 提案被发出去时，按发送的人。人直接提的那条是 null。 */
-  submitted_by_handle: string | null
-  assignee_handle: string | null
-  tags: string[]
-  supports: number
-  comments: number
-  supported: boolean
-  last_activity_at: string | null
-  created_at: string
-}
-
-export interface FeedbackTimelineEntry {
-  status: FeedbackStatus
-  by_handle: string | null // 谁推的；部署管线推的那一步没有人，是 null
-  at: string
-  note?: string | null // 部署管线那一步写「由 PR #N 修复并上线」和链接；人推的没有
-}
-
-/** 一条评论。`parent_id` 只指向**顶层**评论 —— 回复的回复由服务端折上来，所以
- *  层级恒为两层，前端不需要自己判断「这算第几层」。 */
-export interface FeedbackComment {
-  id: string
-  parent_id: string | null
-  author_handle: string
-  author_is_agent: boolean
-  /** 同 `FeedbackCard.author_avatar_id`。 */
-  author_avatar_id: number | null
-  body: string
-  /** 这条在回答谁。**只在被回复的那条本身也是回复时才有值**，因为折到顶层这个动作
-   *  把指向弄丢了 —— 楼中楼里唯一猜不出来的信息。值为 null 有两种情形（顶层评论、
-   *  回楼主的回复），两者渲染方式相同，所以客户端不需要区分它们。
-   *  恒为 handle 而不是 id：要回答的问题只有一个「在回谁」，答案是个名字。 */
-  reply_to_handle: string | null
-  /** 点赞总数。 */
-  likes: number
-  /** **按读者**算：当前登录的人点过没有。 */
-  liked: boolean
-  /** **按读者**算：服务端说这条删得掉吗。按钮画不画由它决定，不由前端猜 ——
-   *  猜的结果是「按钮画得出来、点下去 403」。 */
-  can_delete: boolean
-  /** **服务端数得出来的**这一条（顶层评论才有意义）下面一共几条回复 —— 不是这一页
-   *  带回来几条。评论是分页取的，所以这两件事不一样，而「展开更多」该摊开手上已经
-   *  有的、还是去取下一页，全靠这个数和手上条数的比较。回复恒为 0。
-   *  少了它，客户端只能把「已经取回来的」当成全部：一栋 60 条回复的楼，界面上永远
-   *  只有前 50 条，而「展开更多」会当场消失。 */
-  reply_count: number
-  /** 这一栋楼**楼内**的下一页游标，null = 楼里的回复已经取完了。回复自己恒为 null。
-   *  不透明的字符串，和 `thread_next_cursor` 同一套：原样送回
-   *  `GET /feedback/{id}/comments?parent_id=…&after=…`，不解析、不自己拼。 */
-  replies_next_cursor: string | null
-  created_at: string
-}
-
-/** 管理员之间的内部备注。**只增不改**，所以是行不是列。 */
-export interface FeedbackNote {
-  id: string
-  author_handle: string
-  /** 同 `FeedbackCard.author_avatar_id`。 */
-  author_avatar_id: number | null
-  body: string
-  created_at: string
-}
-
-export interface FeedbackDetail extends FeedbackCard {
-  problem: string
-  why: string | null
-  expectation: string | null
-  what_happened: string | null
-  repro: string | null
-  evidence: string | null
-  logs: string | null
-  session_id: string | null
-  environment: string | null
-  /** 这条反馈是从哪个话题来的。没有话题（harness 在沙箱里撞的墙）时为 null。 */
-  topic_id: string | null
-  project_id: string | null
-  timeline: FeedbackTimelineEntry[]
-  /** 顶层评论的**第一页**，每栋楼跟着它的前若干条回复走（见 `FeedbackComment`）。 */
-  thread: FeedbackComment[]
-  /** 顶层评论的下一页游标，null = 底层这一层已经取完了。和列表接口的 `page_start`
-   *  不同：这是**值承载**的不透明游标，锚点那一行在这中间被删掉也照样能接着往下走。 */
-  thread_next_cursor: string | null
-  /** 只有管理员拿得到内容；不是管理员时是空数组（同一个形状）。 */
-  notes: FeedbackNote[]
-  /** 调用者能不能删掉**整条反馈**。**服务端算**（作者 —— 写它的那个 handle 或按下
-   *  发送的那个 —— 或平台管理员），和 `DELETE /feedback/{id}` 共用一处判据；客户端
-   *  照它画按钮，不自己拼一遍，否则就是「按钮画得出来、点下去 403」。 */
-  can_delete: boolean
-}
-
-export interface FeedbackCounts {
-  all: number
-  hot: number
-  active: number
-  resolved: number
-  /** 「我的反馈」里未读的条数。 */
-  unread: number
-  /** 管理端才有：还没指派给任何人的条数。 */
-  unassigned?: number
-  /** 管理端才有：已经上线的累计条数。它和 `resolved` 是两条不同的数 —— 解决了不等于
-   *  上线了，看板把这两件事分开显示。 */
-  deployed?: number
-}
-
+export type FeedbackStatus = Schemas['FeedbackStatus']
+export type FeedbackVisibility = Schemas['FeedbackVisibility']
+export type FeedbackPriority = Schemas['FeedbackPriority']
+/** 列表里的一行。 */
+export type FeedbackCard = Schemas['FeedbackCard']
+export type FeedbackTimelineEntry = Schemas['TimelineOut']
+/** 一条评论。`parent_id` 只指向顶层评论，层级恒为两层。 */
+export type FeedbackComment = Schemas['CommentOut']
+/** 管理员之间的内部备注，只增不改。 */
+export type FeedbackNote = Schemas['NoteOut']
+export type FeedbackDetail = Schemas['FeedbackDetail']
+/** 标签页上的数。`unassigned` 只在管理端列表里有（`FeedbackAdminCounts`）。 */
+export type FeedbackCounts = Schemas['FeedbackCounts'] & Partial<Pick<Schemas['FeedbackAdminCounts'], 'unassigned'>>
 export interface FeedbackListPayload extends ListPayload<FeedbackCard> {
   counts: FeedbackCounts
 }
-
-/** `GET /feedback/meta` —— 词表。
- *
- *  **颜色不在这里**（那是前端的视觉决定，见 lib/feedbackMeta.ts），这里回答的是
- *  「有哪些取值、按什么顺序流动」。加一个状态是后端改一处的事，前端靠这一份跟上，
- *  不需要发版。`is_admin` 同理：它由服务端算，前端不猜。 */
-export interface FeedbackMeta {
-  kinds: FeedbackKind[]
-  statuses: FeedbackStatus[]
-  priorities: FeedbackPriority[]
-  visibilities: FeedbackVisibility[]
-  /** 状态梯子：时间线把还没到的步骤也画出来，靠的就是它。 */
-  status_ladder: FeedbackStatus[]
-  tabs: string[]
-  admin_tabs: string[]
-  /** 「热门」的规则是**三个数**，不是一个：「热门」按**热度分**排，而热度是衰减的
-   *  （一条三个月前攒够票的反馈不该一直占着这一栏）。三个数各管一件事 —— 门槛多少
-   *  分、一个支持几天打对折、不够线时至少补几条。
-   *  前端**不拿它们算排序**：筛选和排序都在服务端，客户端拿到的已经是排好的行，
-   *  再算一遍屏幕上就有两套热度。它们留在这里是为了把这一栏的规则**说给人听**
-   *  ——「两周前的一票算今天半票 · 至少 5 条」，一个数字说不出这句话。 */
-  hot_score: number
-  hot_half_life_days: number
-  hot_min_items: number
-  is_admin: boolean // 反馈管理员（队列、私密反馈）
-  is_platform_admin: boolean // 平台管理员（管理台其余各块）；两份名单互不包含
-}
-
-export interface FeedbackSupportResult {
-  /** **写完之后**的计数，不是增量。 */
-  count: number
-  supported: boolean
-}
-
-/** 评论点赞的返回，`FeedbackSupportResult` 往下一层。字段叫 `liked` 不叫
- *  `supported`：两件事在界面上是两种表态，共用一个词的话下一个读代码的人会以为
- *  它们是同一条记录。 */
-export interface FeedbackCommentLikeResult {
-  /** **写完之后**的计数，不是增量。 */
-  count: number
-  liked: boolean
-}
+/** `GET /feedback/meta` —— 词表。颜色不在这里（那是前端的视觉决定，见 lib/feedbackMeta.ts）。 */
+export type FeedbackMeta = Schemas['FeedbackMeta']
+/** 写完之后的计数，不是增量。 */
+export type FeedbackSupportResult = Schemas['SupportOut']
+export type FeedbackCommentLikeResult = Schemas['CommentLikeOut']
 
 /** `POST /feedback` 的请求体。作者不在里面 —— 它是验证过的调用者。 */
 export interface FeedbackCreateBody {

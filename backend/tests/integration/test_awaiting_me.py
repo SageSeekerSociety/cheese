@@ -18,6 +18,7 @@ from tests.delivery import delivery_headers, delivery_task, delivery_task_id
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
+    open_task,
     post_project,
     session_auth_headers,
 )
@@ -45,7 +46,7 @@ def _file_card(client, room: str, reviewer: str) -> None:
         json={
             "change_subject": "chore(test): file a card",
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     assert r.status_code == 200, r.text
@@ -185,6 +186,10 @@ def test_a_leftover_turn_does_not_decide_who_the_question_waits_on(
 def test_a_question_in_a_platform_turn_is_on_nobody_s_list(
     client, stub_hooks, monkeypatch
 ):
+    """频道里没有「这条活的人」：题问在频道自己那条线上，就谁也不等。
+
+    问在一条活里的那条在下面 —— 那里有名字可点：这条活的人。
+    """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
 
@@ -195,6 +200,60 @@ def test_a_question_in_a_platform_turn_is_on_nobody_s_list(
 
     assert _mine(client, "alice") == []
     assert _mine(client, "bob") == []
+
+
+def test_a_question_in_a_task_is_on_the_list_of_the_tasks_people(
+    client, stub_hooks, monkeypatch
+):
+    """平台开的轮次里，一道问在活里的题进的是这条活的人的清单。
+
+    实况：这条活是平台自己点「开始」开起来的，芝士在里面问了一道题，谁都没收到它
+    —— 题上没记着某一个人（不是哪个人开的那一轮），就没有谁的名字可点。可这道题问
+    在一条活里，而活是负责人和协作者的：等回答的是他们两个人，答它的也是他们。
+    """
+    project = _project(client, "alice")
+    room = _room(client, project, "alice")
+    join_project_team(client, project, "bob")
+    # 频道里与这条活无关的人：他在名册里，但这条活不是他的。
+    join_project_team(client, project, "carol")
+    task = open_task(client, room, owner="alice", contributors=["bob"])["id"]
+
+    with active_ask(
+        client, stub_hooks, monkeypatch, task, platform_turn=True
+    ) as headers:
+        _ask(client, task, headers)
+
+    for handle in ("alice", "bob"):
+        (item,) = _mine(client, handle)
+        assert item["taskId"] == task
+        assert item["phrase"] == NeedsYou.awaiting_answer
+        assert item["reason"] == "asked"
+    assert _mine(client, "carol") == []
+
+
+def test_a_question_leaves_the_list_when_its_task_closes(
+    client, stub_hooks, monkeypatch
+):
+    """一道题挂在任务上，只在任务还开着时等人回答：任务关了，题跟着结束，清单上
+    不再有它（任务里的选项也不再能点，见前端 `AskQuickReplies`）。"""
+    project = _project(client, "alice")
+    room = _room(client, project, "alice")
+    task = open_task(client, room, owner="alice")["id"]
+    with active_ask(
+        client, stub_hooks, monkeypatch, task, platform_turn=True
+    ) as headers:
+        _ask(client, task, headers)
+    (item,) = _mine(client, "alice")
+    assert item["reason"] == "asked"
+
+    r = client.post(
+        f"/topics/{task}/close",
+        json={"conclusion": "做完了"},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    assert _mine(client, "alice") == []
 
 
 def test_an_idle_room_is_not_something_to_process(client):

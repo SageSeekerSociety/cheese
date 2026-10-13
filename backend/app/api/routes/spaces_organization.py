@@ -22,14 +22,13 @@ in `spaces.py` and are imported here, the shape `users_password.py` and
 `topics_side_routes.py` already use. `spaces.py` imports nothing from this
 module, so there is no cycle.
 
-`SpaceAdminRole` is read here but declared in `app.domain.space.models`, in
-`app.domain.*.models` -- the modules C2 (`routes-touch-no-models` in
-`.importlinter`) forbids a route module from importing directly. It is imported
-**from `spaces.py`**, which already carries that frozen import, rather than from
-the model module: the same shape `topics_side_routes.py` uses for
-`BlockRepository`, and it adds no line to the C2 baseline. The six request
-bodies the moved routes name are defined in `spaces.py`'s shared Request Models
-block and are imported from there, like the helpers.
+A client-supplied role name (`OWNER` / `ADMIN`) is turned into the value
+`add_admin` / `update_admin_role` expect by `SpaceService.admin_role_from_name`
+rather than by reading `SpaceAdminRole` here: that enum lives in
+`app.domain.space.models`, which C2 (`routes-touch-no-models` in
+`.importlinter`) forbids a route module from importing. The six request bodies
+the moved routes name are defined in `spaces.py`'s shared Request Models block
+and are imported from there, like the helpers.
 """
 
 from typing import Annotated
@@ -43,7 +42,6 @@ from app.api.routes.spaces import (
     PatchSpaceCategoryRequest,
     PatchSpaceDomainGroupRequest,
     PatchSpaceManagerRequest,
-    SpaceAdminRole,
     _admin_to_api_model,
     _build_full_space_payload,
     _category_to_api_model,
@@ -396,8 +394,7 @@ async def add_space_admin(
     db=Depends(get_db),
 ) -> dict:
     role_value = payload.role.upper()
-    role_mapping = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
-    role = role_mapping.get(role_value)
+    role = SpaceService.admin_role_from_name(role_value)
     if role is None:
         raise BadRequestError(f"Invalid role: {role_value}")
     await service.add_admin(
@@ -444,8 +441,7 @@ async def patch_space_manager(
     service: SpaceService = Depends(get_space_service),
     db=Depends(get_db),
 ) -> dict:
-    role_map = {"OWNER": SpaceAdminRole.OWNER, "ADMIN": SpaceAdminRole.ADMIN}
-    new_role = role_map.get(payload.role.upper())
+    new_role = SpaceService.admin_role_from_name(payload.role)
     if new_role is None:
         raise BadRequestError(f"Invalid role: {payload.role}. Must be OWNER or ADMIN")
     await service.update_admin_role(

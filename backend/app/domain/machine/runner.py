@@ -20,6 +20,10 @@ destroyed sandbox is seen within one sweep only if nothing slow is in the way.
 import logging
 
 from app.core.db import SessionFactory
+from app.domain.machine import cloud_vm, metering, retained_archives
+from app.domain.machine.lifecycle import SandboxLifecycle
+from app.domain.machine.microcloud import MicroCloudClient
+from app.domain.usage.compute import ComputeMeter
 
 logger = logging.getLogger("cheese.machine.runner")
 
@@ -31,6 +35,7 @@ class CloudPoolSweeper:
     async def sweep(self) -> dict[str, int]:
         # Imported here: the machine domain pulls in the device service, and
         # importing it at module scope would drag that into app startup.
+        # deferred-import: keeps the machine domain out of app startup
         from app.domain.machine.services import HostPool
 
         async with self._sessions() as session:
@@ -56,9 +61,6 @@ class SandboxSweeper:
         self._sessions = session_factory
 
     async def sweep(self) -> dict[str, int]:
-        from app.domain.machine import cloud_vm, retained_archives
-        from app.domain.machine.lifecycle import SandboxLifecycle
-        from app.domain.machine.microcloud import MicroCloudClient
 
         if not MicroCloudClient().configured:
             return {"destroyed": 0, "vms_released": 0}
@@ -76,8 +78,6 @@ class ComputeMeterSweeper:
         self._sessions = session_factory
 
     async def sweep(self) -> dict[str, int]:
-        from app.domain.machine import metering
-        from app.domain.usage.compute import ComputeMeter
 
         async with self._sessions() as session:
             seen = await metering.observe(session)

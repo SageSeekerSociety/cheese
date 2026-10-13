@@ -9,10 +9,9 @@ import type { PickedAttachment } from '@/composables/useAttachmentUploads'
 import { ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { formatFileSize } from '@/utils/materials'
-
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
+import { fmtFileSize } from '@/lib/usageFormat'
 
 defineProps<{
   files: PickedAttachment[]
@@ -42,14 +41,14 @@ function onPicked(event: Event) {
 <template>
   <BaseField
     :label="t('tasks.attachmentPicker.title')"
-    :hint="maxFileBytes ? t('tasks.attachmentPicker.limit', { size: formatFileSize(maxFileBytes) }) : undefined"
+    :hint="maxFileBytes ? t('tasks.attachmentPicker.limit', { size: fmtFileSize(maxFileBytes) }) : undefined"
   >
     <div class="tap">
       <ul v-if="files.length" class="tap__list">
         <li v-for="file in files" :key="file.id" class="tap__row" data-testid="attached-file">
           <v-icon size="16" class="tap__icon">mdi-file-outline</v-icon>
           <span class="tap__name">{{ file.name }}</span>
-          <span class="tap__size t-num">{{ formatFileSize(file.size) }}</span>
+          <span class="tap__size t-num">{{ fmtFileSize(file.size) }}</span>
           <BaseButton
             icon="mdi-close"
             size="sm"

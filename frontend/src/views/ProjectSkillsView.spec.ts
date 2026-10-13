@@ -352,6 +352,8 @@ describe('技能', () => {
       return inputs
     })
     await fireEvent.update(fields[0], '批改作业')
+    // 中文名称给的调用名是它的拼音，不是一个认不出的 skill-1。
+    await waitFor(() => expect(fields[1].value).toBe('pi-gai-zuo-ye'))
     await fireEvent.update(fields[2], '老师让批改一批作业时')
     await fireEvent.click(buttonIn(document.body, '保存')!)
 
@@ -359,7 +361,7 @@ describe('技能', () => {
     const [projectId, sent] = vi.mocked(addProjectSkill).mock.calls[0]
     expect(projectId).toBe('p1')
     expect(sent.title).toBe('批改作业')
-    expect(sent.name).toMatch(/^[a-z0-9][a-z0-9-]{1,47}$/)
+    expect(sent.name).toBe('pi-gai-zuo-ye')
     expect(sent.imported).toBeUndefined()
   })
 })

@@ -97,7 +97,6 @@ vi.mock('../../api', async () => {
     writeFile: vi.fn().mockResolvedValue({ path: 'a.py', version: 'v2' }),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false, tasks: {} }),
-    getGitLog: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     getForgeConnection: vi.fn().mockResolvedValue({ kind: 'forgejo', connected: true, repo: 'o/r', url: null }),
     getTopicUsage: vi.fn().mockResolvedValue(null),
     getProjectUsage: vi.fn().mockResolvedValue(null),
@@ -338,6 +337,18 @@ describe('工作面板 · Tab 容器', () => {
 
     // 总览上挂着这个频道有几件任务；这里只看有哪几格。
     expect(tabLabels(container).map((label) => label.replace(/\s*\d+$/, ''))).toEqual(['概览', '支线', '定时与触发'])
+  })
+
+  it('频道不去问预览和改动：那两格它没有，一轮干完也不问', async () => {
+    const { rerender } = mountChannel()
+    await flush()
+    await rerender({ topic: topic('topic-A'), activityTick: 0, working: true })
+    await rerender({ topic: topic('topic-A'), activityTick: 1, working: false })
+    await flush()
+    await new Promise((r) => setTimeout(r, 300))
+
+    expect(getPreview).not.toHaveBeenCalled()
+    expect(getTopicWorkSummary).not.toHaveBeenCalled()
   })
 
   it('谁也没在里面干过活的任务：这几格都在，改动、现场、预览是浅的', async () => {

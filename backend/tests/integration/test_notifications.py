@@ -179,6 +179,85 @@ def test_list_unread_only(client):
     assert _titles(client, pid, "alice", unread_only="true") == ["B"]
 
 
+def _page(client, project_id: str, handle: str | None = None, **params) -> dict:
+    """一次读的整份 payload：`data` / `total` / `has_more` / `next_start`。"""
+    headers = session_auth_headers(handle) if handle else {}
+    r = client.get(f"/projects/{project_id}/alerts", headers=headers, params=params)
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def test_the_alert_list_is_paged_and_walks_to_the_end(client):
+    """一页有上限；顺着 `next_start` 一路走到底，一行不漏、一行不重。
+
+    这条读以前没有上界 —— 整个历史的信一次全给回来，一个项目跑久了响应只增不
+    减。这里 25 条、一页 10 条，正好要翻三次。
+    """
+    pid = _create_project(client)
+    for i in range(25):
+        _one(
+            client,
+            pid,
+            level="light",
+            kind="change_alert",
+            title=f"第 {i} 条",
+            target_handle="alice",
+        )
+
+    first = _page(client, pid, "alice", page_size=10)
+    # 一页只给 10 条，而 `total` 说的是真话：分页之前它写的是这一页的条数
+    # （`page(items, len(items))`），那两个数在那时候永远相等。
+    assert len(first["data"]) == 10
+    assert first["total"] == 25
+    assert first["has_more"] is True
+
+    seen: list[int] = []
+    page = first
+    while True:
+        seen.extend(n["id"] for n in page["data"])
+        if not page["has_more"]:
+            break
+        assert page["next_start"] is not None
+        # 游标原样喂回去 —— 它就是下一页的头一条，含它自己。
+        page = _page(client, pid, "alice", page_size=10, page_start=page["next_start"])
+
+    assert len(seen) == 25, seen  # 一条不漏
+    assert len(set(seen)) == 25, seen  # 一条不重
+    # 首页到最后：新的在前，整份读下来仍然有序。
+    assert seen == sorted(seen, reverse=True)
+    assert len(page["data"]) == 5
+    assert page["next_start"] is None
+
+
+def test_the_page_size_has_a_ceiling(client):
+    """`page_size` 有上界，报不出来就 400（合并后的 app 把校验错映射成 400）。"""
+    pid = _create_project(client)
+    r = client.get(
+        f"/projects/{pid}/alerts",
+        headers=session_auth_headers("alice"),
+        params={"page_size": 1000},
+    )
+    assert r.status_code == 400
+
+
+def test_an_unknown_cursor_starts_from_the_top(client):
+    """库里没有的游标从头开始，不报错 —— 过期的游标最多让人重看一遍第一页。"""
+    pid = _create_project(client)
+    for i in range(3):
+        _one(
+            client,
+            pid,
+            level="light",
+            kind="change_alert",
+            title=f"第 {i} 条",
+            target_handle="alice",
+        )
+
+    page = _page(client, pid, "alice", page_size=2, page_start=MISSING_ID)
+    assert [n["title"] for n in page["data"]] == ["第 2 条", "第 1 条"]
+    assert page["total"] == 3
+
+
 def test_inbox_carries_decisions_accepts_and_change_alerts(client):
     pid = _create_project(client)
     _roster(client, pid, "alice", "bob")

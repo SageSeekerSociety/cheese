@@ -39,6 +39,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness import harness_for
 from app.domain.agent_session.services import AgentSessionService
@@ -114,6 +115,7 @@ def _run_turn(client, tmp_path, topic_id: str, mode: str) -> None:
     """Drive one turn to completion (or to its failure) on the client DB."""
     screen = _Screen(mode=mode)
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -191,6 +193,8 @@ _CHILD = textwrap.dedent(
     from sqlalchemy.pool import NullPool
     from app.domain.agent.chat import ChatService
     from app.domain.agent.compute import ComputePool
+    from app.domain.agent.realtime.broker import InProcessBroker
+    from app.domain.agent.runtime import AgentWorkRunner
     from tests.conftest import StubChannel
 
     DSN, TOPIC, MARKER, WS, SID = sys.argv[1:6]
@@ -206,10 +210,11 @@ _CHILD = textwrap.dedent(
         factory = async_sessionmaker(engine, expire_on_commit=False)
         screen = A()
         chat = ChatService(
+            work_runner=AgentWorkRunner(InProcessBroker()),
             session_factory=factory,
             base_system_prompt="你是芝士。",
             workspace_root=WS,
-            compute=ComputePool([screen.runtime], screen.name),
+            compute=ComputePool([screen.runtime]),
         )
         async for _ in chat.converse(
             topic_id=uuid.UUID(TOPIC), author="u", content="做事", summon=True
@@ -257,44 +262,59 @@ def test_session_pointer_survives_a_real_sigkill(client, tmp_path):
     )
     env = {**os.environ, "PYTHONPATH": backend_root}
 
-    child = subprocess.Popen(
-        [
-            sys.executable,
-            str(script),
-            TEST_DATABASE_URL,
-            topic_id,
-            str(marker),
-            str(tmp_path / "ws"),
-            SESSION_ID,
-        ],
-        cwd=backend_root,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    try:
-        deadline = time.time() + 90
-        while time.time() < deadline:
-            if marker.exists():
-                break
-            if child.poll() is not None:
-                out, err = child.communicate()
-                pytest.fail(
-                    "child died before announcing its session:\n"
-                    f"{out.decode()[-2000:]}\n{err.decode()[-2000:]}"
-                )
-            time.sleep(0.05)
-        else:
-            pytest.fail("child never reached the session announcement")
+    # A quiet parent must not leave the child's logging blocked on a full PIPE
+    # while waiting for its ready marker. Keep both streams available on failure.
+    with (
+        (tmp_path / "child.stdout").open("w+b") as stdout,
+        (tmp_path / "child.stderr").open("w+b") as stderr,
+    ):
 
-        # No grace period, no signal handler, no chance to flush anything.
-        os.kill(child.pid, signal.SIGKILL)
-        child.wait(timeout=30)
-        assert child.returncode != 0
-    finally:
-        if child.poll() is None:  # never leak the child on a failed assert
+        def output_tail():
+            tails = []
+            for stream in (stdout, stderr):
+                stream.seek(0, os.SEEK_END)
+                stream.seek(max(0, stream.tell() - 8000))
+                tails.append(stream.read().decode(errors="replace")[-2000:])
+            return "\n".join(tails)
+
+        child = subprocess.Popen(
+            [
+                sys.executable,
+                str(script),
+                TEST_DATABASE_URL,
+                topic_id,
+                str(marker),
+                str(tmp_path / "ws"),
+                SESSION_ID,
+            ],
+            cwd=backend_root,
+            env=env,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        try:
+            deadline = time.time() + 90
+            while time.time() < deadline:
+                if marker.exists():
+                    break
+                if child.poll() is not None:
+                    pytest.fail(
+                        "child died before announcing its session:\n" + output_tail()
+                    )
+                time.sleep(0.05)
+            else:
+                pytest.fail(
+                    "child never reached the session announcement:\n" + output_tail()
+                )
+
+            # No grace period, no signal handler, no chance to flush anything.
             os.kill(child.pid, signal.SIGKILL)
             child.wait(timeout=30)
+            assert child.returncode != 0
+        finally:
+            if child.poll() is None:  # never leak the child on a failed assert
+                os.kill(child.pid, signal.SIGKILL)
+                child.wait(timeout=30)
 
     stored = client.portal.call(
         _stored_session_id, client.test_request_factory, topic_id
@@ -322,6 +342,7 @@ def test_no_session_announced_leaves_the_pointer_null(client, tmp_path):
     transcript that was never written."""
     topic_id = _seed_topic(client)
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(_SilentScreen()),
         base_system_prompt="你是芝士。",

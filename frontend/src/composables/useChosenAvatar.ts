@@ -1,6 +1,6 @@
 import { readonly, ref } from 'vue'
 
-import { AvatarsApi } from '@/network/api/avatars'
+import { getDefaultAvatarId } from '@/api/avatars'
 
 /**
  * "Did this person actually pick an avatar?" — and the URL if they did.
@@ -32,9 +32,9 @@ let inflight: Promise<void> | null = null
  */
 export function ensureDefaultAvatarId(): void {
   if (defaultAvatarId.value !== null || inflight) return
-  inflight = AvatarsApi.getDefaultAvatarId()
-    .then(({ data }) => {
-      defaultAvatarId.value = data.avatarId
+  inflight = getDefaultAvatarId()
+    .then(({ avatarId }) => {
+      defaultAvatarId.value = avatarId
     })
     .catch(() => {
       // Unknown stays unknown; see above.

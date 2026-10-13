@@ -6,12 +6,33 @@
  */
 import type { ShortcutGroup } from './shortcutSheet'
 
+import { nextTick, watch } from 'vue'
+
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import { t } from '@/i18n'
 
 const props = defineProps<{ modelValue: boolean; title: string; groups: ShortcutGroup[] }>()
 
 const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
+
+// 这张表是 `?` 和输入框旁的按钮经一个开关打开的，不是从对话框自己的 activator：关上时
+// VDialog 不知道该把焦点还给谁，就落到 <body>。打开时记下焦点在哪，关上还回去 —— 等
+// 一拍再还：同一拍里 VDialog 圈焦点的监听还没撤，会把焦点又抢回对话框（它自己还给
+// activator 时也是这样等的）。
+let opener: HTMLElement | null = null
+watch(
+  () => props.modelValue,
+  async (open) => {
+    if (open) {
+      opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
+      return
+    }
+    const back = opener
+    opener = null
+    await nextTick()
+    if (back?.isConnected) back.focus({ preventScroll: true })
+  }
+)
 </script>
 
 <template>
@@ -21,11 +42,14 @@ const emit = defineEmits<{ (e: 'update:modelValue', v: boolean): void }>()
     :model-value="props.modelValue"
     :max-width="DIALOG_WIDTH.md"
     transition="sheet-fade"
+    aria-labelledby="ssheet-title"
     @update:model-value="emit('update:modelValue', $event)"
   >
     <v-card class="ssheet" rounded="lg" flat>
-      <h2 class="ssheet__title">{{ title }}</h2>
-      <div class="ssheet__body">
+      <h2 id="ssheet-title" class="ssheet__title">{{ title }}</h2>
+      <!-- 能聚焦：表长了要靠方向键滚，而且对话框里得有一个能拿到焦点的地方，VDialog 才
+           把 Tab 圈在里面；否则 Tab 一下就跑到被遮住的页面上，Esc 也就关不掉它了。 -->
+      <div class="ssheet__body" tabindex="0">
         <section v-for="group in groups" :key="group.scope" class="ssheet__group">
           <h3 class="ssheet__scope t-eyebrow-read">{{ group.scope }}</h3>
           <div class="ssheet__rows">

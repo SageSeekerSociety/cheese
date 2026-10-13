@@ -12,6 +12,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.domain.agent.chat import ChatService
 from app.domain.agent.compute import ComputePool
 from app.domain.agent.harness.driven.runner import reply_owed, reply_owed_path
@@ -41,8 +42,9 @@ class Screen(StubChannel):
 async def _room(factory, tmp_path) -> tuple[ChatService, Screen, uuid.UUID]:
     screen = Screen()
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )

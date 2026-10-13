@@ -14,7 +14,7 @@ way when somebody opens its room or starts typing there (`room_active`): a
 message is likely on its way, and the session can be up before it arrives.
 
 The start goes through the same `RoomSessions.ensure` a turn uses, from the
-same inputs (`RoomTurns._launch_inputs`) and under the same seat lock, so a turn
+same inputs (`TurnPreparation.launch_inputs`) and under the same seat lock, so a turn
 arriving meanwhile waits for it rather than racing it, and the session it
 leaves is the one that turn would have kept. What a session is doing is never
 cut short: the channel puts a relaunch off while the session works or has tasks
@@ -34,7 +34,8 @@ from app.domain.agent.seat_admission import seat_admission
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.room.turn import _Launch
+    from app.domain.agent.turn.intake.preparation import TurnPreparation
+    from app.domain.agent.turn.state.live import LiveWork
 
 logger = logging.getLogger(__name__)
 
@@ -54,14 +55,10 @@ class _Rooms(Protocol):
     start it with."""
 
     _compute: "ComputePool"
+    live: "LiveWork"
 
-    def _seat_lock_for(
-        self, topic_id: uuid.UUID, agent_handle: str
-    ) -> asyncio.Lock: ...
-
-    async def _launch_inputs(
-        self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
-    ) -> "_Launch | None": ...
+    @property
+    def turn_preparation(self) -> "TurnPreparation": ...
 
     async def _turn_seat_handle(self, topic_id: uuid.UUID) -> str: ...
 
@@ -148,13 +145,15 @@ class SeatPrewarm:
         runtime = chat._compute.seat_runtime(topic_id, seat)
         if runtime is None:
             return "not_held"
-        async with self._slots, seat_admission(chat._seat_lock_for(topic_id, seat)):
+        async with self._slots, seat_admission(chat.live.seat_lock_for(topic_id, seat)):
             live = runtime.prewarm_due(session)
             if live is None:
                 return "not_due"
             if not await self._memory.has_room(topic_id):
                 return "host_full"
-            launch = await chat._launch_inputs(topic_id, seat, acting=live.acting)
+            launch = await chat.turn_preparation.launch_inputs(
+                topic_id, seat, acting=live.acting
+            )
             if launch is None or launch.runtime is not runtime:
                 # Archived, gone, or now on another harness: that move is the
                 # next turn's to make (`ComputePool.activate`).

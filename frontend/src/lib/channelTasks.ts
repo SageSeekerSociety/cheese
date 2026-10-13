@@ -9,10 +9,9 @@ import { myPhraseLabel, phraseLabel } from './board'
 
 import { t } from '@/i18n'
 
-/** 频道的任务列表（`GET /topics/{频道}/tasks`）比别处多带的几样：在等谁（「待 某某
- *  审阅」里的某某），采纳过几次交付、最近那次是哪个 PR。 */
+/** 频道的任务列表（`GET /topics/{频道}/tasks`）比别处多带的几样：采纳过几次交付、
+ *  最近那次是哪个 PR。 */
 export type ChannelTask = RoomTask & {
-  waiting_on?: string | null
   accepted_count?: number
   last_accepted_pr?: number | null
 }
@@ -95,3 +94,6 @@ export function tasksByOrigin(tasks: readonly RoomTask[]): Map<string, RoomTask[
   }
   return under
 }
+
+/** 频道概览「最近做完」那一栏有几件：概览只读这么多已经做完的。 */
+export const RECENT_DONE = 3

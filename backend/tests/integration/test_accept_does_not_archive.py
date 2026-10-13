@@ -21,6 +21,7 @@ from tests.integration.conftest import (
 from tests.integration.test_accept import remote_delivery as remote_delivery
 from tests.integration.test_accept_pr import _give_card_a_pr, _rendered_head
 from tests.integration.test_accept_pr import app_world as app_world
+from tests.landing import summary_turn_ends
 
 
 def _project(client) -> str:
@@ -58,7 +59,7 @@ def _card(
             **delivery_artifact(client, topic_id),
             "change_subject": subject,
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     if response.status_code == 200:
@@ -110,6 +111,8 @@ def _delivered_topic(client) -> tuple[str, str]:
     tid = _topic(client, pid)
     cid = _card(client, tid).json()["data"]["id"]
     assert _accept(client, cid).status_code == 200
+    # The task closes once its AI teammate has written it up.
+    summary_turn_ends(client, delivery_task_id(client, tid))
     return pid, tid
 
 

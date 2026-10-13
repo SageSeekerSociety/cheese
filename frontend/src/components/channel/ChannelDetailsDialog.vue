@@ -12,6 +12,7 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
+import { channelGlyph } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 
 const DESCRIPTION_MAX_LENGTH = 500
@@ -87,7 +88,7 @@ const canMakePublic = computed(
 </script>
 
 <template>
-  <AdaptiveDialog v-model="open" size="md" :title="`# ${topic.title}`">
+  <AdaptiveDialog v-model="open" size="md" :title="topic.title" :title-icon="channelGlyph(topic)">
     <div role="tablist" class="details__tabs">
       <button
         v-for="name in ['about', 'settings'] as Tab[]"

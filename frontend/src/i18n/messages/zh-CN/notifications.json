@@ -1,14 +1,14 @@
 {
   "common": {
     "justNow": "刚刚",
-    "markAsRead": "标记为已读",
+    "markAsRead": "标为已读",
     "delete": "删除",
     "deleteTitle": "删除这条动态？",
     "deleteHint": "删掉之后它不再出现在这里，也没法恢复。",
     "noNotifications": "暂无通知",
     "noUnread": "暂无未读通知",
     "loadFailed": "无法读取动态",
-    "markAllAsRead": "标记全部已读",
+    "markAllAsRead": "全部标为已读",
     "loadMore": "加载更多",
     "filterAll": "全部",
     "filterUnread": "未读",
@@ -29,7 +29,11 @@
   "MENTION": {
     "title": "{mentioner} 在讨论中提到了你",
     "title_anonymous": "有人在讨论中提到了你",
-    "body": "在 \"{discussionTitle}\" 中提到了你"
+    "body": "在 \"{discussionTitle}\" 中提到了你",
+    "inChannel": "{who} 在「{topicTitle}」提到了你"
+  },
+  "THREAD_REPLY": {
+    "title": "{who} 在「{topicTitle}」的支线里回复了"
   },
   "REPLY": {
     "title": "{replier} 回复了你的评论",
@@ -127,6 +131,14 @@
   },
   "ROOM_NOTICE": {
     "body": "在「{topicTitle}」",
+    "settled": "在「{topicTitle}」，已{outcome}",
+    "outcome": {
+      "accepted": "采纳",
+      "rejected": "退回",
+      "voided": "作废",
+      "archived": "随房间归档"
+    },
+    "settledUnknown": "办结",
     "untitled": "平台有一条提示"
   },
   "CHEESE_QUESTION": {

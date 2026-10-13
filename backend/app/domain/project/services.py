@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -10,19 +11,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.project.models import AiMode, Project
-from app.domain.project.repositories import ProjectRepository
+from app.domain.block.documents import seed
+from app.domain.living_doc.services import DocumentJournal, Documents
+from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.repositories import (
+    ProjectGitInstallationRepository,
+    ProjectRepository,
+)
 from app.domain.task.models import Task, TaskMembership
+from app.domain.task.teaching import protocol_for_task
+from app.domain.team.services import team_service
 from app.domain.topic.models import TopicKind
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.usage.ledger import Ledger
+from app.domain.user.models import User
 
 logger = logging.getLogger(__name__)
 
 
 def _intent_brief(intent: str) -> str:
-    """把用户写的那句话拼成新项目总览的开头；没写就返回空串，调用方不写任何东西。
+    """把用户写的那句话拼成新项目目标的开头；没写就返回空串，调用方不写任何东西。
 
     纯模板，不调模型——``seed_overview`` 的约定是「平台把已有的文字搬个地方」，
     所以它署 system 而不是芝士（见 ``ProjectService.seed_overview`` 的注释）。这也
@@ -31,7 +40,10 @@ def _intent_brief(intent: str) -> str:
     text = intent.strip()
     if not text:
         return ""
-    return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下方对话中说明你要做什么。"
+    return (
+        f"## 要做成什么\n\n{text}\n\n"
+        "下一步：补上什么时候做成、这阶段不做什么，然后在下方对话中说明你要做什么。"
+    )
 
 
 class ProjectArchivedError(ConflictError):
@@ -58,6 +70,7 @@ class ProjectService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = ProjectRepository(session)
+        self._installations = ProjectGitInstallationRepository(session)
         self._topics = TopicRepository(session)
         self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
@@ -85,7 +98,7 @@ class ProjectService:
 
         ``intent`` is what the person said they wanted to do, when the creation
         form asked (#946 片 C). It is stored as written and, if non-empty, copied
-        into the project's overview — see :func:`_intent_brief`.
+        into the project's goals — see :func:`_intent_brief`.
         """
         owner_handle = owner_handle or None  # '' would seed a broken root roster
         if project_id is not None and (earlier := await self._repo.get(project_id)):
@@ -145,6 +158,7 @@ class ProjectService:
         # an agent that exists.
         if external_task_id is not None:
             await self._accept_task_protocol(project, external_task_id)
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
@@ -156,7 +170,7 @@ class ProjectService:
             if settings.forgejo_url or settings.environment != "development":
                 await provision_repository(project.id, self._session)
         # What the person said they wanted to do, carried into the project's
-        # overview, which 综合 shows first and every AI teammate reads.
+        # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
         if brief:
             await self.seed_overview(project, brief)
@@ -165,8 +179,7 @@ class ProjectService:
     async def _resolve_personal_team_id(self, owner_handle: str) -> int | None:
         """owner_handle == User.username (fusion A1) → that user's personal team,
         provisioning it if needed. None when the handle isn't a real user."""
-        # Local imports: project ↔ team would otherwise be an import cycle.
-        from app.domain.team.services import team_service
+        # deferred-import: tests replace this name on app.domain.user.repositories
         from app.domain.user.repositories import UserRepository
 
         user = await UserRepository(session=self._session).get_by_handle(owner_handle)
@@ -203,27 +216,27 @@ class ProjectService:
 
         # The original requirements may be rich-text JSON. Keep their canonical
         # page reachable instead of copying serialized editor data into Markdown.
+        # No deadline here: this text is written once, at claim time, before the
+        # claim is approved — the participant's own deadline does not exist yet,
+        # and one fixed string cannot be in every reader's time zone. The
+        # overview page shows the live one beside this text.
         brief = (
             f"## 赛题要求\n\n{task.intro}\n\n"
             f"[查看完整赛题要求](/spaces/{task.space_id}/tasks/{task.id})"
         )
-        if task.deadline:
-            deadline = task.deadline.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
-            brief += f"\n\n提交截止时间：{deadline}"
         await self.seed_overview(project, brief)
         return project
 
     async def overview_document(self, project: Project):
-        """The project's overview, made empty (version 0) the first time anyone
+        """The project's goals document, made empty (version 0) the first time anyone
         needs it: whoever opens, writes or comments on it needs its id first."""
-        from app.domain.living_doc.services import Documents
 
         documents = Documents(self._session)
         if project.overview_document_id is not None:
             doc = await documents.get(project.overview_document_id)
             if doc is not None:
                 return doc
-        # Two first readers at once must not make two overviews. NO KEY
+        # Two first readers at once must not make two goals documents. NO KEY
         # UPDATE, not FOR UPDATE: this runs inside a turn's assembly, and a
         # full row lock on the project stops every write whose foreign key
         # names the project (each block takes KEY SHARE on it) until the turn
@@ -245,18 +258,16 @@ class ProjectService:
         return doc
 
     async def seed_overview(self, project: Project, content: str) -> None:
-        """Write a new project's overview from text it already had: what its
+        """Write a new project's goals from text it already had: what its
         creator said they wanted, or its 赛题. Author is `system`: the platform
         moved existing words, nobody wrote them here."""
-        from app.domain.block.documents import seed
-        from app.domain.living_doc.services import DocumentJournal
 
         doc = await self.overview_document(project)
         await DocumentJournal(self._session).lock(doc.id)
         await seed(self._session, doc, content)
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
-        """Whether a document is some project's overview."""
+        """Whether a document is some project's goals document."""
         return (
             await self._session.scalar(
                 select(Project.id).where(Project.overview_document_id == document_id)
@@ -297,11 +308,43 @@ class ProjectService:
         rules a roster row follows."""
         return await self._repo.person(handle)
 
+    async def get_projects_by_ids(
+        self, project_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, Project]:
+        """一批项目，按 id 索引，一次查完。
+
+        和 :meth:`get` 是同一道门（都不筛归档），给手上已经攒了一整页外键的调用方
+        用 —— 通知列表的实体解析逐条 :meth:`get` 就是一屏 N 次往返。
+        """
+        return await self._repo.get_by_ids(project_ids)
+
     async def get_or_404(self, project_id: uuid.UUID) -> Project:
         project = await self.get(project_id)
         if project is None:
             raise NotFoundError("Project not found")
         return project
+
+    async def lock_settings(self, project: Project) -> None:
+        """锁住这个项目那一行并重读它的 settings（``FOR NO KEY UPDATE``）。
+
+        改 settings 前先走这里，合并的才是当下这一份；见
+        :meth:`ProjectRepository.lock_settings`。
+        """
+        await self._repo.lock_settings(project)
+
+    async def merge_settings(
+        self,
+        project: Project,
+        patch: Mapping[str, object],
+        *,
+        remove: Iterable[str] = (),
+    ) -> dict[str, object]:
+        """改 settings 里那几个键，其余照数据库当下的样子留着。
+
+        写 settings 的正路，改一个键的调用点都走它——见
+        :meth:`ProjectRepository.merge_settings`。
+        """
+        return await self._repo.merge_settings(project, patch, remove=remove)
 
     async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
         """Archive the project (idempotent): it leaves its members' lists,
@@ -313,7 +356,10 @@ class ProjectService:
         project = await self.get_or_404(project_id)
         if project.archived_at is not None:
             return project
+        # deferred-import: breaks the cycle membership.services -> project.services
         from app.domain.membership.services import InvitationService
+
+        # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
         project.archived_at = datetime.now(UTC)
@@ -328,6 +374,7 @@ class ProjectService:
         project = await self.get_or_404(project_id)
         if project.archived_at is None:
             return project
+        # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
         await TopicService(self._session).unarchive_with_project(project_id, by=by)
@@ -356,6 +403,36 @@ class ProjectService:
         """A team's 项目 page, newest first."""
         return await self._repo.list_by_team(team_id)
 
+    async def list_visible_to(
+        self, *, handle: str | None, user_id: int | None
+    ) -> list[Project]:
+        """这个人有份的项目（``/projects`` 那条侧边栏列表）。
+
+        谁算「有份」——他拥有的、在名册上的、或所属团队的——全写在
+        ``ProjectRepository.list_visible_to`` 里；路由走这道门，不自己构造仓储
+        （架构守卫）。
+        """
+        return await self._repo.list_visible_to(handle=handle, user_id=user_id)
+
+    async def list_for_external_task(self, task_id: int) -> list[Project]:
+        """这条赛题开出来的每个项目（``/projects/by-task``）。"""
+        return await self._repo.list_for_external_task(task_id)
+
+    async def get_by_team(self, team_id: int) -> Project | None:
+        """这个知是团队的那个 AI 工作台项目（P4 原生绑定），最新的一条；没有是
+        None（``/projects/by-team`` 用它显示/隐藏「AI 工作台」入口）。"""
+        return await self._repo.get_by_team(team_id)
+
+    async def installation_for_project(
+        self, project_id: uuid.UUID
+    ) -> ProjectGitInstallation | None:
+        """这个项目绑定的 GitHub 安装，没绑是 None。
+
+        ``branch-protection`` 那一页要读它绑的仓库名才问这里，不自己构造
+        ``ProjectGitInstallationRepository``（架构守卫）。
+        """
+        return await self._installations.get_by_project(project_id)
+
     async def _accept_task_protocol(self, project: Project, task_id: int) -> None:
         """Apply the 赛题's 机构协议 to a freshly created project (#370).
 
@@ -369,14 +446,14 @@ class ProjectService:
         nothing, leaves the project exactly as it was. Creating a project must
         not fail because an institution left its resource pack empty.
         """
+        # deferred-import: Task is bound at the top of this module already
         from app.domain.task.models import Task
-        from app.domain.task.teaching import protocol_for_task
 
         task = await self._session.get(Task, task_id)
         if task is None:
             return
+        # deferred-import: TaskMembership is bound at the top of this module already
         from app.domain.task.models import TaskMembership
-        from app.domain.user.models import User
 
         member_id = project.team_id
         if task.submitter_type == 0:
@@ -430,7 +507,6 @@ class ProjectService:
         """Release the task's resources to its workspace after approval."""
         if membership.approved != 0:
             return
-        from app.domain.user.models import User
 
         owner = None
         if not membership.is_team:

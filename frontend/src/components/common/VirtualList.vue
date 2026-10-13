@@ -38,10 +38,16 @@
 // 开着还是收着，都会让它变。看板那一列自己就是滚动容器、diff 顶上只有一点 padding、
 // 资料库顶上还有搜索框——量出来各是各的对。
 //
-// 滚动容器是个 DOM 元素，而模板 ref 要等挂完才落地，所以一份**刚出现的长列表**第一帧
-// 会整列画一遍、下一帧才交给 virtua。同一轮 flush 里就换完，屏幕上只看得到后一帧（不
-// 闪）；代价是那一列 DOM 白建一次。话题列表的数据是异步来的，碰不到这一帧；看板上展开
-// 「已完成」时会碰上，那一帧整列画出来也正好是「展开就看到全部」。
+// 滚动容器是个 DOM 元素，而模板 ref 要等挂完才落地：组件**第一次**渲染的时候宿主的
+// 模板 ref 还是 null，而渲染函数是在挂载那一趟里就跑完的。所以一份一出现就过门槛的
+// 长列表（宿主手上已经有数据了，比如离开再回到这个项目），第一帧**不知道谁在滚**。
+//
+// 那一帧不整列画（`waitingForScrollParent`）：virtua 一接手就会把那一列全扔掉重建，
+// 全建一遍等于白建（前端的旧版本就是这么干的，报告里「列表出现后又重建」有一半是它）。
+// 留下一个按估计行高撑起来的空盒子过渡这一帧——空着会让宿主量出「这一页没填满滚动
+// 容器」，反过来再取一页数据（`useLibraryPages` 就是这么做的），所以高度得垫上。
+// 挂载后第一趟 flush 一过就知道宿主到底给不给容器了：给过就交给 virtua，一直没给
+// （宿主本来就没有滚动容器，见上）就照旧整列画。
 import type { Component, PropType, VNode } from 'vue'
 
 import {
@@ -120,6 +126,19 @@ export default defineComponent({
     const focusedKey = ref<string | number | null>(null)
     // 两个条件都要：行数过门槛，且知道谁在滚（见文件头）。
     const virtualized = computed(() => props.items.length > props.threshold && props.scrollParent != null)
+
+    // 挂载后第一趟 flush 过了没有。模板 ref 是在挂载那一趟里落地的，过了这一趟还看不到
+    // 滚动容器，就是宿主本来就没有（见文件头）。
+    const settledAfterMount = ref(false)
+    onMounted(() => {
+      void nextTick(() => {
+        settledAfterMount.value = true
+      })
+    })
+    // 一出现就过门槛、而这一帧还不知道谁在滚：这一帧谁都不画（见文件头）。
+    const waitingForScrollParent = computed(
+      () => props.items.length > props.threshold && props.scrollParent == null && !settledAfterMount.value
+    )
 
     // 这份列表离滚动内容起点有多远（px）——交给 virtua 当 `startMargin`。默认 0 直到量到
     // 真的值；量法和为什么必须量见文件头那段。
@@ -251,6 +270,14 @@ export default defineComponent({
     expose({ scrollToIndex })
 
     return () => {
+      if (waitingForScrollParent.value) {
+        // 空盒子（见文件头）：撑住估计的高度，别让宿主把这一帧当成「这一页没填满滚动
+        // 容器」。外壳标签跟着 `itemAs` 走——宿主是 `ul` 的时候这一个也得是 `li`。
+        return h(props.itemAs || 'div', {
+          'aria-hidden': 'true',
+          style: { height: `${props.items.length * props.estimatedSize}px` },
+        })
+      }
       if (!virtualized.value) {
         const rows = plainRows()
         return props.transition

@@ -17,10 +17,6 @@ Only plaintext rows are selected, so a rerun changes nothing. Empty values
 stay empty: the app reads an empty column as empty whether or not the row is
 encrypted.
 
-Downgrade leaves the rows encrypted. The previous revision reads encrypted
-rows already, and writing personal data back out as plaintext is not a
-rollback anyone needs.
-
 Revision ID: 853d38c772dd
 Revises: 90e599b0ba34
 """
@@ -103,4 +99,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade leaves the rows encrypted. The previous revision reads encrypted
+    rows already, and writing personal data back out as plaintext is not a
+    rollback anyone needs."""
     pass

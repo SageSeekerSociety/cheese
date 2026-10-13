@@ -146,7 +146,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import type { MenuAction } from '@/components/common/menuAction'
-import type { Notification } from '@/network/api/notifications/types'
+import type { Notification } from '@/types/apiNotifications'
 import type { RenderedNotificationContent } from './renders/NotificationRenderUtils'
 
 import { computed, markRaw, onMounted, onUpdated, ref, shallowRef, watch } from 'vue'
@@ -311,7 +311,7 @@ const onUpdateNotification = (notificationId: number) => {
   background-color: var(--accent-wash);
 }
 
-/* 通用的「标记为已读 / 删除」是辅助动作：不占常驻的一行，悬停或键盘焦点落进来
+/* 通用的「标为已读 / 删除」是辅助动作：不占常驻的一行，悬停或键盘焦点落进来
    时才现身。只在真有指针的设备上这么做——触屏没有 hover，藏了就再也点不到。 */
 @media (hover: hover) {
   .notification-item__actions {

@@ -51,7 +51,7 @@ def test_status_includes_cards_with_gate_tail(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     assert r.status_code == 200

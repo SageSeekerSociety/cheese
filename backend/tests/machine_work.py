@@ -35,10 +35,11 @@ def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess:
 def machine_commits(
     project_id: uuid.UUID,
     place_id: uuid.UUID,
-    files: dict[str, str],
+    files: dict[str, str | bytes],
     message: str = "chore: work from the machine",
     *,
     author: tuple[str, str] = (CHEESE_NAME, CHEESE_EMAIL),
+    allow_empty: bool = False,
 ) -> str:
     """Write `files` on this place's branch and push it back. Returns the sha."""
     repo = git_store.ensure_repo(project_id)
@@ -62,9 +63,19 @@ def machine_commits(
         for path, content in files.items():
             target = work / path
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
+            if isinstance(content, bytes):
+                target.write_bytes(content)
+            else:
+                target.write_text(content, encoding="utf-8")
         _git(work, "add", "-A")
-        _git(work, "commit", "-q", "-m", message)
+        _git(
+            work,
+            "commit",
+            "-q",
+            *(["--allow-empty"] if allow_empty else []),
+            "-m",
+            message,
+        )
         _git(work, "push", "-q", "origin", branch)
         return _git(work, "rev-parse", "HEAD").stdout.strip()
     finally:

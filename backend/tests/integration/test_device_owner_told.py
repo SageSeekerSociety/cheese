@@ -79,14 +79,13 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
         session = await AgentSessionService(db).ensure(
             topic_id, agent.username, harness="claude-code"
         )
-        session.execution_request = {
-            "generation": str(uuid.uuid4()),
-            "choice": {
-                "name": "Workstation",
-                "profile": "device",
-                "device_id": device.device_id,
-            },
-        }
+        session.execution_request = {"generation": str(uuid.uuid4())}
+        await AgentSessionService(db).set_environment(
+            topic_id,
+            agent.username,
+            {"kind": "self_hosted", "device_id": device.device_id},
+            chosen_by=None,
+        )
         session.runtime_location = {
             "device_id": "center",
             "resource_id": resource,
@@ -168,9 +167,10 @@ async def test_the_owner_is_told_once_when_an_agent_starts_on_their_device(
     assert said["topicTitle"] == "Pricing"
     assert said["agentName"]
     assert said["deviceName"] == "workstation"
-    # Nobody gave the room the whole machine: it runs isolated there (#2320).
-    assert said["machineAccess"] is False
-    assert "能访问整台机器" not in said["content"]
+    # It was put on the machine itself, without a sandbox, and the owner is
+    # told so.
+    assert said["machineAccess"] is True
+    assert "能访问整台机器" in said["content"]
 
 
 async def test_an_owner_in_the_room_is_not_told(client, monkeypatch):

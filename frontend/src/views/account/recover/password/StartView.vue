@@ -42,7 +42,7 @@
 
         <p class="account-foot">
           {{ t('account.recover.rememberPassword') }}
-          <router-link to="/account/signin" class="account-link">{{ t('account.backToSignIn') }}</router-link>
+          <NavLink to="/account/signin" class="account-link">{{ t('account.backToSignIn') }}</NavLink>
         </p>
       </v-form>
     </template>
@@ -60,6 +60,7 @@ import { vuetifyConfig } from '@/utils/form'
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 defineProps<{

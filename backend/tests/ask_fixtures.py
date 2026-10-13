@@ -19,7 +19,7 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import looks_like_agent_handle
 from tests.conftest import settle_turn
-from tests.integration.conftest import chat_ws_url, post_message, room_agent_seat
+from tests.integration.conftest import post_message, room_agent_seat, room_socket
 
 
 def agent_credential(project, topic, seat) -> dict[str, str]:
@@ -29,6 +29,22 @@ def agent_credential(project, topic, seat) -> dict[str, str]:
             project_id=project, topic_id=topic, agent_handle=seat
         )
     }
+
+
+def conversation_project(client, conversation) -> str:
+    """The project of the conversation a seat works in.
+
+    A room is read as `/topics/{id}`; a task is NOT (`GET /topics/{task}`
+    deliberately 404s — a task is read as `/topics/{task}/task`). A question
+    asked inside a task is the same shape of thing as one asked in a room, so
+    the fixtures here have to reach either.
+    """
+    r = client.get(f"/topics/{conversation}")
+    if r.status_code == 200:
+        return r.json()["data"]["project_id"]
+    r = client.get(f"/topics/{conversation}/task")
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["project_id"]
 
 
 @contextmanager
@@ -49,7 +65,7 @@ def active_ask(
     difference the question's addressee turns on.
     """
     seat = seat or room_agent_seat(client, topic)
-    project = client.get(f"/topics/{topic}").json()["data"]["project_id"]
+    project = conversation_project(client, topic)
     started = threading.Event()
 
     def held(tid, prompt, reply, *, agent=None):
@@ -81,7 +97,7 @@ def active_ask(
                 stop()
                 client.portal.call(lambda: settle_turn(chat, uuid.UUID(str(topic))))
             return
-        with client.websocket_connect(chat_ws_url(topic, actor)) as ws:
+        with room_socket(client, topic, actor) as ws:
             post_message(client, topic, actor, {"content": f"<@{seat}> 等我提问"})
             assert started.wait(5), "the admitted runner never received its input"
             try:
@@ -111,7 +127,7 @@ def question_row(client, topic, *, seat=None, author=None, **extra):
     """
     seat = seat or room_agent_seat(client, topic)
     author = author or seat
-    project = client.get(f"/topics/{topic}").json()["data"]["project_id"]
+    project = conversation_project(client, topic)
     question = extra.pop("question", "分页方案选哪个？")
     meta = {
         "options": [{"text": "cursor"}, {"text": "pageStart"}],

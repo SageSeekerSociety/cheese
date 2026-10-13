@@ -92,8 +92,8 @@ NULL；工作话题行清空；`strays=0`、`orphans=0`。`downgrade` 也验过�
   鉴权永远落在房间上（支线没有名册）；分页游标要连支线一起比，否则翻页会静默串线。
 - **用量**：`resource_usage` 直接吃地点 id 会违反外键（响的）；订阅入账的 work index 拿地点 id 匹配 block
   会一条都匹配不上、让那条支线的用量静默变成无法归属（不响的）。两处都改了。
-- **前端**：`splitMarkers` 改读 `GET /topics/{id}/tasks`（标记按支线的 `room_id + created_at` 读时派生）；
-  `upgraded_to_task_id` 在 `ChatPanel` 和 `PanelDoc` 两处都渲染；组件测试与 spec 都按新行为重写。
+- **前端**：任务卡跟着它所在的那一块来（`GET /topics/{id}/blocks` 每块带着 `tasks`）：从消息拆出去的挂在
+  那条消息下面，在房间里新建的在主线那一行 `task_created` 上；组件测试与 spec 都按新行为重写。
 
 ## 二·六、全量测试清出来的（每一条都是真 bug，不是断言过时）
 

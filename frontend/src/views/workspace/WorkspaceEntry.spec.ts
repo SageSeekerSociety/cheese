@@ -41,12 +41,11 @@ vi.mock('@/views/workspace/ProjectSidebar.vue', () => ({
   default: { name: 'ProjectSidebar', template: '<div data-testid="topic-list" />' },
 }))
 
-// 项目的两个来源，各由用例自己摆：**这个浏览器上次见过**的缓存（projectCache，
-// App.vue 读的是同一份），和这次会话拉回来的清单（store，由 ProjectShell 触发）。
-let cache: Project[] = []
+// 项目清单由用例自己摆：`projects` 里一开始就有的，是**这个浏览器上次见过**、存下来
+// 又恢复出来的那份（这时 `projectsSettled` 还是 false：这一趟还没问过）；问完了
+// `projectsSettled` 才变 true。
 const store = reactive({ projects: [] as Project[], projectsSettled: false })
 
-vi.mock('@/lib/projectCache', () => ({ loadCachedProjects: () => cache }))
 vi.mock('@/me', () => ({ myHandle: () => 'lisi' }))
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
@@ -71,7 +70,6 @@ beforeEach(() => {
   mdAndUp.value = true
   query = {}
   name = 'workspace-project'
-  cache = []
   store.projects = []
   store.projectsSettled = false
   replace.mockReset()
@@ -84,13 +82,13 @@ function mount() {
 
 describe('桌面端: 第一屏听壳的', () => {
   it('没声明壳的项目落在项目总览上 —— 今天的行为，一个字没变', async () => {
-    cache = [project('p1')]
+    store.projects = [project('p1')]
     mount()
     await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } }))
   })
 
   it('声明了别的壳就落在别处', async () => {
-    cache = [project('p1', OTHER)]
+    store.projects = [project('p1', OTHER)]
     mount()
     await waitFor(() => expect(replace).toHaveBeenCalledWith({ name: OTHER.home, params: { projectId: 'p1' } }))
     expect(replace).not.toHaveBeenCalledWith({ name: HOME, params: { projectId: 'p1' } })
@@ -99,7 +97,7 @@ describe('桌面端: 第一屏听壳的', () => {
   it('浏览器上次见过这个项目时立刻就走，不等清单', () => {
     // 这是绝大多数进入方式：点一下项目，缓存里就有那一行。等清单只会换来一屏
     // 什么都不画的空转。
-    cache = [project('p1', OTHER)]
+    store.projects = [project('p1', OTHER)]
     mount()
     expect(replace).toHaveBeenCalledTimes(1)
     expect(store.projectsSettled).toBe(false)
@@ -138,14 +136,14 @@ describe('桌面端: 第一屏听壳的', () => {
   })
 
   it('不等话题列表到货 —— 目的地和列表无关，等只会换来一屏转圈', () => {
-    cache = [project('p1')]
+    store.projects = [project('p1')]
     const { container } = mount()
     expect(replace).toHaveBeenCalledTimes(1)
     expect(container.querySelector('.v-progress-circular')).toBeNull()
   })
 
   it('用的是 replace，不是 push —— 后退不该弹回这个中转地址', async () => {
-    cache = [project('p1')]
+    store.projects = [project('p1')]
     mount()
     await waitFor(() => expect(replace).toHaveBeenCalled())
     expect(push).not.toHaveBeenCalled()
@@ -153,7 +151,7 @@ describe('桌面端: 第一屏听壳的', () => {
 
   it('已经不在 `/projects/:id` 上了就不跳 —— 跳转结束后视图还活着一小会儿', async () => {
     name = 'workspace-overview'
-    cache = [project('p1')]
+    store.projects = [project('p1')]
     mount()
     await waitFor(() => expect(replace).not.toHaveBeenCalled())
   })
@@ -162,7 +160,7 @@ describe('桌面端: 第一屏听壳的', () => {
 describe('手机端一个字都没变', () => {
   it('不跳，这一层画的就是话题列表', async () => {
     mdAndUp.value = false
-    cache = [project('p1', OTHER)]
+    store.projects = [project('p1', OTHER)]
     const { queryByTestId } = mount()
     await waitFor(() => expect(queryByTestId('topic-list')).not.toBeNull())
     expect(replace, '跳走就永远看不到列表，也就没有回上一层可回').not.toHaveBeenCalled()
@@ -174,7 +172,7 @@ describe('老链接', () => {
     // 每一条粘贴到聊天里的工作区链接都是这个形状。壳说了什么都不该动它：地址里
     // 已经写明去哪了，没有什么可决定的。
     query = { topic: 't-9' }
-    cache = [project('p1', OTHER)]
+    store.projects = [project('p1', OTHER)]
     mount()
     await waitFor(() =>
       expect(replace).toHaveBeenCalledWith({ name: 'workspace-topic', params: { projectId: 'p1', topicId: 't-9' } })

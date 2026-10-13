@@ -30,8 +30,16 @@ vi.mock('@/api', () => ({
 }))
 
 import { getTopicUnread, listBlocks } from '@/api'
-import { blockCache, blockHasMore, setCachedWindow } from '@/lib/blockCache'
+import { setCachedWindow } from '@/query/blocks'
 import { useWorkspaceStore } from '@/stores/workspace'
+
+/** 打开项目（刷新页面后第一次进来），等第一次读完。 */
+async function opened() {
+  const store = useWorkspaceStore()
+  store.openProject('p1')
+  await flush()
+  return store
+}
 
 async function flush() {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
@@ -47,18 +55,12 @@ function unread(map: Record<string, number>) {
 describe('未读轮询的后台预取', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-    blockCache.clear()
-    blockHasMore.clear()
     vi.mocked(listBlocks).mockClear()
   })
 
   it('刷新页面时不会为每个有未读的话题各发一个请求', async () => {
-    const store = useWorkspaceStore()
-    store.projectId = 'p1'
     unread(Object.fromEntries(Array.from({ length: 40 }, (_, i) => [`t${i}`, 3])))
-
-    await store.refreshUnread()
-    await flush()
+    const store = await opened()
 
     expect(vi.mocked(listBlocks)).not.toHaveBeenCalled()
     // 徽标本身照常更新——被砍掉的只有预取。
@@ -66,24 +68,18 @@ describe('未读轮询的后台预取', () => {
   })
 
   it('这一趟开过的话题仍然会被后台刷新（切回去时第一帧就是新消息）', async () => {
-    const store = useWorkspaceStore()
-    store.projectId = 'p1'
     setCachedWindow('t1', { blocks: [], hasMore: false })
     unread({ t1: 2, t2: 5 })
 
-    await store.refreshUnread()
-    await flush()
+    await opened()
 
     expect(vi.mocked(listBlocks).mock.calls.map((c) => c[0])).toEqual(['t1'])
   })
 
   it('未读没变多就不刷新', async () => {
-    const store = useWorkspaceStore()
-    store.projectId = 'p1'
     setCachedWindow('t1', { blocks: [], hasMore: false })
     unread({ t1: 2 })
-    await store.refreshUnread()
-    await flush()
+    const store = await opened()
     vi.mocked(listBlocks).mockClear()
 
     await store.refreshUnread()

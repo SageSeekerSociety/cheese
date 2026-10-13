@@ -8,10 +8,10 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.routes.spaces import get_space_service
 from app.auth.project_access import may_read_project
-from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -31,8 +31,6 @@ from app.domain.usage.services import UsageService
 _log = get_logger("cheesex.dashboard")
 
 router = APIRouter(prefix="", tags=["dashboard"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def _require_board_reader(

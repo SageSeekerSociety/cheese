@@ -36,7 +36,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from app.domain.agent.runtime import AgentWorkRunner, InProcessBroker
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner
 from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic, open_turn, open_turn_ids
 

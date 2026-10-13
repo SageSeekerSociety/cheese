@@ -6,7 +6,6 @@ covers:
   - cli/
   - backend/app/domain/agent/device_hub.py
   - backend/app/domain/agent/device_provider.py
-  - backend/app/domain/agent/cloud_provider.py
   - backend/app/domain/agent/central_provider.py
   - backend/app/domain/agent/host_failure.py
   - backend/app/domain/agent/dispatch_log.py
@@ -25,7 +24,7 @@ note: 右下角「幕后」是设备卡和连接器的输出
 embed: machines
 steps:
   - label: 几种机器
-    desc: 本机沙盒容器、用户接入的自托管设备、平台云主机池里的沙箱，以及会话在中心、工具调用落到租用机器上的执行机。
+    desc: 用户接入的自托管设备、平台云主机池里的沙箱和虚拟机沙箱，以及会话在中心、工具调用落到租用机器上的执行机。
     link: /dev/machines#kinds
   - label: 连接器登录，保持一条长连接
     desc: 连接器登录后和机器连接服务保持一条长连接。机器连接服务单独常驻，主 API 发版时设备链接不断。
@@ -48,11 +47,12 @@ steps:
 
 | 机器 | 是什么 | 代码 |
 |---|---|---|
-| 本机沙盒容器 | 平台主机上的兄弟容器 | `compute.py` |
-| 自托管设备 | 用户用连接器接入的电脑 | `device_provider.py` |
-| 云端沙箱 | 平台云主机池里的一个沙箱，每条会话一个；宿主机是平台的 MicroCloud 机器，多个项目共用 | `cloud_provider.py`、`machine/services.py` |
-| 整台云虚拟机 | 每条会话一台 MicroCloud 虚拟机，不进沙箱，有 sudo 和 Docker；会话用完、闲置或房间清理后删掉 | `cloud_provider.py`、`machine/services.py`、`machine/cloud_vm.py` |
+| 自托管设备 | 用户用连接器接入的电脑：放某人设备规格的沙箱，或不进沙箱直接用 | `device_provider.py`、`machine/environments.py` |
+| 标准沙箱 | 平台云主机池里的一个沙箱，每条会话一个；宿主机是平台的 MicroCloud 机器，多个项目共用 | `machine/services.py` |
+| 虚拟机沙箱 | 每条会话一台 MicroCloud 虚拟机，虚拟机本身就是沙箱，有 sudo 和 Docker；会话用完、闲置或房间清理后删掉 | `machine/services.py`、`machine/cloud_vm.py` |
 | 中心会话 + 执行机 | 会话在中心主机，工具调用落到租用的机器上 | `central_provider.py` |
+
+沙箱不管在哪台机器上，生命周期都一样：每个沙箱在 `sandbox_homes` 里有一行（平台主机上的记 `host_id`，某人电脑上的记 `device_id`），带着它的规格；空闲超过规格的空闲时间（`Spec.idle_s`）就由 `machine/lifecycle.py` 删掉，机器离线时跳过。会话换走时，主机上的那一行当场还回去，某人电脑上的那一行留下、不再属于任何会话，由同一次清扫在空闲后删掉。
 
 ## 连接 {#link}
 
@@ -77,7 +77,7 @@ blocks: tool/probe, tool/quarantine, tool/unknown
 
 平台在别人机器上装的一切：执行器、CLI、环境脚本、启动脚本、会话目录、共享包缓存，都在机器主人 `$HOME` 下的同一个目录里（`place.footprint_root()`），卸载就是删这一个目录。
 
-房间在机器上是 `isolated` 时（没人选时的默认），每条会话的执行器跑在自己的 bubblewrap 沙箱里，云机器和 Linux 自有设备都是：只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目的缓存和机器主人自己的文件（连接器的凭据就在那里；自有设备上还有主人装在用户目录里的工具，以及 `/mnt`、`/media` 下的盘），也用不了 sudo 和 Docker。云机器上的沙箱有自己的网络：公网全放行，内网地址段、机器本身和别的沙箱都连不上；内存、CPU、进程数各有上限，超了只杀这一条会话的进程。自有设备上没有 root 来设这两样，沙箱和机器共用网络、不设上限。自有设备的主人可以给某个房间整台机器（`host`），只有他本人能给。macOS、Windows 设备还没有沙箱，那里的 `isolated` 房间会被拒绝并说明原因，不会退成整机运行。要 sudo、Docker、KVM 或内核模块的活，房间换成整台云虚拟机：那里每条会话一台虚拟机，执行器直接跑在虚拟机上，不进沙箱。
+执行环境是沙箱时（没人选时的默认），每条会话的执行器跑在自己的 bubblewrap 沙箱里，平台的机器和 Linux 自有设备都是：只写得到自己的会话目录和本项目的包缓存，看不到别的会话、别的项目的缓存和机器主人自己的文件（连接器的凭据就在那里；自有设备上还有主人装在用户目录里的工具，以及 `/mnt`、`/media` 下的盘），也用不了 sudo 和 Docker。云机器上的沙箱有自己的网络：公网全放行，内网地址段、机器本身和别的沙箱都连不上；内存、CPU、进程数各有上限，超了只杀这一条会话的进程。自有设备上没有 root 来设这两样，沙箱和机器共用网络、不设上限。不进沙箱、直接跑在一台自有设备上（`self_hosted`）只有那台设备的主人本人能选，AI 队友不能。Windows 设备还没有沙箱，不放任何沙箱，只能这样用；说过自己给不了沙箱的设备也不放。要 sudo、Docker、KVM 或内核模块的活，用 `vm` 规格的沙箱：每条会话一台虚拟机，那台虚拟机就是它的沙箱，执行器直接跑在上面。
 
 ## 模型流量 {#llm}
 

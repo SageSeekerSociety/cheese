@@ -3,22 +3,22 @@
 // 队友，移人只归频道管理者和项目管理员；「综合」是项目里的所有人，那里只管
 // AI 队友。AI 队友带「AI 队友」标，和 @ 菜单里一样。
 //
-// 名册底下一行写这个话题在哪台工作电脑上跑。一个话题一个容器（2026-09-28，推翻
-// 结论 60）：房间里的 AI 队友都在这一台上，所以不再每个队友各写一行。
+// 每个 AI 队友的会话有自己的执行环境（#2320），写在它那一行下面，各改各的；名册
+// 底下一行是新会话默认用的环境，改它不搬已经开工的会话。
 import type { ProjectMemberRow, TopicMemberRow } from '../cx_types'
-import type { TopicComputeProfile } from '../types/compute'
+import type { Environment, SessionEnvironment, TopicEnvironment } from '../types/compute'
 import type { MenuAction } from './common/menuAction'
 
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
-import { addTopicMember, getTopicComputeProfile, removeTopicMember } from '../api'
+import { addTopicMember, removeTopicMember, setEnvironmentDefault, setSessionEnvironment } from '../api'
 import { useRowMenu } from '../composables/useRowMenu'
 import { t } from '../i18n'
-import { memberName } from '../lib/agentNames'
-import { choiceKey, choiceName } from '../lib/computeConfig'
+import { memberName, shownHandle } from '../lib/agentNames'
+import { environmentName } from '../lib/environment'
 import { externalHandles } from '../lib/externalMembers'
 import { whenIdle } from '../lib/idle'
-import { cachedTopicPanel, fetchTopicMembers } from '../lib/topicPanelCache'
 import { getAvatarUrl } from '../utils/materials'
 
 import AdaptiveMenu from './common/AdaptiveMenu.vue'
@@ -26,10 +26,13 @@ import ExternalTag from './common/ExternalTag.vue'
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import UserAvatar from './common/UserAvatar.vue'
 import CheeseAvatar from './CheeseAvatar.vue'
-import TopicComputePicker from './TopicComputePicker.vue'
+import EnvironmentMenu from './EnvironmentMenu.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { environmentQuery, roomMembersQuery } from '@/query/room'
 
 const props = defineProps<{
   topicId: string
@@ -44,36 +47,28 @@ const props = defineProps<{
   general?: boolean
 }>()
 const emit = defineEmits<{
-  // 有 AI 队友能访问整台机器。这是权限，不是设置，名册合着的时候页头也要写着——
-  // 挂它的地方据此常驻一个标记。null = 没有，或者还不知道。
-  (e: 'machine-access', notice: string | null): void
   // 管这个频道的人叫什么：频道详情的「关于」里写它。名册是唯一记着它的地方。
   (e: 'manager', name: string | null): void
 }>()
 
-// 切回来过的房间先画上次那份名册，背后再重取（lib/topicPanelCache.ts）。
-const members = ref<TopicMemberRow[]>(cachedTopicPanel('members', props.topicId)?.data ?? [])
-const loading = ref(false)
+// 切回来过的房间先画上次那份名册，背后再重取（`query/room`）。骨架只在手上什么
+// 都没有时出：有上次那份就照着它画，回来了原地换。
+const roster = useQuery(
+  computed(() => roomMembersQuery(props.topicId)),
+  queryClient
+)
+const members = computed<TopicMemberRow[]>(() => roster.data.value?.data ?? [])
+const loading = computed(() => roster.isPending.value && !roster.isError.value)
 const busy = ref(false)
 const error = ref('')
 const open = ref(false)
 const addHandle = ref<string | null>(null)
 
-async function load() {
-  if (!props.topicId) return
-  loading.value = true
-  error.value = ''
-  try {
-    const payload = await fetchTopicMembers(props.topicId)
-    members.value = payload.data
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.room.roster.loadFailed')
-  } finally {
-    loading.value = false
-  }
-}
-
-void load()
+const loadError = computed(() =>
+  roster.error.value ? roster.error.value.message || t('work.room.roster.loadFailed') : ''
+)
+// 改名册那一下没成，压过「名册没读到」：那是此刻手上这一下的结果。
+const shownError = computed(() => error.value || loadError.value)
 
 watch(
   members,
@@ -84,27 +79,25 @@ watch(
   { immediate: true }
 )
 
-// 工作电脑：一次读回房间这一项和每个会话在哪台机器上。
-const machines = ref<TopicComputeProfile | null>(null)
-const machinesError = ref('')
-async function loadMachines() {
-  if (!props.topicId) return
-  machinesError.value = ''
-  try {
-    machines.value = await getTopicComputeProfile(props.topicId)
-  } catch (e) {
-    machinesError.value = e instanceof Error ? e.message : t('work.roomMachine.loadFailed')
-  }
+// 执行环境：一次读回新会话默认用哪个、每条会话各在哪个环境里（和任务页那一格同一份）。
+// 它只喂两处：名册展开后的那一行，和页头那个「能访问整台机器」的标记。名册一展开就
+// 读，所以进房间这一下没必要挤在首屏前 —— 推到浏览器空下来再问，标记晚一点补上。
+const machinesWanted = ref(false)
+const machinesRead = useQuery(
+  computed(() => ({ ...environmentQuery(props.topicId), enabled: machinesWanted.value && !!props.topicId })),
+  queryClient
+)
+const machines = computed<TopicEnvironment | null>(() => machinesRead.data.value ?? null)
+const machinesError = computed(() =>
+  machinesRead.error.value ? machinesRead.error.value.message || t('compute.env.loadFailed') : ''
+)
+function loadMachines() {
+  if (!machinesWanted.value) machinesWanted.value = true
+  else void queryClient.invalidateQueries({ queryKey: keys.roomEnvironment(props.topicId) })
 }
 let cancelIdleLoad: (() => void) | null = null
 onMounted(() => {
-  // 工作电脑这一项只喂两处：名册展开后的那一行，和页头那个「能访问整台机器」的标记。
-  // 名册一展开（下面的 watch）会立刻读一次，所以进房间这一下没必要挤在首屏前 —— 推到
-  // 浏览器空下来再问，标记晚一点补上，读到的仍是同一份。
-  const tid = props.topicId
-  cancelIdleLoad = whenIdle(() => {
-    if (props.topicId === tid) void loadMachines()
-  })
+  cancelIdleLoad = whenIdle(() => (machinesWanted.value = true))
   window.addEventListener('project-compute-updated', loadMachines)
 })
 onBeforeUnmount(() => {
@@ -112,18 +105,19 @@ onBeforeUnmount(() => {
   window.removeEventListener('project-compute-updated', loadMachines)
 })
 watch(open, (value) => {
-  if (value) void loadMachines()
+  if (value) loadMachines()
 })
-watch(
-  () => (machines.value?.visibility.machine_access ? t('work.roomMachine.wholeMachineNotice') : null),
-  (notice) => emit('machine-access', notice),
-  { immediate: true }
-)
-
-// 「项目默认」只挂在还没开工的选择上：只有这时它才真的跟着项目走。
-const roomChoiceIsProjectDefault = computed(
-  () => !!machines.value && choiceKey(machines.value.choice) === choiceKey(machines.value.project_default)
-)
+// 一位 AI 队友在这里的会话：按它坐的那个名册位认（成员自己的 Claude Code 坐在主人
+// 名下的位上，会话的 agent_handle 和名册上的 handle 不一定相同）。
+function sessionsOf(handle: string): SessionEnvironment[] {
+  return machines.value?.sessions.filter((s) => s.seat_handle === handle) ?? []
+}
+function saveSession(session: SessionEnvironment) {
+  return (env: Environment) => setSessionEnvironment(props.topicId, session.session_id, env)
+}
+function saveDefault(env: Environment) {
+  return setEnvironmentDefault(props.topicId, env)
+}
 
 // 一份名册：AI 队友就是上面的一行，不在人数外面再挂一个。列表本来就是这样渲染
 // 的（`members` 全量），只有这颗按钮上的头像堆和人数把它挑出去单独摆，读起来像
@@ -177,6 +171,7 @@ const addable = computed(() => {
       .map((m) => ({
         title: memberName(m) || m.user_handle,
         value: m.user_handle,
+        handle: shownHandle(m.user_handle, m),
         agent: !!m.agent,
         external: externals.value.has(m.user_handle),
         face: m.avatar_id != null ? getAvatarUrl(m.avatar_id) : '',
@@ -189,7 +184,8 @@ async function guard<T>(fn: () => Promise<T>): Promise<void> {
   error.value = ''
   try {
     await fn()
-    await load()
+    // 写名册的那一下已经把名册标过期了（api/topicMembers），这里等新的一份回来再收起。
+    await roster.refetch()
   } catch (e) {
     error.value = e instanceof Error ? e.message : t('work.room.roster.failed')
   } finally {
@@ -252,11 +248,11 @@ async function onRemove(handle: string) {
         <span class="roster__count">{{ countLabel }}</span>
       </div>
 
-      <div v-if="error" class="roster__error">{{ error }}</div>
+      <div v-if="shownError" class="roster__error">{{ shownError }}</div>
 
       <LoadingSkeleton v-if="loading" variant="roster" />
       <BaseEmptyState
-        v-else-if="!members.length && !error"
+        v-else-if="!members.length && !shownError"
         size="inline"
         class="roster__empty"
         :title="t('work.room.roster.empty')"
@@ -287,7 +283,7 @@ async function onRemove(handle: string) {
           />
           <span class="roster__who">
             <span class="roster__name">{{ memberName(m) || m.member_handle }}</span>
-            <span class="roster__handle">{{ m.member_handle }}</span>
+            <span class="roster__handle">{{ shownHandle(m.member_handle, m) }}</span>
           </span>
           <span v-if="m.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
           <ExternalTag v-else-if="externals.has(m.member_handle)" />
@@ -304,26 +300,57 @@ async function onRemove(handle: string) {
           >
             <v-icon size="15">mdi-close</v-icon>
           </button>
+          <div
+            v-for="session in m.agent ? sessionsOf(m.member_handle) : []"
+            :key="session.session_id"
+            class="roster__env"
+            :data-testid="`session-env-${session.session_id}`"
+          >
+            <span class="roster__machine-text">{{
+              session.environment
+                ? environmentName(session.environment, machines?.devices, machines?.specs)
+                : t('compute.env.notStarted')
+            }}</span>
+            <EnvironmentMenu
+              v-if="machines"
+              :heading="t('compute.env.sessionHeading', { name: memberName(m) || m.member_handle })"
+              :hint="t('compute.env.sessionHint')"
+              :current="session.environment ?? machines.default"
+              :devices="machines.devices"
+              :specs="machines.specs"
+              :save="saveSession(session)"
+              @changed="loadMachines"
+            />
+          </div>
         </li>
       </ul>
 
       <div v-if="machines" class="roster__future" data-testid="future-machine">
         <span class="roster__machine-text">{{
-          t('work.roomMachine.here', { name: choiceName(machines.choice) })
+          t('compute.env.defaultHere', {
+            name: environmentName(
+              machines.default ?? { kind: 'sandbox', spec: 'standard' },
+              machines.devices,
+              machines.specs
+            ),
+          })
         }}</span>
-        <span v-if="roomChoiceIsProjectDefault" class="roster__tag">{{ t('work.roomMachine.projectDefault') }}</span>
-        <span
-          v-if="machines.visibility.machine_access"
-          class="roster__notice"
-          :title="t('work.roomMachine.wholeMachineNotice')"
-        >
-          <span class="status-dot status-dot--warn" />{{ t('work.roomMachine.wholeMachine') }}
-        </span>
-        <TopicComputePicker :topic-id="topicId" :profile="machines" @changed="loadMachines" />
+        <span v-if="machines.default_from === 'project'" class="roster__tag">{{
+          t('compute.env.projectDefault')
+        }}</span>
+        <EnvironmentMenu
+          :heading="t('compute.env.defaultHeading')"
+          :hint="t('compute.env.defaultHint')"
+          :current="machines.default"
+          :devices="machines.devices"
+          :specs="machines.specs"
+          :save="saveDefault"
+          @changed="loadMachines"
+        />
       </div>
       <div v-else-if="machinesError" class="roster__hint">
-        {{ t('work.roomMachine.loadFailed') }}
-        <button type="button" class="roster__retry" @click="loadMachines">{{ t('work.roomMachine.retry') }}</button>
+        {{ t('compute.env.loadFailed') }}
+        <button type="button" class="roster__retry" @click="loadMachines">{{ t('global.loadError.retry') }}</button>
       </div>
 
       <!-- 频道里的人从项目成员里加人；「综合」里只剩 AI 队友可加。 -->
@@ -356,7 +383,7 @@ async function onRemove(handle: string) {
               </template>
               <span class="roster__who">
                 <span class="roster__name">{{ item.raw.title }}</span>
-                <span class="roster__handle">{{ item.raw.value }}</span>
+                <span class="roster__handle">{{ item.raw.handle }}</span>
               </span>
               <template #append>
                 <span v-if="item.raw.agent" class="roster__badge">{{ t('work.room.roster.agentBadge') }}</span>
@@ -490,7 +517,18 @@ async function onRemove(handle: string) {
   gap: 9px;
   padding: 6px 14px;
 }
-/* 房间那一行：这个话题在哪台工作电脑上跑。 */
+/* AI 队友那一行底下：它这条会话的环境，占满一整行，和名字对齐。 */
+.roster__env {
+  display: flex;
+  flex-basis: 100%;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 35px;
+  color: var(--muted);
+  font-size: 13px;
+}
+/* 名册底下：新会话默认用的环境。 */
 .roster__future {
   display: flex;
   align-items: center;
@@ -516,13 +554,6 @@ async function onRemove(handle: string) {
   border-radius: var(--radius-sm);
   background: var(--fill);
   color: var(--muted);
-}
-.roster__notice {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 4px;
-  color: var(--text);
 }
 .roster__retry {
   border: 0;

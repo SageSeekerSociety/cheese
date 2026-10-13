@@ -73,6 +73,17 @@ function told(outcome) {
   return { deny: [...outcome.context, outcome.deny].join("\n") };
 }
 
+// A tool call the executor's MCP server failed: what it said, as the text the
+// model and the room read, not the content blocks it came in.
+function failed(response) {
+  return {
+    deny: response.content
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n"),
+  };
+}
+
 function remotePath(path, places) {
   return path.startsWith(skills) ? skillPaths(path, places) : path;
 }
@@ -146,7 +157,7 @@ async function sendUserFile($, tool_use_id, args) {
     id: tool_use_id,
     session_id: await $.session.id(),
   });
-  if (response.isError) return { deny: JSON.stringify(response.content) };
+  if (response.isError) return failed(response);
   return told(JSON.parse(response.content[0].text));
 }
 
@@ -161,7 +172,7 @@ async function refused($, tool_use_id, tool, args) {
     const response = await $.mcp.call("native", "permission", {
       id: tool_use_id, session_id: await $.session.id(), tool, args,
     });
-    if (response.isError) return { deny: JSON.stringify(response.content) };
+    if (response.isError) return failed(response);
     const outcome = JSON.parse(response.content[0].text);
     return outcome.deny ? told(outcome) : null;
   } catch (error) {
@@ -269,7 +280,7 @@ export function register(on) {
         const response = await $.mcp.call("native", tool.slice("mcp__native__".length), {
           ...args, id: tool_use_id, session_id: await $.session.id(),
         });
-        if (response.isError) return { deny: JSON.stringify(response.content) };
+        if (response.isError) return failed(response);
         let outcome = JSON.parse(response.content[0].text);
         if (outcome.receipt_path) {
           outcome = JSON.parse(await $.fs.read(outcome.receipt_path, { as: "text" }));
@@ -320,7 +331,7 @@ export function register(on) {
         const response = await $.mcp.call("native", "invoke", {
           id: tool_use_id, tool, args, session_id: await $.session.id(),
         });
-        if (response.isError) return { deny: JSON.stringify(response.content) };
+        if (response.isError) return failed(response);
         let outcome = JSON.parse(response.content[0].text);
         if (outcome.receipt_path) {
           const receipt = await $.fs.read(outcome.receipt_path, { as: "text" });
@@ -353,7 +364,7 @@ export function register(on) {
       if (tool.startsWith(prefix)) {
         try {
           const response = await $.mcp.call(server, tool.slice(prefix.length), args);
-          if (response.isError) return { deny: JSON.stringify(response.content) };
+          if (response.isError) return failed(response);
           return { result: response.content };
         } catch (error) {
           return { deny: "Remote MCP failed: " + String(error) };

@@ -61,6 +61,7 @@ from app.domain.room_task.models import (
     TaskTitle,
     TaskTitleSource,
 )
+from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.service_keys import KeySpec, gateway_base, service_key
 from app.domain.thread.models import Thread
 from app.domain.usage.ledger import Ledger
@@ -106,7 +107,8 @@ SYSTEM_PROMPT = "\n".join(
         "找回某件事，所以名字要短、具体、稳定。",
         "",
         "名字的写法：",
-        "1. 是一个名词短语，不是一句话。中文不超过 12 个字，英文不超过 5 个词。",
+        f"1. 是一个名词短语，不是一句话。宽度不超过 {TITLE_CHARS} 个汉字——"
+        "一个汉字算一个，英文、数字、空格各算半个。",
         "2. 以这件事最具体、最能和别的任务区分开的对象打头：模块、功能、文件、",
         "   仓库、PR 或 issue 编号、课程、报错、人名、产品名。标识符原样保留。",
         "3. 去掉没有区分度的请求词：帮我、看看、处理一下、优化、问题、相关。",
@@ -628,6 +630,7 @@ async def _write(
 async def _publish(renamed: Renamed) -> None:
     """The channel's pages and the task's own page each listen on their own
     conversation, so both are told."""
+    # deferred-import: tests replace this name on app.domain.agent.staleness
     from app.domain.agent.staleness import announce_stale
 
     await announce_stale(renamed.room_id, "topics", id=renamed.room_id)
@@ -642,6 +645,7 @@ SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
 
 
 def _default_factory() -> SessionFactory:
+    # deferred-import: tests replace this name on app.core.db
     from app.core.db import async_session_factory
 
     return async_session_factory

@@ -13,7 +13,7 @@
  *
  * 这里只出通知对象，不引任何依赖：哪一份配哪个组件、每一格看什么，在 `catalogNotifications.ts`。
  */
-import type { EntityInfo, Notification, NotificationType } from '@/network/api/notifications/types'
+import type { EntityInfo, Notification, NotificationType } from '@/types/apiNotifications'
 
 /** 一条通知的外壳：`id` / `createdAt` 取固定值，测试和预览站都不看它们。 */
 function notif(
@@ -42,6 +42,27 @@ export function mentionNotification(withMentioner: boolean): Notification {
     'MENTION',
     withMentioner ? { mentioner: LINXIA } : {},
     withMentioner ? { discussionTitle: '课程安排', previewContent: '下周三的课改到线上，有课件的提前发我。' } : {}
+  )
+}
+
+/**
+ * 频道里的一条消息引出的那两种（`MENTION`、`THREAD_REPLY`）：没有实体，谁说的、在哪个
+ * 频道、那条消息本身都在 `contextMetadata` 里，后端投递时写好（`agent.mentions`）。
+ */
+export function channelMessageNotification(type: 'MENTION' | 'THREAD_REPLY'): Notification {
+  return notif(
+    type,
+    {},
+    {
+      projectId: 'p-1',
+      topicId: 't-1',
+      topicTitle: '课程安排',
+      blockId: 'b-1',
+      author: 'linxia',
+      authorName: '林夏',
+      content: '下周三的课改到线上，有课件的提前发我。',
+      ...(type === 'THREAD_REPLY' ? { threadId: 'th-1' } : {}),
+    }
   )
 }
 

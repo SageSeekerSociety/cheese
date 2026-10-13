@@ -147,9 +147,8 @@ async def _own_session(client, *, session_host_of):
         )
         actor = (await IdentityService(db).ensure_room_agent_user(topic_id)).username
         topic = await db.get(Topic, topic_id)
-        topic.compute_config = {
-            "name": "alices-desk",
-            "profile": "device",
+        topic.default_environment = {
+            "kind": "self_hosted",
             "device_id": rooms_machine,
         }
         resource = str(topic.resource_id or topic_id)

@@ -8,6 +8,7 @@ import LandingUseCases from './LandingUseCases.vue'
 
 import BrandScene from '@/components/account/brandScene/BrandScene.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import i18n, { t } from '@/i18n'
 
 // The manifesto lights up clause by clause once it is on screen, beside the film
@@ -191,10 +192,10 @@ onBeforeUnmount(() => {
           <BaseButton :to="entryHref" kind="primary" size="lg" append-icon="mdi-arrow-top-right">
             {{ entryLabel }}
           </BaseButton>
-          <router-link class="text-link" to="/solutions">
+          <NavLink class="text-link" to="/solutions">
             {{ t('publicSite.solutionsLink') }}
             <v-icon icon="mdi-arrow-right" size="16" />
-          </router-link>
+          </NavLink>
         </div>
       </div>
     </section>
@@ -251,10 +252,10 @@ onBeforeUnmount(() => {
           <BaseButton :to="entryHref" kind="primary" size="lg" append-icon="mdi-arrow-top-right">
             {{ entryLabel }}
           </BaseButton>
-          <router-link class="text-link" to="/solutions">
+          <NavLink class="text-link" to="/solutions">
             {{ t('publicSite.solutionsLink') }}
             <v-icon icon="mdi-arrow-right" size="16" />
-          </router-link>
+          </NavLink>
         </div>
       </div>
     </section>

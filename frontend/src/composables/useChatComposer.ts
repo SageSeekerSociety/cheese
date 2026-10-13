@@ -38,6 +38,9 @@ export interface RowRefs {
 
 export interface ChatComposerDeps {
   topic: () => Topic | null
+  /** The panel reads the room's own conversation, not a task or 支线 in it. A
+   *  task's panel is handed the room as `topic` too. */
+  ownLine: () => boolean
   alwaysSummon: () => boolean
   showComposer: () => boolean
   /** The rows the timeline is showing — the retry button only ever sits on the last one. */
@@ -62,6 +65,7 @@ export interface ChatComposerDeps {
 export function useChatComposer(deps: ChatComposerDeps) {
   const {
     topic,
+    ownLine,
     alwaysSummon,
     showComposer,
     rows,
@@ -157,8 +161,9 @@ export function useChatComposer(deps: ChatComposerDeps) {
   const composerRef = ref<{ focus: () => void } | null>(null)
 
   const starterPrompts = computed(() =>
-    (['research', 'draft', 'breakdown'] as const).map((key) => ({
+    (['tidy', 'research', 'build', 'plan'] as const).map((key) => ({
       label: t(`work.room.chat.starter.${key}`),
+      hint: t(`work.room.chat.starter.${key}Hint`),
       text: t(`work.room.chat.starter.${key}Text`),
     }))
   )
@@ -175,14 +180,9 @@ export function useChatComposer(deps: ChatComposerDeps) {
     blocks.value.some((b) => isAgentBlock(b) && (b.kind === 'message' || b.kind === 'attachment'))
   )
 
-  // 这个人往房间里放过东西没有——「开始清单」里「把材料放进来」那一步的判据之一
-  // （另一条是项目资料库非空，得问服务端）。
-  //
-  // 只数**人**放的：芝士干活时往房间里贴的文件不算这个人交过材料，否则他一进
-  // 来这一步就自己亮起来，而他要做的恰恰是把手上那份给它。
-  const roomHasAttachment = computed(() => blocks.value.some((b) => b.kind === 'attachment' && !isAgentBlock(b)))
   const showStarters = computed(
     () =>
+      ownLine() &&
       topic()?.kind === 'root' &&
       topic()?.status !== 'archived' &&
       showComposer() &&
@@ -201,7 +201,7 @@ export function useChatComposer(deps: ChatComposerDeps) {
   function startDraft(text: string) {
     if (draft.value.trim()) return
     // 起手草稿里那个 @ 和按钮写进去的是同一个名字（见 `agentSeat`）：写错了的话，
-    // 人点完「起草文档」发出去，屋里会动的那位不动，而草稿上明明 @ 着「芝士」。
+    // 人点完一张起手卡发出去，屋里会动的那位不动，而草稿上明明 @ 着「芝士」。
     const agent = agentSeat()
     draft.value = `${alwaysSummon() ? '' : `@${agent?.label ?? t('work.room.defaultAgentName')} `}${text}`
     composerRef.value?.focus()
@@ -370,9 +370,6 @@ export function useChatComposer(deps: ChatComposerDeps) {
     composerRef,
     starterPrompts,
     showStarters,
-    // 「开始清单」读的两条房间内判据：芝士开过口没有、这个人放过材料没有。
-    agentHasSpoken: startersRetired,
-    roomHasAttachment,
     startDraft,
     pendingAtts,
     attsUploading,

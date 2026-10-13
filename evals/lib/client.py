@@ -183,8 +183,15 @@ class EvalApi:
         user_block + done at once). Returns every frame received, in order."""
         token = self.session_token(author)
         frames: list[dict] = []
-        url = f"{self._ws_base}/api/topics/{topic_id}/chat?token={token}"
+        url = f"{self._ws_base}/api/rooms/live?token={token}"
         async with websockets.connect(url, max_size=8 * 1024 * 1024) as ws:
+            # The room is watched once the server says so; a message posted
+            # before that would have its echo published to nobody.
+            await ws.send(
+                json.dumps({"type": "subscribe", "topic": topic_id, "token": token})
+            )
+            while json.loads(await ws.recv()).get("type") != "subscribed":
+                pass
             resp = await self._http.post(
                 f"/api/topics/{topic_id}/messages",
                 json={"content": content, "request_id": str(uuid.uuid4())},

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 侧栏里挂在频道下面的一个任务。比频道的字往里缩一点，左边一条竖线从频道的 # 下面
-// 一直连到「全部任务」，说「这几条是那个频道里的」；字和频道一样大。在等**你**的亮
+// 一直连到「展开其余」那一行，说「这几条是那个频道里的」；字和频道一样大。在等**你**的亮
 // 一颗暖色点（服务端按看的人算的 `awaits_me`，不是「在待处理那一列」），正在运行的
 // 一颗绿点，别的不画。
 import type { RoomTask } from '@/cx_types'
@@ -26,6 +26,10 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'select', task: { roomId: string; taskId: string }): void
+  // 鼠标左键按下去了：意图定了，不必再等指针停满 hover 那一百多毫秒（和频道行
+  // `TopicRailRow` 的 `press` 同一条理由）。任务页的代码是懒加载的，早下这一百多
+  // 毫秒，打开它就少等这一段。
+  (e: 'press', task: { roomId: string; taskId: string }): void
 }>()
 
 const mark = computed<'needs-you' | 'running' | null>(() => {
@@ -43,6 +47,9 @@ const mark = computed<'needs-you' | 'running' | null>(() => {
     :style="{ paddingInlineStart: 40 + depth * 20 + 'px', '--guide-x': 16 + depth * 20 + 'px' }"
     :aria-current="selected ? 'page' : undefined"
     @click="emit('select', { roomId: task.room_id, taskId: task.id })"
+    @pointerdown="
+      $event.pointerType === 'mouse' && $event.button === 0 && emit('press', { roomId: task.room_id, taskId: task.id })
+    "
   >
     <!-- 任务名是人起的（占位名除外，那是界面上的字）。 -->
     <span

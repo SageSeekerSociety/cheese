@@ -8,7 +8,8 @@
 // what it looks like.
 //
 // What lives here: the roster and the turns, the timeline window and its paging
-// (listBlocks is called from useChatPaging, loadTopic and roomResync),
+// (the newest page comes from `query/blocks`; older and newer pages from
+// useChatPaging and roomResync),
 // the socket frames and what each one means for the window, the scroll position
 // policy, the unread/received animation sets, and the error banner. What
 // does not: the composer (useChatComposer), the pointer affordances on a row
@@ -24,45 +25,52 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
-import { ApiError, attachmentRawUrl, downloadFile, ensureFreshToken, isRetryableGetFailure, listBlocks } from '../api'
+import { ApiError, attachmentRawUrl, downloadFile, ensureFreshToken, isRetryableGetFailure } from '../api'
 import { postChatMessage } from '../api/messages'
 import { useChatRowActions } from '../components/chat/composables/useChatRowActions'
 import { useTimelineMotion } from '../components/chat/composables/useTimelineMotion'
 import { useActivityLines } from '../components/room/composables/useActivityLines'
 import { useChatScroll } from '../components/room/composables/useChatScroll'
+import { useErrorFade } from '../components/room/composables/useErrorFade'
 import { useHistoryReads } from '../components/room/composables/useHistoryReads'
 import { useLiveSteps } from '../components/room/composables/useLiveSteps'
 import { SendRefused, useOutbox } from '../components/room/composables/useOutbox'
 import { useRoomActivity } from '../components/room/composables/useRoomActivity'
 import { useRoomRoster } from '../components/room/composables/useRoomRoster'
 import { useRoomSocket } from '../components/room/composables/useRoomSocket'
+import { useRoomTail } from '../components/room/composables/useRoomTail'
 import { useRoomTurns } from '../components/room/composables/useRoomTurns'
 import { useRowBatch } from '../components/room/composables/useRowBatch'
 import { runRecordOf, threadStatusOf, useRunRecords } from '../components/room/composables/useRunRecords'
 import { useTimeline } from '../components/room/composables/useTimeline'
 import { useTypingPreview } from '../components/room/composables/useTypingPreview'
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
-import { cachedWindow, pendingBlockRefresh, setCachedWindow } from '../lib/blockCache'
-import { applyLiveChanges, mergeRefreshedTail, PAGE_SIZE } from '../lib/blockPaging'
+import { applyLiveChanges } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
 import { coalesceSplitFencedCodeBlocks } from '../lib/renderMessage'
-import { placeSplitMarkers } from '../lib/splitMarkers'
 import { taskTitle, topicShortId, topicStateBadge, topicTitle } from '../lib/topicState'
 import { myHandle } from '../me'
 import { currentUserName } from '../services/account'
 
+import { ANNOUNCED, SNAPSHOT_RESOURCES } from './chatPanelContract'
+import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 import { applyRoomState, useRoomResync } from './useRoomResync'
-import { useRoomTasks } from './useRoomTasks'
+import { useTimelineTasks } from './useTimelineTasks'
 
 import i18n, { t } from '@/i18n'
+import { cachedWindow, readNewestBlocks, setCachedWindow } from '@/query/blocks'
+import { roomChanged } from '@/query/changes'
+import { refreshTopicRow } from '@/query/project'
+import { checklistMissed, checklistPushed } from '@/query/room'
+import { settleRoom } from '@/query/snapshot'
 
 // The panel and its host have to agree on the event list, so it lives on its own
 // (see chatPanelContract) and is re-exported here: the view keeps importing
@@ -95,8 +103,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
   const {
-    agentSeat,
-    agentName,
+    agentSeat: rosterSeat,
     mentionPool,
     memberByHandle,
     seatByHandle,
@@ -115,33 +122,24 @@ export function useChatPanel(opts: ChatPanelOptions) {
     },
   })
 
-  // 输入框那一行提示语。和芝士私聊时它**不能**说「交给它做」：私聊不占机器，那边
-  // 的芝士没有工具，读不了文件也跑不了命令。一句承诺它做不到的事的提示语，换来的
-  // 是一次「我试了但做不了」，而人只会记得是它没做成。
-  const composerHint = computed(() =>
-    alwaysSummon()
-      ? t('work.room.composer.placeholderDm', { name: agentName.value })
-      : t('work.room.composer.placeholder', { name: agentName.value })
-  )
-
-  // Keep the module-level handle→name map in sync with the roster, so
-  // <@handle> tokens render with the member's display name.
-  watch(
-    mentionPool,
-    (pool) => {
-      for (const k of Object.keys(mentionNames)) delete mentionNames[k]
-      for (const row of pool) mentionNames[row.handle] = row.label
-      // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
-      // not the raw literal — they are reserved handles, not roster members.
-      mentionNames.all = t('work.room.mention.all')
-      mentionNames.here = t('work.room.mention.here')
-    },
-    { immediate: true, deep: true }
-  )
+  // 谁在这间房说话、界面上怎么称呼它、@ 渲染成谁的名字 —— 见 useAgentNaming。
+  const { agentSeat, agentName, composerHint } = useAgentNaming({
+    roomSeat: rosterSeat,
+    pool: mentionPool,
+    nameOf: agentNameOf,
+    names: mentionNames,
+    taskAgentHandle: opts.taskAgentHandle,
+    alwaysSummon,
+  })
 
   // 此刻显示时间线的哪一段 —— 见 room/composables/useTimeline；rendersInRoom 只放画得出来的块进窗口，不露面的块不占额度。
   const timeline = useTimeline({ renders: rendersInRoom })
   const history = useHistoryReads({ roomId: () => place()?.id, disposed: () => disposed })
+  const tail = useRoomTail({
+    roomId: () => place()?.id,
+    reading: () => history.reading(),
+    catchUp: (roomId, after) => void resync.catchUp(roomId, after),
+  })
   const { messages, hasMore, hasNewer } = timeline
   const loadingHistory = ref(false)
 
@@ -209,6 +207,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // room/composables/useRoomSocket。它不认识帧的含义：帧交给下面的 handleFrame。
   const {
     connected,
+    linkDown,
     connectRefused,
     open: openSocket,
     close: closeSocket,
@@ -221,17 +220,33 @@ export function useChatPanel(opts: ChatPanelOptions) {
       handleFrame(frame)
       noteFrame()
     },
-    onOpen: (reconnect) => {
-      // State frames are transient, so a re-connect rather than the first open:
-      // a doc saved while we were away has no remaining turn left to replay it.
-      if (reconnect) emit('state-changed', 'doc')
+    onOpen: (reconnect, newest, room) => {
+      // 订阅带来的房间快照放进缓存（query/snapshot）；进房间时等着它的那几处读就此拿到。
+      const here = place()
+      const channel = topic()
+      if (here && channel) settleRoom(here.id, channel.id, room)
+      // State frames are transient: what the room announced while we were away is
+      // gone, so a re-connect (not the first open) treats each as changed once —
+      // except what the snapshot just brought, which is as of now.
+      if (reconnect) {
+        const brought: ReadonlySet<string> = room ? SNAPSHOT_RESOURCES : new Set()
+        for (const resource of ANNOUNCED) if (!brought.has(resource)) announce(resource)
+        if (here) void checklistMissed(here.id)
+        if (!room) announce('topics', channel?.id)
+        else {
+          // 房间这一行不在快照里；任务在，时间线上各块带着的那几件照旧重读。
+          if (channel) void refreshTopicRow(channel.project_id, channel.id)
+          void roomTasks.refresh()
+        }
+      }
+      tail.subscribed(newest)
       // 要一份此刻的现场来核对屏幕上留着的那份（handleFrame 的 room_state）。
       sendOnSocket({ type: 'sync' })
       void flushOutbox() // 断线期间没送出去的，连上就自己走
     },
     reconnect: (topicId) => {
       const current = place()
-      if (current?.id === topicId) void (history.entered(topicId) ? resync(topicId) : loadTopic(current))
+      if (current?.id === topicId) void (history.entered(topicId) ? resync.resync(topicId) : loadTopic(current))
     },
     errorMsg,
   })
@@ -264,17 +279,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     openSocket(topicId)
   }
 
-  // 出错提示停多久。一次没成的事（表情没加上、下载失败）说一句，够读完就淡出：一直
-  // 挂着的话它盖住输入框上方那块，而说的多半已经过去了。连不上服务器的时候不走——
-  // 那时候这一行说的是房间此刻的状态（连接被拒、正在重连、历史没读出来），它一走，
-  // 房间为什么不动就没人说了。
-  const ERROR_TOAST_MS = 6000
-  let errorTimer: ReturnType<typeof setTimeout> | undefined
-  watch([errorMsg, connected, connectRefused], ([message, online, refused]) => {
-    clearTimeout(errorTimer)
-    if (message && online && !refused) errorTimer = setTimeout(() => (errorMsg.value = null), ERROR_TOAST_MS)
-  })
-  onBeforeUnmount(() => clearTimeout(errorTimer))
+  useErrorFade(errorMsg, connected, connectRefused)
 
   // 点了「编辑」的那几条：它们离开时先收拢自己的高度，原文回到输入框。别的离开（送达
   // 后换成落库的那一条）必须是瞬间的，否则同一句话会在屏幕上出现两遍。
@@ -285,6 +290,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // a block must never show up twice (现场不能错).
   function pushBlock(b: Block) {
     history.note(b.id, b)
+    tail.hold(b)
     const landing = timeline.append(b)
     if (landing === 'known' || landing === 'above' || history.reading() || b.author === AUTHOR) return
     if (b.kind === 'artifact') emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
@@ -297,6 +303,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 是点它还是自己滚下去）它就收起。停在历史中间时它一直在，写「回到最新」：那时底部
   // 只是这一段的底部，不是最新。
   const unseen = ref<string[]>([])
+
+  // 房间说它的某样东西变了：缓存里那几份标过期，时间线上各块带着的任务重读，页面
+  // 再接它自己画的那些。
+  function announce(resource: string, id?: string) {
+    const room = topic()
+    if (room) void roomChanged({ room: room.id, project: room.project_id, resource, id })
+    if (resource === 'topics' || resource === 'tasks') void roomTasks.refresh()
+    emit('state-changed', resource, id)
+  }
 
   function handleFrame(frame: WsServerFrame) {
     // 平台运行中记下的一件事：不进对话，现场和状态行读它。
@@ -318,15 +333,19 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // row in place (the frame carries the block's full fresh aggregate).
         applyReactions(frame.block_id, frame.reactions)
         break
+      case 'todo':
+        if (place()) checklistPushed(place()!.id, frame.items)
+        break
       case 'state':
-        // A platform resource changed → parent refreshes that panel live.
+        // A platform resource changed: what the cache holds of it goes stale
+        // (`query/changes`), and the parent refreshes whatever else it draws.
         // The clickable record of the action is a persisted event_block (below).
-        if (frame.resource === 'topics' || frame.resource === 'tasks') void reloadRoomTasks()
-        emit('state-changed', frame.resource, frame.id)
+        announce(frame.resource, frame.id)
         break
       case 'event_block':
         // A persisted, clickable action card (doc/topics/...) for this turn.
         pushBlock(frame.block)
+        roomTasks.landed(frame.block)
         toSite(frame.block)
         autoScroll()
         break
@@ -334,6 +353,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
         // 已经在时间线上的一行变了：原地换掉，不追加第二行。
         timeline.replace(frame.block)
         history.note(frame.block.id, frame.block)
+        tail.hold(frame.block)
         toSite(frame.block)
         break
       }
@@ -432,6 +452,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     editing.clear()
     composer.editingId.value = null
     unseen.value = []
+    tail.reset()
     composer.clearPendingAtts() // pending images belong to the topic they were typed in
     closeSocket()
     paging.loadingOlder.value = false
@@ -441,9 +462,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
       timeline.show(cached)
       rowBatch.startFor(room.id, focus)
       if (!focus) restoreScroll(room.id)
-      // 缓存里只有一页，而最新那一段几乎全是 `in_room:false` 的回合事件——一页常常画
-      // 不满一屏（一条消息飘在半空、下面空一片）。不等上面那条请求回来，现在就按真实
-      // 行往回补：补的时候滚动补偿把最新那条钉在底部，历史往上长。见 useChatPaging。
+      // 缓存里只有一页，高屏上一页短消息可能画不满（一条消息飘在半空、下面空一片）。
+      // 不等上面那条请求回来，现在就往回补：补的时候滚动补偿把最新那条钉在底部，历史
+      // 往上长。见 useChatPaging。
       void paging.fillViewportIfNeeded()
     } else {
       timeline.show({ blocks: [], hasMore: false })
@@ -456,53 +477,32 @@ export function useChatPanel(opts: ChatPanelOptions) {
       if (!stillHere()) return
       const parallelSocket = entering && outbox.value.length === 0
       if (parallelSocket) connectSocket(room.id)
-      // 打开话题的那次导航已经替它起了头（router/index.ts），它往往比下面这一条先
-      // 回来：先回来就先画出来。不等它——那条走的是后台预取的队列，可能排在别的话题
-      // 后面；下面这一条照常直接去取，谁先到用谁。
-      // 先画出来的那一页之后就当缓存看待：下面合并、判断「长了没有」、要不要复位滚动，
-      // 都和一开始就有缓存时一样。
-      let shownEarly: typeof cached = null
-      const warming = cached ? undefined : pendingBlockRefresh(room.id)
-      void warming?.then(async () => {
-        if (!stillHere() || !loadingHistory.value) return
-        const warmed = cachedWindow(room.id)
-        if (!warmed) return
-        shownEarly = warmed
-        timeline.show(warmed)
-        rowBatch.startFor(room.id, focus)
-        if (!focus) restoreScroll(room.id)
-        // 预热回来的是同样的一页，而最新那一段几乎全是 `in_room:false` 的回合事件，
-        // 一页只画得出一两行——这时候撤骨架露出来还是「一条消息飘在半空」。先按真实行
-        // 补满一屏再撤，和下面正式那一页补法一致。见 useChatPaging.fillViewportIfNeeded。
-        await paging.fillViewportIfNeeded()
-        if (!stillHere()) return
-        loadingHistory.value = false
-      })
+      // 打开话题的那次导航已经替它起了头（router/index.ts）：这里跟着那一条走，不另发
+      // 一次。回来的是缓存窗口接上最新一页之后的样子（`query/blocks`）。
       // One screenful, not the whole timeline — older blocks arrive when the
       // user scrolls up to them (loadOlder).
-      const payload = await listBlocks(room.id, { limit: PAGE_SIZE })
+      // 断线重连回来再开一次的（不是刚进房间）：之前那次读是断线前发出的，可能卡在
+      // 半路，不跟着它等，另问一次。
+      const fresh = await readNewestBlocks(room.id, { restart: !entering })
       // Only apply if still the active topic (avoid race on fast switching).
       if (!stillHere()) return
+      for (const block of fresh.blocks) tail.hold(block)
       // Blocks that landed while we were away append at the tail; if the user
       // was parked at the bottom, follow them so the newest message is visible
       // without a manual scroll. Compared on the LAST id, not on length: the
       // cached window and this page can be different sizes (the user may have
       // paged back), so a length comparison says nothing about the tail.
-      const shown = cached ?? shownEarly
+      const shown = cached
       // 开场补窗（上面那次 fillViewportIfNeeded）可能已经把更早的几页读进来了。游标是
       // 「窗口读到哪了」，比缓存窗口的更老就说明窗口被往上撑开过——这时候下面这一份
       // 「最新一页」只是它的尾巴，`timeline.show` 整段换会把刚读回来的历史丢掉、屏幕跳
       // 回最新那条。改成把它当缓存窗口，按它去合并。
       const extended = shown !== null && timeline.oldestLoaded() !== (shown.blocks[0]?.id ?? null)
-      const grew = shown !== null && shown.blocks.at(-1)?.id !== payload.data.at(-1)?.id
-      // Merge rather than replace, so scrollback the user already loaded (and
-      // that restoreScroll's saved offset refers to) does not vanish under them.
-      // `has_more` is a boolean on the wire; a response that leaves it out is
-      // "nothing older", not "unknown" — the timeline's flag is never undefined.
-      const more = !!payload.has_more
-      const merged = shown
-        ? mergeRefreshedTail(shown, { blocks: payload.data, hasMore: more })
-        : { blocks: payload.data, hasMore: more }
+      const grew = shown !== null && shown.blocks.at(-1)?.id !== fresh.blocks.at(-1)?.id
+      // Merged rather than replaced (in `readNewestBlocks`), so scrollback the user
+      // already loaded (and that restoreScroll's saved offset refers to) does not
+      // vanish under them.
+      const merged = { ...fresh }
       // Live frames can arrive while the HTTP snapshot is pending. Apply them
       // last, including retractions, so that snapshot cannot erase newer events.
       merged.blocks = applyLiveChanges(merged, changes, reactions)
@@ -528,15 +528,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
       else if (!shown) restoreScroll(room.id)
       else if (grew && atBottom.value) autoScroll()
       if (!parallelSocket && !connectRefused.value) connectSocket(room.id)
-      // 开场这一窗先按真实行补满一屏，再让骨架撤（下面 finally 才把 loadingHistory 落下）：
-      // 最新那一段几乎全是 `in_room:false` 的回合事件，一页 50 块常常只画得出一两行，补完
-      // 之前露出来就是「一条消息飘在半空」，补完再露才是首屏一屏历史。见 useChatPaging。
+      // 开场这一窗先补满一屏，再让骨架撤（下面 finally 才把 loadingHistory 落下）：补完
+      // 之前露出来就是「一条消息飘在半空」。见 useChatPaging。
       await paging.fillViewportIfNeeded()
       done()
     } catch (e) {
       if (stillHere()) historyReadFailed(room.id, e)
     } finally {
-      if (end()) loadingHistory.value = false
+      if (end()) {
+        loadingHistory.value = false
+        tail.check()
+      }
     }
   }
 
@@ -682,6 +684,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     timeline,
     runRecords,
     settle: (b: Block) => settleOutbox(b),
+    noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b)),
+    readEnded: () => tail.check(),
     scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
     failed: historyReadFailed,
@@ -694,13 +698,14 @@ export function useChatPanel(opts: ChatPanelOptions) {
     hasNewer,
     unseen,
     editing,
-    scrollRef,
+    scrollToBottom,
     backToNewest: () => paging.backToNewest(),
   })
   const { arrived, sentNow, delivered, flashId, flash, settleArrival, settleSent, outboxLeave, jumpToUnseen } = motion
 
   const composer = useChatComposer({
     topic: place,
+    ownLine: () => place()?.id === topic()?.id,
     alwaysSummon,
     showComposer,
     rows,
@@ -731,6 +736,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rows,
     reactionPickerFor,
     editingId: composer.editingId,
+    // 首屏的行还在分批挂（useRowBatch）时，顶上那几条还没挂上，不是真的到了顶。
+    loadOlder: () => void (rowBatch.pending.value || paging.loadOlder()),
   })
   const { sheet, sheetBlock, touchOnly, timeShownId, bar, barBlock, onTimelinePointer, hideBar } = rowActions
 
@@ -740,7 +747,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     touchOnly,
     toggleTime: rowActions.toggleTime,
     rows: () => rows.value,
-    roomTasks: () => roomTasks.value,
+    isTask: (id: string) => roomTasks.known.value.has(id),
     emit,
   })
 
@@ -756,34 +763,24 @@ export function useChatPanel(opts: ChatPanelOptions) {
     unreadAnchorId.value = unreadAnchorBlock(rows.value, unreadOnOpen(), AUTHOR)
   }
 
-  // 「已派出」标记 (issue #314): 本房间派出去的活，在时间线上它被派出去的那个时刻
-  // 标一行，点进去就是那条支线。库里没有这行 —— split 不往房间主线写任何 block，所
-  // 以位置只能由支线的 created_at 现算（lib/splitMarkers.ts 说明了它能标什么、标不
-  // 了什么）。
-  //
-  // 单独拉一次而不是从 topicList 里挑：一件活不再是话题树上的一个节点，话题列表里
-  // 根本没有它了。`limit: 1` 是因为标记只要支线本身，不要它们的对话。
-  const { tasks: roomTasks, reload: reloadRoomTasks } = useRoomTasks(() => topic()?.id)
+  // 对话栏画得出来的那几件任务跟着各块一起来（useTimelineTasks），不读整个房间的清单。
+  const roomTasks = useTimelineTasks({
+    roomId: () => topic()?.id,
+    blocks: visible,
+    topicIds: () => new Set(topicList().map((t) => t.id)),
+    replace: (block) => timeline.replace(block),
+  })
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
   // chip 只会写「#话题」。
   watch(
-    [() => topicList(), roomTasks],
+    [() => topicList(), roomTasks.known],
     ([ts, tasks]) => {
       for (const k of Object.keys(topicTitles)) delete topicTitles[k]
       for (const t of ts) topicTitles[t.id] = topicTitle(t)
-      for (const t of tasks) topicTitles[t.id] = taskTitle(t)
+      for (const t of tasks.values()) topicTitles[t.id] = taskTitle(t)
     },
     { immediate: true, deep: true }
-  )
-
-  // 「从这里拆出了一个任务」只画在房间的对话里：任务自己的对话里没有拆出去这回事。
-  const splitMarkers = computed(() =>
-    placeSplitMarkers(place()?.id === topic()?.id ? roomTasks.value : [], {
-      blocks: visible.value,
-      hasMore: hasMore.value,
-      hasNewer: hasNewer.value,
-    })
   )
 
   // 某一轮那位队友。认不出是谁的轮次，房间里只坐着一位时只能是它；坐着几位时不猜：
@@ -847,22 +844,20 @@ export function useChatPanel(opts: ChatPanelOptions) {
   }
 
   // 一段话从哪一行开始、哪一行是同一段的续话、发件箱那几条接在谁后面：规则在
-  // lib/chatGrouping.ts，这里只回答「上面有没有插进别的行」——「已派出」标记和新
-  // 消息线都会把一段话切断。
+  // lib/chatGrouping.ts，这里只回答「上面有没有插进别的行」——新消息线会把一段话切断。
   const runEdges = computed(() =>
     visible.value.map((cur, i) =>
       runEdgeBetween(visible.value[i - 1], cur, {
-        broken: splitMarkers.value.before.has(cur.id) || cur.id === unreadAnchorId.value,
+        broken: cur.id === unreadAnchorId.value,
       })
     )
   )
-  const typing = useTypingPreview({ topic, hasNewer, outbox, visible, splitMarkers, arrived, delivered }) // 队友正在写的那条
+  const typing = useTypingPreview({ topic, hasNewer, outbox, visible, arrived, delivered }) // 队友正在写的那条
   function outboxEdge(index: number): RunEdge {
     if (index > 0) return 'cont'
     const last = visible.value.at(-1)
     return outboxEdgeAfter(last, {
       mine: !!last && isMine(last),
-      brokenAbove: splitMarkers.value.tail.length > 0,
     })
   }
 
@@ -940,7 +935,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom,
     dayLabels,
     unreadAnchorId,
-    splitMarkers,
     runEdges,
     outboxEdge,
     pendingBlock,
@@ -984,6 +978,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     // what the page above listens for
     errorMsg,
     connected,
+    linkDown,
     send,
     replyToQuestion,
     viewer,

@@ -17,7 +17,7 @@ vi.mock('vue-router', () => ({
   useRoute: () => ({ name: 'TeamsDetailMembers', params: { handle: 'cheese-core' }, query: { tab: 'members' } }),
   useRouter: () => ({ replace }),
 }))
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: {
     getJoinLink: (...args: unknown[]) => getJoinLink(...args),
     resetJoinLink: (...args: unknown[]) => resetJoinLink(...args),
@@ -28,8 +28,8 @@ vi.mock('@/network/api/teams', () => ({
 
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
+import { ApiError } from '@/api'
 import { setLocale } from '@/i18n'
-import { BusinessError } from '@/network/types/error'
 
 const team = {
   id: 7,
@@ -50,10 +50,10 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  getJoinLink.mockReset().mockResolvedValue({ data: { token: 'first', approval: true } })
-  resetJoinLink.mockReset().mockResolvedValue({ data: { token: 'second', approval: true } })
-  updateJoinLink.mockReset().mockResolvedValue({ data: { token: 'first', approval: false } })
-  update.mockReset().mockResolvedValue({ data: { team: { ...team, visibility: 'stealth' } } })
+  getJoinLink.mockReset().mockResolvedValue({ token: 'first', approval: true })
+  resetJoinLink.mockReset().mockResolvedValue({ token: 'second', approval: true })
+  updateJoinLink.mockReset().mockResolvedValue({ token: 'first', approval: false })
+  update.mockReset().mockResolvedValue({ team: { ...team, visibility: 'stealth' } })
   copy.mockReset().mockResolvedValue(undefined)
   replace.mockReset().mockResolvedValue(undefined)
 })
@@ -116,7 +116,7 @@ describe('managing how people get into a team', () => {
 
 describe('the team address', () => {
   it('moves the page to the new address once the team is renamed', async () => {
-    update.mockResolvedValue({ data: { team: { ...team, handle: 'zhishi' } } })
+    update.mockResolvedValue({ team: { ...team, handle: 'zhishi' } })
     const view = mount()
     const field = await screen.findByLabelText('团队地址')
     await fireEvent.update(field, ' zhishi ')
@@ -133,9 +133,7 @@ describe('the team address', () => {
   })
 
   it('says so when another team or a person already holds the address', async () => {
-    update.mockRejectedValue(
-      new BusinessError('taken', 409, { name: 'Conflict', message: 'taken', data: { field: 'handle' } })
-    )
+    update.mockRejectedValue(new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'handle' }))
     mount()
     await fireEvent.update(await screen.findByLabelText('团队地址'), 'taken-name')
     await fireEvent.click(screen.getByRole('button', { name: '保存' }))

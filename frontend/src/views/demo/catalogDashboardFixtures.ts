@@ -274,6 +274,10 @@ export const DASH_PENDING: PendingRow[] = [
   },
 ]
 
+/** 账号池快照写下的时刻。**算出来而不是写死**：这是一份静态素材，写死的时刻过几天
+ *  就变成一个过去的钟点，预览里那一句「最早 X 恢复」跟着变成一句假话。 */
+const POOL_AT = Math.floor(Date.now() / 1000)
+
 export const DASH_USAGE: StatsUsage = {
   days: 30,
   totals: { tokens: 921100, calls: 277, cost_usd: 2.6583, unpriced_tokens: 35000 },
@@ -283,18 +287,86 @@ export const DASH_USAGE: StatsUsage = {
     cost_usd: [0.1296, 0.1742, 0.1081, 0.214, 0.145, 0.2603, 0.1806][i],
   })),
   top_projects: [
-    { project_id: '4a1c0f6e-7b52-4d9a-9c31-2f8d5a0b7e11', name: '知是平台后端', tokens: 221100, cost_usd: 0.6381 },
-    { project_id: 'p-y', name: '城西社区', tokens: 118400, cost_usd: 0.3412 },
+    {
+      project_id: '4a1c0f6e-7b52-4d9a-9c31-2f8d5a0b7e11',
+      name: '知是平台后端',
+      tokens: 221100,
+      cost_usd: 0.6381,
+      cache_hit: 0.82,
+      models: [
+        { model: 'glm-4.6', tokens: 160000, cost_usd: 0.45 },
+        { model: 'deepseek-v3', tokens: 61100, cost_usd: 0.1881 },
+      ],
+    },
+    {
+      project_id: 'p-y',
+      name: '城西社区',
+      tokens: 118400,
+      cost_usd: 0.3412,
+      cache_hit: null,
+      models: [{ model: 'deepseek-v3', tokens: 118400, cost_usd: 0.3412 }],
+    },
   ],
   by_model: [
-    { model: 'glm-4.6', tokens: 423700, calls: 141, cost_usd: 1.1976, unpriced_tokens: 24500 },
-    { model: 'deepseek-v3', tokens: 197400, calls: 66, cost_usd: 0.5591, unpriced_tokens: 10500 },
+    { model: 'glm-4.6', tokens: 423700, calls: 141, cost_usd: 1.1976, unpriced_tokens: 24500, cache_hit: 0.74 },
+    { model: 'deepseek-v3', tokens: 197400, calls: 66, cost_usd: 0.5591, unpriced_tokens: 10500, cache_hit: null },
   ],
   by_route: [
     { route: 'gateway', tokens: 571100, calls: 190, cost_usd: 1.7133, unpriced_tokens: 0 },
     { route: 'runtime', tokens: 210000, calls: 61, cost_usd: 0.61, unpriced_tokens: 35000 },
   ],
   prev: { tokens: 1096100, calls: 308, cost_usd: 3.1527 },
+  // 缓存命中只算记了缓存的行；没算进去的输入量写在 KPI 的口径里。
+  cache: { hit_ratio: 0.71, input_tokens: 520000, cache_read_tokens: 369200, uncounted_input_tokens: 180000 },
+  top_users: [
+    { handle: 'lin', name: '林同学', tokens: 301000, calls: 88, cost_usd: 0.92, cache_hit: 0.78 },
+    { handle: 'zhao', name: null, tokens: 96000, calls: 31, cost_usd: 0.27, cache_hit: null },
+  ],
+  unattributed: { tokens: 42000, calls: 12, cost_usd: 0.11 },
+  // 30 天的窗口按天看就够了，后端不给每小时那条。
+  hourly: null,
+  recent: [
+    // 订阅通路一行是一次请求；网关那两行是网关按模型合计的一段用量（页上标「汇总」）。
+    {
+      at: '2026-05-14T15:44:31+08:00',
+      project_id: '4a1c0f6e-7b52-4d9a-9c31-2f8d5a0b7e11',
+      project: '知是平台后端',
+      handle: 'lin',
+      model: 'claude-opus-4-1',
+      route: 'subscription',
+      kind: 'chat',
+      input_tokens: 61200,
+      output_tokens: 830,
+      cache_read_tokens: 58800,
+      cost_usd: 0.142,
+    },
+    {
+      at: '2026-05-14T15:42:10+08:00',
+      project_id: '4a1c0f6e-7b52-4d9a-9c31-2f8d5a0b7e11',
+      project: '知是平台后端',
+      handle: 'lin',
+      model: 'glm-4.6',
+      route: 'gateway',
+      kind: 'chat',
+      input_tokens: 48000,
+      output_tokens: 1200,
+      cache_read_tokens: 41000,
+      cost_usd: 0.031,
+    },
+    {
+      at: '2026-05-14T15:30:02+08:00',
+      project_id: 'p-y',
+      project: '城西社区',
+      handle: null,
+      model: 'deepseek-v3',
+      route: 'gateway',
+      kind: 'memory_dream',
+      input_tokens: 9000,
+      output_tokens: 400,
+      cache_read_tokens: null,
+      cost_usd: 0.004,
+    },
+  ],
   credits: {
     exhausted: [
       {
@@ -324,6 +396,20 @@ export const DASH_USAGE: StatsUsage = {
       method: 'derived_from_resource_usage',
     },
   },
+  // Claude 账号池：三张账号各一种状态 —— 这一块要一眼看得出「一行一张账号」在画什么，
+  // 所以可用 / 冷却 / 已停用各来一张，冷却那张还带着它自己的失败次数。
+  claude_accounts: {
+    accounts: [
+      { name: 'primary', state: 'available', until: null, failures: 0 },
+      { name: 'claude-2', state: 'cooling', until: POOL_AT + 900, failures: 2 },
+      { name: 'claude-3', state: 'disabled', until: null, failures: 6 },
+    ],
+    reason: null,
+    written_at: POOL_AT,
+    age_seconds: 0,
+    stale: false,
+    retry_after: 900,
+  },
 }
 
 export const DASH_PLATFORM: StatsPlatform = {
@@ -351,6 +437,7 @@ export const DASH_PLATFORM: StatsPlatform = {
       redis: { status: 'up' },
       event_loop: { status: 'up', detail: 3.4 },
       routes: { status: 'up' },
+      alerting: { status: 'up' },
     },
   },
   extras: {

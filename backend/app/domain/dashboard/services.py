@@ -12,20 +12,31 @@ import uuid
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ColumnElement, and_, func, not_, select, true
+from sqlalchemy import ColumnElement, String, and_, cast, func, not_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
 from app.core.errors import NotFoundError
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.models import Block
 from app.domain.conversation.services import of_rooms, room_column
-from app.domain.identity.handles import looks_like_agent_handle
+from app.domain.day_windows import dense_series, utc_day, utc_day_window
+from app.domain.identity.handles import (
+    AGENT_HANDLE_PREFIX,
+    agent_instance_handle,
+    looks_like_agent_handle,
+)
+from app.domain.membership.roster import roster
+from app.domain.memory.models import MemoryEntry, parse_user_scope_id
+from app.domain.memory.store import about_person
 from app.domain.notification.models import NotificationType
 from app.domain.notification.repositories import NotificationRepository
-from app.domain.platform_stats.windows import dense_series, utc_day, utc_day_window
+from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
 from app.domain.space.repositories import SpaceRepository
+from app.domain.team.services import team_service
+from app.domain.team.summary import team_summary
 from app.domain.topic.models import Topic, TopicStatus, room_ref
 from app.domain.topic.repositories import TopicRepository, seen_by
 
@@ -34,7 +45,7 @@ if TYPE_CHECKING:
     from app.domain.user.models import User
 
 # A personal page's heatmap covers the last year, by UTC day (the day the
-# platform's other per-day charts use, ``app.domain.platform_stats.windows``);
+# platform's other per-day charts use, ``app.domain.day_windows``);
 # each project's sparkline covers the last twelve weeks of it.
 _ACTIVITY_DAYS = 365
 _SPARKLINE_WEEKS = 12
@@ -140,7 +151,6 @@ class DashboardService:
         — on anybody else's page it is empty."""
         if await self._projects.get(project_id) is None:
             raise NotFoundError("Project not found")
-        from app.domain.membership.roster import roster
 
         member = next(
             (m for m in await roster(self._s, project_id) if m.handle == user_handle),
@@ -204,7 +214,17 @@ class DashboardService:
         )
         return {
             "handle": user_handle,
-            "source": member.source if member else None,
+            # An AI teammate is one whichever way it was seated; a seat row would
+            # otherwise read it as a team or external member.
+            "source": (
+                "agent"
+                if member and member.agent
+                else member.source
+                if member
+                else None
+            ),
+            # The handle its 私聊 opens by (``AgentInstanceService.for_handle``).
+            "instance_handle": member.instance_handle if member else None,
             "topics_started": started,
             "topics_active": topics_active,
             "weekly_contributions": int(weekly),
@@ -223,17 +243,24 @@ class DashboardService:
     ) -> "tuple[User | None, list[Project]]":
         """The person, and their projects as ``viewer`` may see them.
 
-        Every project they are in — owned, through a team, or as an external
-        member. Their own page lists them all; anyone else's lists a project
-        only when the viewer may read it too. Everything a personal page counts
-        (projects, activity, topics) is counted inside this one set, so no
-        number on it reaches into a project the viewer cannot open."""
+        Every project they are in — owned, through a team, as an external
+        member, or, for an AI teammate, the project it is the agent of. Their
+        own page lists them all; anyone else's lists a project only when the
+        viewer may read it too. Everything a personal page counts (projects,
+        activity, topics) is counted inside this one set, so no number on it
+        reaches into a project the viewer cannot open."""
+        # deferred-import: tests replace this name on app.domain.user.repositories
         from app.domain.user.repositories import UserRepository
 
         user = await UserRepository(self._s).get_by_handle(handle)
         theirs = await self._projects.list_visible_to(
             handle=handle, user_id=user.id if user else None
         )
+        listed = {project.id for project in theirs}
+        seated = await self._agent_of(handle)
+        theirs += (
+            await self._projects.get_by_ids([p for p in seated if p not in listed])
+        ).values()
         if viewer == handle:
             return user, theirs
         return user, [
@@ -241,6 +268,26 @@ class DashboardService:
             for project in theirs
             if await may_read_project(self._s, project_id=project.id, handle=viewer)
         ]
+
+    async def _agent_of(self, handle: str) -> set[uuid.UUID]:
+        """The projects whose AI teammate acts under ``handle``: an agent's
+        handle is derived from its instance (``agent_instance_handle``), and the
+        instance belongs to one project. Empty for a person. Without it a
+        teammate's page counted no project at all, so a year of its work read 0
+        beside the 本周 count the member page takes from the same blocks."""
+        hexed = handle.removeprefix(AGENT_HANDLE_PREFIX)
+        if hexed == handle or not hexed:
+            return set()
+        instances = await self._s.scalars(
+            select(AgentInstance).where(
+                func.replace(cast(AgentInstance.id, String), "-", "").like(f"{hexed}%")
+            )
+        )
+        return {
+            instance.project_id
+            for instance in instances
+            if agent_instance_handle(instance.id) == handle
+        }
 
     async def user_profile(self, handle: str, *, viewer: str) -> dict:
         """个人主页 (spec §7.2, LinkedIn/GitHub profile): cross-project — who
@@ -251,8 +298,7 @@ class DashboardService:
         the ones the viewer may see, and the understanding is empty on anyone
         else's page — what the agents remember about a person is not for other
         people to read."""
-        from app.domain.team.services import team_service
-        from app.domain.team.summary import team_summary
+        # deferred-import: tests replace this name on app.domain.user.repositories
         from app.domain.user.repositories import UserProfileRepository, UserRepository
 
         user, visible = await self._projects_shown(handle, viewer=viewer)
@@ -274,6 +320,7 @@ class DashboardService:
         )
         is_self = viewer == handle
         ids = [project.id for project in visible]
+        seated = await self._agent_of(handle)
 
         teams = []
         if user is not None:
@@ -352,9 +399,11 @@ class DashboardService:
                     "project_id": str(project.id),
                     "name": project.name,
                     # Same precedence as the roster: owner, then team, then
-                    # external.
+                    # external; an AI teammate is the project's agent.
                     "source": (
-                        "owner"
+                        "agent"
+                        if project.id in seated
+                        else "owner"
                         if project.owner_handle == handle
                         else "team"
                         if project.team_id in team_ids
@@ -399,10 +448,6 @@ class DashboardService:
         A project is named only while the person may still read it; one they
         have left keeps its notes here (they are about them) but not its name.
         """
-        from app.domain.agent_instance.models import AgentInstance
-        from app.domain.memory.models import MemoryEntry, parse_user_scope_id
-        from app.domain.memory.store import about_person
-        from app.domain.project.models import Project
 
         rows = (
             await self._s.scalars(

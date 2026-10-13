@@ -13,7 +13,9 @@ from app.domain.notification.entity_resolvers import (
     TeamEntityResolver,
     UserEntityResolver,
 )
+from app.domain.notification.legacy_queue import import_legacy_queue
 from app.domain.notification.letter import letter_for, render_html, render_text
+from app.domain.notification.outbox import drain_channel
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.notification.services import NotificationQueryService
 from app.domain.team.services import team_service
@@ -61,8 +63,6 @@ async def send_email(sessions, item):
 
 
 async def drain_email_queue(sessions: SessionFactory) -> dict[str, int]:
-    from app.domain.notification.legacy_queue import import_legacy_queue
-    from app.domain.notification.outbox import drain_channel
 
     try:
         await import_legacy_queue(

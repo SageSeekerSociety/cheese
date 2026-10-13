@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 六个要人管的数：前三个点进「题目」那一格并带上对应的筛选，后三个只是提醒（没有
 // 可以直接跳去处理的地方）。总览和「告警」两处用同一份。
-import type { SpaceAnalyticsAlerts } from '@/network/api/spaces/types'
+import type { SpaceAnalyticsAlerts } from '@/types/apiSpaces'
 import type { SpaceAnalyticsQueryState } from '../utils'
 
 import { computed } from 'vue'

@@ -16,7 +16,8 @@
 //
 // The one cross-tab wire is `open-file`: a <&path> chip in the doc (or in the
 // chat, via `openFile`) opens that file where it lives — its own tab in the
-// free zone when it is a room file the preview can draw, the 改动 tab otherwise.
+// free zone when it is a room file the preview can draw, a read-only tab of the
+// project's code when no task worktree holds it, the 改动 tab otherwise.
 //
 // 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 定时与触发）不能关，位置记忆来自这里。自由区是
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
@@ -31,13 +32,12 @@ import type { CardPhase } from '../lib/topicState'
 import type { TabDef, TabKey } from './panels/panelTabList'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, useId, watch } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getTopicWorkSummary, readPreviewFile } from '../api'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
-import { cachedPreviewPointer, refreshPreviewPointer } from '../lib/previewPointer'
-import { cachedTopicPanel, fetchRoomTasks } from '../lib/topicPanelCache'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
@@ -55,6 +55,9 @@ import ProjectFileTab from './ProjectFileTab.vue'
 
 import { useCommands } from '@/commands'
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { heldPreview, openRoomTasksQuery, readPreview } from '@/query/room'
 
 const props = withDefaults(
   defineProps<{
@@ -64,6 +67,9 @@ const props = withDefaults(
     taskId?: string | null
     // 任务页上，改动只读（不是负责人，或任务已关）。
     taskReadOnly?: boolean
+    // 这件任务有没有自己的分支。没有的（还没有电脑打开过它）没有工作区，「改动」那一格
+    // 打不开它，文件就是项目现在的样子。
+    taskHasBranch?: boolean
     submitQuestion?: SubmitPreviewQuestion
     // Bumped by the parent on AI activity (turn-done / a platform resource the
     // turn changed) so 文档 reloads the doc 芝士 just wrote. See TopicView
@@ -111,6 +117,7 @@ const props = withDefaults(
   {
     taskId: null,
     taskReadOnly: false,
+    taskHasBranch: true,
     submitQuestion: undefined,
     working: false,
     agentControl: null,
@@ -293,10 +300,13 @@ watch(
   (now, before) => {
     if (!before || now) return
     refreshTick.value += 1
-    void pollPreviewPointer()
-    void pollWorkSummary()
+    // 预览和改动只有任务有（见 CHANNEL_TABS）。
+    if (props.taskId) {
+      void pollPreviewPointer()
+      void pollWorkSummary()
+    }
     // 一轮里派出去的活，收工那一刻就该出现在 任务 那一格上。
-    void pollThreads({ fresh: true })
+    pollThreads()
   }
 )
 
@@ -319,9 +329,9 @@ function markPreviewSeen(id?: string | null) {
 }
 
 // Fetch the POINTER only (no file read, no cookie priming) so the dot can appear
-// while 预览 is not the open tab. Goes through lib/previewPointer, so a request the
-// router guard already started for this topic is reused rather than repeated — and
-// the answer here feeds that cache for the next time the room is opened.
+// while 预览 is not the open tab. Goes through the query cache (`query/room`), so a
+// request the router guard already started for this topic is reused rather than
+// repeated — and the answer here is there the next time the room is opened.
 //
 // 返回的是「这次问到的产物 id」：`null` 是「这个房间没有预览」（一个真看到过的
 // 状态），`undefined` 是「这一问没成」（没话题 id，或者网络断了）——两者不能混，兜
@@ -331,7 +341,7 @@ async function pollPreviewPointer(opts: { seen?: boolean } = {}): Promise<string
   if (!tid) return undefined
   let art: PreviewInfo | null = null
   try {
-    art = await refreshPreviewPointer(tid)
+    art = await readPreview(tid)
   } catch {
     // A failed poll is not a state — leave the dot as it was. The real load
     // reports errors; this one only ever adds a hint.
@@ -411,6 +421,7 @@ watch(active, () => syncPreviewPoll())
 // 冒出来。指针真换了才 `refreshTick`：那一格全房间共用，总览会跟着重取房间产物，同一
 // 份东西被重复摆一次不该惊动它们。
 function previewShown() {
+  if (!props.taskId) return
   const before = previewSeen.value
   void pollPreviewPointer().then((id) => {
     if (id === undefined) return
@@ -466,26 +477,22 @@ function markChangesSeen() {
 // ---- 这个房间派出去了几件活 ----
 // A signal, so 总览 can carry its count while closed and can stay out of the way
 // of a room that never dispatched anything.
-const threads = ref<{ open: number }>({ open: 0 })
+// 只取开着的活本身，不带对话：这里只是为了数一数有几条开着。和频道概览读同一份，
+// 切回房间时上次那个数先在。
+const openTasksRead = useQuery(
+  computed(() => ({ ...openRoomTasksQuery(topicId.value ?? ''), enabled: !!topicId.value && !props.taskId })),
+  queryClient
+)
+// 任务页上答 0（`threads` 是 `signalFor` 和 `tabTitle` 的唯一出处）：这一份属于房间，
+// 不属于画在它里面的任务，而它会漏进来——这一格和频道概览读同一份缓存，`enabled` 挡不住。
+const threads = computed<{ open: number }>(() => ({
+  open: props.taskId ? 0 : (openTasksRead.data.value?.data ?? []).filter((r) => r.status === 'open').length,
+}))
 
-function countThreads(rows: { status: string }[]) {
-  threads.value = { open: rows.filter((r) => r.status === 'open').length }
-}
-
-async function pollThreads(opts: { fresh?: boolean } = {}) {
+function pollThreads() {
   const roomId = props.topic?.id
   if (!roomId || props.taskId) return
-  // Show the count from last time (e.g. switching back to a room) while the fresh one loads.
-  const cached = cachedTopicPanel('roomTasks', roomId)
-  if (cached) countThreads(cached.data)
-  try {
-    // limit: 1 — without it this asks for every task's whole history just to
-    // count them. Shared with the channel overview and the chat panel.
-    const rows = (await fetchRoomTasks(roomId, opts)).data
-    if (props.topic?.id === roomId) countThreads(rows)
-  } catch {
-    // A failed poll is not a state — same rule as the two polls above.
-  }
+  void queryClient.invalidateQueries({ queryKey: keys.roomTasks(roomId) })
 }
 
 function hasContent(key: TabKey): boolean {
@@ -585,10 +592,13 @@ const panelTabs = computed<PanelTab[]>(() =>
   // decided, so the phase does not get to.
   settled.value = !!asked
   markPreviewSeen(null)
-  if (id) {
-    // 这个房间的当前预览，路由守卫通常已经先问过了（lib/previewPointer.ts）：命中就
-    // 直接用——面板挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
-    const warm = cachedPreviewPointer(id)
+  // 预览和改动两格只有任务有（频道没有电脑在它名下干活，见 CHANNEL_TABS）：频道不去问
+  // 它们。频道「没有改动」是事实，不用等谁来答。
+  if (!props.taskId) summaryLoaded.value = true
+  if (id && props.taskId) {
+    // 这件任务的当前预览，之前问过的还在缓存里（`query/room`）：命中就直接用——面板
+    // 挂上来时那份答案就在手边，不必再等一轮网络。没命中才自己问。
+    const warm = heldPreview(id)
     if (warm !== undefined) {
       previewPath.value = warm?.path ?? null
       markPreviewSeen(warm?.artifact_id ?? null)
@@ -602,7 +612,6 @@ const panelTabs = computed<PanelTab[]>(() =>
     whenIdle(() => {
       if (conversationId.value === openedId) void pollWorkSummary({ seen: true })
     })
-    void pollThreads()
   }
 }
 
@@ -655,7 +664,9 @@ async function openFile(path: string) {
     return
   }
   // 频道里没有人改项目的文件，提到的一份文件就是项目现在的样子：在自由区开一格只读的。
-  if (!props.taskId) {
+  // 还没有自己分支的任务（没有电脑打开过它）也一样：它没有工作区，「改动」那一格只能
+  // 说打不开这件任务。
+  if (!props.taskId || !props.taskHasBranch) {
     const lines = at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null
     placeFile(want, undefined, { lines })
     setFiles(openFiles.value.map((f) => (f.path === want ? { ...f, project: { lines } } : f)))
@@ -796,7 +807,9 @@ defineExpose({
         @select="selectTab"
         @close-file="closeFile"
         @pin-file="pinFile"
-      />
+      >
+        <template v-if="$slots['tab-actions']" #actions><slot name="tab-actions" /></template>
+      </PanelTabs>
 
       <!-- Panel content (not the tab strip) gets its own boundary: a tab that
            throws shows the fallback here while the strip stays usable.
@@ -867,7 +880,8 @@ defineExpose({
             @mention-click="emit('mention-click', $event)"
           />
           <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
-             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。 -->
+             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
+             在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <RoutinePanelHost
             v-if="mounted.has('routines')"
             v-show="active === 'routines'"
@@ -875,6 +889,7 @@ defineExpose({
             :topic-id="topicId"
             :project-id="projectId"
             :refresh-tick="refreshTick"
+            @open-file="openFile"
           />
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <PanelDocHost
@@ -934,18 +949,13 @@ defineExpose({
 }
 .tabpane-chat {
   display: flex;
-  /* tabbody 是一条 flex 行，这一格必须占满它——按内容收缩的话，输入框只有半屏宽。 */
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
   height: 100%;
 }
 .tabpane-slot {
   display: flex;
-  flex: 1 1 auto;
   width: 100%;
-  min-width: 0;
   min-height: 0;
 }
 .tabpane-in {
@@ -976,6 +986,11 @@ defineExpose({
   min-height: 0;
   /* Panel tab switches cross-fade this block only (lib/viewTransition.ts). */
   view-transition-name: wp-tabbody;
+}
+/* 每一格都占满这条 flex 行：按内容收缩的一格会让 Monaco 量到窄宽度后定死，面板右边空一条。 */
+.tabbody > * {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {

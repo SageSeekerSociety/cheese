@@ -16,8 +16,8 @@ Where the shared names went. The names these four routes read from topics.py now
 have homes of their own: `clean_artifact_path` and `MAX_ARTIFACT_BYTES` are the
 room-file rules in `app.domain.project.room_files`, `source_bytes` is the API
 read-orchestration helper in `app.api.routes.topics_file_sources`, and the binding
-check became `TaskService.require_source_in_room`. `DbSession` and `_actor_in_place`
-are still imported from topics.py, the shape `admin_models.py` uses for `DbSession`.
+check became `TaskService.require_source_in_room`. `_actor_in_place`
+is still imported from topics.py; `DbSession` comes from `app.api.request_deps`.
 `_row_numbers` and `_document_bytes` are the opposite case: nothing outside these
 four routes names them, so they move with them. None of the new homes imports this
 module, so there is no cycle.
@@ -49,8 +49,9 @@ from typing import Literal
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession, _actor_in_place
+from app.api.routes.topics import _actor_in_place
 from app.api.routes.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
@@ -75,6 +76,7 @@ from app.domain.documents.spreadsheet import (
 from app.domain.library import service as library
 from app.domain.project import room_files
 from app.domain.project.room_files import MAX_ARTIFACT_BYTES, clean_artifact_path
+from app.domain.repository.forge_files import ProjectFiles
 from app.domain.room_task.services import TaskService
 from app.domain.textfile import content_version
 from app.domain.topic.services import TopicService
@@ -249,8 +251,6 @@ async def decide_document_revisions(
     except RevisionsFailed as exc:
         raise ValidationError(exception_text(exc)) from exc
     if task is not None:
-        from app.domain.repository.forge_files import ProjectFiles
-
         await ProjectFiles(db, topic.project_id, task).write_bytes(
             clean, made, expected
         )

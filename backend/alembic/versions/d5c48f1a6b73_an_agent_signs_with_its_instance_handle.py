@@ -47,9 +47,6 @@ agent 只有一个名字，从它自己派生，它签的字、它的席位、�
 了芝士自己的 handle，而 ``project_members.user_handle`` 是个字符串。不重指，旧那行
 授的项目级访问（``authorize_topic_access`` 的 ``is_project_member`` 那一档）就悄没声
 地作废了，还没有任何报错指向原因。
-
-降级不做：把一位芝士的记忆再按房间劈开需要知道每条当初属于哪间房，而重键之后那个
-事实已经不在行上了。
 """
 
 import importlib.util
@@ -248,4 +245,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """降级不做：把一位芝士的记忆再按房间劈开需要知道每条当初属于哪间房，而重键之后那个
+    事实已经不在行上了。"""
     pass

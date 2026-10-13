@@ -13,6 +13,7 @@ import uuid
 
 from sqlalchemy import select
 
+from app.api import deps as session_turn_deps
 from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.chat import ChatService
 from app.domain.agent.device_hub import DeviceCallError
@@ -23,10 +24,11 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.main import app
 from tests.conftest import StubChannel, stub_compute
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
+    open_task,
     post_message,
     post_project,
+    room_socket,
 )
 
 
@@ -42,6 +44,7 @@ class StillWorking(StubChannel):
 
 def _service(client, channel: StubChannel) -> ChatService:
     service = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root="/tmp/teammates-handover-ws",
@@ -76,7 +79,7 @@ def _room_with_a_teammate(client) -> str:
 
 
 def _say(client, room: str, content: str) -> None:
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         post_message(client, room, "alice", {"content": content})
         while ws.receive_json()["type"] != "user_block":
             pass
@@ -464,6 +467,46 @@ def test_a_recovered_conversations_old_death_record_is_revoked(client):
     open_ids = {turn.id for turn in _turns(client, room) if turn.stopped_at is None}
     assert new_rows[0].id in open_ids, "新自启行借旧死亡键被收口"
     assert new_rows[0].session_id == b_sid, "新行盖的是这条会话自己的 id"
+
+
+def _task_room_with_a_teammate(client) -> tuple[str, str]:
+    """A room holding the project's own agent and a second one, "Second", and a
+    task in that room — the task was given no teammate of its own."""
+    project = post_project(client, {"name": "HandoverTask"}, owner="alice")
+    data = project.json()["data"]
+    room = data["root_topic_id"]
+    _seat_teammate(client, data, room, "second", "Second")
+    return room, open_task(client, room, "整理一下", start=False)["id"]
+
+
+def test_a_tasks_message_naming_another_teammate_gets_its_turn(client):
+    """A task's own teammate answers what names nobody; what @-ed another
+    teammate is the teammate it named — every message in a task is addressed,
+    and the live turn resolves the named instance. The wake path resolved the
+    conversation's seat to the task's own agent instead and refused the rest
+    ("seat_has_other_agent"), so a message it held — the seat it was for was
+    busy — never came back, while the same message was served when the turn was
+    still live. One task, two waiting messages, two teammates."""
+    room, task = _task_room_with_a_teammate(client)
+    channel = StubChannel()
+    service = _service(client, channel)
+    runner = get_work_runner()
+    runner.hold_turns()
+    post_message(client, task, "alice", {"content": "@芝士 跑一下测试"})
+    post_message(client, task, "alice", {"content": "@Second 编一下文档"})
+
+    client.portal.call(runner.let_go)
+    runner.start_turns()
+    assert client.portal.call(runner.resume_lost_messages, service) == 2
+
+    _until(
+        lambda: (
+            _heard(channel, task, "跑一下测试") is not None
+            and _heard(channel, task, "编一下文档") is not None
+        ),
+        "a message a task held never got its turn",
+    )
+    assert _heard(channel, task, "跑一下测试") != _heard(channel, task, "编一下文档")
 
 
 def test_terminal_evidence_closes_rows_even_with_zero_recovered(client):

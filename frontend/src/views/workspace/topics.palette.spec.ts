@@ -9,13 +9,14 @@ import type { SourceContext } from '@/commands/palette/sources'
 import type { Topic } from '@/cx_types'
 
 import { createPinia, setActivePinia } from 'pinia'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import source from './topics.palette'
 
 import { buildResults } from '@/commands/palette/results'
 import { t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 function topic(id: string, title: string, extra: Partial<Topic> = {}): Topic {
   return {
@@ -32,17 +33,19 @@ function topic(id: string, title: string, extra: Partial<Topic> = {}): Topic {
 // 本地数据源只从 store 里读当前项目那张表；路由这里用不到（只取条目，不点它）。
 const ctx: SourceContext = { projectId: 'p1', router: {} as unknown as Router }
 
-function mountStore(topics: Topic[]) {
+async function mountStore(topics: Topic[]) {
   setActivePinia(createPinia())
+  seedProjects([])
+  seedProject('p1', { topics, members: [], unread: {}, privateUnread: {}, notifyLevels: {} })
   const store = useWorkspaceStore()
-  store.projectId = 'p1'
-  store.topics = topics
+  store.openProject('p1')
+  await vi.waitFor(() => expect(store.topics).toHaveLength(topics.length))
   return store
 }
 
 describe('命令面板：等你处理的话题', () => {
-  it('归档的话题不进「等你处理」，即使后端仍说它 awaits_me', () => {
-    mountStore([
+  it('归档的话题不进「等你处理」，即使后端仍说它 awaits_me', async () => {
+    await mountStore([
       topic('t1', '登录页改成深色', { awaits_me: true }),
       topic('t2', '平台部分问题记录', { awaits_me: true, status: 'archived' }),
     ])
@@ -56,8 +59,8 @@ describe('命令面板：等你处理的话题', () => {
     expect(awaiting?.rows.map((row) => row.id)).toEqual(['topic:t1'])
   })
 
-  it('归档的话题行尾只说「已归档」，不说「等你处理」', () => {
-    mountStore([topic('t2', '平台部分问题记录', { awaits_me: true, status: 'archived' })])
+  it('归档的话题行尾只说「已归档」，不说「等你处理」', async () => {
+    await mountStore([topic('t2', '平台部分问题记录', { awaits_me: true, status: 'archived' })])
 
     const item = source.items!(ctx)[0]
     expect(item.badge?.text).toBe(t('navigation.palette.archived'))
@@ -66,8 +69,8 @@ describe('命令面板：等你处理的话题', () => {
     expect(item.badge?.tone).toBeUndefined()
   })
 
-  it('归档的话题名字仍搜得到——只是不排进「等你处理」，不是从面板里消失', () => {
-    mountStore([topic('t2', '平台部分问题记录', { awaits_me: true, status: 'archived' })])
+  it('归档的话题名字仍搜得到——只是不排进「等你处理」，不是从面板里消失', async () => {
+    await mountStore([topic('t2', '平台部分问题记录', { awaits_me: true, status: 'archived' })])
 
     const rows = buildResults('平台', [source], ctx, []).flatMap((group) => group.rows)
     expect(rows.find((row) => row.id === 'topic:t2')).toBeTruthy()

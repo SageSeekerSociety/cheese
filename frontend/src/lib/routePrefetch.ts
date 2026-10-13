@@ -9,8 +9,9 @@
 // 次」而改变界面上的任何状态——尤其是未读红点。
 import type { RouteLocationRaw, Router } from 'vue-router'
 
-import { refreshBlockCache } from './blockCache'
 import { whenIdle } from './idle'
+
+import { prefetchNewestBlocks } from '@/query/blocks'
 
 /**
  * 指针进来之后要停这么久才算「想点」。
@@ -29,9 +30,8 @@ export interface HoverTarget {
   topicId?: string
 }
 
-// 取过就不再取。路由按解析出来的完整路径记，话题按 id 记。
+// 取过就不再取，按解析出来的完整路径记。消息手上那份还新鲜就不取（`query/blocks`）。
 const warmedRoutes = new Set<string>()
-const warmedTopics = new Set<string>()
 
 // 指针只有一个，所以待触发的预取也只有一个：进到新的一行就顶掉上一行的，离开就
 // 取消。不需要按目标记一堆 timer，那反而会让「路过一整列」留下一串定时器。
@@ -83,6 +83,22 @@ export function prefetchingChunks(): boolean {
   return chunksInFlight > 0
 }
 
+/** 一条路由记录上挂着的懒加载 chunk，全下下来。 */
+function warmComponents(components: Record<string, unknown> | null | undefined): void {
+  for (const component of Object.values(components ?? {})) {
+    if (!isLazyLoader(component)) continue
+    try {
+      const loading = component() as Promise<unknown> | unknown
+      if (loading instanceof Promise) {
+        chunksInFlight++
+        void loading.catch(() => {}).finally(() => chunksInFlight--)
+      }
+    } catch {
+      // 失败就是没预热成，下次点进去照常走一遍，用户看不见任何东西
+    }
+  }
+}
+
 function warmRoute(router: Router, to: RouteLocationRaw): void {
   let resolved: ReturnType<Router['resolve']>
   try {
@@ -92,35 +108,38 @@ function warmRoute(router: Router, to: RouteLocationRaw): void {
   }
   if (warmedRoutes.has(resolved.fullPath)) return
   warmedRoutes.add(resolved.fullPath)
-  for (const record of resolved.matched) {
-    for (const component of Object.values(record.components ?? {})) {
-      if (!isLazyLoader(component)) continue
-      try {
-        const loading = component() as Promise<unknown> | unknown
-        if (loading instanceof Promise) {
-          chunksInFlight++
-          void loading.catch(() => {}).finally(() => chunksInFlight--)
-        }
-      } catch {
-        // 失败就是没预热成，下次点进去照常走一遍，用户看不见任何东西
-      }
-    }
-  }
+  for (const record of resolved.matched) warmComponents(record.components)
+}
+
+/** 按页名预热过的那些页。同一页的不同地址（另一个话题、另一个任务）要的是同一段代码。 */
+const warmedPages = new Set<string>()
+
+/**
+ * 按**页名**预热一页的代码，不看地址里的参数。
+ *
+ * 给「这个框架底下那几页」用：框架那一层手上没有每一页的 `topicId` / `kind`，也不该
+ * 为了预热编一份出来。同一页的不同地址要的是同一段代码，按名字记一次就够。
+ */
+function warmPage(router: Router, name: string): void {
+  if (warmedPages.has(name)) return
+  const record = router.getRoutes().find((candidate) => candidate.name === name)
+  if (!record) return
+  warmedPages.add(name)
+  warmComponents(record.components)
 }
 
 /**
- * 预热话题最新一页消息。
+ * 预热话题最新一页消息。手上那份还新鲜就不取。
  *
- * 复用 `blockCache` 那条队列，而不是自己再开一条：那条闸一次只放两个请求出去，
- * 另起一套等于把闸开大一倍，也就等于把这里的「顺手」变成了和用户抢。
+ * 和未读变多时的后台预取排同一条队（`query/blocks`），而不是自己再开一条：那条闸
+ * 一次只放两个请求出去，另起一套等于把闸开大一倍，也就等于把这里的「顺手」变成了
+ * 和用户抢。
  *
- * 只写缓存。不碰未读、不标已读、不动当前页面的任何状态。
+ * 只写缓存。不碰未读、不标已读、不动当前页面的任何状态。失败不重试也不留痕——下一次
+ * 真的把指针停上来，再顺手试一次。
  */
-async function warmTopic(topicId: string): Promise<void> {
-  if (warmedTopics.has(topicId)) return
-  const blocks = await refreshBlockCache(topicId)
-  // 成功了才记住。失败不重试也不留痕——下一次真的把指针停上来，再顺手试一次。
-  if (blocks) warmedTopics.add(topicId)
+function warmTopic(topicId: string): void {
+  void prefetchNewestBlocks(topicId)
 }
 
 /** 指针进入一个可点的东西：等它停住，然后把它要用的东西先取回来。 */
@@ -130,7 +149,7 @@ export function prefetchOnHover(target: HoverTarget): void {
   pending = setTimeout(() => {
     pending = null
     if (target.router && target.to !== undefined) warmRoute(target.router, target.to)
-    if (target.topicId) void warmTopic(target.topicId)
+    if (target.topicId) warmTopic(target.topicId)
   }, HOVER_INTENT_MS)
 }
 
@@ -143,7 +162,7 @@ export function prefetchNow(target: HoverTarget): void {
   cancelPrefetch()
   if (!connectionAllows()) return
   if (target.router && target.to !== undefined) warmRoute(target.router, target.to)
-  if (target.topicId) void warmTopic(target.topicId)
+  if (target.topicId) warmTopic(target.topicId)
 }
 
 /**
@@ -161,6 +180,28 @@ export function warmRoutesWhenIdle(router: Router, targets: RouteLocationRaw[]):
     const target = queue.shift()
     if (target === undefined) return
     warmRoute(router, target)
+    cancel = whenIdle(next)
+  }
+  cancel = whenIdle(next)
+  return () => {
+    queue.length = 0
+    cancel()
+  }
+}
+
+/**
+ * 同上，但按**页名**点名（见 `warmPage`）。
+ *
+ * 给一个框架层用它自己那几页：它手上只有页名，没有每一页的地址参数。
+ */
+export function warmPagesWhenIdle(router: Router, names: readonly string[]): () => void {
+  if (!connectionAllows()) return () => {}
+  const queue = [...names]
+  let cancel: () => void = () => {}
+  const next = () => {
+    const name = queue.shift()
+    if (name === undefined) return
+    warmPage(router, name)
     cancel = whenIdle(next)
   }
   cancel = whenIdle(next)

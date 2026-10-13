@@ -25,6 +25,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
+import { responseText } from '@/lib/noticeText'
 import { formatRoutineTime, routineRunLabel, routineStateLabel } from '@/lib/routine'
 import { userRefRoute } from '@/lib/userRef'
 
@@ -40,8 +41,8 @@ const props = withDefaults(
     /** 这个房间叫什么。项目总览页给（一条规则属于哪个房间是那一页要紧的信息之一）；
      *  房间右侧那一格不给 —— 那一格里的每一条都是这个房间的。 */
     roomName?: string
-    /** 执行结果那几行点开去哪儿。不给就只写路径（房间面板里那份文件就在手边，
-     *  点它没有别的地方可去）。 */
+    /** 结果文件那几行整串点开去哪儿。项目页给（指回规则所在的房间 —— 那一页上没有
+     *  能开文件的工作面板）；房间面板里那一格不给，那里的每一份都当场点开。 */
     roomTo?: NavTarget
     /** 人名 → 显示名。名册查询在外面（`useUserRef` 那条路），这一行只收结果；
      *  查不到的画 handle 本身。 */
@@ -58,6 +59,8 @@ const emit = defineEmits<{
   (e: 'edit'): void
   (e: 'delete'): void
   (e: 'toggle-runs'): void
+  /** 点了某次执行交回的一份结果文件：打开它。只有房间里那一格会给这件事接去处。 */
+  (e: 'open-file', path: string): void
   /** 点了行里的某个人名：去他的成员页 / 主页。跳路由是最外层的事。 */
   (e: 'navigate', target: UserRefTarget): void
 }>()
@@ -156,7 +159,7 @@ const rowMenu = useRowMenu<'row'>()
       <div class="routine-row__id">
         <div class="t-body routine-row__title">{{ routine.title }}</div>
         <div class="t-meta c-faint">
-          {{ routine.trigger_text }}<template v-if="roomName"> · {{ roomName }}</template>
+          {{ responseText(routine, 'trigger_text') }}<template v-if="roomName"> · {{ roomName }}</template>
           <template v-if="whenText"> · {{ whenText }}</template>
         </div>
       </div>
@@ -271,10 +274,24 @@ const rowMenu = useRowMenu<'row'>()
             {{ run.error || t('routines.noReason') }}
           </div>
           <div v-else-if="run.summary" class="t-body">{{ run.summary }}</div>
-          <div v-if="run.outputs.length" class="t-meta">
-            {{ t('routines.outputs') }}
+          <!-- 这次执行交回的结果文件。规则里填的「结果放在 周报/」只是它们的落脚路径，
+               频道面板上没有对应的文件夹 —— 房间里这一格就是它们的入口，所以每一份都
+               当场点得开；项目页上没有能开文件的面板，整串指回规则所在的房间。 -->
+          <div v-if="run.outputs.length" class="t-meta routine-run__outputs">
+            <span class="routine-run__outputs-label">{{ t('routines.outputs') }}</span>
             <NavLink v-if="roomTo" :to="roomTo">{{ run.outputs.join(t('routines.listSeparator')) }}</NavLink>
-            <template v-else>{{ run.outputs.join(t('routines.listSeparator')) }}</template>
+            <template v-else>
+              <button
+                v-for="path in run.outputs"
+                :key="path"
+                type="button"
+                class="routine-run__file"
+                :title="path"
+                @click="emit('open-file', path)"
+              >
+                {{ path.split('/').pop() || path }}
+              </button>
+            </template>
           </div>
         </li>
       </ol>
@@ -349,5 +366,28 @@ const rowMenu = useRowMenu<'row'>()
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.routine-run__outputs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  min-width: 0;
+}
+/* 一份结果文件：一颗文字按钮，点开它就打开了文件。下划线是说这件事，不是装饰。 */
+.routine-run__file {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  text-decoration: underline;
+  text-decoration-color: var(--line);
+  text-underline-offset: 3px;
+  cursor: pointer;
+  transition: color var(--dur-quick) var(--ease-standard);
+}
+.routine-run__file:hover {
+  color: var(--ink);
 }
 </style>

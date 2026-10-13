@@ -10,12 +10,12 @@ domain-internal. This module is that missing seam.
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.local_fs.service import LocalDirectoryService
+from app.domain.local_fs.sql_repository import SqlLocalFsRepository
 
 __all__ = ["sql_local_directory_service"]
 
 
 def sql_local_directory_service(session: AsyncSession) -> LocalDirectoryService:
     """A SQL-backed ``LocalDirectoryService`` on this session."""
-    from app.domain.local_fs.sql_repository import SqlLocalFsRepository
 
     return LocalDirectoryService(SqlLocalFsRepository(session))

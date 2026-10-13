@@ -164,7 +164,12 @@ async def save_room_file(
             say("fileChangedSinceRead"),
             data={"path": path, "version": now_version, "base_version": base_version},
         )
-    if latest is None and before is not None:
+    # A file that is already here can be over the ceiling: it went in before
+    # the gate existed. The history only holds what the ceiling allows, so that
+    # earlier state is not recorded — the save itself still goes through (its
+    # own bytes face the gate like any other). Failing here instead would leave
+    # such a file impossible to save at all: every attempt would hit this first.
+    if latest is None and before is not None and len(before) <= library.MAX_FILE_BYTES:
         latest = await _record(
             session,
             project_id=project_id,
@@ -399,10 +404,12 @@ _ARTIFACT_KIND_BY_SUFFIX = {
     ".webp": "webp",
 }
 
-#: Ceiling on a published artifact, matching the chat attachment limit below —
+#: Ceiling on a published artifact, matching the chat attachment limit —
 #: both are "a file a person will open in this room", and a report that is too
-#: big to send as an attachment is too big to publish as a deliverable.
-MAX_ARTIFACT_BYTES = 10 * 1024 * 1024
+#: big to send as an attachment is too big to publish as a deliverable. The
+#: number itself lives with the layer that lands the bytes
+#: (``library.MAX_FILE_BYTES``), together with the attachment and library caps.
+MAX_ARTIFACT_BYTES = library.MAX_FILE_BYTES
 
 
 def artifact_kind_for(path: str) -> str:

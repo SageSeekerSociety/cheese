@@ -14,6 +14,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlsplit
 
 if sys.platform != "win32":
     import fcntl
@@ -59,12 +60,17 @@ def process_servers(config):
 
 
 class SandboxUnavailable(RuntimeError):
-    """This machine cannot give the room the isolated environment it runs in,
-    and the message says what would let it."""
+    """This machine cannot give the room the isolated environment it runs in.
+    `key` names the sentence its owner is shown, in their language, about what
+    would let it (the frontend's `apiError` catalog); `params` fill it."""
+
+    def __init__(self, key, **params):
+        super().__init__(key)
+        self.said = {"key": key, "params": params}
 
 
 # How the install exits when it refuses a room for `SandboxUnavailable`, with
-# the message alone on stderr: the backend tells the room that, not a trace.
+# its sentence alone on stderr, as JSON: the backend keeps it for the owner.
 SANDBOX_UNAVAILABLE_EXIT = 78
 
 
@@ -82,7 +88,7 @@ def lock(file):
     """flock(LOCK_EX). This file arrives on stdin before any release is on disk,
     so it cannot load portable.py for the Windows lock; this is the same one."""
     if sys.platform == "win32":
-        import msvcrt
+        import msvcrt  # deferred-import: Windows-only module; absent on other platforms
 
         while True:
             os.lseek(file.fileno(), 0x7FFFFFF0, os.SEEK_SET)
@@ -397,7 +403,7 @@ def executor_state(home, stack, sandboxed):
         # the kernel resolved when it was opened. A room that turns a
         # directory above it into a link afterwards is not stopped here as it
         # is on Linux; on a person's own Mac the other rooms are theirs too.
-        import fcntl
+        import fcntl  # deferred-import: POSIX-only module; absent on Windows
 
         named = fcntl.fcntl(descriptor, fcntl.F_GETPATH, bytes(1024))
         return Path(named.split(b"\0", 1)[0].decode())
@@ -486,8 +492,8 @@ def binary(owner, api):
                 remember(destination, record)
                 return str(destination)
     # Warm room preparation needs neither download handling nor TLS setup.
-    import platform
-    from urllib.request import urlopen
+    import platform  # deferred-import: warm-room prep skips this
+    from urllib.request import urlopen  # deferred-import: warm-room prep skips this
 
     architecture = {
         "x86_64": "x64",
@@ -592,12 +598,9 @@ def platform_file(platform_dir, name):
 # Where `sandbox_host.py` is installed, root's and outside every release: the
 # connector user runs it through `sudo -n`, and only root may change it.
 SANDBOX_HOST = "/usr/local/libexec/cheese-sandbox"
-# The programs a sandbox needs from the machine, by the package that has them.
-SANDBOX_PACKAGES = {
-    "bwrap": "bubblewrap",
-    "ip": "iproute2",
-    "iptables-restore": "iptables",
-}
+# The programs a Cloud machine's sandbox network needs, by the package that has
+# them. bwrap is not among them: cheesehost places the platform's own.
+SANDBOX_PACKAGES = {"ip": "iproute2", "iptables-restore": "iptables"}
 SYSTEM_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
@@ -614,24 +617,12 @@ def sudo(command, failure):
     return result.stdout
 
 
-# What an install is told when this machine's system has no isolated
-# environment for a room. The backend refuses such a room before it gets here
-# (`device.supply.sandbox_unavailable`, the same sentences) for a machine it
-# has heard from; these are for one it has not. A system gains an environment
-# by leaving this table in the same change that teaches `sandbox_tools` and
-# `sandbox_argv` to build it.
-NO_SANDBOX = {
-    "win32": (
-        "This room runs in an isolated environment, which Windows machines do "
-        "not have. Install WSL, enroll the WSL environment as a machine and "
-        "choose it for this room, or have the machine's owner give this room "
-        "full machine access."
-    ),
-}
-FULL_ACCESS_INSTEAD = (
-    "Or have the machine's owner give this room full machine access, which "
-    "runs it without isolation."
-)
+# The sentence for a system with no isolated environment for a room. The
+# machine says the same when asked as it connects (`device.sandbox`), and the
+# backend refuses such a room before it gets here. A system gains an
+# environment by leaving this table in the same change that teaches
+# `sandbox_tools` and `sandbox_argv` to build it.
+NO_SANDBOX = {"win32": "sandboxNoneOnWindows"}
 
 
 def sandbox_tools(release, platform_machine):
@@ -639,25 +630,20 @@ def sandbox_tools(release, platform_machine):
     before anything of the room's is touched. On macOS, `sandbox-exec`
     instead (`confinement.start_seatbelt`).
 
-    Other systems have no isolated environment yet (`NO_SANDBOX`). A machine
-    the platform provisioned (`platform_machine`) needs bubblewrap, `ip` and
-    iptables, and this release's `sandbox_host.py` as `SANDBOX_HOST`; one
-    enrolled before the platform needed them gets them here. A machine a
-    person enrolled is theirs: nothing is installed there, its sandbox has no
-    network or limits of its own (that takes root), and it needs only a
-    bubblewrap that can make a user namespace, or the room is refused with
-    what to install or change. Either way a room meant to be isolated never
-    runs over the whole machine instead."""
+    Other systems have no isolated environment yet (`NO_SANDBOX`). On Linux
+    the sandbox is made with the bwrap cheesehost places (`placed_bubblewrap`),
+    whatever the system has. A machine the platform provisioned
+    (`platform_machine`) also needs `ip`, iptables and this release's
+    `sandbox_host.py` as `SANDBOX_HOST`, installed here. A machine a person
+    enrolled is theirs: nothing is installed there, its sandbox has no network
+    or limits of its own (that takes root), and its bwrap must be able to make a
+    user namespace, or the room is refused with what to change. Either way a
+    room meant to be isolated never runs over the whole machine instead."""
     if sys.platform == "darwin":
         return seatbelt()
     if not sys.platform.startswith("linux"):
-        raise SandboxUnavailable(
-            NO_SANDBOX.get(
-                sys.platform,
-                "This room runs in an isolated environment, which this "
-                "machine's system does not have. " + FULL_ACCESS_INSTEAD,
-            )
-        )
+        key = NO_SANDBOX.get(sys.platform, "sandboxNoneOnSystem")
+        raise SandboxUnavailable(key, system=sys.platform)
     if not platform_machine:
         return enrolled_bubblewrap()
     missing = [
@@ -688,7 +674,7 @@ def sandbox_tools(release, platform_machine):
             failure,
         )
         sudo(["mv", "-f", staged, SANDBOX_HOST], failure)
-    return shutil.which("bwrap", path=SYSTEM_PATH)
+    return placed_bubblewrap()
 
 
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
@@ -698,26 +684,22 @@ def seatbelt():
     """Where `sandbox-exec` is: every macOS has it, so a Mac that lacks it is
     one the room is refused on, not one it runs over whole."""
     if not os.access(SANDBOX_EXEC, os.X_OK):
-        raise SandboxUnavailable(
-            "This room runs in an isolated environment, which on macOS needs "
-            "/usr/bin/sandbox-exec, and this Mac does not have it. "
-            + FULL_ACCESS_INSTEAD
-        )
+        raise SandboxUnavailable("sandboxNoSeatbelt")
     return SANDBOX_EXEC
+
+
+def placed_bubblewrap():
+    """The bwrap cheesehost places when it starts (`cli/internal/devenv`)."""
+    found = Path.home() / PLATFORM_DIR / "runtime/bubblewrap/bwrap"
+    if not os.access(found, os.X_OK):
+        raise SandboxUnavailable("sandboxNotPlaced")
+    return str(found)
 
 
 def enrolled_bubblewrap():
     """Where `bwrap` is on a machine a person enrolled, once it is known to
     make a sandbox there, as the person and not as root."""
-    found = shutil.which("bwrap")
-    if not found:
-        raise SandboxUnavailable(
-            "This room runs in an isolated environment, which needs "
-            "bubblewrap, and bubblewrap is not installed on this machine. "
-            "Install it (Debian and Ubuntu: sudo apt install bubblewrap; "
-            "Fedora: sudo dnf install bubblewrap; Arch: sudo pacman -S "
-            "bubblewrap) and try again. " + FULL_ACCESS_INSTEAD
-        )
+    found = placed_bubblewrap()
     probe = subprocess.run(
         [found, "--unshare-user", "--unshare-pid", "--ro-bind", "/", "/"]
         + ["--proc", "/proc", "--dev", "/dev", "true"],
@@ -727,19 +709,13 @@ def enrolled_bubblewrap():
     )
     if probe.returncode:
         raise SandboxUnavailable(
-            "This room runs in an isolated environment, and bubblewrap cannot "
-            "make one on this machine ("
-            + probe.stderr.strip()[-300:]
-            + "). "
-            + user_namespaces_advice()
-            + " "
-            + FULL_ACCESS_INSTEAD
+            user_namespaces_advice(), detail=probe.stderr.strip()[-300:]
         )
     return found
 
 
 def user_namespaces_advice():
-    """What to change on this machine for bubblewrap to make a sandbox, which
+    """Which change this machine needs for bubblewrap to make a sandbox, which
     it does in a user namespace of its own, as the user and not as root."""
 
     def setting(path):
@@ -748,27 +724,14 @@ def user_namespaces_advice():
         except OSError:
             return None
 
-    keep = (
-        " (put the same line in a file under /etc/sysctl.d/ to keep it after a reboot)"
-    )
+    # Ubuntu from 23.10: only a program a profile names (`cheesehost sandbox allow`).
     if setting("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") == "1":
-        return (
-            "AppArmor here restricts unprivileged user namespaces, as Ubuntu "
-            "does from 23.10 on. Allow them for bubblewrap with an AppArmor "
-            "profile for it, or for every program with: sudo sysctl -w "
-            "kernel.apparmor_restrict_unprivileged_userns=0" + keep + "."
-        )
+        return "sandboxAppArmor"
     if setting("/proc/sys/kernel/unprivileged_userns_clone") == "0":
-        return (
-            "Unprivileged user namespaces are turned off here. Turn them on "
-            "with: sudo sysctl -w kernel.unprivileged_userns_clone=1" + keep + "."
-        )
+        return "sandboxUsernsCloneOff"
     if setting("/proc/sys/user/max_user_namespaces") == "0":
-        return (
-            "User namespaces are turned off here. Turn them on with: sudo "
-            "sysctl -w user.max_user_namespaces=15000" + keep + "."
-        )
-    return "It needs unprivileged user namespaces, which this machine does not allow."
+        return "sandboxUserNamespacesOff"
+    return "sandboxNoUserNamespaces"
 
 
 def record_sandbox(owner, home, release):
@@ -970,7 +933,6 @@ def loopback_ports(env):
     """The machine's loopback ports a sandbox must reach as its own: the
     backend's, where the machine reaches it through a loopback forward
     (`machine_address.device_api_base`), and the preview tunnel's beside it."""
-    from urllib.parse import urlsplit
 
     ports = []
     for name in ("CHEESE_API", "CHEESE_PREVIEW_URL"):
@@ -1318,7 +1280,7 @@ def configure(payload):
     except UpgradeDeferred as deferred:
         print(json.dumps(deferred.info))
     except SandboxUnavailable as refused:
-        print(refused, file=sys.stderr)
+        print(json.dumps(refused.said), file=sys.stderr)
         raise SystemExit(SANDBOX_UNAVAILABLE_EXIT) from None
 
 

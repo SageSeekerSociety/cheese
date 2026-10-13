@@ -12,8 +12,10 @@ import AdminKpiCard from '@/components/admin/AdminKpiCard.vue'
 import AdminLineChart from '@/components/admin/AdminLineChart.vue'
 import AdminMeterBar from '@/components/admin/AdminMeterBar.vue'
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
-import { dayLabel, deltaOf, num } from '@/lib/adminStats'
-import { fmtCost, fmtNum } from '@/lib/usageFormat'
+import AdminDashboardUsageWho from '@/components/admin/dashboard/AdminDashboardUsageWho.vue'
+import { poolView } from '@/lib/adminPool'
+import { dayLabel, deltaOf, num, usageRouteLabel } from '@/lib/adminStats'
+import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
 
 // 用量那一屏：窗口内的 token 与调用次数、每天一条线、最花 token 的几个项目、成本那一
 // 行，外加额度燃尽那三个互斥名单。
@@ -29,7 +31,7 @@ const props = defineProps<{
   loading: boolean
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const usage = computed(() => props.data)
 
@@ -75,6 +77,17 @@ const usageKpis = computed<KpiRow[]>(() => {
       loading: props.loading,
       note: costNote,
     },
+    // 缓存命中率只算记了缓存的行（后端 `usage_detail.py` 的口径），没算进去的输入量
+    // 写在 tip 里 —— 少了那句，一个只覆盖一半输入的比例读起来像全量。
+    {
+      key: 'cache',
+      label: t('feedback.dashboard.usage.cacheKpi'),
+      value: u?.cache ? fmtPercent(u.cache.hit_ratio) : '',
+      loading: props.loading,
+      note: u?.cache
+        ? t('feedback.dashboard.usage.cacheNote', { tokens: fmtNum(u.cache.uncounted_input_tokens) })
+        : undefined,
+    },
   ]
 })
 
@@ -109,27 +122,37 @@ const byModel = computed(() =>
     value: row.tokens,
     cost: fmtCost(row.cost_usd),
     unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
+    cache:
+      row.cache_hit === undefined
+        ? undefined
+        : t('feedback.dashboard.usage.cacheCell', { pct: fmtPercent(row.cache_hit) }),
   }))
+)
+
+/** 每小时的 token，北京时间。只在短窗口有（后端长窗口给 `null`）；标签是「月-日 时点」，
+ *  直接从带 +08:00 的串里取，不经浏览器时区再换一次。 */
+const hourly = computed(() => usage.value?.hourly ?? null)
+const hourlySeries = computed<ChartSeries[]>(() => [
+  {
+    name: t('feedback.dashboard.usage.tokens'),
+    values: hourly.value?.map((row) => row.tokens) ?? [],
+    style: 'solid',
+  },
+])
+const hourlyLabels = computed(() =>
+  (hourly.value ?? []).map((row) => `${row.hour.slice(5, 10)} ${row.hour.slice(11, 13)}:00`)
 )
 
 /** 按供给通路拆（gateway / subscription / native）。`subscription` 那一行的
  *  `unpriced_tokens` 就是 KPI 里「未定价 token」的来源 —— 这一张表是那张卡的注脚。 */
 const byRoute = computed(() =>
   (usage.value?.by_route ?? []).map((row) => ({
-    label: routeLabel(row.route),
+    label: usageRouteLabel(t, row.route),
     value: row.tokens,
     cost: fmtCost(row.cost_usd),
     unpriced: row.unpriced_tokens > 0 ? fmtNum(row.unpriced_tokens) : '',
   }))
 )
-
-/** 通路代号 → 人话。`''` 是打在补上这一列之前的那些行。 */
-function routeLabel(route: string): string {
-  if (route === 'gateway') return t('feedback.dashboard.usage.route.gateway')
-  if (route === 'subscription') return t('feedback.dashboard.usage.route.subscription')
-  if (route === 'native') return t('feedback.dashboard.usage.route.native')
-  return t('feedback.dashboard.usage.route.unknown')
-}
 
 const credits = computed(() => usage.value?.credits ?? null)
 
@@ -170,6 +193,13 @@ const creditMeters = computed(() => {
 /** 「额度燃尽」标题旁的口径 tip：那句互斥集合的说明。 */
 const creditsNote = computed(() => t('feedback.dashboard.credits.note'))
 
+/** 订阅通路身后的 Claude 账号池。**这一块的读数不在数据库里**：计量代理把池子写在
+ *  用量账本旁边的一份快照里（后端读它，见 `claude_pool.py`），所以「看不见」是常态
+ *  而不是故障 —— 那一行画的是原因，不是空白。读法在 `lib/adminPool.ts`。 */
+const pool = computed(() => poolView(usage.value?.claude_accounts, t, locale.value))
+
+const poolNote = computed(() => t('feedback.dashboard.pool.note'))
+
 /** 日期轴的标签：这一屏的 series。 */
 const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel(row.date)))
 </script>
@@ -201,6 +231,15 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
     <AdminBarChart :title="t('feedback.dashboard.usage.top')" :rows="topProjects" :loading="loading" />
   </div>
 
+  <div v-if="hourly" class="ad__row ad__row--single">
+    <AdminLineChart
+      :title="t('feedback.dashboard.usage.hourly')"
+      :x-labels="hourlyLabels"
+      :series="hourlySeries"
+      :loading="loading"
+    />
+  </div>
+
   <!-- 成本与「未定价 token」这两件事是上面那两张 KPI 卡，它们之间的关系那句
              （金额里没有「算不出价钱」的部分）收在两卡各自的口径 tip 里。 -->
 
@@ -220,6 +259,8 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
       :loading="loading"
     />
   </div>
+
+  <AdminDashboardUsageWho :data="usage" :loading="loading" />
 
   <!-- 额度燃尽：三个互斥名单（已耗尽 / 快烧完 / 不限量）。少了它，三个项目同时
              停摆时 token 曲线只是「今天用量下降」，看起来像好消息。 -->
@@ -244,6 +285,22 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
       {{ t('feedback.dashboard.credits.burn') }} {{ credits.burn.credits_per_day.toFixed(1) }}/d ·
       {{ t('feedback.dashboard.credits.eta') }} —
     </p>
+  </section>
+
+  <!-- Claude 账号池：订阅通路身后那几张账号，写在计量代理那台机器上。**全部冷却时
+       这一块是唯一说得清的话** —— 那会儿 token 曲线只会显示「今天用量下降」，读起来
+       像好消息。它也可能是「看不见」（这台部署没跑订阅版代理），那时画的是原因；
+       `summary` 为空只在旧后端没这一块时出现，那块整段不画。 -->
+  <section v-if="pool.summary" class="ad__pool">
+    <h2 class="ad__block-title">{{ t('feedback.dashboard.pool.title') }}<AdminNoteTip :text="poolNote" /></h2>
+    <ul v-if="pool.rows.length" class="ad__pool-list">
+      <li v-for="row in pool.rows" :key="row.name" class="ad__pool-row">
+        <span class="ad__pool-name">{{ row.name }}</span>
+        <span class="ad__pool-state">{{ row.state }}</span>
+      </li>
+    </ul>
+    <p class="ad__block-note t-meta-read">{{ pool.summary }}</p>
+    <p v-if="pool.stale" class="ad__block-note t-meta-read">{{ pool.stale }}</p>
   </section>
 </template>
 
@@ -319,6 +376,9 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
   .ad__row--equal {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
+  .ad__row--single {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* 四栏计数。四格并排，和 KPI 行同一套格子，但高度矮一档 —— 它们是同一个总数的四个
@@ -385,5 +445,40 @@ const xLabels = computed(() => (usage.value?.series ?? []).map((row) => dayLabel
 
 .ad__block-note {
   margin: 12px 0 0;
+}
+
+/* Claude 账号池。两列：账号名在左、状态在右 —— 这一块读的是「哪张账号现在什么状态」，
+   竖排成「名字 / 状态 / 名字 / 状态」会让状态那一列对不齐（平台屏那四行机器同一条）。
+
+   状态**不上色**：全页的状态色只留给平台屏的健康四格，这里的状态名（可用 / 冷却中 /
+   已停用）自己说得清，再加一层颜色只是多一个要维护的说法。 */
+
+.ad__pool {
+  margin-top: 16px;
+}
+
+.ad__pool-list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ad__pool-row {
+  display: contents;
+}
+
+.ad__pool-name {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ad__pool-state {
+  color: var(--ink);
 }
 </style>

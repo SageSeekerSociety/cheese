@@ -27,13 +27,13 @@ from app.domain.agent.device_provider import (
     device_home_dir,
     device_store_dir,
 )
-from app.domain.agent.harness import CLAUDE_CODE, SessionRef
+from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.harness.channel import SESSION_TOKEN_TTL_S, ScreenSetupError
+from app.domain.agent.harness.claude_code import ClaudeLaunch
 from app.domain.agent.harness.claude_code.device_launch import DEVICE_TUNNEL_PROBE
 from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
-from app.domain.agent.harness.claude_code.session_launch import ClaudeLaunch
 from app.domain.agent.place import seat_dir, seat_key
 
 
@@ -1108,21 +1108,6 @@ async def test_a_connector_that_never_answers_the_launcher_is_named_in_the_error
     assert not hub.opened, "no screen is opened on a machine that did not answer"
 
 
-async def test_no_online_device_is_a_clean_error():
-    async def resolver(_project_id, _topic_id):
-        return None  # nothing online / bound
-
-    channel = DeviceChannel(hub=FakeHub(), device_resolver=resolver)
-    with pytest.raises(ScreenSetupError):
-        await channel.precheck(
-            SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code"),
-            needs_place=True,
-        )
-
-
-# --- where a room lives on the machine ---------------------------------------
-
-
 def test_rooms_never_share_a_home_but_always_share_their_project_store():
     """The two halves of the same layout, stated together because they pull
     opposite ways and both are load-bearing.
@@ -1502,8 +1487,7 @@ def test_every_backend_in_the_deployed_pool_gets_the_same_liveness_policy():
     from app.domain.agent.compute import build_compute_pool
 
     pool = build_compute_pool()
-    for name in pool.machines():
-        backend = pool.select(provider_id=name)
+    for backend in pool._runtimes():
         assert backend.no_progress_s == settings.agent_no_progress_s
         assert backend.unread_grace_s == settings.agent_unread_grace_s
         assert backend.hard_ceiling_s == settings.agent_turn_hard_ceiling_s

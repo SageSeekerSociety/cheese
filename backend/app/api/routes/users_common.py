@@ -61,6 +61,8 @@ to mount: `app.main._discover_routers` finds no module-level `APIRouter`, and
 the names below are imported by the modules that do mount one.
 """
 
+import base64
+import json as _json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -69,7 +71,8 @@ from fastapi import Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.common.auth import SudoPurpose, create_access_token
+from app.common.auth import SudoPurpose, create_access_token, verify_sudo_ticket
+from app.core.client_address import resolved_client_address
 from app.core.config import GATEWAY_MOUNT, settings
 from app.core.errors import BadRequestError, InternalServerError, SudoRequiredError
 from app.core.sentences import say
@@ -96,8 +99,6 @@ def challenge_from_credential(credential: dict) -> str:
     """Recover the challenge echoed inside the WebAuthn clientDataJSON. The
     reference contract sends only the credential — the server must not trust a
     separately-supplied challenge anyway."""
-    import base64
-    import json as _json
 
     try:
         raw = credential["response"]["clientDataJSON"]
@@ -125,7 +126,7 @@ async def _spend_sudo_ticket(
     Fail-closed when Redis is unreachable: without the reservation there is no
     way to tell a first use from a replay, and "cannot tell" is not "allow".
     """
-    from app.common.auth import verify_sudo_ticket
+    # deferred-import: tests patch this name on app.core.single_use_state
     from app.core.single_use_state import SingleUseUnavailableError, claim
 
     claims = verify_sudo_ticket(ticket) if isinstance(ticket, str) and ticket else None
@@ -227,7 +228,6 @@ async def issue_session(
     on: the sign-in has just passed two-step verification and its owner asked
     not to be asked again here.
     """
-    from app.core.client_address import resolved_client_address
 
     user_agent = request.headers.get("user-agent", "")
     # Behind a proxy that is not trusted to name the client, the peer is the

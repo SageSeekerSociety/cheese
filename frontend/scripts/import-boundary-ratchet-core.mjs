@@ -136,13 +136,13 @@ export const boundaryRule = {
      * names its props' types, and the type of a server record lives in the API
      * layer, with no house re-export to reach it through (`.claude/rules/
      * architecture.md`: "Data in by prop … **the shape of the props is on
-     * you**"). 21 of the 95 frozen violations were this and nothing else.
+     * you**"). When this half was written, 21 of the 95 frozen violations were
+     * this and nothing else.
      *
-     * The vue-router half keeps counting type-only imports on purpose
-     * (`frontend/AGENTS.md`): there *is* a house alternative — `NavTarget` from
-     * `lib/navTarget.ts` — and naming it is what lets the same component render
-     * with no router at all. A rule only pays for itself where the fix it asks
-     * for exists.
+     * The vue-router half keeps counting type-only imports on purpose: there
+     * *is* a house alternative — `NavTarget` from `lib/navTarget.ts` — and
+     * naming it is what lets the same component render with no router at all.
+     * A rule only pays for itself where the fix it asks for exists.
      */
     function isTypeOnly(node) {
       if (node.importKind === 'type' || node.exportKind === 'type') return true
@@ -207,7 +207,9 @@ export const boundaryPlugin = {
  * that wrote it — not in CI, not in a second worktree. `root` is a parameter
  * rather than a constant so the unit test can drive it with a fixture.
  *
- * Returns `{ counts, unjudged }`. `unjudged` is non-empty when eslint could not
+ * Returns `{ counts, violations, unjudged }`. `violations` keeps eslint's own
+ * `line`, `column` and `message` for every hit, for the failure report.
+ * `unjudged` is non-empty when eslint could not
  * parse a file (`"fatal": true`) or reported a message with no rule id — a
  * syntax error, a missing parser, a plugin that crashed. Those are neither a
  * pass nor a violation of this rule, and counting them as zero is exactly how a
@@ -216,7 +218,7 @@ export const boundaryPlugin = {
  *
  * @param {string} text raw eslint JSON output
  * @param {string} root absolute path the file names are made relative to
- * @returns {{ counts: Record<string, number>, unjudged: string[] }}
+ * @returns {{ counts: Record<string, number>, violations: {file: string, line: number, column: number, rule: string, message: string}[], unjudged: string[] }}
  */
 export function parseEslintJson(text, root = process.cwd()) {
   const parsed = JSON.parse(String(text))
@@ -227,6 +229,8 @@ export function parseEslintJson(text, root = process.cwd()) {
   const prefix = String(root).replaceAll('\\', '/').replace(/\/$/, '') + '/'
   /** @type {Record<string, number>} */
   const counts = {}
+  /** @type {{file: string, line: number, column: number, rule: string, message: string}[]} */
+  const violations = []
   const unjudged = []
   for (const result of parsed) {
     const absolute = String(result.filePath ?? '').replaceAll('\\', '/')
@@ -236,10 +240,13 @@ export function parseEslintJson(text, root = process.cwd()) {
       unjudged.push(`${file}: ${messages.map((m) => m.message).join('; ') || 'fatal'}`)
       continue
     }
-    const hit = messages.filter((m) => m.ruleId === BOUNDARY_RULE_ID).length
-    if (hit > 0) counts[file] = (counts[file] ?? 0) + hit
+    const hits = messages.filter((m) => m.ruleId === BOUNDARY_RULE_ID)
+    for (const m of hits) {
+      violations.push({ file, line: m.line, column: m.column, rule: m.ruleId, message: m.message })
+    }
+    if (hits.length > 0) counts[file] = (counts[file] ?? 0) + hits.length
   }
-  return { counts, unjudged }
+  return { counts, violations, unjudged }
 }
 
 // The ratchet arithmetic is the same question the vue-tsc and stylelint
@@ -251,15 +258,25 @@ export function parseEslintJson(text, root = process.cwd()) {
 export { compare, tightenedBaseline } from './tsc-ratchet-core.mjs'
 
 /**
- * The human-readable half: what went wrong, and what to do about it.
- * Takes what `compare()` returns.
+ * The human-readable half: what went wrong, where, and what to do about it.
+ * Takes what `compare()` returns, and (optionally) the violations from
+ * `parseEslintJson` for the files that regressed.
+ * @param {ReturnType<typeof compare>} result
+ * @param {{file: string, line: number, column: number, rule: string, message: string}[]} [details]
  */
-export function formatBoundaryReport(result) {
+export function formatBoundaryReport(result, details = []) {
   const lines = []
   if (result.regressions.length) {
     lines.push('New component boundary violations (this is what the ratchet blocks):')
     for (const { file, base, now } of result.regressions) {
       lines.push(`  ${file}: ${base} -> ${now}`)
+    }
+    if (details.length) {
+      lines.push('')
+      lines.push('In those files (old and new alike — the count is per file):')
+      for (const { file, line, column, rule, message } of details) {
+        lines.push(`  ${file}:${line}:${column}  ${rule}  ${message}`)
+      }
     }
     lines.push('')
     lines.push('A component under src/components must render from props alone: no')
@@ -267,6 +284,9 @@ export function formatBoundaryReport(result) {
     lines.push('pass the data down, emit the intent up. If the component genuinely')
     lines.push('has to do this, the honest fix is a view or a composable — not a')
     lines.push('line in import-boundary-baseline.json, which only ever goes down.')
+    lines.push('Why, and what the boundary buys: .claude/rules/architecture.md (the')
+    lines.push('component boundary). The rule and its messages live in')
+    lines.push('scripts/import-boundary-ratchet-core.mjs.')
   }
   if (result.improvements.length) {
     lines.push(result.regressions.length ? 'Also improved:' : 'Boundary debt went down — tighten the baseline:')

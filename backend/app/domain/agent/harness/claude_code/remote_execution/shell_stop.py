@@ -13,10 +13,12 @@ import contextlib
 import json
 import os
 import re
+import runpy
 import select
 import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -42,7 +44,6 @@ CAUGHT = tuple(
 
 def portable():
     """The Windows primitives shipped beside this file, as runtime.py loads them."""
-    import runpy
 
     return runpy.run_path(str(Path(__file__).with_name("portable.py")))
 
@@ -125,6 +126,7 @@ def deliver_stop(target, command_id, pipe):
     client = RemoteClient(current_target(target))
 
     def send(signalled):
+        # Hand-written, not tenacity: this runs on machines with the stdlib only.
         started = time.monotonic()
         nonlocal client
         while time.monotonic() < started + 600:
@@ -154,7 +156,6 @@ def read_within(pipe, seconds):
     if sys.platform != "win32":
         ready = select.select([pipe], [], [], seconds)[0]
         return os.read(pipe, 256) if ready else b""
-    import threading
 
     got = []
     reader = threading.Thread(

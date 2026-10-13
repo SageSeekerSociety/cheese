@@ -4,6 +4,8 @@ A plan of three steps used to end at the first: accepting step one closed the
 task, and the other two had nowhere to go (dev, 2026-10-07).
 """
 
+import uuid
+
 import pytest
 from sqlalchemy import text
 
@@ -18,6 +20,9 @@ from tests.integration.test_accept_pr import (
 from tests.integration.test_accept_pr import (
     app_world as _app_world_fixture,
 )
+from tests.landing import summary_turn_ends, time_passes, watch
+from tests.machine_work import machine_commits
+from tests.support import git_store
 
 app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-defined]
 
@@ -81,8 +86,82 @@ def test_accepting_a_step_that_is_not_the_last_keeps_the_task_going(client, app_
     assert "接着做下一步" in _told(client, task_id)
 
 
-def test_accepting_the_last_step_completes_the_task(client, app_world):
+def test_the_next_step_counts_only_its_own_changes(client, app_world):
+    """After a step lands, 改动 is the next step's: its count is what that step
+    changed, not the landed step's files again.
+
+    The badge used to compare the landed step's head with the default branch, so
+    a step that had changed nothing yet read 「改动 1」 over a body with nothing
+    in it (dev, 2026-10-09)."""
+    task_id, before = _accepted_step(client, app_world, completes_task=False)
+    task_uuid = uuid.UUID(str(task_id))
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    project = uuid.UUID(task["project_id"])
+    # What the forge reported as the landed head: the step branch's own tip.
+    landed = git_store.head(project, before["branch_name"])
+
+    async def record_landed_head():
+        async with client.test_factory() as db:
+            await db.execute(
+                text("UPDATE tasks SET delivered_head = :head WHERE id = :task"),
+                {"head": landed, "task": task_uuid},
+            )
+            await db.commit()
+
+    client.portal.call(record_landed_head)
+    # The forge merges the step into main, and the machine moves the task's
+    # checkout onto the next step's branch, cut from the latest code.
+    git_store.merge_task(project, task_uuid, message="feat: step one")
+    git_store.git(git_store.path(project), "branch", task["branch_name"], "main")
+    git_store.bind_task(
+        task_uuid,
+        branch=task["branch_name"],
+        directory=f"task_{task_uuid.hex[:8]}",
+        base="main",
+    )
+
+    def changed() -> list[str]:
+        r = client.get(
+            f"/projects/{project}/topics/{task_id}/work-summary",
+            headers=session_auth_headers("alice"),
+        )
+        assert r.status_code == 200, r.text
+        return r.json()["data"]["changed_files"]
+
+    assert changed() == []
+    machine_commits(project, task_uuid, {"step-two.txt": "two\n"}, "Step two")
+    assert changed() == ["step-two.txt"]
+
+
+def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
+    client, app_world
+):
     task_id, _ = _accepted_step(client, app_world, completes_task=True)
+
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["presentation"]["phrase"] == "accepted"
+    # Its AI teammate gets one turn to bring the document up to date and say
+    # what came of the task.
+    told = _told(client, task_id)
+    assert "最后一次交付已经采纳并合并" in told
+    assert "实况文档" in told and "chat_send" in told
+
+
+def test_the_task_closes_when_its_write_up_turn_ends(client, app_world):
+    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+
+    summary_turn_ends(client, task_id)
+
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "closed"
+    assert task["presentation"]["phrase"] == "accepted"
+
+
+def test_the_task_closes_without_a_write_up_that_never_comes(client, app_world):
+    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+
+    time_passes(client, task_id, minutes=50)
+    watch(client)
 
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"
@@ -91,6 +170,7 @@ def test_accepting_the_last_step_completes_the_task(client, app_world):
 
 def test_the_owner_reopens_a_completed_task_onto_the_latest_code(client, app_world):
     task_id, before = _accepted_step(client, app_world, completes_task=True)
+    summary_turn_ends(client, task_id)
     owner = client.get(f"/topics/{task_id}/task").json()["data"]["owner_handle"]
 
     refused = client.post(
@@ -104,6 +184,38 @@ def test_the_owner_reopens_a_completed_task_onto_the_latest_code(client, app_wor
     assert task["status"] == "open"
     assert task["branch_name"] != before["branch_name"]
     assert task["pr_number"] is None
+
+
+def test_a_task_closed_in_its_write_up_window_reopens_out_of_it(client, app_world):
+    """在写总结的那一会儿里关掉，窗口跟着关闭一起结束；重开出来的是一个正常的、
+    开着的任务。
+
+    窗口是「最后一步已采纳、总结还没写完」，这段时间里它已经显示「已采纳」。这
+    时候负责人点关闭，任务进 closed —— 留着的 `closing_since` 毫无意义，而它的
+    害处要等到重开才显出来：`status` 是 open，界面上却还是「已采纳」，两个列表
+    都不收它（2026-10-11，任务 #58）。"""
+    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["presentation"]["column"] == "done"  # 还在写总结的窗口里
+
+    closed = client.post(
+        f"/topics/{task_id}/close",
+        json={"conclusion": "先到这里"},
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert closed.status_code == 200, closed.text
+
+    reopened = client.post(
+        f"/topics/{task_id}/reopen",
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert reopened.status_code == 200, reopened.text
+
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"
+    assert task["presentation"]["column"] != "done"
+    # 窗口里的那句「已采纳」不会留在重开出来的任务上。
+    assert task["presentation"]["phrase"] != "accepted"
 
 
 def test_an_open_task_cannot_be_reopened(client):

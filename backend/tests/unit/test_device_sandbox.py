@@ -22,6 +22,7 @@ from app.domain.agent import environment_runner
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap, runtime
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
+from tests.support import bubblewrap
 
 RUNNER = Path(environment_runner.__file__)
 
@@ -72,37 +73,41 @@ def owner(tmp_path, monkeypatch):
     home = tmp_path / "owner"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    bubblewrap.place(home)
     monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
     return home
 
 
-def _refusal(payload, capsys) -> str:
+def _refusal(payload, capsys) -> dict:
     with pytest.raises(SystemExit) as exited:
         bootstrap.configure(payload)
     assert exited.value.code == bootstrap.SANDBOX_UNAVAILABLE_EXIT
-    return capsys.readouterr().err
+    return json.loads(capsys.readouterr().err)
 
 
 @linux
 def test_an_isolated_room_this_machine_cannot_isolate_is_refused_and_nothing_runs(
     owner, tmp_path, monkeypatch, capsys
 ):
-    """No bubblewrap on Linux: the room is refused with what to do about it,
-    nothing is installed with the owner's sudo, and nothing runs over the
-    whole machine instead."""
+    """No bwrap where cheesehost places it, even with one on the system: the
+    room is refused with what to do about it, nothing is installed with the
+    owner's sudo, and nothing runs over the whole machine instead."""
+    bubblewrap.placed(owner).unlink(missing_ok=True)
     tools = tmp_path / "tools"
     tools.mkdir()
     asked = tmp_path / "sudo-was-run"
     (tools / "sudo").write_text(f"#!/bin/sh\ntouch {asked}\nexit 1\n")
     (tools / "sudo").chmod(0o755)
+    system_ran = tmp_path / "system-bwrap-ran"
+    (tools / "bwrap").write_text(f"#!/bin/sh\ntouch {system_ran}\n")
+    (tools / "bwrap").chmod(0o755)
     monkeypatch.setenv("PATH", str(tools))
     project, resource = uuid.uuid4(), uuid.uuid4()
 
     said = _refusal(_payload(project, resource, sandbox=True), capsys)
 
-    assert "bubblewrap is not installed" in said
-    assert "sudo apt install bubblewrap" in said
-    assert "full machine access" in said
+    assert said["key"] == "sandboxNotPlaced"
+    assert not system_ran.exists()
     assert not asked.exists()
     state = owner / ".cheese/home" / str(project) / str(resource) / ".cheese/executor"
     assert not Path(runtime.socket_path(state)).exists()
@@ -116,19 +121,23 @@ def test_a_machine_that_allows_no_user_namespaces_is_told_what_to_change(
     """Bubblewrap makes the sandbox in a user namespace of its own; where the
     machine forbids that (Ubuntu's AppArmor restriction among others) the
     room is refused with bubblewrap's own words and what to change."""
-    tools = tmp_path / "tools"
-    tools.mkdir()
-    (tools / "bwrap").write_text(
+    refusing = bubblewrap.placed(owner)
+    refusing.parent.mkdir(parents=True, exist_ok=True)
+    refusing.unlink(missing_ok=True)
+    refusing.write_text(
         "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n"
     )
-    (tools / "bwrap").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{tools}:{os.environ['PATH']}")
+    refusing.chmod(0o755)
 
     said = _refusal(_payload(uuid.uuid4(), uuid.uuid4(), sandbox=True), capsys)
 
-    assert "setting up uid map: Permission denied" in said
-    assert "user namespaces" in said
-    assert "full machine access" in said
+    assert "setting up uid map: Permission denied" in said["params"]["detail"]
+    assert said["key"] in {
+        "sandboxAppArmor",
+        "sandboxUsernsCloneOff",
+        "sandboxUserNamespacesOff",
+        "sandboxNoUserNamespaces",
+    }
     assert not (owner / ".cheese/sandboxes").exists()
 
 
@@ -379,12 +388,12 @@ def test_pruning_a_skill_removes_the_links_in_it_and_nothing_they_name(tmp_path)
 
 
 @sandboxed
-def test_a_room_given_full_machine_access_after_running_isolated_runs_outside_it(
+def test_a_session_moved_from_a_sandbox_to_its_owners_machine_runs_outside_it(
     owner, rooms, capsys
 ):
-    """The owner gives an isolated room the whole machine: its next install
-    replaces the sandboxed executor with one over the machine, and nothing
-    out here goes on treating the room as sandboxed."""
+    """The machine's owner moves a session from a sandbox to run directly on
+    the machine: its next install replaces the sandboxed executor with one over
+    the machine, and nothing out here goes on treating it as sandboxed."""
     room = rooms()
     assert environment_runner.sandbox_process(room.home) is not None
     assert room.bash(f'ls "{owner}/.cheese/sandboxes" 2>/dev/null || echo hidden') == (

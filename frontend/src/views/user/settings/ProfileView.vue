@@ -11,10 +11,10 @@
         <h1 class="t-page-title">{{ t('account.profile.title') }}</h1>
         <p class="settings-page__lede">{{ t('account.profile.lede') }}</p>
       </div>
-      <router-link v-if="user" class="profile__home" :to="{ name: 'UserPage', params: { handle: user.username } }">
+      <NavLink v-if="user" class="profile__home" :to="{ name: 'UserPage', params: { handle: user.username } }">
         {{ t('account.profile.viewPage') }}
         <v-icon icon="mdi-chevron-right" size="16" />
-      </router-link>
+      </NavLink>
     </header>
 
     <!-- Save is the page's one main action, so it is the only amber on it
@@ -51,7 +51,10 @@
       </div>
 
       <div class="srow srow--field">
-        <label class="srow__k" for="profile-nickname">{{ t('account.profile.nickname') }}</label>
+        <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+        <label id="profile-nickname-label" class="srow__k" for="profile-nickname">{{
+          t('account.profile.nickname')
+        }}</label>
         <v-text-field
           id="profile-nickname"
           v-model="nickname"
@@ -72,7 +75,7 @@
       </div>
 
       <div class="srow srow--field">
-        <label class="srow__k" for="profile-intro">{{ t('account.profile.intro') }}</label>
+        <label id="profile-intro-label" class="srow__k" for="profile-intro">{{ t('account.profile.intro') }}</label>
         <v-textarea
           id="profile-intro"
           v-model="intro"
@@ -114,6 +117,7 @@ import { computed, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SaveBar from '@/components/base/SaveBar.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 

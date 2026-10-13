@@ -42,9 +42,6 @@ What ending means. Exactly what the runtime writes when a Stop lands
 (``_close_open_turns``): ``stopped_at``, nothing else. Its value is the
 last thing the turn wrote, which its Stop followed within seconds; a turn that
 wrote nothing ends when it was delivered.
-
-Downgrade puts nothing back: a re-opened row would make the room busy again
-with a turn nobody is running.
 """
 
 from collections.abc import Sequence
@@ -112,4 +109,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade puts nothing back: a re-opened row would make the room busy again
+    with a turn nobody is running."""
     pass

@@ -278,7 +278,7 @@
 
 <script setup lang="ts">
 import type { OAuthConnectionInfo } from '@/cx_types'
-import type { PasskeyInfo, SessionInfo } from '@/network/api/users/types'
+import type { PasskeyInfo, SessionInfo } from '@/types/apiUsers'
 
 import { computed, ref } from 'vue'
 

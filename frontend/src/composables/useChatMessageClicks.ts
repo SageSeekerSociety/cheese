@@ -16,8 +16,8 @@ export function useChatMessageClicks(deps: {
   toggleTime: (target: HTMLElement) => void
   /** 消息行本身，用来数出 chip 所在那行挂着哪件活（`<#id>` 可能是话题，也可能是活）。 */
   rows: () => { block: Block }[]
-  /** 这间里已派出的活，用来把 `<#id>` 分成「开卡片」还是「开话题」。 */
-  roomTasks: () => { id: string }[]
+  /** 这个 `<#id>` 是不是这间里的一件活：是就开卡片，不是就开话题。 */
+  isTask: (id: string) => boolean
   emit: ChatPanelEmit
 }): (e: MouseEvent) => void {
   return function onMessagesClick(e: MouseEvent) {
@@ -34,7 +34,7 @@ export function useChatMessageClicks(deps: {
     else if (el.dataset.handle) deps.emit('mention-click', el.dataset.handle)
     else if (el.dataset.topic) {
       const id = el.dataset.topic
-      if (deps.roomTasks().some((task) => task.id === id)) deps.emit('open-card', id)
+      if (deps.isTask(id)) deps.emit('open-card', id)
       else deps.emit('open-topic', id)
     } else if (el.dataset.file) {
       deps.emit('open-file', el.dataset.file)

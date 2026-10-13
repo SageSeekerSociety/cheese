@@ -76,6 +76,12 @@ class NudgeKind(enum.StrEnum):
     ready = "ready"
 
 
+#: Ends every comment the platform itself posts on a PR (a 退回's comments, see
+#: `review/comment_publish.py`). Those already reached 芝士 with the 退回, so the
+#: poller must not hand them back as a reviewer speaking on the PR.
+PLATFORM_REVIEW_MARK = "<!-- cheese:review-comment -->"
+
+
 @dataclass(frozen=True)
 class ReviewSignal:
     """PR 上一条需要芝士看的评审动静。
@@ -108,6 +114,54 @@ _REVIEW_KIND_WORDS: Final = {
     "commented": "评审意见",
     "comment": "行内评论",
 }
+
+#: GitHub's review states 芝士 is expected to act on. `APPROVED` and
+#: `DISMISSED` are left out on purpose: neither asks for a change, and a card
+#: that nudged on an approval would be pure noise.
+_ACTIONABLE_REVIEW_STATES: Final = {
+    "CHANGES_REQUESTED": "changes_requested",
+    "COMMENTED": "commented",
+}
+
+
+def review_signal(item: dict) -> ReviewSignal | None:
+    """One entry of `GET /pulls/{n}/reviews`, or None if it asks for nothing.
+
+    A `COMMENTED` review with an empty body is what GitHub records when
+    somebody submits inline comments without a summary — the comments
+    themselves come from the other endpoint, so this row would only duplicate
+    them.
+    """
+    state = str(item.get("state") or "").upper()
+    kind = _ACTIONABLE_REVIEW_STATES.get(state)
+    if kind is None:
+        return None
+    body = str(item.get("body") or "")
+    if kind == "commented" and not body.strip():
+        return None
+    return ReviewSignal(
+        id=f"review:{item.get('id')}",
+        kind=kind,
+        author=str((item.get("user") or {}).get("login") or ""),
+        body=body,
+    )
+
+
+def review_comment_signal(item: dict) -> ReviewSignal | None:
+    """One entry of `GET /pulls/{n}/comments` — an inline comment on a line."""
+    body = str(item.get("body") or "")
+    if not body.strip():
+        return None
+    path = str(item.get("path") or "")
+    line = item.get("line") or item.get("original_line")
+    where = f"{path}:{line}" if path and isinstance(line, int) else path
+    return ReviewSignal(
+        id=f"comment:{item.get('id')}",
+        kind="comment",
+        author=str((item.get("user") or {}).get("login") or ""),
+        body=body,
+        where=where,
+    )
 
 
 @dataclass

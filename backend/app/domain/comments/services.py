@@ -1,8 +1,9 @@
 from typing import TYPE_CHECKING
 
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.comments.models import Comment
 from app.domain.comments.repositories import CommentRepository
+from app.domain.user.models import User, UserProfile
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 if TYPE_CHECKING:
@@ -140,7 +141,6 @@ class CommentService:
     async def vote_comment(
         self, *, comment_id: int, user_id: int, vote_type: str
     ) -> dict:
-        from app.core.errors import BadRequestError
 
         await self._ensure_comment_exists(comment_id)
         if vote_type not in ("POSITIVE", "NEGATIVE"):
@@ -203,7 +203,6 @@ class CommentService:
             )
 
         # 2. user (author) profiles.
-        from app.domain.user.models import User, UserProfile
 
         author_ids = list({it["created_by_id"] for it in items})
         users_map: dict[int, User] = {}

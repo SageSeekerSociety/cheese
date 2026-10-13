@@ -1,10 +1,11 @@
 import re
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Select, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.discussion.models import DiscussableModelType, Discussion
 from app.domain.questions.models import (
     Attitude,
     Question,
@@ -15,6 +16,7 @@ from app.domain.questions.models import (
     QuestionTagRelation,
     VoteType,
 )
+from app.domain.tag.models import Tag
 
 _HAS_WORD_CHAR_RE = re.compile(r"[\w]", re.UNICODE)
 
@@ -207,7 +209,6 @@ class QuestionRepository:
         return result.scalar_one_or_none() is not None
 
     async def count_comments(self, question_id: int) -> int:
-        from app.domain.discussion.models import DiscussableModelType, Discussion
 
         stmt = select(func.count(Discussion.id)).where(
             Discussion.model_type == DiscussableModelType.QUESTION.value,
@@ -350,7 +351,6 @@ class QuestionRepository:
         self, *, limit: int = 10, days: int = 7
     ) -> list[Question]:
         cutoff = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
-        from datetime import timedelta
 
         cutoff = cutoff - timedelta(days=days)
         subq = (
@@ -400,7 +400,6 @@ class QuestionRepository:
     async def get_popular_search_terms(
         self, *, limit: int = 10, days: int = 7
     ) -> list[dict]:
-        from datetime import timedelta
 
         cutoff = datetime.now(UTC) - timedelta(days=days)
         stmt = (
@@ -541,7 +540,6 @@ class QuestionTopicRepository:
         return mapping
 
     async def validate_topic_ids(self, topic_ids: list[int]) -> set[int]:
-        from app.domain.tag.models import Tag
 
         if not topic_ids:
             return set()
@@ -553,7 +551,6 @@ class QuestionTopicRepository:
         return set(result.scalars().all())
 
     async def get_topics_for_question(self, question_id: int) -> list[dict]:
-        from app.domain.tag.models import Tag
 
         stmt = (
             select(Tag)
@@ -572,7 +569,6 @@ class QuestionTopicRepository:
         self, question_ids: Sequence[int]
     ) -> dict[int, list[dict]]:
         """Bulk variant of get_topics_for_question. Returns {question_id: [{id, name}]}."""  # noqa: E501
-        from app.domain.tag.models import Tag
 
         if not question_ids:
             return {}

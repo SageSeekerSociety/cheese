@@ -83,6 +83,7 @@ from app.domain.topic.repositories import TopicRepository as TopicRepository
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.project.protection import branch_protection_of, github_repo_snapshot
 from app.domain.review import services as pkg
 
 logger = logging.getLogger("cheesex.review")
@@ -206,7 +207,6 @@ async def _github_enforces(repo: str, token: str | None) -> bool:
     hit = _github_enforces_cache.get(repo)
     if hit is not None and now - hit[0] < _GITHUB_ENFORCES_TTL_S:
         return hit[1]
-    from app.domain.project.protection import github_repo_snapshot
 
     _, prot = await github_repo_snapshot(repo, token)
     _github_enforces_cache[repo] = (now, prot.enforced)
@@ -247,7 +247,8 @@ _MISSING_SUBJECT = (
     "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
     "没有就照默认分支上最近的提交标题"
     "（`git log --no-merges --format=%s -20 origin/<默认分支>`），"
-    "不看你这条分支上的；看不出惯例就用英文。"
+    "不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里"
+    "说话的语言。"
     "只写一行，末尾的 (#N) 平台会加，不要写；原因写进 body。"
 )
 
@@ -300,7 +301,6 @@ def approvals_required_of(project: Project | None) -> int:
     The canonical read lives with the rest of the branch-protection policy
     (issue #718); this is that read, importable where review code already is.
     """
-    from app.domain.project.protection import branch_protection_of
 
     return branch_protection_of(project).approvals_required
 
@@ -373,6 +373,7 @@ async def _read_deliverable(
 
     读的是任务那棵树 —— 交付物是这条活做出来的，主干上还没有它。
     """
+    # deferred-import: tests replace this name on app.domain.repository.forge_files
     from app.domain.repository.forge_files import ProjectFiles
 
     data, _ = await ProjectFiles(session, project_id, task_id).raw(path, "live")

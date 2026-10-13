@@ -23,9 +23,6 @@ stand-in's user row stays: a room's compute screen still acts under it, and a
 token naming it resolves to the agent seated in the room (see
 `ActorResolver`). The memory pool the stand-in wrote to stays where it is; the
 room keeps reading it as its legacy tail.
-
-Downgrade restores nothing: which seat a message was under is not information
-anyone wants back.
 """
 
 from collections.abc import Sequence
@@ -122,4 +119,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade restores nothing: which seat a message was under is not information
+    anyone wants back."""
     pass

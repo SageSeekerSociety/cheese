@@ -5,10 +5,12 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, listing, say
 from app.domain.library import service as library
 from app.domain.project import artifacts
@@ -34,6 +36,8 @@ from app.domain.topic.models import Topic, TopicStatus
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.membership.roster import roster
+from app.domain.project.protection import branch_protection_of
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _ALEMBIC_VERSIONS_DIR,
@@ -51,6 +55,7 @@ from app.domain.review.services._shared import (
     approvals_required_of,
     notice,
 )
+from app.domain.task.teaching import protocol_for_task
 
 
 async def _topic_or_404(self: pkg.AcceptService, topic_id: uuid.UUID) -> Topic:
@@ -102,13 +107,32 @@ async def _card_or_404(self: pkg.AcceptService, card_id: uuid.UUID) -> AcceptCar
     return card
 
 
+#: 审阅重点的上限：审阅的人要在卡上一眼读完。条数按非空行数，字数按全部条目合计。
+FOCUS_MAX_ITEMS = 3
+FOCUS_MAX_CHARS = 300
+
+
+def clean_focus(text: str) -> str:
+    """审阅重点去掉空行；超过上限时拒绝，并说清该怎么写。
+
+    超长的那一份往往是把测试结果、改了哪些函数、要拍板的取舍全塞了进来——那些
+    属于 PR 正文（`change_body`），截断只会留下半句，所以拒绝而不截。"""
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    cleaned = "\n".join(lines)
+    if len(lines) > FOCUS_MAX_ITEMS or len(cleaned) > FOCUS_MAX_CHARS:
+        raise UnprocessableEntityError(
+            say("acceptFocusTooLong", items=FOCUS_MAX_ITEMS, chars=FOCUS_MAX_CHARS)
+        )
+    return cleaned
+
+
 async def create_card(
     self: pkg.AcceptService,
     *,
     topic_id: uuid.UUID,
     task_id: uuid.UUID,
     reviewer_handle: str | None = None,
-    routing_reason: str = "",
+    focus: str = "",
     change_subject: str | None = None,
     change_body: str | None = None,
     artifact: str | None = None,
@@ -119,11 +143,18 @@ async def create_card(
     completes_task: bool = True,
     admits_reviewer: ReviewerAdmission,
 ) -> AcceptCard:
+    focus = clean_focus(focus)
     topic = await self._topic_or_404(topic_id)
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
     if topic.status == TopicStatus.archived:
         raise ValidationError(say("topicArchivedNoReview"))
-    if task.status != TaskStatus.open or not task.branch_name:
+    # A task whose last delivery landed is over, even while its AI teammate is
+    # still writing it up (`room_task.closing`).
+    if (
+        task.status != TaskStatus.open
+        or task.closing_since is not None
+        or not task.branch_name
+    ):
         raise ValidationError(say("taskEndedOrNoBranch"))
     subject = (change_subject or "").strip()
     if not subject:
@@ -151,12 +182,20 @@ async def create_card(
     blocking = next((c for c in existing if c.status in _CARD_BLOCKS_NEW_CARD), None)
     if blocking is not None:
         raise ValidationError(_BLOCKED_BY_CARD_MESSAGES[blocking.status])
+    # deferred-import: tests replace this name on app.domain.repository.forge_files
     from app.domain.repository.forge_files import ProjectFiles
 
     comparison = await ProjectFiles(
         self._session, task.project_id, task.id
     ).comparison()
-    if not comparison or not comparison.get("total_commits"):
+    # A commit that changes no file delivers nothing either: accepting it would
+    # merge an empty commit into the base and call that a delivery. Work whose
+    # result does not land on the base ends by closing the task instead.
+    if (
+        not comparison
+        or not comparison.get("total_commits")
+        or comparison.get("files") == []
+    ):
         raise ValidationError(
             say("taskBranchNothingToDeliver", branch=task.branch_name)
         )
@@ -204,7 +243,7 @@ async def create_card(
         topic_id=topic_id,
         task_id=task.id,
         reviewer_handle=reviewer_handle,
-        routing_reason=routing_reason,
+        focus=focus,
         status=AcceptStatus.pending,
         change_subject=subject,
         change_body=change_body or None,
@@ -232,7 +271,7 @@ async def create_card(
             snapshot[1],
         )
     card.pr_number, card.pr_url = task.pr_number, task.pr_url
-    await self._announce_filed(topic, card, task, artifact=declared.name)
+    await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)
@@ -260,6 +299,7 @@ async def _warn_about_a_second_pending_migration(
     Best-effort throughout: a git read that fails, or a room that won't take
     the message, must never stop someone filing a card.
     """
+    # deferred-import: tests replace this name on app.domain.repository.forge_files
     from app.domain.repository.forge_files import ProjectFiles
 
     async def migrations(task_id: uuid.UUID) -> list[str]:
@@ -368,6 +408,30 @@ async def list_for_topic(
     return cards, len(cards)
 
 
+async def latest_cards_by_task(
+    self: pkg.AcceptService, task_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, AcceptCard]:
+    """每条活最新的一张验收卡 —— 一次查完（`AcceptCardRepository.latest_by_task`）。
+
+    「待我处理」把每条活现在停在哪张卡上折进展示态，判据（最新一张、按
+    `task_id`）留在 repository，这里只把那条读接到服务上，路由不自己构造仓储。
+    """
+    return await self._repo.latest_by_task(task_ids)
+
+
+async def live_cards_for_places(
+    self: pkg.AcceptService, place_ids: list[uuid.UUID]
+) -> list[AcceptCard]:
+    """这些地点（房间或支线）上还没结算的卡 —— 房间自己那一张从这里筛。
+
+    哪些状态算「还没结算」是 `review/archive.py` 维护的那张表
+    （`OPEN_CARD_STATUSES`），所以状态由这里带上，调用方不自己数状态。
+    """
+    return await self._repo.list_live_for_places(
+        place_ids, statuses=archive.OPEN_CARD_STATUSES
+    )
+
+
 async def open_pr_card_ids(
     self: pkg.AcceptService, project_id: uuid.UUID | None = None
 ) -> list[uuid.UUID]:
@@ -429,6 +493,53 @@ async def reviewer_topic_ids(
 async def describe(self: pkg.AcceptService, card: AcceptCard) -> dict:
     """AcceptCardOut payload enriched with the vote state (approvals live in
     their own table; the requirement is a project setting)."""
+    [data] = await describe_many(self, [card])
+    return data
+
+
+async def describe_many(
+    self: pkg.AcceptService, cards: Sequence[AcceptCard]
+) -> list[dict]:
+    """Several cards as `describe` renders one, reading once what they share.
+
+    A room's listing is every card of every task in it: 544 in the busiest room
+    on dev (2026-10-08). Rendered one by one, each card read its room, project,
+    forge binding and the room's private neighbours again, plus its votes and
+    its task — 4,225 queries and 14 s for one `GET /topics/{id}/accept-card`.
+    """
+    approvals = await self._repo.approver_handles_by_card([c.id for c in cards])
+    trees = {
+        tree.id: tree
+        for tree in await TaskService(self._session).list_by_ids(
+            list({c.task_id for c in cards if c.task_id is not None})
+        )
+    }
+    rooms: dict[uuid.UUID, Topic] = {}
+    projects: dict[uuid.UUID, Any] = {}
+    forges: dict[tuple[uuid.UUID, str], forge_mod.Forge | None] = {}
+    hidden: dict[uuid.UUID, set[uuid.UUID]] = {}
+    summaries: dict[tuple[uuid.UUID, uuid.UUID], Any] = {}
+    out: list[dict] = []
+    for card in cards:
+        out.append(
+            await _render(
+                self, card, approvals, trees, rooms, projects, forges, hidden, summaries
+            )
+        )
+    return out
+
+
+async def _render(
+    self: pkg.AcceptService,
+    card: AcceptCard,
+    approvals: dict[uuid.UUID, list[str]],
+    trees: dict[uuid.UUID, Task],
+    rooms: dict[uuid.UUID, Topic],
+    projects: dict[uuid.UUID, Any],
+    forges: dict[tuple[uuid.UUID, str], forge_mod.Forge | None],
+    hidden: dict[uuid.UUID, set[uuid.UUID]],
+    summaries: dict[tuple[uuid.UUID, uuid.UUID], Any],
+) -> dict:
     data = AcceptCardOut.model_validate(card).model_dump(mode="json")
     # 「这条 note 有多严重」是它的状态码算出来的（domain/review/notes.py），
     # 随卡下发。浏览器过去自己按 emoji 开头猜，而那份硬编码列表漏掉了后来加
@@ -438,15 +549,18 @@ async def describe(self: pkg.AcceptService, card: AcceptCard) -> dict:
     # 这次交付更新的是哪一项产物。卡面上要有它：验收的人正在决定这一版要不要
     # 成为《报告》的当前版本，而卡上别的字段一个都没说出这件事。
     # 版本数也按这个房间看得见的数：别的私密频道交付的那几版不算进来。
-    declared = (
-        await artifacts.summary(
-            self._session,
-            card.artifact_id,
-            hidden=await artifacts.hidden_from_room(self._session, card.topic_id),
-        )
-        if card.artifact_id is not None
-        else None
-    )
+    declared = None
+    if card.artifact_id is not None:
+        key = (card.artifact_id, card.topic_id)
+        if key not in summaries:
+            if card.topic_id not in hidden:
+                hidden[card.topic_id] = await artifacts.hidden_from_room(
+                    self._session, card.topic_id
+                )
+            summaries[key] = await artifacts.summary(
+                self._session, card.artifact_id, hidden=hidden[card.topic_id]
+            )
+        declared = summaries[key]
     data["artifact"] = (
         None
         if declared is None
@@ -472,20 +586,27 @@ async def describe(self: pkg.AcceptService, card: AcceptCard) -> dict:
             "url": card.deliverable_url,
         }
     )
-    data["approvals"] = await self._repo.list_approver_handles(card.id)
-    topic = await self._topic_or_404(card.topic_id)
-    project = await self._projects.get(topic.project_id)
-    try:
-        forge: forge_mod.Forge | None = await self._resolve_forge(
-            topic.project_id, card=card
-        )
-    except ValidationError:
-        # 读一张卡不是挑一条车道。采纳那一侧照旧 fail-closed（#362）：读不出
-        # 事实就拒绝，绝不摸黑合一次。但这条读路径上同样的失败过去会把整个
-        # 卡列表端点打成 422 —— 一个项目的 git 出问题，所有项目的卡都看不
-        # 了。这里改成在卡面上如实说「暂时读不出」，失败一点没被盖住（I19），
-        # 只是不再连累别的卡。
-        forge = None
+    data["approvals"] = approvals.get(card.id, [])
+    if card.topic_id not in rooms:
+        rooms[card.topic_id] = await self._topic_or_404(card.topic_id)
+    topic = rooms[card.topic_id]
+    if topic.project_id not in projects:
+        projects[topic.project_id] = await self._projects.get(topic.project_id)
+    project = projects[topic.project_id]
+    # The forge is the project's binding; a card only adds which host its PR
+    # is on, which `resolve` checks against that binding.
+    lane = (topic.project_id, urlsplit(card.pr_url).netloc if card.pr_url else "")
+    if lane not in forges:
+        try:
+            forges[lane] = await self._resolve_forge(topic.project_id, card=card)
+        except ValidationError:
+            # 读一张卡不是挑一条车道。采纳那一侧照旧 fail-closed（#362）：读不出
+            # 事实就拒绝，绝不摸黑合一次。但这条读路径上同样的失败过去会把整个
+            # 卡列表端点打成 422 —— 一个项目的 git 出问题，所有项目的卡都看不
+            # 了。这里改成在卡面上如实说「暂时读不出」，失败一点没被盖住（I19），
+            # 只是不再连累别的卡。
+            forges[lane] = None
+    forge = forges[lane]
     caps = forge.capabilities if forge is not None else None
     # 托管方身份在卡生成的那一刻就在卡上（I23）：这一份是唯一的一份，卡片渲染
     # 「托管方是谁」只从这里取，人点完采纳之后不再补写任何一条 note。
@@ -574,7 +695,6 @@ async def describe(self: pkg.AcceptService, card: AcceptCard) -> dict:
         }
     # 绿了自动合 (#718)：开了 auto_merge_allowed 的项目，验收人可以在
     # BLOCKED / BEHIND 时布防。
-    from app.domain.project.protection import branch_protection_of
 
     data["auto_merge"] = {
         "allowed": (
@@ -591,11 +711,7 @@ async def describe(self: pkg.AcceptService, card: AcceptCard) -> dict:
     # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
     # red one has to be in front of the person about to accept. A check
     # whose result goes nowhere is a check nobody runs.
-    tree = (
-        await TaskService(self._session).get(card.task_id)
-        if card.task_id is not None
-        else None
-    )
+    tree = trees.get(card.task_id) if card.task_id is not None else None
     data["quick_check"] = (
         None
         if tree is None or tree.last_check_at is None
@@ -620,8 +736,8 @@ async def _enforce_protocol(
     `project_task_links` chain it replaced pointed at a 题目 hierarchy that
     had no way to be created.
     """
+    # deferred-import: Task is bound at the top of this module already
     from app.domain.task.models import Task
-    from app.domain.task.teaching import protocol_for_task
 
     project = await self._projects.get(topic.project_id)
     task_id = getattr(project, "external_task_id", None) if project else None
@@ -635,7 +751,6 @@ async def _enforce_protocol(
         return
     # The condition asks for someone from outside the team to sign off: an
     # external member of this project.
-    from app.domain.membership.roster import roster
 
     outside = {
         m.handle

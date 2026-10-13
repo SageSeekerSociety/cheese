@@ -55,6 +55,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # The attribution is correct under the previous revision's schema too, and
-    # putting the rows back to no conversation would only restore the bug.
+    """The attribution is correct under the previous revision's schema too, and
+    putting the rows back to no conversation would only restore the bug."""
     pass

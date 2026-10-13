@@ -115,10 +115,13 @@ EVENT_TURN_QUEUED: Final = "turn_queued"
 EVENT_TOOLS_RECOVERED: Final = "tools_recovered"
 #: 话题的运行环境被重建 —— 会话和后台任务都断了，项目文件没事。
 EVENT_SANDBOX_REBUILT: Final = "sandbox_rebuilt"
-#: 采纳后触发的部署，跑完了。
+#: 任务合并后，包含这次合并的一次部署成功了（`review.landing_watch`）。
 EVENT_DEPLOY_DONE: Final = "deploy_done"
-#: 采纳后触发的部署没跑完 / 回滚了 / 结果不明。
+#: 任务合并后，包含这次合并的一次部署失败了。
 EVENT_DEPLOY_FAILED: Final = "deploy_failed"
+#: 任务合并到默认分支后，一项在合并前那个提交上通过的检查在合并提交上失败了：
+#: 交给任务的 AI 队友修，任务关了就重新打开（`review.landing_watch`）。
+EVENT_MAIN_CHECKS_FAILED: Final = "main_checks_failed"
 #: 一件活的提交并进了房间的分支 / 先排队 / 冲突了。
 EVENT_ROOM_MERGE: Final = "room_merge"
 #: 一张采信卡有结果了：被采信 / 要补证据 / 升级等人拍板。
@@ -196,6 +199,9 @@ EVENT_MCP_NOT_CONNECTED: Final = "mcp_not_connected"
 #: AI 队友之间的点名在这间房一小时里到了上限，这一次没有叫醒被点名的队友
 #: （`delivery/mention.py` 的熔断）。说出来，是因为不说的话它和「点名没用」分不开。
 EVENT_MENTION_FUSED: Final = "mention_fused"
+#: 一个人在「改动」里改了任务目录里的一个文件 —— AI 队友手里的旧内容作废，下一次
+#: 动它之前要重读。
+EVENT_FILE_EDITED: Final = "file_edited"
 #: 交活的人自己的 GitHub 授权开不了 PR，平台改用 App 的身份开了 —— PR 记在机器人
 #: 名下。以前这只进 logger，于是这个人只看到 GitHub 把他的活算给了机器人。
 #: 本模块新增的全部类别码。`platform_error` / `backend_error` / `frontend_error`
@@ -231,6 +237,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_SANDBOX_REBUILT,
         EVENT_DEPLOY_DONE,
         EVENT_DEPLOY_FAILED,
+        EVENT_MAIN_CHECKS_FAILED,
         EVENT_ROOM_MERGE,
         EVENT_CONCLUSION_SETTLED,
         EVENT_MACHINE_PROVISIONING,
@@ -264,6 +271,7 @@ EVENT_TYPES: Final = frozenset(
         EVENT_DOC_MISSING,
         EVENT_MCP_NOT_CONNECTED,
         EVENT_MENTION_FUSED,
+        EVENT_FILE_EDITED,
     }
 )
 

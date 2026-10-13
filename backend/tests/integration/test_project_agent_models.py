@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from app.api import deps as session_turn_deps
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import gateway_catalog
@@ -76,6 +77,7 @@ async def test_project_name_defaults_and_teammate_model_reach_execution(
     response = client.put(route, json={"configuration": {"model": "opus"}})
     assert response.status_code == 200, response.text
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
         compute=stub_compute(),
         base_system_prompt="Test",
@@ -199,6 +201,7 @@ async def test_removed_main_is_refused_but_unused_defaults_do_not_block_override
         assert not result["allow"], result
         assert result["reason_kind"] == "binding"
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_factory,
         compute=stub_compute(),
         base_system_prompt="Test",

@@ -72,6 +72,15 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run lint:boundary
+  # Accessibility rules (eslint-plugin-vuejs-accessibility) over src/**/*.vue.
+  # Ratcheted: the violations already in the tree are frozen per file in
+  # a11y-baseline.json, so only NEW ones fail. Writer: `pnpm run
+  # lint:a11y:update`, which only lowers counts. Read-only, like `lint:style`.
+  lint:a11y:
+    desc: Check accessibility rules (eslint + ratchet, check only)
+    deps: [install]
+    cmds:
+      - pnpm run lint:a11y
   # Every page the router reaches and every panel under src/components/panels/
   # must render with no backend, no route and no business store. Ratcheted:
   # 20 are standalone-ready today (scene-baseline.json) and may not stop; a
@@ -92,6 +101,11 @@ tasks:
     desc: Check grade-A components are in the preview catalog (python ratchet, check only)
     cmds:
       - pnpm run lint:catalog
+  lint:scene-debt:
+    desc: Check child edges, route reads and legacy network imports only shrink
+    deps: [install]
+    cmds:
+      - pnpm run lint:scene-debt
   typecheck:
     desc: Run vue-tsc type check
     deps: [install]
@@ -115,11 +129,13 @@ tasks:
     cmds:
       - pnpm exec eslint .
   check:
-    desc: Run all frontend checks (lint + boundaries + scenes + catalog + style + typecheck + test + build)
+    desc: Run all frontend checks (lint + boundaries + a11y + scenes + catalog + style + typecheck + test + build)
     cmds:
       - task: lint:check
       - task: lint:boundary
+      - task: lint:a11y
       - task: lint:scenes
+      - task: lint:scene-debt
       - task: lint:catalog
       - task: lint:style
       - task: typecheck

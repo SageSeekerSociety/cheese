@@ -2,6 +2,7 @@ import account from './account.json'
 import admin from './admin.json'
 import apiError from './apiError.json'
 import ask from './ask.json'
+import catalog from './catalog.json'
 import compute from './compute.json'
 import credits from './credits.json'
 import design from './design.json'
@@ -32,6 +33,7 @@ import toolLabels from './toolLabels.json'
 import topic from './topic.json'
 import usage from './usage.json'
 import users from './users.json'
+import welcome from './welcome.json'
 import work from './work.json'
 
 export default {
@@ -53,6 +55,7 @@ export default {
   questions,
   usage,
   users,
+  welcome,
   spaces,
   tasks,
   teams,
@@ -70,4 +73,5 @@ export default {
   shell,
   slides,
   topic,
+  catalog,
 }

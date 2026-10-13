@@ -7,18 +7,18 @@ import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listBlocks: vi.fn(),
   listRoomTasks: vi.fn().mockResolvedValue({ data: [] }),
   listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
-  chatWsUrl: () => 'ws://test/chat',
 }))
 vi.mock('../api/messages', () => ({ postChatMessage: vi.fn() }))
 
 import type { ChatMessageBody } from '../cx_types'
 
-import { ApiError, listBlocks } from '../api'
+import { ApiError, listBlocks, listRoomTasks } from '../api'
 import { postChatMessage } from '../api/messages'
 
 import ChatPanel from './ChatPanel.vue'
@@ -39,6 +39,7 @@ class TestSocket {
   onmessage: ((event: { data: string }) => void) | null = null
   send = vi.fn()
   close = vi.fn()
+  drop = vi.fn()
   constructor() {
     sockets.push(this)
   }
@@ -130,7 +131,7 @@ describe('chat recovery after history errors', () => {
     expect(sockets).toHaveLength(2)
   })
 
-  it('a topic’s first connect does not resync the doc; a reconnect does', async () => {
+  it('a topic’s first connect does not resync what the room announces; a reconnect does', async () => {
     // The connect-time doc resync exists for a doc saved while DISCONNECTED. On a
     // topic's first connect the doc panel is already loading the room fresh, so
     // emitting it would only make the panel re-read /docs + /doc/history that it
@@ -145,7 +146,29 @@ describe('chat recovery after history errors', () => {
     await vi.advanceTimersByTimeAsync(1000)
     sockets[1].onopen?.()
     await flushPromises()
-    expect(view.emitted('state-changed'), 'a reconnect catches up the doc').toEqual([['doc']])
+    // What the room announced while the socket was down is gone: everything it
+    // announces is treated as changed once, its own row by the room's id.
+    const caught = view.emitted('state-changed') as unknown[][]
+    expect(caught.map((args) => args[0])).toEqual(
+      expect.arrayContaining(['doc', 'pins', 'accept', 'feedback', 'skills', 'threads', 'topics'])
+    )
+    expect(caught).toContainEqual(['topics', expect.any(String)])
+  })
+
+  it('a task page that reconnects names its channel’s row, not the task', async () => {
+    const room = { id: crypto.randomUUID(), project_id: 'p', title: 'Recovery', kind: 'topic' } as Topic
+    const view = render(ChatPanel as unknown as Component, {
+      props: { topic: room, conversationId: 'task-1', showComposer: false },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
+    await flushPromises()
+    sockets[0].onopen?.()
+    sockets[0].onclose?.()
+    await vi.advanceTimersByTimeAsync(1000)
+    sockets[1].onopen?.()
+    await flushPromises()
+
+    expect(view.emitted('state-changed')).toContainEqual(['topics', room.id])
   })
 
   it('does not retry a forbidden history response', async () => {
@@ -318,7 +341,8 @@ describe('chat recovery after history errors', () => {
     expect(said(sockets[0], 'ping')).toEqual([{ type: 'ping' }])
 
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(sockets[0].close).toHaveBeenCalledOnce()
+    // The link under every room is replaced, not just this room's subscription.
+    expect(sockets[0].drop).toHaveBeenCalledOnce()
     expect(sockets).toHaveLength(2)
     expect(vi.mocked(listBlocks)).toHaveBeenCalledTimes(2)
   })
@@ -481,4 +505,152 @@ it('editing a message that failed to send puts its text back in the box and take
   sockets[1].onopen?.()
   await flushPromises()
   expect(sends()).toHaveLength(1)
+})
+
+// 读历史走 HTTP，之后落下的走 socket。一条消息落在「读」和「订阅生效」之间，两头都
+// 不会带它来；订阅确认时服务端说了那一刻最后存进来的是几号，手里没到那个号就把之后
+// 存进来的补读一次。
+describe('a message that lands between the read and the subscription', () => {
+  function message(id: string, seq: number, content: string, at = new Date()): Block {
+    return {
+      id,
+      seq,
+      project_id: 'p',
+      conversation_id: 'c',
+      kind: 'message',
+      author_type: 'participant',
+      author: 'someone',
+      content,
+      created_at: at.toISOString(),
+    } as unknown as Block
+  }
+  function page(blocks: Block[]) {
+    return {
+      data: blocks,
+      has_more: false,
+      total: blocks.length,
+      oldest_id: blocks[0]?.id ?? null,
+      has_newer: false,
+      newest_id: blocks.at(-1)?.id ?? null,
+    }
+  }
+
+  it('is read once the room is subscribed', async () => {
+    const before = message('m1', 1, '读之前就在的')
+    const between = message('m2', 2, '读完才落下的')
+    vi.mocked(listBlocks)
+      .mockResolvedValueOnce(page([before]))
+      .mockResolvedValueOnce(page([between]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 2 })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ storedAfter: 1 }))
+    expect(view.container.textContent).toContain('读完才落下的')
+    expect(sockets).toHaveLength(1)
+  })
+
+  it('is found though it is dated before what the room already shows', async () => {
+    // 芝士的一条回答记的是它开始写的时刻，写完才存：排在已经显示的那条前面。
+    const shown = message('m1', 1, '已经显示的', new Date('2026-10-09T10:00:05Z'))
+    const late = message('m2', 2, '早就开始写的回答', new Date('2026-10-09T10:00:00Z'))
+    vi.mocked(listBlocks)
+      .mockResolvedValueOnce(page([shown]))
+      .mockResolvedValueOnce(page([late]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 2 })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    const text = view.container.textContent ?? ''
+    expect(text).toContain('早就开始写的回答')
+    expect(text.indexOf('早就开始写的回答')).toBeLessThan(text.indexOf('已经显示的'))
+  })
+
+  it('is still looked for when 芝士 is working and its steps keep arriving', async () => {
+    // 不露面的步骤块号更大，但房间的页面读不到它们：不算「手里已经到这个号了」。
+    let resolve!: (value: ReturnType<typeof page>) => void
+    vi.mocked(listBlocks)
+      .mockReturnValueOnce(new Promise((done) => (resolve = done)))
+      .mockResolvedValueOnce(page([message('m2', 2, '读完才落下的')]))
+    const view = mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 2 })
+    sockets[0].onopen?.()
+    const step = { ...message('s3', 3, 'ran tests'), kind: 'event', meta: { in_room: false, tool: 'Bash' } }
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'event_block', block: step }) })
+    resolve(page([message('m1', 1, '读之前就在的')]))
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenLastCalledWith(expect.any(String), expect.objectContaining({ storedAfter: 1 }))
+    expect(view.container.textContent).toContain('读完才落下的')
+  })
+
+  it('is not looked for when the room already holds the newest message', async () => {
+    vi.mocked(listBlocks).mockResolvedValueOnce(page([message('m1', 1, '只有这一条')]))
+    mountPanel()
+    await flushPromises()
+
+    Object.assign(sockets[0], { newest: 1 })
+    sockets[0].onopen?.()
+    await flushPromises()
+
+    expect(listBlocks).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 卡跟着它所在的那一块来；频道说任务变了，对话栏只按窗口里那几块重读，卡在原处改口。
+describe('a task card when the channel says its tasks changed', () => {
+  it('re-reads the tasks of the blocks on screen, not the whole channel, and updates the card in place', async () => {
+    const task = {
+      id: 'k1',
+      project_id: 'p',
+      room_id: 'r',
+      title: '整理周报',
+      status: 'open',
+      created_at: '2026-08-11T09:04:31Z',
+      updated_at: '2026-08-11T09:04:31Z',
+      presentation: { column: 'building', phrase: 'running' },
+    }
+    const row = {
+      id: 'e1',
+      project_id: 'p',
+      conversation_id: 'r',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content: '张衡 创建了任务「整理周报」',
+      meta: { platform: true, action: 'task_created', task_id: 'k1' },
+      created_at: '2026-08-11T09:04:31Z',
+      tasks: [task],
+    } as unknown as Block
+    vi.mocked(listBlocks).mockResolvedValue({
+      data: [row],
+      has_more: false,
+      total: 1,
+      oldest_id: 'e1',
+      has_newer: false,
+      newest_id: 'e1',
+    })
+    const view = mountPanel()
+    await flushPromises()
+    sockets[0].onopen?.()
+    const done = { ...task, status: 'closed', presentation: { column: 'done', phrase: 'completed' } }
+    vi.mocked(listRoomTasks).mockResolvedValue({ data: [done], total: 1 } as never)
+
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: 'state', resource: 'tasks' }) })
+    await flushPromises()
+
+    expect(listRoomTasks).toHaveBeenCalledWith(expect.any(String), { limit: 0, blocks: ['e1'] })
+    const status = view.container.querySelector<HTMLElement>(
+      '[data-testid="task-card"][data-task-id="k1"] [data-testid="task-card-status"]'
+    )
+    expect(status?.dataset.tone).toBe('done')
+  })
 })

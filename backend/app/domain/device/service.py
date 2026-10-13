@@ -20,7 +20,7 @@ Two invariants (fusion-design §4):
 import logging
 import secrets
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -37,11 +37,10 @@ from app.domain.device.repository import (
     Device,
     DeviceRepository,
     HostHealth,
+    SandboxCheck,
     Supply,
-    TopicDevice,
-    Visibility,
 )
-from app.domain.device.supply import default_visibility
+from app.domain.device.sql_repository import SqlDeviceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -113,8 +112,7 @@ class DeviceService:
         ``self_hosted``, the MicroCloud sweep says ``cloud`` (入口决定待遇: never
         derived from what the machine looks like). A third entry point that forgets
         it is a pyright error, not a machine someone deletes by surprise a year
-        later. Access is not decided here: it belongs to each topic binding
-        (``device_topic.visibility``)."""
+        later."""
         entry = await self._live_code(code_value)
         if entry.status == DeviceStatus.APPROVED and entry.device_id is not None:
             existing = await self._repo.get_device(entry.device_id)
@@ -288,62 +286,6 @@ class DeviceService:
             for d in await self.list_devices_for_project(project_id)
         )
 
-    # -- topic → device pin (affinity, execution-architecture v4) ----------
-
-    async def topic_device(self, topic_id: uuid.UUID) -> str | None:
-        """The device a topic is frozen to.
-
-        ``None`` means 「系统挑一台」 still needs to choose on the first turn. A
-        named machine is bound before that turn, because waiting for the exact
-        machine is already part of the user's choice.
-        """
-        binding = await self.topic_binding(topic_id)
-        return binding.device_id if binding is not None else None
-
-    async def topic_binding(self, topic_id: uuid.UUID) -> TopicDevice | None:
-        return await self._repo.topic_binding(topic_id)
-
-    async def list_topic_bindings(self, device_id: str) -> list[TopicDevice]:
-        """Topics whose durable affinity points at ``device_id``."""
-        return await self._repo.list_topic_bindings(device_id)
-
-    async def room_visibility(self, topic_id: uuid.UUID, device_id: str) -> Visibility:
-        """What a session of room ``topic_id`` sees of machine ``device_id``:
-        what the room's binding to that machine says, or, for a room not bound
-        to it (「系统挑一台」 leaves no pin), the default every binding gets.
-        This is what decides whether the session's executor runs in a sandbox,
-        and what the room's badge shows."""
-        binding = await self.topic_binding(topic_id)
-        if binding is not None and binding.device_id == device_id:
-            return binding.visibility
-        return default_visibility()
-
-    async def bind_topic_device(
-        self, topic_id: uuid.UUID, device_id: str, visibility: Visibility
-    ) -> None:
-        """Pin a topic to a named device or the device its first turn chose.
-
-        Write-once — an existing pin is never overwritten. An allowed pre-turn
-        choice change must release the old pin explicitly before binding the new one.
-        """
-        await self._repo.bind_topic_device(topic_id, device_id, visibility)
-
-    async def release_topic_device(self, topic_id: uuid.UUID, *, reason: str) -> None:
-        """Drop a topic's pin.
-
-        This is the ONLY sanctioned way past ``bind_topic_device``'s write-once rule,
-        and it is deliberately a separate, reason-carrying call rather than a
-        loosening of the resolver: a pin that can be overwritten silently is exactly
-        the original drift bug, where a topic woke up on a different machine with an
-        empty work tree and nobody could tell. Its callers are the compute picker
-        replacing an explicit choice BEFORE the first turn, and the machine domain
-        letting go of a Cloud machine it is destroying. Nothing releases a pin in
-        order to move a running topic elsewhere — a machine judged dead is named
-        in the room and waited for (``agent.host_failure``).
-        """
-        logger.warning("releasing topic %s device pin: %s", topic_id, reason)
-        await self._repo.release_topic_device(topic_id)
-
     # -- machine health / quarantine (#186) --------------------------------
 
     async def host_health(self, device_id: str) -> HostHealth | None:
@@ -406,19 +348,24 @@ class DeviceService:
         now = self._now()
         return [d for d in online if not is_quarantined(health.get(d.device_id), now)]
 
-    async def first_healthy_device(
-        self, project_id: uuid.UUID, is_online: Callable[[str], bool]
-    ) -> Device | None:
-        """「系统挑一台」会挑中的那一台 —— 只读，不写绑定。
+    async def refusing_sandboxes(self, device_ids: Sequence[str]) -> dict[str, str]:
+        """The machines among ``device_ids`` that said they cannot give a
+        session a sandbox, each with its reason. No sandbox is placed on one
+        (`machine.environments.device_for_spec`); a machine not asked yet is
+        not among them, and its install decides."""
+        checks = await self._repo.list_sandbox_checks(device_ids)
+        return {d: c.reason or "" for d, c in checks.items() if not c.isolates}
 
-        两处要知道它：`agent/device_provider.py` 的 `resolve_pinned_device` 紧接着
-        就把它绑给房间；`agent/compute_configs.py` 的 `machine_policy_call` 在**占
-        用之前**要问「这一轮会占谁的机器」，好把提议发给那台机器的主人（结论 40）。
-        闸门调不了 `resolve_pinned_device`——它会把绑定写下去，而撞上策略的调用必须
-        一台机器也没占。挑的规则在这里一处，写绑定的只在那一处。
-        """
-        healthy = await self.healthy_devices_for_project(project_id, is_online)
-        return healthy[0] if healthy else None
+    async def sandbox_check(self, device_id: str) -> SandboxCheck | None:
+        """What ``device_id`` last said about giving a session a sandbox."""
+        return (await self._repo.list_sandbox_checks([device_id])).get(device_id)
+
+    async def record_sandbox_check(
+        self, device_id: str, *, isolates: bool, reason: str | None
+    ) -> None:
+        await self._repo.save_sandbox_check(
+            SandboxCheck(device_id, isolates, reason, self._now())
+        )
 
     async def _require_owned(self, device_id: str, actor_user_id: int) -> Device:
         device = await self._repo.get_device(device_id)
@@ -458,6 +405,5 @@ def device_service_for_session(session) -> DeviceService:
     The repository import is deferred so importing the service module does not
     drag SQLAlchemy's mapper configuration in behind it.
     """
-    from app.domain.device.sql_repository import SqlDeviceRepository
 
     return DeviceService(SqlDeviceRepository(session))

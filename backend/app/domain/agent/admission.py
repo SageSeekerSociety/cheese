@@ -105,6 +105,7 @@ class HostMemory:
             return True
         hub = self._hub
         if hub is None:
+            # deferred-import: tests replace this name on app.domain.agent.device_hub
             from app.domain.agent.device_hub import device_hub as hub
         if any(screen.device_id == host for screen in hub.screens_for_topic(topic_id)):
             return True
@@ -119,6 +120,7 @@ class HostMemory:
             return True
         hub = self._hub
         if hub is None:
+            # deferred-import: tests replace this name on app.domain.agent.device_hub
             from app.domain.agent.device_hub import device_hub as hub
         available = await self._read(hub, host)
         return available is None or available >= mb * 1024 * 1024

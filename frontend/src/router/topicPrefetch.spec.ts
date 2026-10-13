@@ -22,6 +22,7 @@ vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   listBlocks: vi.fn().mockResolvedValue({ data: [], has_more: false }),
   getPreview: vi.fn().mockResolvedValue(null),
+  listFeedbackProposals: vi.fn().mockResolvedValue([]),
 }))
 // 地址换短名要问后端；这里没有后端，换不成就照原地址打开。
 vi.mock('@/api/addresses', () => ({
@@ -33,9 +34,8 @@ vi.mock('@/views/workspace/ProjectShell.vue', pageCode)
 vi.mock('@/views/workspace/ProjectSidebar.vue', pageCode)
 vi.mock('@/views/workspace/TopicView.vue', pageCode)
 
-import { getPreview, listBlocks } from '@/api'
-import { blockCache, setCachedWindow } from '@/lib/blockCache'
-import { resetPreviewPointerCache } from '@/lib/previewPointer'
+import { getPreview, listBlocks, listFeedbackProposals } from '@/api'
+import { setCachedWindow } from '@/query/blocks'
 import router from '@/router'
 
 const PROJECT = '3f1a7c62-9d4e-4b8a-8f21-0c5d6e7a9b10'
@@ -49,8 +49,6 @@ beforeEach(() => {
   setActivePinia(createPinia())
   vi.mocked(listBlocks).mockClear()
   vi.mocked(getPreview).mockClear()
-  blockCache.clear()
-  resetPreviewPointerCache()
   signedIn.id = '7'
 })
 
@@ -80,19 +78,43 @@ describe('opening a topic', () => {
     expect(listBlocks).not.toHaveBeenCalled()
   })
 
-  // 「这个房间当前预览是哪一份」和消息是同一件事：面板要等话题数据 + 一串 chunk 才
-  // 挂得上，而它一挂上就要这份答案。所以守卫也替它先出发——那份请求不该等到面板
-  // 挂上来（实测冷开一个房间要 9 秒）。
-  it('asks for the topic preview while the page code is still loading', async () => {
-    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b04'
+  // 整页刷新、直接打开链接时，订阅要等页面挂上才连：提议卡要是等快照，就比消息晚一个来回。
+  // （这个文件里的页面代码一直没下完，每一次导航都还是从冷打开出发。）
+  it('on a cold open, asks for the proposal cards together with the messages', async () => {
+    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b08'
     void router.push(`/projects/${PROJECT}/channels/${topic}`)
-    await vi.waitFor(() => expect(getPreview).toHaveBeenCalledWith(topic), { timeout: 20_000 })
+    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(topic, expect.anything()), { timeout: 20_000 })
+    expect(listFeedbackProposals).toHaveBeenCalledWith(topic)
   }, 30_000)
 
-  it('asks for no preview when nobody is signed in', async () => {
-    signedIn.id = ''
-    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b05'
+  // 任务页读的是任务自己那段对话：消息按任务的 id 取，不是它所在的频道。
+  it('fetches the newest messages of the task itself while the page code is still loading', async () => {
+    const task = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b05'
+    void router.push(`/projects/${PROJECT}/tasks/${task}`)
+    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(task, expect.anything()), { timeout: 20_000 })
+  }, 30_000)
+
+  // 频道没有「预览」那一格（那是任务的，见 WorkPanel 的 CHANNEL_TABS）：打开频道
+  // 不替它问「当前预览是哪一份」，问了也没有地方用。
+  it('asks a channel for no preview', async () => {
+    const topic = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b04'
     void router.push(`/projects/${PROJECT}/channels/${topic}`)
+    await vi.waitFor(() => expect(listBlocks).toHaveBeenCalledWith(topic, expect.anything()), { timeout: 20_000 })
+    expect(getPreview).not.toHaveBeenCalled()
+  }, 30_000)
+
+  // 任务的「预览」那一格要等任务数据加一串 chunk 才挂得上，而它一挂上就要这份答案
+  // （实测冷开要 9 秒才发得出）。所以守卫替它先出发。
+  it('asks a task for its preview while the page code is still loading', async () => {
+    const task = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b06'
+    void router.push(`/projects/${PROJECT}/tasks/${task}`)
+    await vi.waitFor(() => expect(getPreview).toHaveBeenCalledWith(task), { timeout: 20_000 })
+  }, 30_000)
+
+  it('asks a task for no preview when nobody is signed in', async () => {
+    signedIn.id = ''
+    const task = '9b81c0de-1f22-4a33-9c44-5d6e7f8a9b07'
+    void router.push(`/projects/${PROJECT}/tasks/${task}`)
     await new Promise((r) => setTimeout(r, 20))
     expect(getPreview).not.toHaveBeenCalled()
   })

@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const listMembers = vi.fn()
 const updateAdmin = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     listMembers: (...a: unknown[]) => listMembers(...a),
     updateAdmin: (...a: unknown[]) => updateAdmin(...a),
@@ -121,19 +121,17 @@ describe('空间成员页', () => {
     // 菜单一开 VOverlay 会算位置，happy-dom 没给 devicePixelRatio。
     vi.stubGlobal('devicePixelRatio', 1)
     listMembers.mockResolvedValue({
-      data: {
-        members: [
-          { userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙' }, inviteCode: null },
-          {
-            userId: 4,
-            joinedAt: 0,
-            user: { id: 4, username: 'zhou', nickname: '成员丁' },
-            inviteCode: { id: 9, code: 'ABCD2345EF' },
-          },
-        ],
-      },
+      members: [
+        { userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙' }, inviteCode: null },
+        {
+          userId: 4,
+          joinedAt: 0,
+          user: { id: 4, username: 'zhou', nickname: '成员丁' },
+          inviteCode: { id: 9, code: 'ABCD2345EF' },
+        },
+      ],
     })
-    updateAdmin.mockResolvedValue({ data: { space: null } })
+    updateAdmin.mockResolvedValue({ space: null })
   })
 
   afterEach(() => {

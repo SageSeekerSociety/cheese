@@ -6,10 +6,10 @@ import pytest
 
 from tests.conftest import StubChannel
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 
 
@@ -49,7 +49,7 @@ def _run_turn(client) -> tuple[str, list[dict]]:
     ).json()["data"]
     # 芝士 answers in a 支线, so that is where its messages land.
     t = {"id": in_thread(client, t["id"], "alice")}
-    with client.websocket_connect(chat_ws_url(t["id"], "alice")) as ws:
+    with room_socket(client, t["id"], "alice") as ws:
         post_message(client, t["id"], "alice", {"content": "@芝士 帮我看看"})
         frames = []
         while True:

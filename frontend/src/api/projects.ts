@@ -1,0 +1,124 @@
+import type { ListPayload, Project, ProjectSite, ProjectSiteInfo, WaitingItem } from '../cx_types'
+
+import { ApiError, request } from './http'
+
+export function listProjects(teamId?: number): Promise<ListPayload<Project>> {
+  const q = teamId != null ? `?team_id=${teamId}` : ''
+  return request<ListPayload<Project>>(`/projects${q}`)
+}
+
+/** 待我处理：跨项目、点到我的那些事项，最近动过的在前。
+ *
+ *  和看板读同一份规则（后端 `room_task/presentation.py`），所以一件事在看板上是待
+ *  处理，在这里就是待处理。它不是通知列表的另一种视图：通知是事件记录，答不出
+ *  「现在还没处理完的有哪些」。 */
+export function listAwaitingMe(): Promise<ListPayload<WaitingItem>> {
+  return request<ListPayload<WaitingItem>>('/awaiting-me')
+}
+
+/** 新手引导最后一步「建好项目」：回答存到账号上，按回答建项目、邀请同伴
+ *  （`POST /users/me/onboarding`）。`project_id` 每走一遍引导选一次，重试补完同一个项目。 */
+export interface OnboardingAnswers {
+  project_id: string
+  project_name: string
+  intent: string
+  nickname?: string
+  work_role?: WorkRole | null
+  organization?: string
+  invitees: string[]
+  solo: boolean
+  /** 桌面端：芝士在这台电脑上干活。 */
+  device_id?: string | null
+}
+export type WorkRole = 'student' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
+
+export function finishOnboarding(
+  answers: OnboardingAnswers
+): Promise<{ project_id: string; root_topic_id: string | null; not_invited: string[]; on_device: boolean }> {
+  return request('/users/me/onboarding', { method: 'POST', body: JSON.stringify(answers) })
+}
+
+/** 新手引导要的事实：这个人在这个项目里交给过芝士没有、芝士回过没有、项目采纳过交付没有；
+ *  `learned` 是他在哪个项目里亲手采纳过交付——那样就不用再带了。 */
+export function getStartSteps(
+  projectId: string
+): Promise<{ asked: boolean; answered: boolean; accepted: boolean; learned: boolean }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/start-steps`)
+}
+
+export function createProject(
+  name: string,
+  teamId?: number,
+  externalTaskId?: number,
+  forgeKind?: 'forgejo' | 'github_app',
+  intent?: string,
+  agentName?: string,
+  id?: string
+): Promise<Project> {
+  return request<Project>('/projects', {
+    method: 'POST',
+    body: JSON.stringify({
+      id,
+      name,
+      team_id: teamId,
+      // Set when the project is created FROM a 赛题, so the 赛题 can find it
+      // again. Absent for a project made from the rail.
+      external_task_id: externalTaskId,
+      forge_kind: forgeKind,
+      // 建项目时问的那一句「你打算做什么」。空串就是没答，服务端不写任何东西。
+      intent,
+      agent_name: agentName,
+    }),
+  })
+}
+
+// The 2.0 projects created from one 赛题 — what the 赛题 page shows instead of
+// blindly offering to create another.
+export function listProjectsForTask(taskId: number): Promise<ListPayload<Project>> {
+  return request<ListPayload<Project>>(`/projects/by-task/${taskId}`)
+}
+
+// Single project card.
+export function getProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
+}
+
+/** 归档项目：只有所有者能做。项目从所有人的列表里消失、不能再修改，里面的内容都保留。 */
+export function archiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/archive`, { method: 'POST' })
+}
+
+/** 取消归档：项目和随它一起归档的话题回来。 */
+export function unarchiveProject(projectId: string): Promise<Project> {
+  return request<Project>(`/projects/${encodeURIComponent(projectId)}/unarchive`, { method: 'POST' })
+}
+
+/** 我归档过的项目 —— 它们只在这里列出来。 */
+export function listArchivedProjects(): Promise<ListPayload<Project>> {
+  return request<ListPayload<Project>>('/projects?archived=true')
+}
+
+/** 后端拒绝写入一个已归档项目时，错误名是这个。 */
+export function isProjectArchivedError(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 'ProjectArchivedError'
+}
+
+export function getProjectSite(projectId: string): Promise<ProjectSiteInfo> {
+  return request<ProjectSiteInfo>(`/projects/${encodeURIComponent(projectId)}/site`)
+}
+
+export function publishProjectSite(
+  projectId: string,
+  body: { directory: string; expected_source_revision: string }
+): Promise<ProjectSite> {
+  return request<ProjectSite>(`/projects/${encodeURIComponent(projectId)}/site`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+export function requestSiteSession(projectId: string): Promise<{ url: string; grant: string }> {
+  return request<{ url: string; grant: string }>(`/projects/${encodeURIComponent(projectId)}/site-session`, {
+    method: 'POST',
+  })
+}

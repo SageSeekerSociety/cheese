@@ -19,19 +19,16 @@ from sqlalchemy import select
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent_instance.services import AgentInstanceService, memory_pool
 from app.domain.identity.handles import CHEESE_HANDLE, agent_instance_handle
-from app.domain.memory.models import (
-    MemoryEntry,
-    MemoryScope,
-    agent_project_scope_id,
-)
+from app.domain.memory.models import MemoryEntry, agent_project_scope_id
+from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import memory_store
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import (
-    chat_ws_url,
     in_thread,
     open_task,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 from tests.support.living_doc import document_of
@@ -499,7 +496,7 @@ def _turn(client, room: str, text: str) -> None:
     `stub_hooks.last_resume_session_id` 还停在评审那一轮（None），于是
     `assert None == 'sess-test-1'`。"""
     addressed = text if "<@" in text else f"@芝士 {text}"
-    with client.websocket_connect(chat_ws_url(room, "u")) as ws:
+    with room_socket(client, room, "u") as ws:
         post_message(client, room, "u", {"content": addressed})
         landed = False
         while True:

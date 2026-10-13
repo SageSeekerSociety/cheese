@@ -42,9 +42,10 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession
 from app.api.routes.topics_file_sources import source_bytes
+from app.core import raster_images
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say
@@ -80,21 +81,11 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 # 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以落在房间文件
 # 区一个独占的目录下。
 
-# Only these image types may render inline; other files require download.
-_IMAGE_MIME_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-}
-_EXT_IMAGE_MIME = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-}
-MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
+# Only raster image types may render inline; other files require download.
+_IMAGE_MIME_EXT = raster_images.MEDIA_TYPE_SUFFIX
+_EXT_IMAGE_MIME = raster_images.SUFFIX_MEDIA_TYPE
+#: 贴进对话的一份附件多大为止；数与落地那一层同一个（`library.MAX_FILE_BYTES`）。
+MAX_ATTACHMENT_BYTES = library.MAX_FILE_BYTES
 
 #: What a rendered page may do. It is a document, not an app, and it arrives
 #: carrying inline styles and a little inline script of officecli's own: without
@@ -220,6 +211,24 @@ async def upload_attachment(
     return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
 
 
+def _cache_control_of(path: str) -> str:
+    """一条消息里的一个附件，浏览器可以留多久。
+
+    资料库里那一份（`library/<名字>`）**同一个地址下的字节会变**：替换就是「这个人
+    说了这是同一份文件的新版本」。所以它照资料库自己的字节端点（`routes/library.py`）
+    的规矩来，让人拿到的一点就是现在这一份——留一小时的话，替换之后整整一小时里，
+    旧消息还画着旧图。
+
+    房间文件那一份不是这样：剪贴板贴进来的图落在 `uploads/<随机串>/<名字>` 下，
+    随机串把它钉死在某一次粘贴上，字节写下之后不会再变，留一小时是有意的。
+    """
+    return (
+        "private, no-cache"
+        if library.library_name(path) is not None
+        else "private, max-age=3600"
+    )
+
+
 @router.get("/{topic_id}/attachments/raw")
 async def attachment_raw(
     topic_id: uuid.UUID,
@@ -262,7 +271,9 @@ async def attachment_raw(
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": "default-src 'none'; sandbox",
             "Cache-Control": (
-                "no-store" if task or source == "committed" else "private, max-age=3600"
+                "no-store"
+                if task or source == "committed"
+                else _cache_control_of(clean)
             ),
         },
     )

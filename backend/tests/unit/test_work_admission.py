@@ -12,11 +12,8 @@ import uuid
 
 import pytest
 
-from app.domain.agent.runtime import (
-    AgentWorkRunner,
-    InProcessBroker,
-    addressed_to_agent,
-)
+from app.domain.agent.realtime.broker import InProcessBroker
+from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from tests.support.hang import HANG_S
 from tests.support.work_chat import WorkChat
 from tests.turn_log import a_topic
@@ -37,6 +34,10 @@ class _NothingStored:
 
 
 class FakeChat(WorkChat):
+    @property
+    def human_messages(self):
+        return self
+
     """Controllable stand-in for ChatService: converse turns block until
     released, so tests can observe concurrency and queue order."""
 
@@ -68,7 +69,9 @@ class FakeChat(WorkChat):
         self.system_event_meta.append(meta)
         return {"content": content, "meta": meta}
 
-    def has_running_turn(self, topic_id: uuid.UUID) -> bool:
+    def has_running_turn(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         return False
 
     async def thread_at(self, topic_id: uuid.UUID):
@@ -151,10 +154,10 @@ async def test_slow_agent_subscriber_does_not_block_receive_and_preserves_order(
     topic = uuid.uuid4()
     try:
         async with broker.subscribe(str(topic)) as browser:
-            await broker.receive_message(chat, topic, author="u", content="first")
+            await runner.receive_message(chat, topic, author="u", content="first")
             await chat.entered.wait()
             assert (await browser.get())["block"]["content"] == "first"
-            await broker.receive_message(chat, topic, author="u", content="second")
+            await runner.receive_message(chat, topic, author="u", content="second")
             assert (await browser.get())["block"]["content"] == "second"
             assert chat.delivered == []
         # Delivery is owned by the subscriber even after the browser leaves.
@@ -183,7 +186,7 @@ async def test_failed_agent_delivery_does_not_stop_next_message():
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as browser:
         for content in ("first", "second"):
-            await broker.receive_message(chat, topic, author="u", content=content)
+            await runner.receive_message(chat, topic, author="u", content=content)
         await runner.drain()
         assert {"delivered": "second"} in chat.converse_calls
         frames = []
@@ -240,19 +243,16 @@ async def test_message_to_another_teammate_starts_its_turn_beside_a_live_one(
             self.finished.append(recipient)
             yield {"type": "done"}
 
-        async def ack_summon(self, *args):
-            return None
-
     chat = TwoSeats(db_factory)
     runner, broker = _runner()
     topic = await a_topic(db_factory)
     try:
-        await broker.receive_message(
+        await runner.receive_message(
             chat, topic, author="u", content="<@cheese-seat> A's task"
         )
         await asyncio.wait_for(chat.a_started.wait(), HANG_S)
         chat.selected = "cheese-b"
-        await broker.receive_message(
+        await runner.receive_message(
             chat, topic, author="u", content="<@cheese-seat> B's task"
         )
         # A's turn is still held — B's must finish without waiting for it.
@@ -282,7 +282,6 @@ async def _frames_through(queue, final_type: str) -> list[dict]:
 def _runner() -> tuple[AgentWorkRunner, InProcessBroker]:
     broker = InProcessBroker()
     runner = AgentWorkRunner(broker, turn_timeout_s=5.0)
-    runner.subscribe_messages()
     return runner, broker
 
 
@@ -403,7 +402,6 @@ async def test_a_turn_waits_for_memory_on_the_session_host_then_runs(
     runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=5.0, host_has_room=host_has_room
     )
-    runner.subscribe_messages()
 
     runner.submit(
         chat,
@@ -446,7 +444,6 @@ async def test_a_turn_that_starts_no_session_there_is_not_held_by_the_host(
     runner = AgentWorkRunner(
         InProcessBroker(), turn_timeout_s=5.0, host_has_room=host_has_room
     )
-    runner.subscribe_messages()
 
     runner.submit(
         chat,
@@ -574,7 +571,7 @@ async def test_received_message_lands_before_credit_refusal():
     topic = uuid.uuid4()
 
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(
+        await runner.receive_message(
             chat, topic, author="u", content="<@cheese-seat> 这条必须先落库"
         )
         frames = []
@@ -607,7 +604,7 @@ async def test_unsummoned_message_never_touches_turn_admission():
     runner, broker = _runner()
     topic = uuid.uuid4()
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(chat, topic, author="u", content="只发消息")
+        await runner.receive_message(chat, topic, author="u", content="只发消息")
         assert (await queue.get())["type"] == "user_block"
         assert (await queue.get())["type"] == "done"
     await runner.drain()
@@ -627,7 +624,7 @@ async def test_normal_message_without_live_work_queues_without_fallback_error(
     topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(
+        await runner.receive_message(
             chat, topic, author="u", content="<@cheese-seat> 正常开工"
         )
         frames = await _frames_through(queue, "turn_finished")
@@ -677,7 +674,7 @@ async def test_a_teammate_whose_handle_is_not_cheese_still_gets_a_turn(db_factor
     topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(chat, topic, author="u", content="@审稿人 看一下")
+        await runner.receive_message(chat, topic, author="u", content="@审稿人 看一下")
         frames = await _frames_through(queue, "turn_finished")
 
     assert [frame["type"] for frame in frames] == [
@@ -711,7 +708,7 @@ async def test_the_wait_before_a_turn_assembles_is_accounted_for(db_factory, cap
 
     with caplog.at_level("INFO"):
         async with broker.subscribe(str(topic)) as queue:
-            await broker.receive_message(
+            await runner.receive_message(
                 chat, topic, author="u", content="<@cheese-seat> 正常开工"
             )
             await _frames_through(queue, "turn_finished")
@@ -736,8 +733,13 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
     delivery_result,
 ):
     class FailedLiveDelivery(FakeChat):
-        def has_running_turn(self, topic_id: uuid.UUID) -> bool:
-            return True
+        def has_running_turn(
+            self, topic_id: uuid.UUID, agent_handle: str | None = None
+        ) -> bool:
+            # 收件人自己那一轮在跑 —— 有人正面问「这个席位在跑吗」时才是真的
+            # 递进正在跑的会话。房间级的询问（``agent_handle`` 为空）不该被当成
+            # 「这条消息要的一次实时投递」，那正是这条提示以前误报的地方。
+            return agent_handle is not None
 
         async def merge_into_running_turn(self, *args, **kwargs):
             return delivery_result
@@ -750,7 +752,7 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
     topic = await a_topic(db_factory)
 
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(
+        await runner.receive_message(
             chat, topic, author="u", content="<@cheese-seat> 补充一条"
         )
         frames = await _frames_through(queue, "turn_finished")
@@ -767,6 +769,51 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
     assert frames[1]["block"]["meta"]["severity"] == "warn"
     assert frames[1]["block"]["meta"]["who"] == "platform"
     assert len(chat.converse_calls) == 1
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_another_teammates_turn_is_not_a_lost_delivery(db_factory):
+    """一条 @ 了空闲队友的消息，在另一位队友正跑着的房间里，按正常排队走 ——
+    不记「未能送达」。提示说的是「本该实时递进一个正在跑的会话却没递成」，而这条
+    消息的收件人根本没有在跑的会话：排队就是它本来的路，不是降级。"""
+
+    class RoomBusyRecipientIdle(FakeChat):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.merge_seats: list[str | None] = []
+
+        def has_running_turn(
+            self, topic_id: uuid.UUID, agent_handle: str | None = None
+        ) -> bool:
+            # 房间里有人在跑（不带座位的询问），但收件人自己没在跑（带了座位）。
+            return agent_handle is None
+
+        async def merge_into_running_turn(self, *args, **kwargs):
+            # 递给哪一位：收了座位就不许挑别人的会话，没有就是房间级的老路。
+            self.merge_seats.append(kwargs.get("recipient_handle"))
+            return None
+
+    class Prepared(RoomBusyRecipientIdle):
+        async def converse_prepared(self, **kwargs):
+            yield {"type": "done"}
+
+    chat = Prepared(None, db_factory)
+    runner, broker = _runner()
+    topic = await a_topic(db_factory)
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.receive_message(
+            chat, topic, author="u", content="<@cheese-seat> 补充一条"
+        )
+        frames = await _frames_through(queue, "turn_finished")
+
+    kinds = [frame["type"] for frame in frames]
+    assert "event_block" not in kinds, [f.get("block") for f in frames]
+    assert chat.system_events == []
+    # 递给谁就得是谁：收件人的席位，不是「房间里碰巧在跑的任何一个」。
+    assert chat.merge_seats == ["cheese-seat"]
+    assert kinds == ["user_block", "turn_started", "done", "turn_finished"]
     await _until(lambda: runner.active_work_count() == 0)
 
 
@@ -792,7 +839,7 @@ async def test_receipted_mid_session_message_has_no_second_done():
     )
 
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(
+        await runner.receive_message(
             chat, topic, author="u", content="<@cheese-seat> 补充一条"
         )
         frames = []
@@ -844,7 +891,7 @@ async def test_image_only_message_can_merge_into_live_session():
     attachment = {"path": "uploads/img-a.png", "mime": "image/png"}
 
     async with broker.subscribe(str(topic)) as queue:
-        await broker.receive_message(
+        await runner.receive_message(
             chat,
             topic,
             author="u",
@@ -891,8 +938,8 @@ async def test_only_a_message_to_the_agent_owes_the_running_turn_an_answer():
     await broker.publish(
         str(topic), {"type": "turn_started", "turn_id": "already-running"}
     )
-    await broker.receive_message(chat, topic, author="u", content="<@cheese-seat> 停")
-    await broker.receive_message(chat, topic, author="u", content="我先去吃饭")
+    await runner.receive_message(chat, topic, author="u", content="<@cheese-seat> 停")
+    await runner.receive_message(chat, topic, author="u", content="我先去吃饭")
     await _until(lambda: len(chat.owed) == 2)
 
     assert chat.owed == {"<@cheese-seat> 停": True, "我先去吃饭": False}

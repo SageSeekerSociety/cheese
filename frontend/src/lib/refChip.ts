@@ -5,7 +5,10 @@
 // draw it from here, so a reference reads the same everywhere.
 //
 // Clicks are not wired here: the page around the chip delegates them by the
-// data attribute (data-handle / data-topic / data-file).
+// data attribute (data-handle / data-topic / data-file). A chip outside an editor
+// is a button to the keyboard too: it takes Tab focus, and Enter or Space on it is
+// a click (`installRefChipKeys`), so the same delegated handlers open it. The
+// focusability is written as attributes because chat serialises chips to HTML.
 import { t } from '../i18n'
 
 export interface RefNames {
@@ -18,9 +21,23 @@ export interface RefNames {
 // 资料库保留上传原名，重名时追加 (n)：括号也是文件路径的一部分。
 export const REF_TOKEN = /<([@#])([\w-]+)>|<&([\w./一-鿿()-]+(?::\d+(?:-\d+)?)?)>/g
 
-export function refChip(kind: '@' | '#' | '&', id: string, names: RefNames): HTMLElement {
+/**
+ * `focusable: false` for a chip inside an editable document: there the caret moves
+ * through the text with the arrow keys, and a Tab stop per chip would pull focus
+ * out of the writing.
+ */
+export function refChip(
+  kind: '@' | '#' | '&',
+  id: string,
+  names: RefNames,
+  opts: { focusable?: boolean } = {}
+): HTMLElement {
   const el = document.createElement('span')
   el.className = 'mention'
+  if (opts.focusable !== false) {
+    el.setAttribute('role', 'button')
+    el.setAttribute('tabindex', '0')
+  }
   if (kind === '@') {
     el.dataset.handle = id
     el.textContent = `@${names.mentionNames[id] || id}`
@@ -62,5 +79,19 @@ export function plainRefs(text: string, names: RefNames): string {
     if (fid) return fid.split('/').pop() || fid
     if (k === '@') return `@${names.mentionNames[id] || id}`
     return `#${names.topicTitles[id] || t('work.room.chat.topicFallback')}`
+  })
+}
+
+/**
+ * Enter or Space on a focused chip clicks it, once for the whole page: chips in
+ * chat are written as HTML, so they cannot carry a listener of their own.
+ */
+export function installRefChipKeys(root: Document = document): void {
+  root.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    const chip = e.target instanceof HTMLElement ? e.target : null
+    if (!chip?.matches('.mention[role="button"]') || chip.isContentEditable) return
+    e.preventDefault()
+    chip.click()
   })
 }

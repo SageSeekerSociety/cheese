@@ -22,8 +22,8 @@ from app.api.routes.git_http import open_task_workspace, task_workspace
 from app.api.routes.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
-from app.domain.agent.chat import ChatService
 from app.domain.agent.forgejo_tokens import ForgejoTokens, purge_expired_tokens
+from app.domain.agent.room_events import _known_commits, _turn_changeset
 from app.domain.project.forge import (
     branch_head,
     ensure_repository_webhook,
@@ -571,9 +571,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     owner, repo = binding.repo.split("/", 1)
     publisher = ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
     reviewed = await asyncio.to_thread(_push_with_cli, binding, token, tmp_path, author)
-    chat = object.__new__(ChatService)
-    chat._sessions = db_factory
-    baseline = await chat._known_commits(binding.project_id, room.id)
+    baseline = await _known_commits(db_factory, binding.project_id, room.id)
     assert baseline == {reviewed}
     async with db_factory() as session:
         assert await branch_head(binding.project_id, session, "task/report") == reviewed
@@ -628,7 +626,9 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             },
         )
         assert check.status_code == 201, check.text
-        changes = await chat._turn_changeset(binding.project_id, room.id, baseline)
+        changes = await _turn_changeset(
+            db_factory, binding.project_id, room.id, baseline
+        )
         assert changes is not None and changes.commits == [latest]
         assert changes.files == [{"path": "appendix.md", "added": 1, "removed": 0}]
         async with db_factory() as session:

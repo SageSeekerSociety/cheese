@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends, File, Header, Path, Query, Response, Upl
 from app.api.conditional import if_none_match_hits
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core import raster_images
 from app.core.config import settings
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, NotFoundError, UnprocessableEntityError
+from app.core.sentences import say
 from app.db.session import get_db
 from app.domain.avatars.repositories import AvatarRepository
 from app.domain.avatars.services import AvatarService
@@ -23,29 +25,17 @@ AVATAR_STORAGE_DIR = os.path.join(
     os.path.abspath(settings.storage_local_path), "avatars"
 )
 
-# Avatars are stored as opaque blobs and no content type is recorded anywhere,
-# so the only honest source for one is the file's own magic bytes.
-_MAGIC_MEDIA_TYPES: tuple[tuple[bytes, str], ...] = (
-    (b"\x89PNG\r\n\x1a\n", "image/png"),
-    (b"\xff\xd8\xff", "image/jpeg"),
-    (b"GIF87a", "image/gif"),
-    (b"GIF89a", "image/gif"),
-)
-
 
 def _sniff_media_type(content: bytes) -> str:
     """Guess a media type from the leading bytes of a stored avatar.
 
+    Avatars are stored as opaque blobs and no content type is recorded
+    anywhere, so the only honest source for one is the file's own magic bytes.
     Anything we cannot recognise is served as an opaque download rather than
     mislabelled: claiming ``image/png`` for bytes that are not a PNG is what
     made a broken avatar look like a working one.
     """
-    for magic, media_type in _MAGIC_MEDIA_TYPES:
-        if content.startswith(magic):
-            return media_type
-    if content[:4] == b"RIFF" and content[8:12] == b"WEBP":
-        return "image/webp"
-    return "application/octet-stream"
+    return raster_images.sniff(content) or "application/octet-stream"
 
 
 async def _read_avatar_file(avatar_id: int) -> bytes | None:
@@ -120,7 +110,12 @@ async def create_avatar(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: AvatarService = Depends(get_avatar_service),
 ) -> dict:
-    file_content = await avatar.read()
+    # 上限与附件同口径（`settings.attachment_max_bytes`，默认 100MB）：限读再拒。
+    file_content = await avatar.read(settings.attachment_max_bytes + 1)
+    if len(file_content) > settings.attachment_max_bytes:
+        raise UnprocessableEntityError(
+            say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
+        )
     file_name = avatar.filename or "avatar"
 
     await aiofiles.os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)

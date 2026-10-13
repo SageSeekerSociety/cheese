@@ -12,7 +12,7 @@ import type { Block, Topic } from '@/cx_types'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ChatPanel from './ChatPanel.vue'
@@ -161,8 +161,12 @@ describe('消息里的文件引用', () => {
     history = [block('message', `见 <&${path}>`, { author })]
     const { container, emitted } = await open()
 
-    const chip = container.querySelector<HTMLElement>('.im-text [data-file]')
-    expect(chip, '合法文件引用应能点开').not.toBeNull()
+    // 队友的消息按 Markdown 渲染（MarkdownView 先懒加载渲染器），正文晚几拍才出来。
+    const chip = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>('.im-text [data-file]')
+      expect(found, '合法文件引用应能点开').not.toBeNull()
+      return found
+    })
     expect(chip!.dataset.file).toBe(path)
     chip!.click()
     await settle()

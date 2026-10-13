@@ -34,6 +34,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.routes.spaces import require_reviewed_space
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.core.config import settings
+from app.core.errors import UnprocessableEntityError
+from app.core.sentences import say
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.space.material_service import SpaceMaterialService
@@ -87,9 +90,15 @@ async def upload_space_material(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceMaterialService = Depends(get_space_material_service),
 ) -> dict:
-    # 整份读进内存再交给存储：与 ``POST /materials`` 同一条路，大小上限由上传
-    # 那一层的既有设置管，这里不另立一个。
-    content = await file.read()
+    # 与 ``POST /materials`` 同一条路、同一个上限：``settings.attachment_max_bytes``
+    # （默认 100MB，与 nginx 前门、对话里的附件同口径）。限读再拒——这道 read 在
+    # ``service.add`` 里那句 ``_require_admin`` 之前，不判大小的话，一个进不了这块板
+    # 的人也能先让服务器把整份 body 收进内存。
+    content = await file.read(settings.attachment_max_bytes + 1)
+    if len(content) > settings.attachment_max_bytes:
+        raise UnprocessableEntityError(
+            say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
+        )
     item = await service.add(
         space_id=space_id,
         user_id=auth_user.user_id,

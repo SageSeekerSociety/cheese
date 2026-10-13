@@ -44,8 +44,10 @@ import http.client
 import io
 import json
 import os
+import posixpath
 import re
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -54,6 +56,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, time, timezone
+from html.parser import HTMLParser
 from pathlib import Path
 from time import monotonic, sleep
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -150,6 +153,14 @@ _DOCUMENT_ARG = {
 }
 
 
+#: 任务标题的宽度上限：侧栏一行放得下 12 个汉字，也就是 24 个半角字符。这一份是
+#: 副本——CLI 进容器时是一个只用标准库的文件，导入不了后端的
+#: `app/domain/room_task/title_width.py`。后端按同一个数校验
+#: （`api/routes/topics_tasks.py`、`api/routes/topics_title.py`），超了会拒绝；
+#: 两边一起改。
+TITLE_WIDTH_NOTE = "宽度不超过 12 个汉字（一个汉字算一个，英文、数字、空格各算半个）"
+
+
 def _tool(name: str, description: str, properties=None, required=()) -> dict:
     schema: dict = {"type": "object", "properties": properties or {}}
     if required:
@@ -233,16 +244,25 @@ _FEEDBACK_STATUS = {
 }
 
 
-# The only profiles `PUT /topics/{topic}/compute-profile` accepts. This script is
-# shipped to machines on its own and cannot import the backend, so the set is a
-# literal; tests/contract/test_platform_tools.py fails when it and the backend's
-# compute catalog differ.
-MACHINE_PROFILES = ("cloud", "device")
-MACHINE_PROFILE_DESCRIPTION = (
-    "只有两个值：cloud 是平台的云端，每个会话一个沙箱，配合 whole_machine "
-    "换成每个会话一整台云虚拟机；device 是项目已授权的自有设备，配合 device_id "
-    "指定哪一台，不填 device_id 就自动选一台在线的。"
+ENVIRONMENT_SPEC_DESCRIPTION = (
+    "沙箱规格：standard 是平台的标准沙箱；vm 是一整台虚拟机做的沙箱，有 sudo，"
+    "能跑 Docker、要 KVM 的任务和内核模块，准备要几分钟；devices_of:<编号> "
+    "是那个人自己接入的电脑上的沙箱。不填就列出这个项目能选的规格和你现在的环境。"
 )
+
+
+def _own_session(env) -> str:
+    """This session's id, as its credential names it (``session`` in the
+    claims ``cxss_<base64 json>.<signature>`` carries)."""
+    body = env.get("CHEESE_TOKEN", "").rpartition(".")[0].removeprefix("cxss_")
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    except ValueError:
+        claims = None
+    session = claims.get("session") if isinstance(claims, dict) else None
+    if not session:
+        raise ValueError("This credential names no session")
+    return str(session)
 
 _CONTRIBUTOR = {
     "type": "array",
@@ -321,7 +341,9 @@ PLATFORM_TOOLS = ToolTable(
             "todo_write",
             "把步骤清单整份写进对话：第一次调用发一条清单消息，之后每次调用改的是你"
             "当前那条清单消息。还在做同一个请求就一直改这一条；有人提了新的请求，带上"
-            "new=true 另发一条。做完时再调用一次，所有项标 completed，并用 result "
+            "new=true 另发一条。每做完一步就再调用一次，把做完的标成 completed、"
+            "正在做的那一项标成 in_progress——中间不写，看清单的人就一直看到开工那一版。"
+            "做完时再调用一次，所有项标 completed，并用 result "
             "写一句落下了什么，它接在清单下面。每次传完整的清单，不是增量；"
             f"最多 {TODO_MAX_ITEMS} 项，每项 ≤{TODO_MAX_CHARS} 字；"
             "同一时刻只让一项 in_progress。在任务里时，清单记在这个任务上，"
@@ -469,7 +491,9 @@ PLATFORM_TOOLS = ToolTable(
             "说这话的人，建好就开始。你自己想到的：start 填 false，任务停在讨论中，"
             "你在支线里问一次负责人要不要开始。",
             {
-                "title": _text("任务标题"),
+                "title": _text(
+                    f"任务标题，{TITLE_WIDTH_NOTE}；超了会被拒绝，改短了再调一次"
+                ),
                 "summary": _text(
                     "要做什么、已经定了什么（含否掉的做法）、还要确认什么；"
                     "任务那边的 AI 队友只能从这里和支线里的讨论知道来龙去脉"
@@ -484,8 +508,9 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_close_task",
-            "放弃或撤销当前任务，或者任务的结论不是一次合并（调研、讨论出的决定）时，"
-            "显式关闭；最后一步的交付采纳后任务自动关闭。",
+            "放弃或撤销当前任务，或者任务的结果不并进主干时（调研、讨论出的决定、"
+            "替别人解冲突让他自己推、只给提需求的人这一次用的文件），写明结论关闭；"
+            "最后一步的交付采纳后，平台会让你写一次总结，那一轮结束后任务自动关闭，不用调这个。",
             {
                 "conclusion": _text("关闭原因或最终说明"),
                 "reported_by": _text("需求提出者的 handle"),
@@ -496,8 +521,13 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_accept_request",
             "为当前任务请求人工验收，沿用它的 PR；采纳由验收人决定，不自行合并。"
-            "任务可以分几步交付：completes_task 说这次是不是最后一步。最后一步采纳后任务"
-            "完成并关闭；不是最后一步，采纳后任务还开着，平台会叫你从最新代码接着做下一步。"
+            "递卡交的是要并进主干的改动，或产物清单上一项的新一版；结果不进主干的任务"
+            "用 cheese_close_task 结束，不递卡。任务分支上要有改动了文件的提交，"
+            "空提交会被打回。"
+            "任务可以分几步交付：completes_task 说这次是不是最后一步。递之前对照实况文档，"
+            "任务目标还有没做完的就不是最后一步。最后一步采纳后，平台让你更新实况文档、"
+            "发一条总结，那一轮结束后任务关闭；不是最后一步，采纳后任务还开着，"
+            "平台会叫你从最新代码接着做下一步。"
             "递卡前先让机器把这条任务的提交推上去，所以机器要够得着。"
             "交出去的是什么三选一：deliver（任务目录里的一份文件，当场留快照，"
             "≤80MB）、deliver_url（一个地址）、都不给（这次合并本身）。"
@@ -510,12 +540,16 @@ PLATFORM_TOOLS = ToolTable(
                 "subject": _text(
                     "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
                     "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
-                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例就用英文。"
+                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里说话的语言。"
                     "末尾的 (#N) 平台会加，不要写"
                 ),
                 "reviewer": _text("验收人 handle；省略沿用任务上的人选"),
-                "reason": _text("验收证据和要对方检查的内容"),
-                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用英文"),
+                "focus": _text(
+                    "审阅重点：请审阅的人确认的事，最多 3 条，每条一句，合计 300 字以内，"
+                    "一行一条。只写需要人判断的地方（取舍、可能出乎意料的行为），"
+                    "测试结果和验证过程写进 body，不在这里重复"
+                ),
+                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"),
                 "artifact": _text("产物清单上那一项的 id，照抄系统提示里的清单"),
                 "new_artifact": _text("清单上还没有的东西的真名"),
                 "about": _text("这样东西是什么、给谁的；第 1 版和第 20 版都得成立"),
@@ -523,7 +557,24 @@ PLATFORM_TOOLS = ToolTable(
                 "deliver_url": _text("交出去的地址"),
                 "completes_task": {
                     "type": "boolean",
-                    "description": "这次交付做完了整个任务填 true；分步做、后面还有步骤填 false",
+                    "description": "这次交付后任务目标全部达成填 true；还有没做完的填 false，并在 body 里写下一步做什么",
+                },
+                "comment_outcomes": {
+                    "type": "array",
+                    "description": (
+                        "上一次退回附带了批注时必填：逐条说处理了没有。id 照抄退回消息里"
+                        "方括号中的那个；handled 处理了填 true，没处理填 false；note 一句话，"
+                        "处理了写怎么改的，没处理写为什么。审阅的人看着这一句核对"
+                    ),
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "string"},
+                            "handled": {"type": "boolean"},
+                            "note": {"type": "string"},
+                        },
+                        "required": ["id", "handled", "note"],
+                    },
                 },
             },
             ["subject", "completes_task"],
@@ -535,10 +586,10 @@ PLATFORM_TOOLS = ToolTable(
                 "subject": _text(
                     "PR 标题，也是合并进默认分支的那个提交的标题，只写一行。"
                     "格式和语言：仓库对标题有规定的（CONTRIBUTING、CI 的标题检查之类）照规定；"
-                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例就用英文。"
+                    "没有就照默认分支上最近的提交标题（不算合并提交），不看你这条分支上的；看不出惯例（新仓库、没有几条提交）就用提这件事的人在任务里说话的语言。"
                     "末尾的 (#N) 平台会加，不要写"
                 ),
-                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用英文"),
+                "body": _text("改动原因和验证说明，用作 PR 正文和合并提交的正文；语言照这个仓库 PR 描述或提交正文的惯例，看不出就用提这件事的人在任务里说话的语言"),
             },
             [],
         ),
@@ -551,7 +602,8 @@ PLATFORM_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_title",
-            "给本频道或本任务改名，≤12 字。频道的名字由人起，有人明确要你改时才用。"
+            f"给本频道或本任务改名，{TITLE_WIDTH_NOTE}。频道的名字由人起，"
+            "有人明确要你改时才用。"
             "在任务的对话里，它给这个任务起名：平台会自己给没名字的任务起名、"
             "方向变了再改，所以只在有人明确要你改名，或提示里要你起名"
             "（平台暂时不能起名）时用。",
@@ -763,30 +815,16 @@ PLATFORM_TOOLS = ToolTable(
             },
         ),
         _tool(
-            "cheese_machine",
-            "更换你自己的工作电脑，后续文件和命令操作使用新电脑。"
-            "只能选择项目授权的资源。更换前平台先在原来那台上把改动推送到分支，"
-            "推送失败或原来那台连不上就不换；新电脑从分支拉代码。",
-            {
-                "profile": {
-                    "type": "string",
-                    "enum": list(MACHINE_PROFILES),
-                    "description": MACHINE_PROFILE_DESCRIPTION,
-                },
-                "device_id": _text("自有设备的 id，只有 device 能指定"),
-                "whole_machine": {
-                    "type": "boolean",
-                    "description": "只配 cloud：每个会话一整台云虚拟机，有 sudo，"
-                    "能跑 Docker、要 KVM 的任务和内核模块，沙箱里做不了的活用它；"
-                    "准备要几分钟",
-                },
-            },
-            ["profile"],
+            "cheese_environment",
+            "查看或更换你自己的执行环境：后续文件和命令操作跑在什么样的沙箱里。"
+            "只换你自己，这里的其他队友不受影响；只能选项目能用的规格。更换前平台"
+            "在原来那里尽力把改动推送到分支一次，推没推上去都会换；新环境从分支拉代码。",
+            {"spec": {"type": "string", "description": ENVIRONMENT_SPEC_DESCRIPTION}},
         ),
         _tool(
-            "cheese_wait_machine",
-            "工作电脑还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
-            "要等机器就用它，别用 sleep：预热好的机器常常几秒就好，sleep 只会白等。"
+            "cheese_wait_environment",
+            "执行环境还在准备时，等它就绪再返回（最多约 11 分钟），返回时说等了多久。"
+            "要等就用它，别用 sleep：沙箱常常几秒就好，sleep 只会白等。"
             "文件和命令工具本身也会等，所以只在你想先等好再做别的时候调它。",
         ),
         _tool(
@@ -919,7 +957,9 @@ PLATFORM_TOOLS = ToolTable(
                     "description": "用户为这类事教过你的地方，一处一条，尽量用原话",
                 },
                 "accepted": _text("这一次怎么算做成了：用户怎么接受的结果"),
-                "related": _text("最接近的已有技能和为什么不并进去；没有就写「没有」"),
+                "related": _text(
+                    "最接近的已有技能（写它的名称）和为什么不并进去；没有就写「没有」"
+                ),
                 "absorbs": {
                     "type": "array",
                     "items": {"type": "string"},
@@ -998,7 +1038,9 @@ DELEGATED_TOOLS = ToolTable(
         ),
         _tool(
             "cheese_my_tasks",
-            "列出提问人参加的题目：标题、简介、截止时间、是否已结束。",
+            "列出提问人参加的题目：标题、简介、题目截止时间（deadline）、提问人自己的"
+            "提交截止时间（myDeadline，领取被批准时定下，还没批准时为空）、"
+            "是否已结束。时间都带着提问人所在时区的偏移。",
         ),
     )
 )
@@ -1274,7 +1316,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST",
             "path": here + "/accept-card",
             "body": {
-                "routing_reason": args.get("reason") or "",
+                "focus": args.get("focus") or "",
                 "change_subject": args["subject"],
                 **_given(
                     args,
@@ -1286,6 +1328,7 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
                     "deliver",
                     "deliver_url",
                     "completes_task",
+                    "comment_outcomes",
                 ),
             },
         }
@@ -1432,15 +1475,14 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "POST" if tool == "cheese_feedback_claim" else "DELETE",
             "path": f"/feedback/{ref}/claim?topic={topic}",
         }
-    if tool == "cheese_machine":
-        body = {
-            "profile": args["profile"],
-            **_given(args, "device_id", "whole_machine"),
-        }
+    if tool == "cheese_environment":
+        spec = str(args.get("spec") or "").strip()
+        if not spec:
+            return {"method": "GET", "path": f"/topics/{topic}/environment"}
         return {
             "method": "PUT",
-            "path": f"/topics/{topic}/compute-profile",
-            "body": body,
+            "path": f"/topics/{topic}/sessions/{_own_session(env)}/environment",
+            "body": {"environment": {"kind": "sandbox", "spec": spec}},
         }
     if tool == "cheese_note":
         # 收件人是**那条线程**，不是一个 handle：同 handle 是守卫（I14②），由后端
@@ -2355,10 +2397,33 @@ def _wait_machine(args: dict, host) -> str:
     started = datetime.now(UTC)
     host.wait_machine()
     waited = round((datetime.now(UTC) - started).total_seconds())
-    return f"工作电脑已就绪（等了 {waited} 秒）。" if waited else "工作电脑已就绪。"
+    return f"执行环境已就绪（等了 {waited} 秒）。" if waited else "执行环境已就绪。"
+
+
+def _task(args: dict, host) -> str:
+    """Creating a task, a refusal said to the agent in the open.
+
+    A title too wide for the sidebar is the one refusal the agent can act on:
+    the backend answers with the width it allows and the width it read, so the
+    agent writes a shorter title and calls again. Handed the raw body instead,
+    it reads as a wall of JSON and tries the same title a second time."""
+    try:
+        answer = host.request(request_plan("cheese_task", args, host.environ))
+    except Exception as exc:
+        if getattr(exc, "status", None) != 422:
+            raise
+        try:
+            why = json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+        except (ValueError, KeyError, TypeError):
+            raise exc from None
+        raise PlatformToolError(
+            f"没有建出任务：{why.rstrip('。')}。标题改短了，再调一次 cheese_task。"
+        ) from exc
+    return _say_task(args, answer.get("data"), host.environ)
 
 
 _STEPS = {
+    "cheese_task": _task,
     "cheese_chat_get": _chat_get,
     "cheese_chat_list": _chat_page("cheese_chat_list"),
     "cheese_chat_search": _chat_page("cheese_chat_search"),
@@ -2374,7 +2439,7 @@ _STEPS = {
     "cheese_feedback_claim": _feedback_claim,
     "cheese_feedback_release": _feedback_release,
     "cheese_run_records": _run_records,
-    "cheese_wait_machine": _wait_machine,
+    "cheese_wait_environment": _wait_machine,
 }
 
 
@@ -2482,17 +2547,44 @@ def _say_fetch(args, data, env) -> str:
     return f"{data.get('text', '')}\n\n[来源：{data.get('rung', '?')}（{note}）]"
 
 
-def _say_machine(args, data, env) -> str:
+def _say_environment(args, data, env) -> str:
     data = data or {}
-    if data.get("session"):
-        choice = data["session"]["choice"]
-        return (
-            f"改动已推送到分支，工作电脑已设为 {choice['name']}，"
-            "下次执行操作时使用；在新电脑上从分支拉代码继续。"
-        )
-    if data.get("proposal"):
-        return f"已提请 {data['proposal']['approver']} 点头，等他拍板。"
-    return f"这个频道的工作电脑现在是 {data.get('current')}。"
+    if "specs" in data:
+        try:
+            mine = _own_session(env)
+        except ValueError:
+            mine = ""
+        current = next(
+            (
+                row.get("environment")
+                for row in data.get("sessions") or []
+                if row.get("session_id") == mine
+            ),
+            None,
+        ) or data.get("effective_default")
+        labels = {s["spec"]: s["label"] for s in data["specs"]}
+        if current and current.get("kind") == "self_hosted":
+            now = "你现在直接跑在一台人自己的电脑上，没有沙箱（这只能由那台电脑的主人设）。"
+        elif current:
+            spec = current.get("spec", "")
+            now = f"你现在的执行环境是「{labels.get(spec, spec)}」沙箱。"
+        else:
+            now = "你还没有执行环境，第一次执行操作时用这里的默认。"
+        offered = "\n".join(f"- {s['spec']}：{s['label']}" for s in data["specs"])
+        return f"{now}\n这个项目能选的沙箱规格：\n{offered or '（没有）'}"
+    spec = ((data.get("environment") or {}).get("spec")) or args.get("spec", "")
+    said = (
+        f"你的执行环境已换成规格 {spec} 的沙箱，下次执行操作时生效；"
+        "原来那里的改动平台尽力推送过一次，新环境从分支拉代码。"
+    )
+    if not data.get("keeps_nothing"):
+        return said
+    # 支线和还没开始的任务里的会话改动留不下，换到哪里都一样：只听到「换好了」，
+    # 它会在推送被拒以后再换，去找一个推得上去的环境，而没有这样的环境。
+    return (
+        f"{said}这个会话在支线或还没开始的任务里，改动留不下，换环境不会改变这一点："
+        "能跑命令、改文件，但推送不进项目；要改项目，创建一个任务。"
+    )
 
 
 def _say_members(args, data, env) -> str:
@@ -2665,7 +2757,7 @@ _SAY = {
     "cheese_feedback_propose": lambda a, d, e: (
         f"已提案（卡 id {(d or {}).get('block_id')}），等人按「提交反馈」。"
     ),
-    "cheese_machine": _say_machine,
+    "cheese_environment": _say_environment,
     # `delivered` 是这条工具的答案本身：便条直接进那条线程正在跑的那一轮，那边这一
     # 刻没在跑就没人接住。一律说「已递」，调用方会当作对面已经知道了往下走。
     "cheese_note": lambda a, d, e: (
@@ -2977,6 +3069,100 @@ def _worktree_relative(path: str) -> str:
     if rel.startswith(".."):
         return path
     return rel.replace(os.sep, "/")
+
+
+#: How many of its own files one shown page brings along — the platform's
+#: `MAX_PAGE_ASSETS` — and the largest it takes (`library.MAX_FILE_BYTES`).
+PAGE_ASSET_LIMIT = 200
+PAGE_ASSET_MAX_BYTES = 10 * 1024 * 1024
+_CSS_REF = re.compile(r"""url\(\s*['"]?([^'")\s]+)['"]?\s*\)|@import\s+['"]([^'"]+)['"]""")
+
+
+def _css_refs(text: str) -> list[str]:
+    return [m.group(1) or m.group(2) for m in _CSS_REF.finditer(text)]
+
+
+class _PageRefs(HTMLParser):
+    """Every address a page loads something from: stylesheets and icons
+    (`<link href>`), scripts, images and media (`src`, `srcset`, `poster`), SVG
+    `<image>`/`<use>`, and the `url()`/`@import` in its inline CSS. Links a
+    reader follows (`<a href>`) are not loads, and stay out."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.refs: list[str] = []
+        self._in_style = False
+
+    def handle_starttag(self, tag, attrs):
+        a = {k: v for k, v in attrs if v}
+        if tag in ("link", "image", "use"):
+            self.refs += [a[k] for k in ("href", "xlink:href") if k in a]
+        self.refs += [a[k] for k in ("src", "poster") if k in a]
+        if "srcset" in a:
+            self.refs += [p.split()[0] for p in a["srcset"].split(",") if p.strip()]
+        if "style" in a:
+            self.refs += _css_refs(a["style"])
+        self._in_style = tag == "style"
+
+    def handle_endtag(self, tag):
+        if tag == "style":
+            self._in_style = False
+
+    def handle_data(self, data):
+        if self._in_style:
+            self.refs += _css_refs(data)
+
+
+def _page_assets(page: str) -> list[str]:
+    """The files beside `page` that it loads, relative to the page's directory.
+
+    `cheese show` sends one file, and the preview serves the page from the
+    platform's copy of the room's files: a page that links `style.css` arrived
+    alone and rendered unstyled. So a page brings the local files it loads —
+    and those its stylesheets load in turn. The preview serves a page at its
+    directory's root, so `/x` means the page's directory too. Anything outside
+    that directory, hidden, missing, or larger than the platform takes stays
+    behind: the preview could not serve it anyway.
+    """
+    top = os.path.dirname(os.path.abspath(page))
+    found: list[str] = []
+    seen = {os.path.abspath(page)}
+    pending = [(os.path.abspath(page), True)]
+    while pending and len(found) < PAGE_ASSET_LIMIT:
+        current, is_html = pending.pop(0)
+        try:
+            text = open(current, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if is_html:
+            parser = _PageRefs()
+            parser.feed(text)
+            refs = parser.refs
+        else:
+            refs = _css_refs(text)
+        for ref in refs:
+            parts = urllib.parse.urlsplit(ref.strip())
+            if parts.scheme or parts.netloc or not parts.path:
+                continue
+            path = urllib.parse.unquote(parts.path)
+            base = top if path.startswith("/") else os.path.dirname(current)
+            target = os.path.normpath(os.path.join(base, path.lstrip("/")))
+            rel = os.path.relpath(target, top)
+            if (
+                target in seen
+                or rel.startswith("..")
+                or any(part.startswith(".") for part in rel.split(os.sep))
+                or not os.path.isfile(target)
+                or os.path.getsize(target) > PAGE_ASSET_MAX_BYTES
+            ):
+                continue
+            seen.add(target)
+            found.append(rel.replace(os.sep, "/"))
+            if target.lower().endswith(".css"):
+                pending.append((target, False))
+            if len(found) >= PAGE_ASSET_LIMIT:
+                break
+    return found
 
 
 def _prepare_repository(repo: Path, data: dict) -> None:
@@ -3484,7 +3670,7 @@ def _sync_task(task_id: str) -> list[str]:
             )
             _tell_room_left_out(admin, data, dropped)
             _once_more_if_transient(
-                lambda: _backup_task_snapshot(worktree, admin, data, head, snapshot)
+                lambda: _backup_task_snapshot(worktree, data, head, snapshot)
             )
             if closed:
                 # Kept, never delivered: what the checkout holds is in the
@@ -3674,7 +3860,25 @@ def _backed_up_already(worktree, task_id, head, snapshot) -> bool:
         return False
 
 
-def _backup_task_snapshot(worktree, admin, data, head, snapshot):
+@contextlib.contextmanager
+def _transient_bundle(stem: str):
+    """Where one bundle lives while it is written, read back and dropped.
+
+    Never inside the git directory it serves: on Windows a checkout sits under
+    a session's home, and the path there plus the ".lock" git appends while
+    writing passes the 260 characters the OS allows, so the write fails with
+    ENOENT and the backup never reaches the platform. The system temp
+    directory is short everywhere, and `mkdtemp` makes the directory private,
+    which a bundle needs: it carries the task's unpushed work until the upload
+    lands."""
+    directory = Path(tempfile.mkdtemp(prefix="cheese-"))
+    try:
+        yield directory / f"{stem}.bundle"
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
+
+def _backup_task_snapshot(worktree, data, head, snapshot):
     task_id = data["task_id"]
     ref = f"refs/cheese/snapshots/{task_id}"
     base = f"refs/remotes/origin/{data['base']}"
@@ -3691,8 +3895,9 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
     if _backed_up_already(worktree, task_id, head, snapshot):
         return
     _git_task(worktree, "update-ref", ref, snapshot)
-    bundle = admin / f"cheese-snapshot-{snapshot}.bundle"
-    try:
+    # Built afresh on every try: the base moves on, and a bundle kept from a
+    # refused upload went out again unchanged, refused at every turn.
+    with _transient_bundle(f"cheese-snapshot-{snapshot}") as bundle:
         _git_task(worktree, "bundle", "create", str(bundle), ref, *known)
         digest = hashlib.sha256()
         with bundle.open("rb") as stream:
@@ -3710,10 +3915,6 @@ def _backup_task_snapshot(worktree, admin, data, head, snapshot):
                 receipt = json.load(response)["data"]
         if receipt["digest"] != digest.hexdigest():
             raise RuntimeError("Task backup acknowledgement did not match the bundle")
-    finally:
-        # Built afresh on every try: the base moves on, and a bundle kept from
-        # a refused upload went out again unchanged, refused at every turn.
-        bundle.unlink(missing_ok=True)
 
 
 def _recovery_dir(task_id: str, snapshot: dict) -> Path:
@@ -3870,7 +4071,7 @@ def _restore_snapshot(worktree: Path, data: dict) -> bool:
         return True
     task_id = data["task_id"]
     try:
-        told = _apply_snapshot(worktree, admin, data)
+        told = _apply_snapshot(worktree, data)
     except (Exception, SystemExit) as exc:
         print(
             f"[cheese] 任务 {task_id}：没能从平台快照恢复上次没推送的工作（{exc}）。"
@@ -3886,7 +4087,7 @@ def _restore_snapshot(worktree: Path, data: dict) -> bool:
     return True
 
 
-def _apply_snapshot(worktree: Path, admin: Path, data: dict) -> str | None:
+def _apply_snapshot(worktree: Path, data: dict) -> str | None:
     """Restore the task's latest snapshot into `worktree` when it holds work
     the checkout does not, never over work already there; what to tell the
     agent, or None when there is nothing to restore."""
@@ -3906,11 +4107,8 @@ def _apply_snapshot(worktree: Path, admin: Path, data: dict) -> str | None:
     repo = Path(
         _git_task(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir")
     )
-    bundle = admin / f"cheese-restore-{snapshot['id']}.bundle"
-    try:
+    with _transient_bundle(f"cheese-restore-{snapshot['id']}") as bundle:
         _unbundle(repo, bundle, _download_snapshot(task_id, snapshot, bundle))
-    finally:
-        bundle.unlink(missing_ok=True)
     when = _snapshot_time(snapshot)
     work = saved != head
     files = _changed_files(worktree, head, saved) if work else {}
@@ -4903,6 +5101,22 @@ def main() -> None:
             except UnicodeError as exc:
                 print(f"[cheese] {a.path} 不是文本文件: {exc}", file=sys.stderr)
                 sys.exit(1)
+        assets = (
+            _page_assets(a.path)
+            if a.path.lower().endswith((".html", ".htm"))
+            else []
+        )
+        if assets:
+            folder = posixpath.dirname(rel)
+            payload["assets"] = [
+                {
+                    "path": posixpath.join(folder, asset),
+                    "content_b64": base64.b64encode(
+                        open(os.path.join(os.path.dirname(a.path), asset), "rb").read()
+                    ).decode("ascii"),
+                }
+                for asset in assets
+            ]
         base = _pulled_versions().get(f"{topic}:{rel}")
         extra = {"note": a.note} if a.note else {}
         if base:
@@ -4923,7 +5137,8 @@ def main() -> None:
             )
             sys.exit(1)
         _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
-        print(f"已把 {rel} 摆出来给对话里的人看（{kind}）。")
+        brought = f"，连同它加载的 {len(assets)} 个文件" if assets else ""
+        print(f"已把 {rel} 摆出来给对话里的人看（{kind}）{brought}。")
     elif a.cmd == "template":
         topic = _need("CHEESE_TOPIC", TOPIC)
         if a.tplcmd == "list":

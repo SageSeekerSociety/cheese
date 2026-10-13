@@ -265,6 +265,7 @@ function onFocusOut(event: FocusEvent) {
           class="hover-bar__act rx-toggle"
           :class="{ 'hover-bar__act--on': pickerOpen }"
           :title="t('work.room.message.react')"
+          :aria-label="t('work.room.message.react')"
           @click="emit('toggle-picker', block.id)"
         >
           <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
@@ -273,6 +274,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="t('work.room.message.reply')"
+          :aria-label="t('work.room.message.reply')"
           @click="emit('reply', block)"
         >
           <v-icon size="15">mdi-reply-outline</v-icon>
@@ -304,6 +306,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="t('work.room.message.edit')"
+          :aria-label="t('work.room.message.edit')"
           @click="emit('edit', block)"
         >
           <v-icon size="15">mdi-pencil-outline</v-icon>
@@ -312,6 +315,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
+          :aria-label="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
           @click="copy"
         >
           <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
@@ -323,6 +327,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="linkCopied ? t('work.room.message.linkCopied') : t('work.room.message.copyLink')"
+          :aria-label="linkCopied ? t('work.room.message.linkCopied') : t('work.room.message.copyLink')"
           @click="copyLink(block)"
         >
           <v-icon size="15">{{ linkCopied ? 'mdi-check' : 'mdi-link-variant' }}</v-icon>
@@ -332,6 +337,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="t('work.room.message.upgrade')"
+          :aria-label="t('work.room.message.upgrade')"
           @click="emit('upgrade', block.id)"
         >
           <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
@@ -425,6 +431,9 @@ function onFocusOut(event: FocusEvent) {
   background: none;
   color: var(--muted);
   cursor: pointer;
+  /* 键盘进到这一条、焦点落在条上时，时间线把它滚进可见区（useTimelineKeys）：连同画在
+     按钮外面 4px 的焦点环和条自己的边框一起，不只是按钮本身。 */
+  scroll-margin-block: 6px;
   transition:
     background-color var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);

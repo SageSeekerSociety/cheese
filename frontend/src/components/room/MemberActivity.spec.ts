@@ -88,6 +88,52 @@ describe('who is busy in the room, under the composer', () => {
     expect(line).toContain('2m') // alongside the total time, not instead of it
   })
 
+  it('says nothing about a stall left over from an earlier turn', () => {
+    vi.useFakeTimers()
+    const now = Date.parse('2026-10-01T10:02:00Z')
+    vi.setSystemTime(now)
+    // The stretch began 4s ago; the frame we hold is the one the previous turn left behind.
+    const since = (now - 4_000) / 1000
+    const { container } = render(MemberActivity, {
+      props: {
+        lines: [
+          {
+            handle: 'cheese-a1',
+            name: 'Cedar',
+            kind: 'working',
+            since,
+            detail: 'Thinking',
+            lastFrameAt: now - 127_000,
+          },
+        ],
+      },
+    })
+    expect(lines(container)[0]).not.toContain('No new output')
+  })
+
+  it('does not carry the previous turn\u2019s step into a stretch that just began', () => {
+    vi.useFakeTimers()
+    const now = Date.parse('2026-10-01T10:02:00Z')
+    vi.setSystemTime(now)
+    const since = (now - 4_000) / 1000
+    const { container } = render(MemberActivity, {
+      props: {
+        lines: [
+          {
+            handle: 'cheese-a1',
+            name: 'Cedar',
+            kind: 'working',
+            since,
+            detail: 'Thinking',
+            step: 'Running a command pnpm test',
+            lastFrameAt: now - 127_000,
+          },
+        ],
+      },
+    })
+    expect(lines(container)[0]).not.toContain('Running a command pnpm test')
+  })
+
   it('says nothing about stalls while output is still arriving', () => {
     vi.useFakeTimers()
     const now = Date.parse('2026-10-01T10:02:00Z')

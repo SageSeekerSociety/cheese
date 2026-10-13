@@ -62,7 +62,7 @@ repos:
       # The import graph, not the diff: this walks every module under app/ and
       # reports the ones that broke a declared boundary (api -> domain -> core,
       # no route reaching another domain's models, no cycle between sibling
-      # domains). 235 pre-existing violations are frozen inside
+      # domains). 229 pre-existing violations are frozen inside
       # backend/.importlinter as exact `importer -> imported` pairs, so this
       # blocks new ones and stays quiet about the old ones.
       #
@@ -154,6 +154,18 @@ repos:
         pass_filenames: false
         files: ^frontend/(src/components/|eslint\.boundary\.config\.mjs|import-boundary-baseline\.json|package\.json|scripts/import-boundary-ratchet)
 
+      # Accessibility rules (eslint-plugin-vuejs-accessibility, flat/recommended)
+      # over src/**/*.vue. The violations already in the tree are frozen per
+      # file in frontend/a11y-baseline.json, so this is a separate ESLint config
+      # (eslint.a11y.config.mjs) for the same reason as the boundary check above.
+      # `files:` includes the base config because the a11y one extends it.
+      - id: a11y-frontend
+        name: accessibility (eslint + ratchet)
+        entry: bash -c 'cd frontend && pnpm run lint:a11y'
+        language: system
+        pass_filenames: false
+        files: ^frontend/(src/.*\.vue|eslint\.(a11y\.)?config\.mjs|a11y-baseline\.json|package\.json|pnpm-lock\.yaml|scripts/(a11y-ratchet|tsc-ratchet-core|ratchet-report))
+
       # Every page the router reaches and every SFC under
       # src/components/panels/ has to render with no backend, no route and no
       # business store: 20 do today (frontend/scene-baseline.json) and may not
@@ -170,15 +182,18 @@ repos:
         pass_filenames: false
         files: ^(frontend/(src/(views|router|components/panels)/|scene-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|scene-ratchet|ratchet_report)\.py)$
 
-      # Every .vue under frontend/src (the preview site's own excluded) that
-      # grades A is in the /demo/catalog preview site or on the pending list in
-      # frontend/catalog-baseline.json, and that list may only shrink. Any src
-      # file is in `files:` because a grade moves with the import chain, and an
-      # entry in views/demo/catalog.ts — or in a catalog*.ts volume it imports
-      # and spreads (*Fixtures.ts not read; comments stripped) — is what takes
-      # a component off the list. Same grader
-      # as scene-ratchet. The writer is `pnpm run lint:catalog:update`, which
-      # only ever removes.
+      # Exact rendered child edges, useRoute callers and legacy importers can
+      # only disappear. This parser needs frontend dependencies and origin/main.
+      - id: scene-debt-ratchet
+        name: scene dependencies and legacy imports only go down
+        entry: python3 .claude/scripts/scene-debt-ratchet.py --base origin/main
+        language: system
+        pass_filenames: false
+        files: ^(frontend/.*|\.claude/scripts/(frontend_grade|scene-ratchet|scene-debt-ratchet|test_scene_debt_ratchet|ratchet_report)\.py)$
+
+      # Every grade-A SFC is registered in /demo/catalog or frozen as pending.
+      # The pending list can only shrink; imports determine the grade.
+      # `pnpm run lint:catalog:update` removes paid-down entries.
       - id: catalog-ratchet
         name: grade-A components are in the catalog (python ratchet)
         entry: python3 .claude/scripts/catalog-ratchet.py
@@ -210,7 +225,7 @@ repos:
 
       # --- repo-wide guards ---------------------------------------------
       # always_run because it judges relationships across the tree — duplicate
-      # topic notes, a platform command leaking into CLAUDE.md — which no single
+      # topic notes, a platform command leaking into AGENTS.md — which no single
       # changed path predicts.
       - id: repo-rules
         name: repo rules (datetime, HTTPException, palette, platform CLI, …)
@@ -238,7 +253,23 @@ repos:
         pass_filenames: false
         files: ^docs/manual/
 
-      # A file-size ratchet, not a cliff: 35 files are already past their cap
+      # The other half of the same problem, for the files no site build reads:
+      # an agent document that names a path or a section of another document,
+      # where the target has since moved. Nothing else looks at .claude/ — no
+      # build, no test, no checker imports it — so the sentence keeps reading
+      # perfectly while the reader who obeys it gets a "No such file". The live
+      # example is in the script's docstring: five dead section names in
+      # cheese-py-code-review/SKILL.md, in the file a reviewer is told to trust.
+      # always_run because the claim is about the TREE, not about the file that
+      # carries it: a rename anywhere can be what falsifies a sentence here.
+      - id: doc-references
+        name: agent docs name paths and sections that exist
+        entry: python3 .claude/scripts/check-doc-references.py
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # A file-size ratchet, not a cliff: 7 files are already past their cap
       # (frontend/src 1000 lines, backend/app 1500) and each is frozen at the
       # size it had where this branch left main — the merge base, which is why
       # main moving on cannot fail a branch for a file it never touched. Only

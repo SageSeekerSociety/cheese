@@ -14,7 +14,6 @@ from app import device_connection_app
 from app.core.config import settings
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_hub_rpc import RemoteDeviceHub
-from app.domain.device.supply import sandbox_unavailable
 from tests.support import wire
 
 SECRET = "test-owner-secret"
@@ -59,8 +58,6 @@ async def test_backend_reads_the_build_each_machine_announced(backend) -> None:
 
     assert backend.target("windows-box") == "windows-amd64"
     assert backend.target("linux-box") == "linux-amd64"
-    assert sandbox_unavailable(backend.target("windows-box")) is not None
-    assert sandbox_unavailable(backend.target("linux-box")) is None
 
 
 @pytest.mark.anyio
@@ -70,4 +67,3 @@ async def test_backend_reads_no_build_before_the_machine_says_hello(backend) -> 
 
     assert backend.target("quiet-box") == ""
     assert backend.target("never-seen") == ""
-    assert sandbox_unavailable(backend.target("quiet-box")) is None

@@ -1,6 +1,15 @@
 import type { RouteRecordRaw } from 'vue-router'
 
+import { leaveSignInWhenSignedIn } from './loginRedirect'
+
 import { signInHappensInBrowser } from '@/views/account/appSignIn'
+
+// AccountService's API client imports the router; load it after route construction.
+const leaveWhenSignedIn = leaveSignInWhenSignedIn(async () => {
+  const { default: AccountService } = await import('@/services/account')
+  await AccountService.sessionRestored
+  return AccountService.loggedIn
+})
 
 export default {
   path: '/account',
@@ -17,7 +26,7 @@ export default {
       meta: {
         titleKey: 'account.signIn.title',
       },
-      beforeEnter: signInHappensInBrowser,
+      beforeEnter: [leaveWhenSignedIn, signInHappensInBrowser],
     },
     {
       path: 'signin/email',
@@ -26,7 +35,7 @@ export default {
       meta: {
         titleKey: 'account.emailCode.title',
       },
-      beforeEnter: signInHappensInBrowser,
+      beforeEnter: [leaveWhenSignedIn, signInHappensInBrowser],
     },
     {
       path: 'signin/email/verify',

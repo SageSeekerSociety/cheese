@@ -1,30 +1,34 @@
 <script setup lang="ts">
+import type { MoreTasks } from '@/components/topic-sidebar/moreTasks'
 import type { RoomTask } from '@/cx_types'
 
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import { showsTopicList, useWorkspaceLayout } from '@/composables/useWorkspaceLayout'
 
 import { useCommands } from '@/commands'
+import { restOfChannel } from '@/components/topic-sidebar/moreTasks'
 import TopicSidebar from '@/components/TopicSidebar.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
-import { readProjectTasks } from '@/lib/projectTasks'
-import { railTasksByChannel } from '@/lib/railTasks'
 import { cancelPrefetch, prefetchNow, prefetchOnHover } from '@/lib/routePrefetch'
-import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 
 // 项目侧栏, rendered through the app-wide `sidebar` named view so it survives
 // every navigation inside the project (ProjectShell's doc comment says why).
 //
-// Its one rule: EVERY click here is a route change in the content area. Nothing
-// in this file opens something "in place" — that split (some rows swapped the
-// panel, others pushed a full page and took the sidebar with them) was the
-// reason a click's outcome was unpredictable.
+// Its one rule: every row that opens something is a route change in the content
+// area. Nothing here opens something "in place" — that split (some rows swapped
+// the panel, others pushed a full page and took the sidebar with them) was the
+// reason a click's outcome was unpredictable. What changes only the sidebar
+// itself (folding a channel's subtree, expanding the rest of its tasks) leaves
+// the content area alone.
 defineOptions({ name: 'ProjectSidebar' })
 
 // `page`: 手机上话题列表是页面栈的一层，占满内容区（由 WorkspaceEntry 挂起来）。
@@ -47,48 +51,61 @@ const column = computed(
 const ids = computed(() => routeIds(route.params))
 const activeTopicId = computed(() => (route.name === 'workspace-topic' ? ids.value.topicId ?? null : null))
 const activeTaskId = computed(() => (route.name === 'workspace-task' ? ids.value.taskId ?? null : null))
-// 「全部任务」带着频道筛选打开时，那个频道下面的「全部任务」一行是选中的。
+// 「全部任务」带着频道筛选打开（频道的 ⋯ 里那一项）：那个频道留在侧栏上。
 const activeAllTasks = computed(() =>
   route.name === 'project-tasks' && typeof route.query.channel === 'string' ? route.query.channel : null
 )
 
-// 每个频道里和我有关的几条任务，挂在频道那一行下面（`lib/railTasks`）。和全部任务、项目
-// 总览读同一份（`readProjectTasks`），它们刚读过就拿那一份；换了地方（新建、开始、关闭
-// 任务之后）也重读一次。
-const TASKS_REFRESH_MS = 30_000
-const tasks = ref<RoomTask[]>([])
-async function loadTasks(maxAgeMs?: number) {
-  const pid = props.projectId
-  try {
-    const payload = await readProjectTasks(pid, { maxAgeMs })
-    if (props.projectId === pid) tasks.value = payload.data
-  } catch {
-    // 留着上一次的那份。
-  }
-}
-const railTasks = computed(() => railTasksByChannel(tasks.value, myHandle()))
-const roomTasks = computed(() =>
-  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.shown]))
+// 正打开的东西在哪个频道里：频道页是它自己，任务页是任务所在的那个，「全部任务」
+// 按频道筛时是那个频道。没加入的频道靠它留在侧栏上。
+const hereChannelId = computed(
+  () => activeTopicId.value ?? activeAllTasks.value ?? (activeTaskId.value ? ids.value.topicId ?? null : null)
 )
-const roomTaskTotals = computed(() =>
-  Object.fromEntries(Object.entries(railTasks.value).map(([channel, rail]) => [channel, rail.total]))
+
+// 每个频道里和我有关的几条任务，挂在频道那一行下面：频道清单的每一行自己带着
+// （`my_tasks`：最多几件和我有关的，加这个频道进行中的总数），侧栏不读整个项目的任务。
+// 任务变了，房间推来的帧会把那一行重读一次（query/changes）。
+const roomTasks = computed<Record<string, RoomTask[]>>(() =>
+  Object.fromEntries(
+    store.topics.filter((topic) => topic.my_tasks?.shown.length).map((topic) => [topic.id, topic.my_tasks!.shown])
+  )
 )
-let tasksTimer: number | undefined
-onMounted(() => {
-  void loadTasks()
-  tasksTimer = window.setInterval(() => void loadTasks(TASKS_REFRESH_MS), TASKS_REFRESH_MS)
+const roomTaskTotals = computed<Record<string, number>>(() =>
+  Object.fromEntries(
+    store.topics.filter((topic) => topic.my_tasks?.open).map((topic) => [topic.id, topic.my_tasks!.open])
+  )
+)
+
+// 频道下面最后那一行就地展开这个频道其余进行中的任务。读的是项目里还开着的任务那一份
+// （「全部任务」和项目总览读的也是它，任务一变 `query/changes` 就让它重读），只在有
+// 频道展开着的时候才读；换项目就都收起来。
+const expandedChannels = ref<string[]>([])
+watch(
+  () => props.projectId,
+  () => (expandedChannels.value = [])
+)
+const openTasks = useQuery(
+  computed(() => ({ ...openProjectTasksQuery(props.projectId), enabled: expandedChannels.value.length > 0 })),
+  queryClient
+)
+const moreTasks = computed<Record<string, MoreTasks>>(() => {
+  const listed = openTasks.data.value?.data
+  return Object.fromEntries(
+    expandedChannels.value.map((channelId): [string, MoreTasks] => {
+      if (listed)
+        return [channelId, { state: 'ready', rows: restOfChannel(listed, channelId, roomTasks.value[channelId] ?? []) }]
+      return [channelId, { state: openTasks.isError.value ? 'failed' : 'loading' }]
+    })
+  )
 })
-onUnmounted(() => window.clearInterval(tasksTimer))
-watch(
-  () => [props.projectId, route.fullPath],
-  () => void loadTasks(2_000)
-)
-watch(
-  () => store.tasksChanged,
-  () => void loadTasks()
-)
-function openAllTasks(channelId: string) {
-  void router.push({ name: 'project-tasks', params: { projectId: props.projectId }, query: { channel: channelId } })
+function toggleTasks(channelId: string) {
+  if (moreTasks.value[channelId]?.state === 'failed') {
+    void openTasks.refetch()
+    return
+  }
+  expandedChannels.value = expandedChannels.value.includes(channelId)
+    ? expandedChannels.value.filter((id) => id !== channelId)
+    : [...expandedChannels.value, channelId]
 }
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
@@ -130,6 +147,22 @@ function onPressTopic(topicId: string) {
     router,
     to: { name: 'workspace-topic', params: { projectId: props.projectId, topicId } },
     topicId,
+  })
+}
+
+// 总览/资料库那一行（`TopicRailPinnedRows`）：按下去就下这一页的代码。传过来的是
+// 路由名（`PROJECT_PAGES` 的 key），落点和选中态读的是同一个名字。
+function onPressPage(name: string) {
+  prefetchNow({ router, to: { name, params: { projectId: props.projectId } } })
+}
+
+// 任务行（侧栏那两个 `TopicRailTaskRow` 的位置）：和话题行一样两段都要——任务页的
+// 代码，和任务自己那段对话最新一页消息（任务页读的是它，不是它所在的频道）。
+function onPressTask(task: { roomId: string; taskId: string }) {
+  prefetchNow({
+    router,
+    to: { name: 'workspace-task', params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId } },
+    topicId: task.taskId,
   })
 }
 
@@ -175,8 +208,9 @@ useCommands(() => [
       :selected-topic-id="activeTopicId"
       :room-tasks="roomTasks"
       :room-task-totals="roomTaskTotals"
-      :all-tasks-channel-id="activeAllTasks"
+      :more-tasks="moreTasks"
       :selected-task-id="activeTaskId"
+      :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
@@ -186,10 +220,12 @@ useCommands(() => [
       :private-unread-map="store.privateUnreadMap"
       @select-topic="openTopic"
       @select-task="openTask"
-      @all-tasks="openAllTasks"
+      @toggle-tasks="toggleTasks"
       @browse-channels="browseChannels"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
+      @press-page="onPressPage"
+      @press-task="onPressTask"
       @leave-topic="cancelPrefetch"
       @select-docs="openDocs"
       @retry="store.reloadTopics()"

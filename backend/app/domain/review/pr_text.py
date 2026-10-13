@@ -8,6 +8,7 @@ Chinese room name here, `采纳 topic/8f3a… → main (#7)` there, "验收人�
 a body.
 """
 
+from app.core.config import settings
 from app.domain.repository import identity
 from app.domain.review import commit_message
 from app.domain.review.models import AcceptCard
@@ -76,7 +77,6 @@ def change_subject(card: AcceptCard | None, topic: Topic) -> str:
 def _room_url(topic: Topic) -> str:
     """Where a reader can open this room. Base from configuration, never a
     literal: the same commit text is produced by every deployment."""
-    from app.core.config import settings
 
     base = settings.frontend_url.rstrip("/")
     return f"{base}/projects/{topic.project_id}/topics/{topic.id}"

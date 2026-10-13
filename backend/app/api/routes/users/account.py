@@ -30,20 +30,18 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.user.models import (
-    UserSession,
-)
-from app.domain.user.repositories import (
-    UserProfileRepository,
-    UserRepository,
-)
 from app.domain.user.services import (
     UserAuthService,
     UserProfileService,
+    user_profile_service,
 )
+from app.domain.user.sessions import SessionService
 
 if TYPE_CHECKING:
     pass
+
+from redis.asyncio import Redis as AsyncRedis
+from sqlalchemy.exc import IntegrityError
 
 from app.api.routes.users._common import (
     AddEmailCodeRequest,
@@ -54,6 +52,13 @@ from app.api.routes.users._common import (
     _own_email,
     _send_email_code,
 )
+from app.core.client_address import resolved_client_address
+from app.domain.passkey.models import PasskeyCredential
+from app.domain.user.login_security import TOTPService
+from app.domain.user.verification_service import (
+    EmailCodePurpose,
+    EmailVerificationService,
+)
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -61,8 +66,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 async def get_user_profile_service(
     db=Depends(get_db),
 ) -> UserProfileService:
-    profile_repo = UserProfileRepository(session=db)
-    return UserProfileService(profile_repo=profile_repo)
+    return user_profile_service(db)
 
 
 def _email_taken() -> ConflictError:
@@ -124,13 +128,7 @@ async def _account_without_email(
         )
     started = None
     if session_id is not None:
-        started = await session.scalar(
-            select(UserSession.created_at).where(
-                UserSession.id == session_id,
-                UserSession.user_id == user.id,
-                UserSession.revoked_at.is_(None),
-            )
-        )
+        started = await SessionService(session).started_at(user.id, session_id)
     if started is None or datetime.now(UTC) - started > ADD_EMAIL_SIGN_IN_WINDOW:
         raise ForbiddenError(
             "Sign in again to add an email address", {"reason": "reauth_required"}
@@ -170,7 +168,6 @@ async def add_email(
     session: AsyncSession = Depends(get_db),
     session_id: uuid.UUID | None = Depends(get_current_session_id),
 ) -> dict:
-    from sqlalchemy.exc import IntegrityError
 
     user, profile = await _account_without_email(
         auth_user, auth_service, session, session_id
@@ -182,7 +179,7 @@ async def add_email(
         raise _email_taken()
     await _check_email_code(request, email, payload.code)
     try:
-        await UserRepository(session=session).update_email(user, email)
+        await auth_service.update_email(user, email)
     except IntegrityError:
         raise _email_taken() from None
     user_dto = await auth_service.build_user_dto(
@@ -201,15 +198,13 @@ async def add_email(
 )
 async def get_my_auth_methods(
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """The ways ``/auth/sudo`` accepts from this account, for the caller only:
     what an account has is nobody else's business."""
-    from app.domain.passkey.models import PasskeyCredential
-    from app.domain.user.login_security import TOTPService
-    from app.domain.user.models import User
 
-    user = await session.get(User, auth_user.user_id)
+    user = await auth_service.get_user(auth_user.user_id)
     if user is None:
         raise NotFoundError("User not found")
     passkeys = await session.scalar(
@@ -238,21 +233,13 @@ async def get_my_auth_methods(
 async def request_sudo_email_code(
     request: Request,
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     """Sent to the account's own address, under the same quotas as every
     other mailed code. Refused where ``/auth/sudo`` would refuse the code."""
-    from redis.asyncio import Redis as AsyncRedis
 
-    from app.core.client_address import resolved_client_address
-    from app.domain.user.login_security import TOTPService
-    from app.domain.user.models import User
-    from app.domain.user.verification_service import (
-        EmailCodePurpose,
-        EmailVerificationService,
-    )
-
-    user = await session.get(User, auth_user.user_id)
+    user = await auth_service.get_user(auth_user.user_id)
     if user is None:
         raise NotFoundError("User not found")
     two_factor = await TOTPService(session).is_2fa_enabled(user.id)

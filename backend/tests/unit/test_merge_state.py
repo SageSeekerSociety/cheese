@@ -153,6 +153,42 @@ def test_required_check_skipped_counts_as_missing():
     assert _checks(verdict, "required_check_missing") == ("test",)
 
 
+def test_cancelled_check_is_not_red_but_is_not_a_pass_either():
+    """被取消的检查没有结论：不诬告它「未通过」，也绝不放行。2026-10-12 的
+    PR #3463 就是把 cancelled 读成了红。它落到 skipped 那一档 —— 按缺席处理，
+    等 CI 那边给个真结论。"""
+    verdict = compute_merge_state(
+        github_mergeable_state="clean",
+        github_mergeable=True,
+        check_runs=[CheckRun(name="test", status="completed", conclusion="cancelled")],
+        changed_paths=["backend/app/main.py"],
+        required_checks=[TEST_GLOB],
+    )
+
+    assert verdict.state == "blocked"
+    assert _kinds(verdict) == {"required_check_missing"}
+    # 「谁的活」是等 CI，不是叫芝士去修一个没有结论的检查。
+    assert whose_move(verdict) == "ci"
+
+
+def test_cancelled_check_is_not_an_annotated_red_check():
+    """透传模式下 GitHub 说 unstable，注解里只报真红的那些；只有 cancelled 时
+    一条红注解都不该有。"""
+    verdict = compute_merge_state(
+        github_mergeable_state="unstable",
+        github_mergeable=True,
+        check_runs=[
+            _green("lint"),
+            CheckRun(name="shell-tests", status="completed", conclusion="cancelled"),
+        ],
+        github_enforces=True,
+    )
+
+    assert verdict.state == "unstable"
+    assert _checks(verdict, "check_failed") == ()
+    assert _kinds(verdict) == {"github_verdict"}
+
+
 def test_required_check_rerun_green_after_red_passes():
     """re-run 绿掉一个红检查正是重跑的意义：同名 runs 里任何一次过了就算过。"""
     verdict = compute_merge_state(

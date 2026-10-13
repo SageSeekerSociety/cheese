@@ -13,9 +13,13 @@ import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import { t } from '@/i18n'
 import { replySnippet } from '@/lib/blockDisplay'
-import { columnDotStyle, phraseLabel } from '@/lib/board'
+import { columnDotStyle, taskPhraseLabel } from '@/lib/board'
+import { RECENT_DONE } from '@/lib/channelTasks'
 import { relTime } from '@/lib/relTime'
 import { taskTitle } from '@/lib/topicState'
+import { myHandle } from '@/me'
+
+const ME = myHandle()
 
 const props = defineProps<{
   topic: Topic
@@ -43,8 +47,6 @@ const emit = defineEmits<{
   (e: 'edit-overview', documentId: string): void
 }>()
 
-/** 最近完成列几件：其余在看板里。 */
-const RECENT_DONE = 3
 /** 进行中只列最近这么多天里有动静的，最多这么多件：其余在「全部任务」里。概览答的是
  *  「这个频道现在在忙什么」，一长串很久没人碰的任务会把真在动的淹掉。 */
 const LIVELY_DAYS = 7
@@ -151,7 +153,7 @@ async function save() {
           data-testid="project-overview-edit"
           @click="emit('edit-overview', overview.id)"
         >
-          {{ t('work.channel.overview.edit') }}
+          {{ t('work.channel.overview.editProject') }}
         </button>
       </div>
       <p class="t-meta c-faint co-note">{{ t('work.channel.overview.projectNote', { name: agentName }) }}</p>
@@ -236,7 +238,7 @@ async function save() {
           <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
           <span class="co-task__state t-meta">
             <span class="co-dot" :style="columnDotStyle(task.presentation.column)" aria-hidden="true" />
-            {{ phraseLabel(task.presentation.phrase) }}
+            {{ taskPhraseLabel(task, ME) }}
           </span>
         </span>
         <span v-if="latest(task)" class="co-task__latest t-meta">{{ latest(task) }}</span>

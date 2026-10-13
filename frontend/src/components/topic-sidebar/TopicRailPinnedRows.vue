@@ -6,6 +6,8 @@
 // 算好传进来，点了去哪儿由父级决定。
 import { computed } from 'vue'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
+
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -22,6 +24,9 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-page', key: string): void
   (e: 'hover-page', key: string): void
+  // 鼠标左键按下去了：意图定了，不必再等指针停满 hover 那一百多毫秒（和频道行
+  // `TopicRailRow` 的 `press` 同一条理由）。
+  (e: 'press-page', key: string): void
   (e: 'cancel-prefetch'): void
 }>()
 
@@ -41,6 +46,7 @@ const entries = computed(() =>
     <v-list-item
       v-for="e in entries"
       :key="e.key"
+      v-guide-anchor="`page-${e.key}`"
       tabindex="0"
       rounded="lg"
       class="nav-row pinned-row"
@@ -51,6 +57,7 @@ const entries = computed(() =>
       @click="emit('open-page', e.key)"
       @mouseenter="emit('hover-page', e.key)"
       @mouseleave="emit('cancel-prefetch')"
+      @pointerdown="$event.pointerType === 'mouse' && $event.button === 0 && emit('press-page', e.key)"
     >
       <template #prepend>
         <span class="row-slot"><v-icon size="16" class="row-glyph" :icon="e.icon" /></span>

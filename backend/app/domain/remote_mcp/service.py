@@ -15,6 +15,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +24,7 @@ from app.core import single_use_state
 from app.core.crypto import DecryptionError, Purpose, decrypt, encrypt
 from app.core.errors import NotFoundError, ValidationError
 from app.core.sentences import say
+from app.domain.agent_instance.services import project_types, type_of_seat
 from app.domain.remote_mcp import declared, oauth, upstream
 from app.domain.remote_mcp.declared import Declared, RemoteServer
 from app.domain.remote_mcp.models import ProjectMcpConnection, ProjectMcpSecret
@@ -131,7 +133,6 @@ async def _project_declared(
 ) -> Declared:
     """Every remote server anyone in the project may need connected: its
     `.mcp.json`'s and those of its teammates' types."""
-    from app.domain.agent_instance.services import project_types
 
     return declared.with_types(
         await declared.read(db, project_id, fresh=fresh),
@@ -144,7 +145,6 @@ async def _seat_declared(
 ) -> Declared:
     """The remote servers one teammate's sessions reach: the project's, and its
     own type's. A teammate of another type never reaches this type's."""
-    from app.domain.agent_instance.services import type_of_seat
 
     agent_type = await type_of_seat(db, project_id, agent_handle)
     return declared.with_types(
@@ -201,7 +201,6 @@ async def settings_view(db: AsyncSession, project_id: uuid.UUID) -> dict:
     Each row says where the server comes from: ``declared_by`` is None for the
     project's `.mcp.json`, or the teammates' types that define it.
     """
-    from app.domain.agent_instance.services import project_types
 
     found: Declared = await _project_declared(db, project_id, fresh=True)
     types = await project_types(db, project_id)
@@ -274,7 +273,6 @@ async def room_view(db: AsyncSession, project_id: uuid.UUID) -> list[dict]:
 
 
 def _host(url: str) -> str:
-    from urllib.parse import urlsplit
 
     # A templated host is shown as written; its value may be a secret.
     return urlsplit(url).netloc or url

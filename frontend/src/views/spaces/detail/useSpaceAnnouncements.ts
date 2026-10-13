@@ -6,7 +6,7 @@ import type { SpaceAnnouncement } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 
-import { SpacesApi } from '@/network/api/spaces'
+import { SpacesApi } from '@/api/spaces'
 
 export function useSpaceAnnouncements(spaceId: () => number) {
   const current = ref<SpaceAnnouncement[]>([])
@@ -22,7 +22,7 @@ export function useSpaceAnnouncements(spaceId: () => number) {
     const id = spaceId()
     if (!id) return
     try {
-      const { data } = await SpacesApi.listAnnouncements(id)
+      const data = await SpacesApi.listAnnouncements(id)
       if (id !== spaceId()) return
       current.value = data.current
       expired.value = data.expired

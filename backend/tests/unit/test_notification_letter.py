@@ -36,6 +36,29 @@ def test_cheese_question_leads_with_the_question_and_lands_on_it():
     assert f"{settings.frontend_url}/projects/p-1/topics/t-1?block=b-9" in body
 
 
+def test_the_letter_about_a_question_follows_it_into_the_task_it_was_asked_in():
+    """问在任务里的题：按钮落到那个任务，不是频道主线。
+
+    那条消息在任务自己的线上，频道主线上没有它 —— 落到频道，人点开就是一句「这条
+    消息已不存在」（推送、站内通知的链接读的是同一条规则 `push.push_link`）。
+    """
+    letter = letter_for(
+        {
+            "type": "CHEESE_QUESTION",
+            "payload": {
+                **ROOM,
+                "question": "这个字段存毫秒还是秒？",
+                "blockId": "b-9",
+                "taskId": "k-2",
+            },
+        }
+    )
+
+    assert f"{settings.frontend_url}/projects/p-1/topics/t-1/tasks/k-2?block=b-9" in (
+        render_html(letter)
+    )
+
+
 def test_room_notice_carries_the_sentence_said_in_the_room():
     letter = letter_for(
         {"type": "ROOM_NOTICE", "payload": {**ROOM, "content": "验收卡等你确认"}}
@@ -71,6 +94,39 @@ def test_mention_quotes_what_was_said():
     assert "@你 帮忙看下这个接口" in render_html(letter)
     # 讨论指不到房间，按钮落到收件箱，那里一定列着这一条。
     assert letter.link == f"{settings.frontend_url}/inbox"
+
+
+def test_a_mention_in_a_channel_says_who_and_where_and_lands_on_the_message():
+    letter = letter_for(
+        {
+            "type": "MENTION",
+            "payload": {
+                **ROOM,
+                "authorName": "Alice",
+                "content": "帮忙看下这个接口",
+                "blockId": "b-3",
+                "threadId": "th-1",
+            },
+        }
+    )
+    body = render_html(letter)
+
+    assert letter.subject == "Alice 在「登录页改版」提到了你"
+    assert "帮忙看下这个接口" in body
+    assert letter.link == (
+        f"{settings.frontend_url}/projects/p-1/topics/t-1/threads/th-1?block=b-3"
+    )
+
+
+def test_a_reply_in_a_thread_says_who_replied_where():
+    letter = letter_for(
+        {
+            "type": "THREAD_REPLY",
+            "payload": {**ROOM, "authorName": "Bob", "content": "方案一"},
+        }
+    )
+    assert letter.subject == "Bob 在「登录页改版」的支线里回复了"
+    assert "方案一" in render_html(letter)
 
 
 def test_an_unknown_type_still_reads_as_a_sentence():

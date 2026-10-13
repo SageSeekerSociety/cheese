@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ValidationError
 from app.core.sentences import say
+from app.domain.project.forge import background_quota, quota_serves_background
 
 if TYPE_CHECKING:
     from app.domain.review.models import AcceptCard
@@ -143,7 +144,6 @@ class GitHubForge(Forge):
         await service._refresh_github_unseen_head(card, topic, action)
 
     async def poll(self, service, card, topic, *, chat_service, runner) -> None:
-        from app.domain.project.forge import background_quota, quota_serves_background
 
         # A tick is background work: it leaves the installation's last share of
         # quota to the people delivering and merging cards.
@@ -192,6 +192,7 @@ async def resolve(
     proposal_url: str | None = None,
 ) -> Forge:
     """Resolve the authoritative forge; an unreadable binding never falls local."""
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, tokens_for_project
 
     try:

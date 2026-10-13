@@ -1,4 +1,4 @@
-"""Git 面板显示的是「本话题」的提交 (P1-7).
+"""改动面板显示的是「本话题」的改动 (P1-7).
 
 The panel asked the project-level endpoints, which is wrong in both directions:
 before 采纳 a topic's commits live only on its branch, so the panel showed NONE
@@ -50,17 +50,6 @@ def _turn(
     asyncio.run(published())
 
 
-def _log(client, pid, topic=None) -> list[dict]:
-    params = (
-        {"topic": str(topic), "task": str(delivery_task_id(client, topic))}
-        if topic
-        else {}
-    )
-    return client.get(
-        f"/projects/{pid}/git/log", params=params, headers=_owner(client)
-    ).json()["data"]["data"]
-
-
 def _diff(client, pid, topic=None) -> str:
     params = (
         {"topic": str(topic), "task": str(delivery_task_id(client, topic))}
@@ -103,19 +92,17 @@ def _summary(client, pid, topic) -> dict:
     ).json()["data"]
 
 
-def test_topic_commits_visible_before_accept(client):
-    """The panel's main complaint: 采纳 前一条提交都不显示。"""
+def test_topic_work_visible_before_accept(client):
+    """The panel's main complaint: 采纳 前这个话题的改动一条都不显示。"""
     pid = _mkproject(client)
     tid = _mktopic(client, pid)
     _turn(client, pid, tid, "a.py", "print(1)\n", "加了 a.py")
 
-    messages = [c["message"] for c in _log(client, pid, topic=tid)]
-    assert "加了 a.py" in messages
     assert "print(1)" in _diff(client, pid, topic=tid)
 
 
-def test_topic_log_excludes_other_topics_commits(client):
-    """After one topic is 采纳'd, its commits are on the base — and must not
+def test_topic_diff_excludes_other_topics_work(client):
+    """After one topic is 采纳'd, its changes are on the base — and must not
     show up as another topic's work."""
     pid = _mkproject(client)
     mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
@@ -123,20 +110,19 @@ def test_topic_log_excludes_other_topics_commits(client):
     assert git_store.merge_task(pid, delivery_task_id(client, theirs), message=_MSG)
     _turn(client, pid, mine, "mine.py", "y = 2\n", "我的提交")
 
-    messages = [c["message"] for c in _log(client, pid, topic=mine)]
-    assert "我的提交" in messages
-    assert "别的话题的提交" not in messages
+    diff = _diff(client, pid, topic=mine)
+    assert "mine.py" in diff
+    assert "theirs.py" not in diff
 
 
 def test_topic_with_no_commits_shows_none_not_the_projects(client):
-    """An untouched topic has no history of its own — and must not borrow the
+    """An untouched topic has no changes of its own — and must not borrow the
     project's, which is what made the panel look busy on a fresh topic."""
     pid = _mkproject(client)
     busy, fresh = _mktopic(client, pid), _mktopic(client, pid)
     _turn(client, pid, busy, "busy.py", "z = 3\n", "主干上的提交")
     assert git_store.merge_task(pid, delivery_task_id(client, busy), message=_MSG)
 
-    assert _log(client, pid, topic=fresh) == []
     assert _diff(client, pid, topic=fresh) == ""
 
 
@@ -148,14 +134,15 @@ def test_work_summary_lists_the_same_range_the_diff_renders(client):
     _turn(client, pid, tid, "src/a.py", "print(1)\n", "加了 a.py")
     _turn(client, pid, tid, "src/b.py", "print(2)\n", "加了 b.py")
 
-    assert sorted(_summary(client, pid, tid)["changed_files"]) == [
+    task = delivery_task_id(client, tid)
+    assert sorted(_summary(client, pid, task)["changed_files"]) == [
         "src/a.py",
         "src/b.py",
     ]
 
 
 def test_work_summary_excludes_other_topics_work(client):
-    """Same trap /git/log documents: after another topic is 采纳'd its files are
+    """Same trap the diff test documents: after another topic is 采纳'd its files are
     on the base, and counting them here would put a badge on an idle topic."""
     pid = _mkproject(client)
     mine, theirs = _mktopic(client, pid), _mktopic(client, pid)
@@ -163,7 +150,9 @@ def test_work_summary_excludes_other_topics_work(client):
     assert git_store.merge_task(pid, delivery_task_id(client, theirs), message=_MSG)
     _turn(client, pid, mine, "mine.py", "y = 2\n", "我的提交")
 
-    assert _summary(client, pid, mine)["changed_files"] == ["mine.py"]
+    assert _summary(client, pid, delivery_task_id(client, mine))["changed_files"] == [
+        "mine.py"
+    ]
 
 
 def test_work_summary_empty_for_a_topic_that_never_wrote(client):
@@ -184,14 +173,3 @@ def test_work_summary_reports_a_topic_that_has_run(client):
     summary = _summary(client, pid, tid)
     assert summary["has_run"] is True
     assert summary["changed_files"] == []
-
-
-def test_project_log_still_available_without_a_topic(client):
-    """The project-level view is unchanged — it is simply not what a topic
-    panel asks for."""
-    pid = _mkproject(client)
-    tid = _mktopic(client, pid)
-    _turn(client, pid, tid, "c.py", "w = 4\n", "会被采纳的提交")
-    assert git_store.merge_task(pid, delivery_task_id(client, tid), message=_MSG)
-
-    assert len(_log(client, pid)) >= 1

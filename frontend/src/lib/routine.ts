@@ -9,8 +9,9 @@
 // `routines` 命名空间，这里的几个函数只是把 key 摆成调用方要的形状。改一个字只改目录。
 
 import type { NavTarget } from './navTarget'
+import type { NoticeMessage } from './noticeText'
 
-import { t } from '@/i18n'
+import i18n, { t } from '@/i18n'
 
 /** 一条规则。字段和后端 `GET /routines/{id}` 一一对应。 */
 export interface Routine {
@@ -26,8 +27,9 @@ export interface Routine {
   context_scope: string
   output_dir: string
   trigger: RoutineTrigger
-  /** 后端写好的那一句话：「每周周一 09:00（Asia/Shanghai）」。 */
+  /** The server's text, with the key that renders it in the reader's language. */
   trigger_text: string
+  i18n?: { trigger_text?: NoticeMessage }
   spec: Record<string, unknown>
   timezone: string
   state: RoutineState
@@ -108,8 +110,8 @@ export function routineWeekdays(): string[] {
 export function formatRoutineTime(iso: string | null, timeZone?: string): string {
   if (!iso) return '—'
   try {
-    return new Date(iso).toLocaleString('zh-CN', { timeZone, hour12: false })
+    return new Date(iso).toLocaleString(i18n.global.locale.value, { timeZone, hour12: false })
   } catch {
-    return new Date(iso).toLocaleString()
+    return new Date(iso).toLocaleString(i18n.global.locale.value, { hour12: false })
   }
 }

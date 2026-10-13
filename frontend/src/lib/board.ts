@@ -9,7 +9,7 @@
 // 格子的判据是「**该谁动**」，不是「事情进行到哪一步」。同一个客观事实——比如快检
 // 红了——下一步在平台手上就落 `delivering`，在人手上就落 `needs_you`。
 
-import type { BoardColumn, BoardPhrase } from '@/cx_types'
+import type { BoardColumn, BoardPhrase, RoomTask } from '@/cx_types'
 
 import i18n, { t } from '@/i18n'
 
@@ -28,6 +28,13 @@ export function phraseLabel(phrase: BoardPhrase): string {
  *  「待你开始」—— 文档写好了，下一步是他点开始。没有专门说法的照通用那一句。 */
 export function myPhraseLabel(phrase: BoardPhrase): string {
   return i18n.global.te(`work.board.mine.${phrase}`, 'zh-CN') ? t(`work.board.mine.${phrase}`) : phraseLabel(phrase)
+}
+
+/** 一件任务的那一句，按看的人说：在等的就是他，用 `myPhraseLabel`。页头、频道概览
+ *  和频道里的卡说的是同一件事，对同一个人不能一处「讨论中」一处「待你开始」。 */
+export function taskPhraseLabel(task: Pick<RoomTask, 'presentation' | 'waiting_on'>, viewer: string): string {
+  const { phrase } = task.presentation
+  return task.waiting_on && task.waiting_on === viewer ? myPhraseLabel(phrase) : phraseLabel(phrase)
 }
 
 /** 色点长什么样。

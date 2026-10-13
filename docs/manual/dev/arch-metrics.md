@@ -1,7 +1,7 @@
 ---
 title: 架构指标
 kind: 参考
-summary: 一张能持续看的架构看板：组件 A/B/C/D 分级、后端三条契约的冻结条目、超标文件和两端热点，每个数怎么算、现在是多少、该往哪边走，以及怎么和另一个版本比。
+summary: 一张能持续看的架构看板：组件 A/B/C/D 分级、后端八条契约的冻结条目、超标文件和两端热点，每个数怎么算、现在是多少、该往哪边走，以及怎么和另一个版本比。
 covers:
   - .claude/scripts/arch-metrics.py
   - .github/workflows/arch-metrics.yml
@@ -13,7 +13,7 @@ covers:
 
 # 架构指标 {#arch-metrics}
 
-三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的三条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道都拿一个冻结的基线做棘轮，所以它们会一直绿——绿到看不出一棵树是不是在变好。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
+三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的八条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道都拿一个冻结的基线做棘轮，所以它们会一直绿——绿到看不出一棵树是不是在变好。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
 
 > 讲：有哪些数字、每个数怎么算、现在是多少、要往哪个方向走，以及怎么和另一个版本比。不讲：三道闸各自的规则和为什么那样定（见仓库里的 `.claude/rules/architecture.md`），CI 的整体设计（见 [CI 设计](/dev/ci#required)）。
 
@@ -46,7 +46,7 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `frontend.grade_counts.grades` / `grade_pct` | A/B/C/D 各多少个、占几成 | 见下面的分级方法 | A 升，D 降 |
 | `frontend.grade_counts.grade_lines` | 每一级的行数 | 同级组件的行数之和 | A 升 |
 | `frontend.boundary.violations` | 组件直接取数 / 读路由的处数 | 直接读 `frontend/import-boundary-baseline.json`，不重算 | 只降 |
-| `backend.contracts.per_contract` | 三条契约各自冻结了多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条 | 只降 |
+| `backend.contracts.per_contract` | 八条契约各自冻结了多少条 | 解析 `backend/.importlinter` 的 `ignore_imports`，一条 `importer -> imported` 算一条 | 只降 |
 | `backend.deferred_imports` | 函数内导入的条数 | `ast` 遍历 `backend/app`，只数词法上落在函数体里的 `import` / `from ... import`（嵌套函数算一次，模块级的 `if TYPE_CHECKING:` 不算） | 只降 |
 | `backend.files.files_over_1000` | 后端超过 1000 行的文件数 | `backend/app/**/*.py` 的行数分布 | 只降 |
 | `backend.files.files_over_1500` | 超过上限（1500 行）的 | 同上 | 只降 |
@@ -60,12 +60,12 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 
 | 级别 | 判据 |
 |---|---|
-| **D** | 绑在挂载位置或别的通道上：读了路由（`useRoute`/`useRouter`/`$router`/`vue-router`）、`$parent`/`$root`、事件总线、`provide`/`inject` |
-| **C** | 自己取数：直接 import `@/api`、`@/services/*`、`@/network/*`，或者沿着一条能解析出来的链**间接**够到这些，或者自己写 `fetch`/`axios`；或者读业务 store |
+| **D** | 绑在挂载位置或别的通道上：读了路由（`useRoute`/`useRouter`/`$router`/`vue-router`）、模板里画了 `<router-view>`/`<router-link>`、`$parent`/`$root`、事件总线、`provide`/`inject` |
+| **C** | 自己取数：直接 import `@/api`、`@/services/*`、`@/network/*`，或者沿着一条能解析出来的链**间接**够到这些（链上的每一步 `import` 和 `export … from` 都算一条边），或者自己写 `fetch`/`axios`；或者读业务 store |
 | **B** | 只读应用外壳的 store（`usePageTitleStore`、`useNavigationStore`） |
 | **A** | 以上都没有：只靠 props 和事件就能渲染 |
 
-**误差说清**：这是正则不是编译器（原始体检报告用的也是同一套办法）。`import type` 一律不算，它在构建时就被抹掉；解析不出来的模块说明符当成外部依赖，不当成一条边——所以一个组件如果真的隔着一条解析不出来的链在取数，它会被判高一档。`defineProps` / `defineEmits` 根本不数，四个等级都用不到它们（原来那份报告里的 props 普查没有移植）。热点只覆盖 `backend/app/**/*.py` 和 `frontend/src/**/*.{vue,ts,js}`，去掉 `*.spec.ts` 和测试目录：测试跟着它的主语改，不单独算热点；合并提交（`--no-merges`）本来就没有自己的 diff。
+**误差说清**：这是正则不是编译器（原始体检报告用的也是同一套办法）。`import type` 和 `export type … from` 一律不算，它们在构建时就被抹掉；`export { x } from '…'`、`export * from '…'` 这种再导出算一条边——index barrel 就是这样把一条链传下去的，只读 `import` 会漏掉它；解析不出来的模块说明符当成外部依赖，不当成一条边——所以一个组件如果真的隔着一条解析不出来的链在取数，它会被判高一档。`defineProps` / `defineEmits` 根本不数，四个等级都用不到它们（原来那份报告里的 props 普查没有移植）。热点只覆盖 `backend/app/**/*.py` 和 `frontend/src/**/*.{vue,ts,js}`，去掉 `*.spec.ts` 和测试目录：测试跟着它的主语改，不单独算热点；合并提交（`--no-merges`）本来就没有自己的 diff。
 
 ## 当前基线 {#baseline}
 

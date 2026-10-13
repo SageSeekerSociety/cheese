@@ -216,7 +216,7 @@ export function resetFeedbackCaches(): void {
   markedReadIds.clear()
 }
 
-const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 }
+const EMPTY_COUNTS: FeedbackCounts = { all: 0, hot: 0, active: 0, resolved: 0, deployed: 0, unread: 0 }
 
 /** 提交表单里那一份**内容**。三个入口共用它：反馈中心和「我的反馈」走独立页面
  *  （`/feedback/new`），会话里那张提案卡走对话框，而字段只有这一份

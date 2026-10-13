@@ -25,7 +25,6 @@ from app.core.errors import (
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
 from app.domain.attachment.services import AttachmentService
-from app.domain.feature_stats import pricing
 from app.domain.space.rank_service import SpaceRankService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
@@ -39,19 +38,6 @@ from app.domain.task.attachment_service import (
 from app.domain.task.inputs import (
     map_submitter_type,
 )
-from app.domain.task.models import (
-    Task,
-    TaskTagRelation,
-)
-from app.domain.task.repositories import (
-    TaskAccessDomainRepository,
-    TaskMembershipRepository,
-    TaskRepository,
-    TaskSubmissionEntryRepository,
-    TaskSubmissionRepository,
-    TaskSubmissionReviewRepository,
-    TaskSubmissionSchemaRepository,
-)
 from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
@@ -62,70 +48,46 @@ from app.domain.task.services import (
 )
 from app.domain.task.task_pdf_draft_service import TaskPdfDraftService
 from app.domain.team.repositories import TeamRepository
+from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.services import TeamService
+from app.domain.usage import pricing
 from app.domain.user.repositories import (
     UserRealNameRepository,
 )
 
 
 async def get_task_service(db=Depends(get_db)) -> TaskService:
-    repo = TaskRepository(session=db)
-    return TaskService(repo)
+    return TaskService.of(db)
 
 
 async def get_task_membership_service(db=Depends(get_db)) -> TaskMembershipService:
-    from app.domain.team.repositories import TeamRepository as _TeamRepo
-
-    repo = TaskMembershipRepository(session=db)
-    realname_repo = UserRealNameRepository(session=db)
-    space_repo = SpaceRepository(session=db)
-    space_rank_repo = SpaceUserRankRepository(session=db)
-    team_repo = _TeamRepo(session=db)
-    return TaskMembershipService(
-        repo=repo,
-        realname_repo=realname_repo,
-        space_repo=space_repo,
-        space_rank_repo=space_rank_repo,
-        team_repo=team_repo,
+    # 跨域的仓库（user/space/team）路由自己 new 再传进去；本域的成员仓库由 service
+    # 自己在内部拼 —— 那几笔跨域豁免留着，题目域内的这一笔不再从路由伸进 repositories。
+    return TaskMembershipService.of(
+        db,
+        realname_repo=UserRealNameRepository(session=db),
+        space_repo=SpaceRepository(session=db),
+        space_rank_repo=SpaceUserRankRepository(session=db),
+        team_repo=_TeamRepo(session=db),
     )
 
 
 async def get_task_submission_service(db=Depends(get_db)) -> TaskSubmissionService:
-    submission_repo = TaskSubmissionRepository(session=db)
-    entry_repo = TaskSubmissionEntryRepository(session=db)
-    review_repo = TaskSubmissionReviewRepository(session=db)
-    membership_repo = TaskMembershipRepository(session=db)
-    return TaskSubmissionService(
-        submission_repo=submission_repo,
-        entry_repo=entry_repo,
-        review_repo=review_repo,
-        membership_repo=membership_repo,
-        schema_repo=TaskSubmissionSchemaRepository(session=db),
+    return TaskSubmissionService.of(
+        db,
         attachments=AttachmentService.from_session(
             session=db, storage=get_storage_backend()
         ),
-        session=db,
     )
 
 
 async def get_task_submission_review_service(
     db=Depends(get_db),
 ) -> TaskSubmissionReviewService:
-    review_repo = TaskSubmissionReviewRepository(session=db)
-    submission_repo = TaskSubmissionRepository(session=db)
-    membership_repo = TaskMembershipRepository(session=db)
-    task_repo = TaskRepository(session=db)
     space_repo = SpaceRepository(session=db)
     rank_repo = SpaceUserRankRepository(session=db)
     rank_service = SpaceRankService(space_repo=space_repo, rank_repo=rank_repo)
-    return TaskSubmissionReviewService(
-        review_repo=review_repo,
-        submission_repo=submission_repo,
-        membership_repo=membership_repo,
-        task_repo=task_repo,
-        rank_service=rank_service,
-        session=db,
-    )
+    return TaskSubmissionReviewService.of(db, rank_service=rank_service)
 
 
 async def get_team_service(db=Depends(get_db)) -> TeamService:
@@ -282,7 +244,7 @@ async def _create_task_entity(
     payload: dict | CreateTaskRequest,
     db,
     creator_user_id: int,
-) -> Task:
+):
     # Accept both dict (from PDF draft flow) and validated CreateTaskRequest
     if isinstance(payload, CreateTaskRequest):
         name = payload.name
@@ -453,9 +415,9 @@ async def _create_task_entity(
         category_id=category_id,
     )
 
-    task_repo = TaskRepository(session=db)
+    task_service = TaskService.of(db)
 
-    task = await task_repo.create_task(
+    task = await task_service.create_task(
         name=name,
         intro=intro,
         description=description,
@@ -494,32 +456,18 @@ async def _create_task_entity(
             all_domains.extend(groups_domains.get(gid, []))
 
         if all_domains:
-            access_domain_repo = TaskAccessDomainRepository(session=db)
-            await access_domain_repo.replace_domains(
+            await task_service.replace_access_domains(
                 task_id=task.id, domains=list(dict.fromkeys(all_domains))
             )
 
     # 简单设置话题关联：先不做复杂校验，仅插入关系行。
     if topics:
-        now = datetime.now(UTC)
-        for topic_id in topics:
-            relation = TaskTagRelation(
-                task_id=task.id,
-                tag_id=topic_id,
-                created_at=now,
-                updated_at=now,
-                deleted_at=None,
-            )
-            db.add(relation)
-        await db.flush()
+        await task_service.add_topic_relations(task_id=task.id, topic_ids=topics)
 
     # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
     # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
     if submission_schema:
-        await TaskSubmissionSchemaRepository(session=db).replace_schema(
-            task.id, submission_schema
-        )
-        await db.flush()
+        await task_service.replace_submission_schema(task.id, submission_schema)
 
     return task
 
@@ -537,8 +485,8 @@ def _attachment_service(db) -> AttachmentService:
     return AttachmentService.from_session(session=db, storage=get_storage_backend())
 
 
-async def _require_task(db, task_id: int) -> Task:
-    task = await TaskRepository(session=db).get_by_id(task_id)
+async def _require_task(db, task_id: int):
+    task = await TaskService.of(db).get_task(task_id)
     if task is None:
         raise NotFoundError("Task not found")
     return task

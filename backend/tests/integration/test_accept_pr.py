@@ -22,6 +22,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
+from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -32,6 +33,7 @@ from tests.integration.conftest import (
     room_text,
     session_auth_headers,
 )
+from tests.landing import summary_turn_ends
 from tests.machine_work import machine_commits
 from tests.support import git_store
 
@@ -63,7 +65,7 @@ def _make_card_response(client, topic_id: str, reviewer: str = "alice"):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
 
@@ -181,7 +183,7 @@ def _poll(client) -> dict:
 
     在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：轮询会 `submit`
     真正的轮次，它们得落在 work runner 所在的那个循环上——生产上这一轮也正是
-    从那里跑的（`app/core/background.py` 的 "pr poll"）。
+    从那里跑的（`app/domain/review/periodic.py` 的 "pr poll"）。
     """
     from app.domain.review import pr_poll
 
@@ -239,6 +241,8 @@ class FakeGitHubPrClient:
         self.update_branch_tokens: list[str] = []
         self.check_state_error: Exception | None = None
         self.status_error: Exception | None = None
+        # How long GitHub takes to say where a PR stands.
+        self.status_delay_s: float = 0.0
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -338,13 +342,15 @@ class FakeGitHubPrClient:
 
     async def pull_request_status(
         self, *, owner, repo, number, token
-    ) -> github_pr.PullRequestStatus:
+    ) -> PullRequestStatus:
+        if self.status_delay_s:
+            await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:
             raise self.status_error
         pr = self.prs[number]
         self.status_calls.append(number)
         self.status_tokens.append(token)
-        return github_pr.PullRequestStatus(
+        return PullRequestStatus(
             head_sha=pr["head_sha"],
             head_ref=pr["head"],
             base_ref=pr["base"],
@@ -1452,8 +1458,24 @@ def test_filing_a_card_on_a_branchless_tree_is_refused(client, app_world, monkey
 
     r = _make_card_response(client, tid)
     assert r.status_code == 422, r.text
-    assert "没有可交付的提交" in r.json()["message"]
+    assert "没有可交付的改动" in r.json()["message"]
     assert _branch_of_record(client, tid) in r.json()["message"]
+    assert _cards(client, tid) == []
+
+
+def test_a_branch_holding_only_an_empty_commit_files_no_card(client, app_world):
+    """一个不改任何文件的提交也没有东西可交：采纳它只会往主干并进一条空提交，
+    还算作一次交付。递卡当场被拒，卡上不留一张。"""
+    pid = _make_project(client)
+    tid = _make_topic(client, pid)
+    task = delivery_task(client, tid, commit=False)
+    machine_commits(
+        task.project_id, task.id, {}, "chore: open the card", allow_empty=True
+    )
+
+    r = _make_card_response(client, tid)
+    assert r.status_code == 422, r.text
+    assert "没有可交付的改动" in r.json()["message"]
     assert _cards(client, tid) == []
 
 
@@ -2054,6 +2076,8 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
     assert card["decided_by"] == rejected["decided_by"]
     assert card["pr_head_sha"] == rejected["pr_head_sha"]
     assert card["pr_merged_at"] is not None
+    # The task closes once its AI teammate has written it up.
+    summary_turn_ends(client, delivery_task_id(client, tid))
     assert _room_open_tree_branch(client, tid) is None
     assert _branch_of_record(client, tid) == branch
     assert fake.merge_calls == []
@@ -2073,6 +2097,55 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
 
     asyncio.run(check_delivery_boundary())
     assert _poll(client)["cards_checked"] == 0
+
+
+def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world):
+    """一次交付只落地一次：已经合过的那一笔不会再关一次重开出来的任务。
+
+    任务 #58（2026-10-11）：同一张 PR 上有一张退回过的卡。最后一步被采纳、合
+    并落地、任务关掉，负责人重开去接着做（新分支，`pr_number` 归 None）。下一
+    跳轮询又把那张退回卡读了一遍 —— 它自己从没结算过，而 PR 已经合了 —— 于是
+    同一笔合并第二次落到这个任务上，它一分钟后又进了一次写总结的窗口。开着却
+    写「已采纳」的任务谁都不收：左侧栏要 `closing_since` 为空，「未完成」要
+    presentation 不是 done，「已关闭」要 status 是 closed（2026-10-11，任务 #58）。"""
+    fake = app_world["fake"]
+    pid, tid, returned, number, head_sha = _ready_card(client, app_world)
+    rejected = client.post(
+        f"/accept-cards/{returned}/reject",
+        json={"decided_by": "alice", "note": "这批的边界还没证明"},
+        headers=session_auth_headers("alice"),
+    )
+    assert rejected.status_code == 200, rejected.text
+    # 同一张 PR 上再递一张 —— 生产上这是改完又交的那一版。
+    resent = _make_card(client, tid)
+    _give_card_a_pr(client, app_world, tid, resent, number)
+    fake.check_state_by_sha[head_sha] = ("success", "全部通过")
+    fake.merge_sha_by_number[number] = "merge-sha-1"
+    accepted = _accept(client, resent)
+    assert accepted.status_code == 200, accepted.text
+    task_id = delivery_task_id(client, tid)
+    summary_turn_ends(client, task_id)
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "closed"
+
+    reopened = client.post(
+        f"/topics/{task_id}/reopen",
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["data"]["pr_number"] is None
+
+    result = _poll(client)
+
+    assert result["errors"] == []
+    cards = {card["id"]: card for card in _cards(client, tid)}
+    # 这张退回卡自己从没结算过，所以它还在这条轮询路径上 —— 下面这一条就是
+    # 「这一跳真的读了那张已经合掉的 PR」的证据。
+    assert cards[returned]["status"] == "rejected"
+    assert cards[returned]["pr_merged_at"] is not None
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"
+    assert task["presentation"]["column"] != "done"
 
 
 @pytest.mark.parametrize("closed", [False, True])
@@ -2259,6 +2332,34 @@ def test_a_github_hiccup_on_a_read_never_breaks_the_card_list(client, app_world)
 
     assert r.status_code == 200
     assert r.json()["data"]["data"][0]["merge_state"]["state"] == "unknown"
+
+
+def test_a_slow_github_never_holds_a_card_read_and_its_answer_still_lands(
+    client, app_world, monkeypatch
+):
+    """读卡等 GitHub 有个头：等不到就先把手上那份发出去，那一次重算接着在后台做
+    完、写回卡上，下一次读就是新的。房间里每个开着的页面每 15s 读一次卡，它们
+    一起等的是同一次重算，不是各问一遍 —— 一张接一张地等 GitHub，一次读卡曾经
+    要 40 秒，排在它后面的请求全被拖住。"""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "accept_pr_snapshot_read_wait_s", 0.05)
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _stale_mirror_iso(client, cid)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.status_delay_s = 1.0
+
+    began = time.monotonic()
+    first = _cards(client, tid)[0]["merge_state"]["state"]
+    assert time.monotonic() - began < 0.8
+    assert first == "unknown"
+
+    deadline = time.monotonic() + 10
+    while _cards(client, tid)[0]["merge_state"]["state"] != "clean":
+        assert time.monotonic() < deadline, "the refresh never landed"
+        time.sleep(0.05)
+    assert fake.status_calls == [number]
 
 
 # ============================ 绿了自动合 =====================================
@@ -3223,7 +3324,7 @@ def _treeless_card(client, topic_id: str, status: str) -> None:
                 AcceptCard(
                     topic_id=_uuid.UUID(topic_id),
                     reviewer_handle="alice",
-                    routing_reason="",
+                    focus="",
                     status=AcceptStatus(status),
                     change_subject="chore(old): a card from before trees",
                 )

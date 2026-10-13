@@ -21,7 +21,8 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.memory.models import MemoryEntry, MemoryScope, user_scope_id
+from app.domain.memory.models import MemoryEntry, user_scope_id
+from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries, memory_store
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService

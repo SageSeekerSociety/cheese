@@ -1,28 +1,75 @@
 name: Backup restore test
 
-# Weekly proof that the DB backups actually restore (not just that a dump file
-# exists). Runs on the dev box's self-hosted runner, which has docker and the
-# local dumps; restores the newest dump into a throwaway postgres container and
-# fails (-> GitHub emails admins) if the restore or sanity check fails.
-
+# Weekly local + R2 recovery into throwaway storage on dev. PRs run only the
+# offline regressions, never access the box's backups or R2 credentials.
 on:
   schedule:
     - cron: '17 4 * * 1' # Mondays 04:17 UTC
   workflow_dispatch: {}
+  pull_request:
+    paths:
+      - 'docker-compose.yml'
+      - 'deploy/db-restore-test.sh'
+      - 'deploy/r2-*'
+      - 'deploy/tests/test-db-restore-test.sh'
+      - 'deploy/tests/test_r2_backups.py'
+      - '.github/workflows/backup-freshness.yml'
+      - '.github/workflows/backup-restore-test.yml'
 
-# Least privilege: none of these jobs write anything back to GitHub, so the
-# token they run with should not be able to. Jobs that DO need more (the
-# `scope` gh-api jobs) declare it at job level, which overrides this.
 permissions:
   contents: read
 
 jobs:
+  regressions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Prove restore errors and image drift fail the drill
+        run: bash deploy/tests/test-db-restore-test.sh
+      - name: Prove R2 recovery and freshness failures are observable
+        run: python3 deploy/tests/test_r2_backups.py
   restore-test:
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: [self-hosted, cheese-dev]
-    timeout-minutes: 15
+    timeout-minutes: 45
+    env:
+      CHEESE_R2_ENV: /home/nictheboy/ops/r2.env
+      CHEESE_BACKUP_DIR: /home/nictheboy/backups
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Prove restore failures fail the drill
         run: bash deploy/tests/test-db-restore-test.sh
-      - name: Restore latest backup into a throwaway postgres
+      - name: Restore latest local backup into a throwaway postgres
         run: bash deploy/db-restore-test.sh
+      - name: Detect R2 configuration (absent is an explicit skip)
+        id: r2
+        if: ${{ !cancelled() }}
+        run: |
+          if python3 deploy/r2-check.py configured; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            status=$?
+            [ "$status" = 3 ] || exit "$status"
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare R2 drill dependencies
+        if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        run: |
+          python3 -m venv "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/pip" install --disable-pip-version-check boto3==1.40.61
+      - name: Download latest R2 DB dump and prove it restores
+        if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        run: |
+          TMP="$(mktemp -d "$RUNNER_TEMP/r2-db-$GITHUB_RUN_ID.XXXXXX")"
+          trap 'rm -rf -- "$TMP"' EXIT
+          TMPDIR="$TMP" "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-restore.py
+      - name: Restore and verify the uploads mirror in a new temporary directory
+        if: ${{ !cancelled() && steps.r2.outputs.configured == 'true' }}
+        run: |
+          TMP="$(mktemp -d "$RUNNER_TEMP/r2-uploads-$GITHUB_RUN_ID.XXXXXX")"
+          trap 'rm -rf -- "$TMP"' EXIT
+          "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/bin/python" deploy/r2-sync-uploads.py --restore "$TMP/uploads" --verify "$TMP/uploads"
+      - name: Remove R2 drill environment
+        if: ${{ always() }}
+        run: rm -rf -- "$RUNNER_TEMP/r2-drill-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"

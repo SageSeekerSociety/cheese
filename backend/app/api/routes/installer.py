@@ -100,11 +100,25 @@ esac
 target="$os-$arch"
 dest="$HOME/.local/bin"
 mkdir -p "$dest"
+# sha256sum is coreutils (Linux), shasum is Perl's (macOS), openssl is on both:
+# any one of them can check the download.
+sha256_of() {{
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" | awk '{{print $NF}}'
+  else
+    return 1
+  fi
+}}
 echo "downloading cheesehost ($target)…"
 # A download through a relay can be cut mid-transfer, and plain --retry does
 # not retry a cut one (curl 56). Each attempt resumes the partial file (-C -);
 # --retry-all-errors would do this in one call but curl before 7.71 rejects it.
 partial="$dest/cheesehost.part"
+headers="$dest/cheesehost.headers"
 rm -f "$partial"
 attempt=1
 # The desktop app shows how far the download has got, from curl's bar.
@@ -113,9 +127,11 @@ if [ -n "${{CHEESE_PROGRESS:-}}" ]; then
   progress=-#
 fi
 binary="$ORIGIN/connector/latest/$target/cheesehost"
-until curl -fSL "$progress" -C - -o "$partial" "$binary"; do
+# -D keeps the response's headers: the response that carries the bytes also
+# names their sha256, and that number is what the check below compares to.
+until curl -fSL "$progress" -C - -D "$headers" -o "$partial" "$binary"; do
   if [ "$attempt" -ge 5 ]; then
-    rm -f "$partial"
+    rm -f "$partial" "$headers"
     echo "download failed after $attempt attempts"
     exit 1
   fi
@@ -123,6 +139,29 @@ until curl -fSL "$progress" -C - -o "$partial" "$binary"; do
   echo "download interrupted; resuming (attempt $attempt)…"
   sleep 2
 done
+# The server hashes the very bytes it serves, so this comparison says whether
+# what we hold is what it published. A transfer a relay truncated, or anything
+# that substituted one, must not reach PATH as an executable. A missing header
+# is a failure too: a proxy that strips it would otherwise turn this off
+# silently.
+want=$(grep -i '^x-checksum-sha256:' "$headers" 2>/dev/null \
+  | tail -n 1 | cut -d: -f2- | tr -cd '0-9a-fA-F' | tr 'A-F' 'a-f')
+rm -f "$headers"
+if [ -z "$want" ]; then
+  rm -f "$partial"
+  echo "no sha256 in the response for cheesehost ($target); not installing it" >&2
+  exit 1
+fi
+if ! got=$(sha256_of "$partial"); then
+  rm -f "$partial"
+  echo "no sha256sum, shasum or openssl to check the download; not installing it" >&2
+  exit 1
+fi
+if [ "$got" != "$want" ]; then
+  rm -f "$partial"
+  echo "checksum mismatch for cheesehost ($target): expected $want, got $got" >&2
+  exit 1
+fi
 mv "$partial" "$dest/cheesehost"
 chmod +x "$dest/cheesehost"
 echo "installed to $dest/cheesehost"
@@ -190,11 +229,13 @@ $exe = Join-Path $dir 'cheesehost.exe'
 New-Item -ItemType Directory -Force $dir | Out-Null
 Write-Host "downloading cheesehost (windows-$arch)..."
 $partial = "$exe.part"
+$headers = "$exe.headers"
 Remove-Item -Force -ErrorAction SilentlyContinue $partial
 $url = "$origin/connector/latest/windows-$arch/cheesehost.exe"
 # Resume a download cut mid-transfer, as install.sh does.
 for ($attempt = 1; ; $attempt++) {
-  & curl.exe -fsSL -C - -o $partial $url
+  Remove-Item -Force -ErrorAction SilentlyContinue $headers
+  & curl.exe -fsSL -C - -D $headers -o $partial $url
   if ($LASTEXITCODE -eq 0) { break }
   if ($attempt -ge 5) {
     Remove-Item -Force -ErrorAction SilentlyContinue $partial
@@ -202,6 +243,21 @@ for ($attempt = 1; ; $attempt++) {
   }
   Write-Host "download interrupted; resuming (attempt $($attempt + 1))..."
   Start-Sleep -Seconds 2
+}
+# The same response that carried the bytes named their sha256; check the file
+# against it before it replaces anything, as install.sh does.
+$want = (Get-Content $headers -ErrorAction SilentlyContinue |
+  Where-Object { $_ -match '^X-Checksum-SHA256:' } | Select-Object -Last 1)
+if ($want) { $want = ($want -replace '^[^:]*:\s*', '').Trim().ToLower() }
+Remove-Item -Force -ErrorAction SilentlyContinue $headers
+if (-not $want) {
+  Remove-Item -Force -ErrorAction SilentlyContinue $partial
+  throw "no sha256 in the response for cheesehost (windows-$arch); not installing it"
+}
+$got = (Get-FileHash -Algorithm SHA256 -Path $partial).Hash.ToLower()
+if ($got -ne $want) {
+  Remove-Item -Force -ErrorAction SilentlyContinue $partial
+  throw "checksum mismatch for cheesehost (windows-$arch): expected $want, got $got"
 }
 try {
   Move-Item -Force $partial $exe
@@ -344,7 +400,14 @@ def _accepts_gzip(request: Request) -> bool:
     return False
 
 
-@router.api_route("/latest/{target}/{name}", methods=["GET", "HEAD"])
+@router.api_route(
+    "/latest/{target}/{name}",
+    methods=["GET", "HEAD"],
+    # Named here, not derived: FastAPI builds the default id from the first of the
+    # route's methods and those are a set, so the committed document would otherwise
+    # change with the process (backend/openapi.json is checked as text).
+    operation_id="download_connector_binary",
+)
 async def download_binary(target: str, name: str, request: Request) -> Response:
     """The connector for ``target``. ``X-Checksum-SHA256`` names its bytes, so
     the connection owner can ask which build is published with a HEAD.

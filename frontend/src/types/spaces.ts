@@ -12,6 +12,8 @@ export type Space = {
   visibleTaskLimit?: number | null
   /** 过审状态：没过审的板子，子资源（分类/题目/成员）一律读不到。 */
   reviewStatus?: 'PENDING' | 'APPROVED' | 'REJECTED'
+  /** 被驳回时审核人写的原因。 */
+  reviewReason?: string | null
   /**
    * 这块板的默认「给 AI 队友的指导」（#944）。四级继承的最外层，与
    * `SpaceCategory.teaching` 同形状；六格全空 = 没说。
@@ -199,3 +201,91 @@ export type SpaceMaterialVisibility = 'members' | 'admins'
  * 失效的 —— 那等于让人凭一次网络失败删掉有效的引用。
  */
 export type SpaceMaterialsState = 'loading' | 'ready' | 'error'
+
+// ---- 「我发布的题目」（`SpacesApi.getMyPublishedTasks` 的形状）-----------------
+//
+// 这几个原来长在 `@/types/apiSpaces` 里；挪到领域类型这儿，是因为「题目列表」
+// 拆出来的那半张画面（`views/spaces/detail/TasksView.vue`）只认 props、不连 API 层。
+
+/** 我发布的题目挂在哪个分类下。 */
+export type SpaceMyPublishedTaskCategory = {
+  id: number
+  name: string
+}
+
+/** 审到哪一步了。 */
+export type AnalyticsApproveType = 'NONE' | 'APPROVED' | 'DISAPPROVED'
+
+/** 这道题在别人眼里可不可见。 */
+export type SpaceTaskVisibilityStatus =
+  | 'PENDING_APPROVAL'
+  | 'REJECTED'
+  | 'APPROVED_HIDDEN'
+  | 'APPROVED_VISIBLE'
+  | 'ENDED'
+
+/** 「我发布的」列表里的一行：出题人自己看的题目，带审核状态和几项计数。 */
+export type SpaceMyPublishedTask = {
+  taskId: number
+  taskName: string
+  category: SpaceMyPublishedTaskCategory
+  approved: AnalyticsApproveType
+  visibilityStatus: SpaceTaskVisibilityStatus
+  isVisible: boolean
+  createdAt: number
+  publishedAt?: number | null
+  endedAt?: number | null
+  deadline?: number | null
+  /** 领取人数上限；`null` = 不限（真库用 0 表示不限，接口一律折成 null）。 */
+  participantLimit: number | null
+  participantCount: number
+  approvedParticipantCount: number
+  pendingParticipantApprovalCount: number
+  submittedParticipantCount: number
+  pendingReviewCount: number
+  successfulParticipantCount: number
+  failedParticipantCount: number
+  submissionConversionRate: number
+  successRate: number
+  latestSubmissionAt?: number | null
+}
+
+/** `SpaceMyPublishedTask` 的一页。 */
+export type SpaceMyPublishedTasks = {
+  tasks: SpaceMyPublishedTask[]
+}
+
+// ---- 空间分析 · 告警（`SpacesApi.getAnalyticsAlerts` 的形状）--------------------
+//
+// 原来长在旧网络栈的空间类型里；挪到领域类型这儿，是因为「告警」那一格拆出来的半张画面
+// （`views/spaces/detail/analytics/AlertsView.vue`）只认 props、不连 API 层。
+
+/** 管理员看板「告警」那一格里的几个待办计数。 */
+export type SpaceAnalyticsAlerts = {
+  pendingTaskApprovalCount: number
+  pendingParticipantApprovalCount: number
+  pendingSubmissionReviewCount: number
+  stalledTaskCount: number
+  overdueUnreviewedSubmissionCount: number
+  inactivePublisherCount: number
+}
+
+// ---- 空间申请（`SpacesApi.reviews` 的形状）-------------------------------------
+//
+// 原来长在旧网络栈的空间类型里；挪到领域类型这儿，是因为「空间申请」拆出来的那半张画面
+// （`views/admin/AdminSpacesPageView.vue`）只认 props、不连 API 层。
+
+/** 一条开版申请：谁、申请了什么版、什么时候、说了什么，以及审到哪一步。 */
+export type SpaceApplication = {
+  id: number
+  avatarId?: number | null
+  name: string
+  intro: string
+  reviewStatus: 'PENDING' | 'APPROVED' | 'REJECTED'
+  description: string
+  owner: string | null
+  reviewReason: string | null
+  reviewedBy: string | null
+  reviewedAt: string | null
+  createdAt: string
+}

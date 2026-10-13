@@ -25,9 +25,9 @@ from app.domain.memory.models import (
     MemoryEntry,
     MemoryMigrationPlan,
     MemoryMigrationStatus,
-    MemoryScope,
     user_scope_id,
 )
+from app.domain.memory.scopes import MemoryScope
 from app.domain.project.services import ProjectService
 from tests.integration.conftest import registered
 from tests.support.living_doc import write_overview

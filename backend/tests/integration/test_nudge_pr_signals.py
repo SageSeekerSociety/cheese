@@ -293,6 +293,24 @@ def test_review_comments_reach_the_agent_with_their_text(client, app_world):
     assert "app/x.py:3" in text
 
 
+def test_the_platforms_own_copy_of_a_send_back_is_not_handed_back(client, app_world):
+    """A 退回's comments reach 芝士 with the 退回 and are copied onto the PR; the
+    poller reading that copy back must not tell 芝士 the same thing again."""
+    from app.domain.review.pr_signals import PLATFORM_REVIEW_MARK
+
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("pending", "等待中：Backend Test")
+    fake.reviews_by_number[number] = [
+        _comment(11, body=f"**alice**：归档的也要排除\n\n{PLATFORM_REVIEW_MARK}")
+    ]
+
+    _poll(client)
+    wait_work_idle()
+
+    assert _nudges(client, tid, "pr_review") == []
+
+
 def test_inline_comments_are_not_fetched_when_the_pr_says_it_has_none(
     client, app_world
 ):
@@ -489,3 +507,46 @@ def test_poll_rollback_retries_event_intent_and_signature_together(
     _poll(client)
     _poll(client)
     assert len(_nudges(client, tid, "ci_failed")) == 1
+
+
+def test_checks_turning_green_on_the_same_commit_hands_the_card_back(client, app_world):
+    """2026-10-12 PR #3463：一次被读成红的检查后来转绿（重跑、或被顶替的取消运行
+    不再算红），head 没动。卡上那句「检查未通过」不清掉，看板就一直摆在「修复
+    检查」，验收人的黄灯也不亮 —— GitHub 早就说能合了。"""
+    from app.domain.review.repositories import AcceptCardRepository
+    from app.domain.room_task.presentation import card_waits_on_reviewer
+
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
+    _poll(client)
+    wait_work_idle()
+    assert _card_row(client, cid)["note_code"] is NoteCode.checks_failed
+
+    fake.check_state_by_sha[head_sha] = ("success", "全部 9 项检查通过")
+    _poll(client)
+    wait_work_idle()
+
+    row = _card_row(client, cid)
+    assert row["note_code"] is None
+    assert row["note"] == ""
+
+    async def _waits() -> bool:
+        async with client.test_factory() as session:
+            card = await AcceptCardRepository(session).get(uuid.UUID(cid))
+            assert card is not None
+            return card_waits_on_reviewer(card)
+
+    assert asyncio.run(_waits())
+
+
+def test_a_red_that_is_still_there_keeps_its_note(client, app_world):
+    """还红着就不许清：同一批失败再轮询一次，卡面照旧是「检查未通过」。"""
+    fake = app_world["fake"]
+    tid, cid, number, head_sha = _authorized(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("failure", "Backend Test: failure")
+    _poll(client)
+    _poll(client)
+    wait_work_idle()
+
+    assert _card_row(client, cid)["note_code"] is NoteCode.checks_failed

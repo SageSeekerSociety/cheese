@@ -13,8 +13,8 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
-import { beforeAll, describe, expect, it } from 'vitest'
+import { fireEvent, render } from '@testing-library/vue'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import RailItem from './RailItem.vue'
 
@@ -148,5 +148,19 @@ describe('RailItem 的可访问名称', () => {
     // v-tooltip 的内容渲染在 body 的 overlay 容器里，不在 container 内。
     expect(container.querySelector('a[href^="/project/"]')).not.toBeNull()
     expect(document.body.textContent).toContain('知是 2.0 融合演示')
+  })
+})
+
+describe('只有动作、没有去处的格子', () => {
+  // 「＋新建项目」：只用键盘的人也得建得了项目。
+  it('是一颗按钮，键盘够得着，按下就做那件事', async () => {
+    const action = vi.fn()
+    const view = mount({ key: 'add', type: 'item', title: '新建项目', add: true, action })
+
+    const button = view.getByRole('button', { name: '新建项目' })
+    button.focus()
+    expect(document.activeElement).toBe(button)
+    await fireEvent.click(button)
+    expect(action).toHaveBeenCalledTimes(1)
   })
 })

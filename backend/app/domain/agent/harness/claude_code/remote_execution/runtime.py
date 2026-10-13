@@ -12,6 +12,7 @@ the protocol is the same one. What else differs on Windows is in portable.py.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import contextlib
 import functools
@@ -60,10 +61,9 @@ SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 PROTOCOL_VERSION = 1
 
 # What this runtime reads from its own release, by its path there, with the
-# file it is built from in a checkout (under `backend/`). The launch ships
-# these (`launch.file_sources`), and whatever starts a copy of this runtime
-# installs them the same way (`tests/support/executor_release.py`), so a file
-# the runtime comes to need reaches the machine and every fixture, or neither.
+# file it is built from in a checkout (under `backend/`). The launch ships these
+# (`launch.file_sources`) and every copy of this runtime installs them the same
+# way (`tests/support/executor_release.py`): machine and fixture get the same.
 _OWN = (
     "runtime",
     "portable",
@@ -81,6 +81,7 @@ RELEASE_FILES = {
         for name in (*_OWN, "predecessor")
     },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
+    "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",
 }
@@ -391,7 +392,7 @@ class Executor:
         self.db_lock = threading.Lock()
         self.context_fs_entries = {}
         # Socket clients load this module without opening the service database.
-        import sqlite3
+        import sqlite3  # deferred-import: socket clients load this without a DB
 
         self.db = sqlite3.connect(
             self.state / "requests.sqlite", check_same_thread=False
@@ -624,7 +625,7 @@ class Executor:
             "tools/call", {"name": tool, "arguments": args}
         )
         if result.get("isError"):
-            raise RuntimeError(json.dumps(result.get("content")))
+            raise RuntimeError(result["content"][0]["text"])
         return json.loads(result["content"][0]["text"])
 
     # --- commands ------------------------------------------------------------
@@ -1247,7 +1248,7 @@ class Executor:
         root = (home / ".cheese" / "tasks" / task_id).resolve()
         root.relative_to(home)
         if not root.is_dir():
-            return {"error": "not_found"}
+            return {"error": "not_found", "missing": "worktree"}
         operation = params["operation"]
         if operation == "diff":
 
@@ -1323,7 +1324,7 @@ class Executor:
         path = (root / relative).resolve()
         path.relative_to(root)
         if not path.is_file():
-            return {"error": "not_found"}
+            return {"error": "not_found", "missing": "file"}
         if operation == "read":
             offset = params.get("offset", 0)
             count = params.get("size", 1024 * 1024)
@@ -2028,7 +2029,6 @@ def bridge(state, server, *, call=None):
 
 
 def main():
-    import argparse
 
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["start", "serve", "bridge", "request", "stop"])

@@ -17,6 +17,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -140,6 +141,7 @@ class Task(UuidPk, Timestamps, Base):
         UniqueConstraint("project_id", "number", name="uq_tasks_project_number"),
         # The tasks under each message of a channel's main line.
         Index("ix_tasks_upgraded_from_block_id", "upgraded_from_block_id"),
+        Index("ix_tasks_source_block_id", "source_block_id"),
     )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
@@ -227,9 +229,12 @@ class Task(UuidPk, Timestamps, Base):
     )
     last_check_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     last_check_detail: Mapped[str] = mapped_column(Text, default="", server_default="")
-    # 在哪台工作电脑上做。None = 跟着所在房间的那一项选择（再往上是项目默认）；
-    # 负责人改了才有自己的一份。第一次要用机器时解析一次，写进会话行，之后不变。
-    compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 新进来的 AI 队友在这个任务里用的执行环境（`agent.environment`）。None = 跟
+    # 所在频道的默认（再往上是项目默认）。改它不搬任何人：每位队友自己的那一份在
+    # `agent_environments`。
+    default_environment: Mapped[dict | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     # 哪位 AI 队友在做：它在名册上的座位（`agent_instance_handle`）。
     # None = 所在频道的队友（频道没有自己的就是项目默认的）。
     agent_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -272,6 +277,12 @@ class Task(UuidPk, Timestamps, Base):
     accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Its last delivery landed and its AI teammate is writing it up: the task
+    # closes when that turn ends (`room_task.closing`). Shown as accepted
+    # meanwhile; still open, so the turn can run and write the task document.
+    closing_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # When the thread was collapsed. `status == closed` is the flag; this is
     # when — kept apart so "closed" needs no timestamp to be true.
     closed_at: Mapped[datetime | None] = mapped_column(
@@ -289,3 +300,37 @@ class Task(UuidPk, Timestamps, Base):
         ),
         nullable=True,
     )
+    # The message whose words the task was made from: the one turned into it,
+    # or the person's message the turn its AI teammate created it in was
+    # answering. Unlike `upgraded_from_block_id` it can be a reply in a 支线 or
+    # a message inside another task, so it says where the task came from, not
+    # where it shows. Empty for a task someone created on its own.
+    source_block_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey(
+            "blocks.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_tasks_source_block_id_blocks",
+        ),
+        nullable=True,
+    )
+
+    @property
+    def people(self) -> tuple[str, ...]:
+        """This task's people — the owner first, then its contributors.
+
+        A question asked inside a task and landing on no one person waits on
+        them: whose work this is, and who answers for it. Both places that
+        record it read this one list (`agent/announce.py`'s ``notify_question``
+        writes the notification, `api/routes/awaiting.py` the 待办). A channel
+        or 支线 has no such list, so a question there still lands on nobody.
+
+        The owner leads because he is 唯一的主 (``owner_handle``); a contributor
+        who is also the owner, or listed twice, is one person here.
+        """
+        people: list[str] = []
+        for handle in (self.owner_handle, *self.contributor_handles):
+            name = (handle or "").strip()
+            if name and name not in people:
+                people.append(name)
+        return tuple(people)

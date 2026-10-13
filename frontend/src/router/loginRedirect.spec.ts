@@ -2,11 +2,17 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { carryLoginRedirect, postLoginTarget, stashOAuthRedirect, takeOAuthRedirect } from './loginRedirect'
+import {
+  carryLoginRedirect,
+  leaveSignInWhenSignedIn,
+  postLoginTarget,
+  stashOAuthRedirect,
+  takeOAuthRedirect,
+} from './loginRedirect'
 
 const blank = { template: '<div />' }
 
-function router() {
+function router(signedIn = false) {
   const r = createRouter({
     history: createWebHistory(),
     routes: [
@@ -16,7 +22,12 @@ function router() {
         name: 'Account',
         component: blank,
         children: [
-          { path: 'signin', name: 'SignIn', component: blank },
+          {
+            path: 'signin',
+            name: 'SignIn',
+            component: blank,
+            beforeEnter: leaveSignInWhenSignedIn(async () => signedIn),
+          },
           { path: 'signup', name: 'SignUpStart', component: blank },
         ],
       },
@@ -86,5 +97,31 @@ describe('OAuth 出站再回来', () => {
     stashOAuthRedirect('/projects/7')
     expect(takeOAuthRedirect()).toBe('/projects/7')
     expect(takeOAuthRedirect()).toBe('/')
+  })
+})
+
+describe('已经登录的人打开登录页', () => {
+  it('回到他本来要去的那一页', async () => {
+    const r = router(true)
+    await r.push('/account/signin?redirect=/projects/7/topics/3')
+    expect(r.currentRoute.value.fullPath).toBe('/projects/7/topics/3')
+  })
+
+  it('没有要去的地方就回首页', async () => {
+    const r = router(true)
+    await r.push('/account/signin')
+    expect(r.currentRoute.value.name).toBe('Home')
+  })
+
+  it('站外的 redirect 不认，也回首页', async () => {
+    const r = router(true)
+    await r.push('/account/signin?redirect=//evil.example/x')
+    expect(r.currentRoute.value.name).toBe('Home')
+  })
+
+  it('没登录的人照常看到登录页', async () => {
+    const r = router(false)
+    await r.push('/account/signin')
+    expect(r.currentRoute.value.name).toBe('SignIn')
   })
 })

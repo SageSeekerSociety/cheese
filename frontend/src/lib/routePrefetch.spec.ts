@@ -91,13 +91,13 @@ async function fresh() {
   vi.resetModules()
   const api = await import('@/api')
   const prefetch = await import('./routePrefetch')
-  const cache = await import('./blockCache')
+  const blocks = await import('@/query/blocks')
   return {
     listBlocks: vi.mocked(api.listBlocks),
     markTopicRead: vi.mocked(api.markTopicRead),
     ...prefetch,
-    refreshBlockCache: cache.refreshBlockCache,
-    cachedWindow: cache.cachedWindow,
+    prefetchNewestBlocks: blocks.prefetchNewestBlocks,
+    cachedWindow: blocks.cachedWindow,
   }
 }
 
@@ -170,7 +170,7 @@ describe('hover 预取', () => {
     expect(listBlocks).toHaveBeenCalledWith('t4', expect.anything())
   })
 
-  it('同一个话题预取成功之后不再重复预取', async () => {
+  it('同一个话题刚取过，再停上来不重复取', async () => {
     const { prefetchOnHover, listBlocks } = await fresh()
     listBlocks.mockResolvedValue(page(['b1']))
     const { router } = lazyRouter()
@@ -182,6 +182,21 @@ describe('hover 预取', () => {
     await pointerRests()
 
     expect(listBlocks).toHaveBeenCalledTimes(1)
+  })
+
+  it('取过的那一份放久了，再停上来就再取一次：点进去看到的不是半小时前的样子', async () => {
+    const { prefetchOnHover, listBlocks } = await fresh()
+    listBlocks.mockResolvedValue(page(['b1']))
+    const { router } = lazyRouter()
+    const hover = () => prefetchOnHover({ router, to: { name: 'topic', params: { id: 't1' } }, topicId: 't1' })
+
+    hover()
+    await pointerRests()
+    await vi.advanceTimersByTimeAsync(5 * 60_000)
+    hover()
+    await pointerRests()
+
+    expect(listBlocks).toHaveBeenCalledTimes(2)
   })
 
   it('同一个页面的代码只下一次', async () => {
@@ -259,14 +274,14 @@ describe('hover 预取', () => {
   })
 
   it('预取排在后台刷新的同一条闸后面，不另开一条', async () => {
-    const { prefetchOnHover, refreshBlockCache, listBlocks } = await fresh()
+    const { prefetchOnHover, prefetchNewestBlocks, listBlocks } = await fresh()
     const held = deferred<BlockPage>()
     listBlocks.mockReturnValue(held.promise)
     const { router } = lazyRouter()
 
-    // 两条闸道先被后台刷新占满
-    void refreshBlockCache('busy-1')
-    void refreshBlockCache('busy-2')
+    // 两条闸道先被后台刷新（未读变多的房间）占满
+    void prefetchNewestBlocks('busy-1', { fresh: true })
+    void prefetchNewestBlocks('busy-2', { fresh: true })
     await vi.advanceTimersByTimeAsync(0)
     expect(listBlocks).toHaveBeenCalledTimes(2)
 
@@ -300,9 +315,17 @@ describe('hover 预取', () => {
     listBlocks.mockResolvedValue(page(['b1']))
     const { router } = lazyRouter()
     const { useWorkspaceStore } = await import('@/stores/workspace')
+    const { seedProject, seedProjects } = await import('@/test/seedQueries')
+    seedProjects([])
+    seedProject('p1', {
+      topics: [],
+      members: [],
+      unread: { t1: { count: 3, new: true, messages: 3 } },
+      privateUnread: {},
+      notifyLevels: {},
+    })
     const store = useWorkspaceStore()
-    store.projectId = 'p1'
-    store.unreadMap = { t1: { count: 3, new: true, messages: 3 } }
+    store.openProject('p1')
 
     prefetchOnHover({ router, to: { name: 'topic', params: { id: 't1' } }, topicId: 't1' })
     await pointerRests()
@@ -360,6 +383,91 @@ describe('首屏之后空闲预取路由', () => {
     cancel()
     await vi.advanceTimersByTimeAsync(100)
     expect(load).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('框架层按页名空闲预取', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    desktop()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  /** 两条各带参数的懒加载路由：框架层手上没有那些参数，只能点名。 */
+  function namedRouter() {
+    const overview = vi.fn(async () => ({ default: { template: '<div />' } }))
+    const task = vi.fn(async () => ({ default: { template: '<div />' } }))
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/p/:id/overview', name: 'workspace-overview', component: overview },
+        { path: '/p/:id/t/:topic/task/:task', name: 'workspace-task', component: task },
+      ],
+    })
+    return { router, overview, task }
+  }
+
+  it('按名字热，不为地址里的参数编一个出来', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview, task } = namedRouter()
+
+    warmPagesWhenIdle(router, ['workspace-overview', 'workspace-task'])
+    expect(overview).not.toHaveBeenCalled() // 空闲之前不下
+    await vi.advanceTimersByTimeAsync(2000)
+
+    expect(overview).toHaveBeenCalledTimes(1)
+    expect(task).toHaveBeenCalledTimes(1)
+  })
+
+  it('同一页只下一次（换个话题回来不该再下一遍）', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview } = namedRouter()
+
+    warmPagesWhenIdle(router, ['workspace-overview'])
+    await vi.advanceTimersByTimeAsync(100)
+    warmPagesWhenIdle(router, ['workspace-overview'])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).toHaveBeenCalledTimes(1)
+  })
+
+  it('页名对不上就当没这回事', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview } = namedRouter()
+
+    warmPagesWhenIdle(router, ['nope'])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).not.toHaveBeenCalled()
+  })
+
+  it('省流量时一个都不下', async () => {
+    connection({ saveData: true })
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview } = namedRouter()
+
+    warmPagesWhenIdle(router, ['workspace-overview'])
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).not.toHaveBeenCalled()
+  })
+
+  it('人在这期间离开了：取消之后剩下的不再下', async () => {
+    const { warmPagesWhenIdle } = await fresh()
+    const { router, overview, task } = namedRouter()
+
+    const cancel = warmPagesWhenIdle(router, ['workspace-overview', 'workspace-task'])
+    await vi.advanceTimersByTimeAsync(0)
+    cancel()
+    await vi.advanceTimersByTimeAsync(100)
+
+    expect(overview).toHaveBeenCalledTimes(1)
+    expect(task).not.toHaveBeenCalled()
   })
 })
 

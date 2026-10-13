@@ -146,10 +146,11 @@ const path = (s: ChartSeries): string => s.values.map((v, i) => `${i === 0 ? 'M'
 /** 末点直标：不开 tooltip 也有结论（「今天走到哪」）。多系列只标**第一条**（主系列）：
  *  每条线都标一个数，右缘就是一列数字墙。系列**全相等**时不标 —— 零流量周标一个
  *  「0」像在说「没有数据」，而压着底的那条线本身就是答案；恒值线同理。
- *  直标会占据最末刻度左边那一小块，它落在**最后一天**的 x 刻度上时那个刻度让位
- *  （同一个位置两个数，留结论、不留坐标 —— 窗口长度在页头上已经写着）。 */
-const END_LABEL_GUARD = 24
-
+ *
+ *  直标和最后一个 x 刻度**同时画**：直标的基线在点上方 8px，最低也在基线（y=160）
+ *  上方，x 刻度字在 y=176 —— 两行字纵向错开，不会压在一起。曾经让最后一个刻度给直标
+ *  让位，结果最后一天（「今天」、最后一个小时）在轴上读不出是哪一天：点画到了 10/12，
+ *  轴字停在 10/11。 */
 const endLabels = computed(() => {
   const s = props.series[0]
   if (!s || s.values.length === 0) return []
@@ -158,27 +159,47 @@ const endLabels = computed(() => {
   return [{ text: fmtNum(v), x: x(s.values.length - 1) - 6, y: y(v) - 8 }]
 })
 
+/** 一个 x 轴字大约占多宽：12px 轴字每字符约 7px（与 `padLeft` 同一把尺），两边
+ *  各留 4px。按最长的那个算 —— 窗口跨进两位数日期（「10/10」）时字一下变宽。 */
+const tickW = computed(() => 8 + 7 * Math.max(0, ...props.xLabels.map((label) => label.length)))
+
+/** 一个刻度字横向占的区间：首个靠左、末个靠右、其余居中（与模板的 text-anchor 一致）。 */
+const tickSpan = (tick: { i: number; anchor: 'start' | 'middle' | 'end' }): [number, number] => {
+  const at = x(tick.i)
+  const w = tickW.value
+  if (tick.anchor === 'start') return [at, at + w]
+  if (tick.anchor === 'end') return [at - w, at]
+  return [at - w / 2, at + w / 2]
+}
+
 /** x 轴抽稀：标 `ceil((n-1)/6)` 的倍数位与最后一天 —— 7 天全标（stride=1），
  *  30 天标 6+1 个，90 天标 0/15/30/45/60/75/89 共 7 个。轴上永远读得出两端和
- *  走向，中间的交给 hover。 */
+ *  走向，中间的交给 hover。
+ *
+ *  窄画布上一格放不下一个字时，步长再放大到放得下。两端的字不居中（第一个靠左、最后
+ *  一个靠右），各比居中的多占半个字宽，所以步长放得下仍可能压上邻居：中间的字压上前一个
+ *  就不画，压上最后一个的也让位给最后一个（两端永远在）。390px 宽的 7 天窗口里，
+ *  「10/10」和「10/11」曾经叠在一起；每小时那张图上「10-06 00:00」压过第二个字。 */
 const xTicks = computed(() => {
   const n = props.xLabels.length
   if (n === 0) return []
-  const stride = Math.max(1, Math.ceil((n - 1) / 6))
+  const fit = step.value > 0 ? Math.ceil(tickW.value / step.value) : 1
+  const stride = Math.max(1, Math.ceil((n - 1) / 6), fit)
   const out: { i: number; anchor: 'start' | 'middle' | 'end' }[] = []
   for (let i = 0; i < n; i += stride) {
     out.push({ i, anchor: i === 0 ? 'start' : 'middle' })
   }
   if (n - 1 > out[out.length - 1]!.i) out.push({ i: n - 1, anchor: 'end' })
   else out[out.length - 1]!.anchor = 'end'
-  return out
-})
-
-/** 末点直标出现时让位的那个 x 刻度（见 `endLabels` 的守卫注）。 */
-const xTicksVisible = computed(() => {
-  if (endLabels.value.length === 0) return xTicks.value
-  const lastX = x(props.xLabels.length - 1)
-  return xTicks.value.filter((tick) => Math.abs(x(tick.i) - lastX) > END_LABEL_GUARD)
+  if (out.length === 1) return out
+  const last = out[out.length - 1]!
+  const kept = [out[0]!]
+  for (const tick of out.slice(1, -1)) {
+    if (tickSpan(tick)[0] >= tickSpan(kept[kept.length - 1]!)[1]) kept.push(tick)
+  }
+  while (kept.length > 1 && tickSpan(kept[kept.length - 1]!)[1] > tickSpan(last)[0]) kept.pop()
+  kept.push(last)
+  return kept
 })
 
 /** 点标记只在点数 ≤ 45 时画：90 个点在 1400px 宽下间距 ~15px，实心圆会糊成一条粗线
@@ -313,7 +334,7 @@ const tooltipLeft = computed(() => {
             :y2="PAD_TOP + PLOT_H"
           />
           <text
-            v-for="tick in xTicksVisible"
+            v-for="tick in xTicks"
             :key="`x-${tick.i}`"
             class="alc__ink"
             :x="x(tick.i)"

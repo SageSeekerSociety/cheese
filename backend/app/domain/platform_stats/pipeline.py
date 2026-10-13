@@ -31,6 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.dispatch_log import DispatchRow
 from app.domain.agent.models import AgentTurn
+from app.domain.block.models import Block
+from app.domain.block.repositories import BlockRepository
 from app.domain.device.models import DeviceHealthRow
 from app.domain.review.archive import OPEN_CARD_STATUSES
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -216,7 +218,6 @@ class PipelineRepository:
 
     async def awaiting_questions(self, *, limit: int = 20) -> dict[str, Any]:
         """还堵在「芝士问了、没人答」上的事。来源是块的内容状态，不是状态列。"""
-        from app.domain.block.repositories import BlockRepository
 
         # `_awaiting_an_answer` 的签名是「这些 id 里哪几个」，不是「全平台哪几个」——
         # 先取出候选（未关的活、未归档的房），再让块仓储挑出停在未答提问上的那些。
@@ -275,7 +276,6 @@ class PipelineRepository:
         `ix_blocks_failed_turns` 还要求 `severity='error'`，这里不要求），当前规模可以
         接受，但读的人该知道这一点 —— 所以它和「有索引的列」不是一类查询。
         """
-        from app.domain.block.models import Block
 
         code_col = func.coalesce(Block.meta.op("->>")("code"), "unclassified")
         rows = await self._session.execute(

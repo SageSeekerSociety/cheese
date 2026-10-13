@@ -102,6 +102,8 @@ describe('组件预览站', () => {
     // Vuetify 的「少一个 provide」、vue-router 的「没有这条路由」都从这两个口子出。
     warned = vi.spyOn(console, 'warn').mockImplementation(() => {})
     errored = vi.spyOn(console, 'error').mockImplementation(() => {})
+    // Vuetify rounds the opened invite menu's position to physical pixels.
+    vi.stubGlobal('devicePixelRatio', 1)
     vi.stubGlobal('visualViewport', {
       width: 1024,
       height: 768,
@@ -187,6 +189,61 @@ describe('组件预览站', () => {
       }
     })
   }
+
+  // 真页面（`DemoCatalog.vue`）挂每一件时，装的**始终是** `demoRouter` + Vuetify + i18n +
+  // pinia —— 不管这一条自己声明要哪几样。上面那一组按每一条声明的 `needs` 装：声明里
+  // 漏了 router，画面里那处按 name 指路的去处就根本没被点到，spec 静静地绿着，可真页面
+  // 上它是断的（`router-link`、带 `to` 的 `BaseButton` 碰到没注册的 name 会抛，整段渲染
+  // 停在那儿）。这一组照真页面那样挂，专门守这件事：哪一件声明漏了 router 也护得住。
+  describe('照真页面那样挂（始终装 demoRouter）', () => {
+    for (const entry of CATALOG) {
+      for (const [index, state] of entry.states.entries()) {
+        it(`${entry.id} 第 ${index + 1} 格「${state.name}」挂得起来`, async () => {
+          const host = entry.layout
+            ? ({ ...LAYOUT, components: { Case: entry.component } } as unknown as Component)
+            : entry.component
+          const { container } = render(host, {
+            props: stateProps(entry, state),
+            slots: state.slot ? { default: state.slot } : {},
+            global: {
+              plugins: [createVuetify({ components, directives }), i18n, demoRouter(), createPinia()],
+            },
+          })
+          const scope = entry.teleport ? document.body : container
+          // 只等它画出来，不看具体内容 —— afterEach 那一条已经守住了「这一挂的过程中
+          // 一句 warn/error 都没有」。按 name 指路却没注册的那一处会在这里当场抛出来。
+          await waitFor(() => expect(scope.innerHTML.trim()).not.toBe(''))
+        })
+      }
+    }
+
+    // 上面那一组是**静态**挂：「成员页」页头那颗「邀请成员」是个懒挂的 `v-menu`，菜单
+    // 内容要等点开才渲染 —— 里面那两条 `:to`（邀请码 / 邮箱域名组）在没点开时根本没进
+    // 过渲染，名字没在 `demoRouter` 里注册也看不出来。这一条真把菜单点开，守的正是静态
+    // 挂护不住的那一处：名字缺了，点开这一刻 `router-link` 会当场抛，菜单画不出来。
+    it('members-view：点开邀请菜单，两条按 name 指路的去处也接得上（懒挂，静态挂看不到）', async () => {
+      const entry = CATALOG.find((e) => e.id === 'members-view')
+      expect(entry).toBeTruthy()
+      render(entry!.component, {
+        props: stateProps(entry!, entry!.states[0]),
+        global: {
+          plugins: [createVuetify({ components, directives }), i18n, demoRouter(), createPinia()],
+        },
+      })
+      // 菜单还关着，那两条去处没渲染出来。
+      expect(document.body.textContent).not.toContain('邀请码')
+      const activator = Array.from(document.querySelectorAll('button')).find((b) => b.textContent?.includes('邀请成员'))
+      expect(activator, '没找到页头那颗「邀请成员」').toBeTruthy()
+      await fireEvent.click(activator!)
+      await waitFor(() => expect(document.body.textContent).toContain('邀请码'))
+      const links = Array.from(document.querySelectorAll('a'))
+      const codes = links.find((a) => a.textContent?.includes('邀请码'))
+      const domains = links.find((a) => a.textContent?.includes('邮箱域名组'))
+      // 路径照 `router/spaces.ts`：名字在表里、href 也对得上真页面。
+      expect(codes?.getAttribute('href')).toBe('/spaces/8/manage/settings/invite-codes')
+      expect(domains?.getAttribute('href')).toBe('/spaces/8/manage/settings/domain-groups')
+    })
+  })
 
   describe('页面本身', () => {
     function mount(path: string) {

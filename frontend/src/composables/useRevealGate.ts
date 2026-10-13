@@ -9,11 +9,11 @@
 // 没有闸的地方（页面没提供），占闸是空操作，组件照旧自己加载自己显示。
 import type { InjectionKey, Ref } from 'vue'
 
-import { computed, getCurrentInstance, inject, onBeforeUnmount, provide, ref } from 'vue'
+import { computed, getCurrentInstance, inject, onBeforeUnmount, provide, ref, watch } from 'vue'
 
 type Release = () => void
 
-interface RevealGate {
+export interface RevealGate {
   hold: () => Release
 }
 
@@ -49,4 +49,36 @@ export function holdRevealGate(): Release {
   const release = gate.hold()
   onBeforeUnmount(release)
   return release
+}
+
+/**
+ * 在 setup 里调用：活动的一栏在首次取数期间占住显示闸。
+ * `active` 允许同一页在切栏时重新占闸；隐藏的栏不参与。
+ */
+export function holdRevealUntil(
+  settled: () => boolean,
+  active: () => boolean = () => true,
+  providedGate?: RevealGate
+): void {
+  if (!getCurrentInstance()) return
+  // 同一 setup 提供的闸不能由 inject 读到，页面接线时显式传入。
+  const gate = providedGate ?? inject(GATE, null)
+  if (!gate) return
+
+  let release: Release | undefined
+  const reconcile = () => {
+    if (active() && !settled()) {
+      release ??= gate.hold()
+      return
+    }
+    release?.()
+    release = undefined
+  }
+  reconcile()
+  const stop = watch([settled, active], reconcile)
+  onBeforeUnmount(() => {
+    stop()
+    release?.()
+    release = undefined
+  })
 }

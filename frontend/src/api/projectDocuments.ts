@@ -1,19 +1,29 @@
 // 项目自己的文档：资料库里那些能一起改的文档。对话自带的那一份不在列表里，
 // 但资料库的搜索找得到它，可以另存一份进来。
-import type { ListPayload } from '../cx_types'
 import type { DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
+import { t } from '../i18n'
 import { rememberNumbered } from '../lib/addresses'
 
-import { request } from './http'
+import { authHeaders, BASE, request } from './http'
 
 export type { DocumentHit, DocumentSearch, ProjectDocument } from '../lib/projectDocument'
 
 const base = (projectId: string) => `/projects/${encodeURIComponent(projectId)}/documents`
 const one = (documentId: string) => `/documents/${encodeURIComponent(documentId)}`
 
-export function listProjectDocuments(projectId: string): Promise<ListPayload<ProjectDocument>> {
-  return request<ListPayload<ProjectDocument>>(base(projectId)).then((page) => {
+/** 列表里的一份文档，带着它在资料库页那张混排的表里的位置（后端 `app/core/rank.py`）。 */
+export type ListedDocument = ProjectDocument & { rank: string }
+
+/** 项目自己的文档，一页一页地给，最近改过的在前；`next` 是下一页的游标。 */
+export function listProjectDocuments(
+  projectId: string,
+  cursor: string | null = null,
+  limit = 50
+): Promise<{ data: ListedDocument[]; next: string | null }> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (cursor) params.set('cursor', cursor)
+  return request<{ data: ListedDocument[]; next: string | null }>(`${base(projectId)}?${params}`).then((page) => {
     rememberNumbered('docs', page.data)
     return page
   })
@@ -42,6 +52,19 @@ export function renameDocument(documentId: string, title: string): Promise<Proje
 
 export function deleteDocument(documentId: string): Promise<unknown> {
   return request(one(documentId), { method: 'DELETE' })
+}
+
+/** 文档里引用的一张图（`library/<名字>`，或任务文档所在频道里的文件），取回来做成
+ *  `<img>` 能用的 object URL。读得了这份文档的人才拿得到。
+ *
+ *  先 fetch 再转 URL，是因为只有 fetch 带得上登录凭证，`<img src>` 发出的请求是匿名的。
+ *  调用方在不再需要时 `URL.revokeObjectURL`。 */
+export async function documentImageUrl(documentId: string, path: string): Promise<string> {
+  const res = await fetch(`${BASE}${one(documentId)}/image?path=${encodeURIComponent(path)}`, {
+    headers: authHeaders(),
+  })
+  if (!res.ok) throw new Error(t('global.request.imageFailed', { status: res.status }))
+  return URL.createObjectURL(await res.blob())
 }
 
 /** 这份文档最后存下的正文；还没写过字时是空的。 */

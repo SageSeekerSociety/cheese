@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -37,17 +38,25 @@ func pythonArchive(t *testing.T, entries map[string]string) []byte {
 	return buf.Bytes()
 }
 
-// The server's toolchain route, serving body with the digest it claims.
+const placedBwrap = "#!/bin/sh\necho placed bwrap\n"
+
+// The server's toolchain route, serving body as Python with the digest it
+// claims, and a bwrap; asked counts the requests for Python.
 func toolchainServer(t *testing.T, body []byte, claimed string, asked *atomic.Int32) string {
 	t.Helper()
+	bwrap := pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap})
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		asked.Add(1)
-		if !strings.HasPrefix(r.URL.Path, "/connector/toolchain/python/") {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/connector/toolchain/python/"):
+			asked.Add(1)
+			w.Header().Set("X-Checksum-SHA256", claimed)
+			w.Write(body)
+		case strings.HasPrefix(r.URL.Path, "/connector/toolchain/bubblewrap/"):
+			w.Header().Set("X-Checksum-SHA256", digest(bwrap))
+			w.Write(bwrap)
+		default:
 			http.NotFound(w, r)
-			return
 		}
-		w.Header().Set("X-Checksum-SHA256", claimed)
-		w.Write(body)
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL + "/connector"
@@ -136,5 +145,39 @@ func TestAnArchiveCannotWriteOutsideItsDirectory(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".cheese", "escaped")); err == nil {
 		t.Fatal("a file was written outside the runtime directory")
+	}
+}
+
+func TestOnLinuxThePlatformsBwrapIsPlacedWhateverTheSystemHas(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("bwrap is placed on Linux only")
+	}
+	home := machine(t, true)
+	bin := strings.SplitN(os.Getenv("PATH"), ":", 2)[0]
+	os.WriteFile(filepath.Join(bin, "bwrap"), []byte("#!/bin/sh\necho system bwrap\n"), 0o755)
+	var asked atomic.Int32
+	if err := Ensure(context.Background(), toolchainServer(t, nil, "", &asked), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command("bwrap").Output()
+	if err != nil || strings.TrimSpace(string(out)) != "placed bwrap" {
+		t.Fatalf("bwrap on PATH is not the placed one: %q, %v", out, err)
+	}
+	if !strings.HasPrefix(os.Getenv("PATH"), filepath.Join(home, ".cheese", "runtime", "bubblewrap")+":") {
+		t.Fatalf("PATH: %s", os.Getenv("PATH"))
+	}
+}
+
+func TestElsewhereNoBwrapIsPlaced(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("bwrap is placed on Linux")
+	}
+	home := machine(t, true)
+	var asked atomic.Int32
+	if err := Ensure(context.Background(), toolchainServer(t, nil, "", &asked), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".cheese", "runtime", "bubblewrap")); err == nil {
+		t.Fatal("bwrap was placed on a system that does not run it")
 	}
 }

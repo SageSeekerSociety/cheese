@@ -16,7 +16,7 @@ Enrolled devices provide execution for ordinary rooms: project files, shell comm
 
 - Cheese installs its Claude build at `~/.cheese/claude/versions/<pin>`. It leaves the owner's version store and `~/.local/bin/claude` unchanged.
 - Session configuration, home and worktrees live under Cheese-owned directories. Machine credentials are read from the owner's configuration under the existing authorization; the launcher writes neither the owner's `~/.claude` nor project configuration. Native skills live in the session's `$CLAUDE_CONFIG_DIR/skills/`.
-- This boundary applies to the Cheese integration. A room on an enrolled machine runs its tools in a bubblewrap sandbox by default, and over the whole machine only when the machine's owner gave it that (`where-a-turn-runs.md` §四). Nothing is installed with the owner's sudo: a Linux machine without bubblewrap or unprivileged user namespaces refuses an isolated room with what to install.
+- This boundary applies to the Cheese integration. A session on an enrolled machine runs its tools in a bubblewrap sandbox (a `devices_of:<owner>` spec), and over the whole machine only when the machine's owner chose that machine for it (`self_hosted`, `where-a-turn-runs.md` §四). Nothing is installed with the owner's sudo: a Linux machine without unprivileged user namespaces says so on its owner's devices page and is given no sandbox.
 - 装在**他能写的目录**——否则自更新永远失败，且无声（#501）。
 
 ### 为什么这条特别容易破
@@ -80,13 +80,13 @@ unit 文件由 `cheesehost link connect` 每次重写（kardianos 本身拒绝�
    ```bash
    curl -fsSL <origin>/connector/install.sh | sh
    ```
-   脚本探测平台、下对应二进制到 `~/.local/bin/cheesehost`，不带任何 secret、不含业务逻辑，最后提示 `next: cheesehost link connect <origin>/connector`。
+   脚本探测平台、下对应二进制到 `~/.local/bin/cheesehost`，不带任何 secret、不含业务逻辑，最后提示 `next: cheesehost link connect <origin>/connector`。**下完先校验**：算文件的 sha256，与同一次响应里 `X-Checksum-SHA256` 声明的值比对，不符或没这个头就不安装、非零退出——中间的 relay 截断或替换了字节，不能因此落到 PATH 上变成可执行文件。
 
    Windows 上（没装桌面端的机器，比如服务器）在 PowerShell 里运行，作用相同：
    ```powershell
    irm <origin>/connector/install.ps1 | iex
    ```
-   它把 `cheesehost.exe` 放到 `%LOCALAPPDATA%\cheese\bin` 并加进用户 PATH，不需要管理员；`cheesehost uninstall` 会把这条 PATH 一并去掉。
+   它把 `cheesehost.exe` 放到 `%LOCALAPPDATA%\cheese\bin` 并加进用户 PATH，不需要管理员；`cheesehost uninstall` 会把这条 PATH 一并去掉。校验与 `install.sh` 相同。
 
 2. **`cheesehost link connect <origin>/connector`**。这台机器还没登录，它先走登录：CLI 打 `POST /connector/auth/device/start`，拿回 `device_code`，打印一个 `approve_url`（指向前端 `/connect?code=<code>`），然后**阻塞轮询** `POST /connector/auth/device/poll`，等人批准。
 
@@ -114,6 +114,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 | **bash** | 启动器本身就是 `bash -lc` 脚本 | 必须 |
 | **node** | 启动器用 node 写 `~/.claude.json` 的 per-project trust 闸门（动态 key，shell heredoc 做不到） | 必须 |
 | **curl** | `install.sh` 用 curl 下二进制 | 必须 |
+| **sha256sum**（coreutils）/ **shasum** / **openssl**（任一） | `install.sh` 算下载文件的 sha256，与响应头 `X-Checksum-SHA256` 比对 | 必须，Linux 上有前两个、macOS 上有后两个，三个都没有则拒绝安装 |
 | **tmux** | 把 runner 和它握着的 `claude` 养在持久会话里，链路掉线不丢进程 | 必须。连接器没有 tmux 就直接退出，所以 `link connect` 在批准之前先找一遍 tmux，找不到就停下并说明怎么装；桌面端在 Mac 上自带一份 |
 | **git** | agent 把项目 clone 进工作目录、把话题分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
 | **python3**（3.11 以上） | 会话的运行程序（runner）、执行器，以及平台发到机器上跑的小工具（计量隧道、`cheese serve` 的预览隧道）。只用标准库，机器上不需要 venv、不需要 `pip install` | 必须。机器上的 `python3` 低于 3.11 或者没有时（每台 Mac 自带的 `/usr/bin/python3` 都是 3.9），连接器从服务器的 toolchain 路由取一份固定版本（python-build-standalone）放到 `~/.cheese/runtime/python`，排到自己 PATH 的最前面；会话窗口也带着这个 PATH 启动。取不到时连接照常，后台服务下次启动再取 |
@@ -202,9 +203,8 @@ claude -p 的 stdout（stream-json）               读循环按游标向 runner
 ### 5.3 设备离线时的表现
 
 - **设备掉线**：`device_hub.is_online` 转 false，「设置 → 设备」里该设备变灰「离线」，并写着上次在线的时间（`device.last_seen_at`：连上时记一次，连接期间最多每分钟记一次）。连接断开算掉线，连接器 45 秒（三次心跳）没有消息也算：机器睡眠或断网时，代理那头的连接会一直挂着，直到机器醒来才关，所以平台按心跳判断，不等连接关闭。掉线那一刻，已经发出、正在等回话的调用立刻失败（`LinkInterrupted`，结果未知，不会重发），不会等到各自超时。掉线后 15 秒内（`RECONNECT_GRACE_S`）新来的调用等机器重连并发来 hello 再发出；过了这段时间仍没回来，或者这个进程从没见过这台机器，调用立刻失败（`DeviceOffline`）。CLI 侧带退避重连 + 心跳，NAT 后也能恢复；持久 tmux 会话在掉线期间**继续跑**，runner 照记它的日志，重连后后端接着读，工作树/会话不丢。
-- **已 pin 该设备的话题发 turn**：`resolve_pinned_device` 发现 pinned 设备离线 → 抛 `ScreenSetupError`「话题绑定的算力设备已离线，请重新连接该设备再继续本轮（不会漂到别的设备，以免工作树/会话错乱）」→ 该轮排队/失败重试，**绝不漂到别的在线设备**。
-- **话题还没 pin、且没有任何绑定设备在线**：报「没有在线的绑定设备可运行本轮（self-hosted 设备未连接）」。
-- **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、`DeviceChannel.available` 转 false、市场 listing 里 `device` 变为不可选。
+- **会话的环境要用的设备离线**：这次工具调用答「「设备」没有连上平台」（不进沙箱时）或「这个规格的电脑现在都不在线」（某人设备的沙箱），对话和平台工具照常，**不会换到别的规格或别人的设备上**。
+- **解绑/撤销 token**：`DELETE /my/devices/{id}` 或服务端撤销 durable token → 该设备所有 screen 失效、`device_hub` 标记离线、市场 listing 里「自己的设备」在没有别的在线设备时变为不可选。
 
 ---
 

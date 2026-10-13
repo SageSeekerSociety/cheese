@@ -1,14 +1,18 @@
 <script setup lang="ts">
-// 项目总览（容器）：读项目总览那份文档、最近进展、项目的任务和名册，去任务页、文档
+// 项目总览（容器）：读项目目标、最近进展、项目的任务和名册，去任务页、文档
 // 页、全部任务都在这里；画面在同目录的 ProjectOverviewView。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask } from '@/cx_types'
 import type { ProgressItem } from '@/types/projectProgress'
+import type { ChallengeDeadline } from '@/views/workspace/ProjectOverviewView.vue'
 
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
+
+import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import {
   deleteProjectArtifact,
@@ -18,11 +22,12 @@ import {
   publishProjectSite,
   renameProjectArtifact,
 } from '@/api'
-import { getDocumentText, getProjectOverview } from '@/api/projectDocuments'
-import { listProjectProgress } from '@/api/projectProgress'
 import { memberName } from '@/lib/agentNames'
-import { readProjectTasks } from '@/lib/projectTasks'
+import { prefetchNow } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { overviewQuery, progressQuery, projectQuery } from '@/query/project'
+import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectOverviewView from '@/views/workspace/ProjectOverviewView.vue'
 
@@ -31,70 +36,51 @@ const props = defineProps<{ projectId: string }>()
 const router = useRouter()
 const store = useWorkspaceStore()
 
-const overviewText = ref<string | null>(null)
-// 还没读到的是 null：画面据此不写「0」和「暂无」。
-const progress = ref<ProgressItem[] | null>(null)
-const progressFailed = ref(false)
-const tasks = ref<RoomTask[] | null>(null)
+// 三块都在缓存里：回到这个项目的总览先照着上一次的画，背后重取，回来了原地换——不先
+// 清空成一片骨架；切回标签页时过期了的再取一次。没读到过的才是 null，画面据此不写
+// 「0」和「暂无」。一次网络抖动不该让「谁在做什么」变空：读失败时留着上一次的。只要
+// 还在进行的：总览画的是进行中的事。
+const overview = useQuery(
+  computed(() => overviewQuery(props.projectId)),
+  queryClient
+)
+const recent = useQuery(
+  computed(() => progressQuery(props.projectId)),
+  queryClient
+)
+const work = useQuery(
+  computed(() => openProjectTasksQuery(props.projectId)),
+  queryClient
+)
+holdRevealUntil(() => !overview.isPending.value && !recent.isPending.value && !work.isPending.value)
 
-async function loadOverview() {
-  const pid = props.projectId
-  try {
-    const { id } = await getProjectOverview(pid)
-    const text = await getDocumentText(id)
-    if (props.projectId === pid) overviewText.value = text
-  } catch {
-    // 读不到就按「还没写」显示：那一块的入口（写一份）仍然在。
-    if (props.projectId === pid) overviewText.value = ''
-  }
-}
-async function loadProgress() {
-  const pid = props.projectId
-  progressFailed.value = false
-  try {
-    const listed = await listProjectProgress(pid)
-    if (props.projectId === pid) progress.value = listed.data
-  } catch (e) {
-    // 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
-    if (props.projectId === pid && !store.noteAccess(e)) progressFailed.value = true
-  }
-}
-async function loadTasks(maxAgeMs?: number) {
-  const pid = props.projectId
-  try {
-    const listed = await readProjectTasks(pid, { maxAgeMs })
-    if (props.projectId === pid) tasks.value = listed.data
-  } catch {
-    // 留着上一次的：一次网络抖动不该让「谁在做什么」变空。
-  }
-}
-function loadAll() {
-  void loadOverview()
-  void loadProgress()
-  void loadTasks()
-}
-
-// 切回这个标签页时补一次：看到的是此刻的项目，不是离开时的。
-function onVisibility() {
-  if (!document.hidden) {
-    void loadProgress()
-    void loadTasks(5_000)
-  }
-}
-onMounted(() => {
-  loadAll()
-  document.addEventListener('visibilitychange', onVisibility)
+// 从一道题领出来的项目：总览上方写这一份报名截到哪一刻。项目那一行里带着
+// （`challenge_deadline`，后端按报名算），不是项目目标里写死的字 —— 那份是领取时写的，
+// 那时还没批准，也不知道读的人在哪个时区。
+const project = useQuery(
+  computed(() => projectQuery(props.projectId)),
+  queryClient
+)
+const challengeDeadline = computed<ChallengeDeadline | null>(() => {
+  // 只在单个项目那一行（`GET /projects/{id}`）里有：报名批准时定下的截止（`mine`），
+  // 还没有就是题目的截止。
+  const d = project.data.value?.challenge_deadline as { at: string; mine: boolean } | null | undefined
+  return d ? { at: Date.parse(d.at), mine: d.mine } : null
 })
-onUnmounted(() => document.removeEventListener('visibilitychange', onVisibility))
+// 401/403 交给整页那一屏（ProjectAccessNotice）：重试换不来别的答案。
 watch(
-  () => props.projectId,
-  () => {
-    overviewText.value = null
-    progress.value = null
-    tasks.value = null
-    loadAll()
+  () => recent.error.value,
+  (e) => {
+    if (e) store.noteAccess(e)
   }
 )
+const overviewText = computed(() => overview.data.value?.text ?? null)
+const progress = computed<ProgressItem[] | null>(() => recent.data.value ?? null)
+const progressFailed = computed(() => recent.isError.value && !recent.data.value && !store.accessDenied)
+const tasks = computed<RoomTask[] | null>(() => work.data.value?.data ?? null)
+function loadProgress() {
+  void recent.refetch()
+}
 
 const projectName = computed(() => store.projects.find((p) => p.id === props.projectId)?.name ?? '')
 const members = computed(() => store.members as ProjectMemberRow[])
@@ -120,6 +106,13 @@ function openTask(task: { taskId: string; roomId: string }) {
     params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId },
   })
 }
+// 这一行按下去（还没松开）就先把任务页的代码下下来；落点和 openTask 一直是同一个。
+function pressTask(task: { taskId: string; roomId: string }) {
+  prefetchNow({
+    router,
+    to: { name: 'workspace-task', params: { projectId: props.projectId, topicId: task.roomId, taskId: task.taskId } },
+  })
+}
 function openArtifact(artifactId: string) {
   void router.push({ name: 'project-artifact', params: { projectId: props.projectId, artifactId } })
 }
@@ -136,6 +129,7 @@ function allTasks() {
     :project-id="projectId"
     :project-name="projectName"
     :overview-text="overviewText"
+    :challenge-deadline="challengeDeadline"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"
@@ -145,6 +139,7 @@ function allTasks() {
     :artifact-api="artifactApi"
     @edit-overview="editOverview"
     @open-task="openTask"
+    @press-task="pressTask"
     @open-artifact="openArtifact"
     @all-tasks="allTasks"
     @retry-progress="loadProgress"

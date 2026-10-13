@@ -10,27 +10,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
+from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.repositories import AgentBindingRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.repositories import UserProfileRepository, UserRepository
 
 router = APIRouter(prefix="/topics", tags=["topic-members"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.get("/{topic_id}/members")
 async def list_topic_members(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.identity.repositories import AgentBindingRepository
-    from app.domain.user.repositories import UserProfileRepository, UserRepository
 
     # A task's id reaches its room's roster, files and documents.
     topic = (await TopicService(db).place_or_404(topic_id)).room
@@ -38,7 +37,14 @@ async def list_topic_members(
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    topic_id = topic.id
+    items = await roster_rows(db, topic)
+    return ok(page(items, len(items)))
+
+
+async def roster_rows(db: AsyncSession, topic) -> list[dict]:
+    """A room's roster as `GET /topics/{id}/members` lists it; also the
+    `members` of the room snapshot a subscription opens with (`room_snapshot`).
+    The caller has authorised the reader."""
     seats = await TopicMemberService(db).seats(topic)
     # Attach display names and avatars so the UI can draw the roster without a
     # second round-trip.
@@ -80,6 +86,10 @@ async def list_topic_members(
             agent = AgentInstanceService.resolved(instance) if instance else fallback
             d["name"] = agent.display_name
             d["name_source"] = agent.name_source.value
+            # The teammate's own handle (`cheese`), which the project roster
+            # shows under its name; `member_handle` is its seat (`cheese-<hex>`),
+            # an internal id nobody types.
+            d["instance_handle"] = agent.handle
         else:
             d["name"] = (
                 profile.nickname if profile and profile.nickname else m.member_handle
@@ -88,7 +98,7 @@ async def list_topic_members(
         # initial rather than the one face everybody else who never picked has.
         d["avatar_id"] = avatar_by_uid.get(user.id) if user is not None else None
         items.append(d)
-    return ok(page(items, len(items)))
+    return items
 
 
 @router.post("/{topic_id}/members")
@@ -105,6 +115,8 @@ async def add_topic_member(
         topic_id=topic_id, handle=body.handle, actor=who.handle
     )
     await db.commit()
+    # A private channel appears in the list of whoever was brought in.
+    await tell_project(topic_id, TOPICS)
     return ok(TopicMemberOut.model_validate(member).model_dump(mode="json"))
 
 
@@ -124,4 +136,6 @@ async def remove_topic_member(
     )
     await db.commit()
     await chat.dismiss(topic_id, handle)
+    # A private channel leaves the list of whoever was taken out.
+    await tell_project(topic_id, TOPICS, also={handle})
     return ok({"deleted": True})

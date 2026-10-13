@@ -15,11 +15,11 @@ vi.mock('vue-router', async () => ({
   useRoute: () => route,
   useRouter: () => ({ replace }),
 }))
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: {
-    getMembers: vi.fn(async () => ({ data: { members: [] } })),
-    listTeamJoinRequests: vi.fn(async () => ({ data: { applications: [] } })),
-    listTeamInvitations: vi.fn(async () => ({ data: { invitations: [] } })),
+    getMembers: vi.fn(async () => ({ members: [] })),
+    listTeamJoinRequests: vi.fn(async () => ({ applications: [] })),
+    listTeamInvitations: vi.fn(async () => ({ invitations: [] })),
     approveJoinRequest: vi.fn(),
     removeMember: vi.fn(),
     createInvitation: vi.fn(),
@@ -42,9 +42,9 @@ vi.mock('@/plugins/dialog', async () => ({
 import Members from './Members.vue'
 
 import { ApiError } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import { setLocale } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
-import { TeamsApi } from '@/network/api/teams'
 
 beforeAll(() => {
   vi.stubGlobal('devicePixelRatio', 1)
@@ -124,11 +124,21 @@ describe('under your own name', () => {
 })
 
 describe('moving someone out', () => {
-  const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER' }
+  const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER', canRemove: true }
+
+  it('a member the server will not let the reader remove has no 移除成员', async () => {
+    // 管理员读到的另一位管理员：服务端说移不了，这一行就不给按钮。
+    const peer = { user: { id: 10, nickname: 'zhaoyu', username: 'zhaoyu' }, role: 'ADMIN', canRemove: false }
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [peer, qinmo] } as never)
+    mount({ role: 'ADMIN' })
+
+    await screen.findByRole('button', { name: '移除成员' })
+    expect(screen.getAllByRole('button', { name: '移除成员' })).toHaveLength(1)
+  })
 
   it('an admin is asked first, and a yes takes them off the team', async () => {
-    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [qinmo] } } as never)
-    vi.mocked(TeamsApi.removeMember).mockResolvedValue({ data: {} } as never)
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [qinmo] } as never)
+    vi.mocked(TeamsApi.removeMember).mockResolvedValue(true as never)
     mount({ role: 'ADMIN' })
 
     await fireEvent.click(await screen.findByRole('button', { name: '移除成员' }))
@@ -144,7 +154,7 @@ describe('moving someone out', () => {
 
   it('a no leaves them where they are', async () => {
     dialogMock.confirm.mockImplementation(() => ({ wait: async () => false }))
-    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [qinmo] } } as never)
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [qinmo] } as never)
     mount({ role: 'ADMIN' })
 
     await fireEvent.click(await screen.findByRole('button', { name: '移除成员' }))
@@ -158,7 +168,7 @@ describe('角色说明', () => {
   const qinmo = { user: { id: 9, nickname: 'qinmo', username: 'qinmo' }, role: 'MEMBER' }
 
   it('成员表里每个人的角色旁写着一句这个角色能做什么', async () => {
-    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ data: { members: [qinmo] } } as never)
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({ members: [qinmo] } as never)
     mount({ role: 'ADMIN' })
     // 普通成员没有角色小标，那句话里连角色名一起写出来。
     await screen.findByText('普通成员 · 参与团队的项目')
@@ -177,7 +187,7 @@ describe('answering a join request', () => {
     vi.mocked(TeamsApi.listTeamJoinRequests).mockImplementation(
       async () =>
         ({
-          data: { applications: [{ ...request, status: approved ? 'APPROVED' : 'PENDING' }] },
+          applications: [{ ...request, status: approved ? 'APPROVED' : 'PENDING' }],
         }) as never
     )
     let answer!: () => void
@@ -214,7 +224,7 @@ describe('inviting someone by name', () => {
 
   it('invites the person the username belongs to', async () => {
     lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
-    vi.mocked(TeamsApi.createInvitation).mockResolvedValue({ data: {} } as never)
+    vi.mocked(TeamsApi.createInvitation).mockResolvedValue(true as never)
     const field = await openInvite()
 
     await fireEvent.update(field, 'zhangheng')
@@ -229,7 +239,7 @@ describe('inviting someone by name', () => {
 
   it('a username that begins with digits still means that person, not a user id', async () => {
     lookupUser.mockResolvedValue({ id: 58, handle: '2024zhang', name: '张三', avatar_id: null })
-    vi.mocked(TeamsApi.createInvitation).mockResolvedValue({ data: {} } as never)
+    vi.mocked(TeamsApi.createInvitation).mockResolvedValue(true as never)
     const field = await openInvite()
 
     await fireEvent.update(field, '2024zhang')
@@ -250,6 +260,21 @@ describe('inviting someone by name', () => {
     await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
 
     expect(screen.queryByTestId('found-user')).toBeNull()
+    expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
+  })
+
+  it('someone already in the team is said so, and cannot be invited again', async () => {
+    vi.mocked(TeamsApi.getMembers).mockResolvedValue({
+      members: [{ user: { id: 31, nickname: '张衡', username: 'zhangheng' }, role: 'MEMBER' }],
+    } as never)
+    lookupUser.mockResolvedValue({ id: 31, handle: 'zhangheng', name: '张衡', avatar_id: null })
+    const field = await openInvite()
+
+    await fireEvent.update(field, 'zhangheng')
+    await screen.findByText('已经在团队里', {}, { timeout: 2000 })
+    expect((screen.getByRole('button', { name: '邀请' }) as HTMLButtonElement).disabled).toBe(true)
+    await fireEvent.submit(screen.getByRole('button', { name: '邀请' }).closest('form')!)
+
     expect(TeamsApi.createInvitation).not.toHaveBeenCalled()
   })
 

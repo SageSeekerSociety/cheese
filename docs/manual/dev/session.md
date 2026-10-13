@@ -5,6 +5,7 @@ summary: 一轮是什么、会话身份与座位、后台运行和发版交接�
 covers:
   - backend/app/domain/agent/chat.py
   - backend/app/domain/agent/runtime.py
+  - backend/app/domain/agent/realtime/broker.py
   - backend/app/domain/agent/models.py
   - backend/app/domain/agent/dispatch_log.py
   - backend/app/domain/agent/repositories.py
@@ -47,14 +48,14 @@ covers:
 
 `AgentSession.runtime_location` 是这条会话的进程落在哪台会话机上，连同开它的通道和骨架自己的运行状态（平台不解析）；`place()` 是读它的唯一入口，没有它就没有地点，下一轮重新租，而不是去猜房间上记着什么。`placed_at` 排的是「谁最后开的屏」——不能拿 `updated_at` 排：那一列每轮存 `resume_token` 时也在动，「最后开屏的」会变成「最后说过话的」。
 
-`work_lease` 是另一回事，它是算力选择落到这条会话上的那一份。一个话题一个容器（2026-09-28 决定，推翻结论 60 的后半）：一间房只有一条算力选择；任务没有自己的选择（`tasks.compute_config`）时用房间那一项，有就用自己的。解析时问的是选择本身，不问这一列。选自有设备时每条会话都工作在它算出来的那台机器上；选云端时每条会话各有一个沙箱，落在平台云主机池的哪台宿主机上由池子决定。为什么这么定、几个队友共用一台机器怎么不打架，见[同一话题里的几个 AI 队友](/dev/turn#seats)。
+`work_lease` 是另一回事，它是这位队友的执行环境落到一台机器上的那一份。执行环境是每位队友在每个对话里自己的（`agent_environments`，见[同一话题里的几个 AI 队友](/dev/turn#seats-machine)）：沙箱放在规格给得出的哪台机器上由平台定，不进沙箱时就是那一台电脑。
 
 ### 支线与未开始的任务 {#scratch}
 
 支线的会话，和负责人还没「开始」的任务的会话，改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），支线里例行任务执行的那一轮除外。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
 
 - 机器是这条会话独占的（它自己的沙箱，租约上 `own` 为真）：读、跑命令、改文件都照常，只拒绝把改动带出机器的调用——同步检查点和项目的 MCP 服务。
-- 机器和别的会话或机器主人共用（整台机器授权的设备、Windows、整台云虚拟机）：只能读，和文档芝士借房间机器时一样，外加 Claude Code 自己的 `Read`。
+- 不在自己的沙箱里（直接跑在一台人自己的电脑上）：只能读，和文档芝士借房间机器时一样，外加 Claude Code 自己的 `Read`。
 
 执行路由由设备连接的属主服务，发布应用时属主留在旧镜像上；所以这张凭证同时带 `ro`，认不得 `scratch` 的旧属主照只读处理，换成新属主后才按上面两种走。
 
@@ -62,7 +63,7 @@ covers:
 
 ## 后台的 runner 与 broker {#background}
 
-`agent/runtime.py` 里是两个进程内的东西。`InProcessBroker` 把帧发给订阅者、并给每个频道留一段重放缓冲，所以 WebSocket 断开只掉订阅者，模型请求和会话照跑。`AgentWorkRunner` 管准入、超时和恢复账：`submit()` 立刻返回 turn id，同一话题的轮次在 `ChatService` 的话题锁上排队。
+后台有两个进程内的东西：`agent/realtime/broker.py` 里的 `InProcessBroker` 把帧发给订阅者、并给每个频道留一段重放缓冲，所以 WebSocket 断开只掉订阅者，模型请求和会话照跑。`agent/runtime.py` 里的 `AgentWorkRunner` 接收消息，管准入、超时和恢复账：`submit()` 立刻返回 turn id，同一话题的轮次在 `ChatService` 的话题锁上排队。
 
 `submit()` 没有一个参数说「跑一轮」——一轮是 agent 那一档收件人的到达形态，调用点只能点名，跑不跑由 `_a_turn_was_addressed` 从寻址结果读出来。跑着的一轮记在 `_live` 里，记的是那个 `asyncio.Task` 而不只是 id：一轮也可能在里面而卡住了（子容器死了、流永远不结束），认领它得先取消它。`_last_frame_at` 记每个活轮最后一次发帧的时刻，帧包含不落块的工具调用，所以数据库看不见的动静它看得见。
 

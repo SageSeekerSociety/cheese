@@ -67,11 +67,6 @@ def setup() -> tuple[str, str]:
         pass
     if not doc or (doc.get("content") or "").strip() != DOC_MD.strip():
         _req(f"/api/topics/{tid}/doc", "PUT", {"content": DOC_MD, "author": AUTHOR})
-    nodes = _req(f"/api/topics/{tid}/docs")["data"]
-    # Upgrade the "这里是一段普通文字" paragraph so it carries a live-ref badge.
-    target = next(n for n in nodes if n["content"].startswith("这里是一段普通文字"))
-    if not target.get("upgraded_to_topic_id"):
-        _req(f"/api/blocks/{target['id']}/upgrade", "POST", {})
     print("topic:", tid, "project:", proj)
     return proj, tid
 

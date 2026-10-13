@@ -7,11 +7,10 @@ import type { RoomTask } from '../cx_types'
 
 import { computed, ref, watch } from 'vue'
 
-import { ApiError, downloadFile, getGitDiff, readFile, workspaceFileRawUrl } from '../api'
+import { ApiError, downloadFile, getGitDiff, listRoomTasks, readFile, workspaceFileRawUrl } from '../api'
 import { splitDiffByFile } from '../lib/diff'
 import { useDocumentBytes } from '../lib/documentBytes'
 import { DOCUMENT_TYPES, needsDocumentView, suffixOf } from '../lib/fileKind'
-import { fetchRoomTasks } from '../lib/topicPanelCache'
 
 import { t } from '@/i18n'
 
@@ -85,7 +84,7 @@ export function useProjectFile(opts: {
     const channel = opts.channelId()
     if (!channel) return
     try {
-      const listed = (await fetchRoomTasks(channel)).data.filter((task) => !!task.branch_name)
+      const listed = (await listRoomTasks(channel, { limit: 0, branch: true })).data
       const touched = await Promise.all(
         listed.map(async (task) => {
           try {

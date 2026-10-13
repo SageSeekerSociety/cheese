@@ -209,6 +209,7 @@ def test_commit_fault_does_not_turn_an_admitted_input_into_a_new_send(
 def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
     client, monkeypatch, fault
 ):
+    from app.domain.agent.realtime.broker import InProcessBroker
     from app.domain.agent.runtime import AgentWorkRunner
     from tests.integration.test_same_handle_note_and_timed_delivery import (
         _project,
@@ -233,7 +234,7 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             memory=AsyncMock(),
         )
         monkeypatch.setattr(chat._compute, "_runtimes", lambda: [runtime])
-        chat._active_turn_ids[ref.topic_id] = {work}
+        chat.live.active_turn_ids[ref.topic_id] = {work}
         injected = []
 
         def fail_commit(session):
@@ -292,9 +293,9 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             async def post_event(*args, **kwargs):
                 notices.append(args[3])
 
-            runner = AgentWorkRunner.__new__(AgentWorkRunner)
-            monkeypatch.setattr(runner, "_post_event", post_event)
-            assert await runner._deliver_message(
+            runner = AgentWorkRunner(InProcessBroker())
+            monkeypatch.setattr(runner._intake, "_post_event", post_event)
+            assert await runner._intake._deliver_message(
                 chat,
                 ref.topic_id,
                 uuid.uuid4(),
@@ -304,6 +305,6 @@ def test_live_chat_retains_uncertain_input_instead_of_authorizing_queue(
             )
             assert len(notices) == 1
             assert len(channel.admitted) == 1
-        chat._active_turn_ids.pop(ref.topic_id, None)
+        chat.live.active_turn_ids.pop(ref.topic_id, None)
 
     client.portal.call(run)

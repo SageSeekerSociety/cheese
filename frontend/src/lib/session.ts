@@ -12,7 +12,7 @@
 // Only the refresh answering 401 means the sign-in is over. A network failure,
 // a timeout or any other status leaves the session alone.
 //
-// Deliberately free of imports from `network/` and `services/`: those import
+// Deliberately free of imports from `api/` and `services/`: those import
 // each other already, and everything that refreshes sits among them.
 import type { User } from '@/types/users'
 

@@ -66,7 +66,7 @@ COUNT_SOCKETS = """
 window.__wsOpens = 0;
 const Real = window.WebSocket;
 window.WebSocket = function (url, ...rest) {
-  if (String(url).includes('/chat')) window.__wsOpens += 1;
+  if (String(url).includes('/rooms/live')) window.__wsOpens += 1;
   return new Real(url, ...rest);
 };
 window.WebSocket.prototype = Real.prototype;

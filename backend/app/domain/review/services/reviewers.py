@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import listing, say
 from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.project.models import AiMode, Project
@@ -22,6 +22,7 @@ from app.domain.topic.models import Topic
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     pass
 
+from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _REQUIRED_CHECK_GRACE_MINUTES,
@@ -59,7 +60,6 @@ async def _reviewer_or_project_default(
     would each hand a real delivery to someone who never agreed to look at
     it, and the card would sit there looking correctly routed.
     """
-    from app.domain.project.protection import branch_protection_of
 
     explicit = (reviewer_handle or "").strip()
     if explicit:
@@ -100,7 +100,12 @@ async def _require_reviewer_in_room(
 
     挂的是同一只开关（`authz_enforce_topic_access`）：开关关掉时采纳那道门本来
     就不问成员资格，此时按房间名册拦下递卡只会让一个配置里合法的人递不出去。
+
+    审阅人还得是能采纳的人，这一条不挂开关：协作模式下 AI 队友采纳不了
+    （`_forbid_ai`），递给它的卡同样谁也采纳不了（`can_take_review`）。
     """
+    if not can_take_review(await self._projects.get(topic.project_id), handle):
+        raise UnprocessableEntityError(say("reviewerNotAPerson", handle=handle))
     if not settings.authz_enforce_topic_access:
         return
     if await admits(topic, handle):
@@ -113,7 +118,6 @@ async def reassign(
     *,
     card_id: uuid.UUID,
     reviewer_handle: str | None = None,
-    reason: str = "",
     admits_reviewer: ReviewerAdmission,
 ) -> AcceptCard:
     """改验收人 (spec §4.4): anyone can re-route a pending accept card to a
@@ -128,8 +132,6 @@ async def reassign(
     )
     await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
     card.reviewer_handle = reviewer
-    if reason:
-        card.routing_reason = reason
     await self._session.flush()
     await self._session.refresh(card)
     return card

@@ -25,6 +25,7 @@ from app.domain.topic.models import Topic
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
 
+from app.domain.project.protection import branch_protection_of
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     EVENT_MERGE_REFUSED,
@@ -61,7 +62,6 @@ async def arm_auto_merge(
     BLOCKED / BEHIND 出现，规则没满足正是布防的前提，拒的理由只有「旧 SHA」
     一个。解除布防不需要看过任何版本：撤销自己的同意什么都不会合并。
     """
-    from app.domain.project.protection import branch_protection_of
 
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending or card.pr_number is None:
@@ -238,6 +238,7 @@ async def _merge_pr_for_accept(
     attribution = await identity.attribution(
         self._session, topic, card=card, decided_by=decided_by
     )
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
     if attribution.author:
@@ -388,6 +389,7 @@ async def _merge_armed_card(
     attribution = await identity.attribution(
         self._session, topic, card=card, decided_by=armer
     )
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import ensure_author_email
 
     if attribution.author:

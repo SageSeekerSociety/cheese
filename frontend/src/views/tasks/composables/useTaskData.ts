@@ -5,11 +5,11 @@ import { useRoute } from 'vue-router'
 
 import { truncateString } from '@/utils/form'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { TasksApi } from '@/network/api/tasks'
-import { TaskParticipationInfo } from '@/network/api/tasks/types'
 import AccountService from '@/services/account'
+import { TaskParticipationInfo } from '@/types/taskBoard'
 
 export function useTaskData() {
   const route = useRoute()
@@ -79,13 +79,15 @@ export function useTaskData() {
     }
   })
 
-  // 加载任务数据
-  const loadTaskData = async () => {
-    loading.value = true
-    error.value = null
+  // 加载任务数据。`quiet` 是页面已经画着、只是这道题上的事变了：不转圈，读不到也不把整页换成报错。
+  const loadTaskData = async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    if (!quiet) {
+      loading.value = true
+      error.value = null
+    }
 
     try {
-      const { data } = await TasksApi.detail(taskId.value)
+      const data = await TaskBoardApi.detail(taskId.value)
       taskData.value = data.task
 
       // 获取参与身份信息
@@ -98,7 +100,7 @@ export function useTaskData() {
         }
       }
     } catch (err) {
-      error.value = err instanceof Error ? err.message : t('tasks.loadFailed')
+      if (!quiet) error.value = err instanceof Error ? err.message : t('tasks.loadFailed')
       console.error('Failed to load task:', err)
     } finally {
       loading.value = false

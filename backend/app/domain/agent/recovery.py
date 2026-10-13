@@ -3,7 +3,7 @@ that outlived it, hand their unread tails to the rooms, and fold the round's
 per-conversation death evidence into the durable set (FB-56 legacy③).
 
 The mixin holds the orchestration, a room's replay included; ChatService keeps
-the room-side pieces it calls (`_begin_self_started_turn`, the hook-work
+the room-side pieces it calls (`native_turns.begin`, the hook-work
 registry).
 """
 
@@ -15,11 +15,13 @@ from typing import TYPE_CHECKING
 from app.domain.agent import death_evidence
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.pending_messages import nudge_messages
 
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
-    from app.domain.agent.hook_stream import _HookWorkState
     from app.domain.agent.prewarm import SeatPrewarm
+    from app.domain.agent.turn.intake.native_turns import NativeTurns
+    from app.domain.agent.turn.state.live import LiveWork
 
 logger = logging.getLogger(__name__)
 
@@ -31,24 +33,10 @@ class SessionRecovery:
 
     if TYPE_CHECKING:
         _compute: ComputePool
-        _dead_sessions: set[tuple]
-        _hook_work: dict
-        _replays: dict[uuid.UUID, asyncio.Task]
+        live: LiveWork
 
-        def _mark_turn_inactive(
-            self, topic_id: uuid.UUID, work_id: uuid.UUID
-        ) -> None: ...
-
-        async def _begin_self_started_turn(
-            self,
-            project_id: uuid.UUID,
-            topic_id: uuid.UUID,
-            turn_id: uuid.UUID,
-            *,
-            opened: bool = False,
-            agent_handle: str | None = None,
-            session_id: str | None = None,
-        ) -> _HookWorkState | None: ...
+        @property
+        def native_turns(self) -> NativeTurns: ...
 
         _replay_slots: asyncio.Semaphore
         prewarm: SeatPrewarm
@@ -76,9 +64,7 @@ class SessionRecovery:
         sessions_factory = getattr(self, "_sessions", None)
         if sessions_factory is not None:
             async with sessions_factory() as session:
-                await death_evidence.refresh(
-                    session, self._compute, self._dead_sessions
-                )
+                await death_evidence.refresh(session, self._compute, self.live)
         # One per seat, not per room: teammates in one room run side by side,
         # and a seat left out here is re-attached but never read again until
         # somebody next addresses it. A seat is a conversation's — the room's
@@ -98,13 +84,13 @@ class SessionRecovery:
             )
             if (
                 work is not None
-                and (session.conversation_id, work) not in self._hook_work
+                and (session.conversation_id, work) not in self.live.hook_work
             ):
                 try:
                     found = self._compute.found_conversations(
                         session.conversation_id, session.agent_handle
                     )
-                    await self._begin_self_started_turn(
+                    await self.native_turns.begin(
                         session.project_id,
                         session.conversation_id,
                         work,
@@ -122,10 +108,10 @@ class SessionRecovery:
             # A device reconnecting while its room still replays: the new
             # replay starts where that one stops, not beside it.
             replay = asyncio.create_task(
-                self._replay_room(seats, after=self._replays.get(topic_id)),
+                self._replay_room(seats, after=self.live.replays.get(topic_id)),
                 name=f"replay:{topic_id}",
             )
-            self._replays[topic_id] = replay
+            self.live.replays[topic_id] = replay
             replay.add_done_callback(self._replayed)
         return len(unique)
 
@@ -161,8 +147,6 @@ class SessionRecovery:
                         "session recovery failed for topic %s", session.conversation_id
                     )
                 else:
-                    from app.domain.agent.pending_messages import nudge_messages
-
                     nudge_messages(self, session.conversation_id)
                     # Taken over, read up: now compare it with what this
                     # release would start, while nobody is waiting on it.
@@ -174,21 +158,21 @@ class SessionRecovery:
         (or to a person), and no session will ever end them; kept, each one is
         a second live turn on its seat, which refuses that seat's questions as
         ambiguous and keeps reminding a turn nobody runs to speak."""
-        for key in [key for key in self._hook_work if key[1] in turn_ids]:
-            del self._hook_work[key]
-            self._mark_turn_inactive(*key)
+        for key in [key for key in self.live.hook_work if key[1] in turn_ids]:
+            del self.live.hook_work[key]
+            self.live.mark_turn_inactive(*key)
 
     def _replayed(self, replay: asyncio.Task) -> None:
-        for topic_id, current in list(self._replays.items()):
+        for topic_id, current in list(self.live.replays.items()):
             if current is replay:
-                del self._replays[topic_id]
+                del self.live.replays[topic_id]
 
     def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None:
         """The replay a turn in this room has to wait for, if one is running."""
-        replay = self._replays.get(topic_id)
+        replay = self.live.replays.get(topic_id)
         return None if replay is None or replay.done() else replay
 
     async def replays_settled(self) -> None:
         """Wait until no room is replaying."""
-        while self._replays:
-            await asyncio.gather(*self._replays.values(), return_exceptions=True)
+        while self.live.replays:
+            await asyncio.gather(*self.live.replays.values(), return_exceptions=True)

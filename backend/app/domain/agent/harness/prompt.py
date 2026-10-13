@@ -27,11 +27,13 @@ import re
 import uuid
 from dataclasses import dataclass
 
+from app.core import raster_images
 from app.domain.agent.skills import load_skills
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.instructions import MEMORY_INSTRUCTIONS, memory_block
+from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.task.teaching import TeachingContext
 
 _BARE_PATH_RE = re.compile(
@@ -200,6 +202,8 @@ TODO_WRITE = (
     "一次，把它标成 completed、把下一项标成 in_progress。每次都传完整的清单。做完时"
     "再写一次，所有项标 completed，用 result 写一句落下了什么。有人提了新的请求，就带"
     " new=true 另起一条。简单的问答不用写。"
+    "别只在开工和收尾两头写：每做完一步就写这一次。中间不出声，看清单的人就一直看到"
+    "开工那一版，直到全部打完勾。"
     "清单只说做到哪了，要说的话照样用 `chat_send` 发。"
     "派分身去做时，分身也照这样改这同一份清单。同时派出几个分身时，它们会互相覆盖："
     "在每个分身的 prompt 里写明不要写清单，由你在它们各自交回时更新。"
@@ -237,7 +241,8 @@ ASK_ONLY_CHEESE_ASK = (
 WRITING = (
     "## 写作\n"
     "你写的每段文字（聊天消息、实况文档、记忆、PR 和提交说明）都是给读者看的，"
-    "不是记录你怎么想的。动笔前想清楚：读者是谁，他现在知道什么，读完要能做什么。\n"
+    "不是记录你怎么想的。动笔前想清楚：读者是谁，他现在知道什么，读完要能做什么。"
+    "在对话里给人发的消息另有「在对话里说话」一节，和下面不一样的地方以那一节为准。\n"
     "1. 先写结论。第一句就是读者最需要的那件事，理由和细节放在后面。\n"
     "2. 不反驳没人说过的话。读者心里没有的说法，不要先否定它再给答案。"
     "✗「原因不是一条，是三条叠在一起。」✓「原因有三条：……」"
@@ -339,7 +344,8 @@ DOC_SKILL = (
 #: 提示词：起完名就不该再说，而系统提示词在会话里是不变的。
 UNTITLED_TASK = (
     "这个任务还叫「新任务」（未命名）。等你弄清楚要做的是什么，用 `cheese_title` "
-    "给它起一个不超过 12 字的简短标题。只起一次，定了别反复改。"
+    f"给它起一个宽度不超过 {TITLE_CHARS} 个汉字的简短标题（一个汉字算一个，"
+    "英文、数字、空格各算半个）。只起一次，定了别反复改。"
 )
 
 #: 实况文档那一节里，和文档现在写了什么无关的那几句。文档的内容在会话的开场快照里。
@@ -520,7 +526,7 @@ def build_session_opening(
     keeps_memory: bool = False,
     machine: str | None = None,
 ) -> SessionOpening:
-    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、总览、文档、记忆索引。
+    """新会话第一条消息前面的那份现状：支线、频道、产物、成员、项目目标、文档、记忆索引。
 
     ``machine``：任务会话对工作机器能做什么（``TASK_MACHINE_*``）；别处是 None。
     ``tasks``：支线所在频道还在进行的任务（``thread_tasks``）；别处是 None。它会
@@ -576,6 +582,7 @@ def build_session_opening(
     if roster:
         lines = "\n".join(
             f"- {m['name']}（{_standing(m)}，handle: {m['handle']}"
+            + (f"，{m['about']}" if m.get("about") else "")
             + (f"，时区 {m['timezone']}" if m.get("timezone") else "")
             + "）"
             for m in roster
@@ -596,14 +603,15 @@ def build_session_opening(
         )
     if overview_doc:
         # 人和 agent 共同看的东西是文档，不是一个共享记忆池（结论 7）：每个项目
-        # 有一份总览，每段对话都读到同一份，谁改了都留痕。
+        # 有一份项目目标，每段对话都读到同一份，谁改了都留痕。
         where = f"（`document: {overview_doc_id}`）" if overview_doc_id else ""
         sections["overview"] = (
-            "## 项目总览（全项目共看的那一份）\n"
-            "项目所有人和所有芝士共同看的就是它：这个项目是什么——目标、范围"
-            "（做 / 不做）、对外口径，≤1500 字。它很少变，变了才改，用 "
-            f"`cheese_doc_edit`{where}。项目现在在做什么不写在这里，要看就查各"
-            "频道里的任务。\n"
+            "## 项目目标（全项目共看的那一份）\n"
+            "项目所有人和所有芝士共同看的就是它，只写三件事：这个项目要做成什么、"
+            "什么时候做成、这阶段不做什么，≤1500 字。代码是什么、怎么跑看仓库的 "
+            "README，给 AI 的规矩写在仓库的 CLAUDE.md，都不写进这里；项目现在在做"
+            "什么也不写在这里，要看就查各频道里的任务。它很少变，目标、时间或范围变"
+            f"了才改，用 `cheese_doc_edit`{where}。\n"
             + fit_doc_to_budget(
                 overview_doc,
                 OVERVIEW_DOC_CHAR_BUDGET,
@@ -655,13 +663,14 @@ def task_opening_prompt(
         f"这里是任务「{title}」，{who}它从频道里的讨论中创建：\n\n"
         f"---\n{source}\n---\n\n"
         f"{put}"
-        "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入：目标、现状、"
-        "需要谁做什么、已确定、待决；讨论里否掉的做法写进已确定，标明不采用及原因。"
+        "先把这件事整理成这个任务的实况文档初稿，用 cheese_doc_set 写入。怎么组织你来"
+        "判断：最要紧的一两句放在最上面，细节缩进到下面；讨论里否掉的做法也记下来，"
+        "写明没采用和原因。"
         + (
             "任务创建时已经开始：写完文档就按文档动手，在任务自己的工作目录里做"
-            "（cheese worktree），做完提交审阅。要人决定的事，在任务里问负责人。"
+            "（cheese worktree），做完提交审阅。要人决定的事，用 cheese_ask 问负责人。"
             if started
-            else "然后用 chat_send 在任务里和负责人确认还没定的细节。"
+            else "还没定的细节用 cheese_ask 问负责人。"
             "负责人点「开始」之前，你只讨论、写文档，不改动项目。"
         )
     )
@@ -672,7 +681,9 @@ def task_started_prompt(*, title: str, actor: str) -> str:
     return (
         f"@{actor} 开始了任务「{title}」。从现在起你可以改动项目：按实况文档动手，"
         "在任务自己的工作目录里做（cheese worktree），做完提交审阅。"
-        "做的过程中要求变了，就改实况文档；要人决定的事，在任务里问负责人。"
+        "做的过程中要求变了，就改实况文档；要人决定的事，用 cheese_ask 问负责人。"
+        "开始之前你问过、还没人答的题，负责人开始就是不再等它们的答案："
+        "按你最合理的判断定下来，写进实况文档并标明是你的判断，然后动手。"
     )
 
 
@@ -684,7 +695,48 @@ def task_next_step_prompt(*, title: str, task_id) -> str:
         f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
         "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
         "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
-        "这一步是最后一步时 completes_task 填 true。"
+        "这一步做完任务目标就全部达成时 completes_task 填 true，"
+        "还有没做完的就填 false，并在交付说明里写下一步做什么。"
+    )
+
+
+def task_summary_prompt(*, title: str) -> str:
+    """What a task's agent is told when its last delivery lands: one turn to
+    write the task up, after which the task closes."""
+    return (
+        f"任务「{title}」的最后一次交付已经采纳并合并，这一轮结束后任务关闭。"
+        "这一轮只做两件事：\n"
+        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
+        "没有就不写；过程中被推翻的计划删掉。\n"
+        "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
+        "没有处理的发现逐条列出。"
+        "没什么可补的，只写一句结果。\n"
+        "不要改动文件，不要提交审阅，不要关闭任务。"
+    )
+
+
+def main_checks_failed_prompt(
+    *, title: str, task_id, sha: str, failed: list[tuple[str, str]], reopened: bool
+) -> str:
+    """What a task's agent is told when a check its merge broke fails on the
+    default branch."""
+    checks = "\n".join(f"- {name} {url}".rstrip() for name, url in failed)
+    told = (
+        f"任务「{title}」合并到默认分支的提交 {sha[:12]} 上，下面的检查未通过，"
+        f"而它们在合并前的那个提交上是通过的：\n{checks}\n"
+    )
+    if not reopened:
+        return told + (
+            "看失败日志找到原因，把修复放进这一步一起交付。"
+            "确认是偶发失败、和这次改动无关的，在任务里说明理由。"
+        )
+    return told + (
+        "任务已重新打开。从项目最新的代码修复："
+        f'先执行 cd "$(cheese worktree {task_id})"，'
+        "看失败日志找到原因再改，修好后用 cheese_accept_request 递交付，"
+        "completes_task 填 true。确认是偶发失败、和这次改动无关的，"
+        "在任务里说明理由，然后用 cheese_close_task 关闭任务，不提交改动。"
     )
 
 
@@ -695,18 +747,80 @@ def platform_prompt(content: str) -> str:
     return f"{PLATFORM_NOTICE}\n{content}"
 
 
-def publication_prompt(content: str) -> str:
+def _in_the_readers_language(language: str | None, zh: str, en: str) -> str:
+    """平台自己想对模型说的话，按读它的那个人的语言选。
+
+    `language` 是提问的人界面上选的（`app.core.sentences.LOCALES`），没选过是
+    None——那就说存下来的中文，和平台存下来的每一句话一样。只有 en 说英文。
+    """
+    return en if language == "en" else zh
+
+
+def publication_prompt(content: str, language: str | None = None) -> str:
     """Carry the chat contract on new and resumed terminal input alike."""
     return (
         content
         + "\n\n"
         + platform_prompt(
-            "Ordinary output and final responses are not published to chat. "
-            "Publish with the chat_send tool. "
-            "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
-            "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
-            "重要进展、改方向、阻碍和完成结果也要主动发消息。"
+            _in_the_readers_language(
+                language,
+                "日常输出和最终答复不会发到聊天里，要用 chat_send 工具发。"
+                "收到需要回应的用户消息（包括排队或执行中追加的消息）时，能直接回答就发答案；"
+                "需要继续处理就先说明你理解的意思和接下来要做什么，再继续。"
+                "重要进展、改方向、阻碍和完成结果也要主动发消息。",
+                "Ordinary output and final responses are not published to chat. "
+                "Publish with the chat_send tool. When a person's message needs an "
+                "answer — including one queued or added while you work — answer it "
+                "if you can; if you have to keep working, say what you understood "
+                "and what you are about to do, then carry on. Publish major "
+                "progress, changes of direction, blockers and results too.",
+            )
         )
+    )
+
+
+def silence_reminder(minutes: int, language: str | None = None) -> str:
+    """The room heard nothing from a running turn for `minutes` minutes.
+
+    The platform's own words to the model, said in the reader's language for the
+    same reason the contract above is: a reminder is what a turn that stalled
+    arrives with (a machine off the network, a long command), which is when a
+    session has least else to hold on to. On 2026-10-09 a session restarted
+    after an outage read these two in English and wrote every step's line in
+    English afterwards, in a room whose people write Chinese.
+    """
+    return _in_the_readers_language(
+        language,
+        f"这个房间已经 {minutes} 分钟没听到你说话了，提问的人还在等。"
+        "如果这一轮还在跑，现在就用 chat_send 发一条消息：说清你知道什么、"
+        "在等什么——房间不出声，和卡住了分不出来。计划变了就顺手用 todo_write "
+        "改步骤清单。这一轮已经结束的话才不用理会。",
+        f"You have published nothing to this room for {minutes} minutes and the "
+        "person who asked is still waiting. If this turn is still running, call "
+        "chat_send now with what you know so far and what you are waiting on — a "
+        "room that shows nothing cannot be told apart from one that is stuck. If "
+        "your plan has changed, also update it with todo_write. Ignore this only "
+        "if the turn is already finished.",
+    )
+
+
+def stale_checklist_reminder(minutes: int, language: str | None = None) -> str:
+    """一轮自己写的步骤清单已经有 `minutes` 分钟没动过。
+
+    它和 `silence_reminder` 分开，是因为两件事能分开停：一轮可以一直在说话
+    （chat_send），清单却还是开工时那一版——2026-10-11 报上来的正是这一种，一轮里
+    五步干完，看的人从「○ ○ ○ ○ ○」直接看到「✓ ✓ ✓ ✓ ✓」。清单是房间里唯一的
+    「做到哪了」，而哪一步算做完只有写它的人知道，所以平台能做的是问，不是替它写。
+    """
+    return _in_the_readers_language(
+        language,
+        f"你的步骤清单已经 {minutes} 分钟没动过了，而看的人只能从它知道你做到哪了。"
+        "现在就用 todo_write 再写一次：做完的标成 completed，正在做的那一项标成 "
+        "in_progress。这一轮已经结束的话才不用理会。",
+        f"Your step checklist has not moved for {minutes} minutes, and it is the "
+        "only place a reader can see how far you have got. Call todo_write now: "
+        "mark the steps that are done completed and the one you are on "
+        "in_progress. Ignore this only if the turn is already finished.",
     )
 
 
@@ -724,7 +838,7 @@ def is_inline_image(mime: str | None) -> bool:
     Unknown types and SVG stay files, readable on demand rather than encoded
     into every turn. Keep initial, live and textual routing on this rule.
     """
-    return mime in {"image/png", "image/jpeg", "image/gif", "image/webp"}
+    return raster_images.is_raster(mime)
 
 
 def attachment_prompt_line(

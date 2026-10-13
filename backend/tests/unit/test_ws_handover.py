@@ -44,7 +44,7 @@ def served():
     app = EndBusinessSocketsAtHandover(
         Starlette(
             routes=[
-                WebSocketRoute("/topics/{topic}/chat", echo),
+                WebSocketRoute("/rooms/live", echo),
                 WebSocketRoute("/notifications/live", echo),
                 WebSocketRoute("/llm/tunnel", echo),
             ]
@@ -84,7 +84,7 @@ def served():
 
 def test_browser_sockets_end_with_1012_and_their_handlers_leave(served):
     base, hand_over, handlers_left = served
-    paths = ["/topics/abc/chat", "/notifications/live"]
+    paths = ["/rooms/live", "/notifications/live"]
     browsers = [connect(base + path) for path in paths]
     for browser in browsers:
         browser.send("hello")

@@ -1,11 +1,11 @@
-/** 验收卡上除「采纳」之外的那几个出口，和不该有出口的那两张脸。
+/** 采纳卡上除「采纳」之外的那几个出口，和不该有出口的那两张脸。
  *
  * 这里钉的是卡上真能点到的几件事，以及它们背后的产品规矩：
  *
  *   1. 主分支保护：要两个人批准时，还没批的人手上有「批准」，点下去算自己那一票；
  *      一个人批就够的卡不给这颗按钮；
- *   2. 改由谁审阅：单子上只有在岗的成员（停用的队友不出现在派活的单子上），
- *      选一位就是把卡改派给他；
+ *   2. 改由他人审阅（「更多操作」里）：单子上只有人——AI 队友采纳不了，不出现在
+ *      单子上——选一位就是把卡改派给他；
  *   3. 采纳可撤销：归档话题上的已采纳卡给「撤回采纳」；话题还在进行中时，那张
  *      已采纳的卡不占位置；
  *   4. 已采纳、合并还没走完的那张脸是只读的：PR 在卡上，没有采纳也没有退回。
@@ -24,6 +24,13 @@ const approveCard = vi.fn()
 const reassignCard = vi.fn()
 const revokeCard = vi.fn()
 
+// 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+vi.mock('@/api/reviewComments', () => ({
+  listReviewComments: vi.fn(async () => ({ comments: [] })),
+  writeReviewComment: vi.fn(),
+  editReviewComment: vi.fn(),
+  deleteReviewComment: vi.fn(),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -38,10 +45,11 @@ vi.mock('../../api', async () => {
 })
 vi.mock('@/me', () => ({ myHandle: () => 'alice', myId: () => null }))
 
-import TopicAcceptCard from '../TopicAcceptCard.vue'
+import { AcceptPage, chooseMore, stubOverlayGlobals } from './acceptHarness'
 
 import i18n, { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 function mergeState(): MergeStateInfo {
   return {
@@ -61,7 +69,7 @@ function card(over: Partial<AcceptCard>): AcceptCard {
     id: `card-${seq}`,
     topic_id: 't1',
     reviewer_handle: 'alice',
-    routing_reason: '最懂',
+    focus: '最懂',
     change_subject: 'chore: do a thing',
     change_body: null,
     status: 'pending',
@@ -98,36 +106,28 @@ async function flush() {
 async function mountWith(cards: AcceptCard[], topicStatus = 'active') {
   getAcceptCards.mockResolvedValue({ data: cards, has_more: false })
   const vuetify = createVuetify({ components, directives })
-  const utils = render(TopicAcceptCard, {
-    props: { topicId: 't1', topicStatus },
+  const utils = render(AcceptPage, {
+    props: { topicId: 't1', taskId: 'k1', topicStatus },
     global: { plugins: [vuetify, i18n] },
   })
   await flush()
   return utils
 }
 
-/** 卡上写着某几个字的那颗按钮。 */
+/** 字正好是这几个字的那颗按钮。 */
 function button(container: Element, label: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.trim() === label) as
+    | HTMLButtonElement
+    | undefined
+}
+/** 字里带着这几个字的那颗按钮（信号、横条这种整句的按钮）。 */
+function buttonWith(container: Element, label: string): HTMLButtonElement | undefined {
   return Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes(label)) as
     | HTMLButtonElement
     | undefined
 }
 
-beforeAll(() => {
-  // 「更换」是一张 VOverlay（v-menu），而 happy-dom 没有 visualViewport：不补上，
-  // 单子根本挂不起来，测到的就成了「点了更换什么都没发生」。
-  vi.stubGlobal('visualViewport', {
-    width: 1024,
-    height: 768,
-    offsetLeft: 0,
-    offsetTop: 0,
-    addEventListener() {},
-    removeEventListener() {},
-  })
-  // 菜单量尺寸时还要读 devicePixelRatio，happy-dom 里也没有。少了这个，定位在
-  // 测试收尾之后才跑，报出来的是「unhandled rejection」，比断言失败更难认。
-  vi.stubGlobal('devicePixelRatio', 1)
-})
+beforeAll(() => stubOverlayGlobals(vi))
 afterAll(() => vi.unstubAllGlobals())
 
 beforeEach(() => {
@@ -148,6 +148,7 @@ describe('要几个人批准才合得进去', () => {
 
     expect(container.textContent).toContain('1/2')
 
+    await fireEvent.click(buttonWith(container, '1/2')!)
     await fireEvent.click(button(container, '批准')!)
     await flush()
 
@@ -162,42 +163,55 @@ describe('要几个人批准才合得进去', () => {
 
   it('我已经批过的卡写「你已批准」，不再给我一颗按钮', async () => {
     const { container } = await mountWith([card({ approvals_required: 2, approvals: ['alice'] })])
+    await fireEvent.click(buttonWith(container, '1/2')!)
 
     expect(container.textContent).toContain('你已批准')
     expect(button(container, '批准')).toBeUndefined()
   })
 })
 
+/** 打开 p1，它的成员名册已经读回来。 */
+function withMembers(members: object[]) {
+  seedProjects([])
+  seedProject('p1', { topics: [], members: members as never, unread: {}, privateUnread: {}, notifyLevels: {} })
+  useWorkspaceStore().openProject('p1')
+}
+
 describe('改由谁审阅', () => {
-  it('单子上只有在岗的成员，停用的队友不出现在派活的单子上', async () => {
-    const store = useWorkspaceStore()
-    store.members = [
+  it('单子上只有人：AI 队友不管在不在岗都不出现', async () => {
+    withMembers([
       { user_handle: 'alice', role: 'member', name: 'Alice' },
       { user_handle: 'bob', role: 'member', name: 'Bob' },
-      { user_handle: 'retired', role: 'member', name: 'Retired', active: false },
-    ] as never
+      { user_handle: 'cheese-0a1b2c3d4e5f', role: 'member', name: '小苔', source: 'agent', agent: true },
+      {
+        user_handle: 'cheese-9f8e7d6c5b4a',
+        role: 'member',
+        name: 'Retired',
+        source: 'agent',
+        agent: true,
+        active: false,
+      },
+    ])
 
     const { container } = await mountWith([card({})])
-    await fireEvent.click(button(container, '更换')!)
-    await flush()
+    await chooseMore(container, '改由他人审阅')
 
     const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
     expect(items.some((t) => t.includes('Bob') && t.includes('bob'))).toBe(true)
+    expect(items.some((t) => t.includes('小苔'))).toBe(false)
     expect(items.some((t) => t.includes('Retired'))).toBe(false)
   })
 
   it('选一位就是把卡改派给他', async () => {
-    const store = useWorkspaceStore()
-    store.members = [
+    withMembers([
       { user_handle: 'alice', role: 'member', name: 'Alice' },
       { user_handle: 'bob', role: 'member', name: 'Bob' },
-    ] as never
+    ])
 
     const card1 = card({})
     reassignCard.mockResolvedValue(card1)
     const { container } = await mountWith([card1])
-    await fireEvent.click(button(container, '更换')!)
-    await flush()
+    await chooseMore(container, '改由他人审阅')
 
     const bob = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).find((n) =>
       n.textContent?.includes('Bob')
@@ -243,6 +257,9 @@ describe('已采纳、合并还没走完的那张脸', () => {
         note_level: 'error',
       }),
     ])
+    // 历史卡：点横条才在上面展开当年那张卡。
+    await fireEvent.click(buttonWith(container, '合并未完成')!)
+    await flush()
 
     expect(container.textContent).toContain('合并未完成')
     expect(container.textContent).toContain('PR #12')

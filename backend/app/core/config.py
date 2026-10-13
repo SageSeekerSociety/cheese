@@ -611,7 +611,12 @@ class Settings(BaseSettings):
     # this at it.
     subscription_ca_backend_path: str = ""
     # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
-    # Enforced BEFORE forwarding: a cap that only reports the overspend is not a cap.
+    # A deployment-wide backstop, not a per-project budget: a /v1/messages turn
+    # is refused before it is forwarded once the window's completed turns plus
+    # the turns now in flight reach the cap, so concurrent turns are refused
+    # together rather than each passing on the same stale total. A turn already
+    # admitted runs to its end, so the window can overshoot. The gateway pool is
+    # not covered (LiteLLM meters it). 0 = no cap, the default.
     subscription_token_cap: int = 0
     subscription_cap_window_s: int = 5 * 3600
     # The metering proxy's usage.jsonl as mounted in THIS container (issue #218):
@@ -854,8 +859,14 @@ class Settings(BaseSettings):
     # turn, and its whole purpose is catching the case where nothing else will
     # ever look — a turn dying without the process dying.
     orphan_sweep_interval_s: int = 300
+    # Seconds between looks, on the process holding the sessions, for work
+    # still running in a task that has closed (`stop_work_in_closed_tasks`).
+    # One indexed read of the tasks its working seats are in, and none when no
+    # seat is working: this is how long a close that reached another backend
+    # can leave a turn running.
+    closed_task_stop_interval_s: int = 10
     # How long a message can wait for its turn past a missed wake-up
-    # (`background.periodic_jobs`). One indexed read of the few waiting
+    # (`app.periodic_jobs.periodic_jobs`). One indexed read of the few waiting
     # messages per run (`ix_blocks_queued_messages`), owner process only.
     queued_message_sweep_interval_s: int = 10
     # How long a backend on its way out waits for the prompts it is still
@@ -944,6 +955,11 @@ class Settings(BaseSettings):
     # 次、读到的却是同一份旧快照，得等满一个轮询周期才看见 CI 绿了。这个地板是
     # 必须的：读卡是热点，不能每个读者都替全平台去问一次 GitHub。
     accept_pr_snapshot_floor_s: int = 60
+    # How long one card read waits for those refreshes. They run side by side,
+    # one per card however many readers ask, and finish in the background past
+    # this; the next read gets what they wrote. Each is a few GitHub calls, and
+    # in sequence they once held `GET /topics/{id}/accept-card` for 40 s.
+    accept_pr_snapshot_read_wait_s: float = 2.0
     # 后端报错回房间 (issue #283): how often to close expired burst windows so a
     # flood that STOPPED still reports how big it was. Only bounds how late that
     # summary line is — the dedup window decides whether it exists. 0 disables.

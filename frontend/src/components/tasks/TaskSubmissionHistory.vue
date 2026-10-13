@@ -50,14 +50,33 @@
                 <v-radio :label="t('tasks.submissionHistory.accept')" :value="true"></v-radio>
                 <v-radio :label="t('tasks.submissionHistory.reject')" :value="false"></v-radio>
               </v-radio-group>
-              <v-text-field
-                v-model.number="score"
+              <!-- A score is what a pass is worth (the result reads 「已通过 N 分」); a
+                   rejection reads 「已驳回」 with no number, so it asks for none. -->
+              <BaseField
+                v-if="accepted !== false"
                 :label="t('tasks.submissionHistory.score')"
-                type="number"
-                min="0"
-                max="100"
-                v-bind="scoreProps"
-              />
+                required
+                :error="scoreError"
+                class="mb-4"
+              >
+                <template #default="{ id, describedby, invalid, required }">
+                  <v-text-field
+                    :id="id"
+                    :model-value="score"
+                    :aria-describedby="describedby"
+                    :aria-invalid="invalid"
+                    :aria-required="required"
+                    :error="invalid"
+                    type="number"
+                    min="0"
+                    max="100"
+                    variant="outlined"
+                    density="comfortable"
+                    hide-details
+                    @update:model-value="score = $event === '' ? undefined : Number($event)"
+                  />
+                </template>
+              </BaseField>
               <v-textarea
                 v-model="comment"
                 autocomplete="off"
@@ -143,24 +162,27 @@ import type { TaskSubmissionReview } from '@/types'
 
 import { computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 import { toTypedSchema } from '@vee-validate/zod'
 import dayjs from 'dayjs'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { vuetifyConfig } from '@/utils/form'
-import { usePaging } from '@/utils/paging'
 
 import SubmissionContentCard from './SubmissionContentCard.vue'
 import SubmissionReviewStatus from './SubmissionReviewStatus.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseField from '@/components/base/BaseField.vue'
 import InfiniteScroll from '@/components/common/InfiniteScroll.vue'
-import { TasksApi } from '@/network/api/tasks'
+import { useTaskSubmissionHistory } from '@/views/tasks/composables'
 
 const { t } = useI18n()
+
+/** `changed`：这一版的评审写下、改了或撤了。外面别处也显示这一版判没判（领取者的表、我的进度），
+ *  它们听这一声重读。 */
+const emit = defineEmits<{ changed: [] }>()
 
 interface Props {
   taskId: number
@@ -190,27 +212,22 @@ const props = withDefaults(defineProps<Props>(), {
   isDialog: false,
 })
 
+// 取数与写评审都在这个 composable 里：组件不许够到 API 层，只收 props、发 `changed`。
+// 切题/切领取者时外面会重读（`props.taskId` 变了），它每次现取一次。
 const {
-  data: submissions,
+  submissions,
+  latestSubmission,
   refresh,
   loadMore,
   hasMore,
   refreshing,
   loadingMore,
   total,
-} = usePaging(async (pageStart) => {
-  const { data } = await TasksApi.listSubmissions(props.taskId, props.participantId, {
-    allVersions: true,
-    sort_by: 'createdAt',
-    sort_order: 'desc',
-    pageStart: pageStart,
-    pageSize: 10,
-    queryReview: true,
-  })
-  return { data: data.submissions, page: data.page }
-})
-
-const latestSubmission = computed(() => submissions.value[0])
+  submitReview: saveReview,
+  cancelReview,
+} = useTaskSubmissionHistory({ taskId: () => props.taskId, participantId: () => props.participantId }, () =>
+  emit('changed')
+)
 
 const calcSubmissionReviewColor = (review: TaskSubmissionReview) => {
   if (!review) {
@@ -232,57 +249,38 @@ const calcSubmissionReviewText = (review: TaskSubmissionReview) => {
   return review.detail.accepted ? t('tasks.submissionHistory.accept') : t('tasks.submissionHistory.reject')
 }
 
-const { handleSubmit, defineField, isSubmitting, resetForm } = useForm({
+const { handleSubmit, defineField, isSubmitting, resetForm, errors } = useForm({
+  initialValues: { accepted: true },
   validationSchema: toTypedSchema(
-    z.object({
-      accepted: z.boolean().optional().default(true),
-      score: z.number().min(0).max(100),
-      comment: z.string().max(255).optional().default(''),
-    })
+    z
+      .object({
+        accepted: z.boolean().default(true),
+        score: z.number().optional(),
+        comment: z.string().max(255).optional().default(''),
+      })
+      .superRefine((values, ctx) => {
+        if (!values.accepted) return
+        const { score } = values
+        if (score === undefined || !Number.isInteger(score) || score < 0 || score > 100) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['score'],
+            message: t('tasks.submissionHistory.scoreRequired'),
+          })
+        }
+      })
   ),
 })
 
 const [accepted, acceptedProps] = defineField('accepted', vuetifyConfig)
-const [score, scoreProps] = defineField('score', vuetifyConfig)
+const [score] = defineField('score')
 const [comment, commentProps] = defineField('comment', vuetifyConfig)
+const scoreError = computed(() => errors.value.score)
 
-const submitReview = handleSubmit(async (values) => {
-  if (latestSubmission.value.review && latestSubmission.value.review.reviewed) {
-    try {
-      await TasksApi.patchSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
-      toast.success(t('tasks.submissionHistory.reviewUpdated'))
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewUpdateFailed'))
-      console.error(error)
-    } finally {
-      refresh()
-    }
-  } else {
-    try {
-      await TasksApi.postSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id, values)
-      toast.success(t('tasks.submissionHistory.reviewed'))
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewFailed'))
-      console.error(error)
-    } finally {
-      refresh()
-    }
-  }
+const submitReview = handleSubmit(async (form) => {
+  // The review row keeps a score either way; a rejection's is never shown, so it is 0.
+  await saveReview({ accepted: form.accepted, score: form.accepted ? form.score ?? 0 : 0, comment: form.comment })
 })
-
-const cancelReview = async () => {
-  if (latestSubmission.value.review) {
-    try {
-      await TasksApi.deleteSubmissionReview(props.taskId, props.participantId, latestSubmission.value.id)
-      toast.success(t('tasks.submissionHistory.reviewCanceled'))
-    } catch (error) {
-      toast.error(t('tasks.submissionHistory.reviewCancelFailed'))
-      console.error(error)
-    } finally {
-      refresh()
-    }
-  }
-}
 
 onMounted(refresh)
 
@@ -297,6 +295,23 @@ watch(latestSubmission, (newVal) => {
     } else {
       resetForm()
     }
+  }
+})
+
+// A comment and a score are written for one verdict. Changing a saved review to
+// the other verdict starts both over — otherwise a rejection's comment (and its
+// stored 0) goes out with the pass. Changing back brings the saved ones back.
+// What the reviewer has already typed for the new verdict is left alone.
+watch(accepted, (now) => {
+  const review = latestSubmission.value?.review
+  if (!props.reviewable || !review?.reviewed) return
+  const saved = review.detail
+  if (now === saved.accepted) {
+    if (!comment.value) comment.value = saved.comment
+    if (score.value === undefined) score.value = saved.score
+  } else {
+    if (comment.value === saved.comment) comment.value = ''
+    if (score.value === saved.score) score.value = undefined
   }
 })
 

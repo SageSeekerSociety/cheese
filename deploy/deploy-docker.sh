@@ -134,6 +134,114 @@ preview_connection_running() {
     && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]
 }
 
+# ---- Owners behind the schema ----
+# The connection owners outlive app releases, so this release's migrations run
+# under owners still on an older image. Their models map every column their
+# tables had when that image was built, and a query that loads a model asks for
+# all of them: once a migration drops one, every such query fails. #3411 dropped
+# topics.compute_config and cloud_host_homes on 2026-10-11, and the dev device
+# owner answered ~1500 executor calls with 500 until it was released by hand.
+# Keeping every owner query column-limited (app/domain/device/owner_reads.py)
+# had not prevented it.
+#
+# So the deploy compares what each running owner's image maps with what this
+# release's image maps. A migration only drops what the release before it no
+# longer mapped (.claude/scripts/check-migration-safety.py), so anything the
+# owner maps and this release does not is schema the migrations may take from
+# under it. Such an owner is released in this deploy: the device owner is
+# drained before the migrations, so its callers wait and retry rather than fail,
+# and both are recreated on this release's image after them. Not before: the
+# new image may need what the migrations add.
+SCHEMA_HELD_OWNERS=""
+RELEASE_SCHEMA_MAP=""
+
+# schema_map <command…>: run deploy/schema-map.py in an image, one table or
+# table.column per line.
+schema_map() {
+  "$@" python - < "$HERE/schema-map.py" | sed -n 's/^schema-map //p' | LC_ALL=C sort -u
+}
+
+read_release_schema_map() {
+  [ -z "$RELEASE_SCHEMA_MAP" ] || return 0
+  RELEASE_SCHEMA_MAP="$(schema_map dc run --rm --no-deps -T backend || true)"
+  [ -n "$RELEASE_SCHEMA_MAP" ] \
+    || fail "could not read the schema this release's models map; nothing was migrated"
+}
+
+# owner_schema_behind <container>: what the owner maps and this release does not.
+owner_schema_behind() {
+  local owner_map
+  owner_map="$(schema_map docker exec -i "$1" || true)"
+  if [ -z "$owner_map" ]; then
+    # Unreadable is not proof of agreement.
+    echo "(its schema map could not be read)"
+    return
+  fi
+  LC_ALL=C comm -23 <(printf '%s\n' "$owner_map") <(printf '%s\n' "$RELEASE_SCHEMA_MAP")
+}
+
+hold_owners_behind_schema() {
+  local container behind
+  container="$(dc ps -q device-connection 2>/dev/null | head -n 1 || true)"
+  if [ -n "$container" ] \
+    && [ "$(docker inspect --format '{{.State.Running}}' "$container" 2>/dev/null || true)" = true ]; then
+    read_release_schema_map
+    behind="$(owner_schema_behind "$container")"
+    if [ -n "$behind" ]; then
+      log "device connection owner maps schema this release does not: $(printf '%s ' $behind)"
+      log "draining the device connection owner across the migrations; it is recreated on this release after them"
+      # A call still running after the drain's wait is interrupted rather than
+      # stopping the deploy: left alone, the owner would fail every call that
+      # touches what the migrations drop.
+      DEVICE_CONNECTION_INTERRUPT=late bash "$HERE/release-device-connection.sh" "$SHA" "$COMPOSE" drain \
+        || fail "could not drain the device connection owner; nothing was migrated"
+      SCHEMA_HELD_OWNERS="device"
+    fi
+  fi
+  if [ "$PREVIEW_CONNECTION_MODE" = owner ] && preview_connection_running; then
+    read_release_schema_map
+    behind="$(owner_schema_behind "$(preview_connection_container)")"
+    if [ -n "$behind" ]; then
+      log "preview connection owner maps schema this release does not: $(printf '%s ' $behind)"
+      log "the preview connection owner is recreated on this release after the migrations; its tunnels redial"
+      SCHEMA_HELD_OWNERS="${SCHEMA_HELD_OWNERS:+$SCHEMA_HELD_OWNERS }preview"
+    fi
+  fi
+}
+
+release_owners_held_for_schema() {
+  local held="$SCHEMA_HELD_OWNERS"
+  # Cleared first: an owner being recreated is no longer one to resume.
+  SCHEMA_HELD_OWNERS=""
+  case " $held " in
+    *" device "*)
+      bash "$HERE/release-device-connection.sh" "$SHA" "$COMPOSE" recreate \
+        || fail "device connection owner did not come back on this release after the migrations"
+      log "device connection owner recreated on this release"
+      ;;
+  esac
+  case " $held " in
+    *" preview "*)
+      PREVIEW_CONNECTION_INTERRUPT=1 bash "$HERE/release-preview-connection.sh" "$SHA" "$COMPOSE" \
+        || fail "preview connection owner did not come back on this release after the migrations"
+      log "preview connection owner recreated on this release"
+      ;;
+  esac
+}
+
+# A deploy that stops between the drain and the recreate (a failed migration)
+# lets the old device owner take calls again: it is no worse off than before.
+resume_owners_held_for_schema() {
+  case " $SCHEMA_HELD_OWNERS " in
+    *" device "*)
+      log "resuming the device connection owner drained for the migrations"
+      bash "$HERE/release-device-connection.sh" "$SHA" "$COMPOSE" resume \
+        || log "WARNING: could not resume the device connection owner; dispatch 'Release device connection owner'"
+      ;;
+  esac
+  SCHEMA_HELD_OWNERS=""
+}
+
 # The preview owner carries the machine preview tunnels and the preview content
 # hosts. It is released on its own (deploy/release-preview-connection.sh) exactly
 # like device-connection, so an ordinary app release leaves it alone. It is
@@ -744,6 +852,7 @@ on_exit() {
   local rc=$?
   [ "$#" -eq 0 ] || rc="$1"
   trap - EXIT INT TERM
+  resume_owners_held_for_schema
   [ -z "$SLOTS_OVERLAY" ] || rm -f "$SLOTS_OVERLAY"
   if [ "$RECLAIM_PENDING" = 1 ]; then
     RECLAIM_PENDING=0
@@ -993,11 +1102,13 @@ log_disk "after pull"
 
 ensure_forgejo
 ensure_forge_events
+hold_owners_behind_schema
 log "running DB migrations (alembic upgrade head)…"
 # Production image ships no pyproject, so call alembic directly from the venv.
 # Each migration commits on its own (alembic/env.py), so a failure leaves the
 # database at the last one that succeeded; the next deploy resumes from there.
 dc run --rm backend sh -c "alembic upgrade head" || fail "migration failed — aborting before swap; the database stays at the last migration that committed (alembic current)"
+release_owners_held_for_schema
 
 # Persistent files must be readable by the backend's uid (1000), including
 # legacy repository files that the migration archives. Ownership repair uses
@@ -1361,7 +1472,8 @@ rollout_app() {
 
 # First installation must use the backend image this deploy just pulled or
 # verified. Once running, ensure_device_connection_owner deliberately leaves it
-# untouched until the separate owner release operation.
+# untouched: only hold_owners_behind_schema above, or the separate owner
+# release operation, replaces it.
 export DEVICE_CONNECTION_IMAGE="${DEVICE_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 export PREVIEW_CONNECTION_IMAGE="${PREVIEW_CONNECTION_IMAGE:-${BACKEND_IMAGE:-ghcr.io/sageseekersociety/cheese/backend:$SHA}}"
 ensure_journal_retention

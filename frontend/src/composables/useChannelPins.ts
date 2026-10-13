@@ -6,12 +6,16 @@
 // 在屏幕上；一行都没有的时候不必为一份空名单多问一次。
 import type { Block } from '../cx_types'
 
-import { ref, watch } from 'vue'
+import { computed } from 'vue'
+import { useQuery } from '@tanstack/vue-query'
 
 import { saveRoomOutputToLibrary } from '../api'
-import { listPins, pinBlock, unpinBlock } from '../api/pins'
+import { pinBlock, unpinBlock } from '../api/pins'
 
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { pinsQuery } from '@/query/room'
 
 export function useChannelPins(opts: {
   /** 这一栏是频道主线时是频道 id；否则 null，什么都不读。 */
@@ -21,33 +25,20 @@ export function useChannelPins(opts: {
   /** 时间线上有「谁置顶了什么」那一行。 */
   seen: () => boolean
 }) {
-  const pinnedIds = ref<ReadonlySet<string>>(new Set())
-
+  // 和频道概览里那一块读同一份（`query/room`）。
+  const read = useQuery(
+    computed(() => {
+      const id = opts.channelId() ?? ''
+      return { ...pinsQuery(id), enabled: !!id && opts.seen() }
+    }),
+    queryClient
+  )
+  // 小图钉是装饰：读不到就先不画，下次频道说置顶变了时再读。
+  const pinnedIds = computed<ReadonlySet<string>>(() => new Set((read.data.value ?? []).map((p) => p.block.id)))
   async function reload() {
     const id = opts.channelId()
-    readFor = id
-    if (!id) {
-      pinnedIds.value = new Set()
-      return
-    }
-    try {
-      const pins = await listPins(id)
-      if (opts.channelId() === id) pinnedIds.value = new Set(pins.map((p) => p.block.id))
-    } catch {
-      // 小图钉是装饰：读不到就先不画，下次频道说置顶变了时再读。
-    }
+    if (id) await queryClient.invalidateQueries({ queryKey: keys.roomPins(id) })
   }
-  let readFor: string | null = null
-  watch(
-    [opts.channelId, opts.seen],
-    ([id, seen]) => {
-      if (id !== readFor) pinnedIds.value = new Set()
-      if (!id || !seen || id === readFor) return
-      readFor = id
-      void reload()
-    },
-    { immediate: true }
-  )
 
   async function act(run: () => Promise<unknown>, failed: string) {
     try {

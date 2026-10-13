@@ -1,0 +1,1458 @@
+{
+  "panelDocTopBar": {
+    "about": "The document top bar: on the left the document's current state (who last edited it, offline, read-only); on the right the people online, suggestions, comments, ask the AI teammate about the whole doc, and '...'.",
+    "s1": {
+      "name": "Someone edited it",
+      "note": "Left says the editor's name and '... editing'; clicking it opens the history; a row of online avatars on the right."
+    },
+    "s2": {
+      "name": "Offline",
+      "note": "The left switches to 'Not connected; changes sync when reconnected', not 'who edited it'."
+    },
+    "s3": {
+      "name": "Read-only",
+      "note": "No edit permission: a single 'Read-only' on the left, no toggling back to editable."
+    }
+  },
+  "panelDocOutline": {
+    "about": "The document outline: headings in the body listed indented by level; clicking one scrolls to that section; an empty state when there are no headings.",
+    "s1": {
+      "name": "Has headings",
+      "note": "Three heading levels, each indented one step; clicking emits its pos."
+    },
+    "s2": {
+      "name": "No headings yet",
+      "note": "No heading in the body at all: shows an empty-state line, not a blank box that won't open."
+    }
+  },
+  "panelDocPresence": {
+    "about": "The 'who's here' on the top bar: avatars of others with this doc open; people are round, AI teammates square; more than four collapse to '+N'.",
+    "s1": {
+      "name": "A room full",
+      "note": "Six people, first four drawn, the other two collapse to '+2'. One person with two tabs counts once."
+    },
+    "s2": {
+      "name": "One person",
+      "note": "Only one person here draws a single face, no '+N'."
+    }
+  },
+  "panelDocEditButton": {
+    "about": "The button used on the small cards and strips inside a document: default, the single primary action in a group (solid), and disabled.",
+    "s1": {
+      "name": "Default",
+      "note": "Light fill with an outline, a card's secondary action."
+    },
+    "s2": {
+      "name": "Primary",
+      "note": "One solid fill; only one per group, since accept and accept-all can be on screen together."
+    },
+    "s3": {
+      "name": "Disabled",
+      "note": "Unclickable while busy or without permission."
+    }
+  },
+  "panelDocFindBar": {
+    "about": "The in-document find bar: input, which match of how many, previous/next, close; says 'No matches' when nothing matches.",
+    "s1": {
+      "name": "Has matches",
+      "note": "Five matches found, sitting on the 2nd."
+    },
+    "s2": {
+      "name": "Nothing found",
+      "note": "The query matched nothing."
+    }
+  },
+  "panelDocSlashMenu": {
+    "about": "The Notion-style slash-menu overlay: type '/' in the body to pop it up; lists block types; the keyboard walks the list, the mouse can click too.",
+    "s1": {
+      "name": "A list",
+      "note": "The block-type list that pops up when you type '/' at a line start: icon, name, a hint on the right; the row the keyboard rests on is highlighted."
+    }
+  },
+  "panelDocOverlays": {
+    "about": "The pieces that sit over the body and follow it: the selection toolbar, the slash-menu overlay, the code-block toolbar, the block handle. Each computes its own position, since none is part of the body.",
+    "s1": {
+      "name": "Slash menu open",
+      "note": "'Where the menu opens' is decided above; this only draws: a block-type overlay pinned near the cursor."
+    }
+  },
+  "panelDocBubble": {
+    "about": "The bar that floats over selected text: AI teammate, comment, plus block styles, several text formats and link when editable; when not editable the formats become 'Copy'. On phones it becomes the bar above the keyboard.",
+    "s1": {
+      "name": "Editable",
+      "note": "Editable: 'Cheese' and 'Comment' on the left, then block style, bold/italic/strikethrough/inline code/highlight, three status tags, link."
+    },
+    "s2": {
+      "name": "Not editable",
+      "note": "Read-only collapses the formats, leaving just 'Copy'; it's greyed when nothing is selected."
+    },
+    "s3": {
+      "name": "Inside a status tag",
+      "note": "Cursor inside a status tag: only 'Yes / No / At risk' and 'Remove', no formats."
+    },
+    "s4": {
+      "name": "The phone bar",
+      "note": "On phones it sits above the keyboard: with nothing selected, AI teammate and comment are disabled; formats target the text to be typed at the cursor; undo and redo are added at the end (this cell uses the editor with an undo stack)."
+    }
+  },
+  "panelDocLinkCallout": {
+    "about": "The overlay that adds, edits or removes a link on selected text. Its position is computed to sit next to those characters.",
+    "s1": {
+      "name": "Enter URL",
+      "note": "Selected text not linked yet: an empty URL input with save and cancel. Saving adds the link to those characters. The catalog shows the overlay in normal document flow (position: static), not anchored to a real selection."
+    }
+  },
+  "panelDocVersionDiff": {
+    "about": "The right column of the change history: the selected version compared with the one before it, which paragraphs changed — added paragraphs green, removed red with strikethrough, changed ones marking the added/removed characters inline.",
+    "s1": {
+      "name": "Several paragraphs changed",
+      "note": "A line up top says how many paragraphs were added/removed/changed; below, one block per paragraph."
+    },
+    "s2": {
+      "name": "Same as the previous version",
+      "note": "No changes between the two versions: only the top line and a 'No changes' line remain."
+    }
+  },
+  "panelDocHistory": {
+    "about": "The change-history dialog: every version on the left (newest on top); on the right, by default what changed since the previous one, switchable to that version's full text; when editable you can restore to that version.",
+    "s1": {
+      "name": "Several versions",
+      "note": "Four versions loaded, the newest selected, the right side showing its diff against the previous one."
+    },
+    "s2": {
+      "name": "No versions yet",
+      "note": "Not a single version: the right side shows an empty-state line."
+    }
+  },
+  "panelDocAgentResult": {
+    "about": "The card after the input is handed off: queued, editing or answering (all stoppable); when done editing it says how many spots changed, undoable, can keep going; an answer is the answer itself, convertible to a comment.",
+    "s1": {
+      "name": "Queued",
+      "note": "It's busy: says 'Auto-reply when idle', offers only 'Cancel'."
+    },
+    "s2": {
+      "name": "Editing",
+      "note": "Editing this doc: says 'Editing...', offers 'Stop'."
+    },
+    "s3": {
+      "name": "Done editing",
+      "note": "Done: says how many spots changed, offers 'Undo', and 'Keep editing' below."
+    },
+    "s4": {
+      "name": "Undone",
+      "note": "After undo it can be restored."
+    },
+    "s5": {
+      "name": "Answered",
+      "note": "The answer is read as Markdown: convertible to a comment, can follow up."
+    },
+    "s6": {
+      "name": "Nothing found",
+      "note": "Asked, and it has nothing to add: shows 'No issues found'."
+    }
+  },
+  "panelDocAgentBox": {
+    "about": "The input that opens when you click the AI teammate: an input on top, typeable on open; below, common phrasings in two groups, 'Edit' and 'Ask', filtering as you type.",
+    "s1": {
+      "name": "Edit a selection",
+      "note": "A passage selected: the 'Edit' group first (polish, shorten, to list/table, translate), then 'Ask'."
+    },
+    "s2": {
+      "name": "Ask about the whole doc",
+      "note": "For the whole doc: only the 'Ask' group (summarise key points, review the whole doc, suggest structure)."
+    },
+    "s3": {
+      "name": "Read-only, ask only",
+      "note": "When not editable only 'Ask' remains: the input placeholder becomes 'Enter a question'."
+    }
+  },
+  "panelDocSuggestionStrip": {
+    "about": "The strip above the body: how many edit suggestions the AI teammate has left, previous/next, decide all at once; when all are handled it says how many were accepted and rejected.",
+    "s1": {
+      "name": "Some left",
+      "note": "Three left: previous/next, plus 'Reject all / Accept all'."
+    },
+    "s2": {
+      "name": "All handled",
+      "note": "Done: says two accepted, one rejected, leaving just a close."
+    }
+  },
+  "panelDocSuggestionCard": {
+    "about": "The card under the suggestion being viewed: who proposed it, which one, why, accept or reject.",
+    "s1": {
+      "name": "With a reason",
+      "note": "It gave a why: written on the card, with 'Reject / Accept' below."
+    },
+    "s2": {
+      "name": "No reason",
+      "note": "No why given: only who proposed it and which one."
+    }
+  },
+  "panelDocReviewStrip": {
+    "about": "The strip above the body when 'View changes' opens the doc: who asked the AI teammate to edit, how many are left, previous/next, collapse.",
+    "s1": {
+      "name": "Some left",
+      "note": "'3 spots changed by Cheese at a person's request', with previous/next and collapse."
+    },
+    "s2": {
+      "name": "All reverted",
+      "note": "All spots reverted: becomes 'All reverted', collapsing to just the collapse control."
+    }
+  },
+  "panelDocReviewCard": {
+    "about": "The card under the change being viewed: which one; revert it if unwanted.",
+    "s1": {
+      "name": "Viewing which change",
+      "note": "'1/3' plus a 'Revert this' button; the button is disabled while busy."
+    }
+  },
+  "panelDocThreadCard": {
+    "about": "One card per comment thread: the quoted characters on top, each reply below; while the AI teammate is answering it says which step it's on. Only the thread being viewed gets the reply box and resolve.",
+    "s1": {
+      "name": "Viewing a thread",
+      "note": "Viewing this thread: the reply box and 'Resolve' open below."
+    },
+    "s2": {
+      "name": "Cheese is answering",
+      "note": "Not viewing this thread: it's editing the doc, the card says which step it's on, offers 'Stop'."
+    },
+    "s3": {
+      "name": "Resolved",
+      "note": "A resolved thread: viewing it offers 'Reopen', with no reply box."
+    },
+    "s4": {
+      "name": "Unknown whether the write landed",
+      "note": "The last write's result is unknown: it says so and offers 'Resend'."
+    }
+  },
+  "panelDocComments": {
+    "about": "The content of the comment column: the composer and the threads — unresolved and resolved viewed separately, one card per thread, the conversation laid out.",
+    "s1": {
+      "name": "Unresolved",
+      "note": "Viewing the unresolved ones: a thread started by a person, Cheese replied once."
+    },
+    "s2": {
+      "name": "Viewing resolved",
+      "note": "Switched to 'Resolved': only the handled thread remains."
+    },
+    "s3": {
+      "name": "None at all",
+      "note": "No comments on this doc yet: an empty-state line, not blank."
+    }
+  },
+  "panelDocCommentPanel": {
+    "about": "The comment column: docked to the right of the body when wide enough, over the body when narrow; the width is draggable. Holds DocComments — open, locate and close are driven from outside.",
+    "s1": {
+      "name": "The body cell",
+      "note": "The panel manages docking, the drawer and its width itself; normally it's a column to the right of the body holding the body (the slot below) and the comments. This shows the body in the slot."
+    }
+  },
+  "panelDocSurface": {
+    "about": "The document body itself: takes a real collaborative document, draws it with tiptap, wrapped in this set of blocks, overlays and collaborative cursors. The top bar and comment column are someone else's concern.",
+    "s1": {
+      "name": "Open a doc",
+      "note": "This one is titled 'Rollout process': the body is drawn block by block; '/' at a line start inserts a block, and the selection toolbar has AI teammate and comment."
+    },
+    "s2": {
+      "name": "Still loading",
+      "note": "The body is still on its way: draws a skeleton, the editor gives way."
+    }
+  },
+  "previewPanelPage": {
+    "about": "Web preview: hands the server-rendered page to a sandboxed iframe (allow-scripts only, not same-origin); changing the page swaps the srcdoc.",
+    "s1": {
+      "name": "A web page",
+      "note": "Server-rendered html handed to a frame: it inherits the parent's CSP, so scripts run but the network is shut off by the page's own CSP."
+    }
+  },
+  "previewPanelMarkdown": {
+    "about": "Markdown reading view: rendered the way documents are read (blocks, diagrams and formulas like in a doc), and lets the reader point at a sentence to quote it.",
+    "s1": {
+      "name": "A markdown snippet",
+      "note": "A single newline in the file is a soft break; links open a new page."
+    }
+  },
+  "previewPanelSlides": {
+    "about": "Slide reader: a toolbar on top (thumbnails, previous/next, jump, fit page, present, download), the current slide in the middle.",
+    "s1": {
+      "name": "No slides yet",
+      "note": "Bytes still on their way or not there yet: an empty-state line."
+    },
+    "s2": {
+      "name": "Can't convert",
+      "note": "This PDF won't convert to slides: says 'Preview unavailable for now; you can download the original'."
+    }
+  },
+  "previewPanelPages": {
+    "about": "Paged view: draws a PDF page by page, only when scrolled into view; click to 'point at a spot', select text to quote.",
+    "s1": {
+      "name": "Waiting to point",
+      "note": "The toolbar has the 'Point at a spot' button; this file has no verified version, so it can say 'Verify the version first' but stays disabled."
+    }
+  },
+  "previewPanelSheet": {
+    "about": "Spreadsheet preview: CSV/TSV and workbooks laid out as a table with headers, and a toggle to view the raw text.",
+    "s1": {
+      "name": "A CSV",
+      "note": "Comma-separated text laid out as a table, first row as header."
+    }
+  },
+  "previewPanelThumbRail": {
+    "about": "The thumbnail column beside the slides: one per page, click to jump; a page is drawn only when scrolled into view.",
+    "s1": {
+      "name": "A stack of thumbnails",
+      "note": "Five pages, on page 1: a button per page with the page number below."
+    }
+  },
+  "previewPanelLocator": {
+    "about": "The bar that appears after 'point at a spot': write what to change, submit with Enter or the send button.",
+    "s1": {
+      "name": "Pointed at a spot",
+      "note": "On top, what it points at (label + that sentence); below, an input to write what to change."
+    }
+  },
+  "previewPanelPickToggle": {
+    "about": "The 'Select region' toggle on the preview bar: only offered on web preview; press it to drag out a region on the page.",
+    "s1": {
+      "name": "On",
+      "note": "Lit while on (given an icon, the word is in the title); press again to turn off."
+    },
+    "s2": {
+      "name": "Off",
+      "note": "Off is the default look."
+    }
+  },
+  "previewPanelRegionPick": {
+    "about": "Region select for the app tier: the app has no bridge to read the DOM, so a transparent mask is laid over the iframe and the reader drags out a rectangle.",
+    "s1": {
+      "name": "Laid over the page",
+      "note": "Normally an invisible transparent mask: press, drag, release; the dragged region is sent up with its geometry and the viewport at the time. Too small a gesture (usually a click) is not reported."
+    }
+  },
+  "previewPanelViewportToolbar": {
+    "about": "The design-preview viewport tools: pick desktop/tablet/mobile, zoom out/in, show the scale, fit to viewport.",
+    "s1": {
+      "name": "Desktop",
+      "note": "Desktop selected, scale 100%."
+    },
+    "s2": {
+      "name": "Zoomed halfway",
+      "note": "Scale 50%: the number follows."
+    }
+  },
+  "previewPanelRedactSwatch": {
+    "about": "The small preview of a redaction style (the toolbar's row): solid black, 3x3 mosaic, 7x7 noise — the grey cells come from a fixed formula, identical on every render.",
+    "s1": {
+      "name": "Solid",
+      "note": "A single black block."
+    },
+    "s2": {
+      "name": "Mosaic",
+      "note": "A 3x3 grid of grey cells."
+    },
+    "s3": {
+      "name": "Noise",
+      "note": "A 7x7 grid of grey cells."
+    }
+  },
+  "previewPanelSketchToolbar": {
+    "about": "The annotation tool row on an image: select region, pen/line/arrow/rectangle/ellipse/text/redact, colour, undo-redo-clear, write what to change, add to the thread.",
+    "s1": {
+      "name": "Pen",
+      "note": "Pen selected: the colour wheel is shown; when there are strokes, 'Write what to change' and 'Add to thread' appear on the right."
+    },
+    "s2": {
+      "name": "Redact",
+      "note": "Redact tool selected (or a redaction is selected): the colour wheel becomes the redaction-style row."
+    }
+  },
+  "previewPanelSketchOverlay": {
+    "about": "Draws the annotations already on the screen onto one SVG layer (handles on the selected/edited one): pen, line, arrow, rectangle, ellipse, text, redact.",
+    "s1": {
+      "name": "A few strokes",
+      "note": "A freehand stroke and a rectangle annotation, laid back onto the image to scale."
+    }
+  },
+  "previewPanelRegionNote": {
+    "about": "The small card that appears when pointing at a region of an image: it says what it points at, then write what to change, send or cancel.",
+    "s1": {
+      "name": "Pointing at this region",
+      "note": "On top, what it points at (label + that sentence); below, the input and 'Send'. It says so when the region is outside the view."
+    }
+  },
+  "previewPanelDesignImage": {
+    "about": "Design preview: an image laid into the viewport, zoomable, pannable, region-selectable, annotation layer toggleable; scale and 'Fit to viewport' on top.",
+    "s1": {
+      "name": "An image",
+      "note": "Zoom, scale and 'Fit to viewport' on top; the image below, wheel-zoomable and space-pannable."
+    }
+  },
+  "previewPanelRevisionList": {
+    "about": "A document's revision list: several pending (replace/add/remove), accept or reject one by one, or handle all at once; read-only versions offer no handling.",
+    "s1": {
+      "name": "Three revisions",
+      "note": "'3 revisions' on top; each row below says which paragraph and how it changes."
+    }
+  },
+  "previewPanelRoomFileHistory": {
+    "about": "A file's save history in a channel: every save keeps a version, any version can be downloaded or restored, the current one is marked.",
+    "s1": {
+      "name": "Several saves",
+      "note": "The newest is marked 'current'; each version says which one, who saved it and from which source."
+    }
+  },
+  "previewPanelRoomFileEditor": {
+    "about": "Editing a channel file in the browser: the top bar has the file name, read-only/unsaved/versions saved, and save history and close on the right; the editor is embedded below.",
+    "s1": {
+      "name": "This one can't be edited here",
+      "note": "No session, with the reason 'This kind of file can't be edited in the browser': it says so instead of showing an editor that won't open."
+    }
+  },
+  "manageDeniedView": {
+    "about": "The screen a member sees when they click space management and the guard blocks them: it says 'You don't have management permission', and the way out goes back to the task list, not out of the space.",
+    "s1": {
+      "name": "Blocked from the management area",
+      "note": "Same shape as the project's 'No access' (the same AccessNotice), only the words belong to this board; the exit goes back to the task list — the person is usually still a member here."
+    }
+  },
+  "publishTaskView": {
+    "about": "Publish page: top to bottom one task (content, participants, timing, categories and topics, more settings); when several are read from a file, a task list appears above and the checked ones publish together, the button saying how many.",
+    "s1": {
+      "name": "Publish one",
+      "note": "Default cell: a publish form (task content at the top, 'Import from file' and 'Use a template' at its top-right), the button says 'Publish', and the line beside it says 'Needs admin review after publishing'."
+    },
+    "s2": {
+      "name": "Publish several",
+      "note": "Three read from a file (two checked): the task list above says what the file is called and how many were read; the button changes to say how many will publish."
+    },
+    "s3": {
+      "name": "Space not ready",
+      "note": "Categories and domain groups still hanging off the space, not yet arrived: no form, only the header line explaining this task needs review — the publish button is disabled meanwhile."
+    }
+  },
+  "basicInfoView": {
+    "about": "Space settings 'Basic info': avatar, name, intro, plus a 'Max visible tasks' row for admins and a danger zone (delete space) for owners. Reads and writes are in the container; here it only draws and emits.",
+    "s1": {
+      "name": "Owner and admin",
+      "note": "Default cell: the form holds this board's name and intro, an admin sees 'Max visible tasks', and a danger zone visible only to the creator is added at the bottom."
+    },
+    "s2": {
+      "name": "Just a regular member",
+      "note": "Neither admin nor owner: the max row and the danger zone are not drawn — showing a button that is bound to fail (403) is worse than showing none."
+    }
+  },
+  "spaceSettingsIndexView": {
+    "about": "The shell around space settings: on desktop the grey left side is the list (whose settings these are), the white right side is this section; on phones it's full screen, list first then a section. This layer has its own URL, each item a route.",
+    "s1": {
+      "name": "Basic info selected",
+      "note": "Default cell: the left list shows the seven sections of space settings (currently 'Basic info'), this item is highlighted, and the right side holds its content."
+    },
+    "s2": {
+      "name": "No section selected yet",
+      "note": "'active' empty means no section selected yet: on narrow screens this is 'stopped at the list' (full-screen list, tap an item to enter). This catalog viewport is desktop width, so you see the desktop shell with no list item highlighted."
+    }
+  },
+  "spaceGuidanceView": {
+    "about": "Space settings 'Guidance for the AI teammate': a line of explanation, a six-field form and save. All six empty means this board sets no default, and whichever layer below says something is followed.",
+    "s1": {
+      "name": "This board set defaults",
+      "note": "Default cell: system prompt, current week and this week's scope are filled in; the finer settings are tucked into 'More'."
+    },
+    "s2": {
+      "name": "No defaults yet",
+      "note": "All six empty means 'nothing said': the materials list also failed to load this time, but failing to load isn't the same as gone, so it isn't treated as invalid — that field becomes an explanatory line, offering no candidates."
+    }
+  },
+  "spaceMaterialsView": {
+    "about": "Space settings 'Materials': visible to all members; those marked 'Admins only' are hidden from members and unreadable by their AI. Each row can be downloaded, have its visibility changed, or be taken down.",
+    "s1": {
+      "name": "Has materials, admin sees all",
+      "note": "Default cell: three materials in one list; each row shows type, size, upload date, download count and how many places reference it; the account can manage, so every row has entries to change visibility and take down."
+    },
+    "s2": {
+      "name": "Nothing yet",
+      "note": "Materials empty: says 'No materials', doesn't draw a blank block."
+    },
+    "s3": {
+      "name": "List still loading",
+      "note": "Not loaded yet: spins in place, doesn't say 'No materials' first — that would read 'not loaded' as 'none'."
+    },
+    "s4": {
+      "name": "Upload form open",
+      "note": "The form that appears after pressing 'Upload material': pick a file, set visibility (all members / admins only), both required."
+    }
+  },
+  "briefView": {
+    "about": "Task detail 'Brief' tab: the task brief (rich text) and the materials list; whether it's clickable and how many times it's downloadable is said by the server. The section isn't drawn when there are no materials.",
+    "s1": {
+      "name": "Brief and materials",
+      "note": "Default cell: the task brief on top, a 'Materials' section below listing two downloadable files."
+    },
+    "s2": {
+      "name": "Brief only, no materials",
+      "note": "This task brings no materials: the whole materials section isn't drawn, no empty heading left — just the brief section."
+    }
+  },
+  "insightsView": {
+    "about": "Task detail 'Data' tab: how many claimed this task, how far they got, where they stalled, when they moved. Every number is computed from the roster and submissions.",
+    "s1": {
+      "name": "Claimed and submitted",
+      "note": "Default cell: four KPIs (claimed / submitted / pass rate / claimed-but-idle), a claiming trend, how far they got, squad makeup."
+    },
+    "s2": {
+      "name": "Read failure, not drawn as 0",
+      "note": "Neither roster nor submissions loaded: it explains the failure and offers retry, instead of drawing a '0 claimed, 0% pass' board pretending all is well."
+    },
+    "s3": {
+      "name": "Neither author nor admin",
+      "note": "Those without access are told why, instead of seeing an empty table."
+    },
+    "s4": {
+      "name": "Task not found",
+      "note": "The task itself didn't load: says 'Task not found', doesn't draw a screen of empty charts."
+    }
+  },
+  "rosterView": {
+    "about": "Task detail 'Claimants' tab: reviewing claim requests, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
+    "s1": {
+      "name": "Roster loaded",
+      "note": "Default cell: status-filter tabs on top, a table below — who claimed, when, how far they got, the latest version, the deadline; at the row's end, what that row can do."
+    },
+    "s2": {
+      "name": "Roster still loading",
+      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No claimants' first."
+    },
+    "s3": {
+      "name": "Not for you",
+      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see claimants."
+    },
+    "s4": {
+      "name": "Failed this time",
+      "note": "Separate from 'not for you': a read failure gives the failure and a retry, not the permission line."
+    },
+    "s5": {
+      "name": "No one has claimed",
+      "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
+    }
+  },
+  "views404": {
+    "about": "The screen someone sees at a nonexistent address: a 'Page not found' line and a button home, catching every path not written out.",
+    "s1": {
+      "name": "Page not found",
+      "note": "What the catch-all at the end of the route table draws: the title is 404, a 'Page not found' line, and the action goes home."
+    }
+  },
+  "docsSignInView": {
+    "about": "The sign-in page the platform uses for the docs site: while handing the reader over it's a spinning progress ring; on error it spells out the reason and offers a retry.",
+    "s1": {
+      "name": "Opening the docs",
+      "note": "No error yet: not a blank block but a spinning progress ring, with an aria-label saying what it's doing."
+    },
+    "s2": {
+      "name": "Won't open, offers a retry",
+      "note": "On error it becomes a red notice spelling out the reason as-is, with a button below to try again (it shows a spinner while retrying)."
+    }
+  },
+  "addEmailView": {
+    "about": "The screen for adding an email to an account: first fill in the address and self-check against the rules, then it becomes the enter-code step in place once the code is sent.",
+    "s1": {
+      "name": "Enter address",
+      "note": "Step one: the address field carries a 'School or work email recommended' hint, a send button below, and sign-out in the corner."
+    },
+    "s2": {
+      "name": "Address taken",
+      "note": "When this email is already bound to another account, the reason is written on the top line, the form stays, change it and resend."
+    },
+    "s3": {
+      "name": "After the code is sent",
+      "note": "Same screen switches to the code step: says which address the code went to, six boxes, and resending once the one-minute cooldown passes."
+    }
+  },
+  "appSignInFinishView": {
+    "about": "In the desktop app, waiting for the browser sign-in to be exchanged for its own: success is a signing-in line; failure says this sign-in has expired and offers a button back to sign-in.",
+    "s1": {
+      "name": "Exchanging for the app sign-in",
+      "note": "The link brought back this app-initiated sign-in: the title says 'Signing in', a line below shows it's making progress."
+    },
+    "s2": {
+      "name": "This sign-in expired",
+      "note": "When the link doesn't bring back the app-initiated sign-in: the title says 'Sign-in failed', the reason is in the notice, with a primary button back to sign-in."
+    }
+  },
+  "appSignInStartView": {
+    "about": "The moment the browser lands the desktop app's sign-in: nothing's decided yet, and the only thing drawable is a progress line showing it's working.",
+    "s1": {
+      "name": "Just running",
+      "note": "There's not a single line of text on this screen: a two-pixel progress line is all there is; the container swaps it out once it has the destination."
+    }
+  },
+  "backToAppView": {
+    "about": "The screen that hands the sign-in back to the app after the browser flow finishes: says which account it's signing in, hand it over on press, open the app once the app link arrives, and spell out the reason if it can't be handed over.",
+    "s1": {
+      "name": "Waiting for the link",
+      "note": "Nothing settled yet: a progress line, nothing else to press."
+    },
+    "s2": {
+      "name": "Ask, then hand over",
+      "note": "The account to hand over is set: the title says who it signs in, a 'Continue' below hands it over, with switch-account and cancel beside it."
+    },
+    "s3": {
+      "name": "App link received",
+      "note": "After handing over, the app gave its own link: an 'Open Cheese' button here opens the app."
+    },
+    "s4": {
+      "name": "Can't hand over",
+      "note": "The hand-over failed: the title says 'Sign-in failed', the reason is in the notice, telling the person to sign in again in the app."
+    }
+  },
+  "desktopSignInView": {
+    "about": "The common starting point for sign-in, sign-up and password recovery on the desktop app: a button that opens the browser, and after it's been opened you can open it again or copy the link out.",
+    "s1": {
+      "name": "Browser not opened yet",
+      "note": "Default cell: it explains sign-in happens in the browser, the primary button says 'Sign in in the browser', and 'No account yet?' is below."
+    },
+    "s2": {
+      "name": "Opened once",
+      "note": "The browser has opened once: an 'Opened; you'll return here when done' line is added, the button becomes 'Open the browser again', plus a copy-link button."
+    },
+    "s3": {
+      "name": "Can't open the browser",
+      "note": "If the browser won't launch, the reason is on the top line and the button stays put to try again."
+    },
+    "s4": {
+      "name": "The sign-up cell",
+      "note": "Same shell, a different entry: the title goes from 'Sign in to Cheese' to 'Sign up for Cheese', and the line below from 'No account yet' to 'Already have an account'."
+    }
+  },
+  "oAuthCompleteView": {
+    "about": "The screen after a third-party account comes back verified: a line while loading; once loaded, choose between 'Create a new account' and 'Link an existing account', each with its own form; when the state can't be fetched it says so and offers the way back to sign-in.",
+    "s1": {
+      "name": "Still reading the returned state",
+      "note": "Identity not in hand yet (or still being checked): a progress line, nothing else drawn."
+    },
+    "s2": {
+      "name": "Create a new account",
+      "note": "State in hand: the title greets the name in the identity, defaulting to 'Create a new account' — username, nickname and email fields, with the consent checkbox below."
+    },
+    "s3": {
+      "name": "This site needs an invite code",
+      "note": "An extra field when sign-up needs an invite code: like the sign-up page, submitting empty is stopped by the self-check."
+    },
+    "s4": {
+      "name": "State unavailable",
+      "note": "The third-party state didn't come back (expired or errored): the title says 'Can't continue signing in', the reason is in the lead, with a primary button back to sign-in."
+    }
+  },
+  "oAuthErrorView": {
+    "about": "The screen after a third-party sign-in fails: the title states the result; when the error code carries a reason it's spelled out on its own line, and you go back to sign-in or retry at the provider.",
+    "s1": {
+      "name": "Result only",
+      "note": "The error code carried nothing else: the title 'Sign-in failed' suffices, with just a primary button back to sign-in below."
+    },
+    "s2": {
+      "name": "With a reason",
+      "note": "When the error code translates to a sentence it gets its own line: the reason is in the notice, no longer repeating the title."
+    },
+    "s3": {
+      "name": "Can retry at the provider",
+      "note": "When the address carries a provider, a secondary button is added: it reads 'Sign in again with <provider>' using the provider's name, and jumps right back."
+    }
+  },
+  "oAuthSuccessView": {
+    "about": "The wrapping-up screen after a third-party sign-in returns: while reading the session it says which provider it's completing; once read it says sign-in succeeded and is redirecting; on error it spells out the reason and offers the way back to sign-in.",
+    "s1": {
+      "name": "Completing third-party sign-in",
+      "note": "Still exchanging the cookie from the redirect for a session: the title says 'Signing in', the lead names the provider, a progress line below."
+    },
+    "s2": {
+      "name": "Signed in, redirecting",
+      "note": "The session is exchanged: the title goes from 'Signing in' to 'Signed in', the lead says 'Redirecting', waiting to be taken where it belongs."
+    },
+    "s3": {
+      "name": "Exchange failed",
+      "note": "Holding the cookie but no session: the title says 'Sign-in failed', the reason is in the notice, with a primary button back to sign-in."
+    }
+  },
+  "oAuthVerifyView": {
+    "about": "Asking for the password once when linking a third-party account to an existing one: says which email is being linked; a wrong password can be written on the field, or on its own line above.",
+    "s1": {
+      "name": "Ask for the password once",
+      "note": "Default cell: the title says 'Link account', the lead names the email, a password field, a 'Verify and link' button, sign-in below."
+    },
+    "s2": {
+      "name": "Wrong password, on the field",
+      "note": "A wrong password alone doesn't redden the whole page: that line lands under the password field itself, fixing it in place."
+    },
+    "s3": {
+      "name": "General failure",
+      "note": "When it isn't the password (say the address is taken) it gets its own line: the reason above the form, the field still clean."
+    }
+  },
+  "passkeyOfferView": {
+    "about": "After sign-in, encouraging adding a passkey: accept and not-now are the same size, and an account that declined can quietly say 'Don't ask again'.",
+    "s1": {
+      "name": "Encourage adding one",
+      "note": "Default cell: it explains signing in with fingerprint/face on this device, two equal-sized buttons — add, and not now."
+    },
+    "s2": {
+      "name": "Declined before, can stop the prompt",
+      "note": "This person declined before: a quiet 'Don't ask again' is added; clicking it stops the asking, clearly not being pushed."
+    },
+    "s3": {
+      "name": "Something went wrong adding",
+      "note": "When this device can't create a passkey, the reason is on the top line, both buttons still there."
+    }
+  },
+  "signInView": {
+    "about": "The sign-in page: notice or error, the ways in (the last used one first with a small tag), and the username/password form.",
+    "s1": {
+      "name": "Default order: one-click ways first",
+      "note": "This browser has no sign-in history: the one-click ways come first, then 'or', then the password form; the title line carries a link to sign up."
+    },
+    "s2": {
+      "name": "Last used a passkey",
+      "note": "With sign-in history, that way is drawn first and tagged 'Last used'; the container orders it first too."
+    },
+    "s3": {
+      "name": "An attempt rejected",
+      "note": "When the username or password is wrong the reason is on the top line; during the wait the form's button is held, until enough seconds pass."
+    },
+    "s4": {
+      "name": "Returning with a notice",
+      "note": "A notice travels as its own green message: e.g. just reset the password, or just signed out; it says a line before letting you fill the form."
+    }
+  },
+  "verify2FaView": {
+    "about": "The two-step-verification step: the trust-this-device checkbox, the input for the current code type, a link back to sign-in, and the dialog urging a fresh set of backup codes after one is used.",
+    "s1": {
+      "name": "Enter the authenticator code",
+      "note": "Default cell: the lead says to take a 6-digit code from your authenticator app, the checkbox guards 'don't ask this device for 30 days', and below is how long repeated failures lock you out."
+    },
+    "s2": {
+      "name": "Switch to a backup code",
+      "note": "Switching to a backup code changes only what to fill and the button: the lead becomes 'Enter an 8-digit backup code', the button reads 'Verify backup code'."
+    },
+    "s3": {
+      "name": "Wrong code",
+      "note": "When the code is wrong the reason is on the top line, the field stays put to refill."
+    },
+    "s4": {
+      "name": "The prompt after using a backup code",
+      "note": "Passing this step with a backup code pops a dialog in place: it spells out that each backup code works once, urging you to generate a new set now (not opened here, only drawn)."
+    }
+  },
+  "requestView": {
+    "about": "The first step of signing in with an email code: fill in the address, self-check against the rules, send, and the way back to sign-in.",
+    "s1": {
+      "name": "Enter address",
+      "note": "Default cell: the title says 'Sign in with an email code', an email field, a 'Send code' button, sign-in below."
+    },
+    "s2": {
+      "name": "Sending too often",
+      "note": "Sending repeatedly within a minute is blocked by the server: the reason is on the top line, press the button again once enough time passes."
+    }
+  },
+  "emailCodeVerifyView": {
+    "about": "The second step of signing in with an email code: says which address the code went to, six boxes, a one-minute resend countdown and the way back to sign-in.",
+    "s1": {
+      "name": "Enter code",
+      "note": "Default cell: the title says 'Enter the code', the lead names the address the code went to, six boxes, submitting allowed once filled."
+    },
+    "s2": {
+      "name": "Resend countdown",
+      "note": "Just after sending, the 'Resend' control is tucked away, replaced by a countdown of how many seconds remain; it returns when the seconds run out."
+    },
+    "s3": {
+      "name": "Wrong code",
+      "note": "When the code is wrong or expired the reason is on the top line, the boxes cleared to re-enter."
+    }
+  },
+  "passwordStartView": {
+    "about": "The first step of password recovery: fill in the registered email to send a reset link; once sent, the screen becomes a 'Check your email' line in place.",
+    "s1": {
+      "name": "Enter registered email",
+      "note": "Default cell: it explains a reset link will be sent to this email, a 'Send reset email' button, 'Remembered it?' and sign-in below."
+    },
+    "s2": {
+      "name": "Email sent",
+      "note": "After sending, the form gives way to the result: the title becomes 'Check your email', a 'Reset-password email sent' line, leaving just a button back to sign-in."
+    },
+    "s3": {
+      "name": "Can't send",
+      "note": "When sending fails the reason is on the top line, the form stays, change the address or try later."
+    }
+  },
+  "passwordVerifyView": {
+    "about": "The second step opened by the reset link: enter the new password twice, with the account name hidden in the form for password managers, mismatches written on the field in place.",
+    "s1": {
+      "name": "Set a new password",
+      "note": "Default cell: the title says 'Set a new password', new-password and confirm fields, with a hint of at least 8 characters including letters, digits and symbols."
+    },
+    "s2": {
+      "name": "Link expired",
+      "note": "When the reset token is expired the reason is on the top line: sends you back to sign-in to redo password recovery."
+    }
+  },
+  "signupStartView": {
+    "about": "The create-account screen: username, nickname, email and password in two groups, each self-checked; an extra field when an invite code is needed, and the consent checkbox below.",
+    "s1": {
+      "name": "Fill the form",
+      "note": "Default cell: title 'Create account', five fields each with its own rules, the consent checkbox below; the primary button lights only once the config is complete."
+    },
+    "s2": {
+      "name": "This site needs an invite code",
+      "note": "An extra field when sign-up needs an invite code: like the others it self-checks; submitting empty is stopped."
+    },
+    "s3": {
+      "name": "Sign-up failed",
+      "note": "When the backend refuses (username taken, duplicate email) the reason goes on the top line, the form's contents stay, fix one field and resubmit."
+    },
+    "s4": {
+      "name": "Consent not loaded",
+      "note": "When the consent versions didn't come back, a line under the consent field gives the reason it couldn't, and the primary button stays held as the config is incomplete."
+    }
+  },
+  "verifyEmailView": {
+    "about": "The verify-email screen after sign-up: six boxes, ask for the password once more if a refresh dropped it, ask for consent again if it wasn't kept, and a resend countdown below.",
+    "s1": {
+      "name": "Enter code",
+      "note": "Default cell: title 'Verify email', the lead names the address the code went to, six boxes, with resend and sign-in below."
+    },
+    "s2": {
+      "name": "Refresh dropped the password, ask again",
+      "note": "A refresh lost the half-finished sign-up state: an extra password field, spelling out 'Enter the password you set at sign-up', so verification doesn't succeed with no usable password."
+    },
+    "s3": {
+      "name": "Resend countdown",
+      "note": "Just after sending, 'Resend' is tucked away, replaced by a countdown of how many seconds remain."
+    },
+    "s4": {
+      "name": "Verification failed",
+      "note": "When the code is wrong or expired the reason is on the top line, the boxes cleared to start over."
+    }
+  },
+  "adminCreditsPageView": {
+    "about": "The plans-and-credits page: plans on top, teams below (with plan/type filters and search); opening a team, creating a plan and granting credits all pop up as overlays.",
+    "s1": {
+      "name": "Plans and teams both loaded",
+      "note": "Default cell: the plans table on top, the teams table below, both drawing real data — a personal team shows the owner's nickname in the team column, a shared team shows the member count."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Neither has arrived: each table draws its own skeleton, same shape as loaded, no reflow."
+    },
+    "s3": {
+      "name": "Teams table failed",
+      "note": "The teams path failing doesn't drag down the plans path: only the teams block becomes 'failed + message + retry', the plans table still draws."
+    },
+    "s4": {
+      "name": "Opened a team",
+      "note": "Clicking a team row slides out a panel on the right (full screen on phones): plan, each credit grant, operation log; granting credits is a button."
+    },
+    "s5": {
+      "name": "New plan",
+      "note": "The dialog the 'New plan' button pops up: name, applies to, credits and limit, available models all empty awaiting input."
+    }
+  },
+  "adminRatchetPageView": {
+    "about": "The ratchet screen: where each architecture check stands now, how many are frozen, better or worse than the start. Where the data comes from is on the source line, and the pull result floats on top.",
+    "s1": {
+      "name": "Two collections in the archive",
+      "note": "Default cell: the source line says which commit the data is from, when it was collected and how many collections the archive holds; below, each check's current number and its trend by area."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "No board yet: three fixed-height skeletons, drawing neither an empty table nor an empty state."
+    },
+    "s3": {
+      "name": "Archive unreadable",
+      "note": "This request failed and there's no board in hand: it says 'Archive unreadable', not 'no collections yet' — two things, two lines, retry right beside."
+    },
+    "s4": {
+      "name": "Never collected",
+      "note": "The archive was empty to begin with: it's 'not a single collection yet', offering a 'Pull one now', not drawing it as 'all normal'."
+    },
+    "s5": {
+      "name": "Collected, but no measurement",
+      "note": "The archive has collections yet not one check (a failed collection in the real contract looks like this): it says there's no usable measurement this time, not hiding the failure history."
+    },
+    "s6": {
+      "name": "The failed pull",
+      "note": "Just pressed refresh and CI didn't pull: a red line floats on top; the page keeps the points already stored."
+    }
+  },
+  "adminRunRecordsPageView": {
+    "about": "The run-records screen: errors the platform hit across projects and the things it handled itself, one kind per row; opening a row shows that kind's most recent full text on the right and which projects and threads it appeared in.",
+    "s1": {
+      "name": "One kind per row",
+      "note": "Default cell: errors first, self-handled after; three KPIs in the header say how many error kinds, how many times in all, how many the platform handled itself."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Overview not yet in hand: three KPIs draw skeletons; the table header is already up, but there are no data rows yet."
+    },
+    "s3": {
+      "name": "Read failure doesn't say 'none'",
+      "note": "A dead endpoint should stay put: it explains the failure and offers retry, rather than drawing 'No run records' — that hides a failure as an absence."
+    },
+    "s4": {
+      "name": "No records for now",
+      "note": "Loaded and the window truly has none: only then does it say 'No run records'."
+    },
+    "s5": {
+      "name": "Open a kind for its detail",
+      "note": "Clicking a row slides out detail on the right: the most recent full text, which project threads it appeared in (clickable) and the stack trace."
+    }
+  },
+  "legalDocumentView": {
+    "about": "A published terms-of-service or privacy policy: version, effective date and its own body; the body is fetched by the container and handed over, it fetches not a single byte itself.",
+    "s1": {
+      "name": "A policy",
+      "note": "Default cell: the version and effective date on top, the body rendered from Markdown below."
+    },
+    "s2": {
+      "name": "Unreadable",
+      "note": "When this version isn't fetched, a reason line replaces the body, not a blank page."
+    }
+  },
+  "adminStatsPageView": {
+    "about": "The admin stats page: one shell (header + window switcher) drawing whichever screen this category is — platform, performance, delivery pipeline, usage, product, feedback trend, integrations status. On a whole-block read failure the header stays and the body becomes the failure.",
+    "s1": {
+      "name": "The platform screen",
+      "note": "Default category: account stock and additions, machine ledger, three health tiles. Those machine rows are a stock, not an online count, and that line is on screen."
+    },
+    "s2": {
+      "name": "The delivery pipeline screen",
+      "note": "A different kind draws a different screen: five cards, four live stages on a rail, 'waiting on you / stuck' and failure codes. The four stages are throughput at different moments, not a funnel."
+    },
+    "s3": {
+      "name": "The usage screen",
+      "note": "Tokens and calls in the window, the biggest-spending project, cost, and the quota-exhausted list. 'Unpriced tokens' are counted separately, not folded into the total to look free."
+    },
+    "s4": {
+      "name": "The product screen",
+      "note": "North star, how far hand-offs got. The two that can't be computed are drawn with a reason (no data source), not a fake 0."
+    },
+    "s5": {
+      "name": "The feedback trend screen",
+      "note": "Four counts, a status distribution, three lines, and on the right a 'needs attention' ten rows — that block goes through another request, and only it is a skeleton while the list hasn't arrived."
+    },
+    "s6": {
+      "name": "The performance screen",
+      "note": "The only screen reading process memory: endpoint latencies at this moment, the slowest one right now, the route table. 'Slowest right now' gives the conclusion outright, not making you find it in the table."
+    },
+    "s7": {
+      "name": "First load",
+      "note": "This category hasn't arrived: the header stays (it's the page's name, not data), and each body block draws its own skeleton."
+    },
+    "s8": {
+      "name": "Whole-block read failure",
+      "note": "Nothing came in for this category and there's a server line: the whole body becomes the read failure — the header's still there, the line is copied as-is, retry is the only primary action."
+    }
+  },
+  "settingsGeneralView": {
+    "about": "Account settings 'General': the desktop app's own settings on this computer, appearing only in the app. The header first explains these settings apply only to this computer, and below there's just one row — launch at login.",
+    "s1": {
+      "name": "Launch at login",
+      "note": "The only row: 'Launch at login' and a line of explanation on the left, a switch on the right (it asks the system when the page opens; until answered it's held)."
+    }
+  },
+  "notificationsView": {
+    "about": "Account settings 'Notifications': three blocks top to bottom — channels (in-app / push / email), do-not-disturb (quiet hours / digest frequency), and an eight-events by three-channels matrix. Toggling saves; the result shows at the header's top-right.",
+    "s1": {
+      "name": "Notification prefs loaded",
+      "note": "All three blocks: two cards side by side, the eight-row, three-column matrix below, each cell a dot."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Prefs not loaded yet: a spinner in one card's spot, nothing else drawn (so 'not loaded yet' isn't drawn as 'all off')."
+    },
+    "s3": {
+      "name": "Read failure",
+      "note": "On failure it writes the real reason in place and offers a retry — not a spread of 'all off'."
+    },
+    "s4": {
+      "name": "Saving one matrix cell",
+      "note": "After toggling one matrix cell only that cell goes busy: it's held in place, everything else's display stays put — greying the whole page reads as 'the whole page is saving'."
+    },
+    "s5": {
+      "name": "Saving a channel switch",
+      "note": "After toggling the 'in-app' switch, only that spot goes busy: the switch holds and spins itself, nothing else moves."
+    }
+  },
+  "profileView": {
+    "about": "Account settings 'Profile': avatar, nickname, username, intro in four rows, and a save bar that appears only once something changed. Nickname and intro are this page's own draft, submitted once made dirty.",
+    "s1": {
+      "name": "Profile in hand",
+      "note": "Default cell: a link back to your own page at the header's right; four rows below — avatar, nickname, username, intro."
+    },
+    "s2": {
+      "name": "Person not loaded",
+      "note": "When the container hasn't got the account, the whole page is just a header — the form and the link back are drawn only once the person arrives."
+    },
+    "s3": {
+      "name": "Saving",
+      "note": "After submitting, the save bar surfaces, the receipt on its right reading 'Saving...'."
+    },
+    "s4": {
+      "name": "Saved",
+      "note": "Saved: the receipt becomes a green 'Saved', fading out on its own after a few seconds."
+    },
+    "s5": {
+      "name": "Can't save",
+      "note": "When the server refuses it copies the reason; the receipt is a red line (a reason is appended after 'Save failed')."
+    }
+  },
+  "realNameView": {
+    "about": "Account settings 'Real-name info': once filled it shows only masked name and student ID (a separate confirm to see the full ones); when unfilled, a button to fill it in, and below, the access log of who viewed this record.",
+    "s1": {
+      "name": "Not loaded yet",
+      "note": "The record hasn't come back: a fixed-height card holds the spot so the page doesn't jump the moment it loads."
+    },
+    "s2": {
+      "name": "Read failure",
+      "note": "When the record can't be loaded, the card writes a reason line (it no longer counts as 'loading' then)."
+    },
+    "s3": {
+      "name": "Never filled in",
+      "note": "Read back 'no such record': it says it's not filled yet and offers a button to fill it in."
+    },
+    "s4": {
+      "name": "Fill it the first time",
+      "note": "Opening the form, name and student ID are required, the rest optional; two buttons below — cancel and save."
+    },
+    "s5": {
+      "name": "Already filled in",
+      "note": "With a record, only the masked values are shown row by row, with 'Show full info' and 'Edit' buttons at the top-right."
+    },
+    "s6": {
+      "name": "Your own views",
+      "note": "After filling, an access log is added below: this shows the two entries where you viewed it yourself — the mark, a 'You viewed the full info' line, which space, and when. (The 'someone else viewed it' rows need the outer scope and can't be mounted standalone in the catalog; see the note in the fixtures.)"
+    }
+  },
+  "securityView": {
+    "about": "Account settings 'Password & security': three blocks by 'how you get in' — sign-in methods (password, passkey, two-step verification), linked accounts, browsers and apps signed in; changing the password and enabling two-step verification are both in dialogs.",
+    "s1": {
+      "name": "All three lists present",
+      "note": "Default cell: a passkey (it takes its own detail row), two-step verification off, one linked account, two signed-in browsers."
+    },
+    "s2": {
+      "name": "Browser doesn't support passkeys",
+      "note": "When this browser can't create a passkey, that row says why and the 'Add' button is held."
+    },
+    "s3": {
+      "name": "Two-step verification on",
+      "note": "With two-step verification on, a lit dot precedes the status row and a 'Backup codes' block is added below."
+    },
+    "s4": {
+      "name": "No linked accounts",
+      "note": "The linked-accounts block reads empty: it writes 'No linked accounts' in place, not an empty row."
+    },
+    "s5": {
+      "name": "No other sign-ins",
+      "note": "The sign-in list reads empty: that block writes 'No other sign-ins' in place, and the top-right 'Sign out other devices' doesn't appear (no other devices to sign out)."
+    },
+    "s6": {
+      "name": "Change-password dialog",
+      "note": "The dialog popped by 'Edit': new-password and confirm fields, a mismatch written on the field in place."
+    },
+    "s7": {
+      "name": "Enable two-step: scan",
+      "note": "The first of three steps: a 'Scan the QR code with your authenticator app' line, the QR code, and the secret to enter by hand when scanning isn't possible."
+    },
+    "s8": {
+      "name": "Enable two-step: enter code",
+      "note": "The second step: type the 6 digits from the authenticator into a row of boxes, verification allowed once filled."
+    },
+    "s9": {
+      "name": "Enable two-step: backup codes",
+      "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
+    }
+  },
+  "thisDeviceView": {
+    "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
+    "s1": {
+      "name": "Still asking the connection state",
+      "note": "Not yet asked whether this device is connected: a row with a spinning progress ring, nothing else drawn."
+    },
+    "s2": {
+      "name": "Not connected yet",
+      "note": "When not connected, an empty card: a 'Not connected' line and one line of explanation (once connected, AI teammates can run tasks on this device), plus an entry to connect."
+    },
+    "s3": {
+      "name": "Connected, online",
+      "note": "Connected and online: a lit dot precedes the status row reading 'Connected / Online'; below are the device name, teams, Claude Code and disconnect."
+    },
+    "s4": {
+      "name": "Connected, offline",
+      "note": "The same device dropped: only the status dot and that line change, the rest stay."
+    },
+    "s5": {
+      "name": "Not offered to any team",
+      "note": "When no team is checked, the teams row writes 'Not offered to any team' in place, not a blank."
+    },
+    "s6": {
+      "name": "Carries an error",
+      "note": "A reason like a failed connection-state read is written on a full top line, the blocks below still drawn as usual."
+    }
+  },
+  "channelBrowseView": {
+    "about": "The project's 'Browse channels': channels I can see in a list (findable, joinable, leavable); project managers can create channels on this page too. The sidebar lists only what I've joined; others are found here.",
+    "s1": {
+      "name": "List channels",
+      "note": "Default cell: a search box, a row of filters (all / joined / archived, each with a count), one row per channel below — name, description, headcount, with 'Join' or 'Leave' on the right."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "No channel loaded yet and still reading: a spinner, not saying 'No channels' first."
+    },
+    "s3": {
+      "name": "Read failure",
+      "note": "When the channel list fails, it writes the reason in place and offers a retry."
+    },
+    "s4": {
+      "name": "None visible",
+      "note": "Loaded but no channel I can see: it says 'No channels' in place."
+    },
+    "s5": {
+      "name": "New channel",
+      "note": "The dialog a manager pops by pressing 'New': name, description, a 'Members only' checkbox; creation allowed once the name is filled."
+    }
+  },
+  "projectTasksView": {
+    "about": "The project's 'All tasks': tasks grouped by 'whose turn is next' (to-do, in review, in progress, not started), the ones waiting on a person written in warm colour; filterable on top by 'whose', 'which channel' and 'show closed'.",
+    "s1": {
+      "name": "Tasks in progress",
+      "note": "Default cell: a row of filters (all / mine / helping / others, each with a count), a channel menu, show-closed; below, grouped by status, one task per row."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Tasks not loaded yet and still reading: a spinner; the counts on the filters aren't written yet (a 0 there isn't a real 0)."
+    },
+    "s3": {
+      "name": "Read failure",
+      "note": "When the task list fails, it writes the line and offers a retry."
+    },
+    "s4": {
+      "name": "Nothing at all",
+      "note": "Loaded and this filter has nothing: it says 'No tasks' in place."
+    },
+    "s5": {
+      "name": "Show closed",
+      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Completed' group, and the counts come from the server's set."
+    },
+    "s6": {
+      "name": "Folds a few stalled",
+      "note": "Work idle for fourteen days folds into a bottom 'Stalled' section, first saying just 'N stalled', listing them only when opened."
+    },
+    "s7": {
+      "name": "Only one channel",
+      "note": "After picking a channel from the channel menu, that chip lights up and the list keeps only tasks in that channel."
+    }
+  },
+  "projectOverviewView": {
+    "about": "The page you land on entering a project: the project goals, recent progress (by day), who's doing what (by owner), and what's been made (handed-over artifacts and sites).",
+    "s1": {
+      "name": "All four blocks present",
+      "note": "Default cell: the left column is the project goals (with an 'Edit project goals') and recent progress; the right column is who's doing what and what's been made (those two artifacts)."
+    },
+    "s2": {
+      "name": "No document yet",
+      "note": "When the document is empty (not unreadable) it offers a 'No project goals yet' line saying what to write, and a 'Write project goals'."
+    },
+    "s3": {
+      "name": "Progress unreadable",
+      "note": "When recent progress fails, only that block explains the reason and offers a retry, not turning the whole page into one error."
+    },
+    "s4": {
+      "name": "No progress in two weeks",
+      "note": "Loaded, but nothing to say for the last two weeks: it says 'No progress in the last two weeks' in place."
+    },
+    "s5": {
+      "name": "Who's-doing-what empty",
+      "note": "When there's not a single task in progress, that block says 'No tasks in progress'."
+    },
+    "s6": {
+      "name": "Challenge-born project with a deadline",
+      "note": "A project born from a task adds a deadline line above the document: if your own registration was approved it says 'Submission deadline', otherwise 'Task deadline'."
+    }
+  },
+  "mineView": {
+    "about": "The my-teams page: projects under your own name are not here (a project is not a team); each team you have joined is one row that opens the team page.",
+    "s1": {
+      "name": "Two teams",
+      "note": "Default state: one row per team with avatar, name and a one-line intro; tapping one opens the team page."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: a spinner and a \"Loading…\" line, not the empty state."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read says so and offers a reload, rather than showing \"You haven't joined a team yet\"."
+    },
+    "s4": {
+      "name": "No teams at all",
+      "note": "Read, and there really are none: only now does it say \"You haven't joined a team yet\" and offer the next step."
+    }
+  },
+  "exploreView": {
+    "about": "The find-teams page: a search box on top; before searching it shows the \"Recruiting\" placeholder, and after searching it swaps in results, no-results or a search failure.",
+    "s1": {
+      "name": "Not searched yet",
+      "note": "Default state: the search box is empty and below it sits the recruiting placeholder (coming soon)."
+    },
+    "s2": {
+      "name": "Found teams",
+      "note": "After a keyword is submitted: a list of results, each with avatar, name and a one-line intro."
+    },
+    "s3": {
+      "name": "No results",
+      "note": "Searched, and nothing matched: it says \"No teams found\" in place, without a retry that cannot help."
+    },
+    "s4": {
+      "name": "Search failed",
+      "note": "This request failed, which is not the same as \"no results\": the failure is stated in place with a retry kept."
+    },
+    "s5": {
+      "name": "No permission",
+      "note": "401/403 means \"you may not see this\", not \"this read failed\": it says so and offers no retry."
+    }
+  },
+  "computeView": {
+    "about": "The team-compute page: register devices your members have connected to the team, and see at a glance which are online, who is using them and which screens they run.",
+    "s1": {
+      "name": "Two devices",
+      "note": "Default state: one card per device with online/offline, machine id and, when another project is using it, that project and the screens running on it."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: a spinner in the middle, not an empty \"No self-hosted devices yet\"."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read states the reason and offers a retry, rather than an empty device list."
+    },
+    "s4": {
+      "name": "No permission",
+      "note": "On 401/403 it says there is no access and offers no retry."
+    },
+    "s5": {
+      "name": "Not a single device",
+      "note": "Read, and there really are none: it shows the empty state and keeps the \"Add a self-hosted device\" button."
+    },
+    "s6": {
+      "name": "Add failed",
+      "note": "A failed register/remove is a dismissible error bar (not a read failure): the page stays, the device list stays."
+    }
+  },
+  "adminIntegrationsPageView": {
+    "about": "The admin \"Feishu app\" page: an admin fills in the platform App ID / Secret / domain once and members connect with one click. The Secret is write-only and never echoed.",
+    "s1": {
+      "name": "Already configured",
+      "note": "Default state: the status line reads \"Configured · App ID · domain\" and who last updated it; App ID and domain are filled in, the Secret is always empty."
+    },
+    "s2": {
+      "name": "Never configured",
+      "note": "Never set up: the status line reads \"Not configured\" and the three fields wait to be filled."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read shows only \"could not load\" with a retry — no status line and no form, because only a successful read knows whether it is configured."
+    },
+    "s4": {
+      "name": "App ID blank",
+      "note": "Saving with a blank App ID: it says \"Enter the App ID first\" and the request is never sent."
+    },
+    "s5": {
+      "name": "Save failed",
+      "note": "A rejected save shows the server's own words and leaves every field untouched."
+    }
+  },
+  "adminSpacesPageView": {
+    "about": "The admin \"space applications\" page: applications awaiting review, one per row, with approve/reject to the right of the row; rejecting asks for a reason.",
+    "s1": {
+      "name": "One of each status",
+      "note": "Default state: a pending row has approve and reject on its right; approved/rejected rows carry only a status chip and no actions."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: five fixed-height skeleton rows so nothing jumps when data arrives."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read stays in the list's place, states the reason and offers a retry, rather than showing \"No applications\"."
+    },
+    "s4": {
+      "name": "None at all",
+      "note": "Read, and this pile really is empty: only now does it say \"No applications.\"."
+    },
+    "s5": {
+      "name": "Reject dialog",
+      "note": "The dialog opened by \"Reject\": it names the application, asks for a reason, and keeps \"Reject\" disabled while the reason is blank."
+    },
+    "s6": {
+      "name": "Paging",
+      "note": "When there is a previous or next page, pager buttons appear at the bottom right; a single page leaves no row of grey buttons."
+    }
+  },
+  "alertsView": {
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "s1": {
+      "name": "Counts with alerts",
+      "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Not back yet: a progress bar, not an empty 'No alerts'."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "A failed read states the reason the server gave, with a retry beside it."
+    },
+    "s4": {
+      "name": "Nothing waiting",
+      "note": "Read, and there really is nothing: it says 'No alerts' rather than leaving a blank block."
+    }
+  },
+  "knowledgeView": {
+    "about": "The team knowledge base: the toolbar, the grid and the table, and the two dialogs. Fetching and writing stay in the page — this half only reads props and reports actions.",
+    "s1": {
+      "name": "Grid, four resources",
+      "note": "The default: cards, one per resource, with type, author and time."
+    },
+    "s2": {
+      "name": "Table view",
+      "note": "Switched to the table: the same rows as a list, with an actions menu on each row."
+    },
+    "s3": {
+      "name": "First load",
+      "note": "Not back yet: a spinner in the middle, not an empty base."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "A failed read states the reason and offers a retry."
+    },
+    "s5": {
+      "name": "No permission",
+      "note": "On 401/403 it says there is no access and offers no retry."
+    },
+    "s6": {
+      "name": "Nothing in the base",
+      "note": "Read, and there really are none: it offers how to add the first one."
+    },
+    "s7": {
+      "name": "Filtered to nothing",
+      "note": "Read, and the current filters match nothing: it says so and suggests adjusting them."
+    }
+  },
+  "adminMembersPageView": {
+    "about": "The admin 'members' page: the platform-admin roster in two groups (the root list from config, and the ones added here), with add and remove.",
+    "s1": {
+      "name": "The roster",
+      "note": "The default: two groups, avatars with nickname and handle, account status marks only the exceptions, and remove shows on the added rows only."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "No roster yet: skeleton rows in the table, not a premature empty state."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "The table says it could not be read (the server's words as the description) and the retry sits right there."
+    },
+    "s4": {
+      "name": "After adding",
+      "note": "A result notice — a success also speaks, so you can tell which handles were added."
+    },
+    "s5": {
+      "name": "Refreshing",
+      "note": "With a roster already on screen a refresh only dims it (busy); it does not flash the skeleton."
+    },
+    "s6": {
+      "name": "Add dialog",
+      "note": "Search is server-side; candidates already on the roster are drawn disabled, with a badge."
+    }
+  },
+  "pendingView": {
+    "about": "Requests and invitations: each section owns its loading, failure and results; actions go back to the page.",
+    "s1": {
+      "name": "Requests and invitations",
+      "note": "The three sections show their rows, with cancel, accept or decline for pending items."
+    },
+    "s2": {
+      "name": "Loading requests",
+      "note": "Requests load first; the other two sections retain their original empty states."
+    },
+    "s3": {
+      "name": "Loading team invitations",
+      "note": "Requests have arrived while team invitations are loading."
+    },
+    "s4": {
+      "name": "Loading project invitations",
+      "note": "The team sections have arrived while project invitations are loading."
+    },
+    "s5": {
+      "name": "Empty sections",
+      "note": "All three sections were successfully read and are empty."
+    },
+    "s6": {
+      "name": "Requests failed",
+      "note": "Only requests show a reason and retry; invitations remain usable."
+    },
+    "s7": {
+      "name": "Team invitations failed",
+      "note": "Team invitations retry independently of requests and project invitations."
+    },
+    "s8": {
+      "name": "Project invitations failed",
+      "note": "Project invitations show the failure without hiding the two team sections."
+    },
+    "s9": {
+      "name": "Answering a project invitation",
+      "note": "Only the current project invitation has both buttons disabled; other invitations remain usable."
+    },
+    "s10": {
+      "name": "Refreshing with existing rows",
+      "note": "Each refreshing section retains its existing rows instead of becoming an initial load."
+    }
+  },
+  "learningView": {
+    "about": "Learning analytics: filter by student and knowledge point, select stuck points or questions, and build a teaching outline.",
+    "s1": {
+      "name": "Queues and questions",
+      "note": "Shows stuck points and questions, with a reason for unavailable review signals."
+    },
+    "s2": {
+      "name": "First load",
+      "note": "Shows progress before queues arrive without prematurely showing empty questions."
+    },
+    "s3": {
+      "name": "Load failed",
+      "note": "A failed queue or question read replaces content with the reason and retry."
+    },
+    "s4": {
+      "name": "Empty queues and questions",
+      "note": "Loaded with no flagged items, stuck points or questions."
+    },
+    "s5": {
+      "name": "No member projects",
+      "note": "No member projects takes precedence even when the queue read failed."
+    },
+    "s6": {
+      "name": "Filters and selection",
+      "note": "Both filters are selected; a question is checked in both its stuck point and list row."
+    },
+    "s7": {
+      "name": "Generated outline",
+      "note": "Shows outline sessions, excerpts and the notice for unavailable questions."
+    },
+    "s8": {
+      "name": "Refreshing and building",
+      "note": "Keeps queues, selections and the outline while the build button is busy."
+    },
+    "s9": {
+      "name": "Flagged questions",
+      "note": "Available review signals show their questions instead of an unavailable reason."
+    }
+  }
+}

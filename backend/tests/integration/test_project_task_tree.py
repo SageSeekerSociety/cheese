@@ -37,7 +37,7 @@ def _file_card(client, room_id: str, subject: str) -> str:
         json={
             "change_subject": subject,
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     assert r.status_code == 200, r.text

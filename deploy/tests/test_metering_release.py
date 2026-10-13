@@ -27,6 +27,12 @@ if args[0] == "compose":
     record["saved_image"] = list(home.glob("releases/*/previous-image"))[0].read_text().strip()
 with open(os.environ["CALLS"], "a") as log:
     log.write(json.dumps(record) + "\n")
+if args[0] == "pull":
+    counter = home / "pulls"
+    done = int(counter.read_text()) if counter.exists() else 0
+    counter.write_text(str(done + 1))
+    if done < int(os.environ.get("FAIL_PULLS", "0")):
+        sys.exit(1)
 if args[:2] == ["network", "inspect"] and os.environ.get("NO_NETWORK"):
     sys.exit(1)
 if args[:2] == ["image", "inspect"]:
@@ -199,6 +205,17 @@ class MeteringReleaseTest(unittest.TestCase):
                 "metering-proxy",
             ],
         )
+
+    def test_a_pull_the_registry_drops_is_tried_again(self):
+        result, calls = self.run_release(FAIL_PULLS="2", METERING_PULL_RETRY_DELAYS="0 0 0")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual([c["args"][0] for c in calls].count("pull"), 3)
+        self.assertEqual(len([c for c in calls if c["args"][0] == "compose"]), 1)
+
+    def test_a_pull_that_never_succeeds_stops_the_release(self):
+        result, calls = self.run_release(FAIL_PULLS="99", METERING_PULL_RETRY_DELAYS="0 0 0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual([c["args"][0] for c in calls], ["pull"] * 4)
 
     def released_config(self, env_text=ENV_TEXT):
         """The configuration label a release puts on the container it starts

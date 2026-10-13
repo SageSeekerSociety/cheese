@@ -7,7 +7,7 @@ const setTimezone = vi.fn()
 const setLanguage = vi.fn()
 const getCurrentUser = vi.fn()
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
     setTimezone: (...args: unknown[]) => setTimezone(...args),
     setLanguage: (...args: unknown[]) => setLanguage(...args),
@@ -42,9 +42,9 @@ async function freshPage() {
 beforeEach(() => {
   localStorage.clear()
   setTimezone.mockReset()
-  setTimezone.mockResolvedValue({ data: { timezone: browserZone } })
+  setTimezone.mockResolvedValue({ timezone: browserZone })
   setLanguage.mockReset()
-  setLanguage.mockResolvedValue({ data: { language: 'zh-CN' } })
+  setLanguage.mockResolvedValue({ language: 'zh-CN' })
   getCurrentUser.mockReset()
   vi.stubGlobal('BroadcastChannel', LoneTab)
 })

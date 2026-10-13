@@ -1,19 +1,31 @@
 import type { RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
-/** 登录的人该落在哪：上次待的项目，读不到清单就落在待办。
+/** 登录的人该落在哪：上次待的项目；一个项目都没有、也没走过新手引导的人去引导；
+ *  其余落在待办。
  *
  *  根路由守卫用它，会话恢复层（components/common/SessionRestoreGate.vue）也用它
  *  ——弱网下恢复成功时首屏那次导航早就结束了，得把这份决定重走一遍。 */
 export async function landingForMember(): Promise<RouteLocationRaw> {
-  const [{ listProjects }, { workspaceProject }, { lastOpenedProjectId }] = await Promise.all([
-    import('@/api'),
+  const [
+    { queryClient },
+    { projectsQuery },
+    { workspaceProject },
+    { lastOpenedProjectId },
+    { default: AccountService },
+  ] = await Promise.all([
+    import('@/query/client'),
+    import('@/query/projects'),
     import('@/components/common/Navigation/destinations'),
     import('@/stores/workspace'),
+    import('@/services/account'),
   ])
   try {
-    const projects = (await listProjects()).data
+    // 和左边栏读的是同一份：刚读过就不再问。
+    const projects = await queryClient.fetchQuery(projectsQuery())
     const projectId = workspaceProject(projects, null, lastOpenedProjectId())
     if (projectId) return { name: 'workspace-project', params: { projectId } }
+    // 走过引导（或跳过了）又退出、删光了项目的人不再被拉回引导：待办上有起步的路。
+    if (!AccountService.user?.onboarded_at) return { name: 'welcome' }
   } catch {
     // 项目清单读不到时落在待办上：那一页不依赖这份清单也能用。
   }
@@ -47,8 +59,8 @@ export default {
         publicLanding: true,
       },
       component: () => import('@/views/home/Landing.vue'),
-      // 登录后落回上次待的那个项目：每天的第一件事是接着干活。一个项目都没有的人
-      // 没有地方可回，落在待办上——那一页给他新建项目、用邀请码加入空间两条路。
+      // 登录后落回上次待的那个项目：每天的第一件事是接着干活。新账号先走新手引导
+      // （`landingForMember`）。
       beforeEnter: async () => {
         // AccountService's API client imports the router; load it after route construction.
         const { default: AccountService } = await import('@/services/account')

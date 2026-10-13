@@ -15,13 +15,13 @@ import type { DocEdit } from '../lib/docEdits'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
-import { addComment, getDocNodes, workspaceFileRawUrl } from '../api'
+import { addComment, getDocNodes } from '../api'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
 import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
-import { getDocumentAbout, renameDocument } from '../api/projectDocuments'
+import { documentImageUrl, getDocumentAbout, renameDocument } from '../api/projectDocuments'
 import { isAgentHandle } from '../lib/authorship'
 import { dispatch } from '../lib/docAgent'
 import { expandMentions } from '../lib/expandMentions'
@@ -31,6 +31,7 @@ import { myHandle } from '../me'
 import { useDocCollab } from './useDocCollab'
 
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
 
 /** 不在哪个对话里的一份文档（项目资料库里的）：直接给编号，不经对话去问。 */
 export interface PanelDocument {
@@ -51,7 +52,7 @@ export interface PanelDocProps {
   agentName?: string
   /** 项目 AI 队友的 handle。 */
   agentHandle?: string | null
-  /** 画在一整页里（资料库的那份章程）：总览的其余两块不在那儿画，也就不去取。 */
+  /** 画在一整页里（项目文档页的项目目标）：总览的其余两块不在那儿画，也就不去取。 */
   bare?: boolean
 }
 
@@ -61,7 +62,6 @@ export type PanelDocBundle = ReturnType<typeof usePanelDoc>
 /** 「文档」这一格的全部取数：状态进、动作出，一个 DOM 都不碰。 */
 export function usePanelDoc(props: PanelDocProps) {
   const AUTHOR = myHandle()
-  const projectId = computed<string | null>(() => props.document?.projectId ?? props.topic?.project_id ?? null)
   // 房间的文档是哪一份：切到一个房间时问一次。之后的读写都对着这份文档的 id。
   const documentId = ref<string | null>(null)
   const resolveError = ref<string | null>(null)
@@ -168,14 +168,14 @@ export function usePanelDoc(props: PanelDocProps) {
     return applyDocEdits(did, edits)
   }
 
-  // Display-time image src resolution: workspace-relative paths (uploads/x.png)
-  // render through the raw-file API; absolute http(s)/data URLs pass through.
-  // The node attr keeps the ORIGINAL path, so the Markdown never gets a URL.
-  function imageSrc(src: string): string {
-    if (/^(https?:|data:|blob:|\/)/i.test(src)) return src
-    const pid = projectId.value
-    if (!pid) return src
-    return workspaceFileRawUrl(pid, src.replace(/^\.\//, ''), props.topic?.id)
+  // 文档里引用的一张图拿什么画：按这份文档去取（读得了文档的人才看得到），路径落在
+  // 哪儿由后端按文档是谁的来定。本来就是地址的（http(s)、data、blob、站内绝对路径）
+  // 原样画。节点里留着原来的路径，Markdown 里不会出现取回来的地址。
+  function imageSrc(src: string): Promise<string> {
+    if (/^(https?:|data:|blob:|\/)/i.test(src)) return Promise.resolve(src)
+    const did = documentId.value
+    if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
+    return documentImageUrl(did, src.replace(/^\.\//, ''))
   }
 
   async function resolveDocument(tid: string, taskId: string | null) {
@@ -191,17 +191,27 @@ export function usePanelDoc(props: PanelDocProps) {
     }
   }
 
+  // 「现在打开的是哪一份」：三个 id 拼成一串字面量，watch 比的是这串字本身，值没变就不
+  // 触发下面的回调。不能直接返回数组字面量 —— 每次求值都是新数组，Vue 按引用比较，值没变
+  // 也判定为变化：任务页的数据一刷新，props.topic 就换成另一个对象（id 没变），回调跑起来
+  // 先把 documentId 置空，协同连接跟着拆掉、正文销毁，等同一个 id 解析回来再挂一遍。
+  function openKey(): string {
+    return JSON.stringify([props.document?.id ?? null, props.topic?.id ?? null, props.taskId ?? null])
+  }
+
   watch(
-    () => [props.document?.id ?? null, props.topic?.id ?? null, props.taskId ?? null] as const,
-    ([given, topicId, taskId]) => {
+    openKey,
+    () => {
       documentSequence++
       resolveError.value = null
+      const given = props.document?.id ?? null
       if (given) {
         documentId.value = given
         return
       }
       documentId.value = null
-      if (topicId) void resolveDocument(topicId, taskId)
+      const topicId = props.topic?.id ?? null
+      if (topicId) void resolveDocument(topicId, props.taskId ?? null)
     },
     { immediate: true }
   )
@@ -216,9 +226,19 @@ export function usePanelDoc(props: PanelDocProps) {
     if (id) void loadLastEdit(id).catch(() => {})
   })
 
+  // 同一页历史同时被要两次（几处一起重读），后来的跟着在飞的那一条走；之后的每一次
+  // 照常现问（staleTime 0）。
+  function readVersions(did: string, page: { before?: number; limit?: number }) {
+    return queryClient.fetchQuery({
+      queryKey: ['document', did, 'history', page],
+      queryFn: () => getDocVersions(did, page),
+      staleTime: 0,
+    })
+  }
+
   async function loadLastEdit(did: string) {
     const sequence = ++lastEditSequence
-    const page = await getDocVersions(did, { limit: 1 })
+    const page = await readVersions(did, { limit: 1 })
     if (disposed || documentId.value !== did || sequence !== lastEditSequence) return
     const top = page.versions[0]
     lastEdit.value = top ? { actor: top.actor, at: top.created_at } : null
@@ -235,7 +255,7 @@ export function usePanelDoc(props: PanelDocProps) {
   function loadVersions(before?: number) {
     const did = documentId.value
     if (!did) return Promise.reject(new Error(t('work.room.docEdit.unavailable')))
-    return getDocVersions(did, { before })
+    return readVersions(did, { before })
   }
 
   /** 恢复到某一版：在最新一版上再记一版。 */

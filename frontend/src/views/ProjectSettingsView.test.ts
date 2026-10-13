@@ -12,9 +12,10 @@ import { SudoCancelledError, withSudo } from '../utils/sudo'
 import ProjectSettingsView from './ProjectSettingsView.vue'
 
 import { setLocale } from '@/i18n'
-import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProjects } from '@/test/seedQueries'
 
 const me = vi.hoisted(() => ({ id: null as string | null }))
+const toast = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }))
 const router = vi.hoisted(() => ({
   push: vi.fn(),
   replace: vi.fn(),
@@ -22,7 +23,15 @@ const router = vi.hoisted(() => ({
 }))
 
 vi.mock('../api')
+vi.mock('vuetify-sonner', () => ({ toast }))
 vi.mock('../api/ownAgents')
+vi.mock('../components/settings/ArchiveProjectSection.vue', () => ({
+  // i18n-data: a stand-in that confirms the archive at once
+  default: {
+    emits: ['archive'],
+    template: '<section><button class="archive-confirmed" @click="$emit(\'archive\')">归档</button></section>',
+  },
+}))
 vi.mock('../utils/sudo', () => ({
   SudoCancelledError: class SudoCancelledError extends Error {},
   withSudo: vi.fn(),
@@ -80,7 +89,7 @@ describe('project settings', () => {
     ['alice', true],
     ['bob', false],
   ])('offers archiving only to the owner (owner=%s)', async (owner, offered) => {
-    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: owner }]
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: owner }])
     const wrapper = await openSettings()
     try {
       expect(wrapper.element.textContent?.includes('归档项目')).toBe(offered)
@@ -89,7 +98,7 @@ describe('project settings', () => {
     }
   })
 
-  it('shows the hosted repository without offering a GitHub repository connection', async () => {
+  it('shows the hosted repository without offering a GitHub connection or a link to the forge', async () => {
     vi.mocked(api.getForgeConnection).mockResolvedValue({
       kind: 'forgejo',
       connected: true,
@@ -100,9 +109,8 @@ describe('project settings', () => {
     try {
       expect(wrapper.element.querySelector('[data-testid="forge-repository"]')?.textContent).toContain('由平台托管')
       expect(wrapper.element.querySelector('[data-testid="github-repository"]')).toBeNull()
-      expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')?.getAttribute('href')).toBe(
-        'https://forge.example/project/code'
-      )
+      // Nobody has an account on the platform's forge: a link there lands on a sign-in page.
+      expect(wrapper.element.querySelector('[data-testid="forge-repository"] a')).toBeNull()
       expect(wrapper.element.querySelector('[data-testid="forge-attribution"]')?.textContent).toContain('当前已开启')
       expect(api.setForgeAttribution).not.toHaveBeenCalled()
     } finally {
@@ -240,7 +248,7 @@ describe('project settings', () => {
 
   // 每一栏只放一类事：人一次只为一件事来（换队友 / 调机器 / 定合并规则 / 接仓库）。
   it('lists the sections in order, with archiving last and only for the owner', async () => {
-    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }]
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
       const nav = wrapper.element.querySelector('nav[aria-label="项目设置"]')!
@@ -261,9 +269,31 @@ describe('project settings', () => {
     }
   })
 
+  // 归档完不回首页：首页会把人带进上次待的另一个项目，像是归档没发生、又像跳错了地方。
+  it('after archiving, says so and opens the archived projects, where this one now is', async () => {
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
+    vi.mocked(api.archiveProject).mockResolvedValue(undefined as never)
+    const wrapper = await openSettings('archive')
+    try {
+      // 确认框（打项目名）是 ArchiveProjectDialog 自己的事，这里替身直接说「确认归档」。
+      const confirm = await vi.waitFor(() => {
+        const el = document.body.querySelector<HTMLButtonElement>('.archive-confirmed')
+        if (!el) throw new Error('archive section not drawn yet')
+        return el
+      })
+      confirm.click()
+
+      await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith({ name: 'my-archived-projects' }))
+      expect(api.archiveProject).toHaveBeenCalledWith('project')
+      expect(toast.success).toHaveBeenCalledWith('已归档「毕业设计」')
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('lists 频道 first for whoever manages the project', async () => {
     vi.mocked(api.getProject).mockResolvedValue({ id: 'project', name: 'P', can_manage_members: true } as Project)
-    useWorkspaceStore().projects = [{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }]
+    seedProjects([{ id: 'project', name: '毕业设计', created_at: '', owner_handle: 'alice' }])
     const wrapper = await openSettings()
     try {
       await vi.waitFor(() => {

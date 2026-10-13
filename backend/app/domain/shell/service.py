@@ -22,6 +22,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.shell.catalog import DEFAULT_SHELL_NAME, Shell, is_known, lookup
+from app.domain.space.models import Space, SpaceCategory
+from app.domain.task.models import Task
 from app.domain.task.protocol import resolve as resolve_protocol
 
 logger = logging.getLogger(__name__)
@@ -78,8 +80,6 @@ async def effective_shells(
     projects all declare their own 壳 (or declare none at all) reads no 赛题 and
     no 项目集.
     """
-    from app.domain.space.models import Space, SpaceCategory
-    from app.domain.task.models import Task
 
     rows = list(projects)
     task_ids = {

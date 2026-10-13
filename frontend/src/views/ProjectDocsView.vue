@@ -4,10 +4,13 @@ import type { Block, Topic } from '../cx_types'
 
 import { computed, getCurrentInstance } from 'vue'
 import { useRouter } from 'vue-router'
+import { useQuery } from '@tanstack/vue-query'
 
-import { useCachedResource } from '@/composables/useCachedResource'
+import { usePageActive } from '@/composables/usePageActive'
+import { useProjectAgentName } from '@/composables/useProjectAgentName'
+import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { deleteMemory, getProject, getProjectWeeklies, getTopic, listMemory } from '../api'
+import { deleteMemory, getProjectWeeklies, listMemory } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
 import { relTime } from '../lib/relTime'
 import { myHandle } from '../me'
@@ -19,9 +22,12 @@ import MarkdownView from '@/components/common/MarkdownView.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import i18n, { t } from '@/i18n'
 import { useDialog } from '@/plugins/dialog'
+import { patchQuery, queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { projectQuery, roomRowQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
-// 项目级文档 (spec §7.1): 章程 / 周报集 / 记忆 — one address each
+// 项目级文档 (spec §7.1): 项目目标 / 周报集 / 记忆 — one address each
 // (`/projects/:id/docs/:kind`), inside the project frame. Which document to show
 // is a route parameter, not a route NAME: as three separate named routes this
 // page could be reached two different ways (a sidebar swap and a full-page push)
@@ -40,6 +46,7 @@ const AUTHOR = myHandle()
 const router = useRouter()
 // 单测里这一页是孤立渲染的，没有 store：队友名字就用默认的。
 const workspace = getCurrentInstance()?.appContext.config.globalProperties.$pinia ? useWorkspaceStore() : null
+const agentName = useProjectAgentName()
 
 const kind = computed<Kind>(() => (KINDS.includes(props.kind as Kind) ? (props.kind as Kind) : 'charter'))
 
@@ -54,7 +61,7 @@ function openKind(next: unknown) {
 
 interface DocsPayload {
   rootTopicId: string | null
-  /** 章程就是项目总览那一份文档；编辑器还要知道它在哪个项目、话题怎么读名字。 */
+  /** 项目目标那一份文档；编辑器还要知道它在哪个项目、话题怎么读名字。 */
   rootTopic: Topic | null
   overviewId: string | null
   weeklies: Block[]
@@ -62,30 +69,43 @@ interface DocsPayload {
 }
 
 // 一个 kind 一份缓存：三个 tab 是三份不同的文档，来回点不该各转一次圈。
-const { data, loading, error } = useCachedResource(
-  () => `docs:${props.projectId}:${kind.value}`,
-  async (): Promise<DocsPayload> => {
-    const project = await getProject(props.projectId)
-    const payload: DocsPayload = {
-      rootTopicId: project.root_topic_id ?? null,
-      rootTopic: null,
-      overviewId: null,
-      weeklies: [],
-      memoryEntries: [],
-    }
-    if (kind.value === 'charter') {
-      payload.overviewId = (await getProjectOverview(props.projectId)).id
-      if (project.root_topic_id) payload.rootTopic = await getTopic(project.root_topic_id)
-    } else if (kind.value === 'memory') {
-      payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
-    } else if (kind.value === 'weeklies') {
-      // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
-      // 认，一个叫「周报怎么发」的房间也会出现在这儿。
-      payload.weeklies = (await getProjectWeeklies(props.projectId)).data
-    }
-    return payload
-  }
+const docsKey = computed(() => keys.projectDocs(props.projectId, kind.value))
+// 回到看过的那一面先照着上一次的画，背后重取（query/client）。项目本身和根房间
+// 是工作区别处也在读的那两份，刚读过就不再问。
+// 保活着离开时停下，回来时过期了的再读（usePageActive）。
+const pageActive = usePageActive()
+const docs = useQuery(
+  computed(() => ({
+    enabled: pageActive.value,
+    queryKey: docsKey.value,
+    queryFn: async (): Promise<DocsPayload> => {
+      const project = await queryClient.fetchQuery(projectQuery(props.projectId))
+      const payload: DocsPayload = {
+        rootTopicId: project.root_topic_id ?? null,
+        rootTopic: null,
+        overviewId: null,
+        weeklies: [],
+        memoryEntries: [],
+      }
+      if (kind.value === 'charter') {
+        payload.overviewId = (await getProjectOverview(props.projectId)).id
+        if (project.root_topic_id) payload.rootTopic = await queryClient.fetchQuery(roomRowQuery(project.root_topic_id))
+      } else if (kind.value === 'memory') {
+        payload.memoryEntries = (await listMemory(props.projectId, AUTHOR)).data
+      } else if (kind.value === 'weeklies') {
+        // 一份周报是一条项目级记录，不是标题里带「周报」两个字的房间 —— 按后者
+        // 认，一个叫「周报怎么发」的房间也会出现在这儿。
+        payload.weeklies = (await getProjectWeeklies(props.projectId)).data
+      }
+      return payload
+    },
+  })),
+  queryClient
 )
+holdRevealUntil(() => !docs.isPending.value)
+const data = docs.data
+const loading = docs.isPending
+const error = computed(() => (docs.data.value ? null : docs.error.value))
 
 const weeklies = computed<Block[]>(() => data.value?.weeklies ?? [])
 const memoryEntries = computed<MemoryEntryOut[]>(() => data.value?.memoryEntries ?? [])
@@ -93,7 +113,8 @@ const errorMessage = computed<string | null>(() =>
   error.value ? error.value.message || t('project.docs.loadFailed') : null
 )
 
-// ---- 章程: the project's overview (改了就等于给每个芝士下指令). The same doc
+// ---- 项目目标: what the project is to achieve, by when, and what it leaves out
+// for now; every 芝士 reads it in every conversation. The same doc
 // panel the 综合 overview draws, on a page: one live document, toolbar,
 // selection bubble, `/` menu and comments, so the two never drift apart. ----
 const rootTopicId = computed<string | null>(() => data.value?.rootTopicId ?? null)
@@ -141,7 +162,7 @@ const dialog = useDialog()
 // 删掉找不回，先确认（§3.7）：行里的入口是灰的，红只出现在这一下确认上。
 async function removeMemory(id: string) {
   const confirmed = await dialog
-    .confirm(t('project.docs.memoryDeleteBody'), {
+    .confirm(t('project.docs.memoryDeleteBody', { name: agentName.value }), {
       title: t('project.docs.memoryDeleteTitle'),
       confirmLabel: t('project.docs.memoryDelete'),
       danger: true,
@@ -150,7 +171,10 @@ async function removeMemory(id: string) {
     .catch(() => false)
   if (!confirmed) return
   await deleteMemory(id)
-  if (data.value) data.value.memoryEntries = data.value.memoryEntries.filter((e) => e.id !== id)
+  await patchQuery<DocsPayload>(docsKey.value, (held) => ({
+    ...held,
+    memoryEntries: held.memoryEntries.filter((e) => e.id !== id),
+  }))
 }
 
 // A source-topic link: open that topic in the same project frame.
@@ -177,7 +201,7 @@ useCommands(() => {
 </script>
 
 <template>
-  <!-- 章程是一整篇文档，自己带工具条、自己滚、评论栏停在它旁边：这一页不滚，把高度让给它。 -->
+  <!-- 项目目标是一整篇文档，自己带工具条、自己滚、评论栏停在它旁边：这一页不滚，把高度让给它。 -->
   <!-- The weekly report and the memory log are prose the person reads through, so
        they take the reading column (`--page-w-read`), not the wider form / card-list
        width. Lists and forms elsewhere stay on `--page-w`. -->
@@ -197,10 +221,12 @@ useCommands(() => {
         >
           <v-tab v-for="k in KINDS" :key="k" :value="k" class="text-none">{{ t(`project.docs.kind.${k}`) }}</v-tab>
         </v-tabs>
-        <!-- 章程的顶栏（在线的人、建议、评论……）画在这一行的右边，不另起一行。 -->
+        <!-- 项目目标的顶栏（在线的人、建议、评论……）画在这一行的右边，不另起一行。 -->
         <div v-if="kind === 'charter'" id="charter-doc-bar" class="docs-tabs__bar" />
       </div>
-      <p v-if="kind === 'charter'" class="t-body c-muted mt-2">{{ t('project.docs.charterHint') }}</p>
+      <p v-if="kind === 'charter'" class="t-body c-muted mt-2">
+        {{ t('project.docs.charterHint', { name: agentName }) }}
+      </p>
     </div>
 
     <div v-if="loading" class="d-flex justify-center py-10">
@@ -242,7 +268,7 @@ useCommands(() => {
         </v-card>
       </template>
 
-      <!-- ===== 章程: the project room's own doc panel, on a page ===== -->
+      <!-- ===== 项目目标: the project's own doc panel, on a page ===== -->
       <template v-else-if="kind === 'charter'">
         <PanelDocHost
           v-if="overviewDoc"
@@ -268,7 +294,7 @@ useCommands(() => {
                由芝士写，所以要说清的是**怎么让它写**，不是它已经在写了。 -->
         <div v-if="weeklies.length === 0" class="text-medium-emphasis text-body-2 py-6 text-center">
           <div>{{ t('project.docs.weekliesEmpty') }}</div>
-          <div class="text-caption mt-1">{{ t('project.docs.weekliesHint') }}</div>
+          <div class="text-caption mt-1">{{ t('project.docs.weekliesHint', { name: agentName }) }}</div>
           <BaseButton
             v-if="rootTopicId"
             :to="topicTo(rootTopicId)"
@@ -326,7 +352,7 @@ useCommands(() => {
   min-width: 0;
 }
 
-/* 章程：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，
+/* 项目目标：编辑器整页宽、占满剩下的高度、自己滚；页签那一行仍摆在阅读宽度的那一栏里，
    切到周报集、记忆时不跳。周报集、记忆那一档走 --page-w-read（AppPage 的 prose），
    所以这里也跟着用 --page-w-read——两处对不上，切页签时那一行就会横跳一下。 */
 .docs-head--page {

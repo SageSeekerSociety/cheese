@@ -62,7 +62,6 @@
     "navigationFailed": "The network is still unstable. Try again in a moment."
   },
   "workspaceErrors": {
-    "loadProject": "Couldn’t load the project",
     "loadTopics": "Couldn’t load channels",
     "rename": "Couldn’t rename",
     "archive": "Couldn’t archive",

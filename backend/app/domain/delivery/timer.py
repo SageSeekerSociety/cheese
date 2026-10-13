@@ -38,6 +38,7 @@ from app.domain.delivery.models import Delivery, TimedDelivery
 from app.domain.identity.arrival import Arrival, how_it_arrives
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
+from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
 from app.domain.run_record.service import keep as keep_record
 from app.domain.topic.models import Topic
 from app.domain.user.services import user_by_handle
@@ -242,6 +243,10 @@ async def give_up_stale(sessions: SessionFactory, *, chat) -> int:
         for row in rows:
             row.state = "failed"
             row.last_error = GAVE_UP
+            # A finished task waiting on this turn to be written up closes
+            # without it.
+            if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
+                await close_after_summary(session, row.conversation_id, chat)
             # Only a person's message is told: 「重试」 starts a turn from the
             # messages still waiting, and a platform instruction is not one. A
             # task's opening says it failed on the task page; a routine's run

@@ -12,7 +12,11 @@ from app.domain.room_task.models import Task, TaskStatus
 from app.domain.routine import service as routine_service
 from app.domain.routine.models import Routine, RoutineRun
 from app.domain.routine.service import REPORT_TIMEOUT, sweep
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 OWNER = "user-1"
 PERSON = session_auth_headers(OWNER)
@@ -123,6 +127,82 @@ def test_an_ai_draft_runs_nothing_until_a_person_confirms_it(client):
     assert confirmed.status_code == 200, confirmed.text
     assert confirmed.json()["data"]["state"] == "active"
     assert confirmed.json()["data"]["next_run_at"] is not None
+
+
+def _draft_line(client, room: str, routine_id: str) -> dict:
+    blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
+    [line] = [
+        b
+        for b in blocks["data"]
+        if (b.get("meta") or {}).get("event_type") == "routine_proposed"
+        and b["meta"].get("routine_id") == routine_id
+    ]
+    return line
+
+
+def test_the_rooms_line_about_a_draft_says_how_a_person_decided(client):
+    room = _room(client, _project(client))
+    kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
+    line = _draft_line(client, room, kept["id"])
+    assert line["meta"]["who"] == "human", (
+        "a draft waiting on a person said 芝士 had it"
+    )
+
+    client.post(f"/routines/{kept['id']}/confirm", headers=PERSON)
+    line = _draft_line(client, room, kept["id"])
+    assert "已确认" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+    assert not line["meta"]["who"]
+
+    dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
+    assert (
+        client.delete(f"/routines/{dropped['id']}", headers=PERSON).status_code == 200
+    )
+    line = _draft_line(client, room, dropped["id"])
+    assert "已删除" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+
+
+def test_the_rooms_line_about_a_draft_names_the_teammate_that_drafted(client):
+    """The line names the teammate by its handle, the way a mention chip does,
+    so a teammate called Nova is not announced as 「芝士」, before a person
+    decides and after."""
+    room = _room(client, _project(client))
+    seat = room_agent_seat(client, room)
+    kept = _weekly(client, room, owner_handle=OWNER).json()["data"]
+    dropped = _weekly(client, room, owner_handle=OWNER, title="每日站会").json()["data"]
+    for routine in (kept, dropped):
+        line = _draft_line(client, room, routine["id"])
+        assert line["content"].startswith(f"<@{seat}> "), line["content"]
+        assert "芝士" not in line["content"]
+
+    client.post(f"/routines/{kept['id']}/confirm", headers=PERSON)
+    client.delete(f"/routines/{dropped['id']}", headers=PERSON)
+    for routine in (kept, dropped):
+        line = _draft_line(client, room, routine["id"])
+        assert line["meta"]["state"] == "over"
+        assert line["content"].startswith(f"<@{seat}> "), line["content"]
+        assert "芝士" not in line["content"]
+
+
+def test_the_work_a_run_hands_over_is_labelled_with_the_teammates_name(client):
+    room = _room(client, _project(client))
+    routine = _weekly(client, room, headers=PERSON).json()["data"]
+    _make_due(client, routine["id"])
+    _sweep(client)
+    [run] = _runs(client, routine["id"])
+    thread = _run_message(client, room, run["id"])["routine_run"]["thread_id"]
+    blocks = client.get(f"/topics/{thread}/blocks", headers=PERSON).json()["data"]
+    [line] = [
+        b
+        for b in blocks["data"]
+        if (b.get("meta") or {}).get("event_type") == "routine_run"
+    ]
+    label = line["meta"]["detail_label"]
+    assert label == f"交给 <@{routine['agent_handle']}> 的工作", label
+    assert line["meta"]["i18n"]["detail_label"]["params"] == {
+        "who": f"<@{routine['agent_handle']}>"
+    }
 
 
 def test_a_due_moment_wakes_the_teammate_once(client):

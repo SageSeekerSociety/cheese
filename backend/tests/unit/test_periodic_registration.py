@@ -1,0 +1,370 @@
+"""A registered clock must call the intended work with the intended collaborators."""
+
+import uuid
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
+
+import pytest
+
+from app.core.background import PeriodicJobs
+from app.core.config import settings
+from app.periodic_jobs import periodic_jobs
+
+pytestmark = pytest.mark.anyio
+
+
+def _world():
+    sessions = Mock(name="application sessions")
+    chat_sessions = Mock(name="chat sessions")
+    chat = SimpleNamespace(
+        session_factory=chat_sessions,
+        stop_work_in_closed_tasks=AsyncMock(),
+        remind_silent_turns=AsyncMock(),
+        remind_stale_checklists=AsyncMock(),
+        sweep_memory_dreams=AsyncMock(),
+    )
+    runner = SimpleNamespace(
+        sweep_orphans=AsyncMock(return_value=7),
+        resume_lost_messages=AsyncMock(return_value=2),
+        submit=Mock(),
+    )
+    current = [runner]
+    get_runner = Mock(side_effect=lambda: current[0])
+    machines, sandboxes, compute = AsyncMock(), AsyncMock(), AsyncMock()
+    jobs = periodic_jobs(
+        chat=chat,
+        sessions=sessions,
+        machines=machines,
+        sandboxes=sandboxes,
+        compute=compute,
+        get_runner=get_runner,
+    )
+    return SimpleNamespace(
+        jobs={job.name: job for job in jobs},
+        chat=chat,
+        sessions=sessions,
+        chat_sessions=chat_sessions,
+        runner=runner,
+        current=current,
+        get_runner=get_runner,
+        machines=machines,
+        sandboxes=sandboxes,
+        compute=compute,
+    )
+
+
+@pytest.mark.parametrize(
+    ("name", "target", "argument"),
+    [
+        (
+            "forge event subscriptions",
+            "project.forge.reconcile_repository_webhooks",
+            "sessions",
+        ),
+        (
+            "forge credential cache cleanup",
+            "agent.forgejo_tokens.purge_expired_tokens",
+            "sessions",
+        ),
+        (
+            "forge orphan account sweep",
+            "project.forge.sweep_orphan_accounts",
+            "sessions",
+        ),
+        ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
+        ("pr poll", "review.pr_poll.poll_open_prs", "chat"),
+        ("task pr poll", "review.pr_poll.poll_uncarded_task_prs", "chat"),
+        ("landing watch", "review.pr_poll.watch_landings", "chat"),
+        ("draft pr sweep", "review.pr_poll.open_draft_prs", "chat"),
+        ("cloud warm pool", "machine.warm.sweep_warm_pool", "sessions"),
+        ("run record expiry", "run_record.service.purge_expired", "sessions"),
+        (
+            "notification email drain",
+            "notification.maintenance.drain_email_queue",
+            "sessions",
+        ),
+        (
+            "notification push drain",
+            "notification.push_delivery.drain_push_queue",
+            "sessions",
+        ),
+        (
+            "notification digest",
+            "notification.digest.run_notification_digests",
+            "sessions",
+        ),
+        ("delivery resend", "delivery.ledger.resend_unsent_deliveries", "sessions"),
+        (
+            "docs question retention",
+            "docs_site.assistant.purge_old_questions",
+            "sessions",
+        ),
+        ("overdue deliveries", "delivery.overdue.report_overdue", "sessions"),
+        (
+            "task deadline sweep",
+            "task.deadline_scheduler.sweep_expired_deadlines",
+            "sessions",
+        ),
+        ("ratchet ingest", "ratchet.ingest.ingest_snapshots", "sessions"),
+    ],
+)
+async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
+    monkeypatch, name, target, argument
+):
+    # Patch the work at its owning domain, after the modules have already been
+    # imported: registrar imports must not trap an old function binding.
+    _world()
+    work = AsyncMock(return_value={"did": 1})
+    monkeypatch.setattr(f"app.domain.{target}", work)
+    world = _world()
+    assert world.get_runner.call_count == 0, "registration ran work before a tick"
+    assert await world.jobs[name]._job() == {"did": 1}
+    work.assert_awaited_once_with(getattr(world, argument))
+
+
+@pytest.mark.parametrize(
+    ("name", "collaborator"),
+    [
+        ("cloud host pool sweep", "machines"),
+        ("cloud sandbox lifecycle", "sandboxes"),
+        ("cloud compute metering", "compute"),
+    ],
+)
+async def test_machine_clocks_call_the_explicitly_supplied_sweeper(name, collaborator):
+    world = _world()
+    await world.jobs[name]._job()
+    for candidate in ("machines", "sandboxes", "compute"):
+        expected = 1 if candidate == collaborator else 0
+        assert getattr(world, candidate).await_count == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "method"),
+    [
+        ("closed task stop", "stop_work_in_closed_tasks"),
+        ("chat progress reminder", "remind_silent_turns"),
+        ("checklist reminder", "remind_stale_checklists"),
+        ("memory dream", "sweep_memory_dreams"),
+    ],
+)
+async def test_chat_clocks_call_the_supplied_chat(name, method):
+    world = _world()
+    await world.jobs[name]._job()
+    getattr(world.chat, method).assert_awaited_once_with()
+
+
+@pytest.mark.parametrize(
+    ("name", "target"),
+    [
+        ("timed deliveries", "delivery.timer.deliver_due"),
+        ("routines", "routine.service.sweep"),
+    ],
+)
+async def test_a_dispatch_clock_resolves_the_runner_when_it_ticks(
+    monkeypatch, name, target
+):
+    work = AsyncMock(return_value={"delivered": 1})
+    monkeypatch.setattr(f"app.domain.{target}", work)
+    world = _world()
+    replacement = object()
+    world.current[0] = replacement
+    await world.jobs[name]._job()
+    work.assert_awaited_once_with(world.sessions, chat=world.chat, runner=replacement)
+    world.get_runner.assert_called_once_with()
+
+
+async def test_the_queue_sweep_resumes_on_the_runner_available_at_the_tick():
+    world = _world()
+    replacement = SimpleNamespace(resume_lost_messages=AsyncMock())
+    world.current[0] = replacement
+    await world.jobs["queued message sweep"]._job()
+    replacement.resume_lost_messages.assert_awaited_once_with(
+        world.chat, source="sweep"
+    )
+    world.runner.resume_lost_messages.assert_not_awaited()
+
+
+async def test_the_orphan_sweep_reads_the_chat_activity_and_silence_limit(monkeypatch):
+    activity = AsyncMock(return_value={})
+    monkeypatch.setattr("app.periodic_jobs.last_block_at", activity)
+    monkeypatch.setattr(settings, "turn_silence_timeout_s", 123)
+    world = _world()
+    replacement = SimpleNamespace(sweep_orphans=AsyncMock(return_value=3))
+    world.current[0] = replacement
+    assert await world.jobs["orphan sweep"]._job() == 3
+    args, kwargs = replacement.sweep_orphans.call_args
+    assert args == (world.chat,)
+    assert kwargs["silence_s"] == 123
+    topic_ids = {uuid.uuid4()}
+    await kwargs["last_activity"](topic_ids)
+    activity.assert_awaited_once_with(world.chat_sessions, topic_ids)
+    world.runner.sweep_orphans.assert_not_awaited()
+
+
+async def test_gate_recovery_binds_one_runner_per_sweep_and_addresses_the_seat(
+    monkeypatch,
+):
+    topic_id = uuid.uuid4()
+    meta = {"detail": "gate abandoned"}
+    seat = AsyncMock(return_value="seat-owner")
+    addressed = Mock(return_value="addressed-seat")
+    monkeypatch.setattr("app.periodic_jobs.addressable_seat", seat)
+    monkeypatch.setattr("app.periodic_jobs.addressed_to_agent", addressed)
+    world = _world()
+    replacement = SimpleNamespace(submit=Mock())
+    world.current[0] = replacement
+
+    async def recover(sessions, *, nudge):
+        assert sessions is world.chat_sessions
+        # A sweep binds its runner once, just as startup recovery does. A later
+        # replacement must not split this sweep across two work registries.
+        world.current[0] = SimpleNamespace(submit=Mock())
+        await nudge(topic_id, "retry the card", "gate abandoned", meta)
+        return {"condemned": [topic_id], "errors": []}
+
+    monkeypatch.setattr("app.domain.review.gate_sweep.sweep", recover)
+    result = await world.jobs["gate sweep"]._job()
+    assert result["condemned"] == [topic_id]
+    seat.assert_awaited_once_with(world.chat_sessions, topic_id)
+    addressed.assert_called_once_with("seat-owner")
+    replacement.submit.assert_called_once_with(
+        world.chat,
+        topic_id,
+        author="system",
+        content="retry the card",
+        addressed="addressed-seat",
+        nudge_event="gate abandoned",
+        nudge_meta=meta,
+    )
+    world.get_runner.assert_called_once_with()
+
+
+@pytest.mark.parametrize("log_path", ["", "   ", " /tmp/usage.jsonl "])
+async def test_subscription_ingestion_is_disabled_or_uses_the_trimmed_path(
+    monkeypatch, log_path
+):
+    monkeypatch.setattr(settings, "subscription_usage_log", log_path)
+    monkeypatch.setattr(settings, "subscription_ingest_interval_s", 23)
+    ingest = AsyncMock(return_value=5)
+    monkeypatch.setattr("app.domain.usage.subscription_ingest.ingest_once", ingest)
+    world = _world()
+    job = world.jobs["subscription usage ingest"]
+    assert job.interval_seconds == (23 if log_path.strip() else 0)
+    if log_path.strip():
+        assert await job._job() == 5
+        ingest.assert_awaited_once_with(world.sessions, Path("/tmp/usage.jsonl"))
+    else:
+        ingest.assert_not_awaited()
+
+
+async def test_the_error_clock_flushes_the_backend_error_intake(monkeypatch):
+    flush = AsyncMock(return_value=4)
+    monkeypatch.setattr("app.domain.backend_log.flush_expired", flush)
+    world = _world()
+    assert await world.jobs["backend error flush"]._job() == 4
+    flush.assert_awaited_once_with()
+
+
+def test_a_duplicate_registration_is_rejected_instead_of_overwriting_work():
+    registry = PeriodicJobs()
+    registry.register("one", 10, AsyncMock())
+    with pytest.raises(ValueError, match="registered twice"):
+        registry.register("one", 20, AsyncMock())
+
+
+@pytest.mark.parametrize(
+    ("registered", "manifest", "error"),
+    [
+        (["one"], ["one", "one"], "duplicate"),
+        (["one"], ["one", "missing"], "missing"),
+        (["one", "unlisted"], ["one"], "unlisted"),
+    ],
+)
+def test_a_manifest_with_missing_extra_or_duplicate_jobs_is_rejected(
+    registered, manifest, error
+):
+    registry = PeriodicJobs()
+    for name in registered:
+        registry.register(name, 10, AsyncMock())
+    with pytest.raises(ValueError, match=error):
+        registry.ordered(manifest)
+
+
+def test_registrations_are_instance_owned_and_preserve_order_and_owner():
+    first, second = PeriodicJobs(), PeriodicJobs()
+    first.register("a", 17, AsyncMock())
+    first.register("b", 29, AsyncMock(), owner_only=False)
+    ordered = first.ordered(["b", "a"])
+    assert [(job.name, job.interval_seconds, job.owner_only) for job in ordered] == [
+        ("b", 29, False),
+        ("a", 17, True),
+    ]
+    assert second.ordered([]) == []
+    with pytest.raises(ValueError, match="missing"):
+        second.ordered(["a"])
+
+
+def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
+    monkeypatch,
+):
+    fields = (
+        "accept_pr_poll_interval_s",
+        "orphan_sweep_interval_s",
+        "closed_task_stop_interval_s",
+        "queued_message_sweep_interval_s",
+        "chat_progress_check_interval_s",
+        "gate_sweep_interval_s",
+        "machine_enroll_interval_seconds",
+        "subscription_ingest_interval_s",
+        "backend_error_flush_interval_s",
+        "run_record_expiry_interval_s",
+        "notification_email_drain_interval_s",
+        "notification_push_drain_interval_s",
+        "notification_digest_interval_s",
+        "delivery_resend_interval_s",
+        "delivery_overdue_check_interval_s",
+        "task_deadline_sweep_interval_s",
+        "memory_dream_sweep_interval_s",
+        "ratchet_ingest_interval_s",
+    )
+    for value, field in enumerate(fields, start=101):
+        monkeypatch.setattr(settings, field, value)
+    monkeypatch.setattr(settings, "subscription_usage_log", "/tmp/usage.jsonl")
+    world = _world()
+    assert [(job.name, job.interval_seconds) for job in world.jobs.values()] == [
+        ("forge event subscriptions", 300),
+        ("forge credential cache cleanup", 3600),
+        ("forge orphan account sweep", 3600),
+        ("quiet task reminder", 3600),
+        ("pr poll", 101),
+        ("task pr poll", 101),
+        ("landing watch", 101),
+        ("draft pr sweep", 101),
+        ("orphan sweep", 102),
+        ("closed task stop", 103),
+        ("queued message sweep", 104),
+        ("chat progress reminder", 105),
+        ("checklist reminder", 105),
+        ("gate sweep", 106),
+        ("cloud host pool sweep", 107),
+        ("cloud sandbox lifecycle", 107),
+        ("cloud compute metering", 107),
+        ("cloud warm pool", 107),
+        ("subscription usage ingest", 108),
+        ("backend error flush", 109),
+        ("run record expiry", 110),
+        ("notification email drain", 111),
+        ("notification push drain", 112),
+        ("notification digest", 113),
+        ("delivery resend", 114),
+        ("docs question retention", 86400),
+        ("timed deliveries", 30),
+        ("overdue deliveries", 115),
+        ("routines", 30),
+        ("task deadline sweep", 116),
+        ("memory dream", 117),
+        ("ratchet ingest", 118),
+    ]
+    assert all(job.owner_only for job in world.jobs.values())
+    world.get_runner.assert_not_called()

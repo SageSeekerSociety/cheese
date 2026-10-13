@@ -1,6 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHistory, START_LOCATION } from 'vue-router'
 
 import AccountRoutes from './account'
 import { requireEmail } from './emailRequired'
@@ -15,14 +15,17 @@ import TeamsRoutes from './teams'
 import UserRoutes from './user'
 import { workspaceRoutes } from './workspaceRoutes'
 
-import { canonicalAddress, routeIds } from '@/lib/addresses'
-import { cachedWindow, refreshBlockCache } from '@/lib/blockCache'
+import { canonicalAddress, isUuid, noteSignedOut, routeIds } from '@/lib/addresses'
 import { preloadPdfViewer } from '@/lib/pdfPreload'
-import { refreshPreviewPointer } from '@/lib/previewPointer'
 import { rememberPageBeforeSettings } from '@/lib/settingsReturn'
 import { installTopicTransitions } from '@/lib/viewTransition'
 import { myId } from '@/me'
+import { prefetchNewestBlocks } from '@/query/blocks'
+import { keys } from '@/query/keys'
+import { prefetchPreview } from '@/query/room'
+import { expectRoom, readEarly } from '@/query/snapshot'
 import { recoverNavigations } from '@/services/staleBuild'
+import { useFeedbackStore } from '@/stores/feedback'
 import { usePageTitleStore } from '@/stores/title'
 import { handSignInToApp } from '@/views/account/appSignIn'
 
@@ -102,6 +105,21 @@ const routes: RouteRecordRaw[] = [
     meta: { titleKey: 'navigation.pages.connect', isFullPage: true, ...PERSONAL_PAGE },
   },
   {
+    // 新手引导：一个项目都没有、也没走过引导的人登录后落在这里（router/home.ts
+    // `landingForMember`）；帮助菜单「新手引导」带 `?again=1` 再走一遍。
+    name: 'welcome',
+    path: '/welcome',
+    component: () => import('@/views/welcome/Welcome.vue'),
+    // 整屏：引导期间不露项目栏和顶栏，人只看这一件事。
+    meta: { titleKey: 'welcome.title', isFullPage: true, hideTabs: true, hideAppBar: true },
+    props: (to) => ({ again: to.query.again === '1' }),
+    beforeEnter: async (to) => {
+      const { default: AccountService } = await import('@/services/account')
+      await AccountService.sessionRestored
+      return AccountService.loggedIn ? true : { name: 'SignIn', query: { redirect: to.fullPath } }
+    },
+  },
+  {
     name: 'market',
     path: '/market',
     component: () => import('@/views/MarketView.vue'),
@@ -137,7 +155,7 @@ router.beforeEach(carryLoginRedirect)
 router.beforeEach(handSignInToApp(() => !!myId()))
 requireEmail(router, async () => (await import('@/services/account')).default)
 // 项目框里的地址落地成短的那一种（`/projects/<短名>/tasks/318`），见 lib/addresses。
-router.beforeEach((to) => (myId() ? canonicalAddress(to) : true))
+router.beforeEach((to) => (myId() ? canonicalAddress(to) : noteSignedOut(to)))
 
 router.beforeEach(async (to, from, next) => {
   const store = usePageTitleStore()
@@ -164,22 +182,36 @@ router.afterEach((to, from, failure) => {
   if (!failure) rememberPageBeforeSettings(to, from)
 })
 
-// 话题的消息和话题页的代码同时去取。不在这里起头的话，消息要等话题页那一串
-// chunk 下完、ChatPanel 挂上之后才开始请求，两段等待首尾相接，冷打开一个话题时
-// 那条最大的消息晚半秒以上才出现。缓存里已有的话题 ChatPanel 会立刻画出来，不必
-// 在这里再取一次；没登录就什么都不发。
-router.beforeEach((to) => {
-  if (to.name !== 'workspace-topic' || !myId()) return
-  const topicId = routeIds(to.params).topicId
-  if (!topicId) return
-  if (!cachedWindow(topicId)) void refreshBlockCache(topicId)
-  // 「这个房间当前预览是哪一份」也同时去问。它和消息一样不依赖话题页的代码：等那
-  // 一串 chunk 下完、话题数据回来，面板才挂得上，而它一挂上就要这份答案。这里先让
-  // 它出发，面板到手时通常已经在缓存里了（见 lib/previewPointer.ts）。失败没有人
-  // 看得见——它是顺手做的事。
-  refreshPreviewPointer(topicId).catch(() => {})
+// 房间的消息和房间页的代码同时去取。不在这里起头的话，消息要等房间页那一串
+// chunk 下完、ChatPanel 挂上之后才开始请求，两段等待首尾相接，冷打开一个房间时
+// 那条最大的消息晚半秒以上才出现。ChatPanel 挂上来时跟着这一条走，不另发一次；
+// 手上那份还新鲜就不取（`query/blocks`）；没登录就什么都不发。任务页读的是任务
+// 自己那段对话（任务的 id），不是它所在的频道。
+router.beforeEach((to, from) => {
+  if ((to.name !== 'workspace-topic' && to.name !== 'workspace-task') || !myId()) return
+  const ids = routeIds(to.params)
+  const conversation = to.name === 'workspace-task' ? ids.taskId : ids.topicId
+  if (!conversation || !isUuid(conversation)) return
+  void prefetchNewestBlocks(conversation).catch(() => {})
+  // 房间的名册、任务、置顶这些随订阅一起来（query/snapshot）：页面上读它们的先等快照。
+  if (ids.topicId && isUuid(ids.topicId)) expectRoom(conversation, ids.topicId)
+  // 冷打开时订阅连得晚，快照赶不上消息：提议卡和消息一起先去问，不然它比消息晚一个来回。
+  if (from === START_LOCATION) {
+    readEarly(keys.roomFeedbackProposals(conversation), () => useFeedbackStore().loadProposals(conversation))
+  }
   // 房间里会点开文档预览：趁浏览器空闲把 pdf.js 先取下来（只取一次）。
   preloadPdfViewer()
+})
+
+// 「这件任务当前预览是哪一份」也和页面代码同时去问。它和消息一样不依赖任务页的代码：
+// 等那一串 chunk 下完、任务数据回来，面板才挂得上，而它一挂上就要这份答案。这里先让
+// 它出发，面板到手时通常已经在缓存里了（`query/room`）。失败没有人看得见
+// ——它是顺手做的事。只问任务：频道没有「预览」那一格。地址上还是编号、认不出是哪
+// 一件的，交给面板挂上来之后自己问。
+router.beforeEach((to) => {
+  if (to.name !== 'workspace-task' || !myId()) return
+  const taskId = routeIds(to.params).taskId
+  if (taskId && isUuid(taskId)) void prefetchPreview(taskId)
 })
 
 // A lazily imported view is fetched at navigation time, so a release that

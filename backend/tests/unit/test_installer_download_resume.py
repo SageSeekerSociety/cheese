@@ -6,6 +6,7 @@ script is run for real, with real curl, against a server that closes the first
 transfer halfway and honours Range afterwards.
 """
 
+import hashlib
 import http.server
 import os
 import stat
@@ -18,6 +19,10 @@ from starlette.testclient import TestClient
 from app.api.routes.installer import router
 
 BINARY = bytes(range(256)) * 4096  # 1 MiB, every byte position distinguishable
+# The digest the response announces for BINARY: install.sh checks the file
+# against it, so this stands in for what the route's header carries — on the
+# resumed 206 too, where the real route repeats it.
+DIGEST = hashlib.sha256(BINARY).hexdigest()
 
 
 class _CutsFirstTransfer(http.server.BaseHTTPRequestHandler):
@@ -30,6 +35,7 @@ class _CutsFirstTransfer(http.server.BaseHTTPRequestHandler):
             # Promise the whole file, send half, drop the connection.
             self.send_response(200)
             self.send_header("Content-Length", str(len(BINARY)))
+            self.send_header("X-Checksum-SHA256", DIGEST)
             self.end_headers()
             self.wfile.write(BINARY[: len(BINARY) // 2])
             self.wfile.flush()
@@ -42,6 +48,7 @@ class _CutsFirstTransfer(http.server.BaseHTTPRequestHandler):
             "Content-Range", f"bytes {start}-{len(BINARY) - 1}/{len(BINARY)}"
         )
         self.send_header("Content-Length", str(len(BINARY) - start))
+        self.send_header("X-Checksum-SHA256", DIGEST)
         self.end_headers()
         self.wfile.write(BINARY[start:])
 

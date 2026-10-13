@@ -206,10 +206,13 @@ const getTeamDisabledIcon = (teamEligibility: TeamTaskEligibility): string => {
       return 'mdi-account-alert'
     case 'TEAM_MEMBER_RANK_NOT_HIGH_ENOUGH':
       return 'mdi-star-off'
+    // 这两个原本写的是 account-group-remove / -alert，@mdi/font 7.4.47 里根本没有
+    // 这两个名字（加 mdi- 前缀才是类名），画出来是一片空白。换成人数不足 / 超员各
+    // 一个真实存在的。
     case 'TEAM_SIZE_MIN_NOT_MET':
-      return 'mdi-account-group-remove'
+      return 'mdi-account-multiple-minus'
     case 'TEAM_SIZE_MAX_EXCEEDED':
-      return 'mdi-account-group-alert'
+      return 'mdi-account-multiple-plus'
     default:
       return 'mdi-alert-circle'
   }

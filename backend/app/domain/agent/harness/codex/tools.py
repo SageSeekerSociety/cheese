@@ -8,7 +8,6 @@ import io
 import json
 import posixpath
 import shutil
-import time
 import types
 from pathlib import Path
 
@@ -251,14 +250,16 @@ class RemoteTools:
         first, as Claude Code's does (`_take_leased_machine`): the lease names
         the machine's stdio servers, the checkout's `.mcp.json` ones, which the
         target the session was started with does not. Taken as it is, with no
-        wait for a machine being prepared; a lease the platform cannot hand out
-        fails the start."""
+        wait for a machine being prepared: a lease the platform cannot hand out
+        now leaves the session at the placeholder, as Claude Code's starts
+        there, listing no machine server until it is relaunched onto it."""
         target = self.client.config
         if (
             target.get("kind") == "deferred"
             and target.get("workspace") != DEFERRED_WORKSPACE
+            and not await asyncio.to_thread(self.client.take_now)
         ):
-            await asyncio.to_thread(self.client.acquire, deadline=time.monotonic())
+            target["workspace"] = DEFERRED_WORKSPACE
         tools = []
         routes = {}
         for server in ["native", *self.client.session_servers()]:

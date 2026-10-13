@@ -25,12 +25,15 @@ import { suggestionMarks } from './suggestions'
 // One lowlight instance (common ≈ 37 languages), shared by every editor.
 export const lowlight = createLowlight(common)
 
-// ---- Image: display resolves workspace-relative paths to the raw-file API,
-// but the node ATTR keeps the original path — markdown serialization reads the
-// attr, so `![](uploads/x.png)` is written back verbatim, never a localhost URL.
+// ---- Image: what is drawn is fetched, but the node ATTR keeps the original
+// path — markdown serialization reads the attr, so `![](figures/x.png)` is
+// written back verbatim, never a URL. Fetched rather than put in `<img src>`
+// because the bytes are only given to a request that carries the reader's
+// credential, and an `<img>` request carries none.
 export interface DocImageOptions {
-  /** Rewrites a markdown src for DISPLAY only (e.g. uploads/x.png → /api/...). */
-  resolveSrc: (src: string) => string
+  /** The URL to draw a markdown src with (an object URL of its bytes, or the
+   * src itself when it is already one). Without it the src is drawn as is. */
+  loadSrc: ((src: string) => Promise<string>) | null
 }
 
 const DocImage = Image.extend<DocImageOptions & ImageOptions>({
@@ -39,15 +42,66 @@ const DocImage = Image.extend<DocImageOptions & ImageOptions>({
       // parent always exists for an .extend()ed extension; `!` keeps the
       // strict production build honest about the non-optional base options.
       ...this.parent!(),
-      resolveSrc: (src: string) => src,
+      loadSrc: null,
     }
   },
-  renderHTML({ HTMLAttributes }) {
-    const attrs: Record<string, unknown> = { ...HTMLAttributes }
-    if (typeof attrs.src === 'string' && attrs.src) {
-      attrs.src = this.options.resolveSrc(attrs.src)
+  addNodeView() {
+    const load = this.options.loadSrc
+    if (!load || typeof document === 'undefined') return null
+    const fixed = this.options.HTMLAttributes
+    return ({ node }) => {
+      const img = document.createElement('img')
+      for (const [key, value] of Object.entries(fixed)) img.setAttribute(key, String(value))
+      let wanted = ''
+      let drawn = ''
+      // Only an object URL made for this view is let go: a src that already
+      // was one is somebody else's.
+      let made = false
+      const release = (url: string, ours: boolean) => {
+        if (ours && url.startsWith('blob:')) URL.revokeObjectURL(url)
+      }
+      const describe = (attrs: Record<string, unknown>) => {
+        for (const key of ['alt', 'title'] as const) {
+          const value = attrs[key]
+          if (typeof value === 'string' && value) img.setAttribute(key, value)
+          else img.removeAttribute(key)
+        }
+      }
+      const draw = (src: string) => {
+        wanted = src
+        if (!src) return
+        load(src).then(
+          (url) => {
+            if (wanted !== src) return release(url, url !== src)
+            const [before, beforeMade] = [drawn, made]
+            drawn = url
+            made = url !== src
+            img.src = url
+            if (before !== url) release(before, beforeMade)
+          },
+          () => {
+            // Not readable (gone, or not the reader's to see): the alt text stands in.
+            if (wanted === src) img.removeAttribute('src')
+          }
+        )
+      }
+      describe(node.attrs)
+      draw(String(node.attrs.src ?? ''))
+      return {
+        dom: img,
+        update(updated) {
+          if (updated.type !== node.type) return false
+          describe(updated.attrs)
+          const src = String(updated.attrs.src ?? '')
+          if (src !== wanted) draw(src)
+          return true
+        },
+        destroy() {
+          wanted = ''
+          release(drawn, made)
+        },
+      }
     }
-    return ['img', mergeAttributes(this.options.HTMLAttributes, attrs)]
   },
 })
 
@@ -182,8 +236,9 @@ export interface DocExtensionsOptions {
    * empty paragraph after a closing table or list, which only a shared document
    * has to give up. */
   standalone?: boolean
-  /** Display-time image src resolver (defaults to identity). */
-  resolveImageSrc?: (src: string) => string
+  /** What an image is drawn with (see DocImageOptions.loadSrc); without it
+   * the src is drawn as written. */
+  loadImage?: (src: string) => Promise<string>
 }
 
 // Keep standalone Markdown comments as invisible document nodes. Dropping them
@@ -293,9 +348,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     DocOrderedList,
     TaskList,
     TaskItem.configure({ nested: true }),
-    DocImage.configure({
-      resolveSrc: opts.resolveImageSrc ?? ((s: string) => s),
-    }),
+    DocImage.configure({ loadSrc: opts.loadImage ?? null }),
     DocCodeBlock.configure({ lowlight }),
     MarkdownLinkInput,
     DocHighlight,

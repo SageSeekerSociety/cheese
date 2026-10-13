@@ -9,6 +9,7 @@ import pytest
 
 from app.core.errors import GatewayUnavailableError
 from app.domain.repository import forge_files
+from app.domain.room_task.models import TaskStatus
 
 
 @pytest.mark.anyio
@@ -26,6 +27,8 @@ async def test_github_comparison_includes_files_beyond_its_300_file_cap(monkeypa
         id=uuid.uuid4(),
         branch_name="task/report",
         base_branch="main",
+        status=TaskStatus.open,
+        closing_since=None,
         delivered_head=None,
     )
     files = forge_files.ProjectFiles(None, uuid.uuid4(), task.id)

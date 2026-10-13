@@ -15,6 +15,7 @@ from app.domain.delivery.addressing import Event, Hand, address
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.identity.handles import recipient_seat
 from app.domain.run_record.models import RunRecord
+from app.domain.thread.services import answered_in
 
 DEFERRED_INPUT = "deferred_native_input"
 _runner = None
@@ -139,8 +140,8 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
     the periodic ``sweep``, or ``startup``. A nudge logs every waiting message it
     passes over and why; the sweep logs every message it starts, since one it
     finds is one the nudges missed."""
+    # deferred-import: breaks the cycle agent.queries -> agent.pending_messages
     from app.domain.agent.queries import conversation_seat
-    from app.domain.thread.services import answered_in
 
     if not runner.owns_sessions or not runner.accepting_turns:
         return 0
@@ -250,7 +251,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             content=block.content,
             reply_to=str(block.reply_to) if block.reply_to else None,
             attachments=None,
-            provision_actor=None,
             landed_user_block_id=block.id,
             landed_user_block_ids=[block.id],
             live_delivery_expected=False,

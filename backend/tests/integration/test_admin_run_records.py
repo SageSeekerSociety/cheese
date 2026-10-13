@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
+from app.domain import frontend_log
 from app.domain.run_record.models import RunRecord
 from tests.integration.conftest import post_project, session_auth_headers
 
@@ -87,6 +88,39 @@ def test_one_error_across_projects_is_one_line_that_counts_them(client, admin):
     ).json()["data"]
     assert "ConnectError" in shown["meta"]["stack"]
     assert {p["project_id"] for p in shown["places"]} == {str(a), str(b)}
+
+
+def test_one_frontend_bug_in_two_rooms_is_one_line(client, admin, monkeypatch):
+    """同一个前端 bug 从两个房间报上来，在后端后台是一行。
+
+    认指纹，不认那句话：报错的话里写着出事的页面（`/project/<uuid>/topic/<uuid>`），
+    抹数字抹不掉路径里的字母，同一个 bug 于是每个房间各占一行。
+    """
+    monkeypatch.setattr(frontend_log, "intake", frontend_log.FrontendErrorIntake())
+    a, b = _project(client), _project(client)
+    for project in (a, b):
+        r = client.post(
+            "/frontend-errors",
+            json={
+                "project_id": str(project),
+                "errors": [
+                    {
+                        "message": "TypeError: boom",
+                        "stack": "TypeError: boom\n  at app.js:1",
+                        "source": "app.js:1",
+                        "page": f"/project/{project}/topic/{uuid.uuid4()}",
+                    }
+                ],
+            },
+        )
+        assert r.status_code == 200
+
+    groups = client.get("/admin/run-records?group=errors", headers=admin).json()[
+        "data"
+    ]["groups"]
+    bugs = [g for g in groups if g["kind"] == "frontend_error"]
+    assert len(bugs) == 1
+    assert (bugs[0]["count"], bugs[0]["projects"]) == (2, 2)
 
 
 def test_a_turn_that_did_not_finish_counts_as_an_error(client, admin):

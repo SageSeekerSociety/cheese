@@ -65,16 +65,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.agent.announce", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.block.repositories"),
         ("app.domain.agent.chat", "app.domain.project.repositories"),
-        ("app.domain.agent.chat", "app.domain.topic.repositories"),
         ("app.domain.agent.github_app", "app.domain.project.repositories"),
-        # agent.room.turn 是从 agent.chat 里拆出来的那一块（一轮的组装与执行：
-        # `_assemble_turn`、`_converse_impl`）。它摸的三个 repository 正是原先
-        # chat.py 那一组里跟着它走的：读写 block、读项目表、读话题表。拆模块没有
-        # 新增跨包的边，只是发起方从 chat.py 换成了 room/turn.py，所以按同一笔债
-        # 入账。
-        ("app.domain.agent.room.turn", "app.domain.block.repositories"),
-        ("app.domain.agent.room.turn", "app.domain.project.repositories"),
-        ("app.domain.agent.room.turn", "app.domain.topic.repositories"),
         # agent.mentions 是从 agent.chat 里拆出来的那一块（点名解析、通知与
         # refs）。它摸的两个 repository 正是原先 chat.py 那一对里跟着它走的：
         # 一条读 block（block 领域没有 service 层，`platform_stats.pipeline`
@@ -92,12 +83,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # 边，只是发起方从 chat.py 换成了 queries.py，所以按同一笔债入账。
         ("app.domain.agent.queries", "app.domain.block.repositories"),
         ("app.domain.agent.queries", "app.domain.project.repositories"),
-        # agent.room_events 是从 agent.chat 里拆出来的那一块（这一轮往房间里落下
-        # 的那些行：事件块、步骤的判决、变更汇总）。它摸的 repository 只有 block
-        # 一个，正是原先 chat.py 那一组里跟着它走的：block 领域没有 service 层，
-        # `platform_stats.pipeline` 那条注释讲的是同一件事。拆模块没有新增跨包的
-        # 边，只是发起方从 chat.py 换成了 room_events.py，所以按同一笔债入账。
-        ("app.domain.agent.room_events", "app.domain.block.repositories"),
         # agent.hook_stream 是从 agent.chat 里拆出来的那一块（屏幕订阅送进来的
         # 那一条线：读一条事件、落块、重试与整理的提示、关这一轮的书）。它摸的
         # repository 只有 block 一个，正是原先 chat.py 那一组里跟着它走的：block
@@ -131,11 +116,18 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # service 层，`platform_stats.pipeline` 那条注释讲的是同一件事。这条边在
         # api/doc_agent.py 时就有，挪进领域层才进了这本账。
         ("app.domain.agent.document.question", "app.domain.block.repositories"),
+        # agent.turn.steps.reminders 是从 agent.chat 里挪出来的那一块（平台往正
+        # 在跑的一轮里说话的两条扫底：沉默提醒、清单停着提醒）。它摸的
+        # repository 只有 block 一个，正是原先 chat.py 里 `remind_silent_turns` 那
+        # 一段跟着它走的：读一条消息、拿提问的人是谁（定这一句话用哪种语言）。
+        # block 领域没有 service 层，`platform_stats.pipeline` 那条注释讲的是同
+        # 一件事。拆模块没有新增跨包的边，只是发起方从 chat.py 换成了
+        # reminders.py，所以按同一笔债入账。
+        ("app.domain.agent.turn.steps.reminders", "app.domain.block.repositories"),
         # --- answers / comments / discussion / groups ---
         ("app.domain.answers.services", "app.domain.user.repositories"),
         ("app.domain.answers.services", "app.domain.questions.repositories"),
         ("app.domain.comments.services", "app.domain.user.repositories"),
-        ("app.domain.discussion.services", "app.domain.user.repositories"),
         ("app.domain.groups.services", "app.domain.user.repositories"),
         # --- dashboard（读模型，横跨 7 个领域聚合，单独还） ---
         ("app.domain.dashboard.services", "app.domain.notification.repositories"),
@@ -211,7 +203,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---
         ("app.domain.topic.services", "app.domain.block.repositories"),
-        ("app.domain.topic.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.project.repositories"),
         ("app.domain.topic_membership.services", "app.domain.topic.repositories"),
         # --- webhook / workspace ---
@@ -225,11 +216,9 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.answers", "app.domain.discussion.repositories"),
         ("app.api.routes.answers", "app.domain.questions.repositories"),
         ("app.api.routes.answers", "app.domain.user.repositories"),
-        ("app.api.routes.attachments", "app.domain.attachment.repositories"),
         ("app.api.routes.avatars", "app.domain.avatars.repositories"),
         ("app.api.routes.awaiting", "app.domain.block.repositories"),
         ("app.api.routes.awaiting", "app.domain.project.repositories"),
-        ("app.api.routes.awaiting", "app.domain.review.repositories"),
         ("app.api.routes.awaiting", "app.domain.room_task.repositories"),
         ("app.api.routes.awaiting", "app.domain.topic.repositories"),
         ("app.api.routes.blocks", "app.domain.block.repositories"),
@@ -254,48 +243,36 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.llm_proxy", "app.domain.project.repositories"),
         ("app.api.routes.materialbundles", "app.domain.materials.repositories"),
         ("app.api.routes.materials", "app.domain.materials.repositories"),
-        ("app.api.routes.notifications_flat", "app.domain.notification.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.team.repositories"),
         ("app.api.routes.notifications_flat", "app.domain.user.repositories"),
-        ("app.api.routes.project_environment", "app.domain.machine.repositories"),
         ("app.api.routes.project_environment", "app.domain.user.repositories"),
-        ("app.api.routes.projects", "app.domain.project.repositories"),
         ("app.api.routes.questions", "app.domain.answers.repositories"),
         ("app.api.routes.questions", "app.domain.discussion.repositories"),
         ("app.api.routes.questions", "app.domain.questions.repositories"),
         ("app.api.routes.questions", "app.domain.user.repositories"),
-        ("app.api.routes.recruitment", "app.domain.team.recruitment_repositories"),
-        ("app.api.routes.recruitment", "app.domain.team.repositories"),
         ("app.api.routes.recruitment", "app.domain.user.repositories"),
-        ("app.api.routes.spaces", "app.domain.space.repositories"),
         ("app.api.routes.spaces", "app.domain.task.repositories"),
         ("app.api.routes.spaces", "app.domain.user.repositories"),
         ("app.api.routes.tags", "app.domain.tag.repositories"),
         ("app.api.routes.tasks._common", "app.domain.space.repositories"),
-        ("app.api.routes.tasks._common", "app.domain.task.repositories"),
         ("app.api.routes.tasks._common", "app.domain.team.repositories"),
         ("app.api.routes.tasks._common", "app.domain.user.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.space.repositories"),
-        ("app.api.routes.tasks.lifecycle", "app.domain.task.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.team.repositories"),
         ("app.api.routes.tasks.lifecycle", "app.domain.user.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.space.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.task.repositories"),
-        ("app.api.routes.tasks.participation", "app.domain.team.repositories"),
         ("app.api.routes.tasks.participation", "app.domain.user.repositories"),
         ("app.api.routes.tasks.publish_pdf", "app.domain.space.repositories"),
         ("app.api.routes.tasks.publish_pdf", "app.domain.tag.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),
-        ("app.api.routes.teams", "app.domain.team.repositories"),
         ("app.api.routes.teams", "app.domain.user.repositories"),
         ("app.api.routes.topic_members", "app.domain.identity.repositories"),
         ("app.api.routes.topic_members", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),
         ("app.api.routes.topics", "app.domain.project.repositories"),
-        ("app.api.routes.topics", "app.domain.review.repositories"),
-        ("app.api.routes.topics", "app.domain.topic.repositories"),
         ("app.api.routes.topics", "app.domain.usage.repositories"),
         # topics_compute 是从 routes/topics.py 里拆出来的那一块（房间的工作电脑：读
         # 和写那一条选择，外加一条会话对那台机器的租约）。它摸的 repository 只有
@@ -308,7 +285,6 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         # users.py 名下的三条 repository 债按代码现在住的地方重新入账：账户读写、用户
         # 目录查询、用户偏好各自摸自己摸的那几条。拆模块没有新增跨包的边，也没还掉任何
         # 一条，只是发起方换了名字，所以按同一笔债入账（记法同下面的 users_team）。
-        ("app.api.routes.users.account", "app.domain.user.repositories"),
         ("app.api.routes.users.directory", "app.domain.answers.repositories"),
         ("app.api.routes.users.directory", "app.domain.questions.repositories"),
         ("app.api.routes.users.directory", "app.domain.user.repositories"),
@@ -420,7 +396,7 @@ def _stale_exemptions(
 
     **发起方模块在这棵树里根本不存在的，不算陈行。** 棘轮这一半主张的是「债还完
     了，把行删掉」；文件都不在这个 checkout 里，这个主张就无从谈起——本仓的工作区
-    经常落后于 main（见 CLAUDE.md），照 CI 在更新的 main 上报的违规入账时，那条
+    经常落后于 main（见 AGENTS.md），照 CI 在更新的 main 上报的违规入账时，那条
     豁免在旧 base 上必然找不到对应文件。不加这层判断，棘轮就会把「你的 checkout
     落后」误报成「这笔债还完了」，而正确的动作恰恰相反。
 

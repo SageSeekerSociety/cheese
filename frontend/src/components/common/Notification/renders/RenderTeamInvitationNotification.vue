@@ -40,7 +40,17 @@ const { answeredHere, answer: answerInvitation } = useTeamInvitationAnswer()
 // 获取实体和元数据
 const inviter = computed(() => getEntity(props.notification, 'inviter'))
 const team = computed(() => getEntity(props.notification, 'team'))
-const role = computed(() => getStringMetadata(props.notification, 'role', t('notifications.common.member')))
+// 后端给的是角色码（OWNER / ADMIN / MEMBER），写给人看的是团队成员页上的叫法；
+// 这一版不认识的码说成「成员」，不把码原样印出来。
+const ROLE_LABELS: Record<string, string> = {
+  OWNER: 'teams.members.roleOwner',
+  ADMIN: 'teams.members.roleAdmin',
+  MEMBER: 'teams.members.roleMember',
+}
+const role = computed(() => {
+  const key = ROLE_LABELS[getStringMetadata(props.notification, 'role', '')]
+  return key ? t(key) : t('notifications.common.member')
+})
 const message = computed(() => getStringMetadata(props.notification, 'message', ''))
 // 这条邀请本身：后端把它解析成 entities.application，状态是此刻的，不是发通知那一刻的。
 const application = computed(() => getEntity(props.notification, 'application'))

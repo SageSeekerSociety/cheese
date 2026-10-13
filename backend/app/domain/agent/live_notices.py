@@ -10,18 +10,28 @@
 
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 from app.core.background import spawn
-from app.domain.agent.announce import SHOW_ONCE_COMMITTED
-from app.domain.agent.runtime import get_broker
+from app.core.live_frames import SHOW_ONCE_COMMITTED
+from app.domain.agent.project_feed import TOPICS, tell_project
+from app.domain.agent.realtime.broker import get_broker
 
 
 @event.listens_for(Session, "after_commit")
 def _show_committed_notices(session: Session) -> None:
+    rows: set[uuid.UUID] = set()
     for channel, frame in session.info.pop(SHOW_ONCE_COMMITTED, ()):
         spawn(get_broker().publish(channel, frame), name="notice live")
+        # A room's row changed: the project's channel list shows it too, once
+        # however many of the room's conversations were told.
+        if frame.get("type") == "state" and frame.get("resource") == TOPICS:
+            rows.add(uuid.UUID(str(frame.get("id") or channel)))
+    for room in rows:
+        spawn(tell_project(room, TOPICS), name="project feed")
 
 
 @event.listens_for(Session, "after_rollback")

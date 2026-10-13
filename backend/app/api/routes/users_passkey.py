@@ -44,10 +44,12 @@ module-level `APIRouter` under `app.api.routes`, so the declaration below, with
 `APIRouter(prefix="/users", tags=["Users"])`, is all it takes.
 """
 
+import json
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Request, Response
 from pydantic import BaseModel
+from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_passkey_service, get_user_auth_service
@@ -60,6 +62,7 @@ from app.api.routes.users_common import (
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose
+from app.core.config import settings
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.passkey.prompt import PasskeyPromptService
@@ -86,11 +89,6 @@ async def passkey_register_challenge(
     challenge this step stored, so nothing can be registered without having
     come through here.
     """
-    import json
-
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can register a passkey.")
@@ -136,9 +134,6 @@ async def passkey_register_verify(
     passkey_service: PasskeyService = Depends(get_passkey_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
 
     if auth_user.user_id != user_id:
         raise ForbiddenError("Only the user themselves can register a passkey.")
@@ -202,11 +197,6 @@ async def passkey_authenticate_challenge(
     payload: dict = Body(default={}),
     passkey_service: PasskeyService = Depends(get_passkey_service),
 ) -> dict:
-    import json
-
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
 
     user_id = payload.get("userId")
 
@@ -241,9 +231,6 @@ async def passkey_authenticate_verify(
     auth_service: UserAuthService = Depends(get_user_auth_service),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    from redis.asyncio import Redis as AsyncRedis
-
-    from app.core.config import settings
 
     credential = payload.get("response")
     if not isinstance(credential, dict):

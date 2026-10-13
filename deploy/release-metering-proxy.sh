@@ -14,7 +14,17 @@ proxy_home="${METERING_PROXY_HOME:-$HOME/cheese-proxy-new/deploy/metering-proxy}
 env_file="$proxy_home/.env"
 [[ -r "$env_file" ]] || { echo 'Metering proxy environment file is missing.' >&2; exit 1; }
 image="ghcr.io/sageseekersociety/cheese/metering-proxy:$sha"
-docker pull "$image"
+# A registry hiccup (a dropped connection mid-manifest, `EOF`) fails one pull
+# and nothing else, so the pull is tried again before the release gives up;
+# deploy-docker.sh retries the app images' pulls the same way.
+pulled=false
+for delay in ${METERING_PULL_RETRY_DELAYS:-10 30 60} ""; do
+  if docker pull "$image"; then pulled=true; break; fi
+  [[ -n "$delay" ]] || break
+  echo "Pulling $image failed; trying again in ${delay}s." >&2
+  sleep "$delay"
+done
+$pulled || { echo "Pulling $image failed on every attempt." >&2; exit 1; }
 export METERING_PROXY_IMAGE
 METERING_PROXY_IMAGE="$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')"
 [[ "$METERING_PROXY_IMAGE" =~ ^ghcr.io/sageseekersociety/cheese/metering-proxy@sha256:[0-9a-f]{64}$ ]] || {

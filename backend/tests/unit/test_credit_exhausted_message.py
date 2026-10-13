@@ -18,11 +18,14 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.domain.agent.chat import ChatService, _is_out_of_credit
+from app.api import deps as session_turn_deps
+from app.domain.agent.chat import ChatService
 from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.agent.turn.state.notices import _is_out_of_credit
 from app.domain.block.models import AuthorType
 from app.domain.block.repositories import BlockRepository
 from app.domain.usage.credits import CREDITS_EXHAUSTED_EVENT
+from app.domain.usage.ledger import month_end, month_of
 from tests.conftest import (
     StubChannel,
     close_topic_subscriptions,
@@ -146,6 +149,7 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
 
     screen = _CreditsRefusedScreen()
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=db_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -156,6 +160,64 @@ async def test_a_turn_stamped_refused_gets_the_platforms_own_line(db_factory, tm
     lines = await _system_event_lines(db_factory, topic_id)
     assert any(line.startswith(CREDITS_EXHAUSTED_EVENT) for line in lines)
     assert not any("Invalid API key" in line for line in lines)
+
+
+class _BudgetBrakeScreen(StubChannel):
+    """A turn admission let through that the gateway's budget brake stopped
+    part-way: the metering proxy answers the call with its spent-credits
+    refusal, and the build ends the turn on it."""
+
+    def emit_turn(
+        self,
+        topic_id: uuid.UUID,
+        prompt: str,
+        reply: str,
+        *,
+        agent: str | None = None,
+    ) -> None:
+        del reply
+        self.starts(topic_id)
+        self.acknowledges(topic_id, prompt)
+        self.says(topic_id, "cheese project budget: 额度已用完。", error="rate_limit")
+        self.record(
+            topic_id,
+            type="result",
+            subtype="success",
+            is_error=True,
+            result="cheese project budget: 额度已用完。",
+            terminal_reason="api_error",
+            api_error_status=429,
+        )
+
+
+@pytest.mark.anyio
+async def test_a_turn_the_budget_brake_stopped_says_the_credits_ran_out(
+    db_factory, tmp_path
+):
+    """The first turn to hit a spent budget is stopped by the gateway, not by
+    admission, so nothing stamped it. The room must still say the credits ran
+    out, not 「本轮未完成」 with the proxy's raw words and a retry that can only
+    fail again."""
+    topic_id = await a_topic(db_factory)
+    chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
+        session_factory=db_factory,
+        compute=stub_compute(_BudgetBrakeScreen()),
+        base_system_prompt="你是芝士。",
+        workspace_root=str(tmp_path / "ws"),
+    )
+    await _run_refused_turn(chat, topic_id, uuid.uuid4())
+
+    async with db_factory() as session:
+        blocks = await BlockRepository(session).list_for_topic(topic_id)
+    notices = [b for b in blocks if b.author_type == AuthorType.platform]
+    # The ledger had not settled the turn yet; the line still says the month's
+    # credits are spent and when they come back, as admission says it.
+    resets = month_end(month_of(datetime.now(UTC)))
+    assert [b.content for b in notices] == [
+        f"本月额度已用完，{resets.month}月{resets.day}日重置。这一轮没有执行。"
+    ]
+    assert not any((b.meta or {}).get("retryable") for b in notices)
 
 
 @pytest.mark.anyio
@@ -169,6 +231,7 @@ async def test_an_unstamped_stop_failure_keeps_todays_notice(db_factory, tmp_pat
 
     screen = _CreditsRefusedScreen()
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=db_factory,
         compute=stub_compute(screen),
         base_system_prompt="你是芝士。",
@@ -223,6 +286,7 @@ async def test_a_refused_turn_ending_says_when_the_credits_come_back(
         await session.commit()
 
     chat = ChatService(
+        work_runner=session_turn_deps.get_work_runner(),
         session_factory=db_factory,
         compute=stub_compute(_CreditsRefusedScreen()),
         base_system_prompt="你是芝士。",

@@ -233,8 +233,8 @@ def test_the_profiled_app_expands_exactly_the_effective_routes(profiled_route_ro
         "app.api.routes.accept.create_accept_card",
     ) in {(row["path"], row["endpoint"]) for row in rows}
     assert (
-        "/topics/{topic_id}/chat",
-        "app.api.routes.chat.chat",
+        "/rooms/live",
+        "app.api.routes.chat.rooms_live",
     ) in {(row["path"], row["endpoint"]) for row in rows}
 
 

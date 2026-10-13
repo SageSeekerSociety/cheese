@@ -2,6 +2,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -26,6 +27,7 @@ from app.domain.team.repositories import (
     TeamRepository,
     refuse_anyone_but_the_owner,
 )
+from app.domain.user.models import User
 from app.domain.user.services import handles_by_ids
 
 
@@ -69,6 +71,14 @@ async def _notify(
 
 
 class TeamMembershipService:
+    @classmethod
+    def from_session(cls, session: AsyncSession) -> "TeamMembershipService":
+        return cls(
+            session=session,
+            team_repo=TeamRepository(session=session),
+            application_repo=TeamMembershipApplicationRepository(session=session),
+        )
+
     def __init__(
         self,
         session: AsyncSession,
@@ -83,9 +93,6 @@ class TeamMembershipService:
     async def _validate_user_can_apply_or_be_invited(
         self, user_id: int, team_id: int
     ) -> None:
-        from sqlalchemy import select
-
-        from app.domain.user.models import User
 
         stmt = select(User.id).where(User.id == user_id)
         result = await self._session.execute(stmt)
@@ -129,6 +136,7 @@ class TeamMembershipService:
         if status != "none":
             return status
         if not team.join_approval:
+            # deferred-import: tests replace this name on app.domain.team.services
             from app.domain.team.services import check_team_locking_status
 
             await check_team_locking_status(self._session, team.id)
@@ -248,6 +256,7 @@ class TeamMembershipService:
         return saved
 
     async def accept_team_invitation(self, *, user_id: int, invitation_id: int) -> None:
+        # deferred-import: tests replace this name on app.domain.team.services
         from app.domain.team.services import check_team_locking_status
 
         app = await self._app_repo.find_pending_by_id_and_user_and_type(
@@ -338,6 +347,7 @@ class TeamMembershipService:
         team_id: int,
         request_id: int,
     ) -> None:
+        # deferred-import: tests replace this name on app.domain.team.services
         from app.domain.team.services import check_team_locking_status
 
         if not await self._team_repo.is_team_at_least_admin(team_id, approver_user_id):

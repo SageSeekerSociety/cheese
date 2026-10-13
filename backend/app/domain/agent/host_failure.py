@@ -38,6 +38,7 @@ from app.domain.agent.platform_notices import (
     WHO_HUMAN,
     notice,
 )
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.service import DeviceService, device_service_for_session
 
 logger = logging.getLogger(__name__)
@@ -79,28 +80,30 @@ NO_VERDICT = HostVerdict()
 async def judge_host_failure(
     service: DeviceService,
     *,
-    topic_id: uuid.UUID,
+    device_ids: list[str],
     failure: PlatformFailure,
 ) -> HostVerdict:
-    """Account for one host-scoped turn failure and, if the machine is now judged
-    dead, say so. The whole decision, with no session plumbing —
+    """Account for one host-scoped turn failure against the people's machines
+    the room's sessions hold (``device_ids``) and, if one is now judged dead,
+    say so. The whole decision, with no session plumbing —
     ``handle_host_failure`` is the wrapper that opens a session and commits.
 
-    Safe to call for any topic: one that never ran on an enrolled machine has no
-    pin and gets ``NO_VERDICT`` without anything being touched."""
+    Safe to call for any room: one with no session on a person's machine gets
+    ``NO_VERDICT`` without anything being touched."""
     if not failure.host_scoped:
         # A failure that would follow the topic to any machine says nothing about
         # this one. Counting it would quarantine healthy boxes for a registry
         # outage — and quarantine every box, since they all fail the same way.
         return NO_VERDICT
-    binding = await service.topic_binding(topic_id)
-    if binding is None:
-        return NO_VERDICT
-    device_id = binding.device_id
-    verdict = await service.record_host_failure(device_id, failure.code)
-    if not verdict.quarantined:
+    judged = None
+    for held in device_ids:
+        verdict = await service.record_host_failure(held, failure.code)
+        if verdict.quarantined and judged is None:
+            judged = held, verdict
+    if judged is None:
         # First strike: one failure is a hiccup, and the room already shows it.
         return NO_VERDICT
+    device_id, verdict = judged
 
     device = await service.get_device(device_id)
     name = device.name if device is not None else device_id
@@ -125,13 +128,18 @@ async def handle_host_failure(
     try:
         factory = session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory
         async with factory() as session:
             service = device_service_for_session(session)
             verdict = await judge_host_failure(
-                service, topic_id=topic_id, failure=failure
+                service,
+                device_ids=await AgentSessionService(session).devices_held_in_room(
+                    topic_id
+                ),
+                failure=failure,
             )
             await session.commit()
             return verdict
@@ -150,15 +158,16 @@ async def record_host_success(
     try:
         factory = session_factory
         if factory is None:
+            # deferred-import: tests replace this name on app.core.db
             from app.core.db import async_session_factory
 
             factory = async_session_factory
         async with factory() as session:
             service = device_service_for_session(session)
-            device_id = await service.topic_device(topic_id)
-            if device_id is None:
-                return
-            await service.record_host_success(device_id)
+            for device_id in await AgentSessionService(session).devices_held_in_room(
+                topic_id
+            ):
+                await service.record_host_success(device_id)
             await session.commit()
     except Exception:  # noqa: BLE001 — bookkeeping must never fail a good turn
         logger.exception("host success bookkeeping failed for topic %s", topic_id)

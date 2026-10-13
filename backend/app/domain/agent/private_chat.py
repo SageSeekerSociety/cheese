@@ -5,6 +5,7 @@ import json
 import uuid
 
 from app.core.config import settings
+from app.domain.agent import execution
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import device_home_dir
 from app.domain.agent.executor_transport import RemoteClient
@@ -40,8 +41,6 @@ async def control(
     target: dict, payload: dict, *, hub=None, trace_id: str | None = None
 ) -> dict:
     if target.get("kind") == "device":
-        from app.domain.agent import execution
-
         return await execution.call(
             target, "control", payload, hub=hub, trace_id=trace_id
         )

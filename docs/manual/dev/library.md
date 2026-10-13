@@ -51,9 +51,15 @@ covers:
 
 「替换为新版本」（`PUT /projects/{id}/library?path=`）是人明确说「这是同一份的新版本」，只有这时候同一个名字才换字节：旧的那一行标上 `superseded_at`，它的字节原地不动，新字节记新的一行。所以同一个名字可以有几行，`superseded_at` 为空的是现在这一份。引用这个名字的旧消息从此读到新的一份——这正是替换的意思。字节端点因此不让浏览器凭缓存直接用（`Cache-Control: private, no-cache`）。删除一份资料连同它的所有行和字节一起扔掉。
 
-`blob_key` 是迁移 `0c800ff1db2f` 加的，在那之前写下的行是空的：它们的字节还在当时的目录里（现在这一份在 `.library/<project>/<名字>`，被替换下来的在 `.library-history/<project>/<记录 id>/`），`records.blob_key` 按这两条推出来。那次迁移不回填它，因为部署时还在服务的旧版本做一次替换就会把旧字节挪进历史目录，回填的键就指错了；下一次迁移补齐后把列设为非空，推导那几行随之删掉。
+加 `blob_key` 之前写下的行，由迁移 `c47997681006` 按它们当时写进去的目录补上了键（现在这一份在 `.library/<project>/<名字>`，被替换下来的在 `.library-history/<project>/<记录 id>/`），之后这一列非空。
 
 列表上的房间名只给读得了那个房间的人（`readable_topic_ids`），「被几条消息引用」也只数这些房间里的。放进、替换、删除都只有人能做：一轮里铸出来的凭据在 `authorize_project` 那里只读得进来。
+
+## 一页一页地列 {#library-pages}
+
+资料库页从不一次读全部。`GET /projects/{id}/library`（`domain/library/listing.py`）一次给一页：不带 `q` / `kind` 时是 `dir` 那一层，这一层的文件夹（按名字前缀从记录表里聚出来，带份数和最近一份的时间）在前，然后是文件；带了就是整个资料库里名字或类型对得上的文件。按名字查一份用 `GET …/library/file`，「移动到」要的全部文件夹用 `GET …/library/folders`。
+
+每一行带一个位置 `rank`（`app/core/rank.py`）：按字符串从小到大排就是显示的顺序，它也是下一页的游标。文档在文档表里用同一种位置翻页（`GET /projects/{id}/documents`），所以资料库页能把两串像合并两条有序队列那样并成一张混排的表，而两边的接口都不用知道对方。
 
 ## 文件夹与挪动 {#library-folders}
 

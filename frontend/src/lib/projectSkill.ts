@@ -77,8 +77,8 @@ export interface ProjectSkillRevision {
 const NAME = /^[a-z0-9][a-z0-9-]{1,47}$/
 
 /**
- * 新建时按名称给出的调用名：名称里有英文就照它拼，没有就取 `skill-<n>` 里第一个没被
- * 占用的。人可以改；给出来的一定合后端的格式。
+ * 按名称给出的调用名：照名称里的英文和数字拼，拼不出来就取 `skill-<n>` 里第一个没被
+ * 占用的。人可以改；给出来的一定合后端的格式。名称里有汉字的走 `spellSkillName`。
  */
 export function suggestSkillName(title: string, taken: Iterable<string>): string {
   const used = new Set(taken)
@@ -94,4 +94,16 @@ export function suggestSkillName(title: string, taken: Iterable<string>): string
     const name = `${base}-${n}`
     if (!used.has(name)) return name
   }
+}
+
+/**
+ * 新建时跟着名称给的调用名。名称多半是中文（「组会周报」），照字母拼什么也拼不出来，
+ * 只剩一个谁也认不出的 `skill-1`；所以汉字先转成拼音（`zu-hui-zhou-bao`）。拼音表
+ * 不小，只在名称里真有汉字时才下载。
+ */
+export async function spellSkillName(title: string, taken: Iterable<string>): Promise<string> {
+  if (!/\p{Script=Han}/u.test(title)) return suggestSkillName(title, taken)
+  const { pinyin } = await import('pinyin-pro')
+  const spelled = pinyin(title, { toneType: 'none', type: 'array', nonZh: 'consecutive', v: true })
+  return suggestSkillName(spelled.join(' '), taken)
 }

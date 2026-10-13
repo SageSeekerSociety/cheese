@@ -2,13 +2,16 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal, Protocol
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Header, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
+from app.api.conditional import conditional_json
 from app.api.deps import (
     get_chat_service,
     get_profile_registry,
@@ -18,16 +21,17 @@ from app.api.place import (
     live_rooms_seen,
     rooms_seen,
 )
-from app.api.response import ok, page
+from app.api.request_deps import DbSession
+from app.api.response import ok, page, typed_response
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
     ConflictError,
     ForbiddenError,
     NotFoundError,
+    UnprocessableEntityError,
     ValidationError,
 )
 from app.core.sentences import exception_text, say
@@ -38,12 +42,16 @@ from app.domain.agent.github_app import (
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
-from app.domain.block.queries import awaiting_an_answer, weeklies_for_project
+from app.domain.block.queries import (
+    awaiting_an_answer,
+    weeklies_for_project,
+)
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
-from app.domain.project.models import Project
+from app.domain.onboarding.start import start_steps
+from app.domain.project.forge import follow_github_rename
 from app.domain.project.protection import (
     BRANCH_PROTECTION_KEY,
     GITHUB_UNBOUND,
@@ -52,17 +60,16 @@ from app.domain.project.protection import (
     branch_protection_of,
     github_repo_snapshot,
 )
-from app.domain.project.repositories import (
-    ProjectGitInstallationRepository,
-    ProjectRepository,
-)
 from app.domain.project.schemas import (
     ForgeAttributionUpdate,
     ProjectCreate,
     ProjectOut,
+    StartStepsOut,
 )
 from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
+from app.domain.repository.identity import requester_credit_enabled
+from app.domain.review.github_pr import parse_github_repo
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.room_task import naming, presentation
 from app.domain.room_task.schemas import TaskOut
@@ -70,8 +77,9 @@ from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
 from app.domain.shell.service import effective_shells
+from app.domain.task.claims import deadline_for_project
 from app.domain.task.services import claim_backs_project
-from app.domain.team.services import team_service
+from app.domain.team.services import TeamLabel, team_service
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -81,14 +89,29 @@ logger = logging.getLogger("cheesex.projects")
 
 
 router = APIRouter(prefix="/projects", tags=["projects"])
-DbSession = Annotated[AsyncSession, Depends(get_db)]
+
 Registry = Annotated[ProfileRegistry, Depends(get_profile_registry)]
 
 
-def _shelled(project: Project, shell: Shell, team_handle: str | None) -> dict:
-    """One project's wire payload, with the 壳 it runs under and its team's handle.
+# The route reads project attributes returned by ProjectService. Keep the route
+# independent from the ORM class; the members are declared ``Mapped[...]``
+# exactly as the model declares them, because pyright matches a caller's model
+# against these *class* members — a plain ``int`` here would not accept
+# ``Mapped[int]``. Reading one off an instance still yields the wrapped value.
+# Same shape as ``SpaceRow`` in ``routes/spaces.py``.
+class ProjectRow(Protocol):
+    id: Mapped[uuid.UUID]
+    name: Mapped[str]
+    slug: Mapped[str]
+    owner_handle: Mapped[str | None]
+    team_id: Mapped[int]
+    external_task_id: Mapped[int | None]
 
-    Neither is a column on `Project`, so neither can come from `model_validate`:
+
+def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
+    """One project's wire payload: the 壳 it runs under, its team's handle and name.
+
+    Neither is a column on a project row, so neither can come from `model_validate`:
     the 壳 is resolved from the project's own settings, its 赛题 and that 赛题's
     项目集, and the handle is what links to the team go by. Every route that
     returns a project goes through `_project_payloads`, or the frontend would
@@ -97,24 +120,32 @@ def _shelled(project: Project, shell: Shell, team_handle: str | None) -> dict:
     """
     return (
         ProjectOut.model_validate(project)
-        .model_copy(update={"shell": ShellOut.of(shell), "team_handle": team_handle})
+        .model_copy(
+            update={
+                "shell": ShellOut.of(shell),
+                "team_handle": team.handle if team else None,
+                "team_name": team.name if team else None,
+            }
+        )
         .model_dump(mode="json")
     )
 
 
-async def _project_payloads(db: DbSession, projects: list[Project]) -> list[dict]:
+async def _project_payloads(
+    db: DbSession, projects: Sequence[ProjectRow]
+) -> list[dict]:
     """Every project's payload, without a query per project."""
     shells = await effective_shells(db, projects)
-    handles = await team_service(db).handles_of(
+    teams = await team_service(db).labels_of(
         {p.team_id for p in projects if p.team_id is not None}
     )
     return [
-        _shelled(p, shells[p.id], handles.get(p.team_id) if p.team_id else None)
+        _shelled(p, shells[p.id], teams.get(p.team_id) if p.team_id else None)
         for p in projects
     ]
 
 
-async def _project_payload(db: DbSession, project: Project) -> dict:
+async def _project_payload(db: DbSession, project: ProjectRow) -> dict:
     return (await _project_payloads(db, [project]))[0]
 
 
@@ -231,7 +262,7 @@ async def list_projects(
     else:
         who = await resolver.resolve()
         if who.authenticated:
-            projects = await ProjectRepository(db).list_visible_to(
+            projects = await service.list_visible_to(
                 handle=who.handle, user_id=who.user_id
             )
             total = len(projects)
@@ -284,7 +315,7 @@ async def projects_for_task(
     """
     actor = await resolver.resolve()
     await resolver.authorize_task(actor, task_id=task_id)
-    projects = await ProjectRepository(db).list_for_external_task(task_id)
+    projects = await ProjectService(db).list_for_external_task(task_id)
     items = await _project_payloads(db, projects)
     return ok(page(items, len(items)))
 
@@ -304,7 +335,7 @@ async def project_for_team(
     """
     actor = await resolver.resolve()
     await resolver.authorize_team(actor, team_id=team_id)
-    project = await ProjectRepository(db).get_by_team(team_id)
+    project = await ProjectService(db).get_by_team(team_id)
     data = await _project_payload(db, project) if project is not None else None
     return ok(data)
 
@@ -317,6 +348,18 @@ async def get_project(
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
     payload = await _project_payload(db, project)
+    # A project opened by claiming a challenge hands in by its claim's
+    # deadline; the overview shows it on the reader's own clock.
+    deadline = (
+        await deadline_for_project(
+            db, task_id=project.external_task_id, team_id=project.team_id
+        )
+        if project.external_task_id is not None
+        else None
+    )
+    payload["challenge_deadline"] = (
+        {"at": deadline.at.isoformat(), "mine": deadline.mine} if deadline else None
+    )
     # Whether this caller runs the project's membership: its owner, or an
     # owner/admin of its team. The members page shows invite/remove by it.
     payload["can_manage_members"] = actor.authenticated and await MemberService(
@@ -351,14 +394,32 @@ async def list_weeklies(
     return ok(page(items, len(items)))
 
 
-@router.get("/{project_id}/tasks")
+@router.get("/{project_id}/tasks", response_model=None)
 async def list_project_tasks(
     project_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
-) -> dict:
+    if_none_match: Annotated[str | None, Header()] = None,
+    status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+    channel: uuid.UUID | None = None,
+    whose: Annotated[Literal["mine", "helping", "others"] | None, Query()] = None,
+    limit: Annotated[int | None, Query(ge=1, le=200)] = None,
+    before: str | None = None,
+) -> Response:
     """Every thread in the project, each with the card it currently rides on.
+
+    `status` keeps only threads in that state. The sidebar polls for the open
+    ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
+    read.
+
+    With `limit` (and a `status`) it is a page instead, of the threads that
+    most recently moved: the closed ones only grow, and the all-tasks page
+    scrolls through them rather than reading them whole. A page can be narrowed
+    to one `channel` and to `whose` the threads are to the reader (`mine`: they
+    own it; `helping`: they are among its contributors; `others`: neither).
+    `next` is the cursor to pass as `before` for the page after; `counts` says
+    how many there are in all and by whose, for the same status and channel.
 
     The rail draws rooms and the work inside them, so it needs both halves at
     once. Two round trips, not two per room and one per thread: a project here
@@ -374,6 +435,12 @@ async def list_project_tasks(
     and the one phrase to print on it — derived here rather than in the client,
     so every client gives the same answer (`room_task/presentation.py`). Two
     round trips still: it is computed from the two batches already fetched.
+
+    条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB
+    出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空
+    body —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的
+    状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，
+    翻的时候本来就该重画。
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -385,11 +452,63 @@ async def list_project_tasks(
     # 「它们各自最后一次说话」。
     # A task is seen where its channel is: a private channel's by its people.
     seen = await rooms_seen(db, resolver, actor, project_id)
+    if limit is not None:
+        if status is None:
+            raise UnprocessableEntityError(say("taskPageNeedsStatus"))
+        page_rows, has_more = await TaskService(db).page_in_project(
+            project_id,
+            rooms=seen,
+            status=status,
+            channel=channel,
+            whose=whose,
+            me=actor.handle or "",
+            limit=limit,
+            before=_task_cursor(before),
+        )
+        tasks = [task for task, _ in page_rows]
+        counts = await TaskService(db).counts_in_project(
+            project_id,
+            rooms=seen,
+            status=status,
+            channel=channel,
+            me=actor.handle or "",
+        )
+        items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+        last = page_rows[-1] if page_rows and has_more else None
+        return conditional_json(
+            ok(
+                {
+                    **page(items, len(items)),
+                    "has_more": has_more,
+                    "next": f"{last[1].isoformat()}|{last[0].id}" if last else None,
+                    "counts": counts,
+                }
+            ),
+            if_none_match,
+        )
     tasks = [
         t
         for t in await TaskService(db).list_in_project(project_id)
-        if t.room_id in seen
+        if t.room_id in seen and (status is None or t.status == status)
     ]
+    items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+    return conditional_json(ok(page(items, len(items))), if_none_match)
+
+
+def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
+    """The (moved, id) a page cursor names; a malformed one is refused."""
+    if before is None:
+        return None
+    try:
+        moved, task_id = before.split("|", 1)
+        return datetime.fromisoformat(moved), uuid.UUID(task_id)
+    except ValueError as exc:
+        raise UnprocessableEntityError(say("taskPageCursorInvalid")) from exc
+
+
+async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> list[dict]:
+    """The project rail's rows for ``tasks``: each with its board cell, its
+    card, whether it waits on ``me``, whether it stalled, when it last moved."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
@@ -420,6 +539,7 @@ async def list_project_tasks(
         is_running = task.id in running
         # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
         # 点和任务列表的橙字都读它，不各自从列再推一遍。
+        asking = asked.get(task.id)
         awaits = address(
             Event(
                 reviewers=(
@@ -428,7 +548,11 @@ async def list_project_tasks(
                     else (card.reviewer_handle,)
                 ),
                 reporter=task.reporter_handle,
-                asked=asked.get(task.id),
+                asked=asking,
+                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知、
+                # 待办同一个名单（`announce.notify_question`）。题根本不在等，就
+                # 没有这一层。
+                asked_also=(task.people if task.id in asked and asking is None else ()),
                 owner=(
                     task.owner_handle
                     if presentation.owner_acts_on(shown, running=is_running)
@@ -436,7 +560,7 @@ async def list_project_tasks(
                 ),
             ),
             hand_of(shown.column),
-        ).reason_for(actor.handle or "")
+        ).reason_for(me)
         items.append(
             {
                 **TaskOut.model_validate(task).model_dump(mode="json"),
@@ -456,7 +580,7 @@ async def list_project_tasks(
                 },
             }
         )
-    return ok(page(items, len(items)))
+    return items
 
 
 @router.get("/{project_id}/progress")
@@ -482,6 +606,22 @@ async def project_progress(
     )
     rows = [h.as_dict() for h in happened]
     return ok(page(rows, len(rows)))
+
+
+@router.get("/{project_id}/start-steps", **typed_response(StartStepsOut))
+async def project_start_steps(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """What the new-user guide needs to know about the caller in this project
+    (`app/domain/onboarding/start.py`): handed 芝士 something, got a reply, had a
+    delivery accepted."""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    await ProjectService(db).get_or_404(project_id)
+    steps = await start_steps(db, project_id, actor.handle)
+    return ok(StartStepsOut.model_validate(steps, from_attributes=True).model_dump())
 
 
 @router.post("/{project_id}/memory", dependencies=[CHEESE_ONLY_IN_PROJECT])
@@ -548,6 +688,7 @@ async def get_private_chat(
 async def get_project_forge(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
+    # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
     actor = await resolver.resolve(project_id=project_id)
@@ -570,7 +711,6 @@ async def get_project_forge(
 async def get_forge_attribution(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    from app.domain.repository.identity import requester_credit_enabled
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
@@ -596,14 +736,14 @@ async def save_forge_attribution(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
-    values = dict(project.settings or {})
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
     if body.requester_coauthor is None:
-        values.pop("forge_requester_coauthor", None)
+        await service.merge_settings(project, {}, remove=("forge_requester_coauthor",))
     else:
-        values["forge_requester_coauthor"] = body.requester_coauthor
-    project.settings = values
-    await db.flush()
+        await service.merge_settings(
+            project, {"forge_requester_coauthor": body.requester_coauthor}
+        )
     return await get_forge_attribution(project_id, db, resolver)
 
 
@@ -643,9 +783,9 @@ async def set_task_naming(
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    project = await ProjectService(db).get_or_404(project_id)
-    project.settings = {**(project.settings or {}), naming.SETTINGS_KEY: mode}
-    await db.flush()
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
+    await service.merge_settings(project, {naming.SETTINGS_KEY: mode})
     return await get_task_naming(project_id, db, resolver)
 
 
@@ -667,7 +807,7 @@ async def require_project_steward(
     if not actor.authenticated:
         raise NotFoundError("Project not found")
     handle = actor.handle
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     if await MemberService(db).manages(project_id, handle):
@@ -765,7 +905,7 @@ async def set_project_owner(
     handle = str(body.get("owner_handle") or "").strip()
     if not handle:
         raise ValidationError(say("ownerHandleRequired"))
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     team_changed_from: int | None = None
@@ -821,7 +961,9 @@ async def set_project_owner(
     return ok(await _project_payload(db, project))
 
 
-async def _project_is_personal_to_its_owner(db: AsyncSession, project: Project) -> bool:
+async def _project_is_personal_to_its_owner(
+    db: AsyncSession, project: ProjectRow
+) -> bool:
     """Whether the project sits in its own owner's personal team.
 
     Then its team is a one-person team that exists only to hold this person's
@@ -871,14 +1013,13 @@ async def get_branch_protection(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    project = await ProjectRepository(db).get(project_id)
+    project = await ProjectService(db).get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
     bp = branch_protection_of(project)
-    from app.domain.project.forge import follow_github_rename
 
     await follow_github_rename(project_id, db)
-    installation = await ProjectGitInstallationRepository(db).get_by_project(project_id)
+    installation = await ProjectService(db).installation_for_project(project_id)
     if installation is None:
         merge_method, gh = "squash", GITHUB_UNBOUND
     else:
@@ -929,9 +1070,13 @@ async def set_branch_protection(
     never dual-written. Who may change review policy is the steward dependency's
     question: the project's owner, or an owner/admin of its team.
     """
-    project = await ProjectRepository(db).get(project_id)
+    service = ProjectService(db)
+    project = await service.get(project_id)
     if project is None:
         raise NotFoundError("Project not found")
+    # What is written here is read from what is stored (the current rule, merged
+    # with the body), so the read has to happen under the lock.
+    await service.lock_settings(project)
     new_settings = {**(project.settings or {})}
     if any(key in body for key in _BRANCH_PROTECTION_KEYS):
         try:
@@ -973,13 +1118,14 @@ async def set_project_upstream(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Select a GitHub repository before binding its installation."""
+    # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
-    from app.domain.review.github_pr import parse_github_repo
 
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     await MemberService(db).require_manager(project_id, actor)
-    project = await ProjectService(db).get_or_404(project_id)
+    service = ProjectService(db)
+    project = await service.get_or_404(project_id)
     if await binding_for_project(project_id, db) is not None:
         raise ConflictError(say("repoAlreadyConnected"))
     if (project.settings or {}).get("forge_kind") != "github_app":
@@ -989,6 +1135,45 @@ async def set_project_upstream(
     if raw and parsed is None:
         raise ValidationError(say("githubRepoUrlRequired"))
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
-    project.settings = {**(project.settings or {}), "github_repository_url": url}
-    await db.flush()
+    await service.merge_settings(project, {"github_repository_url": url})
     return ok({"url": url})
+
+
+#: How many of my tasks a channel's row in the sidebar carries under it.
+RAIL_TASKS = 5
+
+
+async def rail_tasks(
+    db: AsyncSession,
+    chat: ChatService,
+    actor: Actor,
+    room_ids: list[uuid.UUID],
+) -> dict[uuid.UUID, dict]:
+    """What the sidebar hangs under each channel, keyed by channel: how many
+    tasks are underway there (`open`, the count after 「全部任务」), and the ones
+    of them the caller owns or helps on (`shown`) — owned first, then helped,
+    each most recently moved first, at most `RAIL_TASKS`, leaving out one that
+    stalled. Every channel in ``room_ids`` gets an entry; the rows are the
+    project rail's (`_project_task_rows`).
+
+    The project's open tasks are not read for this: the count is one grouped
+    query, and only the caller's own tasks are made into rows."""
+    me = actor.handle or ""
+    service = TaskService(db)
+    counts = await service.underway_counts(room_ids)
+    mine = await service.underway_with(room_ids, me) if actor.authenticated else []
+    rows = await _project_task_rows(db, chat, me, mine)
+    shown: dict[str, list[dict]] = {}
+    for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
+        if not row["stalled"]:
+            shown.setdefault(row["room_id"], []).append(row)
+    out: dict[uuid.UUID, dict] = {}
+    for room in room_ids:
+        here = shown.get(str(room), [])
+        owned = [row for row in here if row["owner_handle"] == me]
+        helped = [row for row in here if row["owner_handle"] != me]
+        out[room] = {
+            "shown": (owned + helped)[:RAIL_TASKS],
+            "open": counts.get(room, 0),
+        }
+    return out

@@ -17,11 +17,11 @@ import pytest
 from app.domain.usage.credits import CREDIT_USD
 from tests.conftest import seed_task_with_protocol, seed_user, wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     free_plan_credits,
     in_thread,
     post_message,
     post_project,
+    room_socket,
 )
 
 # A Claude Code session reports no usage of its own: the metering proxy logs
@@ -36,7 +36,7 @@ CREDITS_PER_TURN = (10 * 5e-6 + 5 * 25e-6) / CREDIT_USD
 @pytest.fixture(autouse=True)
 def _priced(monkeypatch):
     """The gateway's price table and the deployment's price per credit."""
-    from app.domain.feature_stats import pricing
+    from app.domain.usage import pricing
 
     async def rates(transport=None):
         return _RATES
@@ -170,7 +170,7 @@ def _run_turn(client, topic_id: str, meter=None) -> list[dict]:
     ``meter`` is called once the turn has run, as the proxy would have logged
     it; a refused turn never reached the model, so it is not metered."""
     frames: list[dict] = []
-    with client.websocket_connect(chat_ws_url(topic_id, "u1")) as ws:
+    with room_socket(client, topic_id, "u1") as ws:
         post_message(client, topic_id, "u1", {"content": "@芝士 你好"})
         while True:
             frame = ws.receive_json()
@@ -304,11 +304,10 @@ def test_exhausted_credits_refuse_next_turn(client, tmp_path):
 
 
 def test_market_nodes_board(client):
-    """节点看板 shows the machine pools this deployment offers, and marks the one
-    an unconfigured topic lands on. It used to show exactly one node — the
-    platform's own container host — which was the one pool nobody could pick."""
+    """节点看板 shows the sandbox specs this deployment offers, and marks the one
+    an agent nothing was chosen for gets."""
     from app.core.config import settings
-    from app.domain.agent.market import compute_default_name, compute_listings
+    from app.domain.agent.market import compute_listings
 
     r = client.get("/market/nodes")
     assert r.status_code == 200
@@ -316,7 +315,7 @@ def test_market_nodes_board(client):
 
     ids = [n["id"] for n in data["nodes"]]
     assert ids == [p.id for p in compute_listings(settings)]
-    assert data["current_provider"] == compute_default_name(settings)
+    assert data["current_provider"] == "standard"
     assert [n["id"] for n in data["nodes"] if n["current"]] == [
         data["current_provider"]
     ]

@@ -1,7 +1,6 @@
-import type { BusinessError } from '@/network/types/error'
-
 import { toast } from 'vuetify-sonner'
 
+import { ApiError } from '@/api/http'
 import { reportError } from '@/errorReporter'
 import { t } from '@/i18n'
 
@@ -37,12 +36,14 @@ class ErrorHandlerService {
 
     const opts = { ...this.defaultOptions, ...options }
 
-    // 判断是否为业务错误
-    if ('name' in error && error.name && this.handlers[error.name]) {
+    // 服务端给这次回绝起的名字：ApiError 把它放在 `code`（后端错误名）。落在一个
+    // 注册过的那条上，就按那一条办。
+    const refusalName = refusalHandlerName(error)
+    if (refusalName && this.handlers[refusalName]) {
       // Not reported: everything with a registered handler is a refusal the
       // product means — no permission, a locked team — which is the system
       // working. Recording those would bury the failures that are not.
-      return await this.handlers[error.name](error)
+      return await this.handlers[refusalName](error)
     }
 
     // Everything else is reported. These are exactly the failures a person SEES
@@ -56,8 +57,8 @@ class ErrorHandlerService {
     const fallback = opts.defaultMessage || t('shell.errors.actionFailed')
     reportError(error.message || fallback, error.stack, `ui:${error.name || 'Error'}`)
 
-    // 如果是业务错误但没有特定处理器
-    if ('code' in error && (error as BusinessError).code) {
+    // 服务端回绝了这次请求、却没有专属处理器：说服务端那句话，别拿通用文案把它盖掉。
+    if (hasServerRefusal(error)) {
       if (opts.showToast) {
         toast.error(error.message || fallback)
       }
@@ -84,12 +85,25 @@ class ErrorHandlerService {
   }
 }
 
+// 服务端给这次回绝起的名字：`ApiError` 把它放在 `code`（后端错误名）。取到就按它
+// 找注册过的那条。
+function refusalHandlerName(error: Error): string | undefined {
+  const code = (error as ApiError).code
+  return typeof code === 'string' && code ? code : undefined
+}
+
+// 这次失败是服务端有条有理地回绝的（带着业务 code），不是网络断了也不是未知错误。
+function hasServerRefusal(error: Error): boolean {
+  return error instanceof ApiError && typeof error.code === 'string' && error.code.length > 0
+}
+
 // 创建单例
 const errorHandler = new ErrorHandlerService()
 
 errorHandler.register('TeamLockedError', (error) => {
-  if (error instanceof Error && 'error' in error && (error as any).error?.data) {
-    const data = (error as any).error.data
+  // 谁锁着：`ApiError` 把回绝数据放在 `data`（= 后端的 error.data）。
+  const data = (error as ApiError).data as { lockingTasks?: string } | undefined
+  if (data?.lockingTasks) {
     toast.warning(t('shell.errors.teamLockedBy', { tasks: data.lockingTasks }))
   } else {
     toast.warning(t('shell.errors.teamLocked'))

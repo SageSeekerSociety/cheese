@@ -49,6 +49,9 @@ test.describe('支线', () => {
     const pane = page.getByTestId('thread-pane');
     await expect(pane).toBeVisible({ timeout: 15_000 });
     await expect(pane.locator('.thread-root', { hasText: text })).toBeVisible();
+    // 页头那条消息在对话自己的滚动区里：它跟着回复一起滚，不钉在面板顶上（钉着的话，
+    // 一条长消息展开就把回复挤没，还把自己末尾那颗「收起」顶到看不见的地方）。
+    await expect(pane.locator('[data-testid="chat-scroll"] .thread-root')).toHaveCount(1);
 
     // 芝士那一轮留下的东西（回答，或者这一轮为什么没成的那一行）落在支线里。
     await expect(pane.locator('[data-row-id]').first()).toBeVisible({ timeout: 60_000 });

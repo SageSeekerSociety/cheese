@@ -6,7 +6,7 @@
 
 import time
 
-from app.domain.agent.runtime import get_broker
+from app.domain.agent.realtime.broker import get_broker
 from tests.integration.conftest import (
     new_project,
     post_project,

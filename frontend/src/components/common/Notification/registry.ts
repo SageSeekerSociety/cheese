@@ -2,7 +2,7 @@
 // 数据，也不认识路由，只决定画什么；所以它和它映射的这批渲染组件住在一起，
 // `src/services/` 留给真正跟服务端说话的那些模块（`.claude/rules/architecture.md`）。
 import type { Component } from 'vue'
-import type { Notification, NotificationType } from '@/network/api/notifications/types'
+import type { Notification, NotificationType } from '@/types/apiNotifications'
 
 import RenderCheeseQuestionNotification from '@/components/common/Notification/renders/RenderCheeseQuestionNotification.vue'
 import RenderDeadlineRemindNotification from '@/components/common/Notification/renders/RenderDeadlineRemindNotification.vue'
@@ -23,13 +23,13 @@ import RenderTeamJoinRequestNotification from '@/components/common/Notification/
 import RenderTeamRequestApprovedNotification from '@/components/common/Notification/renders/RenderTeamRequestApprovedNotification.vue'
 import RenderTeamRequestCanceledNotification from '@/components/common/Notification/renders/RenderTeamRequestCanceledNotification.vue'
 import RenderTeamRequestRejectedNotification from '@/components/common/Notification/renders/RenderTeamRequestRejectedNotification.vue'
+import RenderThreadReplyNotification from '@/components/common/Notification/renders/RenderThreadReplyNotification.vue'
 
 // 通知类型到渲染组件的映射
 const notificationRendererRegistry: Record<NotificationType, Component> = {
   MENTION: RenderMentionNotification,
   REPLY: RenderReplyNotification,
-  // 标题和正文是后端写好的那一句，照原样显示。
-  THREAD_REPLY: RenderDefaultNotification,
+  THREAD_REPLY: RenderThreadReplyNotification,
   REACTION: RenderReactionNotification,
   PROJECT_INVITE: RenderProjectInviteNotification,
   DEADLINE_REMIND: RenderDeadlineRemindNotification,
@@ -131,12 +131,18 @@ export function getNotificationColor(type: NotificationType): string {
 }
 
 /**
- * 这一条通知此刻的图标和颜色。大多数类型只看类型；芝士的提问答过之后（服务端
- * `ledger.settle` 把回答并进 `answered`）就不再是「待你处理」，换成和房间里那张
- * 卡一样的已回答对勾，颜色从 warning 退成 success —— 还画成警示色，等于说它还在等人。
+ * 这一条通知此刻的图标和颜色。大多数类型只看类型；事情办完之后就不再是「待你处理」，
+ * 换成和房间里那张卡一样的办结对勾，颜色从 warning 退成 success —— 还画成警示色，
+ * 等于说它还在等人。两种办完：芝士的提问答过了（服务端 `ledger.settle` 把回答并进
+ * `answered`），平台那一条提示背后的卡有了决定（`ledger.settle_card` 把结局并进
+ * `outcome`）。
  */
 export function getNotificationMark(notification: Notification): { icon: string; color: string } {
-  if (notification.type === 'CHEESE_QUESTION' && notification.contextMetadata?.answered) {
+  const settled =
+    notification.type === 'CHEESE_QUESTION'
+      ? !!notification.contextMetadata?.answered
+      : notification.type === 'ROOM_NOTICE' && !!notification.contextMetadata?.outcome
+  if (settled) {
     return { icon: 'mdi-check-circle-outline', color: 'success' }
   }
   return { icon: getNotificationIcon(notification.type), color: getNotificationColor(notification.type) }

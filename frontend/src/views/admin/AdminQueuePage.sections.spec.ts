@@ -5,7 +5,7 @@
  * 下面几件。`AdminQueuePage.spec.ts` 已经把「整条链子」和「切视图/切页签不发请求」
  * 钉住了；这一份补的是它没盖到的四块 —— 也就是**这次要挪走的那几块**：
  *
- *   1. 页头那排工具：未读徽标与「标记为已读」什么时候出现、刷新按钮的无障碍名、
+ *   1. 页头那排工具：未读徽标与「标为已读」什么时候出现、刷新按钮的无障碍名、
  *      视图切换两颗的 `aria-pressed`；
  *   2. 工具行三组控件的组名、档位与选中态：栏位（radiogroup）、搜索框、状态页签；
  *   3. **总表那一档**的失败文案 —— 它和列表那一档**不是同一句**（「表格加载失败」对
@@ -102,7 +102,7 @@ async function mountQueue(query: Record<string, string> = {}) {
 const rows = (container: Element) => container.querySelectorAll('.qrow')
 
 describe('页头工具', () => {
-  it('未读徽标与「标记为已读」是有未读才有的那一对', async () => {
+  it('未读徽标与「标为已读」是有未读才有的那一对', async () => {
     const { container, findByText } = await mountQueue()
     await waitFor(() => expect(rows(container).length).toBeGreaterThan(0))
 
@@ -110,7 +110,7 @@ describe('页头工具', () => {
     const badge = container.querySelector('.qpage__badge')
     expect(badge?.textContent?.trim()).toMatch(/^\d+ 未读$/)
     expect(badge?.textContent?.trim()).not.toBe('0 未读')
-    expect(await findByText('标记为已读')).toBeTruthy()
+    expect(await findByText('标为已读')).toBeTruthy()
   })
 
   it('刷新按钮报得出名字，按下去真的重拉', async () => {

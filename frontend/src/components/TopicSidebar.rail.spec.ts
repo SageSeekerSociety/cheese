@@ -7,7 +7,7 @@
 import type { Component } from 'vue'
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
-import { defineComponent, h } from 'vue'
+import { defineComponent, h, nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -21,6 +21,7 @@ import TopicSidebar from './TopicSidebar.vue'
 
 import { setLocale } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 const Sidebar = TopicSidebar as unknown as Component
 
@@ -56,6 +57,7 @@ const members: ProjectMemberRow[] = [
 const router = createRouter({
   history: createWebHistory(),
   routes: [
+    { path: '/teams/:handle', name: 'TeamsDetailDefault', component: defineComponent({ setup: () => () => h('div') }) },
     { path: '/:pathMatch(.*)*', name: 'catch-all', component: defineComponent({ setup: () => () => h('div') }) },
   ],
 })
@@ -178,6 +180,53 @@ describe('C1 置顶导航组', () => {
   })
 })
 
+describe('项目名上面写着它归哪个团队', () => {
+  const teamLine = (root: Element) => root.querySelector('.rail-header__team')
+
+  it('团队的项目写团队名，点了去团队的项目列表', () => {
+    const { container } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', team_handle: 'zhishi', team_name: '知是' },
+      ],
+    })
+    expect(teamLine(container)?.textContent?.trim()).toBe('知是')
+    expect(teamLine(container)?.getAttribute('href')).toBe('/teams/zhishi')
+  })
+
+  it('自己名下的项目写「个人」，指向自己那一页', () => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+    const { container } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'linxia', team_handle: 'linxia', team_name: 'linxia' },
+      ],
+    })
+    expect(teamLine(container)?.textContent?.trim()).toBe('个人')
+    expect(teamLine(container)?.getAttribute('href')).toBe('/teams/linxia')
+  })
+
+  // 别人名下的个人项目：那一页只有他本人打得开，所以对被邀请进来的人不画这一行。
+  it('别人名下的项目不画这一行', () => {
+    localStorage.setItem('user', JSON.stringify({ id: 1, username: 'linxia' }))
+    const { container } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', team_handle: 'alice', team_name: 'alice' },
+      ],
+    })
+    expect(teamLine(container)).toBeNull()
+  })
+
+  it('点团队名不打开项目菜单', async () => {
+    const { container, baseElement } = mount({
+      projects: [
+        { id: 'p1', name: 'P1', created_at: '', owner_handle: 'alice', team_handle: 'zhishi', team_name: '知是' },
+      ],
+    })
+    await fireEvent.click(teamLine(container)!)
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/teams/zhishi'))
+    expect(baseElement.querySelector('.v-overlay--active .v-list-item')).toBeNull()
+  })
+})
+
 describe('私聊的未读落在项目名那一行上', () => {
   // 侧栏原来有一整段私聊（芝士 + 有未读的人）。它撤掉了，名册和每个人的未读都归
   // 成员页；成员那一行后来也进了菜单——但「有人找你」必须仍然在主导航上亮，否则
@@ -225,7 +274,7 @@ describe('C4 项目文档', () => {
     return found!
   }
 
-  it('在项目菜单里，点它去章程', async () => {
+  it('在项目菜单里，点它去项目目标', async () => {
     const onSelectDocs = vi.fn()
     const { container, baseElement } = mount({ onSelectDocs })
     ;(await docsItem(container, baseElement)).click()
@@ -339,26 +388,36 @@ describe('行左边那一个槽', () => {
     function withDefaultAgent() {
       const pinia = createPinia()
       setActivePinia(pinia)
-      useWorkspaceStore().members = [
-        member('me', '我'),
-        { user_handle: 'cheese-a1', name: '小芝', agent: true, project_default: true } as ProjectMemberRow,
-      ]
+      // 打开 p1，名册已经读回来。
+      seedProjects([])
+      seedProject('p1', {
+        topics,
+        members: [
+          member('me', '我'),
+          { user_handle: 'cheese-a1', name: '小芝', agent: true, project_default: true } as ProjectMemberRow,
+        ],
+        unread: {},
+        privateUnread: {},
+        notifyLevels: {},
+      })
+      useWorkspaceStore().openProject('p1')
       return pinia
     }
     const failedNow = () => ({ member: null, reason: 'failed', since: new Date().toISOString() })
 
-    it('它一边在干活、房间一边在等一个说不出是谁的成员：这一行只画它一次', () => {
+    it('它一边在干活、房间一边在等一个说不出是谁的成员：这一行只画它一次', async () => {
       const rows = topics.map((t) =>
         t.id === 'a'
           ? ({ ...t, waits: [failedNow()], activity: [{ member: 'cheese-a1', kind: 'working', since: 1 }] } as Topic)
           : t
       )
       const { container } = mount({ topics: rows }, withDefaultAgent())
+      await nextTick()
       const marks = topicRowFor(container, 'a').querySelectorAll('[data-state]')
       expect(marks.length).toBe(1)
     })
 
-    it('同一位队友在哪一行都是同一种底色', () => {
+    it('同一位队友在哪一行都是同一种底色', async () => {
       const rows = topics.map((t) =>
         t.id === 'a'
           ? ({ ...t, waits: [failedNow()] } as Topic)
@@ -367,6 +426,7 @@ describe('行左边那一个槽', () => {
             : t
       )
       const { container } = mount({ topics: rows }, withDefaultAgent())
+      await nextTick()
       const toneIn = (title: string) =>
         topicRowFor(container, title).querySelector('[data-state] .cheese-avatar')?.getAttribute('data-tone')
       expect(toneIn('b')).toBeTruthy()

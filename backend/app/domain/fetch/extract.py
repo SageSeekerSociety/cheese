@@ -49,6 +49,7 @@ def to_markdown(html: str) -> str:
         html = html[:MAX_HTML_BYTES]
     cleaned = strip_non_content(html)
     try:
+        # deferred-import: the fallback below is for the converter being absent
         from markdownify import markdownify
 
         text = markdownify(cleaned)

@@ -14,7 +14,6 @@ import ProfileView from './ProfileView.vue'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
 import i18n, { setLocale } from '@/i18n'
-import { clearPageCache } from '@/lib/pageCache'
 
 const me = vi.hoisted(() => ({ handle: 'lin' }))
 
@@ -25,8 +24,8 @@ vi.mock('@/api', () => ({
   deleteUnderstanding: vi.fn(),
 }))
 vi.mock('@/me', () => ({ myHandle: () => me.handle }))
-vi.mock('@/network/api/avatars', () => ({
-  AvatarsApi: { getDefaultAvatarId: vi.fn().mockResolvedValue({ data: { avatarId: 1 } }) },
+vi.mock('@/api/avatars', () => ({
+  getDefaultAvatarId: vi.fn().mockResolvedValue({ avatarId: 1 }),
 }))
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -66,30 +65,30 @@ function topic(id: string, title: string): ProfileTopic {
   }
 }
 
-async function renderPage(handle: string) {
+async function renderPage(handle: string, projectId?: string) {
   const stub = { template: '<div />' }
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/users/:handle', name: 'UserPage', component: stub },
       { path: '/users/settings/profile', name: 'UserSettingsProfile', component: stub },
-      { path: '/teams/:handle', name: 'TeamsDetail', component: stub },
+      { path: '/teams/:handle', name: 'TeamsDetailDefault', component: stub },
       { path: '/projects/:projectId', name: 'workspace-project', component: stub },
       { path: '/projects/:projectId/members', name: 'project-members', component: stub },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: stub },
+      { path: '/projects/:projectId/dm/:peer', name: 'workspace-dm', component: stub },
     ],
   })
   await router.push(`/users/${handle}`)
   await router.isReady()
   return render(ProfileView, {
-    props: { handle },
+    props: { handle, projectId },
     global: { plugins: [router, createPinia(), i18n, createVuetify({ components, directives })] },
   })
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
-  clearPageCache()
   setLocale('zh-CN')
   me.handle = 'lin'
   vi.stubGlobal('visualViewport', new EventTarget())
@@ -221,5 +220,48 @@ describe('what only the person themselves sees', () => {
     await view.findByRole('heading', { name: '林知远' })
     expect(view.queryByRole('heading', { name: '芝士眼中的你' })).toBeNull()
     expect(view.queryByRole('link', { name: '编辑资料' })).toBeNull()
+  })
+})
+
+describe('opened from a project’s roster', () => {
+  beforeEach(() => {
+    vi.mocked(getUserTopics).mockResolvedValue({ topics: [] })
+  })
+
+  function summary(handle: string, extra: Record<string, unknown>) {
+    return { handle, topics_started: [], topics_active: [], weekly_contributions: 0, waiting_on_you: [], ...extra }
+  }
+
+  it('calls an AI teammate an AI teammate and offers a private chat with it', async () => {
+    vi.mocked(getUserProfile).mockResolvedValue(profileOf('cheese-742841cae293', { name: '小杉' }))
+    vi.mocked(getMemberSummary).mockResolvedValue(
+      summary('cheese-742841cae293', { source: 'agent', instance_handle: 'xiaoshan' }) as never
+    )
+    const view = await renderPage('cheese-742841cae293', 'p1')
+
+    await view.findAllByRole('heading', { name: '小杉' })
+    expect(view.getByText('AI 队友')).toBeTruthy()
+    expect(view.queryByText('团队成员')).toBeNull()
+    const dm = view.getByRole('link', { name: '私聊' })
+    expect(dm.getAttribute('href')).toBe('/projects/p1/dm/agent:xiaoshan')
+  })
+
+  it('offers a private chat with another person in the project', async () => {
+    vi.mocked(getUserProfile).mockResolvedValue(profileOf('wang', { name: '王' }))
+    vi.mocked(getMemberSummary).mockResolvedValue(summary('wang', { source: 'team' }) as never)
+    const view = await renderPage('wang', 'p1')
+
+    await view.findAllByRole('heading', { name: '王' })
+    expect(view.getByText('团队成员')).toBeTruthy()
+    expect(view.getByRole('link', { name: '私聊' }).getAttribute('href')).toBe('/projects/p1/dm/wang')
+  })
+
+  it('offers no private chat with yourself', async () => {
+    vi.mocked(getUserProfile).mockResolvedValue(profileOf('lin'))
+    vi.mocked(getMemberSummary).mockResolvedValue(summary('lin', { source: 'owner' }) as never)
+    const view = await renderPage('lin', 'p1')
+
+    await view.findAllByRole('heading', { name: '林知远' })
+    expect(view.queryByRole('link', { name: '私聊' })).toBeNull()
   })
 })

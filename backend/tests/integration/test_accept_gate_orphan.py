@@ -73,7 +73,7 @@ def _seed_pending_gate_card(client, topic_id: str, reviewer: str = "alice") -> s
                 topic_id=uuid.UUID(topic_id),
                 task_id=task_id,
                 reviewer_handle=reviewer,
-                routing_reason="最懂",
+                focus="最懂",
                 status=AcceptStatus.pending_gate,
             )
             session.add(card)
@@ -111,7 +111,7 @@ def _file_card(client, topic_id: str, reviewer: str = "alice"):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
 
@@ -129,11 +129,25 @@ def _sweep(client) -> dict:
 
     在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：扫底会 `submit`
     叫醒芝士的那一轮，它得落在 work runner 所在的那个循环上——生产上这一轮也正
-    是从那里跑的（`app/core/background.py` 的 "gate sweep"）。
+    是从那里跑的（应用周期接线中的 "gate sweep"）。
     """
-    from app.core import background
+    from app.api.deps import get_work_runner
+    from app.domain.review.periodic import sweep_abandoned_gates
+    from app.periodic_jobs import gate_nudge_factory
 
-    result = client.portal.call(background.sweep_abandoned_gates, _chat_service())
+    chat = _chat_service()
+
+    async def sweep():
+        return await sweep_abandoned_gates(
+            chat.session_factory,
+            nudge_factory=gate_nudge_factory(
+                chat=chat,
+                sessions=chat.session_factory,
+                get_runner=get_work_runner,
+            ),
+        )
+
+    result = client.portal.call(sweep)
     return {**result, "condemned": [str(cid) for cid in result["condemned"]]}
 
 
@@ -348,7 +362,7 @@ def test_void_rejects_a_card_that_is_already_settled(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "alice",
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     card = r.json()["data"]

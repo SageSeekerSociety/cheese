@@ -5,21 +5,22 @@
 """
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Body, Depends, File, Form, UploadFile
+from fastapi import APIRouter, Body, File, Form, Query, UploadFile
 from fastapi.responses import Response
-from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
 from app.api.place import readable_rooms
-from app.api.response import ok, page
+from app.api.request_deps import DbSession
+from app.api.response import ok, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.core.db import get_db
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.identity.actor import Actor
+from app.domain.library import listing as library_listing
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -27,10 +28,44 @@ from app.domain.project.services import ProjectService
 
 router = APIRouter(prefix="/projects", tags=["library"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-#: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线。
-MAX_LIBRARY_UPLOAD_BYTES = 10 * 1024 * 1024
+#: 资料库页上一次放进来的文件多大为止；和对话里上传附件是同一条线，数在
+#: `library.MAX_FILE_BYTES`（落地那一层），这里只借它的名字。
+MAX_LIBRARY_UPLOAD_BYTES = library.MAX_FILE_BYTES
+
+
+class LibraryRoom(BaseModel):
+    """一份资料是在哪个房间给出来的（`room_ref`）：房间的 id 和名字。"""
+
+    id: str
+    title: str
+
+
+class LibraryFileOut(BaseModel):
+    """清单里的一份文件（`library_listing._describe` 写的那一行）。"""
+
+    type: Literal["file"]
+    path: str
+    bytes: int
+    modified: float
+    added_by: str | None
+    added_at: str
+    room: LibraryRoom | None
+    replaced: int
+    references: int
+    rank: str
+
+
+class LibraryFoldersOut(BaseModel):
+    """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
+
+    folders: list[str]
+
+
+class LibraryMoved(BaseModel):
+    """每个旧名字变成了什么（`library_records.move`）；名字没变时是空的。"""
+
+    moved: dict[str, str]
 
 
 @router.get("/{project_id}/library/raw")
@@ -118,18 +153,66 @@ async def restore_library_version(
 
 @router.get("/{project_id}/library")
 async def list_library(
-    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    dir: str = "",
+    flat: bool = False,
+    q: str = "",
+    kind: str | None = None,
+    cursor: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
 ) -> dict:
-    """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。
+    """资料库：用户给这个项目的文件，按原名，每个房间都引用得到。一页一页地给。
+
+    不给 `flat` / `q` / `kind` 时是 `dir` 那一层：文件夹在前，然后是文件；给了就是
+    整个资料库里对得上的文件（只给 `flat` 是全部）。`next` 是下一页的游标，
+    没有下一页时为 null。
 
     Project-level on purpose — 「上周那份预算表」is a sentence someone says in a
     room that has never seen that file."""
+    actor = await _reader(project_id, db, resolver)
+    rooms = await readable_rooms(db, resolver, actor, project_id)
+    entries, after = await library_listing.page(
+        db,
+        project_id,
+        rooms,
+        dir=dir.strip("/"),
+        flat=flat,
+        q=q.strip(),
+        kind=kind,
+        after=cursor,
+        limit=limit,
+    )
+    return ok({"data": entries, "next": after})
+
+
+@router.get("/{project_id}/library/file", **typed_response(LibraryFileOut))
+async def library_file(
+    project_id: uuid.UUID, path: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """一份资料的那一行：地址上点名的那一份不一定在已经取回来的那几页里。"""
+    actor = await _reader(project_id, db, resolver)
+    rooms = await readable_rooms(db, resolver, actor, project_id)
+    return ok(await library_listing.one(db, project_id, rooms, _library_path(path)))
+
+
+@router.get("/{project_id}/library/folders", **typed_response(LibraryFoldersOut))
+async def library_folders(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """资料库里的每一个文件夹（整条路径），给「移动到」挑。"""
+    await _reader(project_id, db, resolver)
+    return ok({"folders": await library_listing.folders(db, project_id)})
+
+
+async def _reader(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> Actor:
     await ProjectService(db).get_or_404(project_id)
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    rooms = await readable_rooms(db, resolver, actor, project_id)
-    listed = await library_records.describe(db, project_id, rooms)
-    return ok(page(listed, len(listed)))
+    return actor
 
 
 async def _library_keeper(
@@ -212,7 +295,11 @@ async def delete_library_file(
     return ok({"deleted": True})
 
 
-@router.post("/{project_id}/library/move", dependencies=[ROUTE_DECIDES])
+@router.post(
+    "/{project_id}/library/move",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(LibraryMoved),
+)
 async def move_library_file(
     project_id: uuid.UUID,
     db: DbSession,

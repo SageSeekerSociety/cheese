@@ -46,7 +46,7 @@ from app.domain.conversation.services import room_column
 from app.domain.identity.handles import agent_handle_column
 from app.domain.project.models import Project
 from app.domain.project.repositories import ProjectRepository
-from app.domain.space.models import SpaceCategory
+from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.topic.models import Topic
 from app.domain.user.models import User, UserProfile
@@ -595,7 +595,6 @@ class SpaceLearningService:
         }
 
     async def _space_name(self, space_id: int) -> str:
-        from app.domain.space.models import Space
 
         name = await self._session.scalar(
             select(Space.name).where(Space.id == space_id)

@@ -7,102 +7,59 @@ order: 1
 
 # 常见问题与排障 {#troubleshooting}
 
-这一页按提示原文列出常见问题，每条链到负责它的功能页，处理办法写在那一节里。
+频道里出现「本轮未完成：……」这类提示时，按提示原文在这一页找到对应的一节，再按节里的链接去处理。
 
-```demo-steps
-title: 频道里常见的几种平台提示
-note: 七种提示各一步，看清提示长什么样，再点进对应的那一节处理
-embed: troubleshooting
-steps:
-  - label: 机器未配置或未连接
-    desc: 频道选的运行设备不在线，或者还没选。这一轮以「本轮未完成：这条会话的环境尚未配置或未连接」结束；展开详细说明，服务返回的原话就在里面。
-    link: /devices#device-offline
-  - label: 本轮未完成或意外中断
-    desc: 一轮没跑完就停了。提示或是以「本轮未完成：」开头，或是「本轮意外中断，平台不会自动重试」。
-    link: /agents#turn-failed
-  - label: 消息未送达
-    desc: 消息没送进芝士的会话，它没看到；工作区里的文件和已完成的改动都没受影响。
-    link: /agents#undelivered
-  - label: 正在排队
-    desc: 输入框上方写着「排队中」：这个项目同时在跑的轮次太多，这一轮在排队。
-    link: /agents#queued
-  - label: 额度已用完
-    desc: 团队本月的额度用完或用量上限满了，这一轮没有执行。
-    link: /quota#quota-exhausted
-  - label: 云端资源紧张
-    desc: 平台的云端此刻没有空位给新的环境。对话和平台工具照常能用。
-    link: /devices#cloud-busy
-  - label: 采纳按钮是灰的
-    desc: 检查没过，现在采纳不会合并。鼠标停在「采纳」上能看到原因。
-    link: /accept#accept-blocked
-```
+按提示出现的位置查：
 
-## 提示机器未配置或未连接 {#device-offline}
+- 频道或任务的对话里：[「这条会话的环境尚未配置或未连接」](#device-offline)、[「工作电脑的环境准备失败」](#environment-failed)、[「本轮未完成」或「本轮意外中断」](#turn-failed)、[「消息未送达」](#undelivered)、[「排队中」](#queued)、[「额度已用完，这一轮没有执行」](#quota-exhausted)、[「云端资源紧张，暂时无法准备环境」](#cloud-busy)
+- 检查芝士的结果时：[「采纳」按钮是灰的](#accept-blocked)、[找不到芝士做出的文件](#result-not-found)
+- 上传文件时：[「超过 10MB，无法上传」](#upload-failed)
+- 题目页上：[「暂时无法参与」](#claim-blocked)、[没有「提交作业」](#submission-unavailable)
 
-频道选的电脑不在线，或者还没有选。
+## 提示电脑没有连上平台 {#device-offline}
 
-处理办法见[设备与环境 · 提示环境未配置或未连接](/devices#device-offline)。
+AI 队友的环境要用的那台电脑不在线，它的文件和命令操作暂时做不了，对话照常。处理办法见[自有设备 · 提示电脑没有连上平台](/devices#device-offline)。
 
-## 提示工作电脑的环境准备失败 {#environment-failed}
+## 提示「执行环境准备失败」 {#environment-failed}
 
-工作电脑开工前要先跑项目的准备脚本和启动脚本，其中一段出了错，AI 队友用不了这台电脑。
+AI 队友开始工作前，平台先运行项目设置的脚本，其中一段出错了；提示写明出错在「准备脚本」还是「启动脚本」。处理办法见[环境 · 提示执行环境准备失败](/environment#environment-failed)。
 
-1. 在这行提示上点「去环境设置」，打开这个频道的环境设置。
-2. 看页面最上面的失败记录和日志末尾，改「准备脚本」或「启动脚本」后点「保存」。也可以点「让〈队友名字〉看看」，它读日志和脚本后给出原因和改法，点「采用并重试」就用它的改法。
-3. 点「重试」。
+## 提示「本轮未完成」或「本轮意外中断」 {#turn-failed}
 
-完成后：环境重新准备，之前在等的支线和任务里，AI 队友接着处理。
+这一轮没有执行完就停止了，提示写明原因，例如「无法连接 AI 服务，这一步未完成」。处理办法见[AI 队友 · 提示本轮未完成或意外中断](/agents#turn-failed)。
 
-## 提示本轮未完成或意外中断 {#turn-failed}
+## 提示「消息未送达」 {#undelivered}
 
-这一轮没有跑完。
+这条消息没有送进芝士的会话，芝士没有看到它。点提示上的「重试」或重新发送，见[AI 队友 · 提示消息未送达](/agents#undelivered)。
 
-处理办法见[AI 队友 · 提示本轮未完成或意外中断](/agents#turn-failed)。
+## 输入框上方显示「排队中」 {#queued}
 
-## 提示消息未送达 {#undelivered}
+这个项目同时运行的轮次已满，这一轮在排队，前面的结束后自动开始，不用重发。说明见[AI 队友 · 提示正在排队](/agents#queued)。
 
-这条消息没有送进芝士的会话。
+## 提示「额度已用完，这一轮没有执行」 {#quota-exhausted}
 
-处理办法见[AI 队友 · 提示消息未送达](/agents#undelivered)。
+团队的额度用完，或者用量到了时间窗口的上限，这一轮没有执行。处理办法见[额度 · 额度用完时](/quota#quota-exhausted)。
 
-## 提示正在排队 {#queued}
+## 提示「云端资源紧张，暂时无法准备环境」 {#cloud-busy}
 
-输入框上方写着「排队中」：项目同时在跑的轮次太多，这一轮在排队。
+平台的云端目前没有空位给新的环境，这不是团队或项目的名额。稍后再让芝士继续，见[环境 · 提示云端资源紧张](/environment#cloud-busy)。
 
-处理办法见[AI 队友 · 提示正在排队](/agents#queued)。
+## 「采纳」按钮是灰的 {#accept-blocked}
 
-## 提示额度已用完 {#quota-exhausted}
+平台检查没有通过，这一版现在不能合并。鼠标停在按钮上，提示写明原因。处理办法见[验收与采纳 · 采纳按钮是灰的](/accept#accept-blocked)。
 
-团队本月的额度或用量上限用完了，这一轮没有执行。
+## 提示「超过 10MB，无法上传」 {#upload-failed}
 
-处理办法见[额度 · 额度用完时](/quota#quota-exhausted)。
+频道里的附件每个不超过 10MB，一条消息最多 9 个。处理办法见[文件与成果 · 文件无法上传](/files#upload-failed)。
 
-## 提示云端资源紧张 {#cloud-busy}
+## 找不到芝士做出的文件 {#result-not-found}
 
-平台的云端此刻没有空位给新的环境。
+芝士的成果在任务页右侧的「改动」和「概览」中；采纳之前，成果不在项目文件里。各处入口见[文件与成果 · 查找芝士生成的文件](/files#find-result)。
 
-处理办法见[设备与环境 · 提示云端资源紧张](/devices#cloud-busy)。
+## 领取题目时提示「暂时无法参与」 {#claim-blocked}
 
-## 采纳按钮是灰的 {#accept-blocked}
+你或你的团队不满足这道题的领取条件，例如缺实名信息、团队人数不对，提示中写明是哪一条。处理办法见[题目 · 无法领取时](/challenges#claim-blocked)。
 
-平台检查没过，这一版现在采纳不会合并。
+## 题目页上没有「提交作业」 {#submission-unavailable}
 
-处理办法见[验收与采纳 · 采纳按钮是灰的](/accept#accept-blocked)。
-
-## 文件无法上传 {#upload-failed}
-
-文件超过 10MB 或一条消息的附件超过 9 个。
-
-处理办法见[文件与成果 · 文件无法上传](/files#upload-failed)。
-
-## 无法提交作业 {#submission-unavailable}
-
-题目的提交页不让交，或者题目顶部没有提交按钮。
-
-处理办法见[提交 · 不能提交时](/submissions#blocked)。
-
-## 找不到芝士的结果 {#result-not-found}
-
-芝士的结果在发起任务的那个频道和项目首页里。
-
-在哪里找见[文件与成果 · 查找芝士生成的文件](/files#find-result)。
+领取申请还在等发布者批准或被拒绝了，或者这道题仅可提交一次而你已经提交过。处理办法见[提交 · 不能提交时](/submissions#blocked)。

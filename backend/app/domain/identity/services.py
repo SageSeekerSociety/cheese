@@ -104,6 +104,7 @@ class IdentityService:
         across all of them. The roster says which one (its seat is the grant),
         and a room with no agent seated falls back to the project's own 芝士.
         """
+        # deferred-import: tests replace a name on app.domain.topic_membership.services
         from app.domain.topic_membership.services import TopicMemberService
 
         handle = await TopicMemberService(self._session).resolve_agent_handle(topic_id)

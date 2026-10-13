@@ -23,10 +23,16 @@
 import hashlib
 import re
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from stat import S_ISREG
 
 from app.core.config import settings
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import (
+    NotFoundError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
 from app.domain.textfile import text_payload
 
@@ -52,9 +58,33 @@ def room_files_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
     return root.resolve()
 
 
+#: 一份文件落地时的字节上限。房间文件（:func:`write_room_file`）与资料库
+#: （:mod:`app.domain.library.records`）落的是同一批字节，用同一个数；路由那一层
+#: 的 ``MAX_ARTIFACT_BYTES`` / ``MAX_ATTACHMENT_BYTES`` /
+#: ``MAX_LIBRARY_UPLOAD_BYTES`` 都指回这里，别在别处再写一遍。
+#:
+#: 这道上限不是「上传那一层」的事：``client_max_body_size`` 只在网关后面那一条路
+#: 上（``frontend/nginx.conf``），而 ``main.py`` 的 OpenAPI ``servers`` 把「直连后
+#: 端端口、前面没有网关」列为合法入口 —— 那条路上没有这道门。
+MAX_FILE_BYTES = 10 * 1024 * 1024
+
+
+def refuse_oversize(data: bytes) -> None:
+    """超过 :data:`MAX_FILE_BYTES` 的字节不落地，报「超限」而不是别的。
+
+    房间文件和资料库的每一个字节都从这里过，所以上限只有一处、也只有一层：调用方
+    漏判也好、直连后端绕开网关也好，字节都写不进去。
+    """
+    if len(data) > MAX_FILE_BYTES:
+        raise UnprocessableEntityError(
+            say("fileTooLarge", mb=MAX_FILE_BYTES // (1024 * 1024))
+        )
+
+
 def write_room_file(
     project_id: uuid.UUID, room_id: uuid.UUID, path: str, data: bytes
 ) -> None:
+    refuse_oversize(data)
     if path.split("/")[0] == LIBRARY_PREFIX:
         # `library/…` 是资料库那一份的地址（见 `read_attachment`）。房间里再写一个
         # 同名的东西，读的人就会拿到房间那份、以为看的是资料库里的原件。
@@ -79,6 +109,54 @@ def room_file_exists(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bo
     return _safe_path(room_files_root(project_id, room_id), path).is_file()
 
 
+#: 一次列出多少份房间文件。频道文件区是几十份的量级（一个人往里放的东西、芝士交付
+#: 的东西、定时任务的结果）；这个数只挡一份失控的目录——目录里的路径由干活的那台机器
+#: 自己写，没有别的上限。超过的那部分由调用方照 `truncated` 说出来，不闷着。
+MAX_LISTED_ROOM_FILES = 500
+
+
+def list_room_files(
+    project_id: uuid.UUID, room_id: uuid.UUID
+) -> tuple[list[dict], int]:
+    """这个房间自己的文件：路径、大小、最后一次改动的时间，最近改的在最前。
+
+    房间文件此前只有按路径取一份的读法（:func:`read_room_file`）：一个人想知道这个
+    房间的文件区里有什么，得先知道那份文件叫什么。这份清单是那个目录本身——定时任务
+    放进来的结果、人贴进来的截图、芝士交付的文档都在里面。
+
+    交出 ``(清单, 找到的总数)``；总数超过上限时清单是最近改的那些，调用方据此报
+    「只列出了一部分」。
+    """
+    root = room_files_root(project_id, room_id)
+    found: list[tuple[float, dict]] = []
+    for entry in root.rglob("*"):
+        relative = entry.relative_to(root)
+        # 点开头的层是编辑器留下的临时文件和别的东西：它们没有消息引得到（
+        # :func:`read_preview_file` 那一侧也拒绝这种地址），占一格只会让人多点一次。
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        try:
+            info = entry.stat()
+        except OSError:
+            continue
+        if not S_ISREG(info.st_mode):
+            continue
+        found.append(
+            (
+                info.st_mtime,
+                {
+                    "path": relative.as_posix(),
+                    "bytes": info.st_size,
+                    "modified_at": datetime.fromtimestamp(
+                        info.st_mtime, UTC
+                    ).isoformat(),
+                },
+            )
+        )
+    found.sort(key=lambda item: (-item[0], item[1]["path"]))
+    return [entry for _, entry in found[:MAX_LISTED_ROOM_FILES]], len(found)
+
+
 def _revision_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
     """Where a room's saved states live, by content hash — beside the room
     files and never inside them, so no room path can name one."""
@@ -93,6 +171,13 @@ def _revision_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
 
 
 def write_revision_blob(project_id: uuid.UUID, room_id: uuid.UUID, data: bytes) -> str:
+    """Keep one exact content under its hash — and never past the ceiling.
+
+    A revision is read back as a file, so a byte that could not have gone into
+    the room must not land here either: this is where the history's bytes land,
+    so the ceiling is checked here too (:func:`refuse_oversize`).
+    """
+    refuse_oversize(data)
     digest = hashlib.sha256(data).hexdigest()
     target = _revision_root(project_id, room_id) / digest
     if not target.is_file():

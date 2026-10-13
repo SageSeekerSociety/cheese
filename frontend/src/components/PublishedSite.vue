@@ -71,6 +71,17 @@ const canPublish = computed(
     !isCurrent.value
 )
 
+/** 按钮为什么按不下去，写在它的 title 上（和采纳按钮一样）；按得下去时是 null。
+ *  发布中的那一下不算：按钮自己在转圈。 */
+const blockedReason = computed(() => {
+  const current = info.value
+  if (!current || canPublish.value || publishing.value) return null
+  if (current.unavailable_reason) return current.unavailable_reason
+  if (!current.source_revision || !selected.value) return t('work.publishedSite.noCandidates')
+  if (isCurrent.value) return t('work.publishedSite.isCurrent')
+  return null
+})
+
 async function load() {
   const projectId = props.projectId
   try {
@@ -146,17 +157,12 @@ watch(
         {{ info.site.url }}
       </a>
       <span v-else class="site-row__url t-body c-muted">{{ t('work.publishedSite.none') }}</span>
-      <BaseButton
-        v-if="info.can_publish"
-        kind="primary"
-        size="sm"
-        class="site-row__act"
-        :disabled="!canPublish"
-        :loading="publishing"
-        @click="asking = true"
-      >
-        {{ info.site ? t('work.publishedSite.update') : t('work.publishedSite.publish') }}
-      </BaseButton>
+      <!-- 灰着的按钮收不到悬停，为什么灰写在包着它的这一层上。 -->
+      <span v-if="info.can_publish" class="site-row__act" :title="blockedReason ?? undefined">
+        <BaseButton kind="primary" size="sm" :disabled="!canPublish" :loading="publishing" @click="asking = true">
+          {{ info.site ? t('work.publishedSite.update') : t('work.publishedSite.publish') }}
+        </BaseButton>
+      </span>
     </div>
     <p v-if="info.site" class="site-row__when t-meta c-faint">
       <code :title="info.site.source_revision">{{ info.site.source_revision.slice(0, 8) }}</code>

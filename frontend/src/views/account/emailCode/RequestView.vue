@@ -39,9 +39,9 @@
       </BaseButton>
 
       <p class="account-foot">
-        <router-link :to="backToSignIn" class="account-link account-link--quiet">
+        <NavLink :to="backToSignIn" class="account-link account-link--quiet">
           {{ t('account.backToSignIn') }}
-        </router-link>
+        </NavLink>
       </p>
     </v-form>
   </div>
@@ -60,6 +60,7 @@ import { vuetifyConfig } from '@/utils/form'
 import AccountField from '@/components/account/AccountField.vue'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{

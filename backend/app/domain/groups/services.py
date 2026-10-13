@@ -310,6 +310,7 @@ def _date_to_ms(d) -> int:
         return 0
     if hasattr(d, "timestamp"):
         return int(d.timestamp() * 1000)
+    # deferred-import: datetime is bound at the top of this module already
     from datetime import datetime as dt
 
     return int(dt.combine(d, dt.min.time(), tzinfo=UTC).timestamp() * 1000)

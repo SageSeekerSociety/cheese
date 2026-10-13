@@ -15,17 +15,19 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 const listBlocks = vi.fn()
 const summonAgent = vi.fn()
 
+vi.mock('../../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     listTopicMembers: vi.fn().mockResolvedValue({ data: [] }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     summonAgent: (...a: unknown[]) => summonAgent(...a),
-    chatWsUrl: () => 'ws://test/ws',
     attachmentRawUrl: () => '',
   }
 })

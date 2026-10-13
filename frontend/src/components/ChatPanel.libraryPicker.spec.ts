@@ -56,11 +56,11 @@ beforeEach(() => {
     if (href.includes('/library')) {
       data = {
         data: [
-          { path: '预算表.xlsx', bytes: 2048, modified: 1758000000 },
-          { path: '合同.docx', bytes: 4096, modified: 1757000000 },
-          { path: '现场照片.png', bytes: 8192, modified: 1756000000 },
+          { type: 'file', path: '预算表.xlsx', bytes: 2048, modified: 1758000000 },
+          { type: 'file', path: '合同.docx', bytes: 4096, modified: 1757000000 },
+          { type: 'file', path: '现场照片.png', bytes: 8192, modified: 1756000000 },
         ],
-        total: 3,
+        next: null,
       }
     } else if (href.includes('/attachments')) {
       data = { path: 'library/预算表.xlsx', mime: 'application/octet-stream', bytes: 2048 }

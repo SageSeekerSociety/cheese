@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""A change to CLAUDE.md needs a human's approval before it can merge.
+"""A change to AGENTS.md needs a human's approval before it can merge.
 
-WHY: CLAUDE.md is loaded in full on every turn of every session, on every
+WHY: AGENTS.md is loaded in full on every turn of every session, on every
 machine, for every topic. A bad line there is not one bad file — it is a
 standing instruction that every agent obeys until someone notices. And the
 noticing is the hard part: nothing goes red, no test fails, the wrong rule just
@@ -37,7 +37,7 @@ import urllib.error
 import urllib.request
 
 REPO = os.environ.get("GITHUB_REPOSITORY", "SageSeekerSociety/cheese")
-GUARDED = "CLAUDE.md"
+GUARDED = "AGENTS.md"
 #: A human signal the PR's own author can actually give. GitHub refuses to let
 #: an author approve their own PR, and in this repo every PR is opened by the
 #: same account the agents act through — so requiring a non-author approval made
@@ -48,7 +48,7 @@ SIGNOFF_LABEL = "claude-md-ok"
 
 
 def guards_this_change(paths: list[str]) -> bool:
-    """Only the root CLAUDE.md. A nested one (frontend/CLAUDE.md) is scoped to
+    """Only the root AGENTS.md. A nested one (frontend/AGENTS.md) is scoped to
     its own directory and does not load on every turn everywhere."""
     return GUARDED in paths
 
@@ -98,7 +98,7 @@ def _api(path: str) -> list[dict]:
 def judge(pr: int) -> int:
     files = [f["filename"] for f in _api(f"pulls/{pr}/files?per_page=100")]
     if not guards_this_change(files):
-        print(f"CLAUDE.md untouched by #{pr} — gate does not apply.")
+        print(f"AGENTS.md untouched by #{pr} — gate does not apply.")
         return 0
 
     detail = _api(f"pulls/{pr}")  # type: ignore[assignment]
@@ -107,13 +107,13 @@ def judge(pr: int) -> int:
         for lbl in (detail.get("labels") or [])  # type: ignore[union-attr]
     ]
     if signed_off(labels):
-        print(f"CLAUDE.md change signed off with the {SIGNOFF_LABEL} label.")
+        print(f"AGENTS.md change signed off with the {SIGNOFF_LABEL} label.")
         return 0
 
     author = (detail.get("user") or {}).get("login", "")  # type: ignore[union-attr]
     approvals = human_approvals(_api(f"pulls/{pr}/reviews?per_page=100"), author)
     if approvals:
-        print(f"CLAUDE.md change approved by {', '.join(approvals)}.")
+        print(f"AGENTS.md change approved by {', '.join(approvals)}.")
         return 0
 
     print(f"FAIL: #{pr} changes {GUARDED} and no human has signed it off.")
@@ -137,10 +137,10 @@ def self_test() -> int:
             print(f"SELF-TEST FAIL: {msg}")
             sys.exit(1)
 
-    check(guards_this_change(["CLAUDE.md"]), "the root CLAUDE.md must be guarded")
+    check(guards_this_change(["AGENTS.md"]), "the root AGENTS.md must be guarded")
     check(
-        not guards_this_change(["docs/README.md", "frontend/CLAUDE.md"]),
-        "a nested CLAUDE.md is scoped to its directory and must not trip this",
+        not guards_this_change(["docs/README.md", "frontend/AGENTS.md"]),
+        "a nested AGENTS.md is scoped to its directory and must not trip this",
     )
 
     check(signed_off([SIGNOFF_LABEL]), "the sign-off label must count")

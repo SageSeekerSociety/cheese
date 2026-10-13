@@ -1,0 +1,73 @@
+name: Remote Bash equivalence
+
+# equivalence.py checks that a room's Bash, run through the shell prefix on the
+# executor, is what the pinned Claude Code build does running on the machine
+# itself (docs/remote-execution.md). Every run plays the same scenarios at the
+# same paths, so two runs cannot share a machine; each job here plays the
+# reference run and one compared run, and holds that one to the reference run
+# on the same machine, exactly as a single job playing them all one after the
+# other does. One job per run and shell keeps the slowest job at two runs
+# instead of five. The newest published build is checked daily by `latest` in
+# mcp-contract.yml.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-equivalence-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  equivalence:
+    name: equivalence (${{ matrix.shell }}, ${{ matrix.run }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        shell: [bash, zsh]
+        # The keys of RUNS in equivalence.py; the reference run is not one of
+        # them, because every job plays it.
+        run: [remote, relaunched, local, local_relaunched]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      # Restore only: warm-caches.yml saves this key on main.
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.npm
+          key: npm-remote-execution-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/remote_execution/package-lock.json') }}
+      - run: .github/scripts/ensure-claude-cli.sh
+      - name: Let a session have its own namespace
+        run: .github/scripts/allow-user-namespaces.sh
+      - name: Install FUSE for the forwarded project view, and zsh
+        # The equivalence check mounts the view a room's session works in.
+        # libfuse2 (fusepy) mounts through `fusermount`; Ubuntu 24.04 ships
+        # only `fusermount3`, which takes the same arguments. zsh is the
+        # executor shell of the zsh runs.
+        run: |
+          "$GITHUB_WORKSPACE"/.github/scripts/ensure-apt.sh fuse3 libfuse2t64 zsh
+          command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
+          python3 -m venv tmp/equivalence-venv
+          tmp/equivalence-venv/bin/pip install --quiet fusepy==3.0.1
+      - name: Remote Bash is equivalent to Claude Code on the executor (${{ matrix.shell }}, ${{ matrix.run }})
+        run: >-
+          tmp/equivalence-venv/bin/python scripts/remote_execution/equivalence.py
+          --claude "$PWD/scripts/remote_execution/node_modules/.bin/claude"
+          --shell ${{ matrix.shell }} --runs ${{ matrix.run }}
+          --output tmp/mcp-equivalence/${{ matrix.shell }}-${{ matrix.run }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        continue-on-error: true
+        # A quota-refused upload retries until the JOB timeout cancels the job
+        # — 20 minutes after the tests passed, reported as cancelled, which
+        # `continue-on-error` never gets to tolerate. Bound the step instead.
+        timeout-minutes: 3
+        if: always()
+        with:
+          name: mcp-equivalence-${{ matrix.shell }}-${{ matrix.run }}-${{ github.sha }}
+          path: tmp/mcp-equivalence/${{ matrix.shell }}-${{ matrix.run }}/

@@ -18,11 +18,11 @@ import uuid
 
 from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
-    chat_ws_url,
     join_project_team,
     open_task,
     post_message,
     post_project,
+    room_socket,
     session_auth_headers,
 )
 
@@ -80,7 +80,7 @@ def _say(client, place_id: str, who: str, text: str) -> None:
     doc comment would read as "not unread" for a reason that has nothing to do
     with tasks.
     """
-    with client.websocket_connect(chat_ws_url(place_id, who)) as ws:
+    with room_socket(client, place_id, who) as ws:
         post_message(client, place_id, who, {"content": text})
         while True:
             frame = ws.receive_json()

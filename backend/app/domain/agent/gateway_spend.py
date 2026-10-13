@@ -136,6 +136,8 @@ async def _charge_once(
                     input_tokens=row.prompt_tokens,
                     output_tokens=row.completion_tokens,
                     cost_usd=row.spend_usd,
+                    cache_read_tokens=row.cache_read_tokens,
+                    cache_write_tokens=row.cache_write_tokens,
                 )
                 for row in rows
             ]
@@ -148,6 +150,8 @@ async def _charge_once(
                         kind=charge.kind,
                         model=model,
                         input_tokens=usage.input_tokens,
+                        cache_read_tokens=usage.cache_read_tokens,
+                        cache_write_tokens=usage.cache_write_tokens,
                         output_tokens=usage.output_tokens,
                         cost_usd=usage.cost_usd,
                         project_id=charge.project_id,
@@ -160,6 +164,8 @@ async def _charge_once(
                     credits=spend_to_credits(usage.cost_usd),
                     model=model,
                     input_tokens=usage.input_tokens,
+                    cache_read_tokens=usage.cache_read_tokens,
+                    cache_write_tokens=usage.cache_write_tokens,
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
                     route="gateway",

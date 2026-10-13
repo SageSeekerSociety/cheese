@@ -128,18 +128,27 @@ if (update) {
 
 const result = compare(baseline, current)
 const scanned = (scan.length ? scan : ROOTS).join(', ')
+// Only the files the ratchet is blocking: listing every frozen violation in the
+// tree would bury the new one the report is about.
+const regressed = new Set(result.regressions.map((r) => r.file))
+const failureReport = formatBoundaryReport(
+  result,
+  parsed.violations.filter((v) => regressed.has(v.file))
+)
 
 if (asJson) {
-  // Per-file counts, not the violations themselves: eslint's JSON does not
-  // carry a line number this check keeps, and a count per file is what the
-  // board groups by anyway.
+  // Per-file counts, the shape the board groups by (docs/topics/棘轮页方案 3.1).
+  // The report is not on stdout here — the collector parses stdout — but on
+  // failure it goes to stderr, so a --json run (what ci:fast calls) still prints
+  // the line, the rule and the fix.
   const details = Object.entries(current)
     .filter(([, count]) => count > 0)
     .map(([file, count]) => ({ file, count }))
   emit(verdict({ id: ID, result, details }))
+  if (!result.ok) console.error(failureReport)
   process.exit(result.ok ? 0 : 1)
 }
 
-console.log(formatBoundaryReport(result))
+console.log(failureReport)
 console.log(`scanned ${scanned} — ${currentTotal} violation(s)`)
 process.exit(result.ok ? 0 : 1)

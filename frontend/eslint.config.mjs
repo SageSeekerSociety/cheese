@@ -103,6 +103,36 @@ export default [
     },
   },
   {
+    // `src/network/` was the second request stack: axios underneath, its own
+    // envelope stripping and its own error type. Every caller moved to `@/api`
+    // and the directory was deleted; this rule is what keeps it deleted. A
+    // re-introduced import is how a second stack starts — and a second stack
+    // means every request bug has two places to be fixed and two behaviours to
+    // be compared. Never add an exemption here: if something seems to need the
+    // old stack, it needs the `@/api` domain module instead.
+    // docs/manual/dev/frontend.md#state-network
+    //
+    // It sits above the src/lib/docSchema block below on purpose: a later
+    // matching config object replaces this rule wholesale for those files
+    // rather than merging patterns, and docSchema's own `@/*` ban already
+    // covers `@/network`.
+    files: ['src/**/*.ts', 'src/**/*.vue'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/network', '@/network/*', '**/network/api', '**/network/api/*'],
+              message:
+                'The legacy network stack (src/network/) is gone. Reach the server through @/api — a domain module under src/api/, or the src/api.ts facade.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // The document schema module is shared with code that runs outside the
     // browser bundle, so it may import packages and its own files only — never
     // the app (see src/lib/docSchema/index.ts).
@@ -118,6 +148,23 @@ export default [
               message: 'src/lib/docSchema is framework-free.',
             },
           ],
+        },
+      ],
+    },
+  },
+  {
+    // `src/api.ts` is the API layer's facade: every `@/api` importer (and every
+    // `vi.mock('@/api')`) resolves here, and the code lives in one module per
+    // domain under src/api/. A function written here would make it a second
+    // home for that code again, which is how it once reached 3747 lines.
+    files: ['src/api.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'Program > :not(ExportAllDeclaration, ExportNamedDeclaration[source])',
+          message:
+            'src/api.ts only re-exports (`export … from`). Put the code in the src/api/<domain>.ts module it belongs to.',
         },
       ],
     },

@@ -19,10 +19,17 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.config import settings
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline
-from app.domain.agent.harness import CLAUDE_CODE, HARNESSES, Capability
+from app.domain.agent.harness import (
+    CLAUDE_CODE,
+    HARNESSES,
+    Capability,
+    deployment_harnesses,
+    harness_for,
+    harness_name,
+    harness_on,
+)
 
 if TYPE_CHECKING:
-    from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness import SessionRef
     from app.domain.agent.room.reads import RoomReader
     from app.domain.agent.room.sessions import (
@@ -37,30 +44,23 @@ if TYPE_CHECKING:
 
 
 class ComputePool:
-    """Which backend a turn lands on — a machine AND a harness.
+    """Which backend a turn lands on: one per harness.
 
-    Two axes, because they are two questions. WHICH MACHINE is the room's
-    compute choice (``topic.compute_config``): someone's enrolled laptop, a
-    leased Cloud box. WHAT RUNS THERE is the agent type's ``harness``. They were
-    one key for as long as one harness existed, and a registry keyed by machine
-    alone cannot hold a second one — two runtimes over the same transport would
-    collide on the same name.
-
-    Caps-matching + project quota + overflow queue land when there is more than
-    one backend per pair; today the pair is looked up directly.
+    Every session runs on the session host and reaches its machine through the
+    one executor channel, whichever machine that is — a person's enrolled
+    computer or one the platform owns. Which machine is the session's own
+    environment, settled when it first needs hands (``machine/session_work``),
+    so nothing here is keyed by machine. What runs is the agent type's
+    ``harness``.
     """
 
     def __init__(
         self,
         backends: "list[RoomSessions]",
-        default_name: str,
         owned: "dict[str, RoomSessions] | None" = None,
     ):
-        from app.domain.agent.harness import deployment_harnesses
 
-        self._backends = {
-            (backend.name, backend.harness): backend for backend in backends
-        }
+        self._backends = {backend.harness: backend for backend in backends}
         # A member's own coding agent runs on their own machine whatever the
         # room chose (`owner_provider`), so these are kept apart from the
         # machine pools a room chooses among, keyed by harness alone.
@@ -70,9 +70,9 @@ class ComputePool:
             *self._owned.values(),
         ]
         # 部署列的骨架，在装配时解析一次：一个配错名字的部署在这里就起不来，而
-        # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。偏好的第一个得挂在
-        # 默认机器上：没说骨架的平台工作落在这一对上。
-        self._default = (default_name, deployment_harnesses()[0])
+        # 不是等到某一轮才发现自己跑的是另一个东西（结论 28）。没说骨架的平台工作
+        # 落在偏好的第一个上。
+        self._default = deployment_harnesses()[0]
         if self._default not in self._backends:
             raise ValueError(f"default backend {self._default!r} not registered")
         # 归属按座位记（topic, agent_handle）：一间房坐着几个 agent，各有各的
@@ -109,16 +109,32 @@ class ComputePool:
                 with contextlib.suppress(DeviceCallError, DeviceOffline):
                     await runtime.interrupt(live.session)
 
+    async def stop_work(self, conversation_id: uuid.UUID) -> None:
+        """Take away the work every teammate is doing in this conversation;
+        what they wrote so far stays. A seat with nothing in flight is left
+        alone."""
+        for runtime in self._runtimes():
+            for seat in [seat for seat in runtime.work if seat[0] == conversation_id]:
+                live = runtime.live.get(seat)
+                if live is not None:
+                    with contextlib.suppress(DeviceCallError, DeviceOffline):
+                        await runtime.interrupt(live.session)
+
+    def working_conversations(self) -> set[uuid.UUID]:
+        """Every conversation a seat this process holds is working in."""
+        return {
+            seat[0]
+            for runtime in self._runtimes()
+            for seat in runtime.work
+            if seat in runtime.live
+        }
+
     def default(self) -> "RoomSessions":
         return self._backends[self._default]
 
     def _runtimes(self) -> "list[RoomSessions]":
         """Every harness's sessions in the pool, on every machine pool."""
         return self._harnesses
-
-    def machines(self) -> set[str]:
-        """Which machine pools this deployment offers, whatever runs on them."""
-        return {name for name, _ in self._backends}
 
     async def steer(
         self,
@@ -345,7 +361,7 @@ class ComputePool:
         for runtime in self._runtimes():
             await runtime.replay(session)
 
-    def platform_work(self, provider_id: str | None = None) -> "RoomSessions":
+    def platform_work(self) -> "RoomSessions":
         """The backend for work the PLATFORM starts — the memory
         consolidation (dream).
 
@@ -355,86 +371,56 @@ class ComputePool:
         answer, and falling back to the default machine is a better one than
         crashing on a wiring gap.
         """
-        return self.select(provider_id=provider_id) or self.default()
+        return self.default()
 
     def owned(self, harness: str) -> "RoomSessions | None":
         """The backend for a member's own agent of ``harness``: on the owner's
         machine, never the room's choice."""
         return self._owned.get(harness)
 
-    def has(self, provider_id: str) -> bool:
-        return provider_id in self.machines()
-
     def choose(
-        self, project_settings: Mapping[str, Any] | None, provider_id: str | None
+        self, project_settings: Mapping[str, Any] | None
     ) -> "tuple[str, RoomSessions | None]":
-        """The harness a room's turn runs on this machine, and its backend.
+        """The harness a room's turn runs, and its backend.
 
-        ``harness_on`` walks the project's order over what this machine runs.
-        When none of it runs here, the answer is the project's first pick with
-        no backend: the turn says that one is not deployed on this machine.
+        ``harness_on`` walks the project's order over what this deployment
+        runs. When none of it runs here, the answer is the project's first pick
+        with no backend: the turn says that one is not deployed.
         """
-        from app.domain.agent.harness import harness_for, harness_on
 
         chosen = harness_on(
-            project_settings,
-            lambda name: self.select(provider_id=provider_id, harness=name) is not None,
+            project_settings, lambda name: self.select(harness=name) is not None
         )
         if chosen is None:
             return harness_for(project_settings), None
-        return chosen, self.select(provider_id=provider_id, harness=chosen)
+        return chosen, self.select(harness=chosen)
 
-    def select(
-        self,
-        *,
-        provider_id: str | None = None,
-        harness: str | None = None,
-        env_spec: dict | None = None,
-    ) -> "RoomSessions | None":
-        """Pick the backend for this turn (execution-architecture v4 会话级选择).
+    def select(self, *, harness: str | None = None) -> "RoomSessions | None":
+        """The backend for ``harness``: the one already chosen for this turn
+        (``harness_on`` walks the project's order over this pool). It does NOT
+        fall back: a name this deployment does not run gets None. None asks for
+        the deployment's first preference."""
 
-        ``provider_id`` is the machine a topic/project chose (resolved upstream
-        from ``topic.compute_config`` → project default); a machine this
-        deployment does not have falls back to the default one, so a stored
-        selection that was retired never breaks a turn.
-
-        ``harness`` is the one already chosen for this turn (``harness_on``
-        walks the project's order over this pool), and it does NOT fall back
-        here: a name this machine does not run gets None. None asks for the
-        deployment's first preference.
-
-        caps/quota/queue routing arrives with ``env_spec`` (design §3
-        pick_provider, v2 R9)."""
-        from app.domain.agent.harness import harness_name
-
-        machine = provider_id if provider_id in self.machines() else self._default[0]
-        return self._backends.get((machine, harness_name(harness)))
+        return self._backends.get(harness_name(harness))
 
 
-def build_compute_pool(
-    cloud_channel: "DeviceChannel | None" = None,
-    host: "SessionHost | None" = None,
-) -> ComputePool:
-    """Build the ComputePool from settings.
-
-    Every machine here belongs to someone a person can name: the device
-    transport (an enrolled machine of theirs) always joins, and Cloud joins when
-    the deployment can provision one. Both are pools the 市场 catalogue lists, so
-    the pool and the menu hold the same machines — a turn can only land on
-    something that was on offer.
-
-    There used to be a third, a container on the platform's own host, wired in
-    unconditionally and made the pool's default. Nothing ever offered it (#358
-    retired it from the catalogue), which is precisely why it kept running work:
-    a machine nobody can choose is still where everything goes if it is what the
-    executor falls back to. The default now comes from `compute_default_name`,
-    the same answer the catalogue marks 默认.
-    """
+def build_compute_pool(host: "SessionHost | None" = None) -> ComputePool:
+    """Build the ComputePool from settings: one backend per harness that can
+    forward its tools, over the one executor channel, plus a member's own
+    Claude Code on the owner's machine (#2991)."""
+    # deferred-import: breaks the cycle agent.central_provider -> agent.compute
     from app.domain.agent.central_provider import CentralChannel
+
+    # deferred-import: breaks the cycle agent.device_provider -> agent.compute
     from app.domain.agent.device_provider import DeviceChannel
-    from app.domain.agent.market import compute_default_name
+
+    # deferred-import: breaks the cycle agent.owner_provider -> agent.compute
     from app.domain.agent.owner_provider import OwnerChannel
+
+    # deferred-import: breaks the cycle room.sessions -> agent.compute
     from app.domain.agent.room.sessions import RoomSessions
+
+    # deferred-import: breaks the cycle session_host.host -> agent.compute
     from app.domain.agent.session_host.host import SessionHost
 
     # One liveness policy for every harness (``docs/agent-liveness.md``): the
@@ -444,22 +430,6 @@ def build_compute_pool(
         "no_progress_s": settings.agent_no_progress_s,
         "unread_grace_s": settings.agent_unread_grace_s,
     }
-
-    # 进这张表的每一条通道，下面都要被 `CentralChannel` 包一次，而这个包装读的是
-    # 设备传输自己的 `_hub` 与 `_session_factory`。所以 `DeviceChannel` 在这里不是
-    # 一条判断，是那个包装本来就要的东西写出来：原来标成 `Channel` 的那个签名兑现
-    # 不了——真递一条别的 `Channel` 进来，`CentralChannel(c)` 当场 AttributeError。
-    channels: list[DeviceChannel] = [DeviceChannel()]
-    if cloud_channel is not None:
-        channels.append(cloud_channel)
-    # The default has to name a machine THIS pool actually holds — the pool
-    # refuses one that does not, and a deployment that cannot start is worse
-    # than one whose fallback is the plainer machine. `compute_default_name` is
-    # the preference and the row the catalogue marks 默认; the device pool is
-    # what every deployment has.
-    preferred = compute_default_name(settings)
-    names = {channel.name for channel in channels}
-    default_name = preferred if preferred in names else DeviceChannel.name
 
     # 一个骨架挂不挂得上一条通道，看它能不能把工具送到那条通道的手上。被
     # `CentralChannel` 包起来的，会话在中心机、手在执行机，所以只挂声明了
@@ -478,10 +448,9 @@ def build_compute_pool(
     # 答得出四条、什么时候写回 `HARNESSES`，这里不用跟着改。
     host = host or SessionHost()
     backends: list[RoomSessions] = [
-        RoomSessions(CentralChannel(channel), harness, host, **policy)
+        RoomSessions(CentralChannel(DeviceChannel()), harness, host, **policy)
         for harness in HARNESSES
         if forwards(harness)
-        for channel in channels
     ]
     # A member's own Claude Code: the session and its hands both on the
     # owner's machine (#2991). The executor side is the device transport.
@@ -490,4 +459,4 @@ def build_compute_pool(
             OwnerChannel(DeviceChannel()), CLAUDE_CODE, host, **policy
         )
     }
-    return ComputePool(backends, default_name, owned)
+    return ComputePool(backends, owned)

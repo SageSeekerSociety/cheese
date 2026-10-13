@@ -25,12 +25,14 @@ import type { ActivityWeek } from '@/lib/activityYear'
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { toast } from 'vuetify-sonner'
+import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { useCachedResource } from '@/composables/useCachedResource'
 import { ensureDefaultAvatarId, isChosenAvatar } from '@/composables/useChosenAvatar'
+import { usePageActive } from '@/composables/usePageActive'
 import { usePageTitle } from '@/composables/usePageTitle'
+import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -44,9 +46,11 @@ import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
+import { agentDmKey } from '@/lib/dm'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
+import { patchQuery, queryClient } from '@/query/client'
 
 defineOptions({ name: 'ProfileView' })
 
@@ -69,19 +73,35 @@ interface Page {
   recent: ProfileTopic[] | null
 }
 
-const { data, loading, error, refresh } = useCachedResource(
-  () => (props.projectId ? `profile:${props.projectId}:${props.handle}` : `profile:${props.handle}`),
-  async (): Promise<Page> => {
-    const [profile, member, recent] = await Promise.all([
-      getUserProfile(props.handle),
-      props.projectId ? getMemberSummary(props.projectId, props.handle).catch(() => null) : Promise.resolve(null),
-      getUserTopics(props.handle, { limit: RECENT_TOPICS })
-        .then((r) => r.topics)
-        .catch(() => null),
-    ])
-    return { profile, member, recent }
-  }
+// 回到看过的主页先照着上一次的画，背后重取（query/client）。
+const pageKey = computed(() => ['user', props.handle, 'profile', props.projectId ?? null] as const)
+// 保活着离开时停下，回来时过期了的再读（usePageActive）。
+const pageActive = usePageActive()
+const page = useQuery(
+  computed(() => ({
+    enabled: pageActive.value,
+    queryKey: pageKey.value,
+    queryFn: async (): Promise<Page> => {
+      const [profile, member, recent] = await Promise.all([
+        getUserProfile(props.handle),
+        props.projectId ? getMemberSummary(props.projectId, props.handle).catch(() => null) : Promise.resolve(null),
+        getUserTopics(props.handle, { limit: RECENT_TOPICS })
+          .then((r) => r.topics)
+          .catch(() => null),
+      ])
+      return { profile, member, recent }
+    },
+  })),
+  queryClient
 )
+holdRevealUntil(() => !page.isPending.value)
+const data = page.data
+// 只在没有任何内容可画时转圈、报错；有内容时背后那次没取到就照常显示。
+const loading = page.isPending
+const error = computed(() => (page.data.value ? null : page.error.value))
+function refresh() {
+  void page.refetch()
+}
 
 const profile = computed(() => data.value?.profile ?? null)
 const member = computed(() => data.value?.member ?? null)
@@ -121,6 +141,7 @@ const activityTotal = computed(() => {
 
 // ---- 项目 ----
 function roleLabel(role: ProfileProjectRole): string {
+  if (role === 'agent') return t('users.profile.role.agent')
   return role === 'owner' ? t('users.profile.role.owner') : t('users.profile.role.team')
 }
 
@@ -200,16 +221,22 @@ function topicDot(status: string): string {
 
 // 先从列表里拿掉，再去删；服务器不肯就放回原处。
 async function forget(note: ProfileUnderstanding) {
+  const key = pageKey.value
   const notes = data.value?.profile.understanding
-  if (!notes) return
-  const at = notes.findIndex((n) => n.id === note.id)
+  const at = notes?.findIndex((n) => n.id === note.id) ?? -1
   if (at < 0) return
-  notes.splice(at, 1)
+  const withNotes = (change: (notes: ProfileUnderstanding[]) => ProfileUnderstanding[]) =>
+    patchQuery<Page>(key, (held) => ({
+      ...held,
+      profile: { ...held.profile, understanding: change(held.profile.understanding ?? []) },
+    }))
+  await withNotes((list) => list.filter((n) => n.id !== note.id))
   try {
     await deleteUnderstanding(note.id)
   } catch {
-    const now = data.value?.profile.understanding
-    if (now && !now.some((n) => n.id === note.id)) now.splice(Math.min(at, now.length), 0, note)
+    await withNotes((list) =>
+      list.some((n) => n.id === note.id) ? list : [...list.slice(0, at), note, ...list.slice(at)]
+    )
     toast.error(t('users.profile.notes.deleteFailed'))
   }
 }
@@ -217,6 +244,15 @@ async function forget(note: ProfileUnderstanding) {
 // ---- 在这个项目里 ----
 const inProject = computed(() => (props.projectId ? member.value : null))
 const roleInProject = computed(() => inProject.value?.source ?? null)
+// 和项目里的另一位（人或 AI 队友）私聊。AI 队友的私聊按它自己的 handle 开，不是
+// 名册上那个座位 handle（lib/dm.ts）。
+const dmRoute = computed(() => {
+  const here = inProject.value
+  if (!props.projectId || !here || isSelf.value) return null
+  const own = typeof here.instance_handle === 'string' ? here.instance_handle : props.handle
+  const peer = here.source === 'agent' ? agentDmKey(own) : props.handle
+  return { name: 'workspace-dm', params: { projectId: props.projectId, peer } }
+})
 </script>
 
 <template>
@@ -275,6 +311,16 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
           <BaseButton v-if="isSelf" :to="{ name: 'UserSettingsProfile' }" kind="secondary" block class="profile__edit">
             {{ t('users.profile.edit') }}
           </BaseButton>
+          <BaseButton
+            v-else-if="dmRoute"
+            :to="dmRoute"
+            kind="secondary"
+            prepend-icon="mdi-message-outline"
+            block
+            class="profile__edit"
+          >
+            {{ t('users.profile.dm') }}
+          </BaseButton>
           <div class="profile__facts">
             <div class="profile__fact">
               <v-icon size="16" icon="mdi-calendar-blank-outline" aria-hidden="true" />
@@ -285,9 +331,11 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
               <!-- 一个团队一行：名字在行中间折开，读起来就分不清是一个团队还是两个。 -->
               <ul class="profile__teams" data-user-content>
                 <li v-for="team in profile.teams" :key="team.id">
-                  <router-link v-if="team.handle" :to="{ name: 'TeamsDetail', params: { handle: team.handle } }">{{
-                    team.name
-                  }}</router-link>
+                  <router-link
+                    v-if="team.handle"
+                    :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
+                    >{{ team.name }}</router-link
+                  >
                   <span v-else>{{ team.name }}</span>
                 </li>
               </ul>

@@ -13,6 +13,7 @@ this by creating one session-scoped anyio blocking portal and:
   reuses it instead of spinning up a fresh per-instance loop.
 """
 
+import contextlib
 import time
 import uuid
 from collections.abc import Generator
@@ -33,6 +34,7 @@ from sqlalchemy.ext.asyncio import (
 from app.common.auth import create_access_token
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import seed_user
 
 if TYPE_CHECKING:
     import httpx
@@ -411,16 +413,79 @@ def open_task(
     return task
 
 
-def chat_ws_url(topic_id: str, handle: str) -> str:
-    """The topic's chat WebSocket, authenticated as ``handle``.
+class RoomSocket:
+    """One room watched on the rooms socket, read the way a room's own socket
+    used to be: frames without their `topic`, a frame sent goes to this room,
+    and the room's `closed` (a refusal, an overflow) ends it like a close."""
+
+    def __init__(self, ws, topic_id: str) -> None:
+        self._ws = ws
+        self.topic_id = str(topic_id)
+        self._held: list[dict] = []
+        #: The `subscribed` frame, once the subscription is acknowledged.
+        self.subscribed: dict | None = None
+
+    def _next(self) -> dict:
+        if self._held:
+            return self._held.pop(0)
+        while True:
+            frame = self._ws.receive_json()
+            if frame.get("topic") in (self.topic_id, None):
+                return frame
+
+    def receive_json(self) -> dict:
+        from starlette.websockets import WebSocketDisconnect
+
+        frame = self._next()
+        if frame.get("type") == "closed":
+            raise WebSocketDisconnect(code=frame.get("code", 1008))
+        frame.pop("topic", None)
+        return frame
+
+    def send_json(self, frame: dict) -> None:
+        self._ws.send_json({**frame, "topic": self.topic_id})
+
+    @property
+    def portal(self):
+        return self._ws.portal
+
+    def opened(self) -> "RoomSocket":
+        """Wait for the subscription to be acknowledged, as a connect used to
+        wait for the accept: a message posted after this is heard. A refusal is
+        kept for the test to read."""
+        while True:
+            frame = self._ws.receive_json()
+            if frame.get("topic") not in (self.topic_id, None):
+                continue
+            if frame.get("type") == "subscribed":
+                self.subscribed = frame
+                return self
+            self._held.append(frame)
+            if frame.get("type") == "closed":
+                return self
+
+
+@contextlib.contextmanager
+def room_socket(
+    client, topic_id: str, handle: str | None, *, token: str | None = None
+) -> Generator[RoomSocket]:
+    """``topic_id`` watched on the rooms socket, as ``handle`` (or with a raw
+    ``token``; ``handle=None`` and no token subscribes without one).
 
     The socket requires a session token (``app.api.routes.chat``), so tests take
     the same path the browser does. It only carries what lands in the room; a
     message is sent with :func:`post_message`. ``handle`` must be able to reach
     the topic — its roster owner, or a member/owner of its project — or the
-    connect is refused with ``code: forbidden``.
+    subscription is refused with ``code: forbidden``.
     """
-    return f"/topics/{topic_id}/chat?token={session_token(handle)}"
+    credential = (
+        token if token is not None else (session_token(handle) if handle else "")
+    )
+    # The connection is a signed-in page's; what is judged is the subscription.
+    connect = session_token(handle or "alice")
+    with client.websocket_connect(f"/rooms/live?token={connect}") as ws:
+        ws.send_json({"type": "subscribe", "topic": str(topic_id), "token": credential})
+        yield RoomSocket(ws, topic_id).opened()
 
 
 def in_thread(client, room_id: str, handle: str) -> str:
@@ -433,6 +498,26 @@ def in_thread(client, room_id: str, handle: str) -> str:
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]
+
+
+def inbox(client, handle: str, kind: str | None = None) -> list[dict]:
+    """What ``handle`` finds in their inbox (动态), only ``kind`` when given.
+
+    Only a person with an account has an inbox, and a notification reaches one
+    only if the account was there when it was sent: give the people a test
+    expects to hear something an account first (``seed_user``, which this
+    calls too, so here it only finds that account).
+    """
+    params: dict = {"pageSize": 100}
+    if kind is not None:
+        params["type"] = kind
+    r = client.get(
+        "/notifications",
+        params=params,
+        headers={"Authorization": f"Bearer {seed_user(client, handle)}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["notifications"]
 
 
 def post_message(client, topic_id: str, handle: str, body: dict) -> dict:
@@ -780,7 +865,7 @@ def api_client(
     # deliberately skip ``with client:`` because it would replace our portal
     # with a fresh one for every test and run lifespan startup/shutdown
     # repeatedly — which would also start every periodic job the platform runs
-    # (app/core/background.py), once per test.
+    # (app/periodic_jobs.py), once per test.
     client.portal = _portal  # type: ignore[assignment]
     # The living document is written through the collaboration service.
     from tests.support.collab import install as install_collab

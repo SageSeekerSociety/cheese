@@ -146,12 +146,22 @@ def test_every_binary_tool_is_pinned_for_every_platform_we_serve():
     tools = {
         tool
         for tool, _ in toolchain.ARTIFACTS
-        if tool not in ("font-sans", "font-serif") and tool not in WINDOWS_RUNTIME
+        if tool not in ("font-sans", "font-serif", "bubblewrap")
+        and tool not in WINDOWS_RUNTIME
     }
     assert tools, "the table must actually carry the binaries"
     for tool in tools:
         for platform in platforms:
             assert toolchain.resolve(tool, platform), f"{tool} has no {platform}"
+
+
+def test_bubblewrap_is_served_to_linux_machines_only():
+    """The sandbox a Linux machine makes for a room; macOS has its own and
+    Windows none."""
+    for platform in ("linux-x64", "linux-arm64"):
+        assert toolchain.resolve("bubblewrap", platform), platform
+    for platform in ("darwin-x64", "darwin-arm64", "windows-x64"):
+        assert toolchain.resolve("bubblewrap", platform) is None, platform
 
 
 def test_windows_is_served_the_tools_it_places_and_its_own_runtime():

@@ -11,7 +11,7 @@ import type { NotificationRenderProps, RenderedNotificationContent } from './Not
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import { getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
+import { getRoomTitle, getStringMetadata, messageLink } from './NotificationRenderUtils'
 
 /**
  * 芝士提出的待回答问题：本轮停在这里等回答。
@@ -23,12 +23,7 @@ import { getRoomTitle, getStringMetadata } from './NotificationRenderUtils'
 const props = defineProps<NotificationRenderProps>()
 const { t } = useI18n()
 
-const projectId = computed(() => getStringMetadata(props.notification, 'projectId'))
-const topicId = computed(() => getStringMetadata(props.notification, 'topicId'))
 const topicTitle = computed(() => getRoomTitle(props.notification))
-// 这条提问在时间线上的那条消息 —— 投递的时候就一并存下了（`announce.notify_question`），
-// 留着就是为了「点进去落在它身上」。
-const blockId = computed(() => getStringMetadata(props.notification, 'blockId'))
 
 const title = computed(
   () => getStringMetadata(props.notification, 'question') || t('notifications.CHEESE_QUESTION.untitled')
@@ -45,18 +40,8 @@ const body = computed(() => {
     : t('notifications.CHEESE_QUESTION.body', { topicTitle: topicTitle.value })
 })
 
-const routerLink = computed(() => {
-  if (!projectId.value || !topicId.value) return undefined
-  // 提问记的是「这一轮停在这儿」，可一条通知点开时，那条消息可能已经在几小时的时间
-  // 线上游了很远 —— 「进房间」不等于「看到那一条」。房间页本来就认 `?block=`（搜索
-  // 结果、别人发来的链接都走它），所以把提问那条消息的 id 一起带上，落下去就是落在
-  // 它身上，而不是房间最新那几条。
-  return {
-    name: 'workspace-topic',
-    params: { projectId: projectId.value, topicId: topicId.value },
-    query: blockId.value ? { block: blockId.value } : undefined,
-  }
-})
+// 落点是问这道题的那条会话里的那条提问消息，而不是房间最新那几条（`messageLink`）。
+const routerLink = computed(() => messageLink(props.notification))
 
 const content = computed<RenderedNotificationContent>(() => ({
   title: title.value,

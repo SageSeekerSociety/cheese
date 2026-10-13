@@ -6,9 +6,13 @@ import re
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import NotFoundError
 from app.core.sentences import say
+from app.domain.project.models import Project
+from app.domain.topic.models import Topic
 
 
 class EnvironmentConfig(BaseModel):
@@ -89,11 +93,6 @@ def project_environment(settings: dict | None) -> dict:
 async def pin_environment(
     session: AsyncSession, project_id: uuid.UUID, topic_id: uuid.UUID
 ) -> dict:
-    from sqlalchemy import select
-
-    from app.core.errors import NotFoundError
-    from app.domain.project.models import Project
-    from app.domain.topic.models import Topic
 
     topic = await session.scalar(
         select(Topic)

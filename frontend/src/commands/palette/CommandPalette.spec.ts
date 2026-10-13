@@ -22,6 +22,7 @@ import { useCommands } from '@/commands'
 import { installShortcuts } from '@/commands/shortcuts'
 import { setLocale, t } from '@/i18n'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 const searchProject = vi.hoisted(() => vi.fn())
 const archiveTopic = vi.hoisted(() => vi.fn())
@@ -110,18 +111,22 @@ async function mount({ withRoomCommand = ref(false) } = {}) {
 
   const pinia = createPinia()
   setActivePinia(pinia)
-  const store = useWorkspaceStore()
-  store.projectId = 'p1'
-  store.projects = [
+  seedProjects([
     { id: 'p1', name: '知是' },
     { id: 'p2', name: '课程助教' },
-  ] as never
-  store.topics = [
-    topic('t1', '登录页改成深色', { awaits_me: true }),
-    topic('t2', '搭建第一个原型'),
-    topic('t3', '合并队列偶发卡住'),
-  ]
-  store.members = [{ user_handle: 'alice', name: 'Alice', role: 'member' }] as never
+  ] as never)
+  seedProject('p1', {
+    topics: [
+      topic('t1', '登录页改成深色', { awaits_me: true }),
+      topic('t2', '搭建第一个原型'),
+      topic('t3', '合并队列偶发卡住'),
+    ],
+    members: [{ user_handle: 'alice', name: 'Alice', role: 'member' }] as never,
+    unread: {},
+    privateUnread: {},
+    notifyLevels: {},
+  })
+  useWorkspaceStore().openProject('p1')
 
   const run = vi.fn()
   const hidden = vi.fn()

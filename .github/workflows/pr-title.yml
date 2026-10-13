@@ -1,0 +1,61 @@
+name: PR title recheck
+
+# Required CI checks a PR's title in its `CI required` job, and passes a draft:
+# the platform opens a task's draft PR under a placeholder title and writes the
+# real subject when it hands the work over, marking the PR ready in the same
+# step. Neither the retitle nor the ready flag is an event Required CI runs on,
+# and running every suite again for a title would cost a full CI round. So this
+# re-runs that one job of the head commit's finished Required CI run: the suites
+# keep their results and the title is read again.
+#
+# A run still in progress needs nothing: its title step has not run yet and
+# reads the PR as it is when it does. Fork PRs get a read-only token and are
+# left alone.
+on:
+  pull_request:
+    types: [ready_for_review, edited]
+    branches: [main]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  recheck:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository
+      && !github.event.pull_request.draft
+      && (github.event.action == 'ready_for_review' || github.event.changes.title)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-run the title check of the head commit's Required CI run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow required-ci.yml \
+            --event pull_request --commit "$HEAD_SHA" --limit 1 \
+            --json databaseId,status --jq '.[0] | select(.status == "completed") | .databaseId')
+          if [ -z "$run" ]; then
+            echo "No finished Required CI run on $HEAD_SHA; its title step will read the PR when it runs."
+            exit 0
+          fi
+          # Only a job that actually ran is worth re-running: `CI required` is a
+          # literal name in required-ci.yml, so it also matches the job of a
+          # draft-quick or superseded run, where it is skipped or cancelled and
+          # re-running it would report nothing about the title.
+          job=$(gh run view "$run" --repo "$GITHUB_REPOSITORY" --json jobs \
+            --jq '.jobs[] | select(.name == "CI required")
+                  | select(.conclusion != "skipped" and .conclusion != "cancelled")
+                  | .databaseId')
+          if [ -z "$job" ]; then
+            echo "Run $run has no 'CI required' that ran (draft quick or superseded); the run in flight reads the title when it does."
+            exit 0
+          fi
+          echo "Re-running 'CI required' (job $job) of Required CI run $run."
+          gh run rerun --job "$job" --repo "$GITHUB_REPOSITORY"

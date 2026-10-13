@@ -92,7 +92,7 @@ async def inspect() -> int:
     topics = await _rows(
         """
         select t.id, t.title, t.project_id, t.session_id,
-               t.compute_config ->> 'profile' as compute_profile,
+               t.default_environment::text as default_environment,
                t.created_at, p.name as project_name
           from topics t join projects p on p.id = t.project_id
          order by t.created_at desc
@@ -103,7 +103,7 @@ async def inspect() -> int:
         has_session = "yes" if t["session_id"] else "no"
         _say(
             f"  {t['id']} [{t['project_name']}] {t['title']!r}"
-            f" profile={t['compute_profile']} session={has_session}"
+            f" default={t['default_environment']} session={has_session}"
             f" {t['created_at']}"
         )
 
@@ -155,13 +155,16 @@ async def send() -> int:
 
     token = create_access_token(user_id, handle=handle)
     base = os.environ.get("WS_BASE", "ws://127.0.0.1:8000")
-    url = f"{base}/topics/{topic_id}/chat?token={token}"
+    url = f"{base}/rooms/live?token={token}"
     content = os.environ.get("CONTENT", "probe: 请回复 pong 并说明你运行在哪台机器上")
     summon = os.environ.get("SUMMON", "1") == "1"
     deadline = time.time() + float(os.environ.get("DEADLINE_S", "300"))
 
     _say(f"connecting as {handle} (uid={user_id}) to topic {topic_id}")
     async with websockets.connect(url, max_size=None) as ws:
+        await ws.send(
+            json.dumps({"type": "subscribe", "topic": topic_id, "token": token})
+        )
         _say("connected")
         await ws.send(
             json.dumps(

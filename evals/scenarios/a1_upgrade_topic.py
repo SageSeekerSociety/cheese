@@ -1,10 +1,10 @@
 """A1 🟢 🔧🤖 开话题（线上升格）(docs/evals.md).
 
 做什么：在讨论里聊一个点，越聊越大，把关键块"升格"成独立话题。
-对长什么样：新话题挂在原话题下；原块变成活引用（双向链接）；新话题自带任务简报
+对长什么样：新话题挂在原话题下，并指回升格的那一块；新话题自带任务简报
 文档；新话题第一条是芝士（分身）的开场白——复述任务 + 下一步。
 
-平台侧检查（确定性）：话题树结构、块↔话题双向链接、简报文档种入、kickoff turn 完成。
+平台侧检查（确定性）：话题树结构、话题指回原块、简报文档种入、kickoff turn 完成。
 Judge 侧：分身开场白是否复述了任务并给出下一步。
 """
 
@@ -80,13 +80,6 @@ async def run(ctx: EvalContext) -> ScenarioOutcome:
             name="topic_links_back_to_block",
             passed=new_topic["upgraded_from_block_id"] == upgrade_block_id,
             detail=f"upgraded_from_block_id={new_topic['upgraded_from_block_id']}",
-        ),
-        Check(
-            name="origin_block_is_live_link",
-            passed=bool(origin)
-            and origin.get("upgraded_to_topic_id") == new_topic["id"],
-            detail=f"origin.upgraded_to_topic_id="
-            f"{origin.get('upgraded_to_topic_id') if origin else None}",
         ),
         Check(
             name="brief_doc_seeded",

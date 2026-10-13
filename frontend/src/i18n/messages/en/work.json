@@ -57,39 +57,10 @@
     },
     "settingsNote": "AI teammates and code repositories are set up inside a project: open Project settings — the first section is AI teammates, and the repository is under “Repository and credit”."
   },
-  "startGuide": {
-    "aria": "Getting-started tip",
-    "project": "Start a project here",
-    "materials": "Or drop it in the library",
-    "skip": "Skip the tour"
-  },
   "sessionMachine": {
     "machine": "Change to",
     "confirm": "Push and change",
     "unavailable": "{name} · Unavailable"
-  },
-  "roomMachine": {
-    "taskHeading": "This task's environment",
-    "taskHint": "Changing it first pushes this task's changes to its branch, and changes either way; the changes as of each turn's end are kept in a snapshot.",
-    "edit": "Edit",
-    "heading": "This channel's environment",
-    "hint": "All AI teammates in the channel share this environment. Changing it first pushes each teammate's changes to its branch, and changes either way; the changes as of each turn's end are kept in a snapshot.",
-    "more": "Other configurations and devices",
-    "projectDefault": "Project default",
-    "wholeMachine": "Can access the whole computer",
-    "wholeMachineNotice": "Lets it see the whole computer: it can operate this computer's services and other channels",
-    "online": "Online",
-    "offline": "Offline",
-    "removed": "Removed from the team",
-    "loadFailed": "Could not load environments",
-    "saveFailed": "Could not choose the environment",
-    "retry": "Retry",
-    "here": "This channel runs on: {name}",
-    "accessHeading": "What this channel sees of {name}",
-    "isolated": "Isolated environment",
-    "isolatedHint": "Its own work directory and the project's package cache. Not the owner's files, the tools installed in their home folder, or other channels.",
-    "host": "Full computer access",
-    "hostOwnerOnly": "Only the computer's owner can turn this on"
   },
   "deviceInUse": {
     "line": "In use: {project} · {room} · {agent}",
@@ -113,8 +84,7 @@
     "collapse": "Collapse",
     "hint": "Only affects agents that have not started; agents already working keep their own environment",
     "distribution": "Where agents are now",
-    "onCloud": "Cloud environment · {agents}",
-    "onCloudVm": "Whole cloud VM · {agents}",
+    "onPlatform": "{env} · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "1 agent | {count} agents",
     "noneStarted": "No agents have started",
@@ -327,6 +297,7 @@
       "exitFocus": "Exit focus mode",
       "newTask": "New task",
       "newTaskFailed": "Couldn’t create the task. Try again later",
+      "files": "Files",
       "rename": "Rename",
       "copyLink": "Copy link",
       "markRead": "Mark as read",
@@ -345,7 +316,8 @@
       "muted": "Muted",
       "markAllRead": "Mark all as read",
       "markAllReadFailed": "Couldn't mark everything as read",
-      "notifyFailed": "Couldn't save the notification setting"
+      "notifyFailed": "Couldn't save the notification setting",
+      "allTasks": "All tasks"
     },
     "archiveNotice": {
       "done": "Archived",
@@ -365,7 +337,6 @@
       "review": "Review",
       "expand": "Show details",
       "collapse": "Hide details",
-      "acceptedBy": "Accepted by {who}",
       "revoke": "Undo accept",
       "deliveringBy": "Accepted by {who}, but the merge didn't finish and needs a person to handle it",
       "gateFailedBody": "Checks failed, so this wasn't submitted for review. {agent} will resubmit after fixing it",
@@ -375,14 +346,10 @@
       "noGateOutput": "No output",
       "conflictFallback": "Conflicts with the main branch, so it couldn't be merged",
       "conflictWorking": "{agent} is resolving it; you can accept again once it's done",
-      "waitingOnWho": "Waiting for {who} to review",
-      "reassign": "Change",
       "reassignTitle": "Who should review instead",
       "noMembers": "No members to choose from",
-      "routingReason": "Why them: {reason}",
-      "delivery": "This delivery",
+      "focus": "Review focus",
       "download": "Download",
-      "changeSubject": "Commit subject after the merge",
       "gatePassed": "Platform check passed: code style and types only, no tests were run",
       "approvedCount": "{done}/{total} approved",
       "approve": "Approve",
@@ -394,19 +361,16 @@
       "sendBack": "Send back",
       "void": "Void",
       "autoMerge": "Merge automatically once checks pass",
-      "autoMergeArmedBy": "Turned on by {who}",
       "forceMerge": "Accept anyway",
       "forceMergeWarning": "Not every check has passed. Who did it, when, and the check status at the time are recorded",
       "forceMergeReason": "Reason",
-      "confirmForceMerge": "Confirm accept",
       "cancel": "Cancel",
       "sendBackReason": "Reason for sending back (optional)",
-      "confirmSendBack": "Confirm send back",
       "voidHint": "Voiding ends this review: nothing is merged and nothing is sent back for changes. It can be submitted for review again later",
       "voidReason": "Reason for voiding (optional)",
-      "confirmVoid": "Confirm void",
       "conflictsWithMain": "Conflicts with the main branch",
-      "checkRunning": "Running"
+      "checkRunning": "Running",
+      "checkCancelled": "Cancelled"
     },
     "retry": {
       "action": "Retry",
@@ -430,9 +394,10 @@
       "goConfirm": "Review and confirm",
       "who": {
         "platform": "Handled by the platform",
-        "cheese": "Cheese is on it",
+        "cheese": "AI teammate is on it",
         "human": "Needs a person"
       },
+      "quote": "“{text}”",
       "working": "{name} is on it",
       "incident": {
         "title": "Environment temporarily unavailable",
@@ -480,7 +445,6 @@
       "upgrade": "Turn into a task",
       "downloadFile": "Download {name}",
       "openFile": "Open {name}",
-      "upgradedToTopic": "Moved to a channel",
       "showMore": "Show more",
       "showLess": "Show less",
       "wrapCode": "Wrap lines",
@@ -498,10 +462,10 @@
       "cancelReply": "Cancel reply",
       "removeAttachment": "Remove {name}",
       "summon": "Hand to {name}",
-      "summonShort": "Hand off",
       "summonOn": "{'@'}{name} is mentioned. Click to remove",
       "summonOff": "Send and hand to {name} (⌘/Ctrl+Enter)",
       "keysHint": "Enter to send, Shift+Enter for a new line, ⌘/Ctrl+Enter to send and hand to {name}. You can paste images",
+      "keysHintSend": "Enter to send, Shift+Enter for a new line. You can paste images",
       "pasteHint": "You can paste images",
       "placeholderDm": "Message {name}",
       "placeholder": "Type a message, or {'@'}{name} to hand it over",
@@ -551,15 +515,11 @@
     "loadFailed": "Failed to load messages",
     "messageGone": "This message no longer exists",
     "changes": {
-      "scopeChanged": "Changes",
-      "scopeAll": "All files",
       "liveFile": "Live files in the environment",
       "committedVersion": "Committed version",
       "download": "Download",
       "refresh": "Refresh",
       "readOnly": "Read-only",
-      "fileList": "File list",
-      "noFileOpen": "No file open",
       "unsaved": "Unsaved",
       "diffView": "Diff",
       "diffMore": "Show {count} more lines",
@@ -568,7 +528,6 @@
       "save": "Save",
       "more": "More",
       "options": "Change options",
-      "scope": "Scope",
       "version": "Version",
       "liveNote": "Includes uncommitted changes",
       "committedNote": "Read-only, without uncommitted changes",
@@ -586,8 +545,6 @@
       "cantDisplay": "Couldn't display this file",
       "tooLarge": "This file is too large to open in the browser",
       "binary": "Not a text file, so it can't be edited",
-      "commits": "Commits",
-      "noCommits": "No commits",
       "draftsKept": "Unsaved changes are kept. Go back to the file to keep editing",
       "fileAdded": "Added",
       "fileRemoved": "Deleted",
@@ -596,7 +553,15 @@
       "downloadFailed": "Couldn't download",
       "loadFailed": "Couldn't load",
       "readFileFailed": "Couldn't read the file",
-      "saveFailed": "Couldn't save"
+      "saveFailed": "Couldn't save",
+      "noTextDiff": "No text changes",
+      "openFile": "Open",
+      "openOther": "Open another file",
+      "backToAll": "Back to all changes",
+      "summary": "{count} files · +{added} −{removed}",
+      "searchFiles": "Search files",
+      "moreFiles": "{count} more files",
+      "fewerFiles": "Show fewer"
     },
     "tabs": {
       "pinHint": "{path} (double-click to keep this tab)",
@@ -704,7 +669,7 @@
       "count": "No revisions | 1 revision | {count} revisions",
       "acceptAll": "Accept all",
       "rejectAll": "Reject all",
-      "libraryReadOnly": "The original in the library stays unchanged. To change this document, ask Cheese to make a new one from it",
+      "libraryReadOnly": "The original in the library stays unchanged. To change this document, ask the AI teammate to make a new one from it",
       "readOnlyNote": "This version is read-only, so revisions cannot be handled.",
       "where": "Paragraph {paragraph} · {author}",
       "anonymous": "Unnamed",
@@ -740,7 +705,7 @@
       "source": {
         "baseline": "Original",
         "upload": "Upload",
-        "ai": "Edited by Cheese",
+        "ai": "Edited by an AI teammate",
         "editor": "Saved from the online editor",
         "restore": "Restore",
         "scheduled": "Scheduled task"
@@ -1006,32 +971,24 @@
       "readingAttachment": "{agent} is reading an attachment…",
       "quoteChanged": "The quoted text has changed"
     },
-    "gettingStarted": {
-      "title": "Getting started",
-      "dismiss": "Don't show again",
-      "talk": "Say the first word to {agent}",
-      "talkHint": "In the box below",
-      "materials": "Bring your material in",
-      "materialsAction": "Open library",
-      "repo": "Get results into the repository",
-      "repoAction": "Connect repository",
-      "people": "Bring a colleague in",
-      "peopleAction": "Go to members",
-      "note": "AI teammates and the code repository are both changed in Project settings: the first section is AI teammates, and the repository is under “Repository and credit”."
-    },
     "chat": {
       "pickTopic": "Select a channel to start chatting",
       "starter": {
-        "research": "Find sources",
-        "researchText": "Look up the material for me, cite your sources, and write it up as a document. What I want to understand is: ",
-        "draft": "Draft a document",
-        "draftText": "Draft a document for me. Confirm the goal and the audience with me first. What I want to write is: ",
-        "breakdown": "Break down a goal",
-        "breakdownText": "Break my goal into tasks I can act on, and show me the suggested split first. My goal is: "
+        "tidy": "Tidy up or rewrite a document",
+        "tidyHint": "Slides, papers, reports, spreadsheets",
+        "tidyText": "Tidy up or rewrite the attached material for me. Show me how you plan to change it first, and start once I confirm. What I want is: ",
+        "research": "Research a topic into a report",
+        "researchHint": "With sources, ready to download",
+        "researchText": "Look up the material for me, cite your sources, and write it up as a report. Show me the outline first, and write it in full once I confirm. What I want to understand is: ",
+        "build": "Build a web page or small tool",
+        "buildHint": "Open the preview when it is done",
+        "buildText": "Build a web page for me and send me the preview link when it is done. Show me the page structure first, and start once I confirm. What I want to build is: ",
+        "plan": "Break down a goal and split the work",
+        "planHint": "Good for team projects",
+        "planText": "Break my goal into tasks I can act on, with a suggested split of the work and a schedule. Show me how you would break it down first. My goal is: "
       },
       "startAria": "Start working in this project",
-      "startTitle": "Start with something concrete",
-      "startBody": "{agent} can find sources, draft documents, or break down tasks with you",
+      "startTitle": "What would you like to do first?",
       "loadingOlder": "Loading older messages…",
       "older": "Older messages",
       "newMessagesBelow": "New messages below",
@@ -1044,7 +1001,9 @@
       "yesterday": "Yesterday",
       "topicFallback": "Channel",
       "timelineLabel": "Conversation",
-      "liveNew": "{name}: {text}"
+      "liveNew": "{name}: {text}",
+      "messageLabel": "{name}, {time}: {text}",
+      "eventLabel": "{time}: {text}"
     },
     "header": {
       "disconnected": "Disconnected",
@@ -1079,7 +1038,7 @@
       "notSentReason": "Not sent: {reason}",
       "confirmSend": "Confirm and send",
       "discard": "Discard",
-      "hint": "The email above is exactly what gets sent. Cheese can't send it for you.",
+      "hint": "The email above is exactly what gets sent. {name} can't send it for you.",
       "waiting": "Sent only once {owner} confirms",
       "discardFailed": "Couldn't discard"
     },
@@ -1229,7 +1188,8 @@
         "open": "Open",
         "closed": "Closed"
       },
-      "failed": "Reply failed"
+      "failed": "Reply failed",
+      "failedCredits": "Out of credits"
     },
     "pin": {
       "pin": "Pin to channel",
@@ -1259,6 +1219,74 @@
       "acceptedPr": "Accepted · PR #{pr}",
       "acceptedTimesPr": "Accepted {n} times · PR #{pr}",
       "acceptedTimes": "Accepted {n} times"
+    },
+    "review": {
+      "label": "This delivery",
+      "more": "More actions",
+      "reassign": "Ask someone else to review",
+      "autoMergeOff": "Turn off auto-merge",
+      "autoMergeOn": "{who} turned on auto-merge when checks pass",
+      "openLink": "Open",
+      "checksFailed": "{n} checks failed",
+      "checksRunning": "{n} checks running",
+      "checksCancelled": "{n} checks cancelled",
+      "checksPassed": "{n} checks passed",
+      "noApprovals": "No approvals yet",
+      "voidTitle": "Void this review?",
+      "forceMergeTitle": "Checks have not passed. Accept anyway?",
+      "sendingCount": "Sending {count}",
+      "suggestion": "Suggested change",
+      "comment": "Comment",
+      "sendAgain": "Send this time",
+      "hold": "Don't send this time",
+      "unsentCount": "{count} unsent comments",
+      "placeholder": "Write a comment",
+      "addHere": "Comment; hold Shift and click another line to select a range",
+      "addAt": "Comment on line {line}",
+      "unsent": "Unsent",
+      "handled": "Handled",
+      "notHandled": "Not handled",
+      "unanswered": "No answer",
+      "mySuggestion": "Your suggested change",
+      "myComment": "Your comment",
+      "lastRound": "Last round's comment",
+      "save": "Save",
+      "answer": "{agent}: {note}",
+      "edit": "Edit",
+      "delete": "Delete",
+      "reply": "Reply",
+      "add": "Add comment",
+      "gone": "Original lines removed",
+      "lines": "Line {lines}",
+      "roundHandled": "Last round: {done} / {total} handled",
+      "mergeBanner": "{agent} also changed this file after you opened it. {count} places overlap with yours; pick a version for each",
+      "mergeBase": "When you opened it",
+      "mergeMine": "Yours",
+      "mergeTheirs": "{agent}'s",
+      "mergeSave": "Save",
+      "page": "Page {n}",
+      "pickedAt": "On {place}",
+      "compare": "Compare with previous",
+      "compareBack": "Back to this version",
+      "compareReturned": "Compared with the version sent back",
+      "compareTaken": "Compared with the version the task started from",
+      "compareNew": "A new file, with no previous version to compare",
+      "compareSame": "The two versions are the same",
+      "compareBefore": "Before",
+      "compareAfter": "Now",
+      "compareTruncated": "Too many paragraphs; only the first part is shown",
+      "compareFormatting": "Formatting alone changed in {n} more places",
+      "paragraph": "Paragraph {n}",
+      "sheetChanged": "{n} cells changed",
+      "cell": "Cell",
+      "formula": "Formula",
+      "slideChanged": "Changed",
+      "slideAdded": "Added",
+      "slideRemoved": "Removed",
+      "compareUnavailable": "These two versions cannot be compared",
+      "documentHint": "Select text or click a cell to comment",
+      "comments": "Comments {n}",
+      "noComments": "No comments yet"
     }
   },
   "board": {
@@ -1329,7 +1357,9 @@
     "archivedBody": "Everything is still here. It can be used again once the project owner unarchives it",
     "backToProjects": "Back to my projects",
     "forbiddenTitle": "You're not a member of this project",
-    "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you"
+    "forbiddenBody": "Only project members can see what is here. If you need access, ask someone on the project to add you",
+    "missingTitle": "Can't open this project",
+    "missingBody": "This project doesn't exist, or you're not a member of it. If you need access, ask someone on the project to add you"
   },
   "topicState": {
     "draft": "Draft",
@@ -1371,6 +1401,7 @@
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",
     "moreActions": "More actions",
     "chooseProject": "Choose a project",
+    "personalTeam": "Personal",
     "switchProject": "Switch project",
     "chooseProjectFirst": "Choose a project first",
     "topics": "Channels",
@@ -1379,7 +1410,11 @@
     "moreMembers": "+{count}",
     "taskNeedsYou": "Needs you",
     "taskRunning": "Running",
-    "allTasks": "All tasks"
+    "allTasks": "All tasks",
+    "moreTasks": "Show 1 more | Show {count} more",
+    "fewerTasks": "Show fewer",
+    "tasksLoading": "Loading…",
+    "tasksFailed": "Couldn't load them. Click to retry"
   },
   "members": {
     "leave": "Leave project",
@@ -1582,7 +1617,8 @@
         "submit": "Archive",
         "body": "The project leaves every member's project list, can no longer be changed, and its running tasks stop. Everything in it is kept, and you can unarchive it from Archived projects",
         "confirmLabel": "Type the project name \"{name}\" to confirm"
-      }
+      },
+      "done": "Archived “{name}”"
     },
     "export": {
       "title": "Export project",
@@ -1594,7 +1630,6 @@
       "title": "Code repository",
       "hosted": "Hosted on the platform",
       "preparing": "Preparing the repository",
-      "open": "Open repository",
       "hint": "The hosting service can't be changed after the project is created"
     },
     "upstream": {
@@ -1717,6 +1752,7 @@
         "effortHintAuto": "Auto leaves it to the model's own default.",
         "effortNone": "This model doesn't take a thinking effort; it runs at its own default.",
         "effortUnsupported": "This model doesn't support \"{effort}\"; it runs at its own default.",
+        "effortLevelsUnsupported": "The current model does not support {levels}, so those levels cannot be chosen.",
         "effortLevelUnsupported": "This model doesn't support this level",
         "advanced": "Advanced settings",
         "advancedReadOnly": "Only the project owner or a team admin can change advanced settings",
@@ -1931,18 +1967,6 @@
       "hint": "Links to this project use this short name: lowercase letters, digits and hyphens. After a rename, old links still open this project, and no other project can take the old name"
     }
   },
-  "computeChoice": {
-    "cloud": "Cloud environment",
-    "cloudVm": "Whole cloud VM",
-    "deviceOnline": "{name} · Online",
-    "deviceOffline": "{name} · Offline",
-    "computer": "Own device",
-    "none": "No environments available",
-    "cloudHint": "Each session works in a cloud environment of its own, prepared on the first run",
-    "cloudVmHint": "Each session gets a virtual machine of its own, with sudo, Docker, KVM and kernel modules. Preparing one takes a few minutes; once the session is idle, its changes are pushed to their branches and the VM is released",
-    "deviceHint": "This project can already use this device, so no further authorization is needed. If it is offline, work waits until it comes online",
-    "submit": "Use this configuration"
-  },
   "projectTransfer": {
     "lookupFailed": "No account found",
     "loadFailed": "Couldn't load members",
@@ -2057,7 +2081,7 @@
     "online": "Online",
     "offline": "Offline",
     "device": "Own device",
-    "cloud": "Cloud environment",
+    "cloud": "From the platform",
     "current": "Used when nothing is chosen"
   },
   "push": {
@@ -2091,6 +2115,9 @@
   },
   "task": {
     "agent": "AI teammate",
+    "agentEdit": "Change",
+    "agentHeading": "Which AI teammate does this",
+    "agentHint": "Whoever you pick takes over from the next turn",
     "machine": "Environment",
     "followsRoom": "Follows the channel",
     "details": "Task details",
@@ -2121,18 +2148,24 @@
     "checklist": "{name}'s checklist for this turn",
     "opening": {
       "drafting": "{name} is drafting…",
-      "draftingWhat": "Turning the discussion into this task's doc: goal, current state, decided, open",
+      "draftingWhat": "Turning the discussion into this task's doc",
       "waiting": "Not started yet; continues once the environment is connected",
       "failed": "{name} could not draft the doc",
       "failedWhy": "This turn did not finish",
       "retry": "Retry",
       "writeMyself": "Write it myself"
     },
+    "source": {
+      "channel": "From a message in #{title}",
+      "thread": "From a thread in #{title}",
+      "task": "From the task “{title}”",
+      "quote": "{name}: {text}",
+      "byPerson": "Created by {name}, not from a conversation",
+      "byAgent": "Created by {name}; which message it came from was not recorded",
+      "unknown": "Where this task came from was not recorded"
+    },
     "related": {
       "title": "Related",
-      "fromThread": "Original discussion · {count} replies in the thread",
-      "fromChannel": "Original discussion · channel",
-      "quote": "{name}: {text}",
       "untitled": "Untitled doc",
       "by": "{name}"
     },
@@ -2161,12 +2194,13 @@
   },
   "channel": {
     "overview": {
-      "project": "Project overview",
+      "project": "Project goals",
       "projectNote": "{name} reads this in every conversation",
       "expand": "Show all",
       "collapse": "Show less",
-      "noProject": "No project overview yet",
-      "writeProject": "Write one",
+      "noProject": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+      "writeProject": "Write project goals",
+      "editProject": "Edit project goals",
       "description": "About this channel",
       "edit": "Edit",
       "save": "Save",
@@ -2248,12 +2282,12 @@
     "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived"
   },
   "overview": {
-    "document": "Project overview",
-    "edit": "Edit",
+    "document": "Project goals",
+    "edit": "Edit project goals",
     "expand": "Show all",
     "collapse": "Collapse",
-    "noDocument": "No project overview yet",
-    "write": "Write one",
+    "noDocument": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
+    "write": "Write project goals",
     "progress": "Recent progress",
     "progressFailed": "Unable to load recent progress",
     "noProgress": "No progress in the last two weeks",
@@ -2275,7 +2309,9 @@
     "people": "Who is doing what",
     "allTasks": "All tasks {count}",
     "nobody": "No tasks in progress",
-    "moreOf": "{count} more"
+    "moreOf": "{count} more",
+    "myDeadline": "Your deadline: {when}",
+    "taskDeadline": "Challenge closes: {when}"
   },
   "projectTasks": {
     "allChannels": "All channels",

@@ -9,15 +9,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const listBlocks = vi.fn()
 const listTopicMembers = vi.fn()
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
+vi.mock('../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: (...args: unknown[]) => listTopicMembers(...args),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    chatWsUrl: () => 'ws://test/chat',
   }
 })
 
@@ -100,6 +103,8 @@ beforeEach(() => {
   FakeWebSocket.instances = []
   listTopicMembers.mockResolvedValue({ data: [], total: 0 })
   vi.stubGlobal('WebSocket', FakeWebSocket)
+  vi.stubGlobal('visualViewport', new EventTarget())
+  vi.stubGlobal('devicePixelRatio', 1)
 })
 
 // 队友在干活时，对话里它最近出现的那个头像跟着状态动，更早的头像不动；这一轮结束，

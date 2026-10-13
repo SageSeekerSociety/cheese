@@ -48,9 +48,6 @@ When. The moment the turn that read it ended, which is when #2502 would have
 ended it: the earliest end, after the message was sent, of a turn on the same
 seat that started before it. When that turn has not ended either, the time of
 this migration, since nothing records a better one.
-
-Downgrade puts nothing back: a re-opened row would make the room busy again
-with a turn nobody is running.
 """
 
 from collections.abc import Sequence
@@ -115,4 +112,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade puts nothing back: a re-opened row would make the room busy again
+    with a turn nobody is running."""
     pass

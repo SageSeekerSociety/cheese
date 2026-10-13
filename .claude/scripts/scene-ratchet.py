@@ -179,7 +179,7 @@ LOCAL_DECL = re.compile(r"\b(?:const|let|var|function|class)\s+([A-Za-z_$][A-Za-
 #: Vuetify's components, auto-registered by the build: not ours to grade, so
 #: trusted — but by NAME, not by prefix. A globally registered `VReport` is
 #: indistinguishable from `VBtn` until the names are checked. The list is the
-#: repo's own auto-import table (vuetify 3.9.3, `dist/json/importMap.json`);
+#: repo's own auto-import table (vuetify 3.13.5, `dist/json/importMap.json`);
 #: a name it does not have (`VOverflowBtn` — exported once, never in the
 #: table) is not Vuetify.
 VUETIFY_TAGS = {
@@ -187,7 +187,7 @@ VUETIFY_TAGS = {
     "VAutocomplete", "VAvatar", "VBadge", "VBanner", "VBannerActions",
     "VBannerText", "VBottomNavigation", "VBottomSheet", "VBreadcrumbs",
     "VBreadcrumbsDivider", "VBreadcrumbsItem", "VBtn", "VBtnGroup", "VBtnToggle",
-    "VCard", "VCardActions", "VCardItem", "VCardSubtitle", "VCardText",
+    "VCalendar", "VCard", "VCardActions", "VCardItem", "VCardSubtitle", "VCardText",
     "VCardTitle", "VCarousel", "VCarouselItem", "VCheckbox", "VCheckboxBtn",
     "VChip", "VChipGroup", "VClassIcon", "VCode", "VCol", "VColorPicker",
     "VCombobox", "VComponentIcon", "VConfirmEdit", "VContainer", "VCounter",
@@ -196,10 +196,10 @@ VUETIFY_TAGS = {
     "VDatePicker", "VDatePickerControls", "VDatePickerHeader", "VDatePickerMonth",
     "VDatePickerMonths", "VDatePickerYears", "VDefaultsProvider", "VDialog",
     "VDialogBottomTransition", "VDialogTopTransition", "VDialogTransition",
-    "VDivider", "VEmptyState", "VExpandTransition", "VExpandXTransition",
+    "VDivider", "VEmptyState", "VExpandBothTransition", "VExpandTransition", "VExpandXTransition",
     "VExpansionPanel", "VExpansionPanelText", "VExpansionPanelTitle",
     "VExpansionPanels", "VFab", "VFabTransition", "VFadeTransition", "VField",
-    "VFieldLabel", "VFileInput", "VFooter", "VForm", "VHover", "VIcon", "VImg",
+    "VFieldLabel", "VFileInput", "VFooter", "VForm", "VHotkey", "VHover", "VIcon", "VImg",
     "VInfiniteScroll", "VInput", "VItem", "VItemGroup", "VKbd", "VLabel",
     "VLayout", "VLayoutItem", "VLazy", "VLigatureIcon", "VList", "VListGroup",
     "VListImg", "VListItem", "VListItemAction", "VListItemMedia",
@@ -252,13 +252,8 @@ def load_frontend_grade() -> Any:
 # ------------------------------------------------------------------ the scenes
 
 
-def scene_paths(root: Path, reach: set[Path] | None = None) -> list[str]:
-    """Every scene, as a repo-relative path, sorted. Pages then panels.
-
-    Pages come from the router's import graph rather than from a list of
-    routes: a page is a `.vue` under `views/` that the router reaches, and a
-    new route is picked up by existing. Panels are the directory.
-    """
+def route_pages(root: Path) -> list[str]:
+    """Router-reached pages, without panels or a container's sibling views."""
     src = root / "frontend" / "src"
     if not src.is_dir():
         raise Unjudgeable(f"no {SRC_DIR}/ under {root}")
@@ -293,6 +288,13 @@ def scene_paths(root: Path, reach: set[Path] | None = None) -> list[str]:
             elif resolved.suffix == ".ts":
                 stack.append(resolved)  # a router module, or one that names pages
 
+    return sorted(pages)
+
+
+def scene_paths(root: Path, reach: set[Path] | None = None) -> list[str]:
+    """Every scene, as a repo-relative path: pages, sibling views, then panels."""
+    pages = set(route_pages(root))
+    src = root / "frontend" / "src"
     panels = {
         p.relative_to(root).as_posix()
         for p in (src / "components" / "panels").rglob("*.vue")
@@ -691,6 +693,19 @@ def write_baseline(path: Path, baseline: Baseline) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+#: The repair, once, for the two branches that name a scene but not how to fix
+#: it (a regression, and an --update refusal). Short on purpose: the page keeps
+#: the read and the view takes the result, which is the one thing a reader has to
+#: know before the fuller recipe.
+FIX_SLICE = (
+    "  Keep the API/route/store read where it belongs — the page (or a composable)\n"
+    "  — and render through a sibling <PageName>View.vue that takes the values as\n"
+    "  props and emits the intent up; a panel's read goes to the caller that renders\n"
+    "  it. Recipe: docs/manual/dev/scenes.md#make-standalone; scaffold the View half\n"
+    "  with `pnpm run scene:split -- src/views/<Page>.vue`."
+)
+
+
 def format_report(verdict: Verdict, baseline: Baseline) -> str:
     """The human half: what is wrong, why, and the one command that fixes it."""
     lines: list[str] = []
@@ -713,8 +728,9 @@ def format_report(verdict: Verdict, baseline: Baseline) -> str:
             lines.extend(f"    - {reason}" for reason in reasons)
         lines.append("")
         lines.append("These are frozen in frontend/scene-baseline.json because they ran")
-        lines.append("standalone once. Putting the reach-through back is not an option the")
-        lines.append("check has: fix the scene, or ask for the rule to be changed in review.")
+        lines.append("standalone once, so putting the reach-through back is not an option.")
+        lines.append("Fix:")
+        lines.append(FIX_SLICE)
         lines.append("")
     if verdict.improvements:
         lines.append("Better than the baseline says — tighten it:")
@@ -784,7 +800,7 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
             for key, why in refusals:
                 print(f"  {key}: {why}", file=sys.stderr)
             print(
-                "\nFix the scene (docs/manual/dev/scenes.md), or leave the baseline alone.",
+                "\nFix the scene, or leave the baseline alone:\n" + FIX_SLICE,
                 file=sys.stderr,
             )
             return 1
@@ -797,6 +813,10 @@ def run(root: Path, baseline_path: Path, *, update: bool, listing: bool) -> int:
 
     verdict = judge(baseline, grades, views)
     if as_json():
+        # --json keeps stdout the one record line; on failure the same human
+        # report (with the recipe) rides on stderr so a JSON caller still sees it.
+        if not verdict.ok:
+            print(format_report(verdict, baseline), file=sys.stderr)
         # The unit here is a scene, and a scene costs at most one: `frozen` is
         # 1 for an allowance the baseline carries and `actual` is 0 once the
         # scene no longer needs it. A scene that got better without ever being
@@ -985,6 +1005,16 @@ def self_test() -> int:
         check("a baselined scene that regresses fails", result.returncode, 1)
         check("and is named with its old grade", "src/views/Home.vue: A -> C" in result.stdout, True)
         check("and says why", "imports the API layer" in result.stdout, True)
+        # The regression branch names a fix and its landing spot, not only the
+        # reason — the reach-through has to come out of the scene.
+        check("and gives the fix", "<PageName>View.vue" in result.stdout, True)
+        check("and points at the recipe", "scenes.md#make-standalone" in result.stdout, True)
+
+        # --json (what ci:fast calls) stays the one record line on stdout, and
+        # carries the same fix on stderr.
+        result = run_cli(root, baseline_path, "--json")
+        check("--json regressing scene stays one line", len(result.stdout.strip().splitlines()), 1)
+        check("--json keeps the fix on stderr", "<PageName>View.vue" in result.stderr, True)
 
         # -- 2. a new page that is not standalone-ready ----------------------
         brand = "  { name: 'brand', path: '/brand', component: () => import('@/views/Brand.vue') },\n"
@@ -1620,10 +1650,87 @@ def self_test() -> int:
         check("a tag string inside an attribute does not break a real container",
               run_cli(root, baseline_path).returncode, 0)
 
+        # -- 14. what the template renders, and a comment that only mentions ---
+        #    The router test is a real import plus the template's own tags. A
+        #    page whose only tie to the router is the link it draws is not
+        #    standalone — that is what a router tag needs an app for — and a
+        #    comment naming the package is prose, not a dependency:
+        #    `common/NavLink.vue` is the file the manual points at for *not*
+        #    importing vue-router, and the substring test graded it D for the
+        #    paragraph in its header that says so.
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/SettleView.vue": "",
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\ndefineProps<{ id: string }>()\n</script>\n'
+                '<template><router-link to="/x">{{ id }}</router-link></template>\n'
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a page whose only router use is the tag it renders is not ready",
+              result.returncode, 1)
+        check("and it is named", "src/views/Settle.vue: D" in result.stdout, True)
+        check("and the tag is the reason", "renders <router-link>" in result.stdout, True)
+
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\n'
+                "// The host passes a NavLink's `to` down; no vue-router here.\n"
+                "defineProps<{ id: string }>()\n</script>\n"
+                "<template><div>{{ id }}</div></template>\n"
+            ),
+        })
+        check("a comment that names vue-router is not a dependency",
+              run_cli(root, baseline_path).returncode, 0)
+
+        # -- 15. an edge spelled `export … from` ------------------------------
+        #    An index barrel carries the chain: `index.ts` re-exports the
+        #    composable that fetches and the page imports the barrel. Reading
+        #    only `import` left that edge out, so such a page was accepted as
+        #    "new and standalone-ready" — the one verdict that lets a fetching
+        #    file into the frozen set. `views/tasks/composables/index.ts` is
+        #    the real one, and `views/tasks/detail/Brief.vue` the real page.
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/SettleView.vue": "",
+            "frontend/src/views/pages/composables/index.ts":
+                "export { useThing } from './useThing'\n",
+            "frontend/src/views/pages/composables/useThing.ts":
+                "import { api } from '@/api'\nexport const useThing = () => api.get()\n",
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\n'
+                "import { useThing } from '@/views/pages/composables'\n"
+                "useThing()\n</script>\n<template><div /></template>\n"
+            ),
+        })
+        result = run_cli(root, baseline_path)
+        check("a page that fetches through a re-export barrel is not ready",
+              result.returncode, 1)
+        check("and it is named", "src/views/Settle.vue: C" in result.stdout, True)
+
+        # the control: the same barrel re-exporting only a type is erased, so
+        # the page that names the type is still standalone-ready
+        _fixture(root, {
+            "frontend/src/router/index.ts": _router(settle),
+            "frontend/src/views/pages/composables/index.ts":
+                "export type { Thing } from './useThing'\n",
+            "frontend/src/views/Settle.vue": (
+                '<script setup lang="ts">\n'
+                "import type { Thing } from '@/views/pages/composables'\n"
+                "defineProps<{ thing: Thing | null }>()\n</script>\n"
+                "<template><div /></template>\n"
+            ),
+        })
+        check("a barrel that re-exports only a type is not an edge",
+              run_cli(root, baseline_path).returncode, 0)
+
         for rel in (
             "frontend/src/views/Settle.vue",
             "frontend/src/views/SettleView.vue",
             "frontend/src/components/ChildFetch.vue",
+            "frontend/src/views/pages/composables/index.ts",
+            "frontend/src/views/pages/composables/useThing.ts",
         ):
             (root / rel).unlink(missing_ok=True)
         _fixture(root)
@@ -1735,6 +1842,9 @@ def self_test() -> int:
         "lowercase component, a quoted </template>, a shadowing declaration, a "
         "V-name the import map lacks — and two more — a trusted name claimed by "
         "a local binding, a view mentioned only inside an attribute value — "
+        "and two the router decides — a link the template draws against a "
+        "comment that only names the package — and two the barrel decides — a "
+        "re-export that carries the chain against one that carries only a type — "
         "with the controls that stay green, "
         "debt that is grandfathered, debt paid down, a type-only import that "
         "is not reach, --update refusing both edits, and four ways of not being able "

@@ -77,3 +77,65 @@ def test_space_board_empty_for_space_without_links(client):
     space_id = seed_space(client, "空书院")
     board = client.get(f"/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 0
+
+
+def test_an_ai_teammates_summary_says_it_is_one_and_how_to_message_it(client):
+    """The member page of an AI teammate names it a teammate, not a person who
+    came in with the team, and carries the handle its private chat opens by."""
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
+    pid = p["id"]
+    headers = session_auth_headers("user-1")
+    # Opening a private chat with the default teammate is what seats it.
+    assert (
+        client.get(
+            f"/projects/{pid}/private-chat?user_handle=user-1", headers=headers
+        ).status_code
+        == 200
+    )
+    roster = client.get(f"/projects/{pid}/members", headers=headers).json()["data"][
+        "data"
+    ]
+    agent = next(m for m in roster if m.get("agent"))
+
+    s = client.get(
+        f"/projects/{pid}/members/{agent['user_handle']}/summary", headers=headers
+    ).json()["data"]
+
+    assert s["source"] == "agent"
+    chat = client.get(
+        f"/projects/{pid}/private-chat?user_handle=user-1"
+        f"&agent_handle={s['instance_handle']}",
+        headers=headers,
+    )
+    assert chat.status_code == 200
+
+
+def test_an_ai_teammates_year_counts_the_same_work_as_its_week(client):
+    """An AI teammate's page counts its own project: what it wrote this week
+    is in its year too, and the project is listed as the one it is the agent
+    of, not as one it was invited into."""
+    p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
+    pid, root = p["id"], p["root_topic_id"]
+    headers = session_auth_headers("user-1")
+    assert (
+        client.get(
+            f"/projects/{pid}/private-chat?user_handle=user-1", headers=headers
+        ).status_code
+        == 200
+    )
+    roster = client.get(f"/projects/{pid}/members", headers=headers).json()["data"][
+        "data"
+    ]
+    seat = next(m for m in roster if m.get("agent"))["user_handle"]
+    _seed_block(client, pid, root, seat, AuthorType.participant, BlockKind.message)
+
+    week = client.get(
+        f"/projects/{pid}/members/{seat}/summary", headers=headers
+    ).json()["data"]["weekly_contributions"]
+    profile = client.get(f"/users/{seat}/profile", headers=headers).json()["data"]
+
+    assert week == 1
+    assert profile["activity"]["total"] == week
+    assert [(x["project_id"], x["source"]) for x in profile["projects"]] == [
+        (pid, "agent")
+    ]

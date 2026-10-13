@@ -48,9 +48,6 @@ is idempotent, so the second run costs a scan and changes only those projects.
 Idempotent on ``(project_id, handle='cheese')``, on every seat it inserts and on
 the stand-in retirement (which fires only while the stand-in is still seated),
 so a rerun changes nothing.
-
-Downgrade restores nothing: these are the rows a project is supposed to have,
-and deleting an agent would strand the memory pool keyed by its handle.
 """
 
 import json
@@ -251,4 +248,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade restores nothing: these are the rows a project is supposed to have,
+    and deleting an agent would strand the memory pool keyed by its handle."""
     pass

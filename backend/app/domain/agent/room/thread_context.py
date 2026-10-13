@@ -72,6 +72,7 @@ async def thread_tasks(session: "AsyncSession", room: Topic, root) -> str:
     open — a person turning the message into a task after the teammate first
     answered — otherwise never reached it, and the teammate, asked to do the
     work, made a second task under the same message."""
+    # deferred-import: tests replace this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
     open_tasks = [

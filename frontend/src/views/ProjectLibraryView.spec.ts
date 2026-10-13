@@ -17,11 +17,11 @@ import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale, t } from '../i18n'
+import { libraryFile, servesLibrary } from '../test/fakeLibrary'
 
 import ProjectLibraryView from './ProjectLibraryView.vue'
 
 vi.mock('../api', () => ({
-  listProjectLibrary: vi.fn(),
   deleteLibraryFile: vi.fn(),
   downloadFile: vi.fn(),
   libraryFileRawUrl: (projectId: string, path: string) => `/api/projects/${projectId}/library/raw?path=${path}`,
@@ -29,7 +29,7 @@ vi.mock('../api', () => ({
 
 // 文档那一半在 ProjectLibraryView.documents.spec.ts；这里资料库里没有文档。
 vi.mock('../api/projectDocuments', () => ({
-  listProjectDocuments: vi.fn(async () => ({ data: [] })),
+  listProjectDocuments: vi.fn(async () => ({ data: [], next: null })),
   searchProjectDocuments: vi.fn(async (_: string, query: string) => ({ query, library: [], rooms: [] })),
   createProjectDocument: vi.fn(),
   deleteDocument: vi.fn(),
@@ -37,14 +37,19 @@ vi.mock('../api/projectDocuments', () => ({
 }))
 
 vi.mock('../lib/libraryApi', () => ({
+  listProjectLibrary: vi.fn(),
   uploadLibraryFile: vi.fn(),
   replaceLibraryFile: vi.fn(),
   moveLibraryFile: vi.fn(),
   libraryFileBytes: vi.fn(),
+  getLibraryFile: vi.fn(),
+  listLibraryFolders: vi.fn(async () => []),
 }))
 
-const { deleteLibraryFile, downloadFile, listProjectLibrary } = await import('../api')
-const { libraryFileBytes, moveLibraryFile, replaceLibraryFile, uploadLibraryFile } = await import('../lib/libraryApi')
+const { deleteLibraryFile, downloadFile } = await import('../api')
+const { libraryFileBytes, listProjectLibrary, moveLibraryFile, replaceLibraryFile, uploadLibraryFile } = await import(
+  '../lib/libraryApi'
+)
 
 afterEach(cleanup)
 
@@ -70,31 +75,19 @@ beforeAll(() => {
   }
 })
 
-function file(path: string, extra: Partial<LibraryFile> = {}): LibraryFile {
-  return {
-    path,
-    bytes: 2048,
-    modified: 1758000000,
-    added_by: 'alice',
-    added_at: '2026-09-20T10:00:00Z',
-    room: null,
-    replaced: 0,
-    references: 0,
-    ...extra,
-  }
-}
+const file = libraryFile
+// 这一刻资料库里有什么：替身（`servesLibrary`）照后端的规矩一页一页地答它。
+let library: LibraryFile[] = []
 
 beforeEach(() => {
   setLocale('zh-CN')
   vi.clearAllMocks()
-  vi.mocked(listProjectLibrary).mockResolvedValue({
-    data: [
-      file('预算表(2).xlsx', { room: { id: 't1', title: '数据分析' } }),
-      file('预算表.xlsx', { bytes: 120 }),
-      file('结题报告.docx'),
-    ],
-    total: 3,
-  })
+  library = [
+    file('预算表(2).xlsx', { room: { id: 't1', title: '数据分析' }, modified: 1758000300 }),
+    file('预算表.xlsx', { bytes: 120, modified: 1758000200 }),
+    file('结题报告.docx', { modified: 1758000100 }),
+  ]
+  vi.mocked(listProjectLibrary).mockImplementation(servesLibrary(() => library))
   vi.mocked(deleteLibraryFile).mockResolvedValue({ deleted: true })
   vi.mocked(downloadFile).mockResolvedValue(undefined)
   vi.mocked(uploadLibraryFile).mockResolvedValue({ path: '新.txt', bytes: 1 })
@@ -232,7 +225,7 @@ describe('资料库', () => {
   })
 
   it('一份都还没有时说的是暂无资料', async () => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({ data: [], total: 0 })
+    library = []
     const router = createRouter({
       history: createMemoryHistory(),
       routes: [{ path: '/projects/:projectId/library', component: ProjectLibraryView, props: true }],
@@ -267,7 +260,7 @@ describe('资料库读不到时', () => {
     await waitFor(() => expect(container.textContent).toContain('无法读取资料库'))
     expect(listProjectLibrary).toHaveBeenCalledTimes(1)
 
-    vi.mocked(listProjectLibrary).mockResolvedValueOnce({ data: [file('结题报告.docx')], total: 1 })
+    library = [file('结题报告.docx')]
     await fireEvent.click(screen.getByRole('button', { name: t('global.loadError.retry') }))
 
     await waitFor(() => expect(listProjectLibrary).toHaveBeenCalledTimes(2))
@@ -288,10 +281,7 @@ describe('资料库读不到时', () => {
 /** 名字里的 `/` 是文件夹：不搜不筛时一层一层地看，一搜就是整个资料库。 */
 describe('资料库的文件夹', () => {
   beforeEach(() => {
-    vi.mocked(listProjectLibrary).mockResolvedValue({
-      data: [file('合同/2026/报价.xlsx'), file('合同/附件.pdf'), file('结题报告.docx')],
-      total: 3,
-    })
+    library = [file('合同/2026/报价.xlsx'), file('合同/附件.pdf'), file('结题报告.docx')]
     vi.mocked(moveLibraryFile).mockResolvedValue({ moved: {} })
   })
 

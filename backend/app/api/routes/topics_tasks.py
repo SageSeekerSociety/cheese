@@ -9,30 +9,35 @@ addressed by the task's own conversation id — `GET|PATCH /topics/{task}/task`
 document go through the same routes as a room's (`/messages`, `/title`,
 `/document`), with the task's id.
 
-`_actor_in_place`, `DbSession` and the repositories come from topics.py, so the
-import guard and `.importlinter` see no new edges.
+`_actor_in_place`, `DbSession` and the block/project/usage repositories come from
+topics.py, so the import guard and `.importlinter` see no new edges; the accept
+card is read through `AcceptService`, not a repository re-export.
 """
 
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, Query, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.conditional import conditional_json
 from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.routes.topics import (
-    AcceptCardRepository,
-    BlockRepository,
-    DbSession,
-    ProjectRepository,
-    UsageRepository,
-)
+from app.api.room_task_rows import named_task, task_rows
+from app.api.routes.topics import BlockRepository, ProjectRepository, UsageRepository
 from app.api.task_instructions import dispatch, teammate_source_text, tell_task
-from app.api.task_origin import discussion, materials, materials_text
+from app.api.task_origin import (
+    asked_in,
+    discussion,
+    materials,
+    materials_text,
+    source,
+)
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import (
     ConflictError,
@@ -42,20 +47,27 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
+from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
-from app.domain.agent.staleness import announce_stale
 from app.domain.agent_instance.own import may_work_for
-from app.domain.block.schemas import BlockOut
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
+from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
+from app.domain.machine import session_work
+from app.domain.machine.environments import default_for, usable_by_owner
 from app.domain.mentions import canonicalize_refs
+from app.domain.review.services import AcceptService
 from app.domain.review.task_landing import tell_origin
+from app.domain.review.task_pr import close_pr_after_commit
 from app.domain.room_task import binding, presentation
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService, said_title
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import ConclusionIn
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -63,16 +75,34 @@ from app.domain.topic_membership.services import TopicMemberService
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
-@router.get("/{topic_id}/tasks")
+@router.get("/{topic_id}/tasks", response_model=None)
 async def list_room_tasks(
     topic_id: uuid.UUID,
     db: DbSession,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     resolver: ActorResolverDep,
-    limit: Annotated[int | None, Query(ge=1, le=500)] = None,
-) -> dict:
+    limit: Annotated[int | None, Query(ge=0, le=500)] = None,
+    status: Annotated[Literal["open", "closed"] | None, Query()] = None,
+    ids: Annotated[list[uuid.UUID] | None, Query()] = None,
+    blocks: Annotated[list[uuid.UUID] | None, Query(max_length=200)] = None,
+    branch: bool = False,
+    latest: Annotated[int | None, Query(ge=1, le=50)] = None,
+    if_none_match: Annotated[str | None, Header()] = None,
+) -> Response:
     """This room's threads — every piece of work in it, each with its own
     conversation.
+
+    Narrowed, a page reads only the tasks it draws instead of the whole room:
+
+    - `status=open|closed`;
+    - `ids`: these tasks (the ones a message names);
+    - `blocks`: the tasks these blocks carry — made from one of them, or named
+      by one of them as the task that began there (`task_created`, `split`);
+    - `branch=true`: tasks with a branch of their own;
+    - `latest=N`: the newest N, newest first — by when they closed with
+      `status=closed`, by when they were created otherwise.
+
+    `ids` and `blocks` together return a task matching either.
 
     The room's own line is `/blocks` beside this; nothing appears in both, and
     together they are everything said in the room. That separation is the whole
@@ -92,89 +122,70 @@ async def list_room_tasks(
     number truncates silently — the exact failure the neighbouring default
     exists to avoid — but a caller rendering a room should be passing `limit`,
     and whoever builds that view should decide what it is.
+
+    `limit=0` is the roster shape: every thread, none of their conversation. A
+    client drawing a rail or an overview wants the threads themselves and never
+    reads a block; asking for `limit=1` made it download one message per thread
+    to throw away. 0 is spelled rather than inferred from a separate flag
+    because it is the same knob — "newest zero blocks each" — and it skips the
+    block query entirely instead of filtering its result.
+
+    条件请求：侧栏画一次 rail 就要整份清单，而一个房间这里有 ~1317 条活、`limit=0`
+    也有 1 MB 上下。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回
+    304、空 body —— 切页面时「没有新东西」不再重传这一份。
     """
     topic = await TopicService(db).get_or_404(topic_id)
     actor = await resolver.resolve(topic_id=topic_id, project_id=topic.project_id)
     await resolver.authorize_topic(
         actor, project_id=topic.project_id, topic_id=topic_id
     )
-    threads = await TaskService(db).threads_for_room(topic_id, limit=limit)
-    # The card each thread rides on, in ONE query for the whole room (the same
-    # batched loader the project rail uses). Without it "在跑 / 闲着" and "等着
-    # 人验收" are indistinguishable on screen — both are quiet — and the room
-    # overview would have to ask per thread to tell them apart.
-    thread_ids = [t.id for t, _ in threads]
-    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
-    asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
-    # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
-    landed: dict[uuid.UUID, list] = {}
-    for accepted_card in await AcceptCardRepository(db).accepted_for_tasks(thread_ids):
-        if accepted_card.task_id is not None:
-            landed.setdefault(accepted_card.task_id, []).append(accepted_card)
-    # 每条活最后一次花钱花在哪个模型上，一次查完 —— 卡上的模型是从这里算的，
-    # `tasks` 上没有一列存它。
-    spent = await UsageRepository(db).last_model_by_task(thread_ids)
-    # 能用哪些模型，按项目算一次，整屏卡共用 —— 每张卡各算一次就是同一个答案
-    # 构造几百遍。
-    project = await ProjectRepository(db).get(topic.project_id)
-    choices = binding.catalog(project.settings if project else None)
-    running = await running_tasks(chat, db, [t for t, _ in threads])
-    # 每件任务最后说的一句：频道概览上的「最新进展」。
-    said = await BlockRepository(db).last_messages(thread_ids)
-    now = datetime.now(UTC)
-    items = []
-    for task, blocks in threads:
-        card = cards.get(task.id)
-        shown = presentation.task_presentation(
-            presentation.facts_for_task(
-                task,
-                card,
-                running=task.id in running,
-                awaiting_answer=task.id in asked,
-            ),
-            now=now,
-        )
-        waiting = presentation.waiting_on(
-            shown,
-            running=task.id in running,
-            owner=task.owner_handle,
-            reviewer=card.reviewer_handle if card is not None else None,
-            asked=asked.get(task.id),
-        )
-        accepted = landed.get(task.id, [])
-        items.append(
-            {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
-                # 用哪个模型。花过就是它真花的那个，没花过就是它绑的那个。
-                "model": presentation.card_model(
-                    task, spent=spent.get(task.id), choices=choices
-                ),
-                # 同一个函数算的那一格，和项目级列表、和这条活自己的头一模一样。
-                "presentation": shown.as_dict(),
-                # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
-                "waiting_on": waiting,
-                "awaits_me": waiting is not None and waiting == actor.handle,
-                "accepted_count": len(accepted),
-                "last_accepted_pr": accepted[-1].pr_number if accepted else None,
-                "blocks": [
-                    BlockOut.model_validate(b).model_dump(mode="json") for b in blocks
-                ],
-                "last_message": BlockOut.model_validate(said[task.id]).model_dump(
-                    mode="json"
-                )
-                if task.id in said
-                else None,
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
-            }
-        )
-    return ok(page(items, len(items)))
+    items = await room_task_items(
+        db,
+        chat,
+        actor,
+        topic,
+        limit=limit,
+        status=status,
+        ids=ids,
+        blocks=blocks,
+        branch=branch,
+        latest=latest,
+    )
+    return conditional_json(ok(page(items, len(items))), if_none_match)
+
+
+async def room_task_items(
+    db: AsyncSession,
+    chat: ChatService,
+    actor: Actor,
+    topic,
+    *,
+    limit: int | None = None,
+    status: Literal["open", "closed"] | None = None,
+    ids: list[uuid.UUID] | None = None,
+    blocks: list[uuid.UUID] | None = None,
+    branch: bool = False,
+    latest: int | None = None,
+) -> list[dict]:
+    """A room's tasks as `GET /topics/{id}/tasks` lists them (see there for what
+    each option keeps); also the `tasks` of the room snapshot a subscription
+    opens with (`room_snapshot`). The caller has authorised the reader."""
+    named: set[uuid.UUID] | None = set(ids) if ids is not None else None
+    if blocks is not None:
+        lines = await BlockRepository(db).many(blocks)
+        named = (named or set()) | {
+            task_id for line in lines if (task_id := named_task(line)) is not None
+        }
+    threads = await TaskService(db).threads_for_room(
+        topic.id,
+        limit=limit,
+        status=status,
+        ids=named,
+        origins=blocks,
+        with_branch=branch,
+        latest=latest,
+    )
+    return await task_rows(db, chat, actor, topic.project_id, threads)
 
 
 @router.get("/{topic_id}/task")
@@ -188,7 +199,14 @@ async def get_task(
     404 for a room's own conversation. What is said in it is read like any
     conversation's (`/topics/{task}/blocks`)."""
     place, _actor, task = await task_conversation(db, resolver, topic_id)
-    cards = await AcceptCardRepository(db).latest_by_task([task.id])
+    return ok(await task_page_row(db, chat, place, task))
+
+
+async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dict:
+    """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
+    snapshot a subscription to it opens with. The caller has authorised the
+    reader."""
+    cards = await AcceptService(db).latest_by_task([task.id])
     out = await _task_out(db, chat, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
@@ -210,7 +228,7 @@ async def get_task(
         }
     )
     out["opening"] = await _opening(db, task)
-    return ok(out)
+    return out
 
 
 async def _opening(db, task) -> str | None:
@@ -230,8 +248,18 @@ async def task_related(
     """Where the task came from and what was put on the table there
     (`task_origin.py`): what its page shows as 相关."""
     _place, _actor, task = await task_conversation(db, resolver, topic_id)
+    return ok(await related_of(db, task))
+
+
+async def related_of(db: AsyncSession, task) -> dict:
+    """Where a task came from and what it was given, as its page's 相关 shows
+    it; also the `related` of a task's room snapshot."""
     origin, blocks = await discussion(db, task)
-    return ok({"origin": origin, "materials": materials(blocks)})
+    return {
+        "source": await source(db, task),
+        "origin": origin,
+        "materials": materials(blocks),
+    }
 
 
 @router.post("/{topic_id}/opening")
@@ -261,20 +289,28 @@ async def _task_out(db, chat: ChatService, task, card=None) -> dict:
     to its page returns, so the page never holds one without it. The same
     function the list uses, so a deep link and the board cannot disagree."""
     if card is None:
-        card = (await AcceptCardRepository(db).latest_by_task([task.id])).get(task.id)
+        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     running = await running_tasks(chat, db, [task])
+    asked = await BlockRepository(db).awaiting_an_answer([task.id])
     out = TaskOut.model_validate(task).model_dump(mode="json")
-    out["presentation"] = presentation.task_presentation(
+    shown = presentation.task_presentation(
         presentation.facts_for_task(
             task,
             card,
             running=task.id in running,
-            awaiting_answer=bool(
-                await BlockRepository(db).awaiting_an_answer([task.id])
-            ),
+            awaiting_answer=task.id in asked,
         ),
         now=datetime.now(UTC),
-    ).as_dict()
+    )
+    out["presentation"] = shown.as_dict()
+    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
+    out["waiting_on"] = presentation.waiting_on(
+        shown,
+        running=task.id in running,
+        owner=task.owner_handle,
+        reviewer=card.reviewer_handle if card is not None else None,
+        asked=asked.get(task.id),
+    )
     return out
 
 
@@ -296,9 +332,9 @@ async def conclude_task(
     # The owner closes the task, or its own session (`cheese_close_task`).
     if actor.via == "cheese":
         if resolver.credential_conversation() != task.id:
-            raise ForbiddenError(say("taskOwnerOnly"))
+            raise ForbiddenError(say("taskOwnSessionCloses"))
     elif actor.handle != task.owner_handle:
-        raise ForbiddenError(say("taskOwnerOnly"))
+        raise ForbiddenError(say("taskOwnSessionCloses"))
     # Friendly "@名字/@话题名" → structured tokens, same as every other write
     # path that lands text a person will read.
     text = (body.conclusion or "").strip()
@@ -323,7 +359,12 @@ async def conclude_task(
                 else task.contributor_handles
             ),
         )
-    task = await tasks.close_thread(task, conclusion=conclusion)
+    # Its own session closing it is the turn that would be stopped, and it
+    # ends by itself.
+    task = await close_task(
+        db, task, None if actor.via == "cheese" else chat, conclusion=conclusion
+    )
+    close_pr_after_commit(db, task)
     # The task's own conversation hears how it ended, and so does the
     # discussion it came from; the channel's card for it updates in place.
     ended = (
@@ -341,7 +382,6 @@ async def conclude_task(
     await tell_origin(db, task, ended)
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -367,7 +407,6 @@ async def reopen_task(
     )
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -413,7 +452,6 @@ async def create_task(
     )
     out = TaskOut.model_validate(task).model_dump(mode="json")
     await db.commit()
-    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
@@ -445,7 +483,6 @@ async def start_task(
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics", id=place.room_id)
     await dispatch(chat)
     return ok(out)
 
@@ -477,7 +514,6 @@ async def update_task(
         await tasks.set_contributors(task, leaving)
         out = await _task_out(db, chat, task)
         await db.commit()
-        await announce_stale(place.room_id, "topics", id=place.room_id)
         return ok(out)
     members = TopicMemberService(db)
     if "owner_handle" in body.model_fields_set and body.owner_handle:
@@ -517,30 +553,42 @@ async def update_task(
         )
     out = await _task_out(db, chat, task)
     await db.commit()
-    await announce_stale(place.room_id, "topics", id=place.room_id)
     return ok(out)
 
 
 async def _move_off_former_owners_computer(db, actor, place, task, owner) -> None:
     """A person's own computer works only that person's tasks: before a task
-    changes hands, it moves to a computer its new owner may use, pushing its
-    work first. A push that fails leaves the task with its owner and says why."""
-    from app.domain.agent.compute_configs import choice_for_owner, works_tasks_of
-    from app.domain.machine import session_work
-    from app.domain.machine.session_reports import devices_held_by
+    changes hands, each agent in it whose environment is on someone else's own
+    computer moves to one its new owner may use, pushing its work first, and a
+    default naming such a computer is cleared. A push that fails leaves the
+    task with its owner and says why."""
 
     room = await TopicService(db).get_or_404(place.room_id)
     project = await ProjectRepository(db).get(place.project_id)
-    target = await choice_for_owner(db, room, task, project, owner)
-    held = await devices_held_by(db, task.id)
-    stays = not task.compute_config or target.model_dump() == task.compute_config
-    if stays and all(
-        [await works_tasks_of(db, device, project, owner) for device in held]
-    ):
-        return
-    await session_work.request_choice(
-        db, topic_id=place.room_id, actor=actor, choice=target, task=task
-    )
+    if not await usable_by_owner(db, task.default_environment, project, owner):
+        task.default_environment = None
+    sessions = AgentSessionService(db)
+    for handle, chosen in (await sessions.environments_in(task.id)).items():
+        if await usable_by_owner(db, chosen.environment, project, owner):
+            continue
+        row = await sessions.latest(task.id, handle)
+        if row is None:
+            continue
+        target = default_for(room, task, project.settings if project else None)
+        environment = (
+            target.environment
+            if await usable_by_owner(
+                db, target.environment.model_dump(), project, owner
+            )
+            else default_environment()
+        )
+        await session_work.switch_environment(
+            db,
+            topic_id=place.room_id,
+            session_id=row.id,
+            actor=actor,
+            environment=environment,
+        )
 
 
 class TeammateTaskIn(BaseModel):
@@ -577,6 +625,14 @@ async def create_teammate_task(
     if actor.via != "cheese":
         raise ForbiddenError(say("teammateTaskByTeammate"))
     TopicService.refuse_tasks_in_private(place.room)
+    # A title nobody can read is not a title. Refused here, with the limit in
+    # the words, so the teammate writes a shorter one and calls again — cutting
+    # it instead would leave half a phrase in the sidebar and no one the wiser.
+    # Checked before the idempotency claim: a refused call leaves no record.
+    if not title_fits(body.title):
+        raise UnprocessableEntityError(
+            say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(body.title))
+        )
     # A turn sent again creates the same task again: one task, not two.
     continuation = get_work_runner().continuation_for(topic_id)
     key = (
@@ -600,6 +656,14 @@ async def create_teammate_task(
     ):
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     owner = named or (origin.author if origin is not None else None)
+    # What the person said that this turn answers is where the task came from;
+    # in a 支线 that is usually a reply, not the message the 支线 hangs under.
+    asked = await asked_in(
+        db,
+        place.conversation_id,
+        actor.handle,
+        main_line=place.thread is None and place.task is None,
+    )
     task = await TopicService(db).create_task(
         room_id=place.room_id,
         created_by=actor.handle,
@@ -608,6 +672,7 @@ async def create_teammate_task(
         teammate=actor.handle,
         named_by_teammate=True,
         origin_block_id=origin.id if origin is not None else None,
+        source_block_id=asked.id if asked is not None else None,
     )
     blocks = (await discussion(db, task))[1]
     started, why_not = False, None
@@ -637,6 +702,5 @@ async def create_teammate_task(
     if key is not None:
         await idem.record_result(db, key, out)
     await db.commit()
-    await announce_stale(place.room_id, "topics", id=place.room_id)
     await dispatch(chat)
     return ok(out)

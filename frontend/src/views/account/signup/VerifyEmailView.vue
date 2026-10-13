@@ -65,16 +65,16 @@
             {{ t('account.verifyEmail.resend') }}
           </button>
         </span>
-        <router-link to="/account/signin" class="account-link account-link--quiet">
+        <NavLink to="/account/signin" class="account-link account-link--quiet">
           {{ t('account.backToSignIn') }}
-        </router-link>
+        </NavLink>
       </div>
     </v-form>
   </div>
 </template>
 
 <script lang="ts" setup>
-import type { AcceptedDocuments } from '@/network/api/legal/types'
+import type { AcceptedDocuments } from '@/types/apiLegal'
 
 import { computed, ref } from 'vue'
 import { toTypedSchema } from '@vee-validate/zod'
@@ -88,6 +88,7 @@ import AccountHeading from '@/components/account/AccountHeading.vue'
 import LegalConsent from '@/components/account/LegalConsent.vue'
 import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{

@@ -213,13 +213,13 @@
       "pageTitle": "OAuth 账户选择"
     },
     "app": {
-      "backTitle": "回到 Cheese app",
-      "backLede": "如果 Cheese app 没有自动打开，点击下方按钮。之后可以关闭此页面。",
-      "open": "打开 Cheese",
-      "handOffFailed": "无法把这次登录交给 Cheese app，在 app 中重新登录",
+      "backTitle": "回到知是 app",
+      "backLede": "如果知是 app 没有自动打开，点击下方按钮。之后可以关闭此页面。",
+      "open": "打开知是",
+      "handOffFailed": "无法把这次登录交给知是 app，在 app 中重新登录",
       "expired": "这次登录已失效，重新登录",
-      "confirmTitle": "登录 Cheese app",
-      "confirmLede": "将以 {name}（{handle}）的身份登录 Cheese app。如果不是你刚才在 app 里发起的，点击取消。",
+      "confirmTitle": "登录知是 app",
+      "confirmLede": "将以 {name}（{handle}）的身份登录知是 app。如果不是你刚才在 app 里发起的，点击取消。",
       "confirm": "继续",
       "switchAccount": "换个账号",
       "cancel": "取消"
@@ -512,6 +512,7 @@
     "more": "更多操作",
     "claudeCodeLoggedIn": "Claude Code · 已登录（{plan}）",
     "claudeCodeLoggedOut": "Claude Code · 未登录，在这台设备的终端运行 {command} 登录",
+    "sandboxUnavailable": "这台电脑给不了频道隔离环境，在这里的频道会被拒绝。它给出的原因和处理办法：",
     "claudeCodeApiKey": "API key",
     "teams": "提供给",
     "noTeams": "未提供给团队",
@@ -621,11 +622,11 @@
   "appSignIn": {
     "lede": "登录会在浏览器中完成，那里有你保存的密码、通行密钥和第三方账号。完成后会自动回到这里。",
     "signin": {
-      "title": "登录 Cheese",
+      "title": "登录知是",
       "open": "在浏览器中登录"
     },
     "signup": {
-      "title": "注册 Cheese",
+      "title": "注册知是",
       "open": "在浏览器中注册"
     },
     "recover": {

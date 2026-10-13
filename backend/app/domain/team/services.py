@@ -1,5 +1,6 @@
 import secrets
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import say
+from app.domain.task.repositories import TaskMembershipRepository
 from app.domain.team.models import (
     Team,
     TeamMemberRole,
@@ -34,7 +36,6 @@ async def check_team_locking_status(session, team_id: int) -> None:
     where the team is APPROVED in a task with LOCK_ON_APPROVAL policy and the
     completion status is still ongoing. Raises ForbiddenError if locked.
     """
-    from app.domain.task.repositories import TaskMembershipRepository
 
     membership_repo = TaskMembershipRepository(session=session)
     locking_policies = ["LOCK_ON_APPROVAL"]
@@ -65,6 +66,30 @@ def team_service(session: AsyncSession) -> "TeamService":
     return TeamService(TeamRepository(session=session))
 
 
+def may_remove_member(actor_role: int | None, target_role: int, *, own: bool) -> bool:
+    """Whether someone holding ``actor_role`` may take a ``target_role`` member
+    off the team. ``own``: the member is the actor (leaving). ``None``: the actor
+    is not in the team.
+
+    The one rule: ``remove_team_member`` enforces it and the roster's
+    ``canRemove`` is drawn from it, so the page never offers a removal the
+    server then refuses.
+    """
+    if target_role == TeamMemberRole.OWNER:
+        return False
+    if own:
+        return True
+    if actor_role == TeamMemberRole.OWNER:
+        return True
+    return actor_role == TeamMemberRole.ADMIN and target_role == TeamMemberRole.MEMBER
+
+
+@dataclass(frozen=True)
+class TeamLabel:
+    handle: str
+    name: str
+
+
 class TeamService:
     def __init__(self, repo: TeamRepository) -> None:
         self._repo = repo
@@ -72,8 +97,16 @@ class TeamService:
     async def get_team(self, team_id: int) -> Team | None:
         return await self._repo.get_by_id(team_id)
 
-    async def handles_of(self, team_ids: set[int]) -> dict[int, str]:
-        """team id -> handle, a personal team going by its owner's username."""
+    async def add_member(
+        self, team_id: int, user_id: int, role: int
+    ) -> TeamUserRelation:
+        return await self._repo.add_member(team_id, user_id, role)
+
+    async def labels_of(self, team_ids: set[int]) -> dict[int, TeamLabel]:
+        """team id -> what links to it go by and what it is called.
+
+        A personal team's handle is its owner's username.
+        """
         teams = await self._repo.get_by_ids(list(team_ids))
         names = await usernames_by_ids(
             self._repo._session,
@@ -83,11 +116,11 @@ class TeamService:
                 if t.personal_owner_user_id is not None
             },
         )
-        out: dict[int, str] = {}
+        out: dict[int, TeamLabel] = {}
         for tid, team in teams.items():
             handle = team.handle or names.get(team.personal_owner_user_id or 0)
             if handle:
-                out[tid] = handle
+                out[tid] = TeamLabel(handle=handle, name=team.name)
         return out
 
     async def visible_team(self, team_id: int, user_id: int) -> Team:
@@ -420,17 +453,17 @@ class TeamService:
                 "Team owner cannot be removed. Transfer ownership or disband the team."
             )
 
-        if target_user_id != actor_user_id:
-            actor_relation = await self._repo.get_member_relation(
-                team_id, actor_user_id
-            )
-            if actor_relation is None or actor_relation.role == TeamMemberRole.MEMBER:
-                raise ForbiddenError("Only admins or owner can remove other members")
-            if (
-                actor_relation.role == TeamMemberRole.ADMIN
-                and relation.role == TeamMemberRole.ADMIN
-            ):
+        own = target_user_id == actor_user_id
+        actor_relation = (
+            relation
+            if own
+            else await self._repo.get_member_relation(team_id, actor_user_id)
+        )
+        actor_role = actor_relation.role if actor_relation is not None else None
+        if not may_remove_member(actor_role, relation.role, own=own):
+            if actor_role == TeamMemberRole.ADMIN:
                 raise ForbiddenError("Admins cannot remove other admins")
+            raise ForbiddenError("Only admins or owner can remove other members")
 
         await check_team_locking_status(self._repo._session, team_id)
         await self._repo.soft_delete_member(relation)

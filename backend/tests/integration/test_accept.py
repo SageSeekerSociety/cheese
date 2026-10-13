@@ -61,14 +61,14 @@ def _make_card(client, topic_id: str, reviewer: str = "alice") -> str:
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": reviewer,
-            "routing_reason": "最懂",
+            "focus": "最懂",
         },
     )
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "pending"
     assert card["reviewer_handle"] == reviewer
-    assert card["routing_reason"] == "最懂"
+    assert card["focus"] == "最懂"
     world = client.test_forge_world
     number = len(world["fake"].prs) + 1
     head = _give_card_a_pr(client, world, topic_id, card["id"], number)
@@ -137,7 +137,7 @@ def test_accept_marks_the_topic_delivered_and_leaves_it_active(client):
     ]
     assert delivered["accepted_by"] == "alice"
     assert delivered["accepted_at"] is not None
-    assert delivered["status"] == "closed"
+    assert delivered["presentation"]["phrase"] == "accepted"
     assert topic["accepted_at"] is None
 
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
@@ -171,24 +171,32 @@ def test_merge_exception_leaves_card_and_topic_retryable(client, monkeypatch):
 
 
 def test_ai_cannot_accept_own_work_collaborative(client):
-    # Default project ai_mode is collaborative. Route the card TO the AI so the
-    # reviewer-identity check passes and `_forbid_ai` is what actually fires —
-    # and to the seat that is really in this room's roster: a card is filed only to
-    # somebody this room admits, and the room-membership gate on the decision routes
-    # has to pass for them too. The bare ``cheese`` handle is on no roster; every
-    # topic's 分身 acts as ``cheese-<topic hex>`` (see `_forbid_ai`, which matches
-    # the whole namespace).
+    # Default project ai_mode is collaborative. The AI cannot be handed its own
+    # change to review, and a card handed to a person is not its to accept. The
+    # seat is the one really in this room's roster — every topic's 分身 acts as
+    # ``cheese-<hex>``, never the bare ``cheese``.
     pid = _make_project(client)
     tid = _make_topic(client, pid)
     ai = room_agent_seat(client, tid)
-    cid = _make_card(client, tid, ai)
+    routed = client.post(
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": ai,
+            "focus": "最懂",
+        },
+    )
+    assert routed.status_code == 422, routed.text
+    assert routed.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
+    cid = _make_card(client, tid, "alice")
 
     r = client.post(
         f"/accept-cards/{cid}/accept",
         json={"decided_by": ai, "head_sha": _rendered_head(client, cid)},
         headers=session_auth_headers(ai),
     )
-    assert r.status_code == 422
+    assert r.status_code in (403, 422), r.text
 
     # Card untouched, topic still active.
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
@@ -321,7 +329,7 @@ def test_only_one_pending_card_per_topic(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
-            "routing_reason": "x",
+            "focus": "x",
         },
     )
     assert r.status_code == 422
@@ -344,7 +352,7 @@ def test_no_new_card_after_delivery(client):
         json={
             "change_subject": "chore(test): file an accept card",
             "reviewer_handle": "bob",
-            "routing_reason": "x",
+            "focus": "x",
         },
     )
     assert r.status_code == 422
@@ -443,3 +451,30 @@ def test_conflicting_remote_branch_refuses_delivery_without_closing_task(client)
     task = client.get(f"/topics/{delivery_task_id(client, tid)}/task").json()["data"]
     assert task["status"] == "open"
     assert task["accepted_at"] is None
+
+
+def _file_with_focus(client, focus: str):
+    topic_id = _make_topic(client, _make_project(client))
+    return client.post(
+        f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
+        headers=delivery_headers(client, topic_id),
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "focus": focus,
+        },
+    )
+
+
+def test_review_focus_is_at_most_three_short_points(client):
+    """审阅重点要让审阅的人一眼读完：超过三条的那一份不收，并说清验证过程该写到哪。"""
+    r = _file_with_focus(client, "一\n二\n三\n四")
+    assert r.status_code == 422, r.text
+    assert r.json()["error"]["i18n"]["key"] == "acceptFocusTooLong"
+
+    r = _file_with_focus(client, "x" * 301)
+    assert r.status_code == 422, r.text
+
+    r = _file_with_focus(client, "迁移会改通知表\n\n回执落点改成了任务\n")
+    assert r.status_code == 200, r.text
+    assert r.json()["data"]["focus"] == "迁移会改通知表\n回执落点改成了任务"

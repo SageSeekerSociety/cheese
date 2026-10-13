@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core import background
 from app.core.errors import GatewayUnavailableError
 from app.core.sentences import say
+from app.domain.project import forge
 from app.domain.textfile import MAX_TEXT_BYTES, decode_text
 
 logger = logging.getLogger(__name__)
@@ -234,7 +235,6 @@ async def _fetch(db: AsyncSession, project_id: uuid.UUID) -> Declared:
     """One read of `.mcp.json` on the default branch: the contents endpoint,
     which GitHub and Forgejo both answer from the default branch when no ref
     is named. A directory, symlink or submodule there is not a file."""
-    from app.domain.project import forge
 
     found = await forge.repository_data(project_id, db, "/contents/.mcp.json")
     if not isinstance(found, dict) or found.get("type") != "file":

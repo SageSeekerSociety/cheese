@@ -18,8 +18,7 @@ Every agent DM gets its peer written down here, once:
 Each named seat is also added to the DM's roster (the room-derived seat that
 was there stays: its messages are on the wall and are labelled through it).
 
-Then the column goes. Downgrade restores nothing: the pointer's information now
-lives in `private_peer`.
+Then the column goes.
 """
 
 from collections.abc import Sequence
@@ -68,4 +67,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    """Downgrade restores nothing: the pointer's information now lives in `private_peer`."""
     pass

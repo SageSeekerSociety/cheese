@@ -41,9 +41,8 @@ class LibraryFileRecord(UuidPk, Base):
     location: Mapped[str] = mapped_column(
         String(16), default="local", server_default="local"
     )
-    #: 字节在那个存储里的键。加这一列之前写下的行是空的，读时按旧的目录推出来
-    #: （`records.blob_key`），下一次迁移补齐后设为非空。
-    blob_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    #: 字节在那个存储里的键（`blobs.new_key`）。
+    blob_key: Mapped[str] = mapped_column(String(1024))
     bytes: Mapped[int] = mapped_column(BigInteger)
     sha256: Mapped[str] = mapped_column(String(64))
     #: 谁放进来的（handle）。

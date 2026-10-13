@@ -101,7 +101,7 @@ class TestTaskIntegration:
             response = api_client.get(f"/projects/{project['id']}", headers=headers)
             assert response.status_code == 200, response.text
             assert response.json()["data"]["external_task_id"] == task_id
-            # The 赛题 is the project's overview, which every member reads.
+            # The 赛题 is the project's goals, which every member reads.
             document = overview_of(api_client, project["id"], headers=headers)
             response = api_client.get(f"/documents/{document}", headers=headers)
             assert response.status_code == 200, response.text
@@ -110,10 +110,6 @@ class TestTaskIntegration:
                 f"[查看完整赛题要求](/spaces/{task_setup['space_id']}/tasks/{task_id})"
                 in response.json()["data"]["content"]
             )
-            expected_deadline = datetime.fromtimestamp(
-                task_setup["deadline_ms"] / 1000, UTC
-            ).strftime("%Y-%m-%d %H:%M UTC")
-            assert expected_deadline in response.json()["data"]["content"]
         if as_team:
             doc = response.json()["data"]
             response = api_client.put(

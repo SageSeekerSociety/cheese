@@ -1,3 +1,4 @@
+import asyncio
 import mimetypes
 from typing import Any, BinaryIO
 
@@ -64,8 +65,6 @@ class AttachmentService:
             final_type = attachment_type
         else:
             final_type = detect_attachment_type(content_type).value
-
-        import asyncio
 
         # One file's ceiling, judged here and nowhere else: this method is the
         # single door bytes take into the attachment table (the generic
@@ -161,6 +160,15 @@ class AttachmentService:
         一个函数里 —— 「谁传的」只有这一个答案，谁都不该自己去 meta 里翻。
         """
         return attachment.meta.get("uploaderId") == user_id
+
+    def is_image(self, attachment: Attachment) -> bool:
+        """这一行是不是一张图片。
+
+        判据（``type == image``）收在这里，读它的地方是通用读路由的放行规则：图片对
+        登录用户放行、其余只有上传者（见 ``routes/attachments.py`` 顶部）。放在
+        service 上，路由就不必为了这一个值 import ``attachment.models``。
+        """
+        return attachment.type == AttachmentType.IMAGE.value
 
     async def download(self, attachment_id: int) -> tuple[bytes, str, str]:
         """Download attachment and return (content, filename, content_type)."""

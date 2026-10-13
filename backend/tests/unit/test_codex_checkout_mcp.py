@@ -154,7 +154,14 @@ def machine(tmp_path):
 
 
 @pytest.fixture
-def platform(machine, monkeypatch):
+def lease_answers():
+    """What the work-lease route answers to each ask, in order; once these run
+    out, the machine."""
+    return []
+
+
+@pytest.fixture
+def platform(machine, monkeypatch, lease_answers):
     """The work-lease route, answering with the machine as the platform
     records it once its executor started (`session_work`): the stdio servers
     the machine's bootstrap reports from the checkout's `.mcp.json`. And the
@@ -170,7 +177,10 @@ def platform(machine, monkeypatch):
 
         def do_POST(self):  # noqa: N802 — the stdlib's name
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            if self.path == "/lease":
+            if self.path == "/lease" and lease_answers:
+                seen.append("lease")
+                result = {"data": lease_answers.pop(0)}
+            elif self.path == "/lease":
                 seen.append("lease")
                 result = {
                     "data": {
@@ -280,4 +290,21 @@ def test_a_codex_session_at_the_placeholder_lists_no_checkout_server(machine, pl
         tool["name"]
         for tool in asyncio.run(RemoteTools(_session(DEFERRED_WORKSPACE)).discover())
     ]
+    assert not [name for name in names if name.startswith("mcp__notes__")]
+
+
+def test_a_codex_session_whose_machine_is_being_prepared_starts_at_the_placeholder(
+    machine, platform, lease_answers
+):
+    """A Codex session relaunched onto a machine the platform cannot hand out
+    at that moment (its sandbox being prepared again) still starts, as Claude
+    Code's does: at the placeholder, listing none of the machine's stdio
+    servers, its own tools taking the machine once it is there."""
+    work, _ = machine
+    lease_answers.append({"unavailable": "环境仍在准备", "preparing": True})
+    names = [
+        tool["name"]
+        for tool in asyncio.run(RemoteTools(_session(str(work))).discover())
+    ]
+    assert "Bash" in names
     assert not [name for name in names if name.startswith("mcp__notes__")]

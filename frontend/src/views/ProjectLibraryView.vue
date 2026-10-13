@@ -17,7 +17,7 @@
 import type { LocationQueryRaw } from 'vue-router'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { LibraryFile } from '../api'
-import type { ProjectDocument } from '../api/projectDocuments'
+import type { ListedDocument } from '../api/projectDocuments'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -26,15 +26,22 @@ import { toast } from 'vuetify-sonner'
 
 import { useRowMenu } from '@/composables/useRowMenu'
 
-import { deleteLibraryFile, downloadFile, libraryFileRawUrl, listProjectLibrary } from '../api'
+import { deleteLibraryFile, downloadFile, libraryFileRawUrl } from '../api'
 import LibraryDocumentHits from '../components/library/LibraryDocumentHits.vue'
 import LibraryDocumentPage from '../components/library/LibraryDocumentPage.vue'
 import { useLibraryDocuments } from '../composables/useLibraryDocuments'
 import { useLibraryNaming } from '../composables/useLibraryNaming'
+import { type LibraryRow, useLibraryPages } from '../composables/useLibraryPages'
 import { useOpenLibraryDocument } from '../composables/useOpenLibraryDocument'
 import { isAgentHandle } from '../lib/authorship'
-import { libraryFileBytes, replaceLibraryFile, uploadLibraryFile } from '../lib/libraryApi'
-import { folderListing, leafOf, type LibraryFolder } from '../lib/libraryFolders'
+import {
+  getLibraryFile,
+  libraryFileBytes,
+  type LibraryFolder,
+  replaceLibraryFile,
+  uploadLibraryFile,
+} from '../lib/libraryApi'
+import { leafOf } from '../lib/libraryFolders'
 import { type Kind, KIND_ICONS, kindLabel, kindOf, KINDS } from '../lib/libraryKinds'
 import { VIRTUAL_LIST_CONTENT_THRESHOLD } from '../lib/virtualList'
 
@@ -67,12 +74,6 @@ const router = useRouter()
 const { mdAndUp } = useDisplay()
 const rowMenu = useRowMenu<string>()
 
-const files = ref<LibraryFile[]>([])
-const loading = ref(false)
-// 列表整块没读出来时：就地换成 BaseLoadError + 重试（docs/design-system.md §3.10），
-// 不再是一行裸红字。`loadReason` 是服务端那句真实原因，有就照原样显示。
-const loadFailed = ref(false)
-const loadReason = ref('')
 const actionError = ref('')
 const busy = ref('')
 const uploading = ref(false)
@@ -81,40 +82,6 @@ const confirming = ref<LibraryFile | LibraryFolder | null>(null)
 const replacing = ref<{ target: LibraryFile; file: File } | null>(null)
 // 同一个名字被替换以后，预览要重新读：换一次，这个数加一。
 const revision = ref(0)
-// 文件那一列自己的滚动容器（`.library__list` 上写着 overflow-y: auto）。行数过门槛
-// 时交给 VirtualList，得把这份容器递给它——见 lib/virtualList.ts 的门槛那段。
-const listEl = ref<HTMLElement | null>(null)
-
-// ---- 读 --------------------------------------------------------------------
-
-async function load() {
-  const projectId = props.projectId
-  loading.value = true
-  loadFailed.value = false
-  loadReason.value = ''
-  try {
-    const listed = await listProjectLibrary(projectId)
-    if (props.projectId !== projectId) return
-    files.value = listed.data
-  } catch (e) {
-    if (props.projectId !== projectId) return
-    loadFailed.value = true
-    loadReason.value = e instanceof Error ? e.message : ''
-  } finally {
-    if (props.projectId === projectId) loading.value = false
-  }
-}
-
-watch(
-  () => props.projectId,
-  () => {
-    files.value = []
-    confirming.value = null
-    actionError.value = ''
-    void load()
-  },
-  { immediate: true }
-)
 
 // ---- 找：按名字、按类型 -------------------------------------------------------
 
@@ -125,13 +92,6 @@ function clearFilters() {
   query.value = ''
   kind.value = 'all'
 }
-const shown = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  return files.value.filter(
-    (file) => (kind.value === 'all' || kindOf(file.path) === kind.value) && (!q || file.path.toLowerCase().includes(q))
-  )
-})
-
 // ---- 文档：和文件摆进同一张列表，最近改过的在前 ------------------------------------
 
 const docs = useLibraryDocuments(
@@ -139,32 +99,26 @@ const docs = useLibraryDocuments(
   () => query.value
 )
 const workspace = useWorkspaceStore()
-type Entry = { key: string; at: number } & (
-  | { doc: ProjectDocument; file?: never; folder?: never }
-  | { file: LibraryFile; doc?: never; folder?: never }
-  | { folder: LibraryFolder; doc?: never; file?: never }
-)
 const searching = computed(() => !!query.value.trim())
 // 一层一层地看：不搜也不筛的时候。
 const browsing = computed(() => !searching.value && kind.value === 'all')
 const dir = computed(() => (typeof route.query.dir === 'string' ? route.query.dir : ''))
-const entries = computed<Entry[]>(() => {
-  const fileRow = (file: LibraryFile): Entry => ({ key: `file:${file.path}`, at: file.modified * 1000, file })
-  if (!browsing.value) {
-    // 找的时候文档按正文找，结果在上面那两组里；这张表只剩文件名对得上的文件。
-    const rows = shown.value.map(fileRow)
-    if (!searching.value && kind.value === 'doc')
-      rows.push(...docs.documents.value.map((doc) => ({ key: `doc:${doc.id}`, at: Date.parse(doc.updated_at), doc })))
-    return rows.sort((a, b) => b.at - a.at)
+// 文件那一列自己的滚动容器（`.library__list` 上写着 overflow-y: auto）：滚到离底不远
+// 就取下一页；行数过门槛时也交给 VirtualList——见 lib/virtualList.ts 的门槛那段。
+const listEl = ref<HTMLElement | null>(null)
+const pages = useLibraryPages(
+  () => props.projectId,
+  () => ({ dir: browsing.value ? dir.value : '', q: query.value, kind: kind.value }),
+  listEl
+)
+const { rows: entries, loading, loadFailed, loadReason } = pages
+watch(
+  () => props.projectId,
+  () => {
+    confirming.value = null
+    actionError.value = ''
   }
-  const here = folderListing(files.value, dir.value)
-  const rows = here.files.map(fileRow)
-  // 文档没有文件夹，摆在最上层。
-  if (!dir.value)
-    rows.push(...docs.documents.value.map((doc) => ({ key: `doc:${doc.id}`, at: Date.parse(doc.updated_at), doc })))
-  const folders = here.folders.map((folder) => ({ key: `dir:${folder.path}`, at: folder.modified * 1000, folder }))
-  return [...folders, ...rows.sort((a, b) => b.at - a.at)]
-})
+)
 const inFolder = computed(() => browsing.value && !!dir.value)
 
 function goTo(path: string) {
@@ -177,12 +131,14 @@ function goTo(path: string) {
 function fileName(file: LibraryFile): string {
   return browsing.value ? leafOf(file.path) : file.path
 }
-const anything = computed(() => files.value.length > 0 || docs.documents.value.length > 0)
+// 搜索框和筛选摆不摆：最上层取完了也什么都没有、又没在找的时候不摆。取的过程中照
+// 摆，换一次条件不该让搜索框闪一下。
+const anything = computed(() => !(browsing.value && !dir.value && pages.exhausted.value && !entries.value.length))
 
 function docName(doc: { title: string | null }): string {
   return doc.title || t('work.room.doc.untitled')
 }
-function docMeta(doc: ProjectDocument): string {
+function docMeta(doc: ListedDocument): string {
   const row = workspace.members.find((m) => m.user_handle === doc.author)
   const who = isAgentHandle(doc.author) ? workspace.agentName : memberName(row) || doc.author
   return t('work.library.docMeta', { who, when: relTime(doc.updated_at) })
@@ -191,7 +147,7 @@ function docMeta(doc: ProjectDocument): string {
 const { selectedDocId, openDocument, openRoom, openDoc, closeDoc, titled } = useOpenLibraryDocument(
   () => props.projectId,
   () => props.docId,
-  docs,
+  { about: docs.about, renamed: pages.renameDoc },
   (message) => (actionError.value = message)
 )
 
@@ -200,6 +156,7 @@ async function make(copyOf?: string) {
   actionError.value = ''
   try {
     openDoc(await docs.make(copyOf))
+    pages.reset()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.newDocFailed')
   }
@@ -213,13 +170,14 @@ async function removeDoc() {
   actionError.value = ''
   try {
     await docs.remove(doc.id)
+    pages.drop((row) => row.doc?.id === doc.id)
     if (selectedDocId.value === doc.id)
       void router.replace({ name: 'project-library', params: { projectId: props.projectId } })
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
   }
 }
-function docActions(doc: ProjectDocument): MenuAction[] {
+function docActions(doc: ListedDocument): MenuAction[] {
   return [
     {
       key: 'delete',
@@ -234,7 +192,26 @@ function docActions(doc: ProjectDocument): MenuAction[] {
 // ---- 看哪一份 ----------------------------------------------------------------
 
 const selectedPath = computed(() => (typeof route.query.file === 'string' ? route.query.file : ''))
-const selected = computed(() => files.value.find((file) => file.path === selectedPath.value) ?? null)
+// 地址上点名的那一份：已经取回来的那几页里有就用它，没有就单独问一次。
+const fetched = ref<LibraryFile | null>(null)
+const selected = computed(
+  () =>
+    entries.value.find((row) => row.file?.path === selectedPath.value)?.file ??
+    (fetched.value?.path === selectedPath.value ? fetched.value : null)
+)
+watch(
+  [selectedPath, () => props.projectId, revision],
+  async ([path, projectId]) => {
+    if (!path || entries.value.some((row) => row.file?.path === path)) return
+    try {
+      const found = await getLibraryFile(projectId, path)
+      if (selectedPath.value === path) fetched.value = found
+    } catch {
+      // 地址上那一份已经不在了：右边那一栏不摆，列表照常。
+    }
+  },
+  { immediate: true }
+)
 
 function open(file: LibraryFile) {
   const next = { query: { ...route.query, file: file.path } }
@@ -293,7 +270,7 @@ async function upload(list: File[]) {
   } finally {
     uploading.value = false
     if (done) toast(t('work.library.uploaded', { n: done }))
-    await load()
+    pages.reset()
   }
 }
 
@@ -331,7 +308,7 @@ async function replace() {
     await replaceLibraryFile(props.projectId, pending.target.path, pending.file)
     revision.value++
     toast(t('work.library.replacedDone'))
-    await load()
+    pages.reset()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.replaceFailed')
   } finally {
@@ -344,7 +321,7 @@ const versionsOf = ref<string | null>(null)
 function onRestored(_path: string, version: number) {
   revision.value++
   toast(t('work.library.restoredDone', { n: version }))
-  void load()
+  pages.reset()
 }
 
 async function download(file: LibraryFile) {
@@ -369,7 +346,7 @@ async function remove(target: LibraryFile | LibraryFolder) {
   const gone = (path: string) => path === target.path || path.startsWith(`${target.path}/`)
   try {
     await deleteLibraryFile(props.projectId, target.path)
-    files.value = files.value.filter((f) => !gone(f.path))
+    pages.drop((row) => gone(row.file?.path ?? row.folder?.path ?? ''))
     if (gone(selectedPath.value)) close()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('work.library.deleteFailed')
@@ -383,11 +360,10 @@ async function remove(target: LibraryFile | LibraryFolder) {
 const naming = useLibraryNaming({
   projectId: () => props.projectId,
   dir: () => dir.value,
-  files: () => files.value,
   goTo,
   opened: () => selectedPath.value,
   reopen: (path) => void router.replace({ query: { ...route.query, file: path } }),
-  reload: load,
+  reload: async () => pages.reset(),
 })
 
 function folderActions(folder: LibraryFolder): MenuAction[] {
@@ -526,7 +502,7 @@ function folderMeta(folder: LibraryFolder): string {
 // 行的身份（和 v-for 的 key 同义）：路径。同名不覆盖，所以路径唯一。写成具名函数而
 // 不是模板里的箭头：模板里那个箭头参数没有类型来源，strict 下会报隐式 any。
 function entryKey(row: unknown): string {
-  return (row as Entry).key
+  return (row as LibraryRow).key
 }
 
 function read(file: LibraryFile) {
@@ -569,7 +545,7 @@ function read(file: LibraryFile) {
           class="library__load-error"
           :title="t('work.library.loadError')"
           :error="loadReason || null"
-          @retry="load"
+          @retry="pages.reset()"
         />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
 
@@ -602,7 +578,12 @@ function read(file: LibraryFile) {
 
         <LibraryCrumbs v-if="inFolder" :dir="dir" :root="t('navigation.project.library')" @go="goTo" />
 
-        <div v-if="loading && !anything" class="py-8 text-center" role="status" :aria-label="t('work.library.loading')">
+        <div
+          v-if="loading && !entries.length"
+          class="py-8 text-center"
+          role="status"
+          :aria-label="t('work.library.loading')"
+        >
           <v-progress-circular indeterminate size="28" color="primary" />
         </div>
 
@@ -616,7 +597,7 @@ function read(file: LibraryFile) {
           @keep="make"
         />
 
-        <ul v-if="entries.length && !(loading && !anything)" class="library__rows">
+        <ul v-if="entries.length" class="library__rows">
           <!-- Long libraries go through VirtualList: past VIRTUAL_LIST_CONTENT_THRESHOLD
                (lib/virtualList.ts) only the rows in view stay mounted, below it this is
                the plain list it always was. `item-as="li"` keeps the ul > li structure
@@ -728,7 +709,8 @@ function read(file: LibraryFile) {
              distinct from "no files yet", and offer one-click clear (§8.1). -->
         <BaseEmptyState
           v-else-if="
-            anything &&
+            !browsing &&
+            !loading &&
             !(searching && docs.searching.value) &&
             !(searching && (docs.found.value?.library.length || docs.found.value?.rooms.length))
           "
@@ -746,6 +728,14 @@ function read(file: LibraryFile) {
           class="library__empty"
           :title="t('work.library.empty')"
         />
+        <div
+          v-if="loading && entries.length"
+          class="py-4 text-center"
+          role="status"
+          :aria-label="t('work.library.loading')"
+        >
+          <v-progress-circular indeterminate size="20" color="primary" />
+        </div>
       </section>
 
       <!-- 这一份：桌面上在右边一栏，手机上是整一页。 -->

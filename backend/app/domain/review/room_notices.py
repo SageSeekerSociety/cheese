@@ -16,6 +16,23 @@ note、以及要不要把某个人叫起来。它们原先都是 `services.py` �
 说什么、说到什么程度、以及「同一件事不重复说」不在这一层：note 的码在
 `notes.py`，提示统一契约（meta / detail / severity）在 `agent/platform_notices.py`，
 内容签名在 `pr_signals.py`。这里只把已经定好的事实说出去。
+
+## 卡的结局写在最后一句里，等的话在决定时一起结掉
+
+一张卡等待期间的话有好几句（递卡、检查全绿、机器推不动），每一句都投给验收人，
+也都在他的收件箱里说着「等你」。卡一有决定，这几句就都不成立了 —— 而它们还各
+自躺着，人只能自己去点「已读」。`_settle_the_card` 就是那次决定带来的收尾，由
+让卡离开验收人手上的那几处调用（采纳、驳回、作废、归档）。
+
+这是两半合成的一件事，各自在一边：**说**的时候（`_announce_filed`、
+`_tell_the_reviewer` 里等谁动手的那几句）把卡号捎上（`about_card`），**决定**的
+时候按卡号收尾。这几句话各自投出去、各自躺在收件箱里，卡号是它们之间唯一的共同
+点（`delivery/ledger.settle_card`）。
+
+说**结局**的那几句不带卡号：`_notify_merge_result` 的合了/作废了，以及
+`_tell_the_reviewer` 里说 PR 被关的那条 —— 它们是这个决定**说完之后**才要说的话，
+这一刻把「合了」标成已读，等于它刚发出去就消失。写调用点时看一句话是「等你」还
+是「结局」。
 """
 
 from __future__ import annotations
@@ -40,6 +57,9 @@ from app.domain.agent.platform_notices import (
     notice,
 )
 from app.domain.delivery.addressing import Event
+from app.domain.delivery.agent import record_task_instruction
+from app.domain.delivery.ledger import DeliveryEvent, settle_card
+from app.domain.notification.models import NotificationType
 from app.domain.project import artifacts
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
@@ -107,6 +127,7 @@ async def _tell_the_reviewer(
     *,
     meta: dict,
     also: Sequence[str] = (),
+    about_card: uuid.UUID | None = None,
 ) -> None:
     """房间里说这一句，并通知这张卡的验收人（`also` 再加几个人）。
 
@@ -124,6 +145,9 @@ async def _tell_the_reviewer(
     回滚就当这一拍没发生过，下一拍重新发现同一件事会再说一次，所以什么都不会
     丢。那几条**已经在 GitHub 上发生了**的结局（合了、被拒了）是另一回事：它
     们的事实不会重来，所以继续走新 session 的重试。
+
+    `about_card` 填一句话是不是「等你动手」那一类：是就填卡的 id，卡一有决定它
+    就从收件箱里消失（`_settle_the_card`）；说结局的那几句不填。
     """
     await announce(
         session,
@@ -133,11 +157,29 @@ async def _tell_the_reviewer(
         meta={"source": "accept", **meta},
         author="accept",
         points_at=Event(reviewers=(card.reviewer_handle, *also)),
+        about_card=about_card,
     )
 
 
+async def _settle_the_card(
+    session: AsyncSession, card: AcceptCard, outcome: str
+) -> None:
+    """卡有了决定：等它的那几句话一起结掉，结局记在它们身上。
+
+    `outcome` 说的是这次决定是什么（`accepted` / `rejected` / `voided` /
+    `archived`）—— 并进 payload，通知那一侧据此说现在的话：一条说过「等你」
+    的提醒，办完之后不该还这么说。结的是**已经投出去**的那几条（`settle_card`
+    按卡号找，见模块说明），所以调用点不必先问「卡上有没有积着话」，没有就是
+    空转。
+
+    由让卡离开验收人手上的那几处调用：采纳、驳回、作废、归档。别的地方改
+    `card.status` 不代表卡不再等人 —— 改验收人就不是，卡只是换到别人手上。
+    """
+    await settle_card(session, card.id, {"outcome": outcome})
+
+
 async def _announce_filed(
-    session: AsyncSession, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
+    session: AsyncSession, topic: Topic, card: AcceptCard, task: Task
 ) -> None:
     """递卡说一声，并通知等着这件事的两个人。
 
@@ -152,6 +194,12 @@ async def _announce_filed(
 
     房间里那一行用第三人称：一屋子人都看得见它，而「待你验收」只对其中一个人
     成立。改动主题（最长 72 字）进 `detail`，房间里那一行保持一行。
+
+    那一行点的是任务的名字，不是产物的：交合并时产物就是项目的仓库，名字是项目
+    名，一个频道里每张卡都会念同一个名字，读的人分不出递上来的是哪一件。
+
+    这一句是「等你」那一类的开头：卡号随它一起投出去，卡一有决定它就一并被结掉
+    （`about_card`，见模块说明）。
     """
     detail = "\n\n".join(
         part
@@ -162,7 +210,7 @@ async def _announce_filed(
         session,
         place_id=topic.id,
         task_id=task.id,
-        content=say("cardFiled", artifact=artifact, reviewer=card.reviewer_handle),
+        content=say("cardFiled", task=task.title, reviewer=card.reviewer_handle),
         meta=notice(
             EVENT_CARD_FILED,
             severity=SEVERITY_INFO,
@@ -174,6 +222,7 @@ async def _announce_filed(
             reviewers=(card.reviewer_handle,),
             reporter=task.reporter_handle,
         ),
+        about_card=card.id,
     )
 
 
@@ -239,6 +288,7 @@ async def _notify_ready(session: AsyncSession, card: AcceptCard, topic: Topic) -
             detail=say("acceptReadyDetail", url=card.pr_url or ""),
             detail_label=say("labelNextStep"),
         ),
+        about_card=card.id,
     )
     ledger.record(pr_signals.NudgeKind.ready, signature)
     card.nudge_state = ledger.dump()
@@ -284,6 +334,7 @@ async def _note_needs_human(
             detail=say("mergeWithheldDetail", reason=reason, why=why, url=card.pr_url),
             detail_label=say("labelReason"),
         ),
+        about_card=card.id,
     )
 
 
@@ -315,9 +366,6 @@ async def _record_task_nudge(
     session: AsyncSession, *, topic, task, content, headline, meta
 ):
     """Commit the task event and parent delivery with the source state."""
-    from app.domain.delivery.agent import record_task_instruction
-    from app.domain.delivery.ledger import DeliveryEvent
-    from app.domain.notification.models import NotificationType
 
     block = await announce(
         session,

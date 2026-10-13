@@ -29,13 +29,12 @@ Handing a topic to a different agent therefore destroys nothing — the new agen
 looks up a key that has no row and starts fresh, and handing it back finds the
 old row still there.
 
-A row also carries WHERE this conversation's process runs, and a copy of the
-work computer it was given. 一个话题一个容器（2026-09-28 决定）：一间房只有一条
-算力选择，房间里的会话都工作在它算出来的那台机器上；一个任务没有自己的选择时也用
-它所在房间的那一项，有就用自己的（``tasks.compute_config``）。所以那一列
-（``execution_request`` / ``work_lease``）是那项选择的副本，解析的时候问的是选择
-本身（``machine/session_work._attempt``）。进程在哪台会话机上仍然是这条会话自己的
-事（``runtime_location``）。
+A row also carries WHERE this conversation's process runs, and the machine its
+work was placed on (``execution_request`` / ``work_lease``). Which execution
+environment that placement follows is the agent's own, kept per (conversation,
+agent) in ``agent_environments``; a room, a task or a project holds only the
+default a new agent takes (``machine/environments.environment_of``). 进程在哪
+台会话机上仍然是这条会话自己的事（``runtime_location``）。
 """
 
 import uuid
@@ -43,6 +42,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import JSON, DateTime, ForeignKey, Index, String
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -51,6 +51,11 @@ from app.domain.common import Timestamps, UuidPk
 # The registry `conversation_id` points at: mapped wherever a session is, so the
 # foreign key resolves in a process that never imports `app.models`.
 from app.domain.conversation.models import Conversation  # noqa: F401
+
+#: Set in a session's ``execution_request`` when its cloud sandbox was destroyed
+#: (idle, or given up with its host). Cleared by the first tool call that lands
+#: in a new one; until then the room's lease still names the machine it was on.
+LOST_KEY = "sandbox_lost"
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,3 +172,36 @@ class AgentSession(UuidPk, Timestamps, Base):
             runtime=location.get("runtime") or {},
             lease=self.work_lease,
         )
+
+
+class AgentEnvironment(Base):
+    """The execution environment one agent works in, in one conversation
+    (``agent.environment``): which sandbox spec, or which self-hosted machine.
+
+    Kept beside the session rows rather than on them: a session row is keyed by
+    harness too, so a change of the project's harness opens a new row, and the
+    agent's environment is its own whichever harness runs it. Written the first
+    time the agent needs one (from the task's, room's or project's default) and
+    whenever someone changes it; read on every tool call that needs hands
+    (``machine/session_work``).
+    """
+
+    __tablename__ = "agent_environments"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_agent_environments_conversation_id",
+        ),
+        primary_key=True,
+    )
+    agent_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    environment: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Who chose it, as an actor (``identity.actor.Actor``): a sandbox on the
+    # platform's machines is charged to the project, and the platform records
+    # who asked for it. None when it came from a default.
+    chosen_by: Mapped[dict | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

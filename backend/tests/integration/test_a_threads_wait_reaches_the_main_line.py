@@ -5,7 +5,7 @@ it is answering. A record of the channel itself is not told twice."""
 import uuid
 
 from app.domain.agent.run_records import record_now
-from tests.integration.conftest import chat_ws_url, in_thread, post_project
+from tests.integration.conftest import in_thread, post_project, room_socket
 
 
 def _until(ws, predicate) -> dict:
@@ -31,7 +31,7 @@ def test_a_threads_queue_reaches_the_main_line(client):
             )
         )
 
-    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+    with room_socket(client, room, "alice") as ws:
         keep(room, "主线自己的")
         keep(thread, "支线里的")
         said = _until(

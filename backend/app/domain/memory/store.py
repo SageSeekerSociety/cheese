@@ -20,12 +20,8 @@ from typing import Protocol
 from sqlalchemy import ColumnElement, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.memory.models import (
-    MemoryEntry,
-    MemoryLayer,
-    MemoryScope,
-    user_scope_about,
-)
+from app.domain.memory.models import MemoryEntry, MemoryLayer, user_scope_about
+from app.domain.memory.scopes import MemoryScope
 
 
 def live_entries() -> ColumnElement[bool]:

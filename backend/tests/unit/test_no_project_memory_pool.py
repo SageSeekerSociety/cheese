@@ -7,7 +7,7 @@ tests must use the remaining instance-owned pools.
 import ast
 import pathlib
 
-from app.domain.memory.models import MemoryScope
+from app.domain.memory.scopes import MemoryScope
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
 
@@ -51,7 +51,7 @@ def test_no_product_code_reads_or_writes_the_project_pool() -> None:
     assert not offenders, (
         "这些地方还在读写项目记忆池：\n  "
         + "\n  ".join(offenders)
-        + "\n\n没有项目记忆池（结论 7）。所有人都该看见的项目目标、范围写进项目"
-        "总览实况文档的「项目是什么」一节；一个实例自己学到的写进它自己的池"
+        + "\n\n没有项目记忆池（结论 7）。所有人都该看见的目标、时间和不做什么写进"
+        "项目目标；一个实例自己学到的写进它自己的池"
         "（`memory_pool`）。"
     )

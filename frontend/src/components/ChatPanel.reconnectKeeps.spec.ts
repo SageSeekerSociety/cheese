@@ -10,18 +10,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listBlocks = vi.fn()
 
+vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
+// 重连之后，置顶和支线那几行也要重读一次（断线期间它们的通知丢了）：这里都没有。
+vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
+vi.mock('@/api/threads', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/threads')>()),
+  listThreads: async () => [],
+}))
+vi.mock('../lib/libraryApi', async () => ({
+  ...(await vi.importActual<typeof import('../lib/libraryApi')>('../lib/libraryApi')),
+  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+}))
 vi.mock('@/me', () => ({ myHandle: () => 'me', myId: () => '1' }))
 vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    listProjectLibrary: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listTopicMembers: vi
       .fn()
       .mockResolvedValue({ data: [{ member_handle: 'cheese-aaaa11112222', name: 'Kimi', agent: true }] }),
     listRoomTasks: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...args: unknown[]) => listBlocks(...args),
-    chatWsUrl: () => 'ws://test/chat',
+    // 重连之后这个房间这一行也重读一次（断线期间的改名、归档帧丢了）。
+    getTopic: vi.fn(async (id: string) => ({ ...topic, id })),
   }
 })
 

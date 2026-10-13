@@ -66,9 +66,9 @@
         <button type="button" class="account-link" @click="emit('toggle')">
           {{ codeType === 'totp' ? t('account.twoFactor.useBackup') : t('account.twoFactor.useTotp') }}
         </button>
-        <router-link :to="backTo" class="account-link account-link--quiet">
+        <NavLink :to="backTo" class="account-link account-link--quiet">
           {{ t('account.backToSignIn') }}
-        </router-link>
+        </NavLink>
       </div>
     </v-form>
 
@@ -92,6 +92,7 @@ import type { NavTarget } from '@/lib/navTarget'
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 defineProps<{

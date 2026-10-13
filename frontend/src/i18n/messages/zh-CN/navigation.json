@@ -11,6 +11,7 @@
     "general": "综合",
     "routines": "定时与触发",
     "skills": "技能",
+    "channelFiles": "频道文件",
     "pages": "项目页面",
     "overview": "总览",
     "tasks": "全部任务"
@@ -28,7 +29,9 @@
     "unread": "帮助与反馈，有未读更新",
     "center": "反馈中心",
     "mine": "我的反馈",
-    "admin": "管理后台"
+    "admin": "管理后台",
+    "guide": "新手引导",
+    "tour": "界面导览"
   },
   "admin": {
     "queue": "反馈",

@@ -1,5 +1,5 @@
 // 支线：主线上一条消息下面的回复，自成一段对话。
-import type { Block } from '../cx_types'
+import type { Block, RoomTask } from '../cx_types'
 
 /** 支线里最后说的一句：谁、说了什么（前两行够用的长度）、什么时候。 */
 export interface ThreadReply {
@@ -28,6 +28,8 @@ export interface ThreadSummary {
   tasks: ThreadTask[]
   /** 最后一条回复之后，AI 队友在这条支线里的一轮出错了。 */
   failed?: boolean
+  /** 那一轮为什么出错：`credits_exhausted` 是额度用完，重试没有用。 */
+  failed_code?: string | null
   /** 此刻在这条支线里有一轮在跑的 AI 队友（handle）。只在主线那一行上有。 */
   replying?: string[]
 }
@@ -64,5 +66,21 @@ export interface ThreadActivityFrame {
 declare module '../cx_types' {
   interface Block {
     thread?: ThreadSummary | null
+  }
+}
+
+// `GET /topics/{频道}/blocks` 在一块上带着它那几件任务：从这条消息拆出去的，或者这一行
+// 说在这里开始的那一件（composables/useTimelineTasks）。
+declare module '../cx_types' {
+  interface Block {
+    tasks?: RoomTask[]
+  }
+}
+
+// `GET /topics` 的每一行带着侧栏挂在它下面的任务：和我有关的几件（最多五件），和这个
+// 频道进行中的一共几件（views/workspace/ProjectSidebar）。
+declare module '../cx_types' {
+  interface Topic {
+    my_tasks?: { shown: RoomTask[]; open: number }
   }
 }

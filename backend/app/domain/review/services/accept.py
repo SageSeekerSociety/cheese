@@ -28,8 +28,11 @@ from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
-    from app.domain.review.github_pr import PullRequestStatus
+    from app.domain.review.github_pr_status import PullRequestStatus
 
+from urllib.parse import urlsplit
+
+from app.domain.project.protection import branch_protection_of
 from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     _ACCEPT_NO_BRANCH_PREFIX,
@@ -147,6 +150,8 @@ async def _accept_discussion(
     await self._repo.add_approval(card.id, decided_by)
     now = datetime.now(UTC)
     card.status = AcceptStatus.accepted
+    # 卡上再没有等人动手的事：收件箱里说着「等你」的那几句一起收掉。
+    await self._settle_the_card(card, "accepted")
     card.decided_by = decided_by
     card.decided_at = now
     notes.clear(card)
@@ -163,8 +168,8 @@ async def _pr_repo_of(
     """(owner, repo) the card's PR lives in — from the card when recorded,
     else resolved from the project's upstream and backfilled onto the card
     (pr_publish records only pr_number/pr_url at filing time)."""
-    from urllib.parse import urlsplit
 
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project, renamed_from
 
     binding = await binding_for_project(topic.project_id, self._session)
@@ -225,6 +230,7 @@ async def _sync_task_dependency_target(
     *,
     drop_dependency: bool = False,
 ) -> bool:
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import default_branch
 
     if (
@@ -271,11 +277,12 @@ async def _pr_verdict(
     the poller's event table reads facts the verdict may have folded away:
     a conflicted PR is `dirty` no matter what its checks say, but a red
     check on it is still 芝士's to fix and must still reach it)."""
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import default_branch
-    from app.domain.project.protection import branch_protection_of
 
     project = await self._projects.get(topic.project_id)
     protection = branch_protection_of(project)
+    # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
     binding = await binding_for_project(topic.project_id, self._session)
@@ -393,7 +400,6 @@ async def _dismiss_stale_accept(
 
     通知投给验收人和**被作废的那几票的主人**：重新投一次只有投票的人能做，
     而这句话已经点了他们的名字。"""
-    from app.domain.project.protection import branch_protection_of
 
     project = await self._projects.get(topic.project_id)
     if not branch_protection_of(project).dismiss_stale:
@@ -461,6 +467,9 @@ async def _void_closed_pr_card(
         "平台自动作废了这次审阅。要继续交付，重新提交审阅。"
     )
     card.status = AcceptStatus.revoked
+    # 先结掉等人动手的那几句，再说这次结局：下面这一句正是「结局」，不带卡号，
+    # 不会被自己刚说的话收进「已读」。
+    await self._settle_the_card(card, "voided")
     notes.record(card, notes.NoteCode.voided, archive.prefix_note(card.note, headline))
     card.decided_at = card.decided_at or datetime.now(UTC)
     await self._session.flush()
@@ -506,6 +515,8 @@ async def _finish_pr_accept(
     """
     now = datetime.now(UTC)
     card.status = AcceptStatus.accepted
+    # 卡上再没有等人动手的事：收件箱里说着「等你」的那几句一起收掉。
+    await self._settle_the_card(card, "accepted")
     by = card.decided_by
     how = say("prMergedExternally") if merged_externally else say("prMerged")
     settled = f"PR #{card.pr_number} {how}：{card.pr_url}"

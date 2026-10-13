@@ -108,6 +108,7 @@ async function mount(url = '/projects/p1/artifacts/a1') {
       },
       { path: '/projects/:projectId/topics/:topicId', name: 'workspace-topic', component: Blank },
       { path: '/projects/:projectId/running', name: 'workspace-running', component: Blank },
+      { path: '/projects/:projectId/overview', name: 'workspace-overview', component: Blank },
     ],
   })
   await router.push(url)

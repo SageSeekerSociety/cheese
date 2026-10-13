@@ -33,6 +33,17 @@ class Ended:
     longer than ``SessionSpec.gone_after_s``."""
 
     reason: str
+    #: What its runner recorded of a process that ended before it ever
+    #: started, when it recorded that (`Driver.last_words`).
+    said: str = ""
+
+
+@dataclass(frozen=True)
+class Abandoned:
+    """A work whose session is gone with its inputs still unfinished, and
+    nobody left to report on them: the runner that would have written a
+    completion or a terminal is the process that died. Read with the work it
+    belongs to, so the room can end those inputs itself."""
 
 
 @dataclass(frozen=True)
@@ -103,6 +114,7 @@ class Read:
         AgentEvent
         | Writing
         | Ended
+        | Abandoned
         | Working
         | Received
         | Completed

@@ -48,9 +48,9 @@
             {{ t('account.verifyEmail.resend') }}
           </button>
         </span>
-        <router-link :to="backToSignIn" class="account-link account-link--quiet">
+        <NavLink :to="backToSignIn" class="account-link account-link--quiet">
           {{ t('account.backToSignIn') }}
-        </router-link>
+        </NavLink>
       </div>
     </v-form>
   </div>
@@ -59,6 +59,7 @@
 <script lang="ts" setup>
 import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
 
 defineProps<{

@@ -1,6 +1,7 @@
 """Task services — reading a room's threads, and the trees they work on."""
 
 import uuid
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select, update
@@ -9,7 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.block.models import Block
-from app.domain.room_task.checkouts import after_close
+from app.domain.identity.handles import names_a_person
+from app.domain.living_doc.services import Documents
+from app.domain.project.models import Project
+from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
     LockKind,
@@ -21,6 +25,7 @@ from app.domain.room_task.models import (
 )
 from app.domain.room_task.repositories import TaskRepository
 from app.domain.topic.models import Topic, TopicStatus
+from app.domain.user.services import user_by_handle
 
 
 class TaskService:
@@ -61,6 +66,13 @@ class TaskService:
 
     async def get(self, task_id: uuid.UUID) -> Task | None:
         return await self._repo.get(task_id)
+
+    async def tasks_of_rooms(
+        self, room_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, uuid.UUID]:
+        """{还在进行的那条活: 它所在的房间} —— 一个频道那一格认的是它全部的对话，
+        所以调用方要的是「这些房间里有哪些活」（`api/routes/topics._awaiting_an_answer`）。"""
+        return await self._repo.tasks_of_rooms(room_ids)
 
     async def record_author(self, task: Task, agent_handle: str) -> None:
         """Keep the first executing agent, including across concurrent opens."""
@@ -176,10 +188,59 @@ class TaskService:
         """
         return await self._repo.last_block_at_for_tasks(task_ids)
 
+    async def page_in_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        whose: str | None,
+        me: str,
+        limit: int,
+        before: tuple[datetime, uuid.UUID] | None,
+    ) -> tuple[list[tuple[Task, datetime]], bool]:
+        """One page of the project's tasks, as `TaskRepository.page_for_project`
+        reads it."""
+        return await self._repo.page_for_project(
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            whose=whose,
+            me=me,
+            limit=limit,
+            before=before,
+        )
+
+    async def counts_in_project(
+        self,
+        project_id: uuid.UUID,
+        *,
+        rooms: Collection[uuid.UUID],
+        status: str,
+        channel: uuid.UUID | None,
+        me: str,
+    ) -> dict[str, int]:
+        """The project's tasks counted by whose they are, as
+        `TaskRepository.counts_for_project` counts them."""
+        return await self._repo.counts_for_project(
+            project_id, rooms=rooms, status=status, channel=channel, me=me
+        )
+
     async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many open tasks each of these rooms has; a room with none is
         absent."""
         return await self._repo.open_counts(room_ids)
+
+    async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """How many tasks each of these rooms has underway (open, and not being
+        written up after its last merge); a room with none is absent."""
+        return await self._repo.underway_counts(room_ids)
+
+    async def underway_with(self, room_ids: list[uuid.UUID], person: str) -> list[Task]:
+        """The tasks underway in these rooms that ``person`` owns or helps on."""
+        return await self._repo.underway_with(room_ids, person)
 
     async def list_in_room(self, room_id: uuid.UUID) -> list[Task]:
         """Every piece of work this room has dispatched, oldest first.
@@ -227,8 +288,6 @@ class TaskService:
         contributor_handles: list[str],
     ) -> None:
         """Record declared human contributions after validating their accounts."""
-        from app.domain.identity.handles import names_a_person
-        from app.domain.user.services import user_by_handle
 
         contributors = list(dict.fromkeys(contributor_handles))
         for handle in contributors + ([reporter_handle] if reporter_handle else []):
@@ -243,26 +302,9 @@ class TaskService:
         task.contributor_handles = contributors
         await self._session.flush()
 
-    async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
-        """关闭任务 —— its owner or its own session says it is over; with a
-        `conclusion` it is done, without one it was put down.
-
-        Idempotent: closing a closed thread keeps the first `closed_at` — the
-        moment it stopped being live is a fact, not a re-statement of intent.
-        """
-        if conclusion is not None:
-            task.conclusion = conclusion
-        if task.status is not TaskStatus.closed:
-            task.status = TaskStatus.closed
-            task.closed_at = datetime.now(UTC)
-            after_close(self._session, task.room_id)
-        await self._session.flush()
-        return task
-
     async def ensure_document(self, task: Task) -> uuid.UUID:
         """The task's living document, created empty the first time it is
         asked for. The row is locked so two first asks make one document."""
-        from app.domain.living_doc.services import Documents
 
         locked = await self._session.scalar(
             select(Task)
@@ -294,9 +336,6 @@ class TaskService:
         submitted: the setting can change, and who a task was handed to for
         review is a fact about the moment it started.
         """
-        from app.domain.living_doc.services import Documents
-        from app.domain.project.models import Project
-        from app.domain.project.protection import branch_protection_of
 
         if task.started_at is not None:
             raise UnprocessableEntityError(say("taskStartedAlready"))
@@ -308,6 +347,9 @@ class TaskService:
         )
         if not reviewer:
             raise UnprocessableEntityError(say("reviewerRequired"))
+        # 审阅人定成采纳不了的人（协作模式下的 AI 队友），这件事的每一次交付都没人能收。
+        if not can_take_review(project, reviewer):
+            raise UnprocessableEntityError(say("reviewerNotAPerson", handle=reviewer))
         doc = (
             await Documents(self._session).get(task.document_id)
             if task.document_id is not None
@@ -376,6 +418,7 @@ class TaskService:
         title_source: TaskTitleSource = TaskTitleSource.human,
     ) -> Task:
         """Record a task's branch; its executor creates the worktree on its machine."""
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
         base = await default_branch(project_id, self._session)
@@ -413,6 +456,7 @@ class TaskService:
         made on a branch of its own, cut from the project's latest code, and
         opens a PR of its own. The machine moves the task's checkout onto it
         (`cheese worktree`), carrying what had not landed."""
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
         task.base_branch = await default_branch(task.project_id, self._session)
@@ -433,12 +477,18 @@ class TaskService:
         task.conclusion = None
         if task.branch_name is not None and task.delivered_head is not None:
             await self.next_step(task)
+        else:
+            # Closing the task closed its PR (`review.task_pr`) and kept its
+            # branch. Forgetting the PR lets the draft sweep open one for the
+            # branch again, or adopt the PR still open where that close failed.
+            task.pr_number = task.pr_url = None
         await self._session.flush()
         return task
 
     async def give_branch(self, task: Task) -> None:
         """The branch a task that arrived without one is worked on, cut from the
         project's default branch like a new task's."""
+        # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
         task.base_branch = await default_branch(task.project_id, self._session)
@@ -451,7 +501,15 @@ class TaskService:
         task.workspace_name = f"task_{task.id.hex[:8]}"
 
     async def threads_for_room(
-        self, room_id: uuid.UUID, *, limit: int | None = None
+        self,
+        room_id: uuid.UUID,
+        *,
+        limit: int | None = None,
+        status: str | None = None,
+        ids: Collection[uuid.UUID] | None = None,
+        origins: Collection[uuid.UUID] | None = None,
+        with_branch: bool = False,
+        latest: int | None = None,
     ) -> list[tuple[Task, list[Block]]]:
         """Every thread in this room, each with its conversation, oldest first.
 
@@ -466,10 +524,29 @@ class TaskService:
         missing — a task that exists and has not been talked in is a real
         answer, and dropping it would make the room's thread count depend on
         whether anyone had spoken yet.
+
+        `limit=0` is that rule at its smallest: every thread, no conversation.
+        A caller drawing a roster never reads a block, and the block query is
+        the one that costs — the whole room's history, or a window function
+        over it. Skipped outright rather than run and discarded.
+
+        The other keywords narrow which threads, as `TaskRepository.list_for_room`
+        says.
         """
-        tasks = await self._repo.list_for_room(room_id)
-        conversations = await self._repo.conversations_for_tasks(
-            [t.id for t in tasks], limit=limit
+        tasks = await self._repo.list_for_room(
+            room_id,
+            status=status,
+            ids=ids,
+            origins=origins,
+            with_branch=with_branch,
+            latest=latest,
+        )
+        conversations = (
+            {}
+            if limit == 0
+            else await self._repo.conversations_for_tasks(
+                [t.id for t in tasks], limit=limit
+            )
         )
         return [(task, conversations.get(task.id, [])) for task in tasks]
 
