@@ -480,7 +480,7 @@ def prepare(
     settings.update(
         skipDangerousModePermissionPrompt=True,
         enableArtifact=False,
-        attribution={"sessionUrl": False},
+        attribution={**settings.get("attribution", {}), "sessionUrl": False},
     )
     settings_path = directory / "settings.json"
     settings_path.write_text(json.dumps(settings))
