@@ -1444,6 +1444,7 @@
     "switchProject": "切换项目",
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
+    "noOtherChannels": "还没有别的频道",
     "workingTip": "{name}正在这里工作",
     "moreMembers": "+{count}",
     "allTasks": "全部任务",

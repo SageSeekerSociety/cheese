@@ -208,7 +208,8 @@ export const workspaceRoutes: RouteRecordRaw = {
       },
     },
     {
-      // 全部频道：项目里我能看到的频道，找、加入、新建。侧栏只列我加入的频道。
+      // 全部频道：项目里我能看到的频道，找、加入、新建（新建侧栏那颗 ＋ 也能开）。
+      // 侧栏只列我加入的频道。
       name: 'project-channels',
       path: 'channels',
       component: () => import('@/views/workspace/ChannelBrowse.vue'),

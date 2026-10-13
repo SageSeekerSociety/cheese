@@ -11439,7 +11439,11 @@ export interface paths {
          * @description 给这个地方起/改标题: a person renaming a channel or a task, or a task's
          *     own session naming it (`cheese_title`, only where the platform cannot).
          *
-         *     A channel is renamed by whoever manages it (`TopicMemberService.manages`).
+         *     A channel is renamed by anyone who can be in it: which channel is called what
+         *     is the room's own business, not its creator's alone. Being able to reach the
+         *     room at all is settled above (`authorize_topic`), which is the same answer a
+         *     reader of the channel gets — and an outsider to a private channel is still
+         *     told it does not exist.
          *
          *     A task's id names the task: a person taking part in it renames it, and that
          *     title is final; its own session's title the platform may still change

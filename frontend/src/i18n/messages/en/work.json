@@ -1444,6 +1444,7 @@
     "switchProject": "Switch project",
     "chooseProjectFirst": "Choose a project first",
     "topics": "Channels",
+    "noOtherChannels": "No other channels yet",
     "workingTip": "{name} is working here",
     "moreMembers": "+{count}",
     "allTasks": "All tasks",
