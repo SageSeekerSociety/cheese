@@ -68,10 +68,14 @@ def _room(client) -> tuple[str, str]:
     return data["id"], thread
 
 
-def _ask_in_a_turn(client, stub_hooks, monkeypatch, room, *, by="alice") -> dict:
-    """The agent asks inside the turn ``by``'s message started, and the turn ends."""
+def _ask_in_a_turn(
+    client, stub_hooks, monkeypatch, room, *, by="alice", to=None
+) -> dict:
+    """The agent asks inside the turn ``by``'s message started, and the turn ends.
+    ``to`` is whom it asks; left out, ``by``."""
+    body = QUESTION if to is None else {**QUESTION, "to": to}
     with active_ask(client, stub_hooks, monkeypatch, room, actor=by) as headers:
-        response = client.post(f"/topics/{room}/asks", json=QUESTION, headers=headers)
+        response = client.post(f"/topics/{room}/asks", json=body, headers=headers)
         assert response.status_code == 200, response.text
     wait_turn_idle(client, room)
     (question,) = response.json()["data"]["blocks"]
@@ -520,7 +524,9 @@ def test_the_question_takes_an_answer_again_after_one_is_taken_back(
     pid, room = _room(client)
     seed_user(client, "bob")
     join_project_team(client, pid, "bob")
-    question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
+    question = _ask_in_a_turn(
+        client, stub_hooks, monkeypatch, room, to=["alice", "bob"]
+    )
     _say(client, room, "alice", {"content": "按部门", "reply_to": question["id"]})
 
     _withdraw_and_settle(client, question["id"])

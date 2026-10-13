@@ -20,15 +20,19 @@
  * several, or everyone in the channel. The card says so above the options
  * (「问 @A @B」), with the same chips a message draws.
  *
+ * Only whoever may answer it can use the options, 「其他」 and the ✕: someone it
+ * asks, anyone in the channel when it asks everyone, and anyone when it asks
+ * nobody in particular (the server holds the same rule, `block.asked.may_answer`,
+ * for a click, a typed answer and a skip alike). Anyone else sees the options
+ * greyed out, without the ✕; the 「问 @…」 line above them says whom it waits on.
+ *
  * A person it asks can decline to answer: the ✕ beside the options skips it
  * for him. Nothing is said in the room; the question stops waiting on him, the
  * options go away for him only, and the others it asks still see them. When
  * everyone it names has skipped, nobody sees options any more and the agent
- * that asked is told; a question asked of everyone never ends that way. Only
- * whoever may answer sees the ✕ — someone it asks, or anyone when it asks
- * nobody in particular (the server holds the same rule). A skip is undone at
- * once, without a confirmation: it is his own, and undoing it only puts the
- * options back in front of him.
+ * that asked is told; a question asked of everyone never ends that way. A skip
+ * is undone at once, without a confirmation: it is his own, and undoing it only
+ * puts the options back in front of him.
  *
  * The one who answered can take it back: a question takes one answer, so a
  * misclick otherwise has no way out. That is the answerer's own line — nobody
@@ -84,8 +88,12 @@ const stacked = computed(() => options.value.some((option) => option.explain))
 // 只有自己答的那一条能撤回。题已经不再等回答（任务关了）也照给：撤回是回答的人
 // 一直有的权利，后端不看这两件事。
 const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer))
-// 跳过只给这道题在等的人：题点了名就是名单上的人，没点名就谁都行。
-const canSkip = computed(() => !!props.viewer && (asked.value.length === 0 || asked.value.includes(props.viewer)))
+// 点选项、写「其他」、跳过，都只给能回答这道题的人：点了名就是名单上的人，问所有人
+// 就是频道里谁都行（名单是问出口那一刻的人，后来进频道的也算），没点名也是谁都行。
+// 和服务端 `block.asked.may_answer` 同一条。
+const canAnswer = computed(
+  () => !!props.viewer && (asked.value.length === 0 || askedAll.value || asked.value.includes(props.viewer))
+)
 const confirming = ref(false)
 
 function confirmWithdraw() {
@@ -199,6 +207,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
             :key="option.text"
             type="button"
             class="ask-replies__option"
+            :disabled="!canAnswer"
             @click="emit('reply', label(option.text))"
           >
             <span class="ask-replies__text">{{ label(option.text) }}</span>
@@ -208,6 +217,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
           <button
             type="button"
             class="ask-replies__option ask-replies__other-toggle"
+            :disabled="!canAnswer"
             :aria-expanded="otherOpen"
             @click="toggleOther"
           >
@@ -230,7 +240,7 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
           </form>
         </div>
         <BaseButton
-          v-if="canSkip"
+          v-if="canAnswer"
           class="ask-replies__skip"
           kind="ghost"
           size="sm"
@@ -306,8 +316,20 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
   border-radius: var(--radius-md);
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
-.ask-replies__option:hover {
+.ask-replies__option:hover:not(:disabled) {
   background: var(--fill);
+}
+/* 问的不是看的人：选项照样读得到，只是降一档、点不动；上面那行「问 @…」说了在等谁。
+   和「其他」里那个空着的发送键同一种灰法。 */
+.ask-replies__option:disabled {
+  cursor: default;
+}
+.ask-replies__option:disabled .ask-replies__text {
+  color: var(--muted);
+}
+.ask-replies__option:disabled .ask-replies__explain,
+.ask-replies__option:disabled .ask-replies__tag {
+  color: var(--faint);
 }
 /* 选项和说明是模型写的，常带一个 URL 或一长串不断开的词：窄屏上它会撑出卡片。 */
 .ask-replies__text,

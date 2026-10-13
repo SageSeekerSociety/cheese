@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
-from app.domain.block.asked import Awaited, settled, skipped_by
+from app.domain.block.asked import Awaited, may_answer, settled, skipped_by
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.indexed_rows import (
     COALESCED_ROWS,
@@ -676,16 +676,20 @@ class BlockRepository:
         A reply to a question (`reply_to` — what clicking one of its options
         sends) answers that question, but only while it is unanswered: a
         question takes one answer, so a reply to one already answered records
-        nothing. A reply to any other message answers nothing.
+        nothing. Nor does a reply from someone who may not answer it
+        (`block.asked.may_answer`): it is talk about the question — a teammate
+        quoting it to say which option he would pick — posted like any other
+        message, not its answer. A reply to any other message answers nothing.
 
         A message that replies to nothing answers the open questions in its
-        conversation that wait on its author — asked of him (among others, or
-        of everyone), or of nobody in particular, and not skipped by him — and
-        that nobody has answered yet, but only when it is his first word since
-        they were asked: what he says after that is talk, not
-        his answer. It is the same reading as `_awaiting_an_answer`'s "spoke
-        after it was asked". ``first_word_only=False`` drops that last
-        condition, for a message the caller knows is addressed to an asker.
+        conversation its author may answer (`block.asked.may_answer`: asked of
+        him, among others, of everyone in the channel, or of nobody in
+        particular), that he has not skipped and that nobody has answered yet,
+        but only when it is his first word since they were asked: what he says
+        after that is talk, not his answer. It is the same reading as
+        `_awaiting_an_answer`'s "spoke after it was asked".
+        ``first_word_only=False`` drops that last condition, for a message the
+        caller knows is addressed to an asker.
         Whom it names is the caller's to weigh.
         """
         place = (Block.conversation_id == reply.conversation_id,)
@@ -701,7 +705,7 @@ class BlockRepository:
             # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
             # 经了结的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
             # `_awaiting_an_answer` 一致（`block.asked.settled`）。
-            if settled(parent.meta):
+            if settled(parent.meta) or not may_answer(parent.meta, reply.author):
                 return []
             return [parent]
         spoke_before = (
@@ -729,6 +733,7 @@ class BlockRepository:
                         func.to_jsonb(cast(reply.author, Text))
                     ),
                     cast(Block.meta, JSONB)["asked"] == func.jsonb_build_array(),
+                    cast(Block.meta, JSONB)["asked_all"].as_boolean().is_(True),
                 ),
                 Block.meta["answered"].as_string().is_(None),
                 Block.id != reply.id,
@@ -742,11 +747,14 @@ class BlockRepository:
             .execution_options(populate_existing=True)
         )
         # 了结了的不收（和 `_awaiting_an_answer` 的判据一致），他自己跳过的也不收：
-        # 跳过之后他说的话是说话，不是回答。
+        # 跳过之后他说的话是说话，不是回答。上面的 SQL 只是先筛一遍，谁能答由
+        # `may_answer` 定，和点选项、跳过同一条。
         return [
             block
             for block in (await self._session.scalars(stmt)).all()
-            if not settled(block.meta) and reply.author not in skipped_by(block.meta)
+            if may_answer(block.meta, reply.author)
+            and not settled(block.meta)
+            and reply.author not in skipped_by(block.meta)
         ]
 
     async def list_for_topic(

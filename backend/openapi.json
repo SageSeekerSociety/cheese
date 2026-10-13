@@ -7294,7 +7294,7 @@
           "blocks"
         ],
         "summary": "Skip Question",
-        "description": "Skip a question asked with quick replies: you will not answer it.\n\nOnly someone the question waits on can — whoever may answer it\n(`block.questions.waits_on`); anyone else is refused, and so is a question\nthat already has its answer. Nothing is said in the room. The question stops\nwaiting, as an answer would make it: it leaves that person's 待你回答 list,\nand its notice is settled. The agent that asked runs another turn told that\nthe question was skipped, so it stops waiting for an answer that is not\ncoming. ``DELETE /blocks/{block_id}/answer`` undoes it.",
+        "description": "Skip a question asked with quick replies: you will not answer it.\n\nOnly someone who may answer it can (`block.asked.may_answer`, the rule an\nanswer by option or in words is held to); anyone else is refused, and so\nis a question that already has its answer. Nothing is said in the room.\nThe question stops waiting, as an answer would make it: it leaves that\nperson's 待你回答 list, and its notice is settled. The agent that asked\nruns another turn told that the question was skipped, so it stops waiting\nfor an answer that is not coming. ``DELETE /blocks/{block_id}/answer`` undoes it.",
         "operationId": "skip_question_blocks__block_id__skip_post",
         "parameters": [
           {
@@ -45800,7 +45800,7 @@
           "topics"
         ],
         "summary": "Get Thread",
-        "description": "One 支线, and the message it hangs under.",
+        "description": "One 支线, the message it hangs under, and the seat of the AI teammate\nit is talking with (`thread_teammate`; null before anyone called one): the\none its composer offers to hand a message to.",
         "operationId": "get_thread_topics__topic_id__thread_get",
         "parameters": [
           {

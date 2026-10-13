@@ -2230,13 +2230,13 @@ export interface paths {
          * Skip Question
          * @description Skip a question asked with quick replies: you will not answer it.
          *
-         *     Only someone the question waits on can — whoever may answer it
-         *     (`block.questions.waits_on`); anyone else is refused, and so is a question
-         *     that already has its answer. Nothing is said in the room. The question stops
-         *     waiting, as an answer would make it: it leaves that person's 待你回答 list,
-         *     and its notice is settled. The agent that asked runs another turn told that
-         *     the question was skipped, so it stops waiting for an answer that is not
-         *     coming. ``DELETE /blocks/{block_id}/answer`` undoes it.
+         *     Only someone who may answer it can (`block.asked.may_answer`, the rule an
+         *     answer by option or in words is held to); anyone else is refused, and so
+         *     is a question that already has its answer. Nothing is said in the room.
+         *     The question stops waiting, as an answer would make it: it leaves that
+         *     person's 待你回答 list, and its notice is settled. The agent that asked
+         *     runs another turn told that the question was skipped, so it stops waiting
+         *     for an answer that is not coming. ``DELETE /blocks/{block_id}/answer`` undoes it.
          */
         post: operations["skip_question_blocks__block_id__skip_post"];
         delete?: never;
@@ -11493,7 +11493,9 @@ export interface paths {
         };
         /**
          * Get Thread
-         * @description One 支线, and the message it hangs under.
+         * @description One 支线, the message it hangs under, and the seat of the AI teammate
+         *     it is talking with (`thread_teammate`; null before anyone called one): the
+         *     one its composer offers to hand a message to.
          */
         get: operations["get_thread_topics__topic_id__thread_get"];
         put?: never;
