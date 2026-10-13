@@ -314,4 +314,35 @@ describe('技能面板的 409', () => {
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
     expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
   })
+
+  // 正常保存这一笔也会把版本顶一格：回来之后父组件那一行的 version 必须跟着变，
+  // 否则下一次保存还带旧 version —— 一改要点两次（浏览器里实证的毛病）。
+  it('正常保存之后，下一次保存带上翻过页的版本', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 })],
+      total: 1,
+    })
+    listSkillCatalog.mockResolvedValue({
+      data: [
+        { name: 'wolfram', description: '算' },
+        { name: 'documents', description: '文档' },
+      ],
+      total: 2,
+    })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [] })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    setAgentEditing.mockResolvedValue({ editing: null })
+    fetchSkillMarket.mockResolvedValue({ skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] })
+    updateProjectAgent.mockResolvedValue({ version: 2 })
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await fireEvent.click(await screen.findByRole('button', { name: /添加/ })) // 展开池子
+    await fireEvent.click(await screen.findByRole('button', { name: /文档/ })) // 加一颗：成功
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
+    await fireEvent.click(await screen.findByRole('button', { name: /文档/ })) // 再改一次
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
+    expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
+  })
 })

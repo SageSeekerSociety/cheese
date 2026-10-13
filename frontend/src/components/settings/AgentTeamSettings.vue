@@ -100,9 +100,13 @@ const skills = useAgentSkills(
   () => props.projectId,
   () => skillTarget.value,
   (message) => toast.error(message),
-  (agentId, list) => {
+  (agentId, list, version) => {
     const row = agents.value.find((a) => a.id === agentId)
-    if (row) row.configuration = { ...row.configuration, skills: list }
+    if (row) {
+      row.configuration = { ...row.configuration, skills: list }
+      // 这一笔把队友的版本顶了一格，就地跟着更新：下一次开面板/保存要带的就是它。
+      row.version = version
+    }
   },
   // 409：别人先写了。重读一遍，并把面板目标重指到新读回来的那一行 —— 名单
   // 刷新是整份换成新对象，skillTarget 不跟过去，下一次保存还带旧 version，只会再撞 409。

@@ -497,21 +497,12 @@ class ProjectService:
                 await agents.set_type(instance, protocol.default_role)
                 await self._session.flush()
             # 题目包自带的「一块 prompt + 一组 skill 名字」（#944）—— 建项目时进默认
-            # 队友的配置，和 `default_role` 落 preset 走同一条 configure。它是**题目**
-            # 给的，不是某个类型预设给的，所以不新造权限开关，只往既有配置上加。
+            # 队友的配置，和 `default_role` 走同一条 configure。它是**题目**给的，
+            # 不是某个类型预设给的，所以不新造权限开关，只往既有配置上加。
             if protocol.prompt or protocol.skills:
-                # agent_instance 自己要读 project.models：提到模块顶，project ↔
-                # agent_instance 就成 C3 环（同上面那份算力默认值）。
-                # deferred-import: keeps C3 acyclic (agent_instance reads project)
-                from app.domain.agent_instance.configuration import AgentConfiguration
-
-                config = AgentConfiguration.model_validate(instance.configuration or {})
-                config.body = "\n\n".join(
-                    part for part in (config.body, protocol.prompt) if part
+                await agents.apply_protocol(
+                    instance, prompt=protocol.prompt, skills=protocol.skills
                 )
-                # 去重、保序：题目列的 skill 与 preset 那份重叠时不重复带。
-                config.skills = list(dict.fromkeys([*config.skills, *protocol.skills]))
-                await agents.configure(instance, config)
         grants = await self._ledger.earmarks(project.id)
         if protocol.compute_credits > 0 and not any(
             grant.source_task_id == task_id for grant in grants

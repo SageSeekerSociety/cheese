@@ -547,7 +547,7 @@ layers =
     platform_stats : feature_stats : dashboard : project_progress : onboarding
     routine : task_quiet : admin : room_cleanup
     agent : agent_session : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
-    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas
+    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : machine_skill : skill_market
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
     common : day_windows : conversation : idempotency : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal

@@ -64,7 +64,7 @@ function agent(skills: string[]) {
 
 function skills(
   onError: (m: string) => void = () => {},
-  onSaved?: (id: string, s: string[]) => void,
+  onSaved?: (id: string, s: string[], version: number) => void,
   carried = ['wolfram'],
   onStale?: () => void
 ) {
@@ -200,7 +200,7 @@ describe('队友技能面板', () => {
       configuration: expect.objectContaining({ skills: ['wolfram', 'documents'] }),
       expected_version: 1,
     })
-    expect(saved).toHaveBeenCalledWith('a1', ['wolfram', 'documents'])
+    expect(saved).toHaveBeenCalledWith('a1', ['wolfram', 'documents'], 1)
   })
 
   it('落库失败就翻回去，并把原因说出去', async () => {

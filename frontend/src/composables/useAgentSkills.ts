@@ -54,7 +54,7 @@ export function useAgentSkills(
   projectId: () => string | null,
   agent: () => ProjectAgent | null,
   onError: (message: string) => void,
-  onSaved?: (agentId: string, skills: string[]) => void,
+  onSaved?: (agentId: string, skills: string[], version: number) => void,
   onStale?: () => void
 ) {
   const pool = ref<SkillItem[]>([])
@@ -181,13 +181,15 @@ export function useAgentSkills(
     carriedNames.value = next
     saving.value = true
     try {
-      await updateProjectAgent(pid, subject.id, {
+      const updated = await updateProjectAgent(pid, subject.id, {
         configuration: { ...subject.configuration, skills: next },
         // The version this panel was built from. Somebody saving in between makes
         // this one a 409 instead of a silent overwrite of their change.
         expected_version: subject.version,
       })
-      onSaved?.(subject.id, next)
+      // 这一笔把 version 顶了一格，而面板下一次保存还要靠它：把新值交给父组件，
+      // 否则父组件只更新了名单、留着旧 version，下一颗就白撞一次 409。
+      onSaved?.(subject.id, next, updated.version)
     } catch (e) {
       if (projectId() === pid && agent()?.id === subject.id) carriedNames.value = before
       if (e instanceof ApiError && e.status === 409) {
