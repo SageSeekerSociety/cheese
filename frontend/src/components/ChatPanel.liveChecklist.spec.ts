@@ -120,6 +120,7 @@ const turning = (view: ReturnType<typeof render>) => view.container.querySelecto
 
 async function scrollUp(view: ReturnType<typeof render>) {
   const pane = view.container.querySelector<HTMLElement>('.messages')!
+  pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
   pane.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
   await settle()

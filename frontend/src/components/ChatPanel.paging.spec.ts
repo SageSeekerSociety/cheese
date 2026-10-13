@@ -207,6 +207,7 @@ const shown = (container: Element) =>
 const olderLoader = (container: Element) => container.querySelector('[data-testid="chat-older-loader"]')
 
 function scrollToTop(pane: HTMLElement, m: Metrics) {
+  pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
   m.scrollTop = 0
   pane.dispatchEvent(new Event('scroll'))
 }
@@ -256,6 +257,7 @@ describe('往回翻历史', () => {
     listBlocks.mockImplementationOnce(async () => gate.promise)
     // A flick: the loader fires near the top, and the pane keeps gliding up
     // while the page is on its way.
+    pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
     m.scrollTop = 120
     pane.dispatchEvent(new Event('scroll'))
     await flush()

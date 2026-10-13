@@ -772,6 +772,8 @@
   "alertKindNotFromInbox": "This kind of notification isn't written from the project inbox",
   "alertRecipientOutside": "The recipient isn't in this project or channel",
   "deviceNotYours": "This device doesn't exist or isn't yours",
+  "modelServiceMachineOffline": "This device is offline. Set the custom model service once it is back online",
+  "modelServiceRefused": "The device did not save this model service: {reason}",
   "deviceTeamMemberOnly": "You're not a member of this team, so you can't register a device to it",
   "notTeamMember": "You're not a member of this team",
   "deviceNotFound": "This device doesn't exist",

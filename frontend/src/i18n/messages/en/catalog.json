@@ -1069,6 +1069,17 @@
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
     }
   },
+  "modelConnectionsView": {
+    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device.",
+    "s1": {
+      "name": "No connections",
+      "note": "Logged in on no device: the card says there are no model connections, and the custom model service button stays at its top right."
+    },
+    "s2": {
+      "name": "Removing on an offline device",
+      "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+    }
+  },
   "thisDeviceView": {
     "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
     "s1": {

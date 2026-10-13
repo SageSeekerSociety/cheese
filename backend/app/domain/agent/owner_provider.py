@@ -135,7 +135,9 @@ async def owners_machines(
     db, owner_user_id: int, kinds: frozenset[ConnectionKind]
 ) -> list[str]:
     """The owner's own machines with the platform's login of one of ``kinds``,
-    most recently confirmed first."""
+    most recently confirmed first. A login its owner removed is not one,
+    whatever the machine last said, until the machine has logged it out
+    (`owner_login.settle`)."""
     rows = await db.execute(
         select(
             DeviceRow.device_id,
@@ -151,6 +153,10 @@ async def owners_machines(
             DeviceRow.owner_user_id == owner_user_id,
             DeviceRow.supply == Supply.self_hosted,
             DeviceClaudeLoginRow.logged_in.is_(True),
+            # A backend that predates removals (the device-connection owner
+            # outlives an app release) writes `logged_in` back from the
+            # machine; this column it never touches.
+            DeviceClaudeLoginRow.revoked_at.is_(None),
         )
         .order_by(DeviceClaudeLoginRow.checked_at.desc())
     )

@@ -371,6 +371,8 @@
   "taskLandedNoPr": "「{title}」已采纳",
   "taskStepLanded": "「{title}」的这次交付已采纳 · PR #{pr}，任务继续进行",
   "taskStepLandedNoPr": "「{title}」的这次交付已采纳，任务继续进行",
+  "taskClosedUndelivered": "任务「{title}」采纳后还在做的工作过了期限仍没有结束：任务已关闭，这些工作已停下，没有交付",
+  "taskClosedUndeliveredDetail": "没有交付的工作：\n{items}",
   "taskReopened": "{actor} 重新打开了任务「{title}」",
   "threadArchivedWithRoom": "随所在频道「{room}」一同归档",
   "timedDelivery": "你请平台在这个时刻把它递给你",

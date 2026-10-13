@@ -548,6 +548,7 @@ async def _mark_task_merged(
         head=delivered_head,
         pr_number=card.pr_number,
         completes=card.completes_task,
+        handed_over=card.created_at,
     )
 
 

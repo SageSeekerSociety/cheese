@@ -2569,6 +2569,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connector/my/model-connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * My Model Connections
+         * @description The caller's model connections across the machines they enrolled
+         *     (#2991): what each logs in with, where it is kept, its last check. Never a
+         *     key.
+         */
+        get: operations["my_model_connections_connector_my_model_connections_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connector/my/devices/{device_id}/claude-code": {
         parameters: {
             query?: never;
@@ -2583,9 +2605,38 @@ export interface paths {
          * @description Ask one of the caller's machines again whether their own Claude Code is
          *     logged in there (#2991). They log in on the machine itself, which tells the
          *     server nothing; the page showing that machine asks, rather than leaving the
-         *     answer from its last connection standing.
+         *     answer from its last connection standing. A logout its owner asked for
+         *     while it was away is carried out first.
          */
         post: operations["check_my_claude_code_connector_my_devices__device_id__claude_code_post"];
+        /**
+         * Revoke My Claude Code
+         * @description Log the caller's own Claude Code out on one of their machines, from any
+         *     browser (#2991). Out of use at once; the machine logs out now when online,
+         *     else as it next connects.
+         */
+        delete: operations["revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/claude-code/model-service": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Use My Model Service
+         * @description Point the caller's own Claude Code on one of their machines at another
+         *     model service, from any browser (#2991). The key is handed to the machine,
+         *     which keeps it; it is not stored here. The machine has to be online.
+         */
+        put: operations["use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -13674,6 +13725,28 @@ export interface components {
              */
             detail: string;
         };
+        /**
+         * ClaudeCodeLoginOut
+         * @description What a machine last said about its owner's Claude Code login.
+         */
+        ClaudeCodeLoginOut: {
+            /** Installed */
+            installed: boolean;
+            /** Logged In */
+            logged_in: boolean;
+            /** Auth Method */
+            auth_method: string | null;
+            /** Subscription Type */
+            subscription_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** Checked At */
+            checked_at: string;
+            /** Revoking */
+            revoking: boolean;
+        };
         /** CommentCreate */
         CommentCreate: {
             /** Body */
@@ -15763,6 +15836,38 @@ export interface components {
             /** Mid Conversation System */
             mid_conversation_system?: boolean | null;
         };
+        /** ModelConnectionOut */
+        ModelConnectionOut: {
+            /** Installed */
+            installed: boolean;
+            /** Logged In */
+            logged_in: boolean;
+            /** Auth Method */
+            auth_method: string | null;
+            /** Subscription Type */
+            subscription_type: string | null;
+            /** Model */
+            model: string | null;
+            /** Service Host */
+            service_host: string | null;
+            /** Checked At */
+            checked_at: string;
+            /** Revoking */
+            revoking: boolean;
+            /** Device Id */
+            device_id: string;
+            /** Device Name */
+            device_name: string;
+            /** Online */
+            online: boolean;
+            /** Last Used At */
+            last_used_at: string | null;
+        };
+        /** ModelConnectionsOut */
+        ModelConnectionsOut: {
+            /** Connections */
+            connections: components["schemas"]["ModelConnectionOut"][];
+        };
         /**
          * ModelCreate
          * @description `POST /admin/gateway/models` 的体 —— 新建一条运行时模型。
@@ -15813,6 +15918,15 @@ export interface components {
             cache_read?: number | null;
             /** Cache Creation */
             cache_creation?: number | null;
+        };
+        /** ModelServiceRequest */
+        ModelServiceRequest: {
+            /** Base Url */
+            base_url: string;
+            /** Token */
+            token: string;
+            /** Model */
+            model: string;
         };
         /**
          * ModelUpdate
@@ -23074,6 +23188,26 @@ export interface operations {
             };
         };
     };
+    my_model_connections_connector_my_model_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelConnectionsOut"];
+                };
+            };
+        };
+    };
     check_my_claude_code_connector_my_devices__device_id__claude_code_post: {
         parameters: {
             query?: never;
@@ -23094,6 +23228,72 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     } | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelServiceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeCodeLoginOut"] | null;
                 };
             };
             /** @description Validation Error */

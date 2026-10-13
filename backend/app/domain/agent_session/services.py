@@ -79,6 +79,12 @@ class AgentSessionService:
         row = await self._repo.get(conversation_id, agent_handle, harness)
         return row.place() if row is not None else None
 
+    async def last_used_on(
+        self, channel: str, machines: list[str]
+    ) -> dict[str, datetime]:
+        """When a session of ``channel`` last ran on each of ``machines``."""
+        return await self._repo.last_used_on(channel, machines)
+
     async def devices_held_in_room(self, room_id: uuid.UUID) -> list[str]:
         """The people's machines the room's sessions (its tasks' included) hold
         a lease on now: a sandbox on one of the platform's machines is not one."""
