@@ -244,9 +244,14 @@ _SECTION_WORDS = {
 #: A list item and a URL line start the same way and are not labels: a section whose
 #: first line is `- pytest：全过` or a link would otherwise be read as ending right
 #: there, and the board would say the body never wrote it.
+#: The name is short — a sentence with a colon in it is not a label — but it may carry
+#: one bracketed aside of any length after it, because a body that dates or sources its
+#: verification writes it there: `验证（跑的时候正在那个窗口里，2026-10-13 00:41 UTC）：`
+#: is a label line, and reading it as one only through the first twenty characters would
+#: say that body never wrote the section.
 _LABEL = re.compile(
     r"^[ \t]*(?![-•*+][ \t])(?!\d+[.)][ \t])(?!\w{2,12}://)"
-    r"(?:\*\*)?([^\n：:*]{1,20})(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
+    r"(?:\*\*)?([^\n：:*]{1,20}(?:[（(][^）\n]{0,80}[）)])?)(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
 _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
 #: A line that is nothing but the name of a section — `Verification`, `验证`, `Tests` —
 #: with no colon after it. The block below it is that section: a body puts the name on
@@ -255,8 +260,11 @@ _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
 #: `_names_a_section`), the line has to stand as a block of its own with nothing above it
 #: but a blank line (§ `_stands_alone`), and it must not be a table row or carry a code
 #: span — a sentence that wraps onto `repo checkout.`, a table's `| Check | Result |` and
-#: a command in a code block all read as names otherwise.
-_BARE_LABEL = re.compile(r"^[ \t]*(?:\*\*)?([^\n：:*|`]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
+#: a command in a code block all read as names otherwise. A list item is the section's
+#: body and not another name for one: the first item under `Verification` so often
+#: mentions a test that reading it as a name cut that whole section away.
+_BARE_LABEL = re.compile(r"^[ \t]*(?![-•*+][ \t])(?!\d+[.)][ \t])(?!#)"
+                         r"(?:\*\*)?([^\n：:*|`]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 #: Everything from the first of these lines down is the platform's, not the author's.
 _TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
@@ -303,22 +311,28 @@ def brief(desc, limit=400):
                     key=lambda m: m.start())
     ver = [m for m in labels
            if any(w in m.group(1).lower() for w in _VERIFIED_LABEL_WORDS)]
-    verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels)
-    changed = _under_heading(text, heads, "changed")
+    verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels, heads)
+    changed = _under_heading(text, heads, "changed", ver)
     if not changed:
         # 没有标题说「改了什么」时，正文开头到「验证」之前的那一段就是它 —— 前面是
         # 背景，后面是验证，中间剩下的全是改动。正文一上来就是标题（`## Summary`、
         # `## Fix` 这类别的叫法）时，改动写在那行标题底下：从标题之后起算，否则这里
-        # 会切出一个空段，看板对着一份写了改动的正文说「没写这一节」。
-        stops = [h.start() for h in heads] + [m.start() for m in ver] + [len(text)]
-        begin = 0
-        if heads and heads[0].start() == 0:
-            begin, stops = heads[0].end(), stops[1:]
-        changed = text[begin:min(stops)].strip()
+        # 会切出一个空段，看板对着一份写了改动的正文说「没写这一节」。正文一上来就是
+        # 验证那一节（开头那行标题是它，或第一个标签行就在第一行）时没有那一段：它
+        # 底下、它后面是验证，改动没写在这里。
+        lead = heads[0] if heads and heads[0].start() == 0 else None
+        if (lead and any(w in lead.group(2).lower() for w in _SECTION_WORDS["verified"])) \
+                or (ver and not text[:ver[0].start()].strip()):
+            changed = ""
+        else:
+            begin = lead.end() if lead else 0
+            stops = sorted(set([h.start() for h in heads] + [m.start() for m in ver]))
+            ends = [s for s in stops if s > begin]
+            changed = text[begin:min(ends) if ends else len(text)].strip()
     return cut(changed, limit), cut(verified, limit)
 
 
-def _under_heading(text, heads, want):
+def _under_heading(text, heads, want, also=()):
     """The body of the heading that names `want`, or "" when there is none.
 
     A heading that only mentions the word does not name the section: a change list whose
@@ -328,14 +342,23 @@ def _under_heading(text, heads, want):
 
     A name that says the opposite loses to one that does not, however short: `## 没验证的`
     beside `## 怎么验证的` is the other half of what the reader has to know. It is still
-    used when it is the only one there."""
+    used when it is the only one there.
+
+    `also` is where the section under this heading stops early: the verification half's
+    label lines, so a `## 改动` does not read the `验证：` line that follows it as one
+    more thing that changed."""
     hits = [i for i, h in enumerate(heads)
             if any(w in h.group(2).lower() for w in _SECTION_WORDS[want])]
     if not hits:
         return ""
     i = min(hits, key=lambda i: (_negates(heads[i]), len(heads[i].group(2)), heads[i].start()))
-    end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-    return text[heads[i].end():end].strip()
+    begin = heads[i].end()
+    # `also` 只在它前面真的还有本节内容时才切：紧贴标题的一行是本节自己的第一行，
+    # 不是「本节到此为止」。
+    stops = [h.start() for h in heads[i + 1:]] \
+        + [m.start() for m in also if m.start() > begin and text[begin:m.start()].strip()]
+    end = min(stops) if stops else len(text)
+    return text[begin:end].strip()
 
 
 def _names_a_section(m):
@@ -363,11 +386,13 @@ def _stands_alone(text, m):
     return not before.strip() or before.endswith("\n\n")
 
 
-def _under_label(text, hits, labels):
-    """The first hit's body, stopping at the next labelled line of any kind."""
+def _under_label(text, hits, labels, heads):
+    """The first hit's body, stopping at the next labelled line of any kind and at the
+    next heading: a heading under a label starts what comes after that section, and a
+    body that runs past it hands the reader the next section's text as this one's."""
     if not hits:
         return ""
-    after = [m.start() for m in labels if m.start() > hits[0].start()]
+    after = [m.start() for m in labels + heads if m.start() > hits[0].start()]
     return text[hits[0].end():min(after) if after else len(text)].strip()
 
 
@@ -460,6 +485,7 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "verified": verified,
         "checks": [c["name"] for c in (pr.get("checks") or [])] if good else [],
         "cases": (pr.get("cases") or []) if good else [],
+        "read": good,
     }
 
 
@@ -582,19 +608,24 @@ def render(rows, metrics, silent, now, room):
 def details(rows):
     """每张待判的卡下面，把它 PR 正文里的那两段、和它红在哪个检查／哪些用例摆出来 ——
     读完这一段就不用再开 PR 页面。同一个任务出现在多个类别里时只说一次。正文没写的
-    那截、GitHub 没说红在哪个检查的，都如实说没有，看板不替它们补话。"""
+    那截、GitHub 没说红在哪个检查的，都如实说没有，看板不替它们补话；正文压根读不到
+    的（还没有 PR，或 GitHub 上查不到）说的也是读不到，不写成作者没写。"""
     seen, out = set(), []
     for r in rows:
         if r["task"] in seen:
             continue
         seen.add(r["task"])
         out += [f"**#{r['task']} {r['title']}**｜{r['kind']}｜{r['stage']}", ""]
-        for label, text in (("改了什么", r["changed"]), ("怎么验证的", r["verified"])):
-            if text:
-                out += [f"{label}："] + ["> " + ln if ln.strip() else ">" for ln in text.split("\n")]
-            else:
-                out.append(f"{label}：PR 正文里没写这一节")
-            out.append("")
+        if not r["read"]:
+            # 「没写这一节」是替作者下判断；读不到正文时说读不到，两件事分开。
+            out += ["PR 正文：" + ("还没有 PR" if not r["pr"] else "GitHub 上看不到"), ""]
+        else:
+            for label, text in (("改了什么", r["changed"]), ("怎么验证的", r["verified"])):
+                if text:
+                    out += [f"{label}："] + ["> " + ln if ln.strip() else ">" for ln in text.split("\n")]
+                else:
+                    out.append(f"{label}：PR 正文里没写这一节")
+                out.append("")
         if r["checks"]:
             out.append("红的是：" + "、".join(r["checks"]))
         if r["cases"]:
