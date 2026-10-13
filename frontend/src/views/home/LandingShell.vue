@@ -18,6 +18,11 @@ defineProps<{ page: 'home' | 'solutions' | 'download' }>()
 // 一旦连着后端，拿它包着用的三个公共页也跟着连上，目录站里就挂不起来。没人注入时按
 // 「没登录」画——公共页本来就是给没登录的人看的。
 const { signedIn } = inject(PUBLIC_VISITOR, ANONYMOUS_VISITOR)
+
+// okcheese.cn is served from the mainland, so its home page shows the ICP
+// filing number, linked to the MIIT register.
+const ICP_FILING = '京ICP备2026068086号' // i18n-data: a registry identifier, written the same in every language
+
 // `/` sends a signed-in visitor to their work, so the way back to the
 // introduction for them is `/about`, which always shows it.
 const homeHref = computed(() => (signedIn.value ? '/about' : '/'))
@@ -132,6 +137,7 @@ onBeforeUnmount(() => {
         <router-link to="/legal/terms">{{ t('publicSite.terms') }}</router-link>
         <router-link to="/legal/privacy">{{ t('publicSite.privacy') }}</router-link>
         <span>{{ t('publicSite.copyright') }}</span>
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener" lang="zh-CN">{{ ICP_FILING }}</a>
       </nav>
     </footer>
   </main>
