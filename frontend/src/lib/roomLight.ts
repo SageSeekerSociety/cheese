@@ -8,14 +8,19 @@
 //                 再有新活，回到呼吸绿。
 //   红（不动）    显示在跑，但五分钟没动静。
 //   黄（不动）    有事等你：一道只有你能答的问题、一张等你采纳的卡。
+//   蓝（不动）    这条是我之外的人负责的。只有任务行用得着。
 //   不亮          没开过、也没活在跑的，不亮灯。
 //
-// 四条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
+// 前四条判据全是**事实**，这一份不推状态、只排先后：在不在往前走看 `moving`
 // （后端按「活的事实压过纸面」算，房间那一行还含它名下的活），等不等人看
 // `awaits_me`（后端按看的人算），多久没输出看 `last_output_at`（后端取整到分钟），
 // 交付完没看过看 `unseen_delivery`（后端比的是这个人的已读位和采纳时刻）。
 //
-// 优先级：红 > 黄 > 呼吸绿 > 长绿 —— 一行上只画一盏灯，红最亮。折叠开关在收起来
+// 蓝灯是第五条，**不是判据**：谁负责写在数据里（`owner_handle`），`lightOf` 不看它，
+// 也永远不会返回蓝灯——它是调用方在拿到灯之后盖上的一枚印（`useTopicRail.taskLight`）。
+//
+// 优先级：蓝 > 红 > 黄 > 呼吸绿 > 长绿 —— 一行上只画一盏灯，蓝最亮。蓝压过一切
+// 是刻意的：那条活不归我，先看清这件事，再看它在跑还是卡住。折叠开关在收起来
 // 的一堆行里挑一个颜色出来时也走同一个次序（`brightest`）。
 //
 // 「点开过就灭」不在这一份里：那是数据的事（服务端按已读位算 `unseen_delivery`，
@@ -25,16 +30,19 @@
 import { t } from '@/i18n'
 
 /** 一行上的灯画哪一盏。`green` 那一盏闪不闪由 `RowLight.breathe` 说。 */
-export type LightKind = 'red' | 'yellow' | 'green'
+export type LightKind = 'blue' | 'red' | 'yellow' | 'green'
 
 export interface RowLight {
   kind: LightKind
-  /** 绿色动不动：呼吸绿闪，长绿不闪。红黄一律不动。 */
+  /** 绿色动不动：呼吸绿闪，长绿不闪。蓝红黄一律不动。 */
   breathe: boolean
 }
 
+/** 别人的活那一盏灯：`lightOf` 不产它，调用方盖上（见文件头）。 */
+export const OTHERS_LIGHT: RowLight = { kind: 'blue', breathe: false }
+
 /** 亮到暗。`brightest` 用它排序。 */
-const BRIGHTNESS: Record<LightKind, number> = { red: 3, yellow: 2, green: 1 }
+const BRIGHTNESS: Record<LightKind, number> = { blue: 4, red: 3, yellow: 2, green: 1 }
 
 /** 「显示在跑、但五分钟没动静」的那五分钟，和 `lib/replyWait.ts` 里等一位成员
  * 回话的阈值是同一个数：两条判据说的是同一件事——五分钟没有新东西出来。 */
@@ -51,7 +59,7 @@ function quietForMs(lastOutputAt: string | null | undefined, now: number): numbe
 /**
  * 这一行画哪盏灯；不该亮灯的行是 null。
  *
- * `moving` 是「这里在不在往前走」，**四种灯里它管两盏**：往前走的画呼吸绿，往前
+ * `moving` 是「这里在不在往前走」，**它管两盏**：往前走的画呼吸绿，往前
  * 走、又已经五分钟没有新输出的画红。后者要 `lastOutputAt` 说得出话说得准 —— 说不
  * 出来（没在跑、或那个进程说不了）就不画红：不知道不等于卡住。
  *
@@ -99,6 +107,7 @@ export function brightest(lights: Iterable<RowLight | null | undefined>): RowLig
 
 /** 灯上悬停（和读屏）说的那一个词：这一行现在怎么了。 */
 export function lightTitle(light: RowLight): string {
+  if (light.kind === 'blue') return t('work.sidebar.light.others')
   if (light.kind === 'red') return t('work.sidebar.light.red')
   if (light.kind === 'yellow') return t('work.sidebar.light.yellow')
   return t(light.breathe ? 'work.sidebar.light.moving' : 'work.sidebar.light.delivered')

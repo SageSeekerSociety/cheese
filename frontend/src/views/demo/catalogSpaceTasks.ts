@@ -28,6 +28,8 @@ import {
   TASK_BRIEF_ATTACHMENTS,
   TASK_DEMO,
   TASK_LATEST,
+  TASK_ONLINE_JUDGE,
+  TASK_ONLINE_JUDGE_STALE,
   TASK_REVIEWS,
   TASK_ROSTER,
 } from './catalogSpaceTasksFixtures'
@@ -429,6 +431,9 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       taskData: TASK_DEMO,
       participants: TASK_ROSTER,
       latestByParticipant: TASK_LATEST,
+      // 默认这道题没接外站：那一列不画（接了的长相在下面那一格）。
+      onlineJudge: null,
+      syncing: false,
       loading: false,
       denied: false,
       failed: false,
@@ -485,6 +490,26 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: { participants: [] },
         expect: '暂无领取者',
+      },
+      {
+        get name() {
+          return t('catalog.rosterView.s6.name')
+        },
+        get note() {
+          return t('catalog.rosterView.s6.note')
+        },
+        props: { onlineJudge: TASK_ONLINE_JUDGE },
+        expect: '已过',
+      },
+      {
+        get name() {
+          return t('catalog.rosterView.s7.name')
+        },
+        get note() {
+          return t('catalog.rosterView.s7.note')
+        },
+        props: { onlineJudge: TASK_ONLINE_JUDGE_STALE, syncing: true },
+        expect: '下面是上一次的数',
       },
     ],
   },

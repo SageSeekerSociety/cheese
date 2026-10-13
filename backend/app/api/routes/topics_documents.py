@@ -15,7 +15,7 @@ decided (`POST .../documents/revisions`) without Word.
 Where the shared names went. The names these four routes read from topics.py now
 have homes of their own: `clean_artifact_path` and `MAX_ARTIFACT_BYTES` are the
 room-file rules in `app.domain.project.room_files`, `source_bytes` is the API
-read-orchestration helper in `app.api.routes.topics_file_sources`, and the binding
+read-orchestration helper in `app.api.topics_file_sources`, and the binding
 check became `TaskService.require_source_in_room`. `_actor_in_place`
 is still imported from topics.py; `DbSession` comes from `app.api.request_deps`.
 `_row_numbers` and `_document_bytes` are the opposite case: nothing outside these
@@ -51,8 +51,8 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics_file_sources import source_bytes
 from app.api.topics_deps import _actor_in_place
+from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.errors import ConflictError, SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say

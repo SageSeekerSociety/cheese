@@ -8,6 +8,7 @@ import { provideTopicMemory } from '@/composables/useTopicMemory'
 
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
+import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { trackNavigations } from '@/lib/navigationProgress'
 import { warmPagesWhenIdle } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
@@ -85,24 +86,28 @@ onUnmounted(() => titles.clearDynamicTitle(PROJECT_FRAME_TITLE))
 // 地址上的项目换不出来（没登录、没有这个项目或看不到）时，这一层也不拿短名去请求。
 const me = myHandle()
 const reachable = computed(() => !store.projectRefused)
+// 未读、私聊未读、通知档位三样只画角标，不挡内容：第一遍和推送订阅一起排到首帧之后
+//（`lib/afterFirstPaint.ts`），开页那一瞬间先把页面自己要的数据发出去。清单
+//（topicsQuery）不推迟——侧栏和内容区都靠它画。
+const badges = computed(() => reachable.value && firstPaintDone.value)
 useQuery(
   computed(() => ({ ...topicsQuery(props.projectId), enabled: reachable.value })),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me && reachable.value })),
+  computed(() => ({ ...unreadQuery(props.projectId, me), enabled: !!me && badges.value })),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me && reachable.value })),
+  computed(() => ({ ...privateUnreadQuery(props.projectId, me), enabled: !!me && badges.value })),
   queryClient
 )
 useQuery(
-  computed(() => ({ ...notifyLevelsQuery(props.projectId), enabled: reachable.value })),
+  computed(() => ({ ...notifyLevelsQuery(props.projectId), enabled: badges.value })),
   queryClient
 )
 useProjectFeed(
-  computed(() => (reachable.value ? props.projectId : '')),
+  computed(() => (badges.value ? props.projectId : '')),
   me || null
 )
 

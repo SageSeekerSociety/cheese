@@ -27,6 +27,7 @@ import { awaitingCount, useAwaitingCount } from '@/composables/useAwaitingCount'
 import { acceptCard, resolveAlert } from '@/api'
 import { postChatMessage } from '@/api/messages'
 import { NotificationsApi } from '@/api/notifications'
+import { openFirstPaint } from '@/test/firstPaint'
 
 type Pending = { resolve: (items: unknown[]) => void }
 
@@ -69,6 +70,10 @@ afterEach(() => {
 
 /** 挂上 App 里取角标数的那一处，等第一次读回来，角标上是 `n`。 */
 async function mountBadge(n: number) {
+  // 角标的第一遍排在「首帧画完」那道门后面（`lib/afterFirstPaint.ts`）：单测里没有
+  // `main.ts`，也不会真跳转，没人推门就一次都不发。这几条用例问的是门开之后的行为
+  // （当场重读、节流、晚到的旧数），所以先推开门再挂。
+  await openFirstPaint()
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/', component: { render: () => null } }],

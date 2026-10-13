@@ -153,6 +153,14 @@
     "topicsPlaceholder": "Choose topics",
     "noCategories": "No categories",
     "noTopics": "No topics",
+    "externalProblem": {
+      "title": "External problem",
+      "label": "YOJ problem number",
+      "placeholder": "e.g. 1001",
+      "hint": "With a number filled in, the platform checks every participant against YOJ by student number. The results are on the Roster tab, where you can also sync again.",
+      "onlyDigits": "The problem number is digits only",
+      "tooLong": "The problem number is at most 32 digits"
+    },
     "more": {
       "title": "More settings",
       "summaryAll": "Open to all members",
@@ -289,6 +297,7 @@
       "claimedAt": "Claimed",
       "status": "Status",
       "latest": "Latest submission",
+      "external": "YOJ",
       "deadline": "Deadline",
       "ops": "Actions"
     },
@@ -326,6 +335,21 @@
     "rejectFailed": "Couldn't decline. Try again later",
     "deadlineSaved": "Deadline updated",
     "deadlineFailed": "Couldn't set the deadline",
+    "external": {
+      "sync": "Sync",
+      "synced": "YOJ results updated",
+      "syncFailed": "The sync did not go through — the numbers below are from the previous one",
+      "neverSynced": "Not synced yet",
+      "lastSynced": "Synced {when}",
+      "lastFailed": "Last sync ({when}) failed — the numbers below are from the previous one",
+      "passed": "Solved",
+      "notPassed": "Not solved",
+      "openAccepted": "See when it was solved",
+      "acceptedTitle": "When it was solved",
+      "acceptedLead": "{name} on this problem",
+      "studentNo": "Student number",
+      "acceptedAt": "Solved at"
+    },
     "unknownUser": "Unknown user",
     "unknownTeam": "Unknown team",
     "memberWithId": "{name} ({id})",
@@ -335,6 +359,7 @@
     "saveChanges": "Save changes",
     "saveAndResubmit": "Save and resubmit for review",
     "resubmitted": "Resubmitted — waiting for an admin to review it",
+    "externalProblemUnavailable": "The external problem number could not be read, so that field is hidden for now. Everything else is editable. A refresh usually brings it back.",
     "crumb": "Edit"
   },
   "loadError": {

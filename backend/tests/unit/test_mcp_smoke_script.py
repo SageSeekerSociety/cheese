@@ -17,7 +17,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from app.domain.agent.skills import _NATIVE_SKILL_SRC
+from app.domain.skill_library import _NATIVE_SKILL_SRC
 
 SMOKE = _NATIVE_SKILL_SRC / "mcp-builder" / "scripts" / "smoke.py"
 

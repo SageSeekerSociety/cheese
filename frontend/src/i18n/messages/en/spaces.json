@@ -133,6 +133,7 @@
       "createFailed": "Couldn't create challenge",
       "initializationFailed": "Couldn't start",
       "attachmentsUploading": "Attachments are still uploading. Publish once they finish.",
+      "externalProblemFailed": "Challenge created, but the external problem number was not saved. Set it again on the challenge page.",
       "teaching": {
         "title": "AI guidance",
         "subtitle": "Applies to projects created from this challenge",

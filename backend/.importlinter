@@ -124,6 +124,17 @@ unmatched_ignore_imports_alerting = warn
 # own, and pulling them in would quote a frozen block of unrelated history. Keep
 # this list in step with `test_domain_import_guard.py`'s `_SCANNED_MODULES`, which
 # covers the repositories half of the same set.
+#
+# The 2026-10 round two moved the route-to-route shared names. The five entries
+# after `topics_deps` are what it added: `awaiting_deps`, `legal_deps` and
+# `teams_deps` are new homes for names one route module used to hand to its
+# siblings (`waiting_items`; `client_context`; the team service and the
+# application payload helpers), `topics_file_sources` left `routes/` whole, and
+# `ws_pipe` is new, holding the tunnel's two pumps. Same rule as the six above:
+# a module one route shares with another stays a source after the name moves.
+# `app.api.doc_access` and `app.api.room_task_rows` are not here on purpose:
+# both were created under `app/api/` before this refactor and are ordinary
+# members of that package, not routes that moved out of it.
 name = C2 routes do not import a domain's models directly
 type = forbidden
 source_modules =
@@ -135,6 +146,11 @@ source_modules =
     app.api.space_payloads
     app.api.task_deps
     app.api.topics_deps
+    app.api.awaiting_deps
+    app.api.legal_deps
+    app.api.teams_deps
+    app.api.topics_file_sources
+    app.api.ws_pipe
 forbidden_modules =
     app.domain.*.models
 allow_indirect_imports = true
@@ -339,7 +355,6 @@ ignore_imports =
     app.domain.project.services -> app.domain.topic.models
     app.domain.project.services -> app.domain.topic.repositories
     app.domain.project.services -> app.domain.topic.services
-    app.domain.project_skill.service -> app.domain.agent.skills
     app.domain.questions.services -> app.domain.answers.repositories
     app.domain.repository.forge_files -> app.domain.agent.device_hub
     app.domain.repository.forge_files -> app.domain.agent.execution
@@ -350,7 +365,6 @@ ignore_imports =
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.identity -> app.domain.topic.models
     app.domain.repository.service -> app.domain.agent.platform_failures
-    app.domain.repository.service -> app.domain.agent.skills
     app.domain.review.archive -> app.domain.agent.platform_notices
     app.domain.review.forge -> app.domain.review.services
     app.domain.review.gate_sweep -> app.domain.agent.platform_notices
@@ -410,7 +424,6 @@ ignore_imports =
     app.domain.usage.ledger -> app.domain.project.services
     app.domain.usage.repositories -> app.domain.project.models
     app.domain.usage.subscription_ingest -> app.domain.project.repositories
-    app.domain.user.realname_services -> app.domain.space.services
     app.domain.user.repositories -> app.domain.identity.models
     app.domain.user.repositories -> app.domain.team.models
     app.domain.user.services -> app.domain.identity.handles
@@ -489,34 +502,35 @@ modules =
     app.api.routes.*
 unmatched_ignore_imports_alerting = warn
 
-# Sixteen lines at once, and every one of them touched `routes/topics.py`: the
-# module that incidentally served as the topics package's shared-dependency
-# module. They went away by moving what it actually shared into
-# `app/api/topics_deps.py` — the thirteen route modules that took a helper or a
-# domain name from it, the two `app.api` modules that did the same
+# First turn: sixteen lines at once, and every one of them touched
+# `routes/topics.py`: the module that incidentally served as the topics
+# package's shared-dependency module. They went away by moving what it actually
+# shared into `app/api/topics_deps.py` — the thirteen route modules that took a
+# helper or a domain name from it, the two `app.api` modules that did the same
 # (`task_instructions`, `task_origin`), and its own import of a sibling route
 # (`routes.projects`, for `rail_tasks`, now in `app.api.room_task_rows`). The
-# ledger goes 32 -> 16; the remaining 16 are the other clusters' turns. Of the
-# seventeen edges in or out of this node, `routes.topics -> routes.topics_rows`
-# was already gone — #3545 moved that file to `app/api/topics_rows.py`.
+# ledger went 32 -> 16. Of the seventeen edges in or out of this node,
+# `routes.topics -> routes.topics_rows` was already gone — #3545 moved that file
+# to `app/api/topics_rows.py`.
 #
+# Second turn: the eleven route-to-route lines, each a name one route module
+# handed a sibling — `client_context`, the origin gate, `asked_of`, the tunnel's
+# two pumps, `task_out`, the attachment bytes, `waiting_items`, the team service
+# and the application payload helpers. Each moved into a module under `app.api`
+# named for what it serves (`legal_deps`, `users_deps`, `doc_access`, `ws_pipe`,
+# `room_task_rows`, `topics_file_sources`, `awaiting_deps`, `teams_deps`), never
+# into a sibling route: the ledger went 16 -> 5. Three of the five are chains
+# through an `app.api` helper (`chat -> room_snapshot`,
+# `preview_sessions -> preview_host`, `topics_preview -> preview_host`); the two
+# `app.main -> ...` lines are not route edges at all, removing them does not
+# turn the contract red, and `--update` keeps them because they still match —
+# they need a later turn of the same hand.
 # --- frozen: existing violations, generated by scripts/boundary_baseline.py
 # Refresh with `--update` (drops entries that no longer match; a recomputed cycle-breaker set is never added).
 ignore_imports =
-    app.api.routes.app_sign_in -> app.api.routes.users.auth
     app.api.routes.chat -> app.api.room_snapshot
-    app.api.routes.document_agent -> app.api.routes.document_comments
-    app.api.routes.forge_token -> app.api.routes.llm_tunnel
-    app.api.routes.notifications_live -> app.api.routes.awaiting
     app.api.routes.preview_sessions -> app.api.preview_host
-    app.api.routes.recruitment -> app.api.routes.teams
-    app.api.routes.topics_attachments -> app.api.routes.topics_file_sources
-    app.api.routes.topics_documents -> app.api.routes.topics_file_sources
     app.api.routes.topics_preview -> app.api.preview_host
-    app.api.routes.topics_title -> app.api.routes.topics_tasks
-    app.api.routes.users.oauth -> app.api.routes.legal
-    app.api.routes.users.registration -> app.api.routes.legal
-    app.api.routes.users_team -> app.api.routes.teams
     app.main -> app.api.preview_host
     app.main -> app.api.routes.connector
 
@@ -559,7 +573,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : machine_skill : skill_market
     repository : integration : external_problem : webhook : fetch : remote_mcp : gateway_chat : usage : notification
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal
+    common : day_windows : conversation : idempotency : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library
 containers =
     app.domain
 exhaustive = true
@@ -624,7 +638,6 @@ ignore_imports =
     app.domain.project.services -> app.domain.task.models
     app.domain.project.services -> app.domain.task.teaching
     app.domain.project.services -> app.domain.usage.ledger
-    app.domain.project_skill.service -> app.domain.agent.skills
     app.domain.remote_mcp.service -> app.domain.agent_instance.services
     app.domain.repository.forge_files -> app.domain.agent.device_hub
     app.domain.repository.forge_files -> app.domain.agent.execution
@@ -632,7 +645,6 @@ ignore_imports =
     app.domain.repository.forge_files -> app.domain.room_task.models
     app.domain.repository.identity -> app.domain.room_task.services
     app.domain.repository.service -> app.domain.agent.platform_failures
-    app.domain.repository.service -> app.domain.agent.skills
     app.domain.repository.service -> app.domain.project_skill.service
     app.domain.review.archive -> app.domain.agent.platform_notices
     app.domain.review.gate_sweep -> app.domain.agent.platform_notices
@@ -702,5 +714,4 @@ ignore_imports =
     app.domain.topic_membership.services -> app.domain.thread.models
     app.domain.usage.credits -> app.domain.agent.platform_notices
     app.domain.usage.subscription_ingest -> app.domain.block.models
-    app.domain.user.realname_services -> app.domain.space.services
     app.domain.webhook.service -> app.domain.agent.announce

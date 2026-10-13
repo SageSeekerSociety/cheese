@@ -32,6 +32,13 @@ export interface TaskFormProps {
   domainGroups?: DomainGroup[]
   /** 一次发好几道：名称和描述逐道在外面填，这张表只管共用的那些。 */
   parametersOnly?: boolean
+  /**
+   * 这张表要不要管外站题号（`TaskFormExternalProblem.vue`）。默认管。
+   *
+   * 改题页在**拿不准原来的题号**时把它关掉：那一格没读回来就画成空的，而保存时
+   * 空值会去删掉已经挂着的题号和结果 —— 一次读失败不该变成一次删除。
+   */
+  externalProblemEnabled?: boolean
 }
 
 /** 富文本那一份内容：编辑器的 JSON 文档（`description` 这个 ref 装的就是它）。 */
@@ -116,6 +123,13 @@ export function useTaskForm(
             .min(1, t('tasks.form.validation.categoryRequired')),
           minTeamSize: z.number().int().min(1).optional(),
           maxTeamSize: z.number().int().min(1).optional(),
+          // 外站题号：只收数字，空串 = 这道题不接外站。校验和服务端同一条
+          // （`ExternalProblemIn` 只封长度，形状由 `service.PROBLEM_NO` 判）。
+          externalProblemNo: z
+            .string()
+            .max(32, t('tasks.form.externalProblem.tooLong'))
+            .regex(/^\d*$/, t('tasks.form.externalProblem.onlyDigits'))
+            .optional(),
           requireRealName: z.boolean().optional().default(false),
           participantLimit: z.number().int().min(1).optional().nullable(),
           teamLockingPolicy: z.enum(['NO_LOCK', 'LOCK_ON_APPROVAL']).optional(),
@@ -143,6 +157,7 @@ export function useTaskForm(
           ? null
           : new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
       requireRealName: props.initialData?.requireRealName ?? false,
+      externalProblemNo: props.initialData?.externalProblemNo ?? '',
       categoryId: props.initialData?.categoryId ?? props.selectedCategoryId ?? undefined,
       minTeamSize: props.initialData?.minTeamSize ?? 1,
       maxTeamSize: props.initialData?.maxTeamSize ?? 10,
@@ -167,6 +182,7 @@ export function useTaskForm(
   const [maxTeamSize, maxTeamSizeProps] = defineField('maxTeamSize', vuetifyConfig)
   const [categoryId, categoryIdProps] = defineField('categoryId', vuetifyConfig)
   const [requireRealName] = defineField('requireRealName', vuetifyConfig)
+  const [externalProblemNo, externalProblemNoProps] = defineField('externalProblemNo', vuetifyConfig)
   const [participantLimit, participantLimitProps] = defineField('participantLimit', vuetifyConfig)
   const [teamLockingPolicy] = defineField('teamLockingPolicy', vuetifyConfig)
   const [accessControlEnabled] = defineField('accessControlEnabled', vuetifyConfig)
@@ -186,6 +202,9 @@ export function useTaskForm(
   const domainGroupItems = computed(
     () => props.domainGroups?.map((g) => ({ title: g.name, value: g.id, subtitle: g.domains.join(', ') })) ?? []
   )
+
+  /** 这一节在不在：一次发好几道时没有（一个题号对不上 N 道题），读不到原来那一份时也不在。 */
+  const externalProblemEnabled = computed(() => (props.externalProblemEnabled ?? true) && !props.parametersOnly)
 
   const description = ref<DescriptionDoc>(descriptionDoc(props.initialData?.description))
 
@@ -210,8 +229,13 @@ export function useTaskForm(
     const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
     deadlineDate?.setHours(23, 59, 59, 999)
 
+    // 题号单独挑出来：它**不是**题目自己的一个字段（见 `api/externalProblem.ts` 开头），
+    // 交出去的这一份里带不带它，决定调用方要不要去写那一次外站题号。
+    const { externalProblemNo: problemNo, ...taskValues } = values
+
     const submissionData: TaskFormSubmitData = {
-      ...values,
+      ...taskValues,
+      ...(externalProblemEnabled.value ? { externalProblemNo: String(problemNo ?? '').trim() } : {}),
       name: props.parametersOnly ? '' : values.name.trim(),
       description: props.parametersOnly ? '' : JSON.stringify(description.value),
       intro: props.parametersOnly ? '' : truncateString(descriptionText || '', 255),
@@ -276,6 +300,9 @@ export function useTaskForm(
     categoryId,
     categoryIdProps,
     requireRealName,
+    externalProblemNo,
+    externalProblemNoProps,
+    externalProblemEnabled,
     participantLimit,
     participantLimitProps,
     teamLockingPolicy,

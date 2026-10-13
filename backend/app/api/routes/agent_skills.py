@@ -27,7 +27,7 @@ from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
-from app.domain.agent import skills as native_skills
+from app.domain import skill_library as native_skills
 from app.domain.agent.carried_bodies import carried_bodies, room_device
 from app.domain.machine_skill.service import MachineSkillService
 from app.domain.project_skill.service import ProjectSkillService, render_skill

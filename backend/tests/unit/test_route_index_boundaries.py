@@ -404,21 +404,23 @@ def test_existing_frozen_debt_keeps_exact_b9_leaves():
     # `/tasks/{taskId}/external-problem*` landed above them, then 713/737 on
     # merging main's `/admin/machines` page, 720/744 on its canvases, 724/748
     # on its agent callers page and 719/743 once main dropped two leaves above
-    # them, then 724/748 again on main's 2026-10-13 batch, then 739/763 once the
+    # them, then 724/748 again on main's 2026-10-13 batch, 726/750 once members
+    # could add and remove their own agents, 727/751 once main's
+    # `/run-records/turns` was registered above them, and 742/766 once the
     # room/machine skill registers landed above them. The pair itself is
     # unchanged — tests/AGENTS.md
     # ("Generated routes and database predicates") asks for the indices, the
     # identities behind them and this assertion to move in one commit.
     (pair,) = FROZEN
     assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        739,
-        763,
+        742,
+        766,
         "http",
         "GET",
     )
     records = [
-        replace(record(739, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(763, pair.later_path), endpoint=pair.later_endpoint),
+        replace(record(742, pair.earlier_path), endpoint=pair.earlier_endpoint),
+        replace(record(766, pair.later_path), endpoint=pair.later_endpoint),
     ]
     assert checked_findings(records, FROZEN) == []
 

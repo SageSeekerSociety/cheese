@@ -9,7 +9,7 @@ Figma 的网址几种形状都还在用（`/file/` 老的、`/design/` 新的）
 
 from __future__ import annotations
 
-from app.domain.agent.skills import _NATIVE_SKILL_SRC
+from app.domain.skill_library import _NATIVE_SKILL_SRC
 
 FIGMA = _NATIVE_SKILL_SRC / "showcase" / "scripts" / "figma.py"
 

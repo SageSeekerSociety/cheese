@@ -174,10 +174,11 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     at = {row.handle: index for index, row in enumerate(rows)}
     owners = await _owners_of_own_agents(session, project_id)
     # A project closed to members' own agents has withdrawn them: they are not
-    # in it, not merely uncallable. Opened again, they are back.
+    # in it, not merely uncallable. Opened again, they are back. One its owner
+    # removed from the project is not in it either, until they add it again.
     withdrawn = not allows_own_agents(project.settings if project else None)
     for instance in await AgentInstanceService(session).list_for_project(project_id):
-        if withdrawn and instance.id in owners:
+        if instance.id in owners and (withdrawn or not instance.is_active):
             continue
         seat = agent_instance_handle(instance.id)
         name = instance.display_name or instance.handle

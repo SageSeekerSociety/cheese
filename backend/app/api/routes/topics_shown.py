@@ -19,7 +19,7 @@ Where the shared names went. The four room-file rules -- `ARTIFACT_MIME`,
 `add_shown_block` in `app.domain.block.shown` (it writes the block; the broadcast
 stays with each caller, so a caller keeps its own order and its own commit). The
 source read (`_source_bytes`) and the binding check (`_bind_source_task`) went to
-their own homes -- `app.api.routes.topics_file_sources.source_bytes` (API read
+their own homes -- `app.api.topics_file_sources.source_bytes` (API read
 orchestration) and `TaskService.require_source_in_room` in `app.domain.room_task`,
 which is a rule about a task, not about HTTP. None of them is read from topics.py
 any more.

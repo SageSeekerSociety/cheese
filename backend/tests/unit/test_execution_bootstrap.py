@@ -234,7 +234,7 @@ def test_a_new_executor_machine_is_given_the_platform_skills(tmp_path, monkeypat
     be there.
     """
     from app.domain.agent.harness.claude_code.remote_execution import bootstrap
-    from app.domain.agent.skills import native_skill_files
+    from app.domain.skill_library import native_skill_files
 
     payload = _executor_payload()
     assert payload["skills"], "the payload carries no skills at all"

@@ -15,6 +15,7 @@ import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 
 import { useTaskData } from './composables'
 
+import { clearTaskExternalProblem, getTaskExternalProblem, setTaskExternalProblem } from '@/api/externalProblem'
 import { TaskBoardApi } from '@/api/taskBoard'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -75,6 +76,14 @@ const attempted = ref(false)
 const saving = ref(false)
 const resubmit = ref(false)
 
+// 外站题号（YOJ）。它不在题目自己那份数据里，所以单独读一次（见 `api/externalProblem.ts` 开头）。
+// 读回来之前不画那张表：先画成空的，一保存就会拿空值去删掉已经挂着的题号和结果。
+// 读失败时这一格干脆不画（`unknown`）—— 拿不准的事不写回去，比猜一个空的安全。
+const externalProblemState = ref<'loading' | 'ready' | 'unknown'>('loading')
+/** 已经存下的那个题号；保存时拿它比对，没变就不发那一次写。 */
+const externalProblemNo = ref('')
+const formInitialData = computed(() => ({ ...editTaskData.value, externalProblemNo: externalProblemNo.value }))
+
 /** 审核没通过的题，改完可以一并重新提交审核。 */
 const rejected = computed(() => taskData.value?.approved === 'DISAPPROVED')
 
@@ -84,19 +93,34 @@ function save(again: boolean) {
   form.value?.submit()
 }
 
+/**
+ * 题号那一次写。`undefined` = 这张表没有这一格（读不到原来那份），什么都不做；
+ * 和存下的一样也不做 —— 换成一个新题号会把上一次的结果删掉，白写一次就是白删一次。
+ */
+async function saveExternalProblem(problemNo: string | undefined) {
+  if (problemNo === undefined || problemNo === externalProblemNo.value) return
+  if (problemNo) await setTaskExternalProblem(taskId, problemNo)
+  else await clearTaskExternalProblem(taskId)
+  externalProblemNo.value = problemNo
+}
+
 async function onSubmit(data: TaskFormSubmitData) {
   if (saving.value) return
   saving.value = true
+  // 题号跟着题目一起保存，但走的不是同一条接口（`PATCH /tasks` 不认它）。
+  const { externalProblemNo: problemNo, ...taskFields } = data
   try {
     // 默认队友（#944）：本来没写、又选回「继承」→ 不带这个键（不动项目集那份）；
     // 本来写过、又选回「继承」→ 带空串，明确清掉这道题的覆盖。
     const role = defaultRolePayload(defaultRole.value, defaultRoleRaw.value)
     await TaskBoardApi.update(taskId, {
-      ...data,
+      ...taskFields,
       // 整份替换：沿用默认就交一份空的，让空间（或项目集）那一层重新生效。
       teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
       ...(role !== undefined ? { defaultRole: role } : {}),
     })
+    // 题目存住了再写题号：题号那次失败时下面会说出来，页面留着让人重试（题目已经是新的了）。
+    await saveExternalProblem(problemNo)
     if (resubmit.value) {
       await TaskBoardApi.resubmitTask(taskId)
       toast.success(t('tasks.edit.resubmitted'))
@@ -117,7 +141,21 @@ async function onSubmit(data: TaskFormSubmitData) {
 const navigateToDetail = () => closeOverlay(router, detailTo.value)
 
 onMounted(async () => {
-  await loadTaskData()
+  // 和题目那份一起读：等两件都到齐才画表格，免得先画一版空的题号。
+  const [, binding] = await Promise.all([
+    loadTaskData(),
+    getTaskExternalProblem(taskId).then(
+      (data) => data,
+      () => null
+    ),
+  ])
+  if (binding) {
+    externalProblemNo.value = binding.problemNo ?? ''
+    externalProblemState.value = 'ready'
+  } else {
+    // 读不到就不画这一格（也就不用管它）。说一句让改题的人知道少了什么。
+    externalProblemState.value = 'unknown'
+  }
   const task = taskData.value
   if (!task) return
   teaching.value = { ...(task.teaching ?? {}) }
@@ -176,47 +214,54 @@ onMounted(async () => {
     </div>
     <!-- A failed read trades the form for the error (docs/design-system.md §3.10). -->
     <BaseLoadError v-else-if="error" :title="t('tasks.loadError.title')" :error="error" @retry="loadTaskData" />
-    <TaskForm
-      v-else-if="taskData"
-      ref="form"
-      :initial-data="editTaskData"
-      is-editing
-      :classification-topics="taskData.space?.classificationTopics || []"
-      :categories="editCategories"
-      :domain-groups="domainGroups"
-      :teaching-custom="teachingOwn"
-      @invalid="formInvalid = $event"
-      @submit="onSubmit"
-    >
-      <template #attachments>
-        <TaskAttachmentPicker
-          :files="uploads.files.value"
-          :uploading="uploads.uploading.value"
-          :max-file-bytes="uploads.maxFileBytes.value"
-          @add="uploads.add"
-          @remove="uploads.remove"
-        />
-      </template>
-      <template #teaching>
-        <div>
-          <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
-          <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
-          <v-radio-group v-model="teachingOwn" hide-details density="compact" class="te__choices">
-            <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
-            <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
-          </v-radio-group>
-          <DefaultTeammatePicker v-model="defaultRole" :raw-value="defaultRoleRaw" class="te__teaching" />
-          <TeachingFields
-            v-if="teachingOwn"
-            v-model="teaching"
-            class="te__teaching"
-            :materials="materials"
-            :materials-state="materialsState"
-            :library-to="spaceLibraryPath(spaceId)"
+    <template v-else-if="taskData && externalProblemState !== 'loading'">
+      <!-- 题号没读出来时这一格不画（见上面 `externalProblemState`），但要说一句：
+           不然改题的人只会发现少了一格，不知道是自己记错了还是页面坏了。 -->
+      <p v-if="externalProblemState === 'unknown'" class="te__ext-missing t-meta-read">
+        {{ t('tasks.edit.externalProblemUnavailable') }}
+      </p>
+      <TaskForm
+        ref="form"
+        :initial-data="formInitialData"
+        :external-problem-enabled="externalProblemState === 'ready'"
+        is-editing
+        :classification-topics="taskData.space?.classificationTopics || []"
+        :categories="editCategories"
+        :domain-groups="domainGroups"
+        :teaching-custom="teachingOwn"
+        @invalid="formInvalid = $event"
+        @submit="onSubmit"
+      >
+        <template #attachments>
+          <TaskAttachmentPicker
+            :files="uploads.files.value"
+            :uploading="uploads.uploading.value"
+            :max-file-bytes="uploads.maxFileBytes.value"
+            @add="uploads.add"
+            @remove="uploads.remove"
           />
-        </div>
-      </template>
-    </TaskForm>
+        </template>
+        <template #teaching>
+          <div>
+            <p class="te__label">{{ t('spaces.detail.publishTask.teaching.title') }}</p>
+            <p class="te__hint t-meta-read">{{ t('spaces.detail.publishTask.teaching.subtitle') }}</p>
+            <v-radio-group v-model="teachingOwn" hide-details density="compact" class="te__choices">
+              <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
+              <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
+            </v-radio-group>
+            <DefaultTeammatePicker v-model="defaultRole" :raw-value="defaultRoleRaw" class="te__teaching" />
+            <TeachingFields
+              v-if="teachingOwn"
+              v-model="teaching"
+              class="te__teaching"
+              :materials="materials"
+              :materials-state="materialsState"
+              :library-to="spaceLibraryPath(spaceId)"
+            />
+          </div>
+        </template>
+      </TaskForm>
+    </template>
   </div>
 </template>
 
@@ -256,6 +301,10 @@ onMounted(async () => {
   flex: none;
   color: var(--ink);
   font-weight: 600;
+}
+
+.te__ext-missing {
+  margin: 0 0 8px;
 }
 
 .te__blocking {

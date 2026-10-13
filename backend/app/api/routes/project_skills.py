@@ -26,7 +26,7 @@ from app.api.response import Page, ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
-from app.domain.agent import skills as native_skills
+from app.domain import skill_library as native_skills
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.platform_notices import (
     EVENT_SKILL_PROPOSED,

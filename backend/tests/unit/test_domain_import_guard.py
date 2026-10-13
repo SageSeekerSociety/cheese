@@ -65,6 +65,18 @@ _SCANNED_MODULES = (
     "app/api/space_payloads.py",
     "app/api/task_deps.py",
     "app/api/topics_deps.py",
+    # 2026-10 的第二轮：拆路由之间的边。前三个是新的共享依赖模块（`awaiting_deps`
+    # 装 `waiting_items`，`teams_deps` 装 teams 的四个共享名，`legal_deps` 装
+    # `client_context`），`topics_file_sources` 是从 `routes/` 挪到 `app/api/` 的
+    # 整个文件，`ws_pipe` 是新的（隧道的两个泵）。判据就一条：这个模块是不是
+    # 2026-10 这轮从 `routes/` 里出来的——是就得点名，否则搬家的那几条账没人看着。
+    # `app/api/doc_access.py` 和 `app/api/room_task_rows.py` 不在这里：它们在这轮之前
+    # 就生在 `app/api/` 下，是那棵树的普通成员，不是从路由里搬出来的。
+    "app/api/awaiting_deps.py",
+    "app/api/legal_deps.py",
+    "app/api/teams_deps.py",
+    "app/api/topics_file_sources.py",
+    "app/api/ws_pipe.py",
 )
 
 #: 路由那棵树的「领域」。它不是领域包，这个值只用来让路由发出的每一条 repository
@@ -250,10 +262,14 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.answers", "app.domain.questions.repositories"),
         ("app.api.routes.answers", "app.domain.user.repositories"),
         ("app.api.routes.avatars", "app.domain.avatars.repositories"),
-        ("app.api.routes.awaiting", "app.domain.block.repositories"),
-        ("app.api.routes.awaiting", "app.domain.project.repositories"),
-        ("app.api.routes.awaiting", "app.domain.room_task.repositories"),
-        ("app.api.routes.awaiting", "app.domain.topic.repositories"),
+        # `waiting_items` 的发起方换了名字：那个函数连同它的四个码搬去了
+        # `app/api/awaiting_deps.py`（推送也读它，而路由模块之间不互相 import）。
+        # 被摸的 repository 一个没多，所以按同一笔债入账，只是换个发起方——记法同下面的
+        # users_team / topics_compute。
+        ("app.api.awaiting_deps", "app.domain.block.repositories"),
+        ("app.api.awaiting_deps", "app.domain.project.repositories"),
+        ("app.api.awaiting_deps", "app.domain.room_task.repositories"),
+        ("app.api.awaiting_deps", "app.domain.topic.repositories"),
         ("app.api.routes.blocks", "app.domain.block.repositories"),
         ("app.api.routes.comments", "app.domain.comments.repositories"),
         ("app.api.routes.comments", "app.domain.questions.repositories"),
@@ -298,7 +314,13 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.api.routes.tasks.roster", "app.domain.task.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.team.repositories"),
         ("app.api.routes.tasks.roster", "app.domain.user.repositories"),
+        # teams 的两个共享名（`application_to_api_model` / `load_application_maps`）
+        # 连同 `get_team_service` / `_user_payload` 搬进了 `app/api/teams_deps.py`
+        # （team 那一路路由和个人的 `/users/me/team*` 都在用，而路由模块之间不互相
+        # import）。同一笔债换发起方：teams_deps 接走 user.repositories 的一条，
+        # `routes/teams.py` 自己留着 `UserRealNameRepository` 那条（它没搬）。
         ("app.api.routes.teams", "app.domain.user.repositories"),
+        ("app.api.teams_deps", "app.domain.user.repositories"),
         ("app.api.routes.topic_members", "app.domain.identity.repositories"),
         ("app.api.routes.topic_members", "app.domain.user.repositories"),
         ("app.api.routes.topics", "app.domain.block.repositories"),

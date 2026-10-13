@@ -17,8 +17,8 @@ import os
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.device_hub import DeviceOffline, device_hub
-from app.domain.agent.skills import native_skill_bodies, shipped_skill_names
 from app.domain.machine_skill.service import MachineSkillService
+from app.domain.skill_library import native_skill_bodies, shipped_skill_names
 
 #: Platform skills, for telling「这个名字平台手里有正文」from「得去机器上读」.
 _SHIPPED = frozenset(shipped_skill_names())

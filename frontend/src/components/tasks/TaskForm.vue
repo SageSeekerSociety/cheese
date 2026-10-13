@@ -19,6 +19,7 @@ import { useTaskForm } from '@/composables/useTaskForm'
 
 import TaskFormClassify from './form/TaskFormClassify.vue'
 import TaskFormContent from './form/TaskFormContent.vue'
+import TaskFormExternalProblem from './form/TaskFormExternalProblem.vue'
 import TaskFormMore from './form/TaskFormMore.vue'
 import TaskFormParticipation from './form/TaskFormParticipation.vue'
 import TaskFormPrivacyDialog from './form/TaskFormPrivacyDialog.vue'
@@ -36,6 +37,8 @@ const props = withDefaults(
     parametersOnly?: boolean
     /** 这道题有没有单独写 AI 指导（「更多设置」收起时那一行要说）。 */
     teachingCustom?: boolean
+    /** 要不要画「外站题」那一节。默认画（见 `useTaskForm.ts` 里这个 prop 的说明）。 */
+    externalProblemEnabled?: boolean
   }>(),
   {
     initialData: null,
@@ -45,6 +48,7 @@ const props = withDefaults(
     domainGroups: () => [],
     parametersOnly: false,
     teachingCustom: false,
+    externalProblemEnabled: true,
   }
 )
 
@@ -92,6 +96,8 @@ const {
   categoryId,
   categoryIdProps,
   requireRealName,
+  externalProblemNo,
+  externalProblemNoProps,
   participantLimit,
   participantLimitProps,
   teamLockingPolicy,
@@ -159,6 +165,12 @@ defineExpose({
       :category-items="categoryItems"
       :topic-items="topicItems"
       :category-id-control="categoryIdProps"
+    />
+
+    <TaskFormExternalProblem
+      v-if="externalProblemEnabled && !parametersOnly"
+      v-model:problem-no="externalProblemNo"
+      :problem-no-control="externalProblemNoProps"
     />
 
     <TaskFormMore

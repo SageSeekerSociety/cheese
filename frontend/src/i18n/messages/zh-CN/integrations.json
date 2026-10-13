@@ -18,6 +18,22 @@
     "configured": "已配置",
     "notConfigured": "还没配置",
     "updatedBy": "最后由 {handle} 更新",
-    "appIdRequired": "先填 App ID"
+    "appIdRequired": "先填 App ID",
+    "externalProblem": {
+      "sub": "平台读外站题成绩用的账号。填校方给的那一个就好。",
+      "username": "账号",
+      "password": "密码",
+      "passwordHint": "留空表示不改已经存下的那一个",
+      "note": "这个账号会被平台用来读 YOJ 上的成绩，请填校方给的那个账号。平台只在同步成绩时用它登录一次去取数，不会代表它做别的动作。",
+      "save": "保存",
+      "saved": "已保存",
+      "saveFailed": "保存失败",
+      "loadFailed": "外站题账号加载失败",
+      "retry": "重试",
+      "configured": "已配置",
+      "notConfigured": "还没配置",
+      "updatedBy": "最后由 {handle} 更新",
+      "usernameRequired": "先填账号"
+    }
   }
 }

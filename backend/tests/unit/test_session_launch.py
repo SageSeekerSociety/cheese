@@ -16,8 +16,8 @@ from app.domain.agent.harness.claude_code.session_launch import (
 )
 from app.domain.agent.harness.launch import MachinePlace
 from app.domain.agent.place import seat_dir
-from app.domain.agent.skills import native_skill_files
 from app.domain.project_skill.service import session_skill_bundle
+from app.domain.skill_library import native_skill_files
 
 STATE = "$HOME/.cheese/harness/p/r/claude-code/deadbeef"
 

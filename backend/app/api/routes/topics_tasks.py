@@ -10,12 +10,15 @@ document go through the same routes as a room's (`/messages`, `/title`,
 `/document`), with the task's id.
 
 `_actor_in_place`, `DbSession` and the block/project/usage repositories come from
-topics.py, so the import guard and `.importlinter` see no new edges; the accept
-card is read through `AcceptService`, not a repository re-export.
+`app.api.topics_deps` (they lived in `topics.py` until that module's siblings
+stopped importing it), so the import guard and `.importlinter` see no new edges;
+the accept card is read through `AcceptService`, not a repository re-export.
+Handing one task back to its page is `app.api.room_task_rows.task_out` — the same
+row the room's list builds — so the title route asks for it there, not here (C4
+`routes-independent`).
 """
 
 import uuid
-from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Header, Query, Response
@@ -28,7 +31,7 @@ from app.api.deps import get_chat_service, get_work_runner
 from app.api.place import task_conversation
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.api.room_task_rows import named_task, task_rows
+from app.api.room_task_rows import named_task, task_out, task_rows
 from app.api.task_instructions import (
     dispatch,
     say_task_started,
@@ -59,7 +62,6 @@ from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
-from app.domain.agent.liveness import running_tasks
 from app.domain.agent.opening import opening_content, opening_state
 from app.domain.agent_instance.own import may_work_for
 from app.domain.agent_session.services import AgentSessionService
@@ -217,7 +219,7 @@ async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dic
     snapshot a subscription to it opens with. The caller has authorised the
     reader."""
     cards = await AcceptService(db).latest_by_task([task.id])
-    out = await _task_out(db, chat, task, cards.get(task.id))
+    out = await task_out(db, chat, task, cards.get(task.id))
     # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
     # 就是它绑的那个。和列表里显示的是同一个函数算的。
     project = await ProjectRepository(db).get(place.project_id)
@@ -294,43 +296,6 @@ async def retry_opening(
     return ok({"opening": "drafting"})
 
 
-async def _task_out(db, chat: ChatService, task, card=None) -> dict:
-    """The task with its board cell — what every route that hands a task back
-    to its page returns, so the page never holds one without it. The same
-    function the list uses, so a deep link and the board cannot disagree."""
-    if card is None:
-        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
-    # 递给谁在 `accept_card_reviewer` 表里（一卡多人）；页头那一格写集合里的第一个，
-    # 和侧栏（`room_task_rows.py`）读的是同一个。
-    reviewers = (
-        (await AcceptService(db).reviewer_handles_for_cards([card.id])).get(card.id, [])
-        if card is not None
-        else []
-    )
-    running = await running_tasks(chat, db, [task])
-    asked = await BlockRepository(db).awaiting_an_answer([task.id])
-    out = TaskOut.model_validate(task).model_dump(mode="json")
-    shown = presentation.task_presentation(
-        presentation.facts_for_task(
-            task,
-            card,
-            running=task.id in running,
-            awaiting_answer=task.id in asked,
-        ),
-        now=datetime.now(UTC),
-    )
-    out["presentation"] = shown.as_dict()
-    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
-    out["waiting_on"] = presentation.waiting_on(
-        shown,
-        running=task.id in running,
-        owner=task.owner_handle,
-        reviewer=reviewers[0] if reviewers else None,
-        asked=asked.get(task.id),
-    )
-    return out
-
-
 @router.post("/{topic_id}/close")
 async def conclude_task(
     topic_id: uuid.UUID,
@@ -397,7 +362,7 @@ async def conclude_task(
         meta={"platform": True, "action": "task_closed", "task_id": str(task.id)},
     )
     await tell_origin(db, task, ended)
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)
 
@@ -422,7 +387,7 @@ async def reopen_task(
         content=say("taskReopened", actor=f"<@{actor.handle}>", title=said_title(task)),
         meta={"platform": True, "action": "task_reopened", "task_id": str(task.id)},
     )
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)
 
@@ -495,7 +460,7 @@ async def start_task(
     )
     await say_task_started(db, task, actor=actor.handle)
     await tell_task(db, task, task_started_prompt(title=task.title, actor=actor.handle))
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     await dispatch(chat)
     return ok(out)
@@ -526,7 +491,7 @@ async def update_task(
         ):
             raise ForbiddenError(say("taskOwnerOnly"))
         await tasks.set_contributors(task, leaving)
-        out = await _task_out(db, chat, task)
+        out = await task_out(db, chat, task)
         await db.commit()
         return ok(out)
     members = TopicMemberService(db)
@@ -565,7 +530,7 @@ async def update_task(
         await tasks.set_contributors(
             task, [h for h in wanted if h != task.owner_handle]
         )
-    out = await _task_out(db, chat, task)
+    out = await task_out(db, chat, task)
     await db.commit()
     return ok(out)
 

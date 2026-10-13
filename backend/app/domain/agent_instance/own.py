@@ -10,9 +10,10 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import exists, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import listing as sentence_list
 from app.core.sentences import say
 from app.domain.agent_instance.models import (
@@ -23,10 +24,11 @@ from app.domain.agent_instance.models import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.device.login_kind import ConnectionKind, connection_kind
-from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow
+from app.domain.device.models import DeviceClaudeLoginRow, DeviceRow, HostedDeviceRow
+from app.domain.device.supply import Supply
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.user.models import User
-from app.domain.user.services import faces_by_handle, user_by_handle
+from app.domain.user.services import faces_by_handle
 
 #: The project setting that lets members bring their own agent in. Off unless a
 #: manager turns it on: the project's content leaves through a member's own
@@ -61,8 +63,9 @@ def allowed_kinds(
 
 @dataclass(frozen=True)
 class Login:
-    """One of a person's machines with their own Claude Code logged in for the
-    platform, and how it reaches a model."""
+    """One of a person's model connections: the login their own Claude Code
+    has for the platform on one of their machines, and how it reaches a
+    model. A machine holds one; the connection is named by the machine."""
 
     device_id: str
     device_name: str
@@ -71,64 +74,101 @@ class Login:
     plan: str | None
     #: The model a model service is called with; None for the other kinds.
     model: str | None
+    #: A model service's host; None for the other kinds.
+    service_host: str | None = None
+
+
+def _login(device_id: str, name: str, row: DeviceClaudeLoginRow) -> Login:
+    kind = connection_kind(row.auth_method, row.subscription_type)
+    service = kind is ConnectionKind.model_service
+    return Login(
+        device_id=device_id,
+        device_name=name,
+        kind=kind,
+        plan=row.subscription_type if kind is ConnectionKind.subscription else None,
+        model=row.model if service else None,
+        service_host=row.service_host if service else None,
+    )
+
+
+def _usable():
+    """The conditions under which a machine's login is a connection a session
+    may run on: logged in, on a machine its owner enrolled, and not removed by
+    its owner — whatever a backend that predates removals wrote back into
+    ``logged_in``, it never touches ``revoked_at``."""
+    return (
+        DeviceRow.supply == Supply.self_hosted,
+        DeviceClaudeLoginRow.logged_in.is_(True),
+        DeviceClaudeLoginRow.revoked_at.is_(None),
+    )
 
 
 async def logins(db: AsyncSession, owner_user_id: int) -> list[Login]:
-    """This person's machines with the platform's login, by machine name."""
+    """This person's model connections, the most recently confirmed first."""
     rows = await db.execute(
-        select(
-            DeviceRow.device_id,
-            DeviceRow.name,
-            DeviceClaudeLoginRow.auth_method,
-            DeviceClaudeLoginRow.subscription_type,
-            DeviceClaudeLoginRow.model,
-        )
+        select(DeviceRow.device_id, DeviceRow.name, DeviceClaudeLoginRow)
+        .join(HostedDeviceRow, HostedDeviceRow.device_id == DeviceRow.device_id)
         .join(
             DeviceClaudeLoginRow,
             DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
         )
-        .where(
-            DeviceRow.owner_user_id == owner_user_id,
-            DeviceClaudeLoginRow.logged_in.is_(True),
-        )
-        .order_by(DeviceRow.name)
+        .where(DeviceRow.owner_user_id == owner_user_id, *_usable())
+        .order_by(DeviceClaudeLoginRow.checked_at.desc())
     )
-    found = []
-    for device_id, name, auth_method, subscription_type, model in rows:
-        kind = connection_kind(auth_method, subscription_type)
-        found.append(
-            Login(
-                device_id=device_id,
-                device_name=name,
-                kind=kind,
-                plan=subscription_type if kind is ConnectionKind.subscription else None,
-                model=model if kind is ConnectionKind.model_service else None,
-            )
-        )
-    return found
+    return [_login(device_id, name, row) for device_id, name, row in rows]
 
 
-async def kinds_refused(
-    db: AsyncSession, owner_user_id: int, project_settings: dict[str, Any] | None
-) -> list[ConnectionKind]:
-    """The kinds of this person's logins when the project allows none of them,
-    so their own agent has no login to run on here; empty when one is allowed,
-    or when nothing is logged in (their agent waits for a machine instead)."""
-    allowed = allowed_kinds(project_settings)
-    kinds = list(dict.fromkeys(login.kind for login in await logins(db, owner_user_id)))
-    if any(kind in allowed for kind in kinds):
-        return []
-    return kinds
+async def connection_of(db: AsyncSession, owned: "Owned") -> Login | None:
+    """The model connection a member's own agent runs on, while it is one:
+    None once its owner removed it, logged it out, or the machine is gone."""
+    if owned.device_id is None:
+        return None
+    for login in await logins(db, owned.owner_user_id):
+        if login.device_id == owned.device_id:
+            return login
+    return None
+
+
+def label(login: Login) -> str:
+    """What tells one of a person's own agents from another in its name: a
+    subscription's plan, a model service's model, or that it is an API key."""
+    if login.kind is ConnectionKind.subscription:
+        return login.plan.capitalize() if login.plan else "订阅"
+    if login.kind is ConnectionKind.model_service:
+        return login.model or login.service_host or "自定义模型"
+    return "API"
 
 
 def kinds_refused_sentence(owner_name: str, kinds: list[ConnectionKind]) -> str:
-    """What the room is told when a member's own agent has only logins of
-    kinds the project does not allow."""
+    """What the room is told when a member's own agent runs on a kind of
+    connection the project does not allow."""
     return say(
         "ownAgentKindNotAllowed",
         owner=owner_name,
         kinds=sentence_list(say(_KIND_WORDS[kind]) for kind in kinds),
     )
+
+
+async def unusable(
+    db: AsyncSession, owned: "Owned", project_settings: dict[str, Any] | None
+) -> str | None:
+    """Why a member's own agent cannot work here even for someone it answers
+    to, as the sentence the room is told: its connection is gone, or is of a
+    kind the project does not allow. None when it can (it may still have to
+    wait for its machine to come online)."""
+    login = await connection_of(db, owned)
+    if login is None:
+        instance = await db.get(AgentInstance, owned.instance_id)
+        owner = await owner_of(db, owned.instance_id)
+        return say(
+            "ownAgentConnectionGone",
+            agent=(instance.display_name if instance else None) or "",
+            owner=owner[1] if owner else "",
+        )
+    if login.kind not in allowed_kinds(project_settings):
+        owner = await owner_of(db, owned.instance_id)
+        return kinds_refused_sentence(owner[1] if owner else "", [login.kind])
+    return None
 
 
 @dataclass(frozen=True)
@@ -137,6 +177,17 @@ class Owned:
     owner_user_id: int
     harness: str
     callers: OwnCallers = OwnCallers.owner
+    #: The machine holding the model connection it runs on.
+    device_id: str | None = None
+
+
+_OWNED = (
+    AgentInstance.id,
+    OwnAgent.owner_user_id,
+    OwnAgent.harness,
+    OwnAgent.callers,
+    OwnAgent.device_id,
+)
 
 
 async def owned_by_seat(
@@ -148,18 +199,13 @@ async def owned_by_seat(
     if not seat_handle:
         return None
     rows = await db.execute(
-        select(
-            AgentInstance.id,
-            OwnAgent.owner_user_id,
-            OwnAgent.harness,
-            OwnAgent.callers,
-        )
+        select(*_OWNED)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
         .where(AgentInstance.project_id == project_id)
     )
-    for instance_id, owner_user_id, harness, callers in rows:
-        if agent_instance_handle(instance_id) == seat_handle:
-            return Owned(instance_id, owner_user_id, harness, callers)
+    for row in rows:
+        if agent_instance_handle(row[0]) == seat_handle:
+            return Owned(*row)
     return None
 
 
@@ -173,12 +219,7 @@ async def owned_by_session(
         return None
     row = (
         await db.execute(
-            select(
-                AgentInstance.id,
-                OwnAgent.owner_user_id,
-                OwnAgent.harness,
-                OwnAgent.callers,
-            )
+            select(*_OWNED)
             .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
             .where(
                 AgentInstance.project_id == project_id,
@@ -193,15 +234,18 @@ async def owned_instance(db: AsyncSession, instance_id: uuid.UUID) -> Owned | No
     row = await db.get(OwnAgent, instance_id)
     if row is None:
         return None
-    return Owned(row.instance_id, row.owner_user_id, row.harness, row.callers)
+    return Owned(
+        row.instance_id, row.owner_user_id, row.harness, row.callers, row.device_id
+    )
 
 
 async def owned_in_project(
     db: AsyncSession, project_id: uuid.UUID
 ) -> list[tuple[AgentInstance, int, OwnCallers]]:
     """This project's members' own agents, each with its owner's user id and who
-    may call it. The callers column rides along because the row holding it is
-    this package's: a reader below that wants it calls this, not ``OwnAgent``."""
+    may call it — those their owners removed included (``is_active`` false).
+    The callers column rides along because the row holding it is this
+    package's: a reader below that wants it calls this, not ``OwnAgent``."""
     rows = await db.execute(
         select(AgentInstance, OwnAgent.owner_user_id, OwnAgent.callers)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
@@ -211,29 +255,17 @@ async def owned_in_project(
     return [(instance, owner, callers) for instance, owner, callers in rows]
 
 
-async def has_a_login(db: AsyncSession, owner_user_id: int) -> bool:
-    """Whether any of this person's machines has their own Claude Code logged
-    in for the platform, as the machine last said."""
-    return bool(
-        await db.scalar(
-            select(
-                exists().where(
-                    DeviceRow.owner_user_id == owner_user_id,
-                    DeviceClaudeLoginRow.device_id == DeviceRow.device_id,
-                    DeviceClaudeLoginRow.logged_in.is_(True),
-                )
-            )
-        )
-    )
-
-
 def own_handle(owner_user_id: int) -> str:
-    """The memory key of a member's own agent in a project: one per person."""
-    return f"own-claude-code-{owner_user_id}"
+    """The memory key of a member's own agent in a project: one per agent, so
+    one per connection its owner added there."""
+    return f"own-claude-code-{owner_user_id}-{uuid.uuid4().hex[:8]}"
 
 
-def own_name(nickname: str) -> str:
-    return f"{nickname}的 Claude Code"
+def own_name(nickname: str, distinction: str) -> str:
+    """「<昵称>的 Claude Code（<区分>）」: every one of them carries what tells
+    it from its owner's others (``label``), even while it is the only one, so
+    its name does not change when its owner adds a second."""
+    return f"{nickname}的 Claude Code（{distinction}）"[:64]
 
 
 def own_role(nickname: str, callers: OwnCallers = OwnCallers.owner) -> str:
@@ -253,74 +285,115 @@ def own_role(nickname: str, callers: OwnCallers = OwnCallers.owner) -> str:
     )
 
 
-async def ensure_own_agent(
-    db: AsyncSession, project, owner_user_id: int, nickname: str, harness: str
-) -> AgentInstance | None:
-    """The person's own Claude Code in this project, made the first time it is
-    asked for: it follows its owner into every project they are in, as long as
-    the project lets members bring their own and the owner has logged it in on
-    a machine. None when either is not so. ``harness`` is the registry's name
-    for Claude Code, passed in because this package sits below the registry."""
-
-    existing = await db.scalar(
+async def add(
+    db: AsyncSession, project, owner_user_id: int, device_id: str, harness: str
+) -> AgentInstance:
+    """Its owner brings their own Claude Code with one of their connections
+    into the project. One agent per connection: adding a connection already
+    here is a no-op, and one its owner removed comes back with what it knew.
+    ``harness`` is the registry's name for Claude Code, passed in because this
+    package sits below the registry."""
+    if not allows_own_agents(project.settings):
+        raise ForbiddenError(say("ownAgentsClosedHere"))
+    login = next(
+        (c for c in await logins(db, owner_user_id) if c.device_id == device_id),
+        None,
+    )
+    if login is None:
+        raise NotFoundError(say("ownAgentConnectionNotFound"))
+    if login.kind not in allowed_kinds(project.settings):
+        raise ForbiddenError(say("ownAgentConnectionKindRefused"))
+    instance = await db.scalar(
         select(AgentInstance)
         .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
         .where(
             AgentInstance.project_id == project.id,
             OwnAgent.owner_user_id == owner_user_id,
+            OwnAgent.device_id == device_id,
         )
     )
-    if not allows_own_agents(project.settings):
-        return None
-    if existing is None and not await has_a_login(db, owner_user_id):
-        return None
-    if existing is None:
-        existing = AgentInstance(
+    if instance is None:
+        nickname = await _nickname_of(db, owner_user_id)
+        instance = AgentInstance(
             project_id=project.id,
             handle=own_handle(owner_user_id),
             type_name=None,
             configuration={"body": own_role(nickname)},
-            display_name=own_name(nickname)[:64],
+            display_name=own_name(nickname, label(login)),
             name_source=NameSource.human,
         )
-        db.add(existing)
+        db.add(instance)
         await db.flush()
         db.add(
             OwnAgent(
-                instance_id=existing.id,
+                instance_id=instance.id,
                 owner_user_id=owner_user_id,
                 harness=harness,
+                device_id=device_id,
             )
         )
+    instance.is_active = True
+    await db.flush()
+    await _name_owners_agents(db, project.id, owner_user_id)
+    await AgentInstanceService(db).ensure_identity(instance)
+    return instance
+
+
+async def remove(db: AsyncSession, instance_id: uuid.UUID) -> None:
+    """Its owner takes it out of the project: off the roster and out of reach.
+    The row stays, as a retired teammate's does, so its memory is there if they
+    add the same connection again; its seats are its caller's to revoke."""
+    instance = await db.get(AgentInstance, instance_id)
+    if instance is not None:
+        instance.is_active = False
         await db.flush()
-    else:
-        if existing.display_name != own_name(nickname)[:64]:
-            # It carries its owner's name, so it follows a change of nickname.
-            existing.display_name = own_name(nickname)[:64]
-        callers = await db.scalar(
-            select(OwnAgent.callers).where(OwnAgent.instance_id == existing.id)
-        )
-        role = own_role(nickname, callers or OwnCallers.owner)
-        if (existing.configuration or {}).get("body") != role:
-            # Whose word it takes follows its owner's nickname and who they let
-            # call it.
-            existing.configuration = {**(existing.configuration or {}), "body": role}
-    await AgentInstanceService(db).ensure_identity(existing)
-    return existing
 
 
-async def ensure_for_member(
-    db: AsyncSession, project, handle: str, harness: str
+async def rename_for_connection(db: AsyncSession, device_id: str) -> None:
+    """After a machine said what its login is, the own agents on that
+    connection take the name it now calls for (its owner switched plan or
+    model), and their owner's current nickname."""
+    rows = await db.execute(
+        select(AgentInstance.project_id, OwnAgent.owner_user_id)
+        .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .where(OwnAgent.device_id == device_id, AgentInstance.is_active.is_(True))
+        .distinct()
+    )
+    for project_id, owner_user_id in rows.all():
+        await _name_owners_agents(db, project_id, owner_user_id)
+
+
+async def _name_owners_agents(
+    db: AsyncSession, project_id: uuid.UUID, owner_user_id: int
 ) -> None:
-    """Bring a member's own Claude Code into the project they are looking at,
-    made on read like an agent's identity (`ensure_identity`): it follows its
-    owner, so a project they join has it the next time they look."""
-
-    user = await user_by_handle(db, handle)
-    if user is None:
-        return
-    nickname = await _nickname(db, user.username)
-    await ensure_own_agent(db, project, user.id, nickname, harness)
+    """Name one owner's own agents in a project after their connections, in
+    the order they were added. Two on the same plan or model are told apart by
+    a number (「（Max 2）」). One whose connection is gone keeps its name."""
+    nickname = await _nickname_of(db, owner_user_id)
+    by_device = {c.device_id: c for c in await logins(db, owner_user_id)}
+    rows = await db.execute(
+        select(AgentInstance, OwnAgent.device_id, OwnAgent.callers)
+        .join(OwnAgent, OwnAgent.instance_id == AgentInstance.id)
+        .where(
+            AgentInstance.project_id == project_id,
+            OwnAgent.owner_user_id == owner_user_id,
+            AgentInstance.is_active.is_(True),
+        )
+        .order_by(AgentInstance.created_at)
+    )
+    seen: dict[str, int] = {}
+    for instance, device_id, callers in rows.all():
+        login = by_device.get(device_id) if device_id else None
+        if login is not None:
+            base = label(login)
+            seen[base] = seen.get(base, 0) + 1
+            distinction = base if seen[base] == 1 else f"{base} {seen[base]}"
+            instance.display_name = own_name(nickname, distinction)
+        role = own_role(nickname, callers)
+        if (instance.configuration or {}).get("body") != role:
+            # Whose word it takes follows its owner's nickname.
+            instance.configuration = {**(instance.configuration or {}), "body": role}
+    await db.flush()
 
 
 async def owner_of(db: AsyncSession, instance_id: uuid.UUID) -> tuple[str, str] | None:
@@ -379,21 +452,17 @@ async def why_not(
 ) -> str | None:
     """Why ``caller`` may not set this agent to work, as the sentence the room
     is told; None when they may. A member's own agent is withheld in a project
-    closed to them, from anyone it does not answer to, and when every login its
-    owner has is of a kind the project does not allow."""
+    closed to them, from anyone it does not answer to, and when its connection
+    is gone or of a kind the project does not allow (``unusable``)."""
     owned = await owned_instance(db, instance_id)
     if owned is None:
         return None
     if not allows_own_agents(project_settings):
         return say("ownAgentsClosed")
-    owner = await owner_of(db, instance_id)
-    owner_name = owner[1] if owner is not None else ""
     if not await callable_by(db, instance_id, caller):
-        return say("ownAgentOwnerOnly", owner=owner_name)
-    refused = await kinds_refused(db, owned.owner_user_id, project_settings)
-    if refused:
-        return kinds_refused_sentence(owner_name, refused)
-    return None
+        owner = await owner_of(db, instance_id)
+        return say("ownAgentOwnerOnly", owner=owner[1] if owner is not None else "")
+    return await unusable(db, owned, project_settings)
 
 
 async def may_work_for(
@@ -446,18 +515,27 @@ async def listing(
     db: AsyncSession, project_id: uuid.UUID, viewer_user_id: int | None, is_online
 ) -> list[dict]:
     """The members' own agents a project has: whose each one is, who may call
-    it, and the kinds of model connection it has. Everyone in the project reads
-    that much; the machines it runs on, and whether they are online, only its
-    owner reads (``machines`` is None for everyone else)."""
+    it, and the model connection it runs on (None once that is gone). Everyone
+    in the project reads that much; the machine holding the connection, and
+    whether it is online, only its owner reads (``machine`` is None for
+    everyone else)."""
 
     rows = []
     for instance, owner_user_id, callers in await owned_in_project(db, project_id):
+        if not instance.is_active:
+            continue
+        owned = await owned_instance(db, instance.id)
+        login = await connection_of(db, owned) if owned is not None else None
         owner = await db.get(User, owner_user_id)
-        found = await logins(db, owner_user_id)
-        connections = dict.fromkeys(
-            (login.kind.value, login.plan, login.model) for login in found
-        )
         mine = viewer_user_id is not None and viewer_user_id == owner_user_id
+        machine = None
+        if mine and owned is not None and owned.device_id is not None:
+            device = await db.get(DeviceRow, owned.device_id)
+            if device is not None:
+                machine = {
+                    "name": device.name,
+                    "online": bool(is_online(device.device_id)),
+                }
         rows.append(
             {
                 "handle": agent_instance_handle(instance.id),
@@ -465,22 +543,56 @@ async def listing(
                 "callers": callers.value,
                 "owner_handle": owner.username if owner else None,
                 "owner_name": await _nickname(db, owner.username) if owner else None,
-                "connections": [
-                    {"kind": kind, "plan": plan, "model": model}
-                    for kind, plan, model in connections
-                ],
-                "machines": [
-                    {
-                        "name": login.device_name,
-                        "online": bool(is_online(login.device_id)),
-                    }
-                    for login in found
-                ]
-                if mine
+                "connection": {
+                    "kind": login.kind.value,
+                    "plan": login.plan,
+                    "model": login.model,
+                }
+                if login is not None
                 else None,
+                "machine": machine,
             }
         )
     return rows
+
+
+async def my_connections(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    viewer_user_id: int,
+    project_settings: dict[str, Any] | None,
+    is_online,
+) -> list[dict]:
+    """The reader's own connections, for them to add to this project: each
+    with whether it is already here and whether the project allows its kind."""
+    here = {
+        device_id
+        for (device_id,) in (
+            await db.execute(
+                select(OwnAgent.device_id)
+                .join(AgentInstance, AgentInstance.id == OwnAgent.instance_id)
+                .where(
+                    AgentInstance.project_id == project_id,
+                    AgentInstance.is_active.is_(True),
+                    OwnAgent.owner_user_id == viewer_user_id,
+                )
+            )
+        ).all()
+    }
+    allowed = allowed_kinds(project_settings)
+    return [
+        {
+            "id": login.device_id,
+            "kind": login.kind.value,
+            "plan": login.plan,
+            "model": login.model,
+            "machine_name": login.device_name,
+            "online": bool(is_online(login.device_id)),
+            "added": login.device_id in here,
+            "allowed": login.kind in allowed,
+        }
+        for login in await logins(db, viewer_user_id)
+    ]
 
 
 async def _nickname(db: AsyncSession, handle: str) -> str:
@@ -488,3 +600,8 @@ async def _nickname(db: AsyncSession, handle: str) -> str:
 
     name, _avatar = (await faces_by_handle(db, [handle])).get(handle, (None, None))
     return name or handle
+
+
+async def _nickname_of(db: AsyncSession, user_id: int) -> str:
+    user = await db.get(User, user_id)
+    return await _nickname(db, user.username) if user is not None else ""

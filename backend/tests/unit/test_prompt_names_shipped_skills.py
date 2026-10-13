@@ -8,7 +8,8 @@ arrives.
 import re
 
 from app.domain.agent.harness.prompt import build_system_prompt
-from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE, native_skill_files
+from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
+from app.domain.skill_library import native_skill_files
 
 _LOAD = re.compile(r"加载\s*`?([a-z][a-z0-9-]+)`?")
 

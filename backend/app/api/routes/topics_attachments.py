@@ -16,7 +16,7 @@ Where the shared names went. The three names this module used to read from
 topics.py now have their own homes: `clean_artifact_path` and
 `MAX_ARTIFACT_BYTES` are the room-file rules in `app.domain.project.room_files`,
 `source_bytes` is the API read-orchestration helper in
-`app.api.routes.topics_file_sources`, and the binding check became
+`app.api.topics_file_sources`, and the binding check became
 `TaskService.require_source_in_room`. `DbSession` is still imported from
 topics.py, the shape `admin_models.py` uses for it. A helper two groups share
 does not belong to either, so it moves out of topics.py rather than staying
@@ -51,7 +51,7 @@ from app.api.auth import (
 from app.api.byte_response import media_bytes_response
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics_file_sources import source_bytes
+from app.api.topics_file_sources import source_bytes
 from app.core import raster_images, video_files
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
