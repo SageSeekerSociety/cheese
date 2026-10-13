@@ -49,8 +49,11 @@ from app.api.routes.awaiting import waiting_items  # noqa: E402
 
 #: (bucket, dotted path) for every leaf fetch ``waiting_items`` performs. They
 #: do not nest, so charging each one is exclusive. A path here is where the
-#: route *reaches* the call: three of these are imported by name into
-#: ``app.api.routes.awaiting``, so patching the defining module would miss them.
+#: route *reaches* the call: two of these (``threads_of_rooms``,
+#: ``running_tasks``) are imported by name into ``app.api.routes.awaiting``, so
+#: patching the defining module would miss them. ``address`` is a third such
+#: by-name import, but it is a judgement call, so it sits in
+#: ``JUDGEMENT_TARGETS`` below rather than here.
 FETCH_LEAVES = [
     ("projects", "app.domain.project.repositories.ProjectRepository.list_visible_to"),
     (

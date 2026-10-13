@@ -7,8 +7,9 @@ Measures three things that the single-request harness cannot separate:
     which is the part a second worker could not absorb;
   * per-request CPU under contention, to compare with the single-request run.
 
-It also runs the same batch with twice the tasks visible, so "the cost follows
-the data" can be checked rather than assumed.
+It runs one batch per iteration against the database it is pointed at; to see
+how the cost moves with the data, resize the seed (`PERF_DATABASE_URL`) and run
+it again.
 
 Run from the repo root.
 """
