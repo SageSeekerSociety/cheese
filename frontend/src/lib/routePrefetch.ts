@@ -12,6 +12,7 @@ import type { RouteLocationRaw, Router } from 'vue-router'
 import { whenIdle } from './idle'
 
 import { prefetchNewestBlocks } from '@/query/blocks'
+import { prefetchThread } from '@/query/room'
 
 /**
  * 指针进来之后要停这么久才算「想点」。
@@ -28,6 +29,8 @@ export interface HoverTarget {
   to?: RouteLocationRaw
   /** 要预热消息的话题：把它最新那一页取回缓存里。 */
   topicId?: string
+  /** 要预热的支线：它本身（连页头那条消息）和最新那一页回复（`query/room` 的 `prefetchThread`）。 */
+  threadId?: string
 }
 
 // 取过就不再取，按解析出来的完整路径记。消息手上那份还新鲜就不取（`query/blocks`）。
@@ -150,6 +153,7 @@ export function prefetchOnHover(target: HoverTarget): void {
     pending = null
     if (target.router && target.to !== undefined) warmRoute(target.router, target.to)
     if (target.topicId) warmTopic(target.topicId)
+    if (target.threadId) void prefetchThread(target.threadId)
   }, HOVER_INTENT_MS)
 }
 
@@ -163,6 +167,7 @@ export function prefetchNow(target: HoverTarget): void {
   if (!connectionAllows()) return
   if (target.router && target.to !== undefined) warmRoute(target.router, target.to)
   if (target.topicId) warmTopic(target.topicId)
+  if (target.threadId) void prefetchThread(target.threadId)
 }
 
 /**
