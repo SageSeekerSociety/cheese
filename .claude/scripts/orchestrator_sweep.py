@@ -427,9 +427,10 @@ def occurrences(hay, needle):
 def unique_tail(content):
     """The shortest run of trailing lines that occurs exactly once, or None when the
     document has no such run. Appending needs a passage to name that is this text and
-    nowhere else; this keeps the passage as small as the document allows. When the whole
-    document is the only trailing run that occurs once — every line of it repeats — the
-    passage is the whole document, and the board is still appended after it."""
+    nowhere else; this keeps the passage as small as the document allows. Only when no
+    shorter trailing run occurs once does the passage become the whole document — a
+    document of five identical lines is one such document — and the board is appended
+    after it."""
     lines = content.split("\n")
     for start in range(len(lines) - 1, -1, -1):
         candidate = "\n".join(lines[start:])
