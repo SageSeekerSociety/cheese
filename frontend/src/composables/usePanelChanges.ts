@@ -413,9 +413,11 @@ export function usePanelChanges(props: PanelChangesProps) {
   // the reader actually clicked.
   let pendingOpen: string | null = null
 
-  // 上一次指名要开的文件没在这份清单里。`openFile` 拿它给调用者回话：文件不在这一支
-  // 的工作副本里，该换个地方开它（工作面板退到「项目当前版本」那一格）。
-  let openMissed = false
+  // 上一次指名要开的文件在这份清单里。`openFile` 拿它给调用者回话：没在——文件不在
+  // 这一支的工作副本里，或者清单根本没拿到（任务找不到、项目没接仓库、取清单出错）——
+  // 就该换个地方开它（工作面板退到「项目当前版本」那一格），而不是停在一格开不出它的
+  // 「改动」上。
+  let openFound = false
 
   // Two callers can ask for the listing in the same tick — `openFile` asks
   // directly, and coming on screen makes the activation watcher ask too. Letting
@@ -452,9 +454,9 @@ export function usePanelChanges(props: PanelChangesProps) {
         // （工作面板退到「项目当前版本」那一格），列表留在原地。
         if (!listed.some((f) => f.path === want)) {
           pendingOpen = null
-          openMissed = true
           return
         }
+        openFound = true
         // Keep the directed path reserved while its read is in flight, so a
         // later diff/list response cannot start an automatic first-file read.
         await selectFile(want)
@@ -709,7 +711,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     fileRequest += 1
     filesInFlight = null
     pendingOpen = null
-    openMissed = false
+    openFound = false
     fileSaving.value = false
     inFlight = 0
     loading.value = false
@@ -754,7 +756,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     clearSource()
     pendingOpen = path
     await Promise.all([loadGit(), loadFiles()])
-    return !openMissed
+    return openFound
   }
 
   return {
