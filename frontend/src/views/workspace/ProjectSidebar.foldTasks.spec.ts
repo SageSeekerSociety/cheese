@@ -184,10 +184,7 @@ describe('频道下面那一整块任务，收得起来', () => {
     await openProject([
       channel(
         'topic-a',
-        [
-          task(K1, '任务一', 'topic-a', { owner_handle: 'me' }),
-          task(K2, '任务二', 'topic-a', { filling_in: true }),
-        ],
+        [task(K1, '任务一', 'topic-a', { owner_handle: 'me' }), task(K2, '任务二', 'topic-a', { filling_in: true })],
         4
       ),
     ])
