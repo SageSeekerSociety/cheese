@@ -7,6 +7,7 @@ appends the rendered board to one document and never restates anything above it.
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
       [--silent-min 60] [--skip 1443,1405] [--json | --render | --sync-doc <document id>]
+  python3 .claude/scripts/orchestrator_sweep.py --self-test   (offline: no token, no network, no gh)
 
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
   出队          card pending, PR neither merged nor queued, last queue event is a removal
@@ -240,10 +241,14 @@ _VERIFIED_LABEL_WORDS = _VERIFIED_WORDS + ("check",)
 #: 短，就会把「路上顺手修的那几条」当成整份改动摆出来。
 _SECTION_WORDS = {
     "changed": (("what chang", "change", "changes", "改动", "改了什么"),
-                ("fix", "改法", "修改")),
+                ("fix", "behavio", "改法", "修改")),
     "verified": (_VERIFIED_HEADING_WORDS,),
 }
 _SECTION_WORDS_FLAT = {k: tuple(w for g in gs for w in g) for k, gs in _SECTION_WORDS.items()}
+#: 标题里说「没改」的那些词：`## What did not change` 讲的是另一半，不是改动本身。
+#: 只看开头三个词 —— `## Fix a bug that no longer exists` 是在说改动。
+_NEGATING_WORDS = frozenset({"not", "no", "never", "without", "unverified", "none", "nothing"})
+_NEGATING_PHRASES = ("没改", "未改", "不改", "无改动", "没有改")
 #: A line that labels the part after it — `**验证**：…`, `验证：`, `## Tests` alike. How
 #: this repo actually writes the second half, far more often than as a heading.
 #: A list item and a URL line start the same way and are not labels: a section whose
@@ -256,9 +261,9 @@ _SECTION_WORDS_FLAT = {k: tuple(w for g in gs for w in g) for k, gs in _SECTION_
 #: say that body never wrote the section.
 _LABEL = re.compile(
     r"^(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!\w{2,12}://)"
-    r"(?:\*\*)?([^\n：:*`，]{1,20}(?:[（(][^）\n]{0,80}[）)])?)"
-    r"(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
-_HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
+    r"(?:\*\*)?([^\n：:*`，。]{1,40}(?:[（(][^）\n]{0,80}[）)])?)"
+    r"(?:\*\*)?[ \t]*[：:](?!//)[ \t]*", re.M)
+_HEADING = re.compile(r"^(#{1,4})\s+(.+?)\s*$", re.M)
 #: A line that is nothing but the name of a section — `Verification`, `验证`, `Tests` —
 #: with no colon after it. The block below it is that section: a body puts the name on
 #: its own line when a list follows, rather than beside the first sentence. Three things
@@ -271,7 +276,7 @@ _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
 #: mentions a test that reading it as a name cut that whole section away.
 _BARE_LABEL = re.compile(r"^(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!#)"
                          r"(?:\*\*)?([^\n：:*|`]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
-_HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
+_COMMENT_OPEN, _COMMENT_CLOSE = "<!--", "-->"
 #: Everything from the first of these lines down is the platform's, not the author's.
 _TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
                            r"|Reviewed-by|Reported-by|Fixes-feedback):", re.M | re.I)
@@ -289,6 +294,26 @@ _LOG_STAMP = re.compile(r"^\d{4}-\d\d-\d\dT[\d:.]+Z\s?")
 #: A failed check's page names the Actions job whose log carries the case names.
 _JOB_IN_URL = re.compile(r"/actions/runs/\d+/job/(\d+)")
 _CASES_MAX = 6
+
+
+def _strip_comments(text):
+    """The text with every `<!-- … -->` taken out.
+
+    Scanning is linear and not a regex: a body is allowed to be 64 KB, and a `.` that
+    crosses newlines hunting for a close it never finds is quadratic in the body's
+    length. An unclosed `<!--` is left where it is — the regex kept it too."""
+    out, i = [], 0
+    while True:
+        j = text.find(_COMMENT_OPEN, i)
+        if j < 0:
+            out.append(text[i:])
+            return "".join(out)
+        k = text.find(_COMMENT_CLOSE, j + len(_COMMENT_OPEN))
+        if k < 0:
+            out.append(text[i:])
+            return "".join(out)
+        out.append(text[i:j])
+        i = k + len(_COMMENT_CLOSE)
 
 
 def _section_rank(low, want):
@@ -325,7 +350,7 @@ def brief(desc, limit=400):
     Each half is read off the heading that names it; where no heading does, the
     opening paragraphs answer for "what changed" and a plain label line answers for
     the other half, which is how most bodies here are written."""
-    text = _HTML_COMMENT.sub("", desc or "")
+    text = _strip_comments(desc or "")
     trailer = _TRAILER_LINE.search(text)
     if trailer:
         text = text[:trailer.start()]
@@ -337,7 +362,7 @@ def brief(desc, limit=400):
         return "", ""
     heads = list(_HEADING.finditer(text))
     # 可能会切走一节的行，从早到晚：带冒号的标签行，和整行只有章节名的那些。
-    labels = sorted(list(_LABEL.finditer(text))
+    labels = sorted([m for m in _LABEL.finditer(text) if _starts_a_block(text, m)]
                     + [m for m in _BARE_LABEL.finditer(text)
                        if _names_a_section(m) and _stands_alone(text, m)],
                     key=lambda m: m.start())
@@ -402,10 +427,22 @@ def _names_a_section(m):
 def _negates(h):
     """Whether a heading names the section by saying it is not that: `没验证的`, `No tests`."""
     low = h.group(2).strip().lower()
-    if low.startswith(("没", "未", "无", "不")):
+    if low.startswith(("没", "未", "无", "不")) or any(w in low for w in _NEGATING_PHRASES):
         return True
-    return re.split(r"[\s:：,，—-]+", low, maxsplit=1)[0] in (
-        "not", "no", "never", "without", "unverified", "none", "nothing")
+    return any(w in _NEGATING_WORDS for w in re.split(r"[\s:：,，.,()（）-]+", low)[:3])
+
+
+def _starts_a_block(text, m):
+    """Whether the line `m` matched begins a block of its own.
+
+    A label line names a section, and a section starts after a blank line, after a
+    heading, or at the top. A sentence that merely wrapped onto a line whose text
+    happens to reach a colon within the name's length does not: reading one as a label
+    cut the section above it in half (PR #2772)."""
+    before = text[:m.start()].rstrip(" \t")
+    if not before.strip() or before.endswith("\n\n"):
+        return True
+    return before.rsplit("\n", 1)[-1].lstrip().startswith("#")
 
 
 def _stands_alone(text, m):
@@ -819,8 +856,99 @@ def value_of(argv, flag):
     return argv[i]
 
 
+#: 离线自测的用例：每一份正文/每一行日志都是这个仓库里真实写过的形状，其中多数正是
+#: 这一版修掉的那几种读法。改读段逻辑时先跑它。
+_SELF_TEST_BODIES = (
+    ("标题说 Change（单数）时读改动，不读它上面那段为什么",
+     "## Why it broke\n\n背景：线上报了什么错。\n\n## Change\n\n- 把 A 换成 B\n",
+     "- 把 A 换成 B", ""),
+    ("有 Root cause 和 Fix 两个标题时读 Fix",
+     "## Root cause\n\n坏在 A。\n\n## Fix\n\n把 A 换成 B。\n\n## Test\n\n跑过了\n",
+     "把 A 换成 B。", "跑过了"),
+    ("中文的 修改 和 改法 也是改动那一节",
+     "## 现象\n\n坏的。\n\n## 修改\n\n改成 A。\n\n## 验证\n\n绿了\n",
+     "改成 A。", "绿了"),
+    ("缩进的列表项不是标签行，不切走上一节",
+     "## 改动\n\nA。\n\n验证：\n  - 用例 a 过了\n  - 用例 b 过了\n",
+     "A。", "- 用例 a 过了\n  - 用例 b 过了"),
+    ("标签名字里的反引号和逗号不改变它是标签行",
+     "改了 A。\n\n自测（`--self-test`，离线：不取 token、不连网）写在同一份文件里。\n\n验证：全过\n",
+     "改了 A。\n\n自测（`--self-test`，离线：不取 token、不连网）写在同一份文件里。", "全过"),
+    ("括号里点名的用例文件不挡住 Tests 这一行",
+     "改了 A。\n\nTests (`test_a_b.py`): green\n",
+     "改了 A。", "green"),
+    ("Latest 里的 test 不是验证那一节",
+     "## Latest conflict resolution\n\n合并了 main。\n\n验证：绿\n",
+     "合并了 main。", "绿"),
+    ("平台尾注之后的内容不算正文",
+     "改动：A。\n\nCo-Authored-By: x <x@y>\n\nFixes-feedback: FB-1\n",
+     "改动：A。", ""),
+    ("标题只提了一句测试的清单不算验证节",
+     "## 改动\n\n把 A 换成 B。\n\n## Checklist\n\n- [x] 各带自己的挂载测试\n\n## 验证方式\n\n绿了\n",
+     "把 A 换成 B。", "绿了"),
+    ("标题说「没改的部分」时，改动读的是上面那一节",
+     "## What changed\n\n把 A 换成 B。\n\n## What did not change\n\nC 没动。\n",
+     "把 A 换成 B。", ""),
+    ("标签名里带句点时它还是标签行",
+     "改了 A。\n\nChecks. Locally: `pnpm install`, eslint 0 errors\n",
+     "改了 A。", "`pnpm install`, eslint 0 errors"),
+    ("跟在句子中间的冒号不是标签行",
+     "read the file top to bottom in both renders; nothing\nelse stopped me. Higher layer: the pool\n",
+     "read the file top to bottom in both renders; nothing\nelse stopped me. Higher layer: the pool", ""),
+    ("整行只有章节名时，它底下的块是那一节",
+     "改动如下。\n\nVerification\n\n- pytest 全过\n",
+     "改动如下。", "- pytest 全过"),
+)
+_SELF_TEST_ROLLUPS = (
+    ("FAILURE 的 CheckRun 算红", {"contexts": {"nodes": [
+        {"__typename": "CheckRun", "name": "guards / guards", "conclusion": "FAILURE",
+         "detailsUrl": "https://github.com/x/y/actions/runs/1/job/2"}]}}, ["guards / guards"]),
+    ("SUCCESS 的不算红", {"contexts": {"nodes": [
+        {"__typename": "CheckRun", "name": "guards / guards", "conclusion": "SUCCESS",
+         "detailsUrl": "https://github.com/x/y/actions/runs/1/job/2"}]}}, []),
+    ("老式 StatusContext 的 FAILURE 也算红", {"contexts": {"nodes": [
+        {"__typename": "StatusContext", "context": "ci/old", "state": "FAILURE",
+         "targetUrl": "https://github.com/x/y/actions/runs/1/job/3"}]}}, ["ci/old"]),
+)
+_SELF_TEST_LOG_LINES = (
+    ("2026-10-13T04:11:00.1234567Z FAILED tests/unit/test_a.py::test_b", "tests/unit/test_a.py::test_b"),
+    ("##[error]tests/unit/test_a.py::test_b", "tests/unit/test_a.py::test_b"),
+    ("--- FAIL: TestTheThing", "TestTheThing"),
+    ("✕ renders the settings page", "renders the settings page"),
+    ("2026-10-13T04:11:00.1234567Z ok, nothing failed here", ""),
+)
+
+
+def self_test():
+    """离线自测：不开网络、不取 token、不调 gh，覆盖读段和读红两条新路径。"""
+    bad, total = [], 0
+
+    def check(name, got, want):
+        nonlocal total
+        total += 1
+        if got != want:
+            bad.append(f"{name}\n  想要 {want!r}\n  读成 {got!r}")
+
+    for name, body, want_changed, want_verified in _SELF_TEST_BODIES:
+        check("读段：" + name, brief(body, limit=10_000), (want_changed, want_verified))
+    for name, rollup, want in _SELF_TEST_ROLLUPS:
+        check("读红：" + name, [c["name"] for c in failed_checks(rollup)], want)
+    for line, want in _SELF_TEST_LOG_LINES:
+        found = _CASE_LINE.match(_LOG_STAMP.sub("", line).strip())
+        got = next((g for g in found.groups() if g), "").strip() if found else ""
+        check("读用例：" + line, got, want)
+    for line in bad:
+        print("FAIL " + line)
+    if bad:
+        print(f"self-test: {len(bad)} of {total} failed")
+        raise SystemExit(1)
+    print(f"self-test: ok ({total} cases, offline)")
+
+
 def main():
     argv = sys.argv
+    if "--self-test" in argv:
+        return self_test()
     room = argv[1]
     silent = int(value_of(argv, "--silent-min") or 60)
     skip = set((value_of(argv, "--skip") or "").split(",")) - {""}
