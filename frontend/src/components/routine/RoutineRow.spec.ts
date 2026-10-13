@@ -1,8 +1,11 @@
 // 一条规则那一行：**按钮亮不亮由这条规则自己说**。
 //
-// 后端逐条算好 `can_manage`（规则主人或项目管理员），前端照着画。这一份钉的就是这句
-// 话的两半：拿得到权限时动作都在，拿不到时一颗按钮都不画、而且写清为什么 —— 一条没
-// 有按钮的规则和一条不允许你动的规则，看起来不该是同一个东西。
+// 后端逐条算好 `can_manage`（规则主人或项目管理员），前端照着画。权限是三档，不是两
+// 档：频道里的人都能改、能暂停/恢复、能立即执行一次；只有规则主人和项目管理员能确认
+// 启用、能删除。做不到的按钮干脆不出现，也不写一句「只有谁能做」。
+//
+// 已经在跑的那一条，动作只有一处：行尾那颗 ⋯（桌面上右键一行弹的是同一份，弹在鼠标
+// 那一点上）。待确认的那一条例外——「确认启用」是它唯一要紧的事，摆在行里。
 import type { Component } from 'vue'
 import type { Routine } from '@/lib/routine'
 
@@ -54,10 +57,9 @@ const base: Routine = {
   topic_id: 'room-1',
   title: '每周项目进展',
   instructions: '汇总本周完成的任务和进行中的事',
-  context_scope: '本项目所有房间的任务',
   output_dir: '周报',
   trigger: 'schedule',
-  trigger_text: '每周周一 09:00（Asia/Shanghai）',
+  trigger_text: '每周一 09:00（Asia/Shanghai）',
   i18n: {
     trigger_text: {
       key: 'routineTriggerWeekly',
@@ -69,6 +71,10 @@ const base: Routine = {
     },
   },
   spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
+  scope_topic_ids: [],
+  scope_topics: [],
+  last_run: null,
+  run_count: 12,
   timezone: 'Asia/Shanghai',
   state: 'active',
   agent_handle: 'cheese-x',
@@ -86,6 +92,11 @@ function mount(routine: Routine, props: Record<string, unknown> = {}) {
   return render(Row, { props: { routine, ...props }, global: { plugins: [vuetify, i18n] } })
 }
 
+/** 此刻弹出来的菜单里那几行。 */
+function menuItems(): (string | null)[] {
+  return Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((el) => el.textContent?.trim() ?? null)
+}
+
 /** 这一行上画出来的按钮（桌面上那一排文字按钮；手机上收进 ⋯，那里没有按钮）。 */
 function buttons(container: Element): string[] {
   return Array.from(container.querySelectorAll('button'))
@@ -96,15 +107,15 @@ function buttons(container: Element): string[] {
 describe('一条规则这一行', () => {
   it('changes the trigger language on an already rendered row, not its timezone or clock', async () => {
     const { container } = mount(base)
-    expect(container.textContent).toContain('每周周一 09:00（Asia/Shanghai）')
+    expect(container.textContent).toContain('每周一 09:00（Asia/Shanghai）')
     setLocale('en')
     await waitFor(() => {
       expect(container.textContent).toContain('Every Monday at 09:00 (Asia/Shanghai)')
-      expect(container.textContent).not.toContain('每周周一')
+      expect(container.textContent).not.toContain('每周一')
     })
   })
 
-  it('右键这一行：弹出行里那几样操作', async () => {
+  it('右键这一行：弹出行尾 ⋯ 里那几样操作，弹在鼠标那一点上', async () => {
     const { container } = mount(base)
     await fireEvent.contextMenu(container.querySelector('.routine-row')!, { clientX: 20, clientY: 40 })
     await waitFor(() =>
@@ -114,45 +125,77 @@ describe('一条规则这一行', () => {
     )
   })
 
-  it('已经在跑的：暂停、立即执行一次、修改、执行记录、删除都在', () => {
-    const { container } = mount(base)
-    expect(buttons(container)).toEqual(['暂停', '立即执行一次', '修改', '执行记录', '删除'])
-    expect(container.textContent).toContain('每周周一 09:00（Asia/Shanghai）')
-    expect(container.textContent).toContain('执行中')
+  it('已经在跑的：五样动作都收在行尾那颗 ⋯ 里，行里不再摊一排按钮', async () => {
+    const ui = mount(base)
+    expect(buttons(ui.container)).toEqual([])
+    expect(ui.container.textContent).toContain('每周一 09:00（Asia/Shanghai）')
+    expect(ui.container.textContent).toContain('执行中')
+    await fireEvent.click(ui.getByRole('button', { name: '更多操作' }))
+    await waitFor(() => expect(menuItems()).toEqual(['暂停', '立即执行一次', '修改', '执行记录', '删除']))
   })
 
-  it('暂停了的：动作是「恢复」，不是「暂停」', () => {
-    const { container } = mount({ ...base, state: 'paused' })
-    expect(buttons(container)).toContain('恢复')
-    expect(buttons(container)).not.toContain('暂停')
-    expect(container.textContent).toContain('已暂停')
+  it('暂停了的：动作是「恢复」，不是「暂停」', async () => {
+    const ui = mount({ ...base, state: 'paused' })
+    expect(ui.container.textContent).toContain('已暂停')
+    await fireEvent.click(ui.getByRole('button', { name: '更多操作' }))
+    await waitFor(() => {
+      expect(menuItems()).toContain('恢复')
+      expect(menuItems()).not.toContain('暂停')
+    })
   })
 
   it('等确认的草稿：把它要做什么摊开，动作是「确认启用」', () => {
     const { container } = mount({ ...base, state: 'draft', next_run_at: null })
-    expect(buttons(container)).toEqual(['确认启用', '修改', '不要了'])
+    expect(buttons(container)).toEqual(['确认启用', '修改', '删除'])
     expect(container.textContent).toContain('汇总本周完成的任务和进行中的事')
-    expect(container.textContent).toContain('本项目所有房间的任务')
     expect(container.textContent).toContain('周报')
+    expect(container.textContent).toContain('执行范围')
+    // 没勾频道就是「未限定」——「执行范围」这一行永远在，空着不说话会让人以为没读到。
+    expect(container.textContent).toContain('未限定')
   })
 
-  it('别人的规则：一颗按钮都不画，并且说清归谁管', () => {
-    const { container } = mount({ ...base, can_manage: false, owner_handle: 'u-other' })
-    expect(buttons(container)).toEqual([])
-    expect(container.textContent).toContain('u-other')
-    expect(container.textContent).toContain('只有他和项目管理员能改')
+  it('等确认的草稿：勾了频道就把它们的名字列出来', () => {
+    const { container } = mount({
+      ...base,
+      state: 'draft',
+      next_run_at: null,
+      scope_topic_ids: ['room-1', 'room-2'],
+      scope_topics: [
+        { id: 'room-1', title: '设计' },
+        { id: 'room-2', title: '前端' },
+      ],
+    })
+    expect(container.textContent).toContain('设计')
+    expect(container.textContent).toContain('前端')
+    expect(container.textContent).not.toContain('未限定')
+  })
+
+  // 频道里的人能改、能暂停、能立即执行一次，所以别人的规则上仍然有 ⋯；只有「删除」
+  // 不出现。少一颗按钮就够了，不弹提示、也不写一句「只有谁能做」。
+  it('别人的规则：能做的照样有，做不到的不出现，也不写一句解释', async () => {
+    const ui = mount({ ...base, can_manage: false, owner_handle: 'u-other' })
+    expect(ui.container.textContent).not.toContain('只有他和项目管理员能改')
+    await fireEvent.click(ui.getByRole('button', { name: '更多操作' }))
+    await waitFor(() => expect(menuItems()).toEqual(['暂停', '立即执行一次', '修改', '执行记录']))
+  })
+
+  // 待确认的那一条只有「确认启用」「修改」；「删除」也归负责人和管理员。
+  it('别人的待确认：只有「修改」', () => {
+    const { container } = mount({ ...base, state: 'draft', can_manage: false, next_run_at: null })
+    expect(buttons(container)).toEqual(['修改'])
   })
 
   // 归档不是暂停：规则自己的状态没变（取消归档后从下一个时刻继续），所以这里说的是
   // 「随归档停止」，而不是把这一条说成「已暂停」。
-  it('房间归档了：说「已随话题归档停止」，不说「下次 …」', () => {
+  it('房间归档了：说「已随频道归档停止」，不说「上次执行 …」', () => {
     const { container } = mount({ ...base, room_archived: true })
     expect(container.textContent).toContain('已随频道归档停止')
-    expect(container.textContent).not.toContain('下次')
+    expect(container.textContent).not.toContain('上次执行')
+    expect(container.textContent).not.toContain('还没有执行过')
     expect(container.textContent).toContain('执行中')
   })
 
-  it('展开执行记录：一次失败说出原因，一次成功说出做了什么', () => {
+  it('展开执行记录：一次没跑成写「未能执行」，原因折在「原因」里', () => {
     const { container } = mount(base, {
       open: true,
       runs: [
@@ -172,7 +215,8 @@ describe('一条规则这一行', () => {
         },
       ],
     })
-    expect(container.textContent).toContain('失败')
+    expect(container.textContent).toContain('未能执行')
+    expect(container.textContent).toContain('原因')
     expect(container.textContent).toContain('没有交回结果')
   })
 
@@ -198,8 +242,8 @@ describe('一条规则这一行', () => {
         },
       ],
     })
-    const file = ui.getByRole('button', { name: '2026-10-11.md' })
-    expect(file.getAttribute('title')).toBe('周报/2026-10-11.md')
+    // 标签就是整条路径：这一格和上面那些频道面板在同一屏，路径本身是它唯一的出处。
+    const file = ui.getByRole('button', { name: '周报/2026-10-11.md' })
     await fireEvent.click(file)
     expect(ui.emitted()['open-file']).toEqual([['周报/2026-10-11.md']])
   })
@@ -226,7 +270,8 @@ describe('一条规则这一行', () => {
         },
       ],
     })
-    expect(ui.container.querySelector('.routine-run__file')).toBeNull()
-    expect(ui.container.querySelector('.routine-run__outputs')?.textContent).toContain('周报/2026-10-11.md')
+    const file = ui.container.querySelector('a.routine-run__file')
+    expect(file).not.toBeNull()
+    expect(file?.textContent).toContain('周报/2026-10-11.md')
   })
 })

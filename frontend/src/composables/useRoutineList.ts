@@ -7,11 +7,12 @@
 // 所以画的那一半（`components/routine/RoutineBoard.vue`）只有一份，取数也就只有一份。
 //
 // 画的人不在这里：这一层不碰 DOM，也不认识 Vuetify。`can_manage` 是后端逐条给的
-// （规则主人或项目管理员），这一层原样传下去，不自己算 —— 「谁能动这条规则」是后端的
-// 判断，前端算一遍就是第二个答案。
+// （规则主人或项目管理员），这一层原样传下去，不自己算 —— 「确认启用和删除归不归你管」
+// 是后端的判断，前端算一遍就是第二个答案。修改、暂停、恢复、立即执行一次不看它：
+// 这个频道里的人都能做。
 import type { Routine, RoutineInput, RoutineRun } from '../lib/routine'
 
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 
 import {
   createRoutine,
@@ -42,11 +43,6 @@ export function useRoutineList(options: RoutineListOptions) {
   /** 展开着执行记录的那一条。 */
   const openId = ref<string | null>(null)
   const runs = ref<Record<string, RoutineRun[]>>({})
-
-  // 等确认的那几条单独摆在前面：它们此刻什么都没在跑，摆在「已经在跑」那一堆里
-  // 就没人看得见，而它们是这一页唯一需要人动手的东西。
-  const drafts = computed(() => routines.value.filter((r) => r.state === 'draft'))
-  const others = computed(() => routines.value.filter((r) => r.state !== 'draft'))
 
   function fail(e: unknown, fallback: string) {
     error.value = e instanceof Error ? e.message : fallback
@@ -144,7 +140,6 @@ export function useRoutineList(options: RoutineListOptions) {
   }
 
   function startEdit(r: Routine) {
-    if (!r.can_manage) return
     editing.value = r
     formError.value = ''
     formOpen.value = true
@@ -190,8 +185,6 @@ export function useRoutineList(options: RoutineListOptions) {
 
   return {
     routines,
-    drafts,
-    others,
     loading,
     error,
     busy,

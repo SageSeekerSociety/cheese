@@ -20,6 +20,7 @@ import {
   deviceApproval,
   routine,
   ROUTINE_RUNS,
+  RUN_PAGE,
   ROUTINES,
   SEARCH_COUNTS,
   SEARCH_HITS,
@@ -32,6 +33,7 @@ import {
 import ConnectViewView from '@/views/ConnectViewView.vue'
 import MyArchivedProjectsViewView from '@/views/MyArchivedProjectsViewView.vue'
 import PreviewOpenViewView from '@/views/PreviewOpenViewView.vue'
+import ProjectRoutineRunsViewView from '@/views/ProjectRoutineRunsViewView.vue'
 import ProjectRoutinesViewView from '@/views/ProjectRoutinesViewView.vue'
 import ProjectSearchViewView from '@/views/ProjectSearchViewView.vue'
 import SiteOpenViewView from '@/views/SiteOpenViewView.vue'
@@ -188,19 +190,17 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
     id: 'project-routines-view',
     title: 'ProjectRoutinesViewView',
     about:
-      '项目里「例行事务」那一整页的画面：这个项目所有房间的规则，一条一行；等确认的草稿摊开给人读，已经在跑的写清下次什么时候跑，页头两颗命令由页壳画。取数、读地址里的 `?routine=`、权限都在容器 `ProjectRoutinesView.vue` 里。',
+      '项目里「例行事务」那一整页的画面：这个项目所有房间的规则，一条一行；等确认的草稿整条摊开给人读（工作内容、存储位置、执行条件、执行范围，三颗按钮摆在行里），已经在跑的动作收在行尾那颗 ⋯ 里，头一行写清哪个频道、什么时候跑、结果放哪、上次什么时候跑。取数、读地址里的 `?routine=` 都在容器 `ProjectRoutinesView.vue` 里。',
     file: 'src/views/ProjectRoutinesViewView.vue',
     component: ProjectRoutinesViewView,
     needs: UI_T,
     args: {
-      agentName: '芝士',
       runs: ROUTINE_RUNS,
       openId: null,
       busy: '',
       loading: false,
       error: '',
       roomNames: { 'topic-weekly': '周会' },
-      userNames: USER_NAMES,
       rooms: [topic()],
       defaultRoom: 'topic-weekly',
       formOpen: false,
@@ -217,7 +217,7 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '一条等确认、一条在跑',
-        note: '草稿摆在前面的「等你确认」那一栏里，摊开写着它要做什么、用哪些资料、结果放哪；已经在跑的那条写在下面，带它的状态和下次时间。',
+        note: '草稿摆在前面的「等你确认」那一栏里，整条摊开写着工作内容、存储位置、执行条件、执行范围；已经在跑的那条写在下面，带状态和「上次执行 …」。',
         props: { routines: ROUTINES },
         expect: '等你确认',
       },
@@ -235,9 +235,62 @@ export const SCENES_WORKSPACE_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '展开执行记录',
-        note: '点开某一条的执行记录：它下面接着一串，每次执行的成败、用了多久、结果在哪都在那儿。',
-        props: { routines: [routine()], openId: 'routine-weekly' },
-        expect: '整理好了 12 条讨论',
+        note: '点开某一条的执行记录：面板里只铺最近 5 次，没跑成的那次写「未能执行」，原因折在「原因」里，底下一行「看全部 {count} 次」开整页。',
+        props: { routines: [routine({ run_count: 2 })], openId: 'routine-weekly' },
+        expect: '未能执行',
+      },
+    ],
+  },
+  {
+    id: 'project-routine-runs-view',
+    title: 'ProjectRoutineRunsViewView',
+    about:
+      '「执行记录」整页的画面：页头一行写清是哪条规则、这个筛选下一共几次；顶上一排筛子（最新在前 / 未能执行 / 最近 30 天），中间一页十次执行，底下「上一页 下一页」和可以直接填的第几页。取数、翻页、筛子的状态在容器 `ProjectRoutineRunsView.vue` 里。',
+    file: 'src/views/ProjectRoutineRunsViewView.vue',
+    component: ProjectRoutineRunsViewView,
+    needs: UI_T,
+    args: {
+      routine: routine(),
+      runs: RUN_PAGE,
+      total: 47,
+      page: 1,
+      pageCount: 5,
+      order: 'newest',
+      failedOnly: false,
+      days: 30,
+      loading: false,
+      error: '',
+    },
+    states: [
+      {
+        name: '一页执行记录',
+        note: '十行里三种样子都在：交回文件的写路径，没跑成的写「未能执行」并把原因折在「原因」里，还在跑的那次写状态本身。底下是翻页栏。',
+        props: {},
+        expect: '未能执行',
+      },
+      {
+        name: '只看未能执行',
+        note: '「未能执行」那颗筛子按下去的样子（说到做到：只筛真正没跑成的那种），页头那句「共几次」也跟着变成筛过的数。',
+        props: { failedOnly: true, total: 3, pageCount: 1 },
+        expectSelector: '[aria-pressed="true"]',
+      },
+      {
+        name: '这个筛选下没有记录',
+        note: '筛过之后一条都没有：就地说一句，不是空白页。',
+        props: { runs: [], total: 0, pageCount: 1 },
+        expect: '此刻这个筛选下没有执行记录',
+      },
+      {
+        name: '正在读执行记录',
+        note: '记录还在路上的时候只有一颗转圈，读屏念的是「读取执行记录」。',
+        props: { runs: [], total: 0 },
+        expectSelector: '[aria-label="读取执行记录"]',
+      },
+      {
+        name: '读记录失败',
+        note: '记录没读出来：一句话（role=alert）加一颗「重试」，不是「没有记录」—— 那会让失败看着像本来就没有。',
+        props: { runs: [], total: 0, error: '未能读取执行记录' },
+        expect: '未能读取执行记录',
       },
     ],
   },

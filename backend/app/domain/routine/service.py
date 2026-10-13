@@ -210,6 +210,35 @@ class RoutineService:
             )
         )
 
+    async def run_counts(self, routine_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
+        """每条规则一共跑过多少次，一次查询问完。
+
+        「看全部 47 次」和那一页的「共 47 次」都用它；一条一条问就是每行一次往返。
+        """
+        if not routine_ids:
+            return {}
+        rows = await self._session.execute(
+            select(RoutineRun.routine_id, func.count(RoutineRun.id))
+            .where(RoutineRun.routine_id.in_(routine_ids))
+            .group_by(RoutineRun.routine_id)
+        )
+        return {routine_id: int(count) for routine_id, count in rows}
+
+    async def latest_runs(self, routine_ids: list[uuid.UUID]) -> dict[uuid.UUID, RoutineRun]:
+        """每条规则最近的一次执行，一次查询问完。
+
+        卡片上那行「上次执行 …」和「排队中」都看它：一条一条问就是每行一次往返。
+        """
+        if not routine_ids:
+            return {}
+        rows = await self._session.scalars(
+            select(RoutineRun)
+            .where(RoutineRun.routine_id.in_(routine_ids))
+            .order_by(RoutineRun.routine_id, RoutineRun.created_at.desc())
+            .distinct(RoutineRun.routine_id)
+        )
+        return {row.routine_id: row for row in rows}
+
     async def runs_page(
         self,
         routine_id: uuid.UUID,

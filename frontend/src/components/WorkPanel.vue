@@ -887,6 +887,7 @@ defineExpose({
             v-show="active === 'routines'"
             :class="enterClass('routines')"
             :topic-id="topicId"
+            :topic-title="topic?.title ?? ''"
             :project-id="projectId"
             :refresh-tick="refreshTick"
             @open-file="openFile"

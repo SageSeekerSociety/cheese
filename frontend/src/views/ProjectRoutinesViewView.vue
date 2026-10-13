@@ -5,7 +5,6 @@
 // 只把动作抛上去。
 import type { Topic } from '@/cx_types'
 import type { Routine, RoutineInput, RoutineRun } from '@/lib/routine'
-import type { UserRefTarget } from '@/lib/userRef'
 
 import AppPage from '@/components/common/AppPage.vue'
 import RoutineBoard from '@/components/routine/RoutineBoard.vue'
@@ -13,8 +12,6 @@ import RoutineFormDialog from '@/components/routine/RoutineFormDialog.vue'
 import { t } from '@/i18n'
 
 defineProps<{
-  /** 这个项目里队友的名字：导语里要用它点名（「…」由容器查名册后传下来）。 */
-  agentName: string
   routines: Routine[]
   runs: Record<string, RoutineRun[]>
   openId: string | null
@@ -22,7 +19,6 @@ defineProps<{
   loading: boolean
   error: string
   roomNames: Record<string, string>
-  userNames: Record<string, string>
   rooms: Topic[]
   defaultRoom: string
   formOpen: boolean
@@ -32,7 +28,6 @@ defineProps<{
 }>()
 
 defineEmits<{
-  navigate: [target: UserRefTarget]
   confirm: [routine: Routine]
   pause: [routine: Routine]
   resume: [routine: Routine]
@@ -47,28 +42,24 @@ defineEmits<{
 
 <template>
   <AppPage :title="t('navigation.project.routines')">
-    <div>
-      <p class="t-body c-muted mb-6">{{ t('routines.intro', { name: agentName }) }}</p>
-
-      <RoutineBoard
-        :routines="routines"
-        :runs="runs"
-        :open-id="openId"
-        :busy="busy"
-        :loading="loading"
-        :error="error"
-        :room-names="roomNames"
-        :user-names="userNames"
-        @navigate="(target) => $emit('navigate', target)"
-        @confirm="(r) => $emit('confirm', r)"
-        @pause="(r) => $emit('pause', r)"
-        @resume="(r) => $emit('resume', r)"
-        @run-now="(r) => $emit('run-now', r)"
-        @edit="(r) => $emit('edit', r)"
-        @delete="(r) => $emit('delete', r)"
-        @toggle-runs="(r) => $emit('toggle-runs', r)"
-      />
-    </div>
+    <RoutineBoard
+      :routines="routines"
+      :runs="runs"
+      :open-id="openId"
+      :busy="busy"
+      :loading="loading"
+      :error="error"
+      :room-names="roomNames"
+      link-files
+      class="mb-6"
+      @confirm="(r) => $emit('confirm', r)"
+      @pause="(r) => $emit('pause', r)"
+      @resume="(r) => $emit('resume', r)"
+      @run-now="(r) => $emit('run-now', r)"
+      @edit="(r) => $emit('edit', r)"
+      @delete="(r) => $emit('delete', r)"
+      @toggle-runs="(r) => $emit('toggle-runs', r)"
+    />
 
     <RoutineFormDialog
       :model-value="formOpen"

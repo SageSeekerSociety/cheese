@@ -1,11 +1,11 @@
 <script setup lang="ts">
 // 一串规则：等确认的几条摆在前面，剩下的按后端给的顺序。项目总览页（整个项目）和房间
-// 右侧那一格（只这一个房间）画的是同一串，只是给进来的数组不同。
+// 右侧那一格（只这一个房间）画的是同一串，只是给进来的数组不同，以及项目页多说一句
+// 「哪个频道的」。
 //
 // 只吃 props、只往上抛动作：谁去调接口由调用方办。唯一自己做主的是「删之前问一句」——
 // 那是一次确认，不是一次请求。
 import type { Routine, RoutineRun } from '@/lib/routine'
-import type { UserRefTarget } from '@/lib/userRef'
 
 import { computed, ref } from 'vue'
 
@@ -14,7 +14,7 @@ import RoutineRow from './RoutineRow.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import { t } from '@/i18n'
-import { routineRoomTarget } from '@/lib/routine'
+import { routineRoomTarget, routineRunsTarget } from '@/lib/routine'
 
 const props = withDefaults(
   defineProps<{
@@ -28,13 +28,12 @@ const props = withDefaults(
     loading?: boolean
     /** 读列表或做动作失败的那句话，摆在最上面。 */
     error?: string
-    /** 房间名，键是房间 id。项目总览页给。 */
+    /** 频道名，键是频道 id。项目总览页给（那一页把整个项目的规则摆在一起，得说清每
+     *  条落在哪）；房间右侧那一格不给，那一格里的每一条都是这个房间的。 */
     roomNames?: Record<string, string>
-    /** 结果文件那几行要不要整串指回规则所在的房间。项目总览页给 —— 那一页上没有能
-     *  开文件的面板；房间右侧那一格不给，那里的每一份都当场点开。 */
-    linkRooms?: boolean
-    /** 人名 → 显示名。名册查询在调用方，这一串只收结果。 */
-    userNames?: Record<string, string>
+    /** 结果文件那一行是去哪儿还是当场打开。项目总览页给（这一页没有工作面板，去了频道
+     *  才点得开）；房间右侧那一格不给 —— 那里点一份就当场摊开。 */
+    linkFiles?: boolean
   }>(),
   {
     runs: () => ({}),
@@ -42,9 +41,8 @@ const props = withDefaults(
     busy: '',
     loading: false,
     error: '',
-    roomNames: () => ({}),
-    linkRooms: true,
-    userNames: () => ({}),
+    roomNames: undefined,
+    linkFiles: false,
   }
 )
 
@@ -58,27 +56,26 @@ const emit = defineEmits<{
   (e: 'toggle-runs', routine: Routine): void
   /** 点了某次执行交回的一份结果文件。谁来开它由调用方办。 */
   (e: 'open-file', path: string): void
-  /** 点了行里的某个人名：去他的成员页 / 主页。跳路由是最外层的事。 */
-  (e: 'navigate', target: UserRefTarget): void
 }>()
 
-/** 房间名：项目总览页给的名册里查不到（房间已经没了），就写「已不在的房间」；
- *  房间右侧那一格不给名册（`linkRooms` 是 false），那一格里的每一条都是这个房间的，不写。 */
+/** 频道名：项目总览页的名册里查不到（频道已经没了），照实说「已不在的频道」；房间右侧
+ *  那一格给不出名册，那一格里每一条都是这个房间的，不写。 */
 function roomNameOf(r: Routine): string | undefined {
-  const name = props.roomNames[r.topic_id]
-  if (name) return name
-  return props.linkRooms ? t('routines.goneRoom') : undefined
+  if (!props.roomNames) return undefined
+  return props.roomNames[r.topic_id] || t('routines.goneRoom')
 }
 
-const drafts = computed(() => props.routines.filter((r) => r.state === 'draft'))
-const others = computed(() => props.routines.filter((r) => r.state !== 'draft'))
+/** 等确认的那几条摆在前面：它们此刻什么都没在跑，摆在「已经在跑」那一堆里就没人看得见，
+ *  而它们是这一页唯一需要人动手的东西。 */
+const ordered = computed(() => [
+  ...props.routines.filter((r) => r.state === 'draft'),
+  ...props.routines.filter((r) => r.state !== 'draft'),
+])
 // 删一条规则不可撤销（执行记录一起删），所以问一句再动手。问的这一条留在这里。
 const confirming = ref<Routine | null>(null)
 
-/** 手机上 ⋯ 里的「执行记录」要写的字：展开着的那一条写「收起记录」。 */
-function isOpen(r: Routine): boolean {
-  return props.openId === r.id
-}
+/** 删之前那两句里的存储位置：没填就是频道根目录。 */
+const dirOf = (r: Routine | null) => (r?.output_dir ? `${r.output_dir}/` : t('routines.spec.rootDir'))
 
 function confirmDelete() {
   const r = confirming.value
@@ -96,35 +93,18 @@ function confirmDelete() {
     </div>
 
     <template v-else>
-      <section v-if="drafts.length" class="mb-6">
-        <h2 class="t-section mb-2">{{ t('routines.waiting') }}</h2>
-        <ul class="routine-list">
-          <RoutineRow
-            v-for="r in drafts"
-            :key="r.id"
-            :routine="r"
-            :busy="busy"
-            :room-name="roomNameOf(r)"
-            :user-names="userNames"
-            @confirm="emit('confirm', r)"
-            @edit="emit('edit', r)"
-            @delete="confirming = r"
-            @navigate="(t) => emit('navigate', t)"
-          />
-        </ul>
-      </section>
-
-      <ul v-if="others.length" class="routine-list">
+      <ul v-if="ordered.length" class="routine-list">
         <RoutineRow
-          v-for="r in others"
+          v-for="r in ordered"
           :key="r.id"
           :routine="r"
           :runs="runs[r.id]"
-          :open="isOpen(r)"
+          :open="openId === r.id"
           :busy="busy"
           :room-name="roomNameOf(r)"
-          :room-to="linkRooms ? routineRoomTarget(r) : undefined"
-          :user-names="userNames"
+          :runs-to="routineRunsTarget(r)"
+          :room-to="linkFiles ? routineRoomTarget(r) : undefined"
+          @confirm="emit('confirm', r)"
           @pause="emit('pause', r)"
           @resume="emit('resume', r)"
           @run-now="emit('run-now', r)"
@@ -132,14 +112,13 @@ function confirmDelete() {
           @toggle-runs="emit('toggle-runs', r)"
           @open-file="(path) => emit('open-file', path)"
           @delete="confirming = r"
-          @navigate="(t) => emit('navigate', t)"
         />
       </ul>
 
-      <BaseEmptyState v-if="!routines.length && !error" :title="t('routines.empty')" :desc="t('routines.emptyHint')" />
+      <BaseEmptyState v-if="!routines.length && !error" :title="t('routines.empty')" />
     </template>
 
-    <!-- Deleting a rule is not reversible (its run history goes too): ask before it happens. -->
+    <!-- 删掉一条规则不可撤销（执行记录跟着一起删），所以问一句再动手。 -->
     <ConfirmDialog
       :model-value="!!confirming"
       :title="t('routines.deleteTitle', { title: confirming?.title ?? '' })"
@@ -148,7 +127,7 @@ function confirmDelete() {
       @update:model-value="confirming = null"
       @confirm="confirmDelete"
     >
-      {{ t('routines.deleteBody') }}
+      {{ t('routines.deleteBody', { dir: dirOf(confirming) }) }}
     </ConfirmDialog>
   </div>
 </template>

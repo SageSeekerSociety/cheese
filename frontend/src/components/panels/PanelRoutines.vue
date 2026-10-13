@@ -1,15 +1,15 @@
 <script setup lang="ts">
 // 话题页右侧「例行事务」那一格 —— 纯展示：数据从 props 进，动作从事件出。
 //
-// 取数在 `components/routine/RoutinePanelHost.vue`（`useRoutineList` + 名册 + 路由都接在
-// 那里）。为什么这一格自己必须一滴取数都不沾：`components/panels/` 下的每个 SFC 都是
-// 「场景」，2026-09-30 起的场景棘轮要求新场景第一天就是 A 档（只吃 props、只抛事件），
-// 而 panels/ 没有页面那种「外壳 + 视图」的豁免。样板是 `PanelDocView`。
+// 取数在 `components/routine/RoutinePanelHost.vue`（`useRoutineList` 接在那里）。为什么
+// 这一格自己必须一滴取数都不沾：`components/panels/` 下的每个 SFC 都是「场景」，
+// 2026-09-30 起的场景棘轮要求新场景第一天就是 A 档（只吃 props、只抛事件），而 panels/
+// 没有页面那种「外壳 + 视图」的豁免。样板是 `PanelDocView`。
 //
-// `can_manage` 是后端逐条算好的，这一格不自己算：拿不到权限的那些规则在 `RoutineRow`
-// 里不画按钮、只写一句「这条例行事务由谁管」——只读不是「偷偷禁用」，是说出来。
+// `can_manage` 是后端逐条算好的，这一格不自己算：拿不到权限的那两颗按钮（确认启用、
+// 删除）在 `RoutineRow` 里根本不出现，也没有一句解释——做不到的事不画出来，比画出来
+// 再说「你不行」干净。
 import type { Routine, RoutineInput, RoutineRun } from '@/lib/routine'
-import type { UserRefTarget } from '@/lib/userRef'
 
 import RoutineBoard from '../routine/RoutineBoard.vue'
 import RoutineFormDialog from '../routine/RoutineFormDialog.vue'
@@ -36,8 +36,8 @@ withDefaults(
     saving?: boolean
     /** 新建时定死的那个房间：这一格里的规则长在这个房间，表单不画「在哪个房间执行」。 */
     defaultRoom: string
-    /** 人名 → 显示名。名册查询在外壳里，这一格只收结果。 */
-    userNames?: Record<string, string>
+    /** 那个房间叫什么：表单里那行「在「X」这个频道执行」要写名字，不写 id。 */
+    defaultRoomName?: string
   }>(),
   {
     runs: () => ({}),
@@ -49,7 +49,7 @@ withDefaults(
     editing: null,
     formError: '',
     saving: false,
-    userNames: () => ({}),
+    defaultRoomName: '',
   }
 )
 
@@ -69,8 +69,6 @@ const emit = defineEmits<{
   (e: 'form-open-change', open: boolean): void
   /** 表单存下去。 */
   (e: 'submit', payload: { room: string; body: RoutineInput }): void
-  /** 点了行里的某个人名：去他的成员页 / 主页。 */
-  (e: 'navigate', target: UserRefTarget): void
 }>()
 </script>
 
@@ -99,8 +97,6 @@ const emit = defineEmits<{
         :busy="busy"
         :loading="loading"
         :error="error"
-        :user-names="userNames"
-        :link-rooms="false"
         @confirm="(r) => emit('confirm', r)"
         @pause="(r) => emit('pause', r)"
         @resume="(r) => emit('resume', r)"
@@ -109,7 +105,6 @@ const emit = defineEmits<{
         @delete="(r) => emit('delete', r)"
         @toggle-runs="(r) => emit('toggle-runs', r)"
         @open-file="(path) => emit('open-file', path)"
-        @navigate="(t) => emit('navigate', t)"
       />
     </div>
 
@@ -119,6 +114,7 @@ const emit = defineEmits<{
       :model-value="formOpen"
       :routine="editing"
       :default-room="defaultRoom"
+      :default-room-name="defaultRoomName"
       :saving="saving"
       :error="formError"
       @update:model-value="(open) => emit('form-open-change', open)"

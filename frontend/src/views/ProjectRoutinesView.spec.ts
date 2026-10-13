@@ -56,12 +56,16 @@ const base = {
   room_archived: false,
   project_id: 'p1',
   topic_id: 'room-1',
+  title: '每周进展汇总',
   instructions: '整理本周进展',
-  context_scope: '',
   output_dir: '周报',
   trigger: 'schedule' as const,
-  trigger_text: '每周周一 09:00（Asia/Shanghai）',
+  trigger_text: '每周一 09:00（Asia/Shanghai）',
   spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
+  scope_topic_ids: [],
+  scope_topics: [],
+  last_run: null,
+  run_count: 0,
   timezone: 'Asia/Shanghai',
   agent_handle: 'cheese-x',
   owner_handle: 'u1',
@@ -100,6 +104,25 @@ function buttonIn(scope: Element, label: string): HTMLElement | undefined {
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.trim() === label)
 }
 
+/** 行尾那颗 ⋯ —— 已经在跑的规则上，它是这一行唯一那颗按钮。 */
+function rowMenuButton(rowEl: Element): HTMLElement {
+  return rowEl.querySelectorAll('button')[0]!
+}
+
+/** 此刻弹出来的菜单里写着这个字的那一行。 */
+function menuItem(label: string): HTMLElement | undefined {
+  return Array.from(document.querySelectorAll<HTMLElement>('.v-overlay--active .v-list-item-title')).find(
+    (el) => el.textContent?.trim() === label
+  )
+}
+
+/** 已经跑起来的那条，动作都在 ⋯ 里：点开它，再点要的那一样。 */
+async function rowAction(rowEl: Element, label: string) {
+  await fireEvent.click(rowMenuButton(rowEl))
+  await waitFor(() => expect(menuItem(label)).toBeTruthy())
+  await fireEvent.click(menuItem(label)!.closest('.v-list-item') ?? menuItem(label)!)
+}
+
 function row(container: Element, id: string): Element {
   return container.querySelector(`[data-routine="${id}"]`)!
 }
@@ -111,12 +134,13 @@ describe('例行事务', () => {
   it('reads in English under the en locale', async () => {
     setLocale('en')
     const { container } = mount()
-    await waitFor(() => expect(container.textContent).toContain('Waiting for you to confirm'))
+    await waitFor(() => expect(container.textContent).toContain('Needs confirmation'))
     const draft = row(container, 'draft-1')
     expect(buttonIn(draft, 'Confirm and enable')).toBeTruthy()
-    // The drafter credit is a sentence with two people in it, not two names glued together.
-    expect(draft.textContent).toContain('(drafted by')
-    expect(buttonIn(row(container, 'live-1'), 'Run history')).toBeTruthy()
+    // 已经在跑的那条：动作在 ⋯ 里，菜单也是英文的那一份。
+    await fireEvent.click(rowMenuButton(row(container, 'live-1')))
+    await waitFor(() => expect(menuItem('Run log')).toBeTruthy())
+    expect(menuItem('Delete')).toBeTruthy()
   })
 
   it('芝士起草的规则单独列在「等你确认」里，确认之后才算启用', async () => {
@@ -135,7 +159,7 @@ describe('例行事务', () => {
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('已经在跑的日报'))
 
-    await fireEvent.click(buttonIn(row(container, 'live-1'), '删除')!)
+    await rowAction(row(container, 'live-1'), '删除')
     await waitFor(() => expect(buttonIn(document.body, '取消')).toBeTruthy())
     await fireEvent.click(buttonIn(document.body, '取消')!)
 
@@ -169,9 +193,9 @@ describe('例行事务', () => {
     const { container } = mount()
     await waitFor(() => expect(container.textContent).toContain('已经在跑的日报'))
 
-    await fireEvent.click(buttonIn(row(container, 'live-1'), '执行记录')!)
+    await rowAction(row(container, 'live-1'), '执行记录')
 
     await waitFor(() => expect(container.textContent).toContain('没有交回结果'))
-    expect(container.textContent).toContain('失败')
+    expect(container.textContent).toContain('未能执行')
   })
 })

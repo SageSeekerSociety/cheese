@@ -1,7 +1,6 @@
 {
   "action": {
     "edit": "修改",
-    "drop": "不要了",
     "pause": "暂停",
     "resume": "恢复",
     "runNow": "立即执行一次",
@@ -13,38 +12,27 @@
     "refresh": "刷新",
     "new": "新建"
   },
-  "trigger": {
-    "schedule": "按时间",
-    "library_file_added": "资料库新增文件时",
-    "task_closed": "任务完成时",
-    "card_accepted": "成果被采纳时"
-  },
-  "freq": {
-    "daily": "每天",
-    "weekly": "每周",
-    "monthly": "每月",
-    "hourly": "每小时"
-  },
   "state": {
-    "draft": "待确认",
+    "draft": "等你确认",
     "active": "执行中",
     "paused": "已暂停"
-  },
-  "line": {
-    "chip": "例行 · {title}",
-    "going": "运行中",
-    "missed": "未能执行",
-    "missedBecause": "未能执行：{reason}",
-    "took": "运行用时 {minutes} 分钟",
-    "files": "结果文件",
-    "open": "查看这次运行"
   },
   "run": {
     "queued": "排队中",
     "running": "执行中",
     "succeeded": "已完成",
-    "failed": "失败",
+    "failed": "未能执行",
     "skipped": "未执行"
+  },
+  "line": {
+    "chip": "例行 · {title}",
+    "missed": "未能执行",
+    "missedReason": "未能执行的原因",
+    "files": "结果",
+    "open": "查看这次运行"
+  },
+  "moment": {
+    "today": "今天 {time}"
   },
   "goneRoom": "（已不在的频道）",
   "loadFailed": "未能读取例行事务",
@@ -55,63 +43,62 @@
   "editTitle": "修改「{title}」",
   "pickRoom": "先选一个频道：工作在那个频道里执行，结果也放在那里",
   "saveFailed": "没有保存成功",
-  "intro": "到点或项目里发生某件事时，频道里的 AI 队友自己开工，做完把结果放进频道并通知你。在频道里说「每周一早上整理一次进展」，{name}也会起草一条，等你在这里确认",
   "loading": "读取例行事务",
-  "waiting": "等你确认",
   "spec": {
     "work": "工作内容",
-    "scope": "参考资料",
-    "unlimited": "未限定",
     "output": "存储位置",
-    "outputDir": "频道 {dir}",
     "rootDir": "根目录",
-    "agent": "执行者",
-    "draftedBy": "{agent}（由 {author} 起草）"
+    "trigger": "执行条件",
+    "range": "执行范围",
+    "unlimited": "未限定"
   },
-  "next": "下次 {time}",
+  "lastRun": "上次执行 {time}",
   "neverRun": "还没有执行过",
-  "finishedAt": "结束于 {time}",
   "noReason": "没有给出原因",
-  "outputs": "结果：",
   "listSeparator": "、",
   "empty": "还没有例行事务",
-  "emptyHint": "点「新建」，或在频道里让 AI 队友帮你起草一条",
   "form": {
     "room": "执行频道",
-    "roomHint": "执行者是这个频道里的 AI 队友，结果也放在这个频道",
+    "here": "在「{room}」这个频道执行",
+    "range": "执行范围",
+    "selectAll": "全选",
+    "rangeEmpty": "这个项目里还没有别的频道",
+    "open": "例行事务与执行条件",
+    "openPlaceholder": "例如：每周一早上，把上周各频道完成的事汇总成一页",
     "name": "名称",
     "namePlaceholder": "例如：每周项目进展",
     "instructions": "工作内容",
     "instructionsPlaceholder": "例如：汇总本周各频道完成的任务、进行中的事和阻碍，写成一页周报",
-    "context": "参考资料",
-    "contextPlaceholder": "例如：本项目所有频道的任务和决策；只用资料库里的文件",
     "outputDir": "存储位置",
     "outputDirPlaceholder": "例如：周报",
-    "trigger": "执行条件",
-    "freq": "频率",
-    "time": "时间",
-    "minute": "分钟",
-    "day": "日期",
-    "timezone": "时区",
-    "scope": "范围",
-    "scopeRoom": "只看这个频道",
-    "scopeProject": "整个项目",
     "machineNote": "AI 队友的环境在线才能开工：用云端的项目随时可以；用自有设备的项目，设备离线时这次执行会排队，两小时内没开始会记为失败并通知你"
   },
-  "deleteTitle": "删除「{title}」",
-  "deleteBody": "删除后不再执行，执行记录也一起删除；已经放进频道的结果文件保留",
+  "runs": {
+    "title": "执行记录",
+    "count": "共 {count} 次",
+    "all": "看全部 {count} 次",
+    "newest": "最新在前",
+    "oldest": "最早在前",
+    "failed": "未能执行",
+    "days7": "最近 7 天",
+    "days30": "最近 30 天",
+    "daysAll": "全部",
+    "reason": "原因",
+    "loading": "读取执行记录",
+    "empty": "此刻这个筛选下没有执行记录",
+    "filterLabel": "筛选执行记录",
+    "orderLabel": "排序方式",
+    "daysLabel": "时间范围",
+    "jumpLabel": "跳到第几页",
+    "prev": "上一页",
+    "next": "下一页",
+    "page": "第 {page} / 共 {pages} 页"
+  },
+  "deleteTitle": "删掉「{title}」？",
+  "deleteBody": "它跑出来的东西还在 {dir} 里。执行记录跟着这条一起删，别处看不到。",
   "roomsFailed": "未能读取这个项目的频道",
   "archivedStopped": "已随频道归档停止",
-  "readonly": "这条例行事务由 {owner} 管，只有他和项目管理员能改",
   "refreshAria": "刷新例行事务",
   "save": "保存",
-  "weekday": {
-    "mon": "周一",
-    "tue": "周二",
-    "wed": "周三",
-    "thu": "周四",
-    "fri": "周五",
-    "sat": "周六",
-    "sun": "周日"
-  }
+  "submit": "提交"
 }

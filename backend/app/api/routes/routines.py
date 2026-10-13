@@ -83,6 +83,8 @@ def _routine(
     can_manage: bool = False,
     room_archived: bool = False,
     scope_topics: list[dict] | None = None,
+    last_run: RoutineRun | None = None,
+    run_count: int = 0,
 ) -> dict:
     trigger_text = describe_trigger(row)
     return {
@@ -103,6 +105,20 @@ def _routine(
         #: 的名字，卡片那一行和表单那排勾都照它画。
         "scope_topic_ids": list(row.scope_topic_ids or []),
         "scope_topics": scope_topics or [],
+        #: 卡片那行「上次执行 …」看它；排队中/执行中也是它。没有就是还没跑过。
+        "last_run": (
+            {
+                "id": str(last_run.id),
+                "status": last_run.status,
+                "at": _iso(
+                    last_run.finished_at or last_run.started_at or last_run.created_at
+                ),
+            }
+            if last_run is not None
+            else None
+        ),
+        #: 「看全部 {count} 次」和那一页的「共 {count} 次」看它。
+        "run_count": run_count,
         "timezone": row.timezone,
         "state": row.state,
         "agent_handle": row.agent_handle,
@@ -242,7 +258,10 @@ async def _present(
     归档不写规则那一行（结论：规则状态不变，取消归档后从下一个时刻继续），所以
     「已随话题归档停止」只能由房间答，一次问完这一批。
     """
-    archived = await RoutineService(db).archived_room_ids([r.topic_id for r in rows])
+    service = RoutineService(db)
+    archived = await service.archived_room_ids([r.topic_id for r in rows])
+    latest = await service.latest_runs([r.id for r in rows])
+    counts = await service.run_counts([r.id for r in rows])
     wanted = {
         uuid.UUID(str(value)) for r in rows for value in (r.scope_topic_ids or [])
     }
@@ -259,6 +278,8 @@ async def _present(
                 named.get(str(value), {"id": str(value), "title": ""})
                 for value in (r.scope_topic_ids or [])
             ],
+            last_run=latest.get(r.id),
+            run_count=counts.get(r.id, 0),
         )
         for r in rows
     ]

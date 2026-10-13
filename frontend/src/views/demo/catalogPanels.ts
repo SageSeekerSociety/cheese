@@ -48,6 +48,9 @@ import {
 import { PREVIEW_PANEL_ENTRIES } from './catalogPanelsPreview'
 import { DEMO_PROJECT, DEMO_TOPIC } from './demoPanels'
 
+/** 那一次执行落在哪个频道：结果文件那一行指回去的地方。和 `RoutineRow` 里同一个去处。 */
+const DEMO_ROOM_TO = { name: 'workspace-topic', params: { projectId: DEMO_PROJECT, topicId: DEMO_TOPIC } }
+
 import ChangesDiff from '@/components/panels/ChangesDiff.vue'
 import ChangesDiffList from '@/components/panels/ChangesDiffList.vue'
 import ChangesFileTree from '@/components/panels/ChangesFileTree.vue'
@@ -57,6 +60,7 @@ import PanelChanges from '@/components/panels/PanelChanges.vue'
 import PanelDoc from '@/components/panels/PanelDoc.vue'
 import PanelPreview from '@/components/panels/PanelPreview.vue'
 import PanelRoutines from '@/components/panels/PanelRoutines.vue'
+import RoutineRunRow from '@/components/routine/RoutineRunRow.vue'
 import PanelSite from '@/components/panels/PanelSite.vue'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import ProjectFileView from '@/components/panels/ProjectFileView.vue'
@@ -305,7 +309,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     file: 'src/components/panels/PanelRoutines.vue',
     component: PanelRoutines,
     needs: ['vuetify', 'i18n'],
-    args: { defaultRoom: DEMO_TOPIC, userNames: PANEL_NAMES },
+    args: { defaultRoom: DEMO_TOPIC, defaultRoomName: '课程' },
     states: [
       {
         name: '一条在跑、一条等确认',
@@ -315,21 +319,51 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '展开了执行记录',
-        note: '最近两次：一次成了（写着做了什么），一次没成（写着为什么）。',
+        note: '最近两次：一次成了（写着交回的文件），一次没成（写「未能执行」，原因折在「原因」里），底下一行「看全部 2 次」开整页。',
         props: { routines: [ROUTINE_WEEKLY], runs: ROUTINE_RUNS, openId: ROUTINE_WEEKLY.id },
-        expect: '工作电脑没有连上',
+        expect: '未能执行',
       },
       {
         name: '别人管的规则',
-        note: '这一条不归你管：行里不画按钮，只说清归谁管 —— 只读是说出来，不是偷偷禁用。',
+        note: '这一条不归你管：行尾照样有那颗 ⋯（这个频道里的人都能暂停、能立即执行一次），只是里面没有「删除」，也不写一句解释。',
         props: { routines: [{ ...ROUTINE_WEEKLY, can_manage: false }] },
-        expect: '只有他和项目管理员能改',
+        expect: '每周一整理课程进展',
       },
       {
         name: '还没有规则',
         note: '空的时候告诉人两条路：点「新建」，或者在频道里让芝士起草。',
         props: { routines: [] },
         expect: '还没有例行事务',
+      },
+    ],
+  },
+  {
+    id: 'routine-run-row',
+    title: 'RoutineRunRow',
+    about:
+      '一次执行那一行：什么时候跑的、这一次交回了什么。面板里那一格铺最近 5 次，执行记录整页铺一页 —— 同一行东西，两处画的是这一份。',
+    file: 'src/components/routine/RoutineRunRow.vue',
+    component: RoutineRunRow,
+    needs: ['i18n', 'router'],
+    args: { timezone: 'Asia/Shanghai', roomTo: DEMO_ROOM_TO },
+    states: [
+      {
+        name: '跑成了：写出交回的文件',
+        note: '跑成了就写结果文件的名字；这一格给不出工作面板（项目页和执行记录整页），所以那是一颗指回它所在频道的链接。',
+        props: { run: ROUTINE_RUNS[ROUTINE_WEEKLY.id][0] },
+        expect: '周报/2026-10-05.md',
+      },
+      {
+        name: '没跑成：原因折着',
+        note: '没跑成写「未能执行」，为什么折在「原因」里 —— 平时不占地方，要看的人点得开（原生 details，键盘和读屏都认）。',
+        props: { run: ROUTINE_RUNS[ROUTINE_WEEKLY.id][1] },
+        expect: '未能执行',
+      },
+      {
+        name: '房间里那一格：点一份就当场打开',
+        note: '在房间右侧那一格里，结果文件不是链接而是一颗按钮 —— 那一格所在的页面上就有能摊开它的工作面板。',
+        props: { run: ROUTINE_RUNS[ROUTINE_WEEKLY.id][0], roomTo: undefined },
+        expect: '周报/2026-10-05.md',
       },
     ],
   },

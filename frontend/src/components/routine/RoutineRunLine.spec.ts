@@ -1,4 +1,4 @@
-/** 例行任务那条消息下面的一行：跑着时说在跑，没跑成说原因，能去看这次执行。 */
+/** 例行任务那条消息下面的一行：跑着时说在跑，跑成的写结果文件，没跑成的把原因折着。 */
 import type { Component } from 'vue'
 import type { RoutineRunLine as Run } from '@/types/routineRun'
 
@@ -33,18 +33,30 @@ function mount(run: Partial<Run>, threaded = false) {
 describe('例行任务的一次执行', () => {
   it('还在跑时说在跑', () => {
     const ui = mount({ status: 'running' })
-    expect(ui.getByTestId('routine-run-going')).toBeTruthy()
+    expect(ui.getByTestId('routine-run-going').textContent).toContain('执行中')
   })
 
-  it('没跑成时给出平台说的原因', () => {
+  it('排队的那次说排队中', () => {
+    const ui = mount({ status: 'queued' })
+    expect(ui.getByTestId('routine-run-going').textContent).toContain('排队中')
+  })
+
+  it('没跑成时写「未能执行」，平台说的原因折在下面', () => {
     const ui = mount({ status: 'failed', reason: '工作电脑的环境准备失败' })
-    expect(ui.getByTestId('routine-run-missed').textContent).toContain('工作电脑的环境准备失败')
+    expect(ui.getByTestId('routine-run-missed').textContent).toContain('未能执行')
+    const why = ui.getByText('未能执行的原因')
+    expect(why.tagName).toBe('SUMMARY')
+    expect(ui.getByText('工作电脑的环境准备失败')).toBeTruthy()
   })
 
-  it('跑成后交回的结果文件点得开，屏幕上写文件名、路径写在提示里', async () => {
+  it('平台没给原因时就照实说没给', () => {
+    const ui = mount({ status: 'failed', reason: '' })
+    expect(ui.getByText('没有给出原因')).toBeTruthy()
+  })
+
+  it('跑成后交回的结果文件点得开，写的是它在频道里的整条路径', async () => {
     const ui = mount({ status: 'succeeded', outputs: ['周报/2026-10-11.md', '周报/明细.csv'] })
-    const file = ui.getByRole('button', { name: '2026-10-11.md' })
-    expect(file.getAttribute('title')).toBe('周报/2026-10-11.md')
+    const file = ui.getByRole('button', { name: '周报/2026-10-11.md' })
     await fireEvent.click(file)
     expect(ui.emitted()['open-file']).toEqual([['周报/2026-10-11.md']])
   })

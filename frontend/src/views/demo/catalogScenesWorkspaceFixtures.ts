@@ -36,11 +36,17 @@ export function routine(over: Partial<Routine> = {}): Routine {
     topic_id: 'topic-weekly',
     title: '每周一整理上周进展',
     instructions: '把上周房间里的讨论和任务收成一页周报。',
-    context_scope: '频道全部内容',
     output_dir: 'reports',
     trigger: 'schedule',
-    trigger_text: '每周一 09:00',
+    trigger_text: '每周一 09:00（北京时间）',
     spec: { freq: 'weekly', weekdays: [0], time: '09:00' },
+    scope_topic_ids: ['topic-design'],
+    scope_topics: [
+      { id: 'topic-weekly', title: '周会' },
+      { id: 'topic-design', title: '设计' },
+    ],
+    last_run: { id: 'run-1', status: 'succeeded', at: '2026-10-06T01:03:00Z' },
+    run_count: 12,
     timezone: 'Asia/Shanghai',
     state: 'active',
     agent_handle: 'cheese-demo',
@@ -74,6 +80,33 @@ export function routineRun(over: Partial<RoutineRun> = {}): RoutineRun {
     ...over,
   }
 }
+
+/** 执行记录那一页（`ProjectRoutineRunsViewView`）的一页：十行里三行没跑成，其余交回了
+ *  文件 —— 三种行（成了 / 没成 / 还在跑）都在，页头那句「共 47 次」也有出处。 */
+export const RUN_PAGE: RoutineRun[] = [
+  routineRun(),
+  routineRun({
+    id: 'run-2',
+    scheduled_for: '2026-10-05T01:00:00Z',
+    status: 'failed',
+    summary: '',
+    outputs: [],
+    error: '云端的执行环境没能起来，这一轮记作未能执行。',
+    created_at: '2026-10-05T01:00:00Z',
+    started_at: '2026-10-05T01:00:05Z',
+    finished_at: '2026-10-05T01:00:20Z',
+  }),
+  routineRun({
+    id: 'run-3',
+    scheduled_for: '2026-10-04T01:00:00Z',
+    status: 'running',
+    summary: '',
+    outputs: [],
+    created_at: '2026-10-04T01:00:00Z',
+    started_at: '2026-10-04T01:00:02Z',
+    finished_at: null,
+  }),
+]
 
 /** 一个房间：新建例行事务时要选一个，行里也写它叫什么。 */
 export function topic(over: Partial<Topic> = {}): Topic {

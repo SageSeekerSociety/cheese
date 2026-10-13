@@ -243,6 +243,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       },
     },
     {
+      // 一条规则跑过的每一次：卡片里「看全部 {count} 次」开的就是这里。项目级，和上面
+      // 那页一样 —— 规则的结果可能落在别的房间，而这一页看的是「它跑得怎么样」。
+      name: 'project-routine-runs',
+      path: 'routines/:routineId/runs',
+      component: () => import('@/views/ProjectRoutineRunsView.vue'),
+      props: addressProps,
+      meta: { titleKey: 'routines.runs.title', hideTabs: true, backTo: 'project-routines' },
+    },
+    {
       // 技能：这个项目存下来的做法。项目级，因为存下来就是给之后每个房间用的。
       name: 'project-skills',
       path: 'skills',
