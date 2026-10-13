@@ -75,6 +75,14 @@ export default defineConfig({
       // first request for it, which can take tens of seconds on a cold start.
       timeout: 60_000,
     },
+    // The desktop app renders with WebKit, and how the chat pane keeps its place
+    // at the bottom differs there: WebKit clamps scrollTop where Chromium does not.
+    {
+      name: 'components-webkit',
+      use: { browserName: 'webkit', baseURL: `http://localhost:${COMPONENT_PORT}` },
+      testMatch: ['chat-back-to-latest.spec.ts'],
+      timeout: 60_000,
+    },
   ],
   webServer: [
     {
