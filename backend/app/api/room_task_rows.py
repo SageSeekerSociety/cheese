@@ -14,23 +14,30 @@ routes), so a deep link and the board cannot disagree either.
 `project_task_rows` and `rail_tasks` moved here from `routes/projects.py`, and
 `task_out` from `routes/topics_tasks.py`, for the same reason the room's own
 rows already lived here — they are a page's view of a task, not a route's, and
-more than one route module asks for them.
+more than one route module asks for them. `room_task_items` (the room's list of
+tasks), `task_page_row` (one task's page) and `_opening` (where its first turn
+is) followed them out of `routes/topics_tasks.py` later, when the room snapshot
+started reading them: it is not a route, so a route module holding them made it
+reach one (C4 `routes-independent`).
 """
 
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import last_output_at, running_tasks
+from app.domain.agent.opening import opening_state
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
+from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.repositories import AcceptCardRepository
@@ -388,3 +395,76 @@ async def rail_tasks(
                     {**row, "filling_in": True}
                 )
     return out
+
+
+async def room_task_items(
+    db: AsyncSession,
+    chat: ChatService,
+    actor: Actor,
+    topic,
+    *,
+    limit: int | None = None,
+    status: Literal["open", "closed"] | None = None,
+    ids: list[uuid.UUID] | None = None,
+    blocks: list[uuid.UUID] | None = None,
+    branch: bool = False,
+    latest: int | None = None,
+) -> list[dict]:
+    """A room's tasks as `GET /topics/{id}/tasks` lists them (see there for what
+    each option keeps); also the `tasks` of the room snapshot a subscription
+    opens with (`room_snapshot`). The caller has authorised the reader."""
+    named: set[uuid.UUID] | None = set(ids) if ids is not None else None
+    if blocks is not None:
+        lines = await BlockRepository(db).many(blocks)
+        named = (named or set()) | {
+            task_id for line in lines if (task_id := named_task(line)) is not None
+        }
+    threads = await TaskService(db).threads_for_room(
+        topic.id,
+        limit=limit,
+        status=status,
+        ids=named,
+        origins=blocks,
+        with_branch=branch,
+        latest=latest,
+    )
+    return await task_rows(db, chat, actor, topic.project_id, threads)
+
+
+async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dict:
+    """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
+    snapshot a subscription to it opens with. The caller has authorised the
+    reader."""
+    cards = await AcceptService(db).latest_by_task([task.id])
+    out = await task_out(db, chat, task, cards.get(task.id))
+    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
+    # 就是它绑的那个。和列表里显示的是同一个函数算的。
+    project = await ProjectRepository(db).get(place.project_id)
+    out["model"] = presentation.card_model(
+        task,
+        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
+        choices=binding.catalog(project.settings if project else None),
+    )
+    card = cards.get(task.id)
+    out["card"] = (
+        None
+        if card is None
+        else {
+            "id": str(card.id),
+            "status": str(card.status),
+            "pr_number": card.pr_number,
+            "pr_url": card.pr_url,
+        }
+    )
+    out["opening"] = await _opening(db, task)
+    return out
+
+
+async def _opening(db, task) -> str | None:
+    """Where the task's first turn is, while its document is still empty
+    (`agent/opening.py`); None once the document says something."""
+    if task.document_id is not None:
+        doc = await Documents(db).get(task.document_id)
+        if doc is not None and doc.content.strip():
+            return None
+    return await opening_state(db, task.id)
