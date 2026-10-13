@@ -202,28 +202,6 @@ const at = ref({ tray: ['a', 'b', 'c'], slot: [], list: ['x', 'y'] })
   expect(errors).toEqual([]);
 });
 
-test('a number in a sentence is dragged and stepped within its range', async ({ page }) => {
-  const errors = await runApp(
-    page,
-    `<script setup>
-import { ref } from 'vue'
-const n = ref(3)
-</script>
-<template>
-  <p>每周 <c-scrub v-model="n" :min="1" :max="7" unit=" 次" />，<span id="out">{{ typeof n }} {{ n }}</span></p>
-</template>`
-  );
-  const box = (await page.locator('c-scrub').boundingBox())!;
-  await page.mouse.move(box.x + 4, box.y + box.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(box.x + 600, box.y + box.height / 2, { steps: 6 });
-  await page.mouse.up();
-  await expect(page.locator('#out')).toHaveText('number 7');
-  await page.keyboard.press('ArrowLeft');
-  await expect(page.locator('#out')).toHaveText('number 6');
-  expect(errors).toEqual([]);
-});
-
 test('an app cannot reach the network', async ({ page }) => {
   await runApp(
     page,

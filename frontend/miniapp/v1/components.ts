@@ -20,7 +20,6 @@ import Plane from './components/Plane.ce.vue'
 import { registerPlaneItems } from './components/planeItem'
 import Player from './components/Player.ce.vue'
 import Row from './components/Row.ce.vue'
-import Scrub from './components/Scrub.ce.vue'
 import Segmented from './components/Segmented.ce.vue'
 import Select from './components/Select.ce.vue'
 import Slider from './components/Slider.ce.vue'
@@ -39,7 +38,6 @@ const ALL = {
   'c-row': Row,
   'c-chart': Chart,
   'c-math': MathEl,
-  'c-scrub': Scrub,
   'c-plane': Plane,
 }
 /** Vue gives an element its properties only once it is in the page. A
