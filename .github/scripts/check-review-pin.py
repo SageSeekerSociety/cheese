@@ -11,9 +11,12 @@ The rule, judged on the PR as it is now:
 - the NEWEST pin must name the PR's current head, and
 - that review must have no `[blocker]` or `[major]` finding.
 
-Only a pin posted by someone with a role on this repository counts
-(OWNER/MEMBER/COLLABORATOR): anyone may comment on a public PR, and a comment
-that starts with the marker must not be able to supply, or replace, the review.
+Only a pin posted by someone with a role on this repository
+(OWNER/MEMBER/COLLABORATOR) or by this repository's GitHub App counts: anyone
+may comment on a public PR, and a comment that starts with the marker must not
+be able to supply, or replace, the review. The App needs its own rule because
+agents post through its installation token, and GitHub reports those comments
+as CONTRIBUTOR, not as a member.
 A draft is not judged (the platform opens a task's draft PR before any review
 exists, and marks it ready when it hands the work over); the merge queue does
 not run this either, because the PR side has already judged the same commit.
@@ -30,6 +33,9 @@ import sys
 MARKER = "<!-- pr-review sha="
 #: Associations that make a comment a pin. Matches who can push to this repo.
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
+#: The GitHub App agents post as (`gh` in a seat mints its installation token). The
+#: `[bot]` login is reserved for the App, so a user cannot take the name.
+APP_LOGIN = "cheesex-app[bot]"
 _PIN = re.compile(r"\A<!-- pr-review sha=(?P<sha>[0-9a-f]{40}) -->")
 #: A finding heading as `.claude/pr-review/render.py` writes it.
 _FINDING = re.compile(r"^### \d+\. \[(?P<severity>blocker|major|minor)\] (?P<title>.*)$", re.M)
@@ -59,13 +65,20 @@ def load_pages(text: str) -> list[dict]:
     return items
 
 
+def trusted(comment: dict) -> bool:
+    if comment.get("author_association") in TRUSTED:
+        return True
+    user = comment.get("user")
+    return isinstance(user, dict) and user.get("login") == APP_LOGIN and user.get("type") == "Bot"
+
+
 def newest_pin(comments: list[dict]) -> dict | None:
     """The newest trusted comment that opens with the pin marker, oldest-first order kept on ties."""
     pins = [
         c
         for c in comments
         if isinstance(c, dict)
-        and c.get("author_association") in TRUSTED
+        and trusted(c)
         and isinstance(c.get("body"), str)
         and c["body"].startswith(MARKER)
     ]

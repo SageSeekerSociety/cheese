@@ -20,8 +20,19 @@ def review(sha, *severities, marker=True):
     return "\n".join(lines)
 
 
-def comment(body, *, who="MEMBER", at="2026-10-13T10:00:00Z", id=1):
-    return {"id": id, "body": body, "author_association": who, "created_at": at}
+def comment(body, *, who="MEMBER", at="2026-10-13T10:00:00Z", id=1, login="someone", kind="User"):
+    return {
+        "id": id,
+        "body": body,
+        "author_association": who,
+        "created_at": at,
+        "user": {"login": login, "type": kind},
+    }
+
+
+def app_comment(body, **kwargs):
+    """What GitHub reports for a comment posted with the App's installation token."""
+    return comment(body, who="CONTRIBUTOR", login="cheesex-app[bot]", kind="Bot", **kwargs)
 
 
 def run(comments, *, head=HEAD, draft=False, pages=None):
@@ -93,15 +104,39 @@ class ReviewPinTest(unittest.TestCase):
         outsider_junk = comment(review(OLD, "major"), who="NONE", at="2026-10-13T10:00:00Z", id=2)
         self.assertEqual(run([trusted_good, outsider_junk]).returncode, 0)
 
+    def test_every_role_that_can_push_here_may_pin(self):
+        for who in ("OWNER", "MEMBER", "COLLABORATOR"):
+            with self.subTest(who=who):
+                self.assertEqual(run([comment(review(HEAD), who=who)]).returncode, 0)
+                self.assertEqual(run([comment(review(OLD), who=who)]).returncode, 1)
+
+    def test_a_pin_posted_through_the_app_counts_but_only_the_apps(self):
+        self.assertEqual(run([app_comment(review(HEAD))]).returncode, 0)
+        stale = run([app_comment(review(OLD))])
+        self.assertEqual(stale.returncode, 1)
+        self.assertIn(OLD[:12], stale.stdout)
+        self.assertEqual(run([app_comment(review(HEAD, "major"))]).returncode, 1)
+        other_bot = comment(review(HEAD), who="NONE", login="coderabbitai[bot]", kind="Bot")
+        self.assertEqual(run([other_bot]).returncode, 1)
+        look_alike = comment(review(HEAD), who="CONTRIBUTOR", login="cheesex-app[bot]", kind="User")
+        self.assertEqual(run([look_alike]).returncode, 1)
+        app_good = app_comment(review(HEAD), at="2026-10-13T09:00:00Z", id=1)
+        other_junk = comment(review(OLD, "major"), who="NONE", login="coderabbitai[bot]", kind="Bot", at="2026-10-13T10:00:00Z", id=2)
+        self.assertEqual(run([app_good, other_junk]).returncode, 0)
+
     def test_a_marker_in_the_middle_of_a_comment_is_not_a_pin(self):
         quoted = comment("see\n" + review(HEAD))
         self.assertEqual(run([quoted]).returncode, 1)
+        real = comment(review(HEAD), at="2026-10-13T09:00:00Z", id=1)
+        later_quote = comment("this one is stale:\n" + review(OLD, "major"), at="2026-10-13T10:00:00Z", id=2)
+        self.assertEqual(run([real, later_quote]).returncode, 0)
 
     def test_a_marker_without_a_readable_commit_is_red(self):
         for line in ["<!-- pr-review sha=abc -->", "<!-- pr-review sha= -->", f"<!-- pr-review sha={HEAD.upper()} -->"]:
             with self.subTest(line=line):
                 result = run([comment(line)])
                 self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("unreadable pin line", result.stdout)
 
     def test_a_draft_is_not_judged(self):
         result = run([], draft=True)
@@ -118,7 +153,9 @@ class ReviewPinTest(unittest.TestCase):
         self.assertEqual(run(None, pages=page_one).returncode, 1)
 
     def test_a_pull_request_without_a_head_is_red(self):
-        self.assertEqual(run([comment(review(HEAD))], head="").returncode, 1)
+        result = run([comment(review(HEAD))], head="")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("no head sha", result.stdout)
 
 
 if __name__ == "__main__":
