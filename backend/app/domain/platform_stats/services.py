@@ -166,15 +166,21 @@ class PlatformStatsService:
         users, unattributed = await detail.top_users(
             since=since, until=until, limit=TOP_USERS
         )
-        # 这一屏也画人：头像和「是不是队友」都走各自域里那一处，别在这里另写一份
-        # 判据（谁挑过哪张头像在 user 域，谁是队友在 identity 域）。账号已删的
-        # handle 拿不到头像 —— 前端按首字母兜底，不共用一张默认脸。
-        user_handles = [row["handle"] for row in users if row.get("handle")]
+        recent = await detail.recent(since=since, until=until, limit=RECENT_CALLS)
+        # 这一屏画人的地方有两处：按人拆的排行，和最近几行账本里「谁触发的」。脸和
+        # 「是不是队友」都走各自域里那一处，别在这里另写一份判据（谁挑过哪张头像在
+        # user 域，谁是队友在 identity 域）；两处一起批一次，同一个人在两处
+        # 长得一样。账号已删的 handle 拿不到头像 —— 前端按首字母兜底，不共用一张
+        # 默认脸。名字不在这里补：显示名是行自己的事，`top_users` / `recent` 各自
+        # 已经带上（同一次名册查询，见 `usage_detail.py`）。
+        people = [*users, *recent]
+        user_handles = [row["handle"] for row in people if row.get("handle")]
         avatars = await chosen_avatars_by_handle(self._session, user_handles)
         agents = await IdentityService(self._session).agents_among(user_handles)
-        for row in users:
-            row["avatar_id"] = avatars.get(row["handle"])
-            row["is_agent"] = row["handle"] in agents
+        for row in people:
+            handle = row["handle"]
+            row["avatar_id"] = avatars.get(handle) if handle else None
+            row["is_agent"] = handle in agents if handle else None
         return {
             "days": days,
             "totals": totals,
@@ -197,7 +203,7 @@ class PlatformStatsService:
                 if days <= HOURLY_MAX_DAYS
                 else None
             ),
-            "recent": await detail.recent(since=since, until=until, limit=RECENT_CALLS),
+            "recent": recent,
             # 上一窗口的同一口径合计（环比用）。`unpriced_tokens` 不进 prev：环比那
             # 三张卡是 token / 调用 / 成本，prev 的形状与那三张一一对应。
             "prev": {

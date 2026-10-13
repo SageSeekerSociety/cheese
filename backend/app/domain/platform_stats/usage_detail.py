@@ -299,7 +299,12 @@ class UsageDetailRepository:
         """窗口里最近的几行账本：什么时候、哪个项目、谁触发、哪个模型、多少钱。
 
         `cache_read_tokens` 在这一行不计入命中率时是 None（口径见模块 docstring）：
-        那一行的 0 可能只是没记。"""
+        那一行的 0 可能只是没记。
+
+        「谁触发」这一格和 `top_users` 同口径地补上**显示名**（昵称，没有就用
+        handle）—— 一列纯 handle 在滚动时几乎不可区分，而这一列和排行那一列说的是
+        同一种人，两处不该一处有名一处没有。脸和「是不是队友」不在这里查（那是
+        user 域和 identity 域各自的事），由服务层一并批一次，和 `top_users` 一样。"""
         handle, trigger = self._triggered_by(since, until)
         _, first, join = self._cache_columns(since, until)
         counted = ResourceUsage.created_at >= first.c.first_cached
@@ -334,7 +339,7 @@ class UsageDetailRepository:
                 .limit(limit)
             )
         ).all()
-        return [
+        out = [
             {
                 "at": at.astimezone(BEIJING).isoformat(),
                 "project_id": str(project_id) if project_id else None,
@@ -362,3 +367,7 @@ class UsageDetailRepository:
                 cost,
             ) in rows
         ]
+        names = await self._names([row["handle"] for row in out if row["handle"]])
+        for row in out:
+            row["name"] = names.get(row["handle"].lower()) if row["handle"] else None
+        return out

@@ -163,7 +163,20 @@ function when(at: string): string {
         <td class="t-num" data-card="primary">{{ when(row.at) }}</td>
         <td :data-label="t('feedback.dashboard.usage.col.project')">{{ row.project || '—' }}</td>
         <td :data-label="t('feedback.dashboard.usage.col.person')">
-          {{ row.handle ? `@${row.handle}` : t('feedback.dashboard.usage.byPlatform') }}
+          <!-- Same identity as the by-user column above: face + display name, falling
+               back to the handle. Rows with no triggerer are platform-initiated and
+               keep the plain note. -->
+          <NavLink v-if="row.handle" :to="userRefRoute(row.handle)" class="adw__link">
+            <IdentityView
+              :handle="row.handle"
+              :name="row.name"
+              :avatar-id="row.avatar_id ?? null"
+              :agent="row.is_agent ?? null"
+              :size="18"
+              handle-line
+            />
+          </NavLink>
+          <template v-else>{{ t('feedback.dashboard.usage.byPlatform') }}</template>
         </td>
         <td class="adw__model" :data-label="t('feedback.dashboard.usage.col.model')" :title="row.model">
           {{ row.model || t('feedback.dashboard.usage.unknownModel') }}

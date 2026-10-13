@@ -105,12 +105,21 @@ export interface StatsUsage {
   /** 每个整点一行，北京时间（`hour` 带 +08:00），补到当前这个小时；窗口长于 7 天时是
    *  `null`。 */
   hourly?: { hour: string; tokens: number; calls: number; cost_usd: number }[] | null
-  /** 窗口里最近的几行账本，最新的在前。`cache_read_tokens` 为 `null` = 这一行没记缓存。 */
+  /** 窗口里最近的几行账本，最新的在前。`cache_read_tokens` 为 `null` = 这一行没记缓存。
+   *  「谁触发」这一列和 `top_users` 同口径地画成头像 + 显示名：`name` / `avatar_id` /
+   *  `is_agent` 的含义与那一处逐字相同（`null` 各按首字母、按 handle 兜底）。 */
   recent?: {
     at: string
     project_id: string | null
     project: string | null
     handle: string | null
+    /** 触发者的显示名（昵称，没有就 null，前端退回 handle）。可选：旧后端还没有它。 */
+    name?: string | null
+    /** 触发者**自己挑过**的头像素材 id；没挑过、账号已删、或是平台自己发起的轮次，都是
+     *  null（前端画首字母）。可选：旧后端还没有它。 */
+    avatar_id?: number | null
+    /** 是不是 AI 队友。判据是绑定关系，不是 handle 长相。可选：旧后端还没有它。 */
+    is_agent?: boolean | null
     model: string
     route: string
     kind: string

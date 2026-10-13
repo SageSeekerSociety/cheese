@@ -107,3 +107,29 @@ describe('AdminDashboardUsageWho · 触发最多的人', () => {
     expect(rows[1].querySelector('img')).toBeNull()
   })
 })
+
+describe('AdminDashboardUsageWho · 最近的账本行也画人', () => {
+  it('触发者有脸有名；平台自己发起的轮次写「平台发起」，不画脸', async () => {
+    const { container } = await mountWho([
+      row({ model: 'a-model', handle: 'lin', name: '林一', avatar_id: 9, is_agent: false }),
+      row({ model: 'b-model', handle: 'cheese-abc', name: '小苔', is_agent: true }),
+      row({ model: 'c-model', handle: null }),
+    ])
+
+    /** 最近那张表里，某一行的「谁触发」那一格（第三列）。 */
+    const personOf = (model: string) => rowOf(container, model).querySelectorAll('td')[2] as HTMLElement
+
+    // 人：共用身份视图，头像拼 /avatars/{id}。
+    const lin = personOf('a-model')
+    expect(lin.querySelector('.identity-view'), '这一行没走共用身份视图').not.toBeNull()
+    expect(lin.querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
+    // 队友（is_agent）走队友的脸，不画人的头像图。
+    const cheese = personOf('b-model')
+    expect(cheese.querySelector('.identity-view')).not.toBeNull()
+    expect(cheese.querySelector('img')).toBeNull()
+    // 没有触发者：写「平台发起」，不画脸（这一行不是一个人）。
+    const platform = personOf('c-model')
+    expect(platform.querySelector('.identity-view')).toBeNull()
+    expect(platform.textContent).toContain('平台发起')
+  })
+})
