@@ -260,16 +260,18 @@ unmatched_ignore_imports_alerting = warn
 # leaves (I11) — the same two edges `team.membership_services` already has for
 # team invitations.
 #
-# 下面多一条 `app.domain.review.nudges -> app.domain.agent.platform_notices`：三条
-# 待发（CI 挂了、有人评审、和目标分支冲突）搬去 `review/nudges.py` 时，它们写的
-# `EVENT_*` 常量跟着搬了，review -> agent.platform_notices 这条边换了导入方。
-# services 那条仍在（它自己还发别的通知）——同一份债挪了地方，不是新欠的。
+# `app.domain.review.nudges -> app.domain.agent.platform_notices`：三条待发（CI 挂
+# 了、有人评审、和目标分支冲突）搬去 `review/nudges.py` 时，它们写的 `EVENT_*` 常量
+# 跟着搬了，这条边换了导入方。services 那条仍在（它自己还发别的通知）——同一份债挪
+# 了地方，不是新欠的。**2026-10-13**：码表下沉到第 1 层的 `notice_meta` 之后，这批
+# 边都不在了（nudges、room_notices、services._shared 各一条）。
 #
 # 同理，第二片 `app.domain.review/room_notices.py`（一件事做完之后怎么说出去）
 # 带走两条边：`review -> agent.announce` 换了导入方（services 那句 `announce(...)`
 # 全在这一片里，所以 services 那条**随之消失**，不是被还掉），
 # `review -> agent.platform_notices` 又多一个导入方（room_notices 自己写
-# `EVENT_*` 与 `notice()`，services 那条仍在）。两条都是同一份债挪了地方。
+# `EVENT_*` 与 `notice()`）。两条都是同一份债挪了地方；`platform_notices` 那条在
+# 2026-10-13 随码表下沉消失，只剩 `review -> agent.announce`。
 #
 # 再到 `app.domain.room_task.naming -> app.domain.agent.staleness`：房间改名之后
 # 要告诉这个房间「侧栏里你那一行变了」的 `announce_stale`，原本住在
