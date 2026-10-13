@@ -29,8 +29,15 @@ const props = defineProps<{
   editable: boolean
   /** 没有编辑权限：只读回不去，「⋯」里也没有切换。 */
   readOnly: boolean
-  /** 最近一次编辑：谁（已经读成名字）、什么时候。 */
-  lastEdit: { name: string; at: string } | null
+  /** 最近一次编辑：谁（已经读成名字）、什么时候，外加画那张脸要的 handle / 头像地址 /
+   *  是不是队友。这一格画的是一张脸加一个名，不是一串 handle。 */
+  lastEdit: {
+    name: string
+    at: string
+    handle?: string | null
+    avatar?: string | null
+    agent?: boolean | null
+  } | null
   suggestionCount: number
   suggestionsOpen: boolean
   commentCount: number
@@ -112,14 +119,24 @@ function pickHeading(pos: number) {
           :title="t('work.room.doc.history')"
           @click="emit('history')"
         >
-          <!-- The ellipsis has to sit on THIS element. The button itself is
-               `display: inline-flex`, so its text becomes an anonymous flex item
-               and `text-overflow` on the flex container does nothing: measured at
-               390px wide the label needs 118px, the button is given 88px, and the
-               text refused to shrink. See .doc-top-bar__quiet-text. -->
-          <span class="doc-top-bar__quiet-text">{{
-            t('work.room.doc.lastEdit', { who: lastEdit.name, when: relTime(lastEdit.at) })
-          }}</span>
+          <!-- A face, then the words. The name lives in the shared identity, so the
+               sentence itself no longer carries `{who}` — printing it twice would read
+               the name twice in one line. The ellipsis still has to sit on the text run
+               (see the comment above): the outer span is now a flex row holding the
+               face, and `text-overflow` on a flex container does nothing, so the label
+               is its own element. -->
+          <span class="doc-top-bar__quiet-text">
+            <IdentityView
+              :handle="lastEdit.handle"
+              :name="lastEdit.name"
+              :avatar="lastEdit.avatar"
+              :agent="lastEdit.agent"
+              :size="16"
+            />
+            <span class="doc-top-bar__quiet-label">{{
+              t('work.room.doc.lastEdit', { when: relTime(lastEdit.at) })
+            }}</span>
+          </span>
         </button>
       </template>
     </div>
@@ -344,7 +361,16 @@ function pickHeading(pos: number) {
   color: var(--faint);
 }
 
+/* 这一行现在是「脸 + 字」：flex 行坐着头像，所以截断落在里面那段文字上，不落在这
+   一层（flex 容器上的 `text-overflow` 是形同虚设的，同文件头那条）。 */
 .doc-top-bar__quiet-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.doc-top-bar__quiet-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

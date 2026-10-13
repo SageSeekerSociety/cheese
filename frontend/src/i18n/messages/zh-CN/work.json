@@ -798,7 +798,7 @@
       "copy": "复制",
       "blockType": "段落格式",
       "offlineSync": "没连上，改动会在连上后同步",
-      "lastEdit": "{who} {when}编辑",
+      "lastEdit": "{when}编辑",
       "history": "修改记录",
       "exportMarkdown": "导出 Markdown",
       "suggestionCount": "{n} 处建议",

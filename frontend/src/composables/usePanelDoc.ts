@@ -319,7 +319,21 @@ export function usePanelDoc(props: PanelDocProps) {
     askAgent,
     stopAgent,
     answerToComment,
-    lastEdit: computed(() => (lastEdit.value ? { name: nameOf(lastEdit.value.actor), at: lastEdit.value.at } : null)),
+    lastEdit: computed(() => {
+      if (!lastEdit.value) return null
+      const { actor, at } = lastEdit.value
+      // 名字、脸、是不是队友一起给出去：顶栏那一句「谁 · 多久之前编辑的」画的是一张脸
+      // 加一个名，不是一串 handle。脸来自在场名册（`DocPeer.avatar` 是现成的 URL，对面
+      // 客户端送来的），不在场的人（断线了、或就是自己）没有 URL，退回彩色首字母。
+      const peer = collab.peers.value.find((p) => p.handle === actor)
+      return {
+        name: nameOf(actor),
+        at,
+        handle: actor,
+        avatar: peer?.avatar || null,
+        agent: actor === props.agentHandle || isAgentHandle(actor),
+      }
+    }),
     nameOf,
     loadVersions,
     restoreVersion,

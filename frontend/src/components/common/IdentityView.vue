@@ -28,6 +28,13 @@ const props = withDefaults(
     name?: string | null
     /** 自己挑过的头像素材 id；null = 没挑过，画彩色首字母。 */
     avatarId?: number | null
+    /**
+     * 现成的头像地址。**只有拿不到素材 id、手上只有 URL 的地方才用它** —— 协作面板的
+     * 在场人就是这种：对面客户端把 URL 直接送过来，平台那头没有 id 可拼。给了它就用
+     * 它，`avatarId` 让位。**别把 id 塞进来**：id 走 `avatarId`、URL 由 `getAvatarUrl`
+     * 拼，这是平台惯例（接口回 id）。
+     */
+    avatar?: string | null
     /** 是不是 AI 队友。名册在手就照名册填 true/false；不填（null）则按 handle 命名规则兜底。 */
     agent?: boolean | null
     size?: number | string
@@ -48,6 +55,7 @@ const props = withDefaults(
     handle: null,
     name: null,
     avatarId: null,
+    avatar: null,
     agent: null,
     size: 24,
     mention: false,
@@ -58,7 +66,9 @@ const props = withDefaults(
 )
 
 const label = computed(() => props.name || props.handle || '')
-const avatarUrl = computed(() => (props.avatarId == null ? '' : getAvatarUrl(props.avatarId)))
+// 现成的 URL 优先：给它的地方本来就没有素材 id 可拼。都没给就是空串 —— `UserAvatar`
+// 的 `hasAvatar` 判的正是空串，会去画彩色首字母。
+const avatarUrl = computed(() => props.avatar || (props.avatarId == null ? '' : getAvatarUrl(props.avatarId)))
 const isAgent = computed(() => props.agent ?? isAgentHandle(props.handle || ''))
 </script>
 

@@ -47,12 +47,18 @@ beforeEach(() => {
 })
 
 describe('文档顶栏左边那一句状态', () => {
-  it('最近编辑那一句：字装在自己的元素里，省略号才收得动', () => {
-    const { container } = mount({ lastEdit: { name: '王长鑫', at: new Date().toISOString() } })
+  it('最近编辑那一句：脸 + 名，字装在自己的元素里，省略号才收得动', () => {
+    const { container } = mount({
+      lastEdit: { name: '王长鑫', at: new Date().toISOString(), handle: 'wang', avatar: null, agent: false },
+    })
     const text = container.querySelector('.doc-top-bar__quiet-text')
     expect(text?.textContent).toContain('王长鑫')
     // 它必须是那颗安静按钮的孩子，而不是被平铺回按钮里。
     expect(text?.parentElement?.classList.contains('doc-top-bar__btn--quiet')).toBe(true)
+    // 名字走共用身份（脸和名一处画），所以这一句的字里不再重复念一遍名字；
+    // 省略号挂在那段文字自己的元素上（外层现在是 flex 行，见文件头）。
+    expect(text?.querySelector('.identity-view'), '这一句没画共用身份').not.toBeNull()
+    expect(text?.querySelector('.doc-top-bar__quiet-label')?.textContent).toContain('编辑')
   })
 
   it('没有最近编辑就不画这一句', () => {

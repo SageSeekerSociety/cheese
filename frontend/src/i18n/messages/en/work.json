@@ -798,7 +798,7 @@
       "copy": "Copy",
       "blockType": "Paragraph style",
       "offlineSync": "Offline. Your changes will sync when the connection is back",
-      "lastEdit": "Edited by {who} {when}",
+      "lastEdit": "Edited {when}",
       "history": "Version history",
       "exportMarkdown": "Export Markdown",
       "suggestionCount": "Suggestions: {n}",

@@ -118,8 +118,15 @@ const props = withDefaults(
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
     // ---- 修改记录 ----
-    /** 最近一次编辑：谁（读成名字）、什么时候。 */
-    lastEdit?: { name: string; at: string } | null
+    /** 最近一次编辑：谁（读成名字）、什么时候，以及画那张脸要的 handle / 头像地址 /
+     *  是不是队友（顶栏的左半边画的是脸 + 名，不是一串 handle）。 */
+    lastEdit?: {
+      name: string
+      at: string
+      handle?: string | null
+      avatar?: string | null
+      agent?: boolean | null
+    } | null
     /** handle 读成名字。 */
     nameOf?: (handle: string) => string
     /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
