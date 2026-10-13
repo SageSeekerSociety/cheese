@@ -431,13 +431,13 @@ async def update_task(
             db, place.project_id, given, task.owner_handle, settings_now
         ):
             raise ForbiddenError(say("ownAgentOtherOwnersTask"))
-        await TopicService(db).give_task_teammate(task, given)
+        await TopicService(db).give_task_teammate(task, given, by=actor.handle)
     elif not await may_work_for(
         db, place.project_id, task.agent_handle, task.owner_handle, settings_now
     ):
         # Handed to someone whose own agent it is not (#2991): the task goes
         # back to the project's teammate, and its new owner may give it theirs.
-        await TopicService(db).give_task_teammate(task, None)
+        await TopicService(db).give_task_teammate(task, None, by=actor.handle)
     if body.contributor_handles is not None:
         people = await members.project_people(place.project_id)
         wanted = list(dict.fromkeys(body.contributor_handles))

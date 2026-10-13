@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import (
     ConflictError,
+    ForbiddenError,
     NotFoundError,
     UnprocessableEntityError,
     ValidationError,
@@ -1019,8 +1020,9 @@ class TopicService:
         ``teammate`` is the seat of the AI teammate the work came from — the one
         that created it, or the one a message turned into it was addressed to.
         The task is worked by that teammate rather than the room's, so whoever
-        was asked keeps the work; a seat that is no saved teammate of the
-        project is ignored.
+        was asked keeps the work, and it is seated in the room if it is not
+        (refused when ``created_by`` could not add it); a seat that is no saved
+        teammate of the project is ignored.
 
         A title typed by a person is final. A task opened unnamed is named by
         the platform (`room_task/naming.py`). A title the AI teammate wrote
@@ -1084,6 +1086,7 @@ class TopicService:
                 project, teammate
             )
         ):
+            await self._seat_teammate(room.id, teammate, by=created_by)
             await tasks.give_agent(task, agent_handle=teammate)
         await tasks.ensure_document(task)
         if owner:
@@ -1094,17 +1097,36 @@ class TopicService:
         await self._session.flush()
         return task
 
-    async def give_task_teammate(self, task: Task, seat: str | None) -> None:
+    async def give_task_teammate(
+        self, task: Task, seat: str | None, *, by: str
+    ) -> None:
         """Another AI teammate works ``task`` from its next turn: one saved in
         the task's project, named by its seat; None gives it back to its
-        room's."""
+        room's. ``by`` is who gives it, who must be able to seat it."""
         if seat is not None:
             project = await self._projects.get(task.project_id)
             if project is None or not await AgentInstanceService(
                 self._session
             ).for_seat_handle(project, seat):
                 raise ValidationError(say("teammateHandleNotFound", handle=repr(seat)))
+            await self._seat_teammate(task.room_id, seat, by=by)
         await TaskService(self._session).give_agent(task, agent_handle=seat)
+
+    async def _seat_teammate(
+        self, room_id: uuid.UUID, seat: str, *, by: str | None
+    ) -> None:
+        """Seat the teammate a task is given in the task's room, so that it
+        works and speaks there as itself (`queries._seat_of`).
+
+        Seated the way ``by`` would add it to the room by hand, with the same
+        permission: someone who could not add it cannot give it the task
+        either, and is told so."""
+        if seat in await self._members.agent_handles(room_id):
+            return
+        try:
+            await self._members.add(topic_id=room_id, handle=seat, actor=by or "")
+        except ForbiddenError:
+            raise ForbiddenError(say("taskTeammateNeedsSeat")) from None
 
     async def clone_from(
         self, *, target_topic_id: uuid.UUID, source_topic_id: uuid.UUID

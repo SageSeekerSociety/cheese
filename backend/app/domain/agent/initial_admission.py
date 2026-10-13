@@ -88,8 +88,9 @@ async def admitted_initial(
     async with seat_admission(seat_lock_for(topic_id, seat)):
         async with sessions() as session:
             place = await PlaceResolver(session).conversation(topic_id)
-            # A room's addressed agent must still sit on its roster; a task's
-            # agent is the task's own and sits on no roster.
+            # A room's addressed agent must still sit on its roster. A task's
+            # agent is seated when the task is given to it, and the turn
+            # refuses one that is not (`queries._acting_handle`).
             if instance_id is not None and place is not None and place.task is None:
                 # deferred-import: tests patch app.domain.topic_membership.services
                 from app.domain.topic_membership.services import TopicMemberService
