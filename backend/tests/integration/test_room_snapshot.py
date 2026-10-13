@@ -110,7 +110,7 @@ def test_a_channel_row_carries_my_tasks_owned_first_and_how_many_are_underway(cl
     room = _room(client, project)
     other = _room(client, project, "别的频道")
     mine = open_task(client, room, "我的")
-    helping = open_task(client, room, "我帮忙的", owner="bob", contributors=["alice"])
+    open_task(client, room, "我帮忙的", owner="bob", contributors=["alice"])
     open_task(client, room, "别人的", owner="bob")
 
     rail = _sidebar(client, project, "alice")
@@ -127,8 +127,10 @@ def test_a_channel_row_carries_my_tasks_owned_first_and_how_many_are_underway(cl
     assert rail[other] == {"shown": [], "open": 0}
     # Someone else sees their own under the same channel; mine is what got borrowed.
     bob = _sidebar(client, project, "bob")[room]["shown"]
-    assert {t["title"] for t in bob if not t.get("filling_in")} == {"我帮忙的", "别人的"}
-    assert [t["title"] for t in bob if t.get("filling_in")] == ["我的"]
+    theirs = {t["title"] for t in bob if not t.get("filling_in")}
+    borrowed = [t["title"] for t in bob if t.get("filling_in")]
+    assert theirs == {"我帮忙的", "别人的"}
+    assert borrowed == ["我的"]
     assert mine["id"] in [t["id"] for t in bob]
 
 
