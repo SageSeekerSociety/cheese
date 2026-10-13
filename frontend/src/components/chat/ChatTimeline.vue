@@ -57,6 +57,8 @@ const props = defineProps<{
   threadStatusFor?: (m: Block) => string | null
   /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
   processable?: boolean
+  /** 支线和任务里的对话：人发的长消息也收起（RoomMessage 的 `foldPlain`）。 */
+  foldPlain?: boolean
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
@@ -541,6 +543,7 @@ const rowLabels = computed(() =>
               :topic-list="topicList"
               :pinnable="pinnable"
               :pinned="!!pinnedIds?.has(m.id)"
+              :fold-plain="foldPlain"
               :data-row-id="m.id"
               :data-feed-item="m.id"
               @animationend="settleRow"
