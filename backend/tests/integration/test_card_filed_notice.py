@@ -56,7 +56,14 @@ def _room(client) -> str:
 
 
 def _set_reporter(client, room: str, handle: str) -> None:
+    """把这条活的递卡人写成 ``handle``。
+
+    递卡人还要是这个项目的人：撤回只认递卡人（`_may_withdraw`），而每个决定
+    验收卡的路由都先问「你是这个频道的人吗」（`_card_actor`）—— 只在库里写个
+    名字，他连自己那张卡都退不了。
+    """
     task = delivery_task(client, room)
+    join_project_team(client, str(task.project_id), handle)
 
     async def go() -> None:
         async with client.test_factory() as session:
