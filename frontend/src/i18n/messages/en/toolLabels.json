@@ -59,8 +59,6 @@
   "cheeseFetch": "Read web page",
   "cheeseDocsSearch": "Search documentation",
   "cheeseDocsRead": "Read documentation",
-  "cheeseLock": "Lock a resource",
-  "cheeseUnlock": "Release a resource",
   "cheeseDecision": "Record a decision",
   "cheeseTitle": "Set the title",
   "cheeseNotify": "Send a notification",

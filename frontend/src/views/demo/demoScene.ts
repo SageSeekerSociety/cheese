@@ -118,8 +118,6 @@ export type SceneEvent =
   | { at: number; do: 'machine'; text: string }
   // 一位队友的座位卡上换几项（工作目录、会话、此刻在干什么）。
   | { at: number; do: 'seat'; who: string; dir?: string; session?: string; state?: string }
-  // 房间的重资源锁：谁占着，null 是放开。
-  | { at: number; do: 'lock'; who: string | null }
   // 话题标题换了。
   | { at: number; do: 'title'; text: string }
   // 记忆文件树：建一个文件或者改它。`add` 在末尾加一行，`remove` 删掉等于它的那行，
@@ -226,7 +224,6 @@ export interface Frame {
   step: number
   topic: string
   machine: string
-  lock: string | null
   seats: Seat[]
   chat: ChatLine[]
   site: Block[]
@@ -324,7 +321,6 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
   const last = Math.max(0, Math.min(step, scene.steps.length - 1))
   let topic = scene.topic
   let machine = scene.machine
-  let lock: string | null = null
   const seats = new Map<string, Seat>((scene.seats ?? []).map((who) => [who, { who, dir: '', session: '', state: '' }]))
   const chat: ChatLine[] = []
   const site: Block[] = []
@@ -500,9 +496,6 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
           seats.set(e.who, seat)
           break
         }
-        case 'lock':
-          lock = e.who
-          break
         case 'title':
           topic = e.text
           break
@@ -551,7 +544,6 @@ export function frameAt(scene: Scene, step: number, elapsed: number): Frame {
     step: last,
     topic,
     machine,
-    lock,
     seats: [...seats.values()],
     chat,
     site,

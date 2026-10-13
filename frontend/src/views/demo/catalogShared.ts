@@ -235,8 +235,8 @@ export const SHARED_ENTRIES: CatalogEntry[] = [
       {
         name: '选定了某一位',
         note: 'modelValue 是一个预设名：选中项就画那一位的名字。',
-        props: { modelValue: 'claude-code' },
-        expect: 'Claude Code',
+        props: { modelValue: 'reviewer' },
+        expect: '代码审查',
       },
       {
         name: '清单没读到',
@@ -247,7 +247,7 @@ export const SHARED_ENTRIES: CatalogEntry[] = [
       {
         name: '写过又选回「继承」',
         note: 'rawValue 有值、modelValue 是空串：这一层本来单独指定过，保存会把它清掉，所以多一句提醒。',
-        props: { rawValue: 'claude-code' },
+        props: { rawValue: 'reviewer' },
         expectSelector: '[data-testid="default-teammate-will-clear"]',
       },
     ],

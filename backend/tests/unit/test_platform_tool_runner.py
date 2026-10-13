@@ -437,20 +437,6 @@ def test_a_task_that_could_not_start_tells_the_teammate_to_ask():
     assert "没有审阅人" in out
 
 
-def test_a_lock_someone_else_holds_is_a_refusal():
-    host = Host(
-        {
-            ("POST", f"/topics/{_ROOM}/lock"): {
-                "acquired": False,
-                "reason": "任务 x 占着",
-            }
-        }
-    )
-    with pytest.raises(cheese.PlatformToolError, match="任务 x 占着"):
-        run("cheese_lock", {}, host)
-    assert host.requests[0]["body"] == {"kind": "heavy"}
-
-
 # --- memory, roster, status and the rest -----------------------------------
 
 

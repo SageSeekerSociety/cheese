@@ -75,15 +75,15 @@ function agentType(over: Partial<AgentType> & Pick<AgentType, 'name' | 'title'>)
 /** 两个平台预设：一个有技能清单（副标题列它），一个没有（退回说明那一句）。 */
 export const AGENT_TYPES: AgentType[] = [
   agentType({
-    name: 'claude-code',
-    title: 'Claude Code',
-    description: '动手改代码的那一位',
+    name: 'reviewer',
+    title: '代码审查',
+    description: '只看不改，逐条说清哪里不对。',
     skills: ['wolfram', 'docx'],
   }),
   agentType({
-    name: 'code-reviewer',
-    title: '代码审查',
-    description: '只看不改，逐条说清哪里不对。',
+    name: 'writer',
+    title: '文档助手',
+    description: '把结论写成一页纸，附上它引用的出处。',
   }),
 ]
 

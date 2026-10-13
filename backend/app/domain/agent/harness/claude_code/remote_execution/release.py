@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import errno
 import hashlib
 import json
@@ -496,6 +497,81 @@ def _without_paths(text):
         if not dropping:
             out.append(line)
     return "\n".join(out)
+
+
+#: Bytes asked of the executor per read of one context file.
+CONTEXT_READ_BYTES = 1024 * 1024
+
+
+def copy_context(target, tree, client):
+    """The project's context — the tree a forwarded view would show — as plain
+    files in the session's own directory (`central_workspace`), for a session
+    whose host has no view of a project held on another machine (a member's
+    own Claude Code, `apart`). Claude Code reads the project's instructions,
+    rules, skills and agents from there as it would from the view; what is
+    gone from the tree is taken away, and a file whose size and time are
+    unchanged is not read again."""
+    root = Path(target["central_workspace"])
+    record = Path(target["target_file"]).with_name("context-copy.json")
+    copied = json.loads(record.read_text()) if record.exists() else {}
+    entries = tree["entries"]
+    remote_root = target["workspace"]
+    for name in sorted(set(copied) - set(entries), reverse=True):
+        path = root / name
+        if path.is_symlink() or path.is_file():
+            path.unlink()
+        elif path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
+    for name in sorted(entries):
+        entry = entries[name]
+        relative = Path(name)
+        if relative.is_absolute() or ".." in relative.parts:
+            # i18n-exempt: session-host helper, stdlib only, no catalog
+            raise ValueError("Invalid remote context path")
+        path = root / relative
+        shape = [entry["kind"], entry.get("size"), entry.get("mtime_ns")]
+        shape.append(entry.get("target"))
+        if copied.get(name) == shape and (path.exists() or path.is_symlink()):
+            continue
+        if path.is_symlink() or (path.exists() and entry["kind"] != "directory"):
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if entry["kind"] == "directory":
+            path.mkdir(exist_ok=True)
+        elif entry["kind"] == "symlink":
+            # A link into the project points into this copy of it, as the
+            # view shows it (`forwarded_fs.readlink`).
+            link = entry["target"]
+            if link == remote_root or link.startswith(remote_root + "/"):
+                link = str(root) + link[len(remote_root) :]
+            path.symlink_to(link)
+        else:
+            data = b""
+            while True:
+                piece = base64.b64decode(
+                    client.call(
+                        "context_fs",
+                        {
+                            "operation": "read",
+                            "path": name,
+                            "offset": len(data),
+                            "size": CONTEXT_READ_BYTES,
+                        },
+                    )["data"]
+                )
+                data += piece
+                if len(piece) < CONTEXT_READ_BYTES:
+                    break
+            temporary = path.with_name(path.name + ".next")
+            temporary.write_bytes(data)
+            temporary.replace(path)
+        copied[name] = shape
+    for name in set(copied) - set(entries):
+        del copied[name]
+    record.write_text(json.dumps(copied))
 
 
 def link_forwarded_user_context(directory, config, forwarded, tree, helpers, view=None):

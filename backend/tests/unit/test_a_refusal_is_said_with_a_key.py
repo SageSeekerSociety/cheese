@@ -442,7 +442,7 @@ _BASELINE: dict[str, int] = {
     "app/domain/machine/microcloud.py": 3,
     "app/domain/machine/pi_dist.py": 6,
     "app/domain/machine/services.py": 7,
-    "app/domain/machine/session_work.py": 14,
+    "app/domain/machine/session_work.py": 13,
     "app/domain/machine/supply.py": 2,
     "app/domain/machine/toolchain_dist.py": 4,
     "app/domain/machine/warm.py": 1,
