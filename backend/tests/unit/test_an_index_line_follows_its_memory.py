@@ -2,7 +2,7 @@
 
 一条新记忆超了长度上限没收，它在同一轮里加进 `MEMORY.md` 的那一行也不能收：收
 下了，平台的索引就指向一个不存在的文件，每次同步铺到所有房间，读它的 agent 读到
-「文件不存在」。别人早先留下的行不动，哪怕它也指空。
+「文件不存在」。只管被拒收的文件；别人早先留下的行不动，哪怕它也指空。
 """
 
 from app.domain.memory.files import digest
@@ -50,12 +50,13 @@ def test_an_accepted_new_memory_keeps_its_index_line():
     assert result.files["team/MEMORY.md"] == index
 
 
-def test_a_new_line_pointing_at_a_file_never_written_is_not_taken():
-    index = _INDEX + "- [c](c.md) — 文件没写\n"
+def test_a_new_line_pointing_at_a_file_not_yet_written_is_kept():
+    # The file may come next round, or from another room writing it now.
+    index = _INDEX + "- [c](c.md) — 文件还没写\n"
     result = _round(
         "team", {"MEMORY.md": index, "a.md": _A}, {"MEMORY.md": _INDEX, "a.md": _A}
     )
-    assert result.files["team/MEMORY.md"] == _INDEX
+    assert result.files["team/MEMORY.md"] == index
 
 
 def test_a_line_already_on_the_platform_is_left_alone_even_if_it_points_nowhere():
