@@ -145,6 +145,7 @@ function onMenuToggle(open: boolean) {
     :class="{
       'topic-row--hover-actions': !page,
       'topic-row--tasks': !!taskCount,
+      'topic-row--tasks-collapsed': !!taskCount && tasksCollapsed === true,
       'is-active': selected,
       'is-sub': row.depth > 0,
       'is-menu-open': menuOpen,
@@ -538,10 +539,18 @@ function onMenuToggle(open: boolean) {
   opacity: 0;
 }
 /* 有折叠加手的行，那颗 ⋯ 往左让出一个把手的宽度：不让的话它正好压住把手，而把手是
-   那一块唯一的入口，压住就成了「看着有、点不着」。让出的宽度是定值（把手自己有多
-   宽见 TopicRailTaskFold.vue），所以 ⋯ 的位置不跟着「收起来了没有」跳。 */
+   那一块唯一的入口，压住就成了「看着有、点不着」。（把手自己有多宽见
+   TopicRailTaskFold.vue。） */
 .topic-row--tasks .row-actions {
   right: 45px;
+}
+/* 收起来的那一档要再让一截：把手这时还多顶着一盏灯和一颗条数，展开态只有一个箭头。
+   45px 那条留的量只够展开态——收起时 ⋯ 正好压在那颗条数上（2026-10-13 真渲染量到
+   的：压住 21px），而条数正是收起这一档要留给人看的唯一东西。所以按宽的那一档让。
+   45 是怎么来的：行右沿到把手的间距 16px + 展开态把手 15px + 14px 空隙。收起态把手
+   50px，同样留 14px 空隙，就是 16 + 50 + 14 = 80。这些数都跟着字号走，字号变了要重量。 */
+.topic-row--tasks-collapsed .row-actions {
+  right: 80px;
 }
 /* 整页形态：手指点的地方至少 44px 高；改名的输入框 16px，iOS 聚焦时才不会整页放大。 */
 .topic-rail--page .topic-row {

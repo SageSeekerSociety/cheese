@@ -131,6 +131,21 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.queryByTitle('5 tasks under way')).toBeNull()
   })
 
+  it('收起时频道行挂上那一档：行尾变宽了，⋯ 要让开', async () => {
+    await openProject([channel('topic-a', [task(K1, '任务一')], 5)])
+    const row = () => document.querySelector('.topic-row--tasks') as HTMLElement
+
+    expect(row().classList.contains('topic-row--tasks-collapsed')).toBe(false)
+
+    await fireEvent.click(fold())
+    await settle()
+
+    // 收起之后行尾多出灯和条数，把手比展开时宽了 35px；⋯ 是浮在行尾的一层，
+    // 让多少写在这条 class 对应的 CSS 里。这一层量不出排版，只能钉住挂在
+    // 哪一档上——档位掉了，⋯ 就会重新压在那颗条数上（2026-10-13 量到的 21px）。
+    expect(row().classList.contains('topic-row--tasks-collapsed')).toBe(true)
+  })
+
   it('「展开其余 N 个」那一行跟着那一块一起收起来', async () => {
     await openProject([channel('topic-a', [task(K1, '任务一'), task(K2, '任务二')], 5)])
     expect(screen.getByRole('button', { name: /Show 3 more/ })).toBeTruthy()
