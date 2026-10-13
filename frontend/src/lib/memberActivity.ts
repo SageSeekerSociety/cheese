@@ -2,6 +2,8 @@
 // 名字和「哪一步」由调用方给（名册和轮次在它手上），这里只把它们拼成一种形状，
 // 房间的输入框下面和现场那一格读的是同一份。
 
+import type { MentionIdentity } from './personIdentity'
+
 /** 一位成员此刻在一个房间里忙着的事。`since` 是 epoch 秒；打字带 `expires_in`（秒），
  * 过了这么久没有新的一下就算停了。 */
 export interface MemberActivity {
@@ -27,6 +29,22 @@ export interface MemberFace {
   avatar: string | null
   /** 是不是 AI 队友；名册认不出时是 null，由 `IdentityView` 按 handle 命名规则兜底。 */
   agent: boolean | null
+}
+
+/** 名册那一张表：handle → 这位自己挑过的头像地址 + 是不是队友（`lib/personIdentity` 那份）。 */
+export type MentionFaceMap = Record<string, MentionIdentity>
+
+/** 由名册那一张表算出「一位成员的脸」。表里没有的人退回 `avatarSrc`（项目名册那一份）；
+ *  队友身份留 null 交给 `IdentityView` 按 handle 兜底 —— 那条规则只在一个地方写，别在
+ *  这里再抄一份。 */
+export function faceLookup(
+  identities: MentionFaceMap,
+  avatarSrc: (handle: string) => string
+): (handle: string) => MemberFace {
+  return (handle) => {
+    const known = identities[handle]
+    return { avatar: known?.avatar ?? avatarSrc(handle), agent: known?.agent ?? null }
+  }
 }
 
 export interface MemberActivityLine {

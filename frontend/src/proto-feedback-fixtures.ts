@@ -33,6 +33,7 @@ import type {
 } from '@/cx_types'
 
 import { adminRoutes } from './proto-admin-fixtures'
+import { assigneeFace, avatarOf } from './proto-feedback-avatars'
 import { withUsageExtras } from './proto-usage-fixtures'
 
 /** 预览里「我」是谁。管理端入口和「我的」那一栏都看它。 */
@@ -44,23 +45,6 @@ const HOT_HALF_LIFE_DAYS = 14
 const HOT_MIN_ITEMS = 5
 /** 预览一律按管理员看：私密条目、安全标记、管理端那一屏都要能点到。 */
 const IS_ADMIN = true
-
-/**
- * 「谁挑过头像」——接口的 `author_avatar_id` 在真实现里来自 `UserProfile.avatar_id`，
- * 而且**只装真的挑过的人**：注册时会给人人都写上那张全局默认头像，所以「有 avatar_id」
- * 不等于「挑过」，后端专门有一处把这两种分开（`chosen_avatar_ids`）。
- *
- * 这份假数据照同一件事造：名单里没有的返回 null，界面就画那个按 handle 派生的彩色
- * 首字母。**不要**图省事一律给个 id —— 那正是「所有没挑过头像的人共用同一张脸」，
- * 而区分人正是头像唯一的活。
- */
-const CHOSEN_AVATARS: Record<string, number> = {
-  andy: 3,
-  andylizf: 2,
-  chiruotong: 4,
-}
-
-const avatarOf = (handle: string): number | null => CHOSEN_AVATARS[handle] ?? null
 
 /** 相对时间按**打开页面的那一刻**算：预览是拿来看「长什么样」的，把一个日期写死，
  *  过几天再打开就全是「8 天前」，而那不是任何人的真实体验。 */
@@ -100,8 +84,6 @@ function row(spec: {
   authorIsAgent?: boolean
   submittedBy?: string | null
   assignee?: string | null
-  /** 指派人是不是 AI 队友。默认 false —— 预览里领取反馈的都是真人账号。 */
-  assigneeIsAgent?: boolean
   tags?: string[]
   supports: number
   supported?: boolean
@@ -135,10 +117,7 @@ function row(spec: {
     author_avatar_id: avatarOf(spec.author),
     submitted_by_handle: spec.submittedBy ?? null,
     assignee_handle: spec.assignee ?? null,
-    // 没人指派时是 null（不是 0/默认头像）：界面据此根本不画头像，也不会把「没这个人」
-    // 画成别人。有人指派时头像同样只给真的挑过的那颗（`avatarOf` 的规矩）。
-    assignee_avatar_id: spec.assignee ? avatarOf(spec.assignee) : null,
-    assignee_is_agent: spec.assignee ? spec.assigneeIsAgent ?? false : null,
+    ...assigneeFace(spec.assignee),
     tags: spec.tags ?? [],
     supports: spec.supports,
     comments: thread.length,
@@ -2554,12 +2533,11 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
       // 空串是**清掉**指派人（`services.patch_admin` 那句 `or None`）—— 提交框里把人
       // 删掉发的就是一个空串，`?? null` 那种写法会把它存成一个空 handle，界面上看着像
       // 「指派给了一个没有名字的人」。`undefined` 才是「这次请求里没提到它」。
-      const next = (payload.assignee_handle as string | null) || null
-      item.assignee_handle = next
+      item.assignee_handle = (payload.assignee_handle as string | null) || null
       // 头像和「是不是队友」跟着指派人一起变：真实现里客户端下一次拿到的是服务端从
-      // 身份域问回来的答案。预览在这一刻把同一件事算好，界面换个人脸也跟着换。
-      item.assignee_avatar_id = next ? avatarOf(next) : null
-      item.assignee_is_agent = next ? false : null
+      // 身份域问回来的答案，预览在这一刻用同一套假数据把这件事算好（见
+      // `proto-feedback-avatars.ts`）。
+      Object.assign(item, assigneeFace(item.assignee_handle))
     }
     if (payload.security !== undefined && Boolean(payload.security) !== item.security) {
       item.security = Boolean(payload.security)
