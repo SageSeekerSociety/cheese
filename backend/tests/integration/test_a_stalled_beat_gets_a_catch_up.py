@@ -17,9 +17,10 @@ from app.domain.agent.platform_notices import EVENT_WAKE_MISSED
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.delivery.models import Delivery, NativeInput
 from app.domain.delivery.timer import deliver_due
+from app.domain.notification.models import NotificationType
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.run_record.models import RunRecord
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.wake_watch import beats, catchup
 from app.domain.wake_watch.beats import Beat, stall_record_id
 from app.domain.wake_watch.observe import watch
@@ -30,6 +31,9 @@ from tests.integration.test_same_handle_note_and_timed_delivery import (
 )
 
 MARKER = "【20 分钟巡检·定时器】"
+#: #1343 那条线自己的对话 —— 总调度的定时器把每一拍发到这里。写死在这儿是有意的：
+#: 期望值不从 `beats` 取，常量被改成别的对话时这一条才红得起来。
+DISPATCH_LINE = uuid.UUID("998a4d26-a7d7-4313-b3f5-b22304182d5d")
 AT = datetime(2026, 10, 13, 12, 0, tzinfo=UTC)
 STALLED = AT + timedelta(minutes=61)
 
@@ -139,6 +143,17 @@ class _Line:
     @property
     def room_id(self) -> uuid.UUID:
         return uuid.UUID(self.room)
+
+    def archive(self) -> None:
+        """把这条线所在的房间归档掉。"""
+
+        async def write() -> None:
+            async with self.client.test_factory() as session:
+                topic = await session.get(Topic, self.room_id)
+                topic.status = TopicStatus.archived
+                await session.commit()
+
+        self.client.portal.call(write)
 
     def record(self) -> dict:
         async def read() -> dict:
@@ -259,15 +274,18 @@ def test_the_record_names_who_was_called(client, line):
 
 
 def test_the_delivery_carries_the_missed_beat_event(client, line):
-    """投递上记的是同一件事：这一拍该发没发。
+    """投递上记的是同一件事：这一拍该发没发，而且它是平台的指令。
 
-    换一套事件码会让「这一拍断过几次」在账本上分成两处数。
+    换一套事件码会让「这一拍断过几次」在账本上分成两处数。类型也得是这条：它是平台
+    自己发的指令（`ROOM_NOTICE`），不是点了某个人的那种 —— 判失败时说不说话就由它
+    决定（`delivery/timer.py` 的 `give_up_stale` 只替人的消息说）。
     """
     _stalled(line)
     line.look(STALLED)
 
     (delivery,) = line.deliveries()
     assert delivery.payload["eventType"] == EVENT_WAKE_MISSED
+    assert delivery.type == NotificationType.ROOM_NOTICE
 
 
 def test_the_catch_up_really_starts_a_turn(client, line):
@@ -397,22 +415,54 @@ def test_the_delivery_says_which_room_it_is_about(client, line):
 def test_the_shipped_line_is_the_timer_beat_of_the_dispatcher_line():
     """线上的那条线就是定时器那一拍所在的对话。
 
-    这一条把补跳指向哪里钉死在真常量上：测试里那条线是造出来的，所以它答不出
-    「真的会不会补对人」。真常量写错（房间 id、标记），这条会红。
+    测试里那条线是造出来的，答不出「真的会不会补对人」，所以期望值写死在这里、不从被
+    检查的那一处取：常量被换成别的对话、或者认这一拍的标记被改掉，这条就红。（写死的
+    是 #1343 那条线的 id 和这一拍留在正文里的标记；总调度那条线真换了地方时，改的是
+    这里和 `beats`，两边一起。）
     """
-    assert catchup.LINE == beats.TIMER.conversation_id
+    assert catchup.LINE == DISPATCH_LINE
+    assert beats.TIMER.conversation_id == DISPATCH_LINE
     assert beats.TIMER in beats.WATCHED
     assert beats.HEARTBEAT in beats.WATCHED
-    assert beats.TIMER.marker and not beats.TIMER.stamp_in_content
+    assert beats.TIMER.marker == MARKER and not beats.TIMER.stamp_in_content
     assert beats.HEARTBEAT.marker_first and beats.HEARTBEAT.stamp_in_content
+
+
+def test_an_archived_line_is_never_handed_a_catch_up(client, line):
+    """归档了的那条线不点名 —— 不是先记一条、再让投递那一侧判它失败。
+
+    投递派发见到「房间归档」会把这一行判成 failed，而这一跳是平台的指令
+    （`ROOM_NOTICE`），判失败不往线上说话（`delivery/timer.py` 的 `give_up_stale`）。
+    更麻烦的是这一次停摆的去重键跟着账上那一行走，而那一拍不重新走起来就一直是同一个
+    ——留下的那行 failed 会让后面每一遍都认成「补过了」，这一跳再也不会来了。
+    """
+    _stalled(line)
+    line.archive()
+
+    assert line.look(STALLED) == {"stalled": 1}
+    assert line.deliveries() == []
+    # 判据照记：这一拍是真停了，只是这一遍点不了名。
+    assert line.record()["stalled_minutes"] == 61
+    assert "catch_up_seat" not in line.record()
+
+
+def test_the_shipped_default_keeps_the_catch_up_on():
+    """出厂就是开着的：影子期只判不补，这一半是判完之后真的补。
+
+    默认值是个产品决定（2026-10-13 总调度定的落地范围），不是随手可翻的调试开关。
+    接线那条测的是「读了这个开关」，默认值本身谁也测不到 —— 翻成关，补跳就悄悄不
+    发了，而所有别的测试都是显式设过开关的。
+    """
+    assert settings.wake_watch_catchup is True
 
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_the_wiring_reads_the_flag(monkeypatch, enabled):
-    """开关真被接线读了：开着才把补跳接上，关着传 None。
+    """开关真被接线读了：开着接的是补跳那一句，关着传 None。
 
     单独的 `summon` 测得到补跳本身，测不到「它有没有被接上去」—— 接线那一行写
-    成 `summon = None`，只测 `summon` 的那一组一条都不会红。
+    成 `summon = None`，只测 `summon` 的那一组一条都不会红。接上去的也必须是补跳
+    本身：接成别的什么都不做的一句，一样一条都不会红。
     """
     from app.core.background import PeriodicJobs
     from app.domain.wake_watch import observe as observe_module
@@ -436,6 +486,9 @@ def test_the_wiring_reads_the_flag(monkeypatch, enabled):
         client_loop.close()
 
     assert (seen["summon"] is not None) is enabled
+    if enabled:
+        # 接的必须是补跳那一句，不是别的什么都行的一句。
+        assert seen["summon"].func is catchup.summon
 
 
 def test_a_judged_stall_is_still_recorded_when_the_catch_up_raises(client, line):

@@ -12,7 +12,10 @@ chat 和 runner —— 判的人不碰「它跑起来没有」，那一问归投
 
 - **一次停摆只补一次。** 投递的去重键是「这条事件 + 收件人」，而事件 id 就是这次停摆的
   记录 id（`beats.stall_record_id`）—— 由「哪一拍、停在哪一刻」算出来的。巡检五分钟看
-  一遍，看多少遍、进程重启多少次，账上都只有一条。
+  一遍，看多少遍、进程重启多少次，账上都只有一条。也正因为只补一条，那一条必须是真
+  送得出去的：注定会被派发判失败的一条不记（线关了、房间归档了、那一侧没有活着的座
+  位）—— 记下的那行会占住这一次停摆的去重键，而那一拍不重新走起来就一直是同一次，
+  这一跳就再也补不上了。
 - **座位上还有没处理完的输入就不补。** 那个座位这一遍收不下新的一条：平台的入场闸本来
   就会把它挂住（`delivery/input_holds.py` 的 `seat_has_unfinished_input`，也是
   `agent/pending_messages.py` 和 `agent/initial_admission.py` 用的同一句话），挂住的投递
@@ -41,6 +44,7 @@ from sqlalchemy import select
 from app.core.db import SessionFactory
 from app.core.sentences import say
 from app.domain.agent.platform_notices import EVENT_WAKE_MISSED, SEVERITY_WARN
+from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.delivery.agent import record_agent
 from app.domain.delivery.input_holds import seat_has_unfinished_input
@@ -50,7 +54,7 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.room_task.models import Task, TaskStatus
-from app.domain.topic.models import Topic
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.wake_watch import beats
 from app.domain.wake_watch.beats import Beat, Ticking, stall_record_id
 from app.domain.wake_watch.observe import evidence
@@ -106,19 +110,30 @@ async def summon(
                 minutes,
             )
             return None
-        if task.status != TaskStatus.open:
-            # 和投递派发那一侧同一个条件（`delivery.agent.dispatch_pending` 的任务
-            # 分支），先拦在这里：记一条注定会被判失败的投递，等于在那条线上留一行
-            # 「没能起来」。
+        agent = await AgentInstanceService(session).for_task(
+            project, room, task.agent_handle
+        )
+        instance = await session.get(AgentInstance, agent.instance_id)
+        # 投递派发的任务分支（`delivery.agent.dispatch_pending`）见到这一组条件就把这
+        # 一行判成 `failed`，而判成失败这一跳就永远补不上了：去重键跟着账上那一行走，
+        # 而这一次停摆的去重键由「哪一拍、停在哪一刻」算出，那一拍不重新走起来就一直是
+        # 同一个 —— 所以留下的那行 `failed` 会让后面每一遍都认成「补过了」，谁也不再
+        # 补。（这条投递是 ROOM_NOTICE，判失败时不往线上说话：`delivery/timer.py` 的
+        # `give_up_stale` 只替人的消息说。）注定失败的一条，不如不记。
+        if (
+            task.status != TaskStatus.open
+            or room.status == TopicStatus.archived
+            or instance is None
+            or not instance.is_active
+            or instance.project_id != task.project_id
+        ):
             logger.warning(
-                "wake watch: %s 静了 %s 分钟，但 #1343 已经关了，这一遍不补",
+                "wake watch: %s 静了 %s 分钟，但 #1343 那条线这一遍点不了名（关了、"
+                "归档了、或者那一侧没有能接这一跳的座位），这一遍不补",
                 beat.name,
                 minutes,
             )
             return None
-        agent = await AgentInstanceService(session).for_task(
-            project, room, task.agent_handle
-        )
         # 用算出来的 handle，不用 `agent.handle`：投递那一行记的收件人
         # （`record_agent` 里的 `agent_instance_handle(instance_id)`）才是座位上
         # 认的那个名字，两处必须是同一个串，闸才问得到同一件事。
