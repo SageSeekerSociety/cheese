@@ -3136,6 +3136,7 @@ def _git_task(
     extra_env: dict | None = None,
     input_text: str | None = None,
     raw: bool = False,
+    pre_push_report: Path | None = None,
 ) -> str:
     env = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
@@ -3143,6 +3144,19 @@ def _git_task(
     env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
         env.update(extra_env)
+    if pre_push_report is not None:
+        # A push is the one git call here that runs the project's own pre-push
+        # entry point (the hook `cheese worktree` installs), and that script's
+        # whole output is a report. It writes to a pipe on this path, and a
+        # pipe on a delivery push has no reader: the commit that triggered it
+        # was made by an agent, whose terminal is gone by the time the
+        # post-commit hook pushes. So the report is asked for by name here and
+        # read back below, for `_flush_pre_push_reports` to hand to the room.
+        env["CI_FAST_PRE_PUSH_REPORT"] = str(pre_push_report)
+        try:
+            pre_push_report.unlink()
+        except OSError:
+            pass
     result = subprocess.run(
         ["git", "-C", str(cwd), *args],
         env=env,
@@ -3153,8 +3167,61 @@ def _git_task(
     )
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
+    if pre_push_report is not None:
+        try:
+            _keep_pre_push_report(pre_push_report.read_text().strip())
+        except OSError:
+            pass
     # Raw for NUL-separated paths: a file name may begin with a space.
     return result.stdout if raw else result.stdout.strip()
+
+
+def _pre_push_report_path(worktree: Path) -> Path:
+    """Where this checkout's delivery push leaves the pre-push report.
+
+    The worktree's own git dir, so two tasks on one machine never read each
+    other's report; the file is written by `.cheese/pre-push` and only when
+    that run did not pass, so its presence means there is something to say.
+    """
+    git_dir = _git_task(worktree, "rev-parse", "--absolute-git-dir")
+    return Path(git_dir) / "cheese-pre-push-report"
+
+
+# Reports read back from a delivery push, waiting for `_sync_task` to hand
+# them over. Kept: `_tell_room` can fail while the room is unreachable, and
+# the report is the entry point's only output on this path — it is not
+# re-derivable from the branch afterwards.
+_pending_pre_push_reports: list[str] = []
+
+
+def _keep_pre_push_report(text: str) -> None:
+    if text:
+        _pending_pre_push_reports.append(text)
+
+
+def _flush_pre_push_reports() -> None:
+    """Send the delivery push's pre-push reports to the room.
+
+    `git commit` reaches the push through the post-commit hook (`exec cheese
+    sync`), so on this path the report is produced, paid for, and captured
+    with nobody to read it — the author of the commit is the reader it was
+    written for, and this is how it reaches them.
+    """
+    if not (API and TOPIC and TOKEN):
+        return  # Nobody to tell: a checkout with no room has no author to reach.
+    if not _pending_pre_push_reports:
+        return
+    pending = list(_pending_pre_push_reports)
+    content = (
+        "⚠️ 这次提交的推前自检没过（它只是报告，推送照常完成了）：\n\n"
+        + "\n\n".join(pending)
+    )
+    if _tell_room(content):
+        del _pending_pre_push_reports[:]
+    else:
+        # The next sync tries again: dropping it here would lose the report
+        # the way the captured pipe did.
+        _pending_pre_push_reports[:] = pending
 
 
 def _git_credential(operation: str) -> None:
@@ -3915,6 +3982,10 @@ def _sync_task(task_id: str) -> list[str]:
                     worktree, branch, head, queued_pr=data.get("merge_queued_pr")
                 )
             )
+            # The report of the push that just ran, to the author of the
+            # commit that triggered it. Only a push produces one, so a sync
+            # that had nothing to deliver is silent here.
+            _flush_pre_push_reports()
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
@@ -4014,8 +4085,12 @@ def _deliver_task_branch(
     remote = f"refs/remotes/origin/{branch}"
     if _is_ancestor(worktree, head, remote):
         return
+    # The pushes below run the project's pre-push entry point, whose report is
+    # read back and handed to the room (`_flush_pre_push_reports`).
+    pre_push_report = _pre_push_report_path(worktree)
     if not _git_task(worktree, "ls-remote", "origin", f"refs/heads/{branch}"):
-        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}",
+                  pre_push_report=pre_push_report)
         return
     _git_task(
         worktree,
@@ -4030,7 +4105,8 @@ def _deliver_task_branch(
     if queued_pr:
         raise _BranchQueued(branch, queued_pr)
     if _is_ancestor(worktree, tip, head):
-        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}",
+                  pre_push_report=pre_push_report)
         return
     own = _git_task(
         worktree, "reflog", "show", "--format=%H", f"refs/heads/{branch}"
@@ -4046,6 +4122,7 @@ def _deliver_task_branch(
         f"--force-with-lease=refs/heads/{branch}:{tip}",
         "origin",
         f"{head}:refs/heads/{branch}",
+        pre_push_report=pre_push_report,
     )
 
 

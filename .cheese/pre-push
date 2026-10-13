@@ -14,7 +14,31 @@
 # 「永远 0」要挡住的不只是检查失败：还要挡住这一次跑不完。档位自己的预算管的是
 # 单个检查，管不了这个进程卡住（例如取 pre-commit 的机器没网），所以外面再套一层
 # 墙钟；墙钟、python 不在、脚本自己被杀，都落在下面那个无条件的 0 上。
-cd "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || exit 0
-timeout "${CI_FAST_PRE_PUSH_TIMEOUT:-240}" \
-    python3 .github/scripts/ci-fast.py --tier static --pre-push || true
+#
+# CI_FAST_PRE_PUSH_REPORT 由平台自己的交付推送设置：那次推送发起在 post-commit
+# 的 `cheese sync` 里，没有终端可看，报告得由平台带走转给提交的人。设了就只把
+# 非 0 那一次的输出留在那个文件里——通过的报告是给跑的人自己看的，送回对话是
+# 噪声；非 0 的那份才是这个入口存在的理由，也正是没人看得见的那一份。
+root="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+# `cd ""` 在 dash 和 bash 里都返回 0，所以要自己判空：不然这条守卫看着在，
+# 实际会把报告跑在调用者的目录上，还照样以 0 退出。
+[ -n "$root" ] || exit 0
+cd "$root" || exit 0
+
+run_report() {
+    timeout "${CI_FAST_PRE_PUSH_TIMEOUT:-240}" \
+        python3 .github/scripts/ci-fast.py --tier static --pre-push
+}
+
+report="${CI_FAST_PRE_PUSH_REPORT:-}"
+if [ -z "$report" ]; then
+    run_report || true
+    exit 0
+fi
+output="$(run_report 2>&1)"
+status=$?
+printf '%s\n' "$output"
+if [ "$status" -ne 0 ]; then
+    printf '%s\n' "$output" > "$report"
+fi
 exit 0

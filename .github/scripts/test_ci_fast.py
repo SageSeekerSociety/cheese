@@ -394,6 +394,14 @@ class CiFastTest(unittest.TestCase):
         self.assertIn("复现 commit-title", proc.stdout)
         self.assertIn("cannot read --pull-request", proc.stdout)
         self.assertNotRegex(proc.stdout, r"复现 commit-title.*pre-commit run")
+        # --- the plan's rows are the other branch of `reproduce` — the one
+        # --- with a command of its own — so `commit-title` alone would leave a
+        # --- regression there green. `backend-pure` runs in this very run, and
+        # --- its line has to say where to run it: from the repository root the
+        # --- argv cannot find its runner (reported 2026-10-12).
+        self.assertIn("复现 backend-pure", proc.stdout)
+        self.assertNotRegex(proc.stdout, r"复现 backend-pure.*pre-commit run")
+        self.assertRegex(proc.stdout, r"复现 backend-pure（[^）]*）: cd \S*/backend && .*pytest")
 
     # --- leaving the node hooks out of the run is not a licence to lose them
     # --- from the config: the drift check reads the whole set before the
@@ -415,6 +423,94 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout)
         self.assertTrue({"eslint", "stylelint", "boundary-check-frontend"} <= self.ran_hooks())
         self.assertFalse(self.report()["pre_push"])
+
+    # --- the spawn and the printed line read CI_FAST_PRECOMMIT at two
+    # --- separate sites, and both workflows set it. The test above strips it,
+    # --- so it covers only the default branch: with the variable set, a
+    # --- footer that fell back to the default invocation would print a line
+    # --- the run never used and stay green.
+    def test_pre_push_prints_the_pre_commit_it_spawned_with_ci_fast_precommit(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        log = self.tmp / "uvx-argv"
+        uvx = tools / "uvx"
+        uvx.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$(basename "$0") $*" >> {shlex.quote(str(log))}\n'
+            'case "$*" in\n'
+            '  *--version*) echo "pre-commit 4.7.0"; exit 0 ;;\n'
+            'esac\n'
+            "exit 1\n"
+        )
+        uvx.chmod(0o755)
+        proc = self.run_ci_fast(
+            "--pre-push",
+            env_extra={"PATH": str(tools) + os.pathsep + self.env["PATH"],
+                       "CI_FAST_PRECOMMIT": "uvx pre-commit"},
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        printed = re.search(r"复现 ruff（fail）: (.*)", proc.stdout)
+        self.assertIsNotNone(printed, proc.stdout)
+        self.assertTrue(printed.group(1).startswith("uvx pre-commit run ruff"),
+                        f"printed {printed.group(1)!r}, but CI_FAST_PRECOMMIT says uvx pre-commit")
+        ran_ruff = [line for line in log.read_text().splitlines() if " run ruff " in line]
+        self.assertTrue(ran_ruff, proc.stdout)
+        self.assertTrue(ran_ruff[-1].startswith(printed.group(1)),
+                        f"printed {printed.group(1)!r} ran {ran_ruff[-1]!r}")
+
+    # --- `--types` adds `frontend-typecheck`, the one node hook the pre-push
+    # --- filter does not drop, so a static pre-push run that asked for types
+    # --- still needs frontend/node_modules. Asking the selection rather than
+    # --- the flag is what keeps this blocked instead of passing with the check
+    # --- it selected never run.
+    def test_pre_push_with_types_still_gates_on_node_modules(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        shutil.rmtree(self.repo / "frontend/node_modules")
+        proc = self.run_ci_fast("--pre-push", "--types")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("node_modules", proc.stdout)
+
+    # --- a config that is not text is a blocked run with a sentence, not a
+    # --- traceback: `UnicodeDecodeError` is a `ValueError`, so the `except
+    # --- OSError` that reads like it covers an unreadable file does not, and
+    # --- the footer raised out of the handler that was already reporting the
+    # --- verdict (reported 2026-10-12).
+    def test_pre_push_reports_an_unreadable_config_as_blocked(self):
+        self.write_hooks()
+        self.make_base_and_head("backend/app/x.py")
+        (self.repo / ".pre-commit-config.yaml").write_bytes(
+            b"repos: []\n# raw 0x80 follows: \x80\n"
+        )
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("cannot read .pre-commit-config.yaml", proc.stdout)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertEqual(self.report()["status"], "blocked")
+
+    # --- the entry point is documented as runnable by hand, so the guard that
+    # --- sends it away from outside a work tree has to actually fire: `cd ""`
+    # --- returns 0 in dash and in bash, so testing `cd`'s status is not
+    # --- testing that a directory was found, and the report would run against
+    # --- the caller's directory while still exiting 0.
+    def test_the_entry_point_stays_out_of_the_way_outside_a_work_tree(self):
+        entry = SCRIPT.parents[2] / ".cheese/pre-push"
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        marker = self.tmp / "ran-ci-fast"
+        python = tools / "python3"
+        python.write_text(f"#!/bin/sh\ntouch {shlex.quote(str(marker))}\nexit 0\n")
+        python.chmod(0o755)
+        elsewhere = self.tmp / "elsewhere"
+        elsewhere.mkdir()
+        proc = subprocess.run(
+            [str(entry)], cwd=elsewhere, capture_output=True, text=True, timeout=60,
+            env={"PATH": str(tools) + os.pathsep + self.env["PATH"]},
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(marker.exists(), "the report ran outside a work tree")
 
     # --- an unknown path widens the scope; it must not shrink to guards-only
     def test_unknown_path_widens_scope(self):

@@ -442,6 +442,56 @@ def test_a_push_that_lands_tells_the_room_nothing(device):
     assert not (home / "posted.jsonl").exists()
 
 
+def _told_the_room(home):
+    posted = home / "posted.jsonl"
+    if not posted.exists():
+        return []
+    return [
+        json.loads(line)["body"]["content"] for line in posted.read_text().splitlines()
+    ]
+
+
+def test_the_pre_push_report_of_a_commit_reaches_the_room(device):
+    """The report the project's entry point prints has no terminal on this path.
+
+    An agent's commit is delivered by the post-commit hook, so whatever the
+    push's own check said is said to a closed pipe unless the delivery push
+    goes and reads it back.
+    """
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    entry = work / ".cheese/pre-push"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text(
+        "#!/bin/sh\n"
+        'echo "ruff 报了一个错"\n'
+        'echo "ruff 报了一个错" > "$CI_FAST_PRE_PUSH_REPORT"\n'
+        "exit 1\n"
+    )
+    entry.chmod(0o755)
+    (work / "work.txt").write_text("work\n")
+    git(work, "add", "work.txt")
+    git(work, "commit", "-m", "feat: work")
+
+    assert [text for text in _told_the_room(home) if "ruff 报了一个错" in text]
+
+
+def test_the_entry_point_says_nothing_in_the_room_when_it_passes(device):
+    cli, tasks, _remote, home = device
+    task = next(iter(tasks))
+    work = cli._task_worktree(task)
+    entry = work / ".cheese/pre-push"
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    entry.write_text("#!/bin/sh\necho '推前自检都过了'\nexit 0\n")
+    entry.chmod(0o755)
+    (work / "clean.txt").write_text("clean\n")
+    git(work, "add", "clean.txt")
+    git(work, "commit", "-m", "feat: clean")
+
+    assert not [text for text in _told_the_room(home) if "推前自检都过了" in text]
+
+
 def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
     cli, tasks, remote, home = device
     task = next(iter(tasks))

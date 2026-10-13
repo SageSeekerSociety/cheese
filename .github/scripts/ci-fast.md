@@ -71,10 +71,23 @@ described in `docs/workflows.md`). It calls this script as
   `frontend-typecheck-changed`, and a directly invoked `commit-title` — is not
   dressed up as one: it names the command that actually ran, or the input it
   was missing, because `pre-commit run <id>` for one of those exits with `No
-  hook with id ...`. Which files are at fault comes from the hook's own output,
+  hook with id ...`. A plan check leads with the directory it was spawned in
+  and the variables it was spawned under, for the same reason: its argv does
+  not carry either, and `uv run pytest` from the repository root does not find
+  the runner. Which files are at fault comes from the hook's own output,
   printed above as it runs — the report's rows record the check, its verdict,
   its clock and its command, not its log; the reproduce command prints that
   output again.
+
+The entry point also honours `CI_FAST_PRE_PUSH_REPORT`: when the caller sets it
+to a path, the ones of those runs that did not pass leave their output there,
+for the caller to carry to whoever asked for the push. The platform's own
+delivery push sets it (`backend/sandbox/cheese`), because that push is started
+by the `post-commit` hook on a commit an agent made: the report's reader is
+that agent, and by push time its terminal is gone, so the report has to be
+asked for by name instead of being printed at nobody. A run that passes still
+leaves nothing there — the passing report is for whoever ran it by hand, and a
+delivery push that reported every clean commit would be noise.
 
 The report carries `"pre_push": true`, and the exit code is unchanged — `1` for
 a real failure, `2`/`3` for unknown/blocked — which is what the reproduce
