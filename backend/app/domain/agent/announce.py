@@ -36,9 +36,9 @@ from collections.abc import Callable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ValidationError
+from app.core.errors import ForbiddenError, ValidationError
 from app.core.live_frames import show_once_committed
-from app.core.sentences import notice_message, with_keys
+from app.core.sentences import notice_message, say, with_keys
 from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.platform_notices import (
     SEVERITY_INFO,
@@ -48,7 +48,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
-from app.domain.block.asked import asked_of, settled, skipped_by
+from app.domain.block.asked import asked_of, may_answer, settled, skipped_by
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -328,6 +328,13 @@ async def answer_questions(
     )
     if reply.reply_to is None:
         questions = _typed_answers(reply, questions)
+    elif questions and not may_answer(questions[0].meta, reply.author):
+        # A reply to an open question is an answer to it (a click on one of its
+        # options, or 「其他」); only those it asks give one, as typing and
+        # skipping only count from them (`block.asked.may_answer`). Refused, not
+        # stored as talk: the person meant it as an answer, and would otherwise
+        # see it sent while the question went on waiting.
+        raise ForbiddenError(say("askAnswerNotYours"))
     if not questions:
         return []
     said = " ".join(_MENTION_RE.sub("", reply.content or "").split())
@@ -370,9 +377,10 @@ async def answer_questions(
 def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
     """Which open questions a message that replies to nothing answers.
 
+    ``questions`` are those its author may answer (`block.asked.may_answer`).
     It is said to one asker: the one it @-mentions, or else whoever asked most
-    recently among the questions that ask its author (alone, among others, or
-    as one of everyone in the channel). A question that waits on nobody in
+    recently among the questions that name someone (its author alone, among
+    others, or everyone in the channel). A question that waits on nobody in
     particular (asked in a turn the platform started) is answered only by a
     message that names its asker: people talking to each other in the room is
     not an answer to it.
@@ -381,7 +389,7 @@ def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
     if named:
         # Addressed to the one who asked, it answers whatever is open of his.
         return [q for q in questions if named == {q.author}]
-    questions = [q for q in questions if reply.author in asked_of(q.meta)]
+    questions = [q for q in questions if asked_of(q.meta)]
     if not questions:
         return []
     seat = questions[-1].author

@@ -367,3 +367,44 @@ describe('题问了几个人', () => {
     expect(container.querySelectorAll('.ask-replies__answers li')).toHaveLength(2)
   })
 })
+
+describe('只有被问到的人能点选项', () => {
+  it('问的是别人：选项看得到但点不动，「其他」也点不开，没有 ✕', async () => {
+    history = [question('t-chip-theirs', null, ['alice'])]
+    const { container, getByRole, queryByRole } = await open('t-chip-theirs')
+    // 卡上那行「问 @alice」说明了在等谁。
+    expect(container.querySelector('.ask-replies__asked')?.textContent).toContain('@alice')
+    const option = getByRole('button', { name: /按项目/ }) as HTMLButtonElement
+    const other = getByRole('button', { name: '其他' }) as HTMLButtonElement
+    // 灰掉的按钮浏览器不派发点击（happy-dom 照样派发，所以这里看的是 disabled 本身）。
+    expect(option.disabled).toBe(true)
+    expect(other.disabled).toBe(true)
+    expect(queryByRole('button', { name: '跳过这道题' })).toBeNull()
+  })
+
+  it('问到了我，几个人里的一个也算：选项点得动', async () => {
+    history = [question('t-chip-mine', null, ['alice', 'me'])]
+    const { getByRole } = await open('t-chip-mine')
+    await fireEvent.click(getByRole('button', { name: /按项目/ }))
+    await until(() => sent.length > 0)
+    expect(sent[0].body.reply_to).toBe('q-t-chip-mine')
+  })
+
+  it('问所有人：名单里没有我（后来才进频道）也点得动，也能跳过', async () => {
+    history = [question('t-chip-all', null, ['alice', 'bob'], [], true)]
+    const { getByRole } = await open('t-chip-all')
+    expect(getByRole('button', { name: '跳过这道题' })).toBeTruthy()
+    await fireEvent.click(getByRole('button', { name: /按项目/ }))
+    await until(() => sent.length > 0)
+    expect(sent[0].body.content).toBe('按项目')
+  })
+
+  it('没点名的题（平台发起的那一轮里问的）：谁都点得动、都能跳过，和以前一样', async () => {
+    history = [question('t-chip-nobody', null, [])]
+    const { getByRole } = await open('t-chip-nobody')
+    expect(getByRole('button', { name: '跳过这道题' })).toBeTruthy()
+    await fireEvent.click(getByRole('button', { name: /按项目/ }))
+    await until(() => sent.length > 0)
+    expect(sent[0].body.reply_to).toBe('q-t-chip-nobody')
+  })
+})
