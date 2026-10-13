@@ -167,11 +167,11 @@ def test_a_delivery_lights_the_row_of_everyone_on_the_task_and_of_nobody_else(cl
         assert row["unseen_delivery"] is True, handle
         assert _task_row(row, ids["delivered"])["unseen_delivery"] is True, handle
 
-    # bob 在这个项目里，但没碰过这件活：交付了也不该在他侧栏上亮灯，那件活甚至
-    # 不在他那一行的下面。
+    # bob 在这个项目里，但没碰过这件活：交付了也不该在他侧栏上亮灯，那件活也不算
+    # 挂在他名下 —— 他那一行下面纵有那一条，也是侧栏给这个频道补上来的（`filling_in`）。
     bob = _room_row(client, project, room, "bob")
     assert bob["unseen_delivery"] is False
-    assert bob["my_tasks"]["shown"] == []
+    assert [t for t in bob["my_tasks"]["shown"] if not t.get("filling_in")] == []
 
 
 def test_opening_the_room_puts_out_the_delivery_for_that_person_only(client):

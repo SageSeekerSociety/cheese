@@ -1452,7 +1452,12 @@
     "moreTasks": "Show 1 more | Show {count} more",
     "fewerTasks": "Show fewer",
     "tasksLoading": "Loading…",
-    "tasksFailed": "Couldn't load them. Click to retry"
+    "tasksFailed": "Couldn't load them. Click to retry",
+    "fillIn": "Filled in",
+    "fillInTip": "Fewer than three of your own tasks are here; this row makes up the three",
+    "collapseTasks": "Collapse this channel's tasks",
+    "expandTasks": "Expand this channel's tasks",
+    "collapsedTasks": "{count} tasks under way"
   },
   "members": {
     "leave": "Leave project",

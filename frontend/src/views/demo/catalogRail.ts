@@ -21,6 +21,7 @@ import TopicRailMoreTasksRow from '@/components/topic-sidebar/TopicRailMoreTasks
 import TopicRailPinnedRows from '@/components/topic-sidebar/TopicRailPinnedRows.vue'
 import TopicRailRootRow from '@/components/topic-sidebar/TopicRailRootRow.vue'
 import TopicRailRow from '@/components/topic-sidebar/TopicRailRow.vue'
+import TopicRailTaskFold from '@/components/topic-sidebar/TopicRailTaskFold.vue'
 
 const UI: CatalogNeed[] = ['vuetify']
 
@@ -118,7 +119,8 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-row',
     title: 'TopicRailRow',
-    about: '话题列表里的一行：左边一个 16px 槽，行尾是这一行自己的灯、未读角标和 hover 才浮现的 ⋯。',
+    about:
+      '话题列表里的一行：左边一个 16px 槽，行尾是这一行自己的灯、未读角标、这个频道挂着任务时的折叠加手，以及 hover 才浮现的 ⋯。',
     file: 'src/components/topic-sidebar/TopicRailRow.vue',
     component: TopicRailRow,
     // 一行不认识路由、也不取数：状态、折叠、未读全在 props 里（`row` 是
@@ -178,6 +180,23 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         note: '行更高（44px），没有那颗 hover 才出现的 ⋯ —— 那里长按一行打开同一组操作（见 TopicSidebar.longPress）。',
         props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working, page: true, selected: true }),
         expect: '写第 4 章的教案',
+      },
+      {
+        name: '挂着任务：行尾多一个折叠加手',
+        note: '这个频道下面挂着一块任务，行尾就多一个把手，把那一块收起来。⋯ 给它让开一个身位，不压住它——这里把 ⋯ 一直亮着（`menuOpen`），看得清两个控件的位置。',
+        props: rowProps({ row: RAIL_ROWS.working, marks: RAIL_MARKS.working, menuOpen: true, taskCount: 5 }),
+        expect: '写第 4 章的教案',
+      },
+      {
+        name: '任务块收起来了：条数和灯挪上来',
+        note: '那一块收起来时，行上留一个数（这个频道里进行中的有几条）和一盏最亮的灯——收起来不能把「有活在走」和「有事等你」一起收掉。',
+        props: rowProps({
+          row: RAIL_ROWS.awaits,
+          taskCount: 5,
+          tasksCollapsed: true,
+          taskLight: { kind: 'yellow', breathe: false },
+        }),
+        expect: '5',
       },
     ],
   },
@@ -373,6 +392,36 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         note: '竖线和文字左缘跟着频道在树里的层级往里缩。',
         props: { label: '展开其余 2 个', expanded: false, depth: 1 },
         expect: '展开其余 2 个',
+      },
+    ],
+  },
+  {
+    id: 'topic-rail-task-fold',
+    title: 'TopicRailTaskFold',
+    about:
+      '频道行右边那个折叠加手：把挂在它下面的一整块任务收起来。收起来时它自己顶上那一块的条数和灯——不然收起来就成了一条没有信息量的空白。',
+    file: 'src/components/topic-sidebar/TopicRailTaskFold.vue',
+    component: TopicRailTaskFold,
+    // 那个箭头是 v-icon，所以要 Vuetify；两句 title 和计数那颗的说明要读词表。
+    needs: ['vuetify', 'i18n'],
+    states: [
+      {
+        name: '开着：任务就挂在下面',
+        note: '只有一个朝下的箭头，安静地说「这一块能收」。它左边的宽度是留给下面的条数的，所以两颗箭头不会因为收没收起来而左右跳。',
+        props: { collapsed: false, count: 4 },
+        expectSelector: '.task-fold__btn',
+      },
+      {
+        name: '收起来了：留着条数和灯',
+        note: '箭头转成朝右，前面接上这个频道里进行中的任务数和那一块最亮的一盏灯。收起不能把信号一起收掉。',
+        props: { collapsed: true, count: 4, light: { kind: 'yellow', breathe: false } },
+        expect: '4',
+      },
+      {
+        name: '收起来了，里面很静',
+        note: '没有在走的活、也没有等你的东西，就不点灯——不亮不是「亮着但说不清」。条数照旧。',
+        props: { collapsed: true, count: 2, light: null },
+        expect: '2',
       },
     ],
   },

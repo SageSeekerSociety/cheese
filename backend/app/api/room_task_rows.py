@@ -284,8 +284,10 @@ async def project_task_rows(
     return items
 
 
-#: How many of my tasks a channel's row in the sidebar carries under it.
-RAIL_TASKS = 5
+#: How few of the caller's own tasks a channel's row in the sidebar may carry
+#: under it: a channel with fewer borrows the channel's other underway tasks to
+#: reach this many (caisongyang, 2026-10-12). There is no ceiling on its own.
+RAIL_TASKS_FLOOR = 3
 
 
 async def rail_tasks(
@@ -300,12 +302,20 @@ async def rail_tasks(
     """What the sidebar hangs under each channel, keyed by channel: how many
     tasks are underway there (`open`, the count after 「全部任务」), and the ones
     of them the caller owns or helps on (`shown`) — owned first, then helped,
-    each most recently moved first, at most `RAIL_TASKS`, leaving out one that
-    stalled. Every channel in ``room_ids`` gets an entry; the rows are the
-    project rail's (`project_task_rows`).
+    each most recently moved first, all of them rather than a fixed few, leaving
+    out the stalled. A channel where those come to fewer than
+    `RAIL_TASKS_FLOOR` borrows the channel's other underway tasks, most recently
+    moved first, until it reaches that many; a borrowed row carries `filling_in`.
+    Every channel in ``room_ids`` gets an entry; the rows are the project rail's
+    (`project_task_rows`).
 
-    The project's open tasks are not read for this: the count is one grouped
-    query, and only the caller's own tasks are made into rows."""
+    A channel with no task of the caller's at all is still brought up to the
+    floor, so the rail shows every channel with something going on rather than
+    only the ones the caller is in.
+
+    The project's open tasks are still not read for this: the counts are one
+    grouped query, and only the caller's own tasks and the borrowed few become
+    rows."""
     me = actor.handle or ""
     service = TaskService(db)
     counts = await service.underway_counts(room_ids)
@@ -318,12 +328,27 @@ async def rail_tasks(
         if not row["stalled"]:
             shown.setdefault(row["room_id"], []).append(row)
     out: dict[uuid.UUID, dict] = {}
+    short: dict[uuid.UUID, int] = {}
     for room in room_ids:
         here = shown.get(str(room), [])
         owned = [row for row in here if row["owner_handle"] == me]
         helped = [row for row in here if row["owner_handle"] != me]
-        out[room] = {
-            "shown": (owned + helped)[:RAIL_TASKS],
-            "open": counts.get(room, 0),
-        }
+        out[room] = {"shown": owned + helped, "open": counts.get(room, 0)}
+        short[room] = max(0, RAIL_TASKS_FLOOR - len(owned) - len(helped))
+    if actor.authenticated and any(short.values()):
+        # 一条一查不行：这里一次读全项目别人的、进行中的活（几百条的量级），
+        # 按最近有动静排好，每个房间顺着取够补的那几条就停手；只有取中的那几条
+        # 才做成行——行本身贵（卡、提问、在跑的一轮、最后一次说话都要读）。
+        picked: list = []
+        for task in await service.underway_others(room_ids, me):
+            if short.get(task.room_id, 0) > 0:
+                short[task.room_id] -= 1
+                picked.append(task)
+        for row in await project_task_rows(
+            db, chat, me, picked, silent_of=silent_of, delivered_of=delivered_of
+        ):
+            if not row["stalled"]:
+                out[uuid.UUID(row["room_id"])]["shown"].append(
+                    {**row, "filling_in": True}
+                )
     return out
