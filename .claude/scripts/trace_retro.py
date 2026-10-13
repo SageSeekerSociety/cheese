@@ -1613,7 +1613,16 @@ def self_test() -> int:
         {"number": 4, "state": "MERGED"},  # merged after the window: kept
         {"number": 5, "state": "CLOSED"},
     ]
-    split = split_updated(rows, [rows[0]])
+    # `merged` is a DIFFERENT dict from the row it stands for, with the key set
+    # merged_prs' --json really returns — the two reads do not share keys
+    # (updated_prs adds `updatedAt` and `state`), so subtracting by object
+    # equality rather than by number would match nothing in production while
+    # passing here if this fixture handed over the same object.
+    merge_window_row = {
+        "number": 1, "title": "m", "mergedAt": "2026-10-12T11:00:00Z",
+        "headRefOid": "a", "mergeCommit": {"oid": "m"},
+    }
+    split = split_updated(rows, [merge_window_row])
     check("共组计入还开着的和窗口外才合并的", [p["number"] for p in split["keep"]], [2, 4])
     check("关掉没合并的单独一栏", [p["number"] for p in split["closed"]], [3, 5])
     check("窗口内合并的不重复计入", 1 in [p["number"] for p in split["keep"]], False)
@@ -1649,8 +1658,17 @@ def self_test() -> int:
         pr_report(pr_row(21), [rnd("a", "failure"), rnd("b", "green")], [])["strict_first_pass"],
         False,
     )
+    # The first head carries TWO rounds (draft-red then full-green, the shape
+    # ci_rounds really produces), so one fixture rules out both readings of
+    # 「第一」 at once: rounds[-1] would say 09:40 and pushes[-1] would say 10:00.
     two_heads = [
-        {"sha": "a", "rounds": [{"outcome": "failure", "tier": "full", "started_at": "2026-10-12T09:00:00Z"}]},
+        {
+            "sha": "a",
+            "rounds": [
+                {"outcome": "failure", "tier": "draft", "started_at": "2026-10-12T09:00:00Z"},
+                {"outcome": "green", "tier": "full", "started_at": "2026-10-12T09:40:00Z"},
+            ],
+        },
         {"sha": "b", "rounds": [{"outcome": "green", "tier": "full", "started_at": "2026-10-12T10:00:00Z"}]},
     ]
     check(
@@ -1692,11 +1710,17 @@ def self_test() -> int:
     )
     check("合并口径的报告里没有这句", "两栏不是包含关系" in md_merged_snl, False)
 
-    # The first-push detail table: the two columns the cohort adds, and a row
-    # that carries them.
+    # The first-push detail table: the two columns the cohort adds, and one row
+    # of each 落地 branch — a fixture of merged rows alone would let the column
+    # be hardcoded to 已合并 without any test noticing.
+    open_row = pr_report(
+        {"number": 29, "title": "t", "mergedAt": None, "mergeCommit": {"oid": "m"}},
+        [rnd("a", "green")],
+        [],
+    )
+    fp_rows = [draft_only, open_row]
     md_fp_row = render_markdown(
-        {"summary": summarize([draft_only], cohort="first-push"), "since": "s", "until": "u",
-         "prs": [draft_only]}
+        {"summary": summarize(fp_rows, cohort="first-push"), "since": "s", "until": "u", "prs": fp_rows}
     )
     check(
         "首推明细表 header 带首次被判 / 落地",
@@ -1704,6 +1728,12 @@ def self_test() -> int:
         True,
     )
     check("首推明细行写出首次被判与落地", "| #27 | 2026-10-12T11:00:00 | 已合并 |" in md_fp_row, True)
+    check("还没合并的那一行也照实写", "| #29 | 2026-10-12T11:00:00 | 还没合并 |" in md_fp_row, True)
+    check(
+        "口径行写出共组条数与落地数",
+        "本窗口 2 个：已合并 1、到跑这一版时还没合并 1。" in md_fp_row,
+        True,
+    )
 
     # green_of: the boundary is a full-tier green, not a draft one.
     draft_green = {"outcome": "green", "tier": "draft", "started_at": "2026-10-12T11:00:00"}
