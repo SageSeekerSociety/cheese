@@ -408,21 +408,22 @@ def test_existing_frozen_debt_keeps_exact_b9_leaves():
     # could add and remove their own agents, 727/751 once
     # `/run-records/turns` was registered above them, and 728/752 once
     # `POST /blocks/{block_id}/skip` was, then 732/756 once an account could
-    # hold a model connection, and 726/750 once the six external-problem
-    # routes were reverted. The pair itself is
+    # hold a model connection, and 733/757 once a machine's connection could be
+    # named (`PATCH /connector/my/devices/{device_id}/claude-code`), and 727/751
+    # once the six external-problem routes were reverted. The pair itself is
     # unchanged — tests/AGENTS.md
     # ("Generated routes and database predicates") asks for the indices, the
     # identities behind them and this assertion to move in one commit.
     (pair,) = FROZEN
     assert (pair.earlier_index, pair.later_index, pair.protocol, pair.method) == (
-        726,
-        750,
+        727,
+        751,
         "http",
         "GET",
     )
     records = [
-        replace(record(726, pair.earlier_path), endpoint=pair.earlier_endpoint),
-        replace(record(750, pair.later_path), endpoint=pair.later_endpoint),
+        replace(record(727, pair.earlier_path), endpoint=pair.earlier_endpoint),
+        replace(record(751, pair.later_path), endpoint=pair.later_endpoint),
     ]
     assert checked_findings(records, FROZEN) == []
 

@@ -33,6 +33,7 @@ function connection(deviceId: string, extra: Partial<ModelConnection> = {}): Mod
     subscription_type: 'max',
     model: null,
     service_host: null,
+    name: null,
     checked_at: new Date().toISOString(),
     last_used_at: null,
     revoking: false,
@@ -146,5 +147,17 @@ describe('ModelConnectionsView', () => {
     const dialog = await screen.findByRole('alertdialog')
     await fireEvent.click(within(dialog).getByRole('button', { name: t('account.modelConnections.remove') }))
     expect(view.emitted('removeHeld')).toEqual([['two']])
+  })
+
+  it('names the login on the device whose row was asked, and nothing on the account', async () => {
+    const view = mount([connection('desk'), connection('laptop')], [], [heldKey('one')])
+
+    await fireEvent.click(within(row('laptop')).getByRole('button', { name: t('account.modelConnections.rename') }))
+    const field = await screen.findByLabelText(t('account.modelConnections.name'))
+    await fireEvent.update(field, '  Lab Max  ')
+    await fireEvent.click(screen.getByRole('button', { name: t('global.save') }))
+
+    expect(view.emitted('renameDevice')).toEqual([['laptop', 'Lab Max']])
+    expect(view.emitted('renameHeld')).toBeUndefined()
   })
 })

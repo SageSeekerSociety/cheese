@@ -8692,7 +8692,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AccountConnectionRename"
+                "$ref": "#/components/schemas/ConnectionRename"
               }
             }
           }
@@ -8805,6 +8805,57 @@
                     }
                   ],
                   "title": "Response Revoke My Claude Code Connector My Devices  Device Id  Claude Code Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Rename My Claude Code",
+        "description": "Name the login the caller's own Claude Code has on one of their machines\n(#2991); the own agents on it are named after it, whatever the machine\nreports later. The machine need not be online.",
+        "operationId": "rename_my_claude_code_connector_my_devices__device_id__claude_code_patch",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionRename"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudeCodeLoginOut"
                 }
               }
             }
@@ -24225,7 +24276,7 @@
           "projects"
         ],
         "summary": "Set Own Agents",
-        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use. Turned off, members' own\nagents leave the project: off its roster and out of its channels. Turned on\nagain, the ones their owners had added are back on the roster, and sit in a\nchannel again once someone they answer to names them there.",
+        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use, and which model services.\nTurned off, members' own agents leave the project: off its roster and out\nof its channels. Turned on again, the ones their owners had added are back\non the roster, and sit in a channel again once someone they answer to names\nthem there.",
         "operationId": "set_own_agents_projects__project_id__own_agents_put",
         "parameters": [
           {
@@ -52450,20 +52501,6 @@
         "title": "AccountConnectionOut",
         "description": "A model connection the caller's account holds: an Anthropic API key or\na model service, kept sealed by the platform. Never the key."
       },
-      "AccountConnectionRename": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 64,
-            "title": "Name"
-          }
-        },
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "AccountConnectionRename"
-      },
       "AddCard": {
         "properties": {
           "op": {
@@ -54376,6 +54413,17 @@
             ],
             "title": "Service Host"
           },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
           "checked_at": {
             "type": "string",
             "title": "Checked At"
@@ -54393,6 +54441,7 @@
           "subscription_type",
           "model",
           "service_host",
+          "name",
           "checked_at",
           "revoking"
         ],
@@ -55081,6 +55130,21 @@
           "model_service"
         ],
         "title": "ConnectionKind"
+      },
+      "ConnectionRename": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ConnectionRename",
+        "description": "What its owner calls a model connection; empty takes the name away."
       },
       "ControlIn": {
         "properties": {
@@ -59709,6 +59773,17 @@
             ],
             "title": "Service Host"
           },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
           "checked_at": {
             "type": "string",
             "title": "Checked At"
@@ -59749,6 +59824,7 @@
           "subscription_type",
           "model",
           "service_host",
+          "name",
           "checked_at",
           "revoking",
           "device_id",
@@ -60812,6 +60888,10 @@
           "on_account": {
             "type": "boolean",
             "title": "On Account"
+          },
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
           }
         },
         "type": "object",
@@ -60819,7 +60899,8 @@
           "kind",
           "plan",
           "model",
-          "on_account"
+          "on_account",
+          "allowed"
         ],
         "title": "OwnAgentConnectionOut"
       },
@@ -60929,6 +61010,13 @@
             "type": "array",
             "title": "Kinds"
           },
+          "service_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Service Hosts"
+          },
           "can_manage": {
             "type": "boolean",
             "title": "Can Manage"
@@ -60952,6 +61040,7 @@
         "required": [
           "allowed",
           "kinds",
+          "service_hosts",
           "can_manage",
           "agents",
           "my_connections"
@@ -61021,6 +61110,22 @@
               }
             ],
             "title": "Kinds"
+          },
+          "service_hosts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 253
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Hosts"
           }
         },
         "type": "object",

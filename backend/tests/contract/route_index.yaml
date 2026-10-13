@@ -572,6 +572,7 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/connector/my/model-connections/{connection_id}", auth: "model_connection.owner", owner: "device"}
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
+  - {protocol: "http", method: "PATCH", path: "/connector/my/devices/{device_id}/claude-code", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "PUT", path: "/connector/my/devices/{device_id}/claude-code/model-service", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/sandbox", auth: "device.user", owner: "device"}
   - {protocol: "http", method: "PATCH", path: "/connector/my/devices/{device_id}", auth: "device.user", owner: "device"}

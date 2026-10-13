@@ -316,6 +316,31 @@ def test_a_project_that_refuses_its_kind_does_not_take_it(client, service):
     assert _add(client, project_id, connection).status_code == 403
 
 
+def test_a_project_that_does_not_list_its_services_host_does_not_take_it(
+    client, service
+):
+    project_id = _people(client)
+    r = client.put(
+        f"/projects/{project_id}/own-agents",
+        json={"service_hosts": ["api.deepseek.test"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+    connection = _keep(
+        client,
+        kind="model_service",
+        base_url="https://api.moonshot.test/anthropic",
+        model="kimi-k2",
+    ).json()["id"]
+
+    (offered,) = _settings(client, project_id, "bob")["my_connections"]
+    refused = _add(client, project_id, connection)
+
+    assert offered["allowed"] is False
+    assert refused.status_code == 403, refused.text
+    assert "api.moonshot.test" in refused.text
+
+
 # --- its session ------------------------------------------------------------
 
 
@@ -425,6 +450,30 @@ def test_a_removed_connection_deletes_its_key_and_starts_nothing(
     with pytest.raises(ScreenSetupError) as refused:
         _prepare(client, session, "the-session-host")
     assert "模型连接已解除" in str(refused.value), "the room is told why"
+
+
+def test_its_session_does_not_start_once_the_project_stops_listing_its_host(
+    client, service, monkeypatch
+):
+    monkeypatch.setattr(settings, "agent_session_device_id", "the-session-host")
+    project_id = _people(client)
+    connection = _keep(
+        client,
+        kind="model_service",
+        base_url="https://api.moonshot.test/anthropic",
+        model="kimi-k2",
+    ).json()["id"]
+    session = _session(client, project_id, connection)
+    r = client.put(
+        f"/projects/{project_id}/own-agents",
+        json={"service_hosts": ["api.deepseek.test"]},
+        headers=session_auth_headers("alice"),
+    )
+    assert r.status_code == 200, r.text
+
+    with pytest.raises(ScreenSetupError) as refused:
+        _prepare(client, session, "the-session-host")
+    assert "api.moonshot.test" in str(refused.value), "the room is told which"
 
 
 def test_a_message_to_it_waits_for_none_of_its_owners_machines(client, service):
