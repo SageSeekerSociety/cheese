@@ -69,6 +69,7 @@
   "ownAgentKindSubscription": "a Claude subscription",
   "ownAgentKindApiKey": "an Anthropic API key",
   "ownAgentKindModelService": "a custom model service",
+  "ownAgentConnectionGone": "{agent}'s model connection was removed, so it won't start work. Call it again once {owner} logs that connection in again, or adds another one in the project settings",
   "cliProviderOverloaded": "The AI service is overloaded right now; this step did not finish",
   "cliProviderOverloadedHint": "This is a problem on the service's side and usually clears up quickly. You can retry later.",
   "cliSubscriptionAccountsCooling": "Every Claude subscription account on the platform is rate-limited; this step did not finish",
