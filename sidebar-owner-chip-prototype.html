@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>侧栏任务行的签：补足 → 我的</title>
+<style>
+/* ---- token：照 frontend/src/style.css 的两套主题块抄下来 ---- */
+:root{
+  color-scheme:light;
+  --ink:#191a1c; --text:#36383c; --muted:#5a5e66; --faint:#747a82;
+  --line:#ecedef; --line-2:#e2e3e6; --fill:#f4f5f7; --fill-2:#eeeff1;
+  --canvas:#f7f8fa; --surface:#ffffff;
+  --accent:#f57f17; --accent-press:#d96e0a; --accent-ink:#9a5413; --accent-wash:#fdf1e2;
+  --ok:#1f9d55; --warn:#e8901c; --warn-ink:#8f5406; --warn-wash:#faf0dc;
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'PingFang SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --shadow-1:0 1px 2px rgba(25,26,28,.06), 0 2px 8px rgba(25,26,28,.06);
+  --shadow-2:0 4px 12px rgba(25,26,28,.1), 0 12px 32px rgba(25,26,28,.1);
+  --focus-ring:#c2570a;
+  /* 批注标的颜色：刻意不用产品里的任何一档（橙=等你、绿=在跑），
+     否则挂在行上会跟状态点混掉。 */
+  --note:#3b5bdb; --note-press:#2f4bbd; --note-wash:#e7ebfb;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --ink:#f3f4f6; --text:#d3d6db; --muted:#aeb4bd; --faint:#888ea0;
+  --line:#2b2e33; --line-2:#3a3e45; --fill:#212429; --fill-2:#282c31;
+  --canvas:#141517; --surface:#1b1d20;
+  --accent:#ffa733; --accent-press:#ffbc5e; --accent-ink:#ffc670; --accent-wash:#2e2216;
+  --ok:#3fbf7f; --warn:#f0a94a; --warn-ink:#f7c078; --warn-wash:#2a2114;
+  --focus-ring:rgba(255,167,51,.65);
+  --shadow-1:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+  --shadow-2:0 4px 12px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
+  --note:#8aa5ff; --note-press:#a8bcff; --note-wash:#1c2440;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--canvas);color:var(--text);
+  font-family:var(--font-sans);font-size:14px;line-height:20px;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{margin:0;color:var(--ink);font-weight:600;text-wrap:balance}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px}
+.t-meta{font-size:12px;line-height:18px;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---- 页面外壳（不属于产品） ---- */
+.chrome{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;
+}
+.chrome__mark{
+  width:28px;height:28px;border-radius:var(--radius-md);background:var(--accent);
+  color:#fff;font-weight:700;display:grid;place-items:center;font-size:15px;flex:none;
+}
+.chrome__id{display:flex;align-items:center;gap:10px}
+.chrome__tools{margin-left:auto;display:flex;align-items:center;gap:10px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius-md);font-size:13px;font-weight:600}
+.btn--secondary{background:var(--fill);color:var(--ink)}
+.btn--secondary:hover{background:var(--fill-2)}
+.btn--sm{height:28px;font-size:12px;padding:0 10px}
+.stage{padding:20px 24px 40px;max-width:1400px;margin:0 auto}
+.hint{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px}
+.segs{display:inline-flex;background:var(--fill);border-radius:var(--radius-md);padding:2px;gap:2px}
+.segs[hidden]{display:none}
+.segs button{padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;color:var(--muted);font-weight:600}
+.segs button.is-on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+.legend{font-size:12px;color:var(--muted)}
+.legend b{color:var(--ink)}
+.frame{
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);overflow:hidden;
+  background:var(--surface);box-shadow:var(--shadow-2);
+}
+.frame__bar{
+  display:flex;align-items:center;gap:6px;padding:0 12px;height:36px;
+  background:var(--fill);border-bottom:1px solid var(--line);
+}
+.frame__dot{width:9px;height:9px;border-radius:var(--radius-pill);background:var(--line-2)}
+.frame__url{flex:1;text-align:center;font-size:12px;color:var(--muted);font-family:var(--mono)}
+.frame__tag{font-size:11px;color:var(--warn-ink);background:var(--warn-wash);border-radius:var(--radius-sm);padding:2px 6px;font-weight:600}
+.frame__scroll{overflow-x:auto}
+/* 这份原型是给桌面看的：窄屏不重排，横向滚，免得把侧栏挤成一条 */
+.app{display:flex;height:680px;min-width:940px;background:var(--canvas)}
+
+/* ---- 最左那条图标栏 ---- */
+.railbar{
+  width:52px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;align-items:center;gap:8px;padding:10px 0;
+}
+.railbar button{width:34px;height:34px;border-radius:var(--radius-md);display:grid;place-items:center;color:var(--muted);font-size:14px}
+.railbar button.is-on{background:var(--ink);color:var(--surface)}
+.railbar button:hover{background:var(--fill-2)}
+
+/* ---- 频道侧栏：这一块就是被改的东西 ---- */
+.side{
+  width:304px;flex:none;background:var(--surface);border-right:1px solid var(--line);
+  display:flex;flex-direction:column;min-height:0;
+}
+.side__head{display:flex;align-items:center;gap:4px;height:48px;padding:0 8px 0 16px;border-bottom:1px solid var(--line);flex:none}
+.side__proj{font-weight:600;color:var(--ink);font-size:14px;flex:1;text-align:left}
+.side__label{display:flex;align-items:center;gap:6px;padding:14px 8px 4px 16px;font-size:12px;font-weight:600;color:var(--faint);flex:none}
+.side__label span{flex:1}
+.side__list{flex:1;min-height:0;overflow-y:auto;padding:0 8px 12px;display:flex;flex-direction:column;gap:1px}
+
+/* 频道行 */
+.ch{
+  position:relative;display:flex;align-items:center;gap:8px;width:100%;text-align:left;
+  min-height:32px;padding:0 6px 0 8px;border-radius:var(--radius-md);color:var(--text);font-size:14px;
+}
+.ch:hover{background:var(--fill)}
+.ch.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
+.ch__glyph{width:16px;flex:none;text-align:center;color:var(--faint);font-size:14px}
+.ch__name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ch__tail{display:flex;align-items:center;gap:6px;flex:none}
+.ch__n{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--fill);border-radius:var(--radius-sm);padding:0 5px;border:1px solid var(--line)}
+.ch__more{opacity:0;color:var(--muted);font-size:14px;line-height:1;padding:2px 4px}
+.ch:hover .ch__more,.ch.is-on .ch__more{opacity:1}
+.dot{width:7px;height:7px;border-radius:var(--radius-pill);display:block;flex:none}
+.dot--run{background:var(--ok)}
+.dot--await{background:var(--warn)}
+
+/* 任务行 */
+.tk{
+  position:relative;display:flex;align-items:center;gap:6px;width:100%;text-align:left;
+  min-height:32px;padding:0 6px 0 40px;border-radius:var(--radius-md);color:var(--text);font-size:14px;line-height:20px;
+}
+.tk:hover{background:var(--fill-2);color:var(--ink)}
+.tk.is-on{background:var(--line-2);color:var(--ink);font-weight:600}
+.tk::before{content:'';position:absolute;left:16px;top:-3px;bottom:-3px;width:1px;background:var(--line-2)}
+.tk__t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk--help .tk__t{color:var(--text)}
+.tk--pad .tk__t{color:var(--muted)}
+.tk__tail{display:flex;align-items:center;gap:6px;flex:none}
+.tk__badge{min-width:16px;height:16px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;padding:0 4px;font-family:var(--mono)}
+/* 这枚签：形态照 TopicRailTaskRow.vue 的 .rail-task__mine 抄——
+   11px、--faint 字色、--fill 底、8px 圆角、左右各 6px 内边距。 */
+.tk__tag{font-size:11px;line-height:16px;color:var(--faint);background:var(--fill);border-radius:8px;padding:0 6px}
+
+/* 最后那行「展开其余 N 个」 */
+.more{
+  position:relative;display:flex;align-items:center;gap:6px;width:100%;min-height:32px;
+  padding:0 6px 0 40px;border-radius:var(--radius-md);color:var(--muted);font-size:14px;text-align:left;
+}
+.more:hover{background:var(--fill-2);color:var(--ink)}
+.more::before{content:'';position:absolute;left:16px;top:-3px;height:calc(50% + 3px);width:1px;background:var(--line-2)}
+.more__label{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.more__chev{color:var(--faint);font-size:12px}
+
+/* ---- 主区 ---- */
+.view{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--canvas);min-height:0}
+.vhead{display:flex;align-items:center;gap:10px;height:48px;padding:0 16px;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.vhead h2{font-size:15px}
+.vhead__crumb{font-size:13px;color:var(--muted)}
+.vbody{flex:1;min-height:0;overflow-y:auto;padding:20px 24px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);padding:16px;margin-bottom:12px;box-shadow:var(--shadow-1)}
+.card h3{font-size:15px;margin-bottom:6px}
+.chip{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 8px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;background:var(--fill);color:var(--muted)}
+.chip--warn{background:var(--warn-wash);color:var(--warn-ink)}
+.pair{display:grid;gap:8px;margin-top:10px}
+.pair__row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.pair__k{width:52px;flex:none;font-size:12px;color:var(--faint)}
+.pair__demo{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px dashed var(--line-2);border-radius:var(--radius-md);background:var(--canvas)}
+.pair__demo .tk__t{max-width:15em}
+.pair--old{opacity:.75}
+
+/* ---- 改动标记（蓝色，跟产品里的状态点分得开） ---- */
+.mk{
+  display:inline-grid;place-items:center;width:17px;height:17px;border-radius:var(--radius-pill);
+  background:var(--note);color:#fff;font-size:11px;font-weight:700;font-style:normal;
+  cursor:pointer;font-family:var(--mono);flex:none;box-shadow:0 0 0 2px var(--note-wash);
+}
+.mk:hover{background:var(--note-press)}
+.mk.is-seen{background:var(--muted);box-shadow:0 0 0 2px var(--fill)}
+
+/* ---- 说明卡 ---- */
+/* 靠右下角，不盖住左边那条侧栏（被改的就是它）；窄屏才铺开 */
+.sheet{
+  position:fixed;right:24px;bottom:20px;
+  width:min(820px,calc(100vw - 424px));background:var(--surface);
+  border:1px solid var(--line-2);border-radius:var(--radius-lg);box-shadow:var(--shadow-2);
+  z-index:60;overflow:hidden;
+}
+.sheet[hidden]{display:none}
+.sheet__head{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.sheet__no{width:26px;height:26px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;display:grid;place-items:center;font-size:12px;font-weight:700;flex:none;font-family:var(--mono)}
+.sheet__head h3{font-size:15px;line-height:21px}
+.sheet__body{padding:12px 16px 16px;display:grid;gap:8px;max-height:52vh;overflow-y:auto}
+.sheet__row{display:flex;gap:10px;font-size:13px;line-height:20px}
+.sheet__k{width:60px;flex:none;color:var(--faint)}
+.sheet__v{flex:1;color:var(--text)}
+.sheet__v b{color:var(--ink)}
+.sheet__row--ask .sheet__v{color:var(--accent-ink)}
+.sheet__foot{display:flex;align-items:center;gap:8px;padding:0 12px 12px;font-size:12px;color:var(--faint)}
+.icon-btn{width:28px;height:28px;border-radius:var(--radius-md);display:grid;place-items:center;color:var(--muted);font-size:15px;line-height:1}
+.icon-btn:hover{background:var(--fill)}
+
+@media (max-width:940px){
+  .stage{padding:12px}
+  .chrome{padding:12px 16px}
+  .sheet{left:12px;right:12px;width:auto}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="chrome__id">
+    <span class="chrome__mark">知</span>
+    <div>
+      <h1>侧栏任务行的签：补足 → 我的</h1>
+      <p class="t-meta">caisongyang 2026-10-13：补足这个标签去掉，剩下的我负责的标记为「我的」· 界面上那些蓝标点一下，看这处改什么</p>
+    </div>
+  </div>
+  <div class="chrome__tools">
+    <span class="t-meta mono" id="seen">已看过 0 / 3</span>
+    <button class="btn btn--secondary btn--sm" id="themeBtn">深色</button>
+  </div>
+</header>
+
+<main class="stage">
+  <div class="hint">
+    <div class="segs" id="modeSeg">
+      <button data-mode="before" class="is-on">改前：签上写「补足」</button>
+      <button data-mode="after">改后：签上写「我的」</button>
+    </div>
+    <div class="segs" id="langSeg">
+      <button data-lang="zh" class="is-on">中文</button>
+      <button data-lang="en">English</button>
+    </div>
+    <div class="segs" id="spreadSeg" title="第 3 处标记要你定的就是这件事">
+      <button data-spread="always" class="is-on">「我的」一直打</button>
+      <button data-spread="mixed">只在混着别人的任务时打</button>
+    </div>
+    <span class="legend">左边点着走：<b>点频道</b>打开它，<b>点任务</b>打开那条任务。鼠标停在<b>淡一档</b>的那几行上看说明。</span>
+  </div>
+
+  <div class="frame">
+    <div class="frame__bar">
+      <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+      <span class="frame__url">okcheese.com/workspace</span>
+      <span class="frame__tag">原型 · 不是线上</span>
+    </div>
+    <div class="frame__scroll">
+      <div class="app">
+
+        <nav class="railbar" aria-label="项目">
+          <button class="is-on" title="知是平台">知</button>
+          <button title="我的项目">我</button>
+        </nav>
+
+        <aside class="side">
+          <div class="side__head">
+            <button class="side__proj">知是平台</button>
+            <button class="icon-btn" title="项目菜单">▾</button>
+          </div>
+          <div class="side__label">
+            <span id="chLabel">频道</span>
+            <button class="icon-btn" title="新建频道" style="width:22px;height:22px;font-size:14px">＋</button>
+          </div>
+          <nav class="side__list" id="sideList"></nav>
+        </aside>
+
+        <section class="view">
+          <div class="vhead" id="vhead"></div>
+          <div class="vbody" id="vbody"></div>
+        </section>
+
+      </div>
+    </div>
+  </div>
+</main>
+
+<aside class="sheet" id="sheet" hidden>
+  <div class="sheet__head">
+    <span class="sheet__no" id="sheetNo">1</span>
+    <div style="flex:1">
+      <h3 id="sheetTitle"></h3>
+      <p class="t-meta" id="sheetSrc"></p>
+    </div>
+    <button class="icon-btn" id="sheetClose">×</button>
+  </div>
+  <div class="sheet__body">
+    <div class="sheet__row"><span class="sheet__k">现状</span><span class="sheet__v" id="sheetNow"></span></div>
+    <div class="sheet__row"><span class="sheet__k">这一版</span><span class="sheet__v" id="sheetFix"></span></div>
+    <div class="sheet__row sheet__row--ask" id="sheetAskRow" hidden><span class="sheet__k">要你定</span><span class="sheet__v" id="sheetAsk"></span></div>
+    <div class="sheet__row"><span class="sheet__k">要动哪里</span><span class="sheet__v" id="sheetWork"></span></div>
+  </div>
+  <div class="sheet__foot"><span>点别的标记换一张</span></div>
+</aside>
+
+<script>
+(function(){
+  'use strict';
+
+  // ------------------------------------------------------------------
+  // 假数据。照侧栏里那一块画的。
+  //   rel: 'own'  我负责的（后端 owner_handle 是我）
+  //        'help' 我协助的
+  //        'pad'  这个频道里别人的、被借来把这一块凑够三条的（后端 filling_in）
+  //   open = 这个频道进行中的任务总数
+  // 一块里我负责和协助的合起来不到三条时，才从别人的活里借。谁被借来由后端定。
+  // ------------------------------------------------------------------
+  var DATA = [
+    {
+      id:'general', name:'综合', nameEn:'General', on:true, open:51,
+      rows:[
+        {t:'灯', rel:'own', dot:'run'},
+        {t:'电脑端待办入口位置', rel:'own', dot:'await', badge:2},
+        {t:'验收卡 merge_state 快照过期', rel:'own'},
+        {t:'空间重设计', rel:'own'},
+        {t:'新建频道入口设计', rel:'help'}
+      ]
+    },
+    {
+      id:'design', name:'产品设计', nameEn:'Product design', on:false, open:6,
+      rows:[
+        {t:'出题改动原型', rel:'own', dot:'run'},
+        {t:'频道改动原型', rel:'own', dot:'await', badge:1},
+        {t:'全部频道页加搜索', rel:'pad'}
+      ]
+    },
+    {
+      id:'test', name:'测试频道', nameEn:'Testing', on:false, open:3,
+      rows:[
+        {t:'冒烟测试补跑一遍', rel:'pad'},
+        {t:'移动端宽度回归', rel:'pad'},
+        {t:'合并队列卡住排查', rel:'pad'}
+      ]
+    },
+    {
+      id:'duty', name:'客服值班', nameEn:'Support duty', on:false, open:4,
+      rows:[
+        {t:'值班表自动排班', rel:'own', dot:'run'},
+        {t:'工单标签规范化', rel:'pad'},
+        {t:'常见问题库更新', rel:'pad'}
+      ]
+    }
+  ];
+
+  // ---- 这一处改的东西：签上的字、签挂在哪几条上、说明挂在哪儿。 ------------------
+  // 键名和字段都没动：`filling_in` 还是那个意思，`fillInTip` 那句话只是从签上挪到整行。
+  var COPY = {
+    zh:{
+      mine:'我的', fillIn:'补足',
+      tip:{ before:'这个频道里和你有关的不到三条，这一条是补上来的',
+            after:'这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿' },
+      channels:'频道', fold:'收起这个频道下面的任务', unfold:'展开这个频道下面的任务',
+      more:'展开其余 {n} 个', countTip:'这个频道里进行中的任务数',
+      borrowedHint:'（淡一档的是这个频道里别人的活）'
+    },
+    en:{
+      mine:'Mine', fillIn:'Filled in',
+      tip:{ before:'Fewer than three of your own tasks are here; this row makes up the three',
+            after:"Fewer than three of your own tasks are here; this one is someone else's, added to fill the three" },
+      channels:'Channels', fold:"Collapse this channel's tasks", unfold:"Expand this channel's tasks",
+      more:'Show {n} more', countTip:'Tasks under way in this channel',
+      borrowedHint:'(dimmed rows are other people’s work in this channel)'
+    }
+  };
+
+  var ITEMS = {
+    1:{t:'签换了：不标借来的，标我的',
+       s:'caisongyang 2026-10-13：补足这个标签去掉，剩下的我负责的标记为「我的」',
+       now:'签上写「补足」/ "Filled in"，挂在这个频道里<b>借来凑数</b>的那几条上。它说的是「这一条是补上来的」——凑数的动作。',
+       fix:'借来的那几条<b>不挂签</b>了，它为什么在这儿改由鼠标停上去的那句说明交代；'
+         + '我负责的那几条反过来缀一个「我的」。上面切「改前」「改后」，看的就是这一枚签。'
+         + '（「我协助的」不缀——它不是我在负责。）',
+       ask:'叫法：中文「我的」是照你说的写的，英文那半我暂定 "Mine"。你有别的说法以你为准。',
+       work:'两份词表 <span class="mono">frontend/src/i18n/messages/zh-CN/work.json</span> 和 '
+         + '<span class="mono">en/work.json</span>：删掉 <span class="mono">work.sidebar.fillIn</span>（签上的字），'
+         + '加上 <span class="mono">work.sidebar.mine</span>。行上那句说明留在 <span class="mono">work.sidebar.fillInTip</span>，'
+         + '只是从签挪到了整行。删键是照 <span class="mono">docs/i18n.md</span> §5：不留没人用的键。'},
+    2:{t:'整块都是别人的时候，一个字都不标',
+       s:'同一条规则的另一头',
+       now:'「测试频道」我一条都没有，三行全是从这个频道借来的，三行都缀「补足」。',
+       fix:'这三行现在都不挂签，整块干净。鼠标停在任意一行上，说明照样说清它为什么在这儿。'
+         + '（这几行的标题仍然淡一档——那是「不是我负责的活」的底色。）',
+       ask:'',
+       work:'不用另外改。这是同一处文案在别处的样子。'},
+    3:{t:'全是我的时候，一排「我的」',
+       s:'照你说的「我负责的标记为我的」，字面写出来是这样 —— 这一处要你定',
+       now:'「综合」底下挂着四条我负责的、一条我协助的（一共五条，不用借别人的），这五条现在都没有签。',
+       fix:'改后四条我负责的都缀「我的」。上面第三个开关就是这件事：'
+         + '<b>「一直打」</b>是照你原话的写法，全是我的频道里也会一排「我的」；'
+         + '切<b>「只在混着别人的任务时打」</b>，这一块里没有借来的行就不打签，只有产品设计、客服值班那种混着的才打。',
+       ask:'这两种你挑一个。侧栏本来就是「和我有关的」那一份，全是我的地方再打一排「我的」可能只是噪声；'
+         + '只在混着的时候打，同一行的样子会随这个频道里别人的任务多少而变。',
+       work:'两种都只改 <span class="mono">frontend/src/components/topic-sidebar/TopicRailTaskRow.vue</span> 里那颗签的判据：'
+         + '「一直打」只认这一条是不是我负责的；混着才打还要知道这一块里有没有借来的行（多传一个条件进来）。'}
+  };
+
+  var seen = {}, mode = 'after', lang = 'zh', spread = 'always';
+  var selTask = '电脑端待办入口位置', selChannel = 'general';
+  var $ = function(s,r){ return (r||document).querySelector(s); };
+  var $$ = function(s,r){ return Array.prototype.slice.call((r||document).querySelectorAll(s)); };
+
+  function S(){ return COPY[lang]; }
+  function esc(s){
+    return String(s).replace(/[&<>"]/g, function(c){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'})[c];
+    });
+  }
+  function attr(s){ return esc(s).replace(/'/g, '&#39;'); }
+  function mk(n){ return '<i class="mk" data-item="'+n+'" title="这一处改什么">'+n+'</i>'; }
+  function dotHTML(d){
+    if (!d) return '';
+    return '<span class="dot dot--'+d+'" title="'+(d==='run'?'有队友在跑':'有事等你')+'"></span>';
+  }
+  // 这一块里有没有借来的行：只有它才需要说「哪些是我的」。
+  function hasBorrowed(ch){ return ch.rows.some(function(r){ return r.rel === 'pad'; }); }
+  // 签挂在哪几条上、写什么。
+  function chipOf(ch, row){
+    if (mode === 'before') return row.rel === 'pad' ? S().fillIn : '';
+    if (row.rel !== 'own') return '';
+    if (spread === 'mixed' && !hasBorrowed(ch)) return '';
+    return S().mine;
+  }
+
+  function renderSide(){
+    var parts = [];
+    DATA.forEach(function(ch){
+      parts.push('<div class="ch'+(ch.on?' is-on':'')+'" data-ch="'+ch.id+'">');
+      parts.push('<span class="ch__glyph">#</span>');
+      parts.push('<span class="ch__name">'+esc(lang === 'zh' ? ch.name : ch.nameEn)+'</span>');
+      parts.push('<span class="ch__tail">');
+      if (ch.open) parts.push('<span class="ch__n" title="'+attr(S().countTip)+'">'+ch.open+'</span>');
+      parts.push('<span class="ch__more" title="更多操作">⋯</span>');
+      if (ch.id === 'test') parts.push(mk(2));
+      if (ch.id === 'general') parts.push(mk(3));
+      parts.push('</span></div>');
+
+      ch.rows.forEach(function(row, i){
+        var on = row.t === selTask;
+        var cls = 'tk' + (on?' is-on':'') + (row.rel==='help'?' tk--help':'') + (row.rel==='pad'?' tk--pad':'');
+        // 淡一档的那几条，鼠标停上去说出它为什么在这儿；改前那句话挂在签上。
+        var tip = row.rel === 'pad' && !(mode === 'before') ? S().tip.after : '';
+        parts.push('<button class="'+cls+'" data-task="'+esc(row.t)+'" data-chid="'+ch.id+'"'
+          + (tip ? ' title="'+attr(tip)+'"' : '') + '>');
+        parts.push('<span class="tk__t">'+esc(row.t)+'</span>');
+        parts.push('<span class="tk__tail">');
+        var chip = chipOf(ch, row);
+        if (chip) {
+          var chipTip = row.rel === 'pad' ? S().tip.before : '';
+          parts.push('<span class="tk__tag"'+(chipTip?' title="'+attr(chipTip)+'"':'')+'>'+esc(chip)+'</span>');
+        }
+        if (row.badge) parts.push('<span class="tk__badge">'+row.badge+'</span>');
+        parts.push(dotHTML(row.dot));
+        if (ch.id === 'design' && row.rel === 'pad') parts.push(mk(1));
+        parts.push('</span></button>');
+      });
+
+      var rest = Math.max(0, ch.open - ch.rows.length);
+      if (rest) {
+        parts.push('<span class="more"><span class="more__label">'
+          + esc(S().more.replace('{n}', rest)) + '</span>'
+          + '<span class="more__chev">⌄</span></span>');
+      }
+    });
+    $('#sideList').innerHTML = parts.join('');
+  }
+
+  function renderView(){
+    var ch = DATA.filter(function(c){ return c.id === selChannel; })[0] || DATA[0];
+    var title = selTask || (lang === 'zh' ? ch.name : ch.nameEn);
+    $('#vhead').innerHTML = '<span class="vhead__crumb">'+esc(lang==='zh'?ch.name:ch.nameEn)+' /</span>'
+      + '<h2>'+esc(title)+'</h2><span class="chip chip--warn">已开始</span>';
+
+    var zhTip = attr(COPY.zh.tip.after), enTip = attr(COPY.en.tip.after);
+    var zhMine = COPY.zh.mine, enMine = COPY.en.mine;
+    $('#vbody').innerHTML =
+        '<div class="card"><h3>改的就是这枚签</h3>'
+      + '<p class="t-meta">同一个频道块，改前和这一版各画一遍。行的高度、颜色、后端那个 <span class="mono">filling_in</span> 字段都没动，动的是签挂在谁身上。</p>'
+      + '<div class="pair">'
+      +   '<div class="pair__row pair--old"><span class="pair__k">改前</span>'
+      +     '<span class="pair__demo tk--pad"><span class="tk__t">全部频道页加搜索</span>'
+      +     '<span class="tk__tag" title="'+attr(COPY.zh.tip.before)+'">'+esc(COPY.zh.fillIn)+'</span></span>'
+      +     '<span class="pair__demo" lang="en"><span class="tk__t">冒烟测试补跑一遍</span>'
+      +     '<span class="tk__tag" title="'+attr(COPY.en.tip.before)+'">'+esc(COPY.en.fillIn)+'</span></span>'
+      +   '</div>'
+      +   '<div class="pair__row"><span class="pair__k">这一版</span>'
+      +     '<span class="pair__demo"><span class="tk__t">出题改动原型</span>'
+      +     '<span class="tk__tag">'+esc(zhMine)+'</span></span>'
+      +     '<span class="pair__demo tk--pad" title="'+zhTip+'"><span class="tk__t">全部频道页加搜索</span></span>'
+      +     '<span class="pair__demo" lang="en"><span class="tk__t">出题改动原型</span>'
+      +     '<span class="tk__tag">'+esc(enMine)+'</span></span>'
+      +     '<span class="pair__demo tk--pad" lang="en" title="'+enTip+'"><span class="tk__t">冒烟测试补跑一遍</span></span>'
+      +   '</div>'
+      + '</div>'
+      + '<p class="t-meta" style="margin-top:10px">借来的那两条，鼠标停上去分别说：<br>'
+      +   esc(COPY.zh.tip.after)+'<br>'+esc(COPY.en.tip.after)+'</p>'
+      + '</div>'
+      + '<div class="card"><h3>'+esc(title)+'</h3>'
+      + '<p class="t-meta">这里是内容区，放它只为让左边点得动。这次改的是左边那条侧栏里的签。'
+      + esc(S().borrowedHint)+'</p></div>';
+  }
+
+  function render(){
+    $('#chLabel').textContent = S().channels;
+    $('#spreadSeg').hidden = (mode === 'before');
+    renderSide();
+    renderView();
+  }
+
+  function seenText(){ $('#seen').textContent = '已看过 ' + Object.keys(seen).length + ' / 3'; }
+
+  function openSheet(n){
+    var it = ITEMS[n]; if (!it) return;
+    seen[n] = 1;
+    $$('.mk').forEach(function(m){ if (m.dataset.item === String(n)) m.classList.add('is-seen'); });
+    seenText();
+    $('#sheetNo').textContent = n;
+    $('#sheetTitle').textContent = it.t;
+    $('#sheetSrc').textContent = it.s;
+    $('#sheetNow').innerHTML = it.now;
+    $('#sheetFix').innerHTML = it.fix;
+    $('#sheetWork').innerHTML = it.work;
+    if (it.ask) { $('#sheetAsk').innerHTML = it.ask; $('#sheetAskRow').hidden = false; }
+    else { $('#sheetAskRow').hidden = true; }
+    $('#sheet').hidden = false;
+  }
+
+  document.addEventListener('click', function(e){
+    var mkEl = e.target.closest('.mk');
+    if (mkEl) { e.stopPropagation(); openSheet(mkEl.dataset.item); return; }
+
+    var chRow = e.target.closest('.ch');
+    if (chRow) {
+      selChannel = chRow.dataset.ch; selTask = '';
+      DATA.forEach(function(c){ c.on = (c.id === selChannel); });
+      render(); return;
+    }
+    var tk = e.target.closest('.tk');
+    if (tk) {
+      selTask = tk.dataset.task; selChannel = tk.dataset.chid;
+      DATA.forEach(function(c){ c.on = (c.id === selChannel); });
+      render(); return;
+    }
+    var seg = e.target.closest('#modeSeg button');
+    if (seg) {
+      mode = seg.dataset.mode;
+      $$('#modeSeg button').forEach(function(b){ b.classList.toggle('is-on', b === seg); });
+      render(); return;
+    }
+    var lseg = e.target.closest('#langSeg button');
+    if (lseg) {
+      lang = lseg.dataset.lang;
+      $$('#langSeg button').forEach(function(b){ b.classList.toggle('is-on', b === lseg); });
+      render(); return;
+    }
+    var sseg = e.target.closest('#spreadSeg button');
+    if (sseg) {
+      spread = sseg.dataset.spread;
+      $$('#spreadSeg button').forEach(function(b){ b.classList.toggle('is-on', b === sseg); });
+      render(); return;
+    }
+    if (e.target.closest('#sheetClose')) { $('#sheet').hidden = true; }
+  });
+
+  $('#themeBtn').addEventListener('click', function(){
+    var dark = document.documentElement.dataset.theme === 'dark';
+    document.documentElement.dataset.theme = dark ? 'light' : 'dark';
+    this.textContent = dark ? '深色' : '浅色';
+  });
+
+  seenText();
+  render();
+})();
+</script>
+</body>
+</html>
