@@ -387,6 +387,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/addresses/refs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve Refs
+         * @description What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a
+         *     task or a 支线, its title and the room it is in. An id that names none of
+         *     them, or one the caller may not see, is absent from the answer — so a
+         *     private channel is not told apart from one that was never made.
+         */
+        get: operations["resolve_refs_addresses_refs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/slug": {
         parameters: {
             query?: never;
@@ -1255,6 +1278,9 @@ export interface paths {
          *     `credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者
          *     不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。
          *
+         *     `cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、
+         *     谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。
+         *
          *     `claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里
          *     唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，
          *     理由见那个模块的 docstring）。
@@ -1383,6 +1409,27 @@ export interface paths {
          *     计量落账心跳都要先加埋点才查得到）。
          */
         get: operations["integrations_stats_admin_stats_integrations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/stats/machines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Machines Stats
+         * @description 机器那一块：MicroCloud 上的每台宿主机、它上面的沙箱、温机池，和过去一天沙箱
+         *     起得怎么样。口径写在 `app/domain/machine/admin.py` 的模块 docstring 上。
+         */
+        get: operations["machines_stats_admin_stats_machines_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2170,6 +2217,145 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/blocks/{block_id}/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Withdraw Answer
+         * @description Take back your own answer to a question asked with quick replies, so the
+         *     question is unanswered again and its options come back for everyone.
+         *
+         *     ``block_id`` is the question, not the answer: an answer is an ordinary
+         *     message, and what is withdrawn is the line it left on the question
+         *     (`domain/block/questions`). Only whoever answered it can — anyone else gets
+         *     a refusal, not a way to erase somebody's answer. The message the answerer
+         *     sent stays in the room; its words are not what this changes.
+         *
+         *     Whoever was watching gets the question as a `block_updated` frame, and the
+         *     agent that asked it runs another turn, because the turn it had been going
+         *     on was decided on an answer that no longer counts.
+         */
+        delete: operations["withdraw_answer_blocks__block_id__answer_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{document_id}/canvases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Canvases
+         * @description The canvases the document's text names, each as text, in order.
+         */
+        get: operations["document_canvases_documents__document_id__canvases_get"];
+        put?: never;
+        /**
+         * Create Canvas
+         * @description A new, empty canvas of this document, for a canvas block an editor just
+         *     put in it.
+         */
+        post: operations["create_canvas_documents__document_id__canvases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canvases/{canvas_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Canvas */
+        get: operations["get_canvas_canvases__canvas_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Patch Canvas */
+        patch: operations["patch_canvas_canvases__canvas_id__patch"];
+        trace?: never;
+    };
+    "/canvases/{canvas_id}/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Canvas Text
+         * @description The canvas as an outline an AI teammate reads; ``positions`` adds where
+         *     each card sits.
+         */
+        get: operations["canvas_text_canvases__canvas_id__text_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canvases/{canvas_id}/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Change Canvas
+         * @description Make the changes in order, all or none; a refusal names the change
+         *     (``data.index``). Answers the canvas as it now is, and the numbers new
+         *     cards got by their ``ref`` (``refs``).
+         */
+        post: operations["change_canvas_canvases__canvas_id__changes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/canvases/{canvas_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Canvas
+         * @description A copy of this canvas as it is now, belonging to ``document_id``: a
+         *     canvas block pasted into a document, or into the same one again. Whoever
+         *     may read the canvas and write that document may make one.
+         */
+        post: operations["copy_canvas_canvases__canvas_id__copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/comments/{commentId}/attitudes": {
         parameters: {
             query?: never;
@@ -2370,6 +2556,28 @@ export interface paths {
          *     answer from its last connection standing.
          */
         post: operations["check_my_claude_code_connector_my_devices__device_id__claude_code_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connector/my/devices/{device_id}/sandbox": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check My Sandbox
+         * @description Ask one of the caller's machines again whether it can give a session a
+         *     sandbox: after its owner changed what it lacked, the page asks rather than
+         *     leaving the answer from its last connection standing.
+         */
+        post: operations["check_my_sandbox_connector_my_devices__device_id__sandbox_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2995,6 +3203,29 @@ export interface paths {
          *     written. Its reply keeps what was written, marked as stopped.
          */
         post: operations["stop_agent_documents__document_id__comments__comment_id__agent_stop_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/documents/{document_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Document Image
+         * @description The bytes of an image the document references by ``path``.
+         *
+         *     A browser cannot send its credential with an ``<img src>``, so the editor
+         *     fetches these and shows them from memory.
+         */
+        get: operations["document_image_documents__document_id__image_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -4849,7 +5080,7 @@ export interface paths {
         };
         /**
          * Project Overview Document
-         * @description Which document is the project's overview. It is made, empty, the first
+         * @description Which document holds the project's goals. It is made, empty, the first
          *     time anyone asks.
          */
         get: operations["project_overview_document_projects__project_id__overview_get"];
@@ -4989,9 +5220,9 @@ export interface paths {
         };
         /**
          * List Pools
-         * @description The full catalog: every AI pool and compute pool on offer, each with its
-         *     tier, price, and whether it's available to select. Powers the 市场 browse
-         *     view; a project selects from these in its settings.
+         * @description The full catalog: every AI pool and sandbox spec on offer, each with
+         *     its tier, price, and whether it's available to select. Powers the 市场
+         *     browse view; a project selects from these in its settings.
          */
         get: operations["list_pools_market_pools_get"];
         put?: never;
@@ -5011,12 +5242,11 @@ export interface paths {
         };
         /**
          * List Nodes
-         * @description 节点看板: the compute pools this deployment can run a turn on, with
-         *     liveness and current load (in-flight turns).
+         * @description 节点看板: the sandbox specs this deployment can place an agent's
+         *     environment on, with liveness and current load (in-flight turns).
          *
          *     Built from the same catalogue the 市场 browses, so the board cannot show a
-         *     node the picker does not offer — it used to show exactly one, the platform's
-         *     own container host, which was the one pool the catalogue never listed.
+         *     node the picker does not offer.
          */
         get: operations["list_nodes_market_nodes_get"];
         put?: never;
@@ -5578,7 +5808,7 @@ export interface paths {
          * Search Documents
          * @description The library's search: the project's own documents by title and by what
          *     they say, and the living documents of the channels the caller may read —
-         *     tasks' documents, the project overview — by what they say. Those are not
+         *     tasks' documents, the project's goals — by what they say. Those are not
          *     in the library's list, but they are found here, under their channel and
          *     task, to open there or keep a copy of.
          */
@@ -5994,7 +6224,9 @@ export interface paths {
          *
          *     `status` keeps only threads in that state. The sidebar polls for the open
          *     ones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per
-         *     read.
+         *     read. `accepted` independently keeps tasks with an approved delivery
+         *     (`true`) or without one (`false`); omitted, it keeps both. This applies to
+         *     whole lists as well as pages, regardless of whether the task is open.
          *
          *     With `limit` (and a `status`) it is a page instead, of the threads that
          *     most recently moved: the closed ones only grow, and the all-tasks page
@@ -6002,7 +6234,8 @@ export interface paths {
          *     to one `channel` and to `whose` the threads are to the reader (`mine`: they
          *     own it; `helping`: they are among its contributors; `others`: neither).
          *     `next` is the cursor to pass as `before` for the page after; `counts` says
-         *     how many there are in all and by whose, for the same status and channel.
+         *     how many there are in all and by whose, for the same status, channel and
+         *     acceptance filter.
          *
          *     The rail draws rooms and the work inside them, so it needs both halves at
          *     once. Two round trips, not two per room and one per thread: a project here
@@ -6049,6 +6282,28 @@ export interface paths {
          *     已经归档的频道里的事不在里面。
          */
         get: operations["project_progress_projects__project_id__progress_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/projects/{project_id}/start-steps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Start Steps
+         * @description What the new-user guide needs to know about the caller in this project
+         *     (`app/domain/onboarding/start.py`): handed 芝士 something, got a reply, had a
+         *     delivery accepted.
+         */
+        get: operations["project_start_steps_projects__project_id__start_steps_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6549,6 +6804,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/projects/{project_id}/own-agents/{handle}/callers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Own Agent Callers
+         * @description Who may call a member's own agent: its owner alone, or any person in the
+         *     project. Only its owner decides, since it is their account that pays.
+         */
+        put: operations["set_own_agent_callers_projects__project_id__own_agents__handle__callers_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/projects/{project_id}/default-model": {
         parameters: {
             query?: never;
@@ -6577,9 +6853,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get Compute Configs */
+        /**
+         * Get Compute Configs
+         * @description The environment a new agent in this project gets, where its agents
+         *     are now, the sandbox specs it is offered and the people's computers it
+         *     has.
+         */
         get: operations["get_compute_configs_projects__project_id__compute_configs_get"];
-        /** Save Compute Configs */
+        /**
+         * Save Compute Configs
+         * @description What a new agent in this project gets. A manager's choice; nobody
+         *     already working moves.
+         */
         put: operations["save_compute_configs_projects__project_id__compute_configs_put"];
         post?: never;
         delete?: never;
@@ -6600,7 +6885,7 @@ export interface paths {
          * @description The project's agent sessions on one self-hosted device, for a project
          *     manager to switch some of them elsewhere (「现在的分布」 → 查看并更换).
          *
-         *     Each switch then goes through the room's own route, with its checks. A
+         *     Each switch then goes through the session's own route, with its checks. A
          *     session in a room the caller cannot open is counted in ``hidden`` and not
          *     listed, so its room's title stays in that room.
          */
@@ -7252,6 +7537,35 @@ export interface paths {
         head?: never;
         /** Edit Review Comment */
         patch: operations["edit_review_comment_review_comments__comment_id__patch"];
+        trace?: never;
+    };
+    "/topics/{topic_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Files
+         * @description 这个房间自己的文件：路径、大小、最后一次改动、是谁写的，最近改的在最前。
+         *
+         *     这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫
+         *     什么名字。定时任务交回的结果、芝士交付的文档、有人放进来的文件都落在同一个目录
+         *     下，这份清单就是那个目录本身，也是界面上看得见它的那一处。
+         *
+         *     作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存
+         *     补齐，没保存过的那几份照列。
+         *
+         *     `truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。
+         */
+        get: operations["list_files_topics__topic_id__files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/topics/{topic_id}/files/raw": {
@@ -9139,6 +9453,10 @@ export interface paths {
         /**
          * Enumerate Team Members
          * @description Return team members for a given team.
+         *
+         *     Each row says whether the reader may remove that member (``canRemove``),
+         *     by the rule the remove endpoint enforces. The reader's own row says no:
+         *     leaving is its own action, not a removal from the roster.
          */
         get: operations["get_team_members_teams__teamId__members_get"];
         put?: never;
@@ -9523,6 +9841,10 @@ export interface paths {
          *     - `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one
          *     - `?limit=N&around=<block_id>` → that block with about N/2 on each side: a
          *       conversation opened at one message (a search hit, a quoted reply)
+         *     - `?limit=N&stored_after=<seq>` → the N blocks stored next after the one
+         *       numbered so, in the order they were stored: what a page holding
+         *       everything up to that number missed (the rooms socket's `newest`).
+         *       `has_newer` says more were stored after them.
          *
          *     Filters narrow the timeline inside the paging, so a page holds `limit` rows
          *     of what was asked for and `has_more` counts the same set (filtering a page
@@ -9775,60 +10097,13 @@ export interface paths {
          * Record Weekly
          * @description 记一份周报到周报集 (spec §7.1) —— 项目文档页的「周报集」就是从这条读的。
          *
-         *     一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是章程和话题文档
-         *     的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
+         *     一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是任务和它们的实况
+         *     文档的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一
          *     列 —— 它是这一条记录的属性，没有第二处会读它。
          *
          *     `refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。
          */
         post: operations["record_weekly_topics__topic_id__weekly_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/read": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Mark Topic Read
-         * @description 已读位: bump the caller's read cursor on a room or on one of its tasks
-         *     (opening either clears its unread badge, Feishu-style). ``topic_id`` is
-         *     the conversation's id; the door is its room's.
-         *
-         *     The cursor is per person, so whose it is comes from the verified
-         *     credential — ``handle`` in the body is only an assertion checked against
-         *     it (it used to BE the identity, letting anyone move anyone's cursor).
-         */
-        post: operations["mark_topic_read_topics__topic_id__read_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/notify-level": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        /**
-         * Set Topic Notify Level
-         * @description 这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO
-         *     时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。
-         */
-        put: operations["set_topic_notify_level_topics__topic_id__notify_level_put"];
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -10050,8 +10325,7 @@ export interface paths {
         };
         /**
          * Attachment Raw
-         * @description Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
-         *     to images so this can never serve executable HTML from the worktree.
+         * @description Authorized raster images and video bytes, never executable HTML/SVG.
          */
         get: operations["attachment_raw_topics__topic_id__attachments_raw_get"];
         put?: never;
@@ -10201,7 +10475,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/topics/{topic_id}/compute-profile": {
+    "/topics/{topic_id}/environment": {
         parameters: {
             query?: never;
             header?: never;
@@ -10209,24 +10483,57 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Topic Compute Profile
-         * @description A conversation's work computer — a room's, or a task's: the one choice
-         *     every session of that conversation works on. A session that has not
-         *     started answers the same choice, the machine it will get.
+         * Get Environment
+         * @description Each agent's environment in this conversation, the default a new agent
+         *     gets here and where it comes from, the sandbox specs this project is
+         *     offered, and the people's computers one may run on unisolated.
          */
-        get: operations["get_topic_compute_profile_topics__topic_id__compute_profile_get"];
+        get: operations["get_environment_topics__topic_id__environment_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/environment-default": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
         /**
-         * Set Topic Compute Profile
-         * @description A conversation's work computer: a room's, or a task's.
-         *
-         *     Every session working on the choice moves with it, each after one
-         *     best-effort checkpoint (``machine/session_work.request_choice``): for the
-         *     room, its own sessions and those of tasks that follow it; for a task, the
-         *     task's. Only the task's owner, a project manager or the owner of a device
-         *     the task holds changes a task's, or the task's own session. A person's own
-         *     computer works only that person's tasks.
+         * Set Environment Default
+         * @description What a new agent in this conversation gets; None to take the room's
+         *     (for a task) or the project's. Nobody already here moves. A person's
+         *     choice: an agent changes only its own environment.
          */
-        put: operations["set_topic_compute_profile_topics__topic_id__compute_profile_put"];
+        put: operations["set_environment_default_topics__topic_id__environment_default_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/sessions/{session_id}/environment": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Session Environment
+         * @description Give one agent here another environment. Only that agent moves, after
+         *     one best-effort checkpoint where it was. An agent may change its own,
+         *     never another's, and never to a machine without isolation.
+         */
+        put: operations["set_session_environment_topics__topic_id__sessions__session_id__environment_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -10517,6 +10824,53 @@ export interface paths {
          */
         get: operations["preview_file_topics__topic_id__preview_file_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mark Topic Read
+         * @description 已读位: bump the caller's read cursor on a room or on one of its tasks
+         *     (opening either clears its unread badge, Feishu-style). ``topic_id`` is
+         *     the conversation's id; the door is its room's.
+         *
+         *     The cursor is per person, so whose it is comes from the verified
+         *     credential — ``handle`` in the body is only an assertion checked against
+         *     it (it used to BE the identity, letting anyone move anyone's cursor).
+         */
+        post: operations["mark_topic_read_topics__topic_id__read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/topics/{topic_id}/notify-level": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set Topic Notify Level
+         * @description 这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO
+         *     时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。
+         */
+        put: operations["set_topic_notify_level_topics__topic_id__notify_level_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -11959,6 +12313,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/me/onboarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Finish the new-user guide: save the answers and make the project */
+        post: operations["finish_onboarding_users_me_onboarding_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/users/{userId}/passkeys/options": {
         parameters: {
             query?: never;
@@ -12566,6 +12937,31 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /** AddCard */
+        AddCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "add";
+            /** Ref */
+            ref?: string | null;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /** Task */
+            task?: string | null;
+            /** X */
+            x?: number | null;
+            /** Y */
+            y?: number | null;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
+        };
         /** AddEmailCodeRequest */
         AddEmailCodeRequest: {
             /** Email */
@@ -12791,6 +13187,12 @@ export interface components {
             where?: string | null;
             /** Request Id */
             request_id?: string | null;
+            /** Received Events */
+            received_events?: number | null;
+            /** Upstream Failure */
+            upstream_failure?: string | null;
+            /** Ended By */
+            ended_by?: string | null;
         };
         /** BindTeamRequest */
         BindTeamRequest: {
@@ -12942,12 +13344,207 @@ export interface components {
             /** Updates */
             updates: components["schemas"]["NotificationUpdate"][];
         };
+        /** CanvasCardOut */
+        CanvasCardOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Number */
+            number: number;
+            /** Content */
+            content: string;
+            /** X */
+            x: number | null;
+            /** Y */
+            y: number | null;
+            /** Width */
+            width: number | null;
+            /** Height */
+            height: number | null;
+            task: components["schemas"]["CanvasTaskOut"] | null;
+            /** Task Hidden */
+            task_hidden: boolean;
+            /** Updated By */
+            updated_by: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** CanvasChangedOut */
+        CanvasChangedOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Height */
+            height: number | null;
+            /** Writable */
+            writable: boolean;
+            /** Cards */
+            cards: components["schemas"]["CanvasCardOut"][];
+            /** Edges */
+            edges: components["schemas"]["CanvasEdgeOut"][];
+            /** Refs */
+            refs: {
+                [key: string]: number;
+            };
+            /** Added */
+            added: number[];
+        };
+        /** CanvasChangedOutEnvelope */
+        CanvasChangedOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["CanvasChangedOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** CanvasCopyIn */
+        CanvasCopyIn: {
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+        };
+        /** CanvasEdgeOut */
+        CanvasEdgeOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * From
+             * Format: uuid
+             */
+            from: string;
+            /**
+             * To
+             * Format: uuid
+             */
+            to: string;
+            /** Label */
+            label: string;
+        };
+        /** CanvasOut */
+        CanvasOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Document Id
+             * Format: uuid
+             */
+            document_id: string;
+            /** Height */
+            height: number | null;
+            /** Writable */
+            writable: boolean;
+            /** Cards */
+            cards: components["schemas"]["CanvasCardOut"][];
+            /** Edges */
+            edges: components["schemas"]["CanvasEdgeOut"][];
+        };
+        /** CanvasOutEnvelope */
+        CanvasOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["CanvasOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** CanvasPatchIn */
+        CanvasPatchIn: {
+            /** Height */
+            height: number | null;
+        };
+        /**
+         * CanvasTaskOut
+         * @description The task a card points at, as the reader's board shows it.
+         */
+        CanvasTaskOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Number */
+            number: number | null;
+            /** Title */
+            title: string;
+            /**
+             * Room Id
+             * Format: uuid
+             */
+            room_id: string;
+            /** Column */
+            column: string;
+            /** Phrase */
+            phrase: string;
+        };
+        /** CanvasTextOut */
+        CanvasTextOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Text */
+            text: string;
+        };
+        /** CanvasTextOutEnvelope */
+        CanvasTextOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["CanvasTextOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** ChangePasswordRequest */
         ChangePasswordRequest: {
             /** Password */
             password: string;
             /** Sudoticket */
             sudoTicket?: string | null;
+        };
+        /** ChangesIn */
+        ChangesIn: {
+            /** Changes */
+            changes: (components["schemas"]["AddCard"] | components["schemas"]["UpdateCard"] | components["schemas"]["MoveCard"] | components["schemas"]["DeleteCard"] | components["schemas"]["Connect"] | components["schemas"]["Disconnect"])[];
         };
         /**
          * ChatAttachmentIn
@@ -13193,37 +13790,12 @@ export interface components {
             /** Truncated */
             truncated?: boolean | null;
         };
-        /**
-         * ComputeChoice
-         * @description Which machine a room works on: a cloud sandbox, a whole cloud VM, or a
-         *     self-hosted device.
-         *
-         *     Cloud is either a sandbox on a platform host, or with ``whole_machine`` a
-         *     whole virtual machine for each session, for work a sandbox cannot do
-         *     (Docker, KVM, kernel modules, root). Neither has a spec to choose: every
-         *     sandbox gets the same fixed share of a host, and every VM the deployment's
-         *     one VM size. ``name`` is only ever a device's own name, a proper
-         *     noun that reads the same in every language. A choice the platform describes
-         *     — the cloud, and 「any online device」 — carries no name: it is identified
-         *     by its fields, and each reader's screen renders its own label for it. A
-         *     stored name would be one language's words shown to every member of the
-         *     project.
-         */
-        ComputeChoice: {
-            /** Name */
-            name?: string | null;
-            /**
-             * Profile
-             * @enum {string}
-             */
-            profile: "cloud" | "device";
-            /** Device Id */
-            device_id?: string | null;
-            /**
-             * Whole Machine
-             * @default false
-             */
-            whole_machine: boolean;
+        /** ComputeConfigsIn */
+        ComputeConfigsIn: {
+            /** Default */
+            default: {
+                [key: string]: unknown;
+            };
         };
         /**
          * ConclusionIn
@@ -13252,6 +13824,27 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /**
+         * Connect
+         * @description A line from one card to another; between two connected cards it
+         *     replaces the words on the line.
+         */
+        Connect: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "connect";
+            /** From */
+            from: number | string;
+            /** To */
+            to: number | string;
+            /**
+             * Label
+             * @default
+             */
+            label: string;
+        };
         /** ConnectRequest */
         ConnectRequest: {
             /** Device Code */
@@ -13273,6 +13866,40 @@ export interface components {
             request: {
                 [key: string]: unknown;
             };
+        };
+        /** ConversationRefOut */
+        ConversationRefOut: {
+            /** Kind */
+            kind: string;
+            /** Title */
+            title: string;
+            /** Room Id */
+            room_id: string;
+            /** Project Id */
+            project_id: string;
+        };
+        /**
+         * ConversationRefs
+         * @description What each id that names something names, by id.
+         */
+        ConversationRefs: {
+            [key: string]: components["schemas"]["ConversationRefOut"];
+        };
+        /** ConversationRefsEnvelope */
+        ConversationRefsEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["ConversationRefs"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** CreateInviteCodeRequest */
         CreateInviteCodeRequest: {
@@ -13457,6 +14084,16 @@ export interface components {
              */
             avatarId: number;
         };
+        /** DeleteCard */
+        DeleteCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "delete";
+            /** Card */
+            card: number | string;
+        };
         /**
          * Deleted
          * @description ``ok({"deleted": True})``: the thing is gone (or was never there to see).
@@ -13496,6 +14133,18 @@ export interface components {
          * @enum {string}
          */
         DigestCadence: "daily" | "weekly" | "off";
+        /** Disconnect */
+        Disconnect: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "disconnect";
+            /** From */
+            from: number | string;
+            /** To */
+            to: number | string;
+        };
         /** Dismissed */
         Dismissed: {
             /** Dismissed */
@@ -13525,6 +14174,35 @@ export interface components {
             expected_version: number;
             /** Operation Id */
             operation_id?: string | null;
+        };
+        /** DocumentCanvasTextOut */
+        DocumentCanvasTextOut: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Text */
+            text: string;
+            /** Title */
+            title: string;
+        };
+        /** DocumentCanvasTextOutListEnvelope */
+        DocumentCanvasTextOutListEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            /** Data */
+            data: components["schemas"]["DocumentCanvasTextOut"][];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /**
          * DocumentIn
@@ -13610,6 +14288,45 @@ export interface components {
             variables?: {
                 [key: string]: string;
             };
+        };
+        /** EnvironmentDefaultIn */
+        EnvironmentDefaultIn: {
+            /** Environment */
+            environment?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** EnvironmentDefaultOut */
+        EnvironmentDefaultOut: {
+            /** Default */
+            default: (components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"]) | null;
+        };
+        /** EnvironmentDefaultOutEnvelope */
+        EnvironmentDefaultOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["EnvironmentDefaultOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** EnvironmentDeviceOut */
+        EnvironmentDeviceOut: {
+            /** Device Id */
+            device_id: string;
+            /** Name */
+            name: string;
+            /** Online */
+            online: boolean;
+            /** Owned */
+            owned: boolean;
         };
         /** EventChoiceIn */
         EventChoiceIn: {
@@ -14626,6 +15343,201 @@ export interface components {
             /** Totpcode */
             totpCode?: string | null;
         };
+        /** MachineConfigOut */
+        MachineConfigOut: {
+            /** Slots Per Core */
+            slots_per_core: number;
+            /** Sandbox Memory Mb */
+            sandbox_memory_mb: number;
+            /** Sandbox Idle S */
+            sandbox_idle_s: number;
+            /** Host Idle Hold S */
+            host_idle_hold_s: number;
+            /** Vm Idle S */
+            vm_idle_s: number;
+        };
+        /** MachineHistoryOut */
+        MachineHistoryOut: {
+            /** Since */
+            since: string;
+            /** Prepared */
+            prepared: number;
+            /** Ready */
+            ready: number;
+            /** Abandoned */
+            abandoned: number;
+            /** Replaced */
+            replaced: number;
+            /** Released Idle */
+            released_idle: number;
+            /** Released Unpaid */
+            released_unpaid: number;
+            /** Wait P50 S */
+            wait_p50_s: number | null;
+            /** Wait P95 S */
+            wait_p95_s: number | null;
+            /** Wait Max S */
+            wait_max_s: number | null;
+            /** Refused Sessions */
+            refused_sessions: number;
+            /** Refused By Reason */
+            refused_by_reason: {
+                [key: string]: number;
+            };
+            /** Hosts Lost */
+            hosts_lost: number;
+            /** Hosts Lost By Reason */
+            hosts_lost_by_reason: {
+                [key: string]: number;
+            };
+            /** Sandboxes Lost */
+            sandboxes_lost: number;
+        };
+        /** MachineHostOut */
+        MachineHostOut: {
+            /** Id */
+            id: string;
+            /** Hostname */
+            hostname: string;
+            /** Machine Id */
+            machine_id: number | null;
+            /** Whole Machine */
+            whole_machine: boolean;
+            /** Project */
+            project: string | null;
+            /** Phase */
+            phase: string;
+            /** Status */
+            status: string;
+            /** Online */
+            online: boolean;
+            /** Ip */
+            ip: string | null;
+            /** Cores */
+            cores: number;
+            /** Memory Mb */
+            memory_mb: number;
+            /** Disk Gb */
+            disk_gb: number;
+            /** Slots */
+            slots: number;
+            /** Used */
+            used: number;
+            /** Created At */
+            created_at: string | null;
+            /** Enrolled At */
+            enrolled_at: string | null;
+            /** Last Seen At */
+            last_seen_at: string | null;
+            /** Idle Since */
+            idle_since: string | null;
+            /** Offline Since */
+            offline_since: string | null;
+            /** Failed At */
+            failed_at: string | null;
+            /** Released At */
+            released_at: string | null;
+            /** Enroll Attempts */
+            enroll_attempts: number;
+            /** Enroll Error */
+            enroll_error: string | null;
+            /** Sandboxes */
+            sandboxes: components["schemas"]["MachineSandboxOut"][];
+        };
+        /** MachinePoolOut */
+        MachinePoolOut: {
+            /** Hosts */
+            hosts: number;
+            /** Vms */
+            vms: number;
+            /** Max Hosts */
+            max_hosts: number;
+            /** At Cap */
+            at_cap: boolean;
+            /** Slots */
+            slots: number;
+            /** Used */
+            used: number;
+            /** Free */
+            free: number;
+            /** Min Free */
+            min_free: number;
+            /** Waiting */
+            waiting: number;
+            /** Oldest Wait Since */
+            oldest_wait_since: string | null;
+            /** Provider Failures */
+            provider_failures: number;
+            /** Provider Failure Limit */
+            provider_failure_limit: number;
+            /** Provider Window Min */
+            provider_window_min: number;
+            /** Provider Probe Min */
+            provider_probe_min: number;
+            /** Last Provider Failure */
+            last_provider_failure: string | null;
+            /** Refusing */
+            refusing: boolean;
+            /** Warm Target */
+            warm_target: number;
+        };
+        /** MachineSandboxOut */
+        MachineSandboxOut: {
+            /** Id */
+            id: string;
+            /** Spec */
+            spec: string;
+            /** State */
+            state: string;
+            /** Project Id */
+            project_id: string;
+            /** Project */
+            project: string | null;
+            /** Room Id */
+            room_id: string;
+            /** Room */
+            room: string | null;
+            /** Placed At */
+            placed_at: string | null;
+            /** Waiting Since */
+            waiting_since: string | null;
+            /** Active At */
+            active_at: string | null;
+            /** Stopped At */
+            stopped_at: string | null;
+            /** Idle Deadline */
+            idle_deadline: string | null;
+        };
+        /** MachinesOverviewOut */
+        MachinesOverviewOut: {
+            /** Configured */
+            configured: boolean;
+            /** Now */
+            now: string;
+            pool: components["schemas"]["MachinePoolOut"];
+            config: components["schemas"]["MachineConfigOut"];
+            /** Hosts */
+            hosts: components["schemas"]["MachineHostOut"][];
+            /** Warm */
+            warm: components["schemas"]["WarmMachineOut"][];
+            history: components["schemas"]["MachineHistoryOut"];
+        };
+        /** MachinesOverviewOutEnvelope */
+        MachinesOverviewOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["MachinesOverviewOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** MailIn */
         MailIn: {
             /**
@@ -14797,6 +15709,24 @@ export interface components {
             /** Selectable */
             selectable?: boolean | null;
         };
+        /** MoveCard */
+        MoveCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "move";
+            /** Card */
+            card: number | string;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+            /** Width */
+            width?: number | null;
+            /** Height */
+            height?: number | null;
+        };
         /** NoteCreate */
         NoteCreate: {
             /** Body */
@@ -14913,11 +15843,128 @@ export interface components {
             /** Base */
             base: string | null;
         };
+        /** OnboardingIn */
+        OnboardingIn: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Project Name */
+            project_name: string;
+            /**
+             * Intent
+             * @default
+             */
+            intent: string;
+            /** Nickname */
+            nickname?: string | null;
+            /** Work Role */
+            work_role?: ("student" | "teacher" | "office" | "research" | "maker" | "other") | null;
+            /** Organization */
+            organization?: string | null;
+            /** Invitees */
+            invitees?: string[];
+            /**
+             * Solo
+             * @default true
+             */
+            solo: boolean;
+            /** Device Id */
+            device_id?: string | null;
+        };
+        /** OnboardingOut */
+        OnboardingOut: {
+            /**
+             * Project Id
+             * Format: uuid
+             */
+            project_id: string;
+            /** Root Topic Id */
+            root_topic_id: string | null;
+            /** Not Invited */
+            not_invited: string[];
+            /** On Device */
+            on_device: boolean;
+        };
+        /** OnboardingOutEnvelope */
+        OnboardingOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["OnboardingOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** OwnAgentCallersUpdate */
+        OwnAgentCallersUpdate: {
+            callers: components["schemas"]["OwnCallers"];
+        };
+        /** OwnAgentMachineOut */
+        OwnAgentMachineOut: {
+            /** Name */
+            name: string;
+            /** Online */
+            online: boolean;
+        };
+        /** OwnAgentOut */
+        OwnAgentOut: {
+            /** Handle */
+            handle: string;
+            /** Name */
+            name: string | null;
+            callers: components["schemas"]["OwnCallers"];
+            /** Owner Handle */
+            owner_handle: string | null;
+            /** Owner Name */
+            owner_name: string | null;
+            /** Machines */
+            machines: components["schemas"]["OwnAgentMachineOut"][];
+        };
+        /** OwnAgentsOut */
+        OwnAgentsOut: {
+            /** Allowed */
+            allowed: boolean;
+            /** Can Manage */
+            can_manage: boolean;
+            /** Agents */
+            agents: components["schemas"]["OwnAgentOut"][];
+        };
+        /** OwnAgentsOutEnvelope */
+        OwnAgentsOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["OwnAgentsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** OwnAgentsUpdate */
         OwnAgentsUpdate: {
             /** Allowed */
             allowed: boolean;
         };
+        /**
+         * OwnCallers
+         * @description Who may set a member's own agent to work. Its owner decides; the
+         *     platform does not look at what the agent signs in with.
+         * @enum {string}
+         */
+        OwnCallers: "owner" | "project";
         /** PageCheckIn */
         PageCheckIn: {
             /** Html */
@@ -15405,10 +16452,6 @@ export interface components {
             /** Result */
             result?: string | null;
         };
-        /** ProjectComputeConfigs */
-        ProjectComputeConfigs: {
-            default: components["schemas"]["ComputeChoice"];
-        };
         /** ProjectCreate */
         ProjectCreate: {
             /** Id */
@@ -15826,6 +16869,57 @@ export interface components {
              */
             reason: string;
         };
+        /**
+         * RoomFileListOut
+         * @description 文件区的清单：``data`` 是文件，``truncated`` 说清单是不是全部。
+         */
+        RoomFileListOut: {
+            /** Data */
+            data: components["schemas"]["RoomFileOut"][];
+            /** Total */
+            total: number;
+            /** Truncated */
+            truncated: boolean;
+        };
+        /** RoomFileListOutEnvelope */
+        RoomFileListOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["RoomFileListOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /**
+         * RoomFileOut
+         * @description 文件区里的一份文件：路径、大小、最后一次改动的时间，以及最后是谁从哪条路
+         *     放下的。
+         *
+         *     作者是平台按写下来的那次动作记的（谁按的保存、谁交的），不是谁自己填的。三个
+         *     字段都可能空：目录里的一份文件可能从没有过保存记录（清单列的是目录本身，字节
+         *     可以由别的东西直接放进去），那时界面照列，只是说不出是谁写的。
+         */
+        RoomFileOut: {
+            /** Path */
+            path: string;
+            /** Bytes */
+            bytes: number;
+            /** Modified At */
+            modified_at: string;
+            /** Author */
+            author: string | null;
+            /** Author Kind */
+            author_kind: string | null;
+            /** Source */
+            source: string | null;
+        };
         /** RoutineIn */
         RoutineIn: {
             /** Title */
@@ -15882,6 +16976,26 @@ export interface components {
             /** Agent Handle */
             agent_handle?: string | null;
         };
+        /** Sandbox */
+        Sandbox: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "sandbox";
+            /**
+             * Spec
+             * @default standard
+             */
+            spec: string;
+        };
+        /** SandboxSpecOut */
+        SandboxSpecOut: {
+            /** Spec */
+            spec: string;
+            /** Label */
+            label: string;
+        };
         /** SearchIn */
         SearchIn: {
             /** Query */
@@ -15920,12 +17034,72 @@ export interface components {
             /** End */
             end: number;
         };
+        /** SelfHosted */
+        SelfHosted: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "self_hosted";
+            /** Device Id */
+            device_id: string;
+        };
         /** SendEmailCodeRequest */
         SendEmailCodeRequest: {
             /** Email */
             email: string;
             /** Invitecode */
             inviteCode?: string | null;
+        };
+        /** SessionEnvironmentChangeOut */
+        SessionEnvironmentChangeOut: {
+            /** Environment */
+            environment: components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"];
+            /** Keeps Nothing */
+            keeps_nothing: boolean;
+        };
+        /** SessionEnvironmentChangeOutEnvelope */
+        SessionEnvironmentChangeOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["SessionEnvironmentChangeOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
+        /** SessionEnvironmentIn */
+        SessionEnvironmentIn: {
+            /** Environment */
+            environment: {
+                [key: string]: unknown;
+            };
+            /**
+             * If Idle
+             * @default false
+             */
+            if_idle: boolean;
+        };
+        /** SessionEnvironmentOut */
+        SessionEnvironmentOut: {
+            /** Session Id */
+            session_id: string;
+            /** Agent Handle */
+            agent_handle: string;
+            /** Seat Handle */
+            seat_handle: string;
+            /** Environment */
+            environment: (components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"]) | null;
+            /** Status */
+            status: string | null;
+            /** Online */
+            online: boolean;
         };
         /**
          * SheetCellQuoteIn
@@ -16061,6 +17235,37 @@ export interface components {
         SlugIn: {
             /** Slug */
             slug: string;
+        };
+        /**
+         * StartStepsOut
+         * @description What the new-user guide needs to know about the caller
+         *     (`GET /projects/{id}/start-steps`).
+         */
+        StartStepsOut: {
+            /** Asked */
+            asked: boolean;
+            /** Answered */
+            answered: boolean;
+            /** Accepted */
+            accepted: boolean;
+            /** Learned */
+            learned: boolean;
+        };
+        /** StartStepsOutEnvelope */
+        StartStepsOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["StartStepsOut"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** StoreIn */
         StoreIn: {
@@ -16353,6 +17558,40 @@ export interface components {
              */
             members_only: boolean;
         };
+        /** TopicEnvironmentOut */
+        TopicEnvironmentOut: {
+            /** Default */
+            default: (components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"]) | null;
+            /**
+             * Default From
+             * @enum {string}
+             */
+            default_from: "task" | "room" | "project" | "deployment";
+            /** Effective Default */
+            effective_default: components["schemas"]["Sandbox"] | components["schemas"]["SelfHosted"];
+            /** Sessions */
+            sessions: components["schemas"]["SessionEnvironmentOut"][];
+            /** Devices */
+            devices: components["schemas"]["EnvironmentDeviceOut"][];
+            /** Specs */
+            specs: components["schemas"]["SandboxSpecOut"][];
+        };
+        /** TopicEnvironmentOutEnvelope */
+        TopicEnvironmentOutEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["TopicEnvironmentOut"];
+            /** Warnings */
+            warnings?: string[] | null;
+        };
         /** TopicMemberCreate */
         TopicMemberCreate: {
             /** Handle */
@@ -16372,6 +17611,20 @@ export interface components {
             role: "user" | "assistant";
             /** Content */
             content: string;
+        };
+        /** UpdateCard */
+        UpdateCard: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            op: "update";
+            /** Card */
+            card: number | string;
+            /** Content */
+            content?: string | null;
+            /** Task */
+            task?: string | null;
         };
         /** ValidationError */
         ValidationError: {
@@ -16409,6 +17662,27 @@ export interface components {
              * @default
              */
             note: string;
+        };
+        /** WarmMachineOut */
+        WarmMachineOut: {
+            /** Id */
+            id: string;
+            /** State */
+            state: string;
+            /** Machine Id */
+            machine_id: number | null;
+            /** Ip */
+            ip: string | null;
+            /** Online */
+            online: boolean;
+            /** Created At */
+            created_at: string | null;
+            /** Enrolled At */
+            enrolled_at: string | null;
+            /** Attempts */
+            attempts: number;
+            /** Error */
+            error: string | null;
         };
         /**
          * WebElementQuoteIn
@@ -16546,6 +17820,40 @@ export interface components {
             w: number;
             /** H */
             h: number;
+        };
+        /**
+         * WithdrawnAnswer
+         * @description 撤回一道题的回答，回的是这道题撤回之后的样子。
+         *
+         *     和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+         *     不必再取一次。
+         */
+        WithdrawnAnswer: {
+            /** Id */
+            id: string;
+            /**
+             * Answer Log
+             * @default []
+             */
+            answer_log: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** WithdrawnAnswerEnvelope */
+        WithdrawnAnswerEnvelope: {
+            /**
+             * Code
+             * @default 200
+             */
+            code: number;
+            /**
+             * Message
+             * @default ok
+             */
+            message: string;
+            data: components["schemas"]["WithdrawnAnswer"];
+            /** Warnings */
+            warnings?: string[] | null;
         };
         /** WorkLeaseRequest */
         WorkLeaseRequest: {
@@ -17197,6 +18505,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_refs_addresses_refs_get: {
+        parameters: {
+            query?: {
+                ids?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationRefsEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -18921,6 +20260,26 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+        };
+    };
+    machines_stats_admin_stats_machines_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MachinesOverviewOutEnvelope"];
                 };
             };
         };
@@ -20730,6 +22089,268 @@ export interface operations {
             };
         };
     };
+    withdraw_answer_blocks__block_id__answer_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawnAnswerEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_canvases_documents__document_id__canvases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DocumentCanvasTextOutListEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_canvas_documents__document_id__canvases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_canvas_canvases__canvas_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    patch_canvas_canvases__canvas_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CanvasPatchIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    canvas_text_canvases__canvas_id__text_get: {
+        parameters: {
+            query?: {
+                positions?: boolean;
+            };
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasTextOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    change_canvas_canvases__canvas_id__changes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChangesIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasChangedOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_canvas_canvases__canvas_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                canvas_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CanvasCopyIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CanvasOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_attitude_to_comment_comments__commentId__attitudes_post: {
         parameters: {
             query?: never;
@@ -21163,6 +22784,39 @@ export interface operations {
         };
     };
     check_my_claude_code_connector_my_devices__device_id__claude_code_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                device_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    } | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_my_sandbox_connector_my_devices__device_id__sandbox_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -22217,6 +23871,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    document_image_documents__document_id__image_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                document_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image's bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                    "image/jpeg": unknown;
+                    "image/gif": unknown;
+                    "image/webp": unknown;
                 };
             };
             /** @description Validation Error */
@@ -28822,6 +30512,7 @@ export interface operations {
         parameters: {
             query?: {
                 status?: ("open" | "closed") | null;
+                accepted?: boolean | null;
                 channel?: string | null;
                 whose?: ("mine" | "helping" | "others") | null;
                 limit?: number | null;
@@ -28877,6 +30568,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    project_start_steps_projects__project_id__start_steps_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StartStepsOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -29892,6 +31614,42 @@ export interface operations {
             };
         };
     };
+    set_own_agent_callers_projects__project_id__own_agents__handle__callers_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                project_id: string;
+                handle: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OwnAgentCallersUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OwnAgentsOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_default_model_projects__project_id__default_model_get: {
         parameters: {
             query?: never;
@@ -30006,7 +31764,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["ProjectComputeConfigs"];
+                "application/json": components["schemas"]["ComputeConfigsIn"];
             };
         };
         responses: {
@@ -31880,6 +33638,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReviewCommentOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_files_topics__topic_id__files_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoomFileListOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -37641,6 +39430,7 @@ export interface operations {
                 kind?: components["schemas"]["BlockKind"][] | null;
                 author?: string | null;
                 shown?: boolean | null;
+                stored_after?: number | null;
             };
             header?: never;
             path: {
@@ -37990,84 +39780,6 @@ export interface operations {
         };
     };
     record_weekly_topics__topic_id__weekly_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    mark_topic_read_topics__topic_id__read_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    set_topic_notify_level_topics__topic_id__notify_level_put: {
         parameters: {
             query?: never;
             header?: never;
@@ -38677,7 +40389,7 @@ export interface operations {
             };
         };
     };
-    get_topic_compute_profile_topics__topic_id__compute_profile_get: {
+    get_environment_topics__topic_id__environment_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -38694,9 +40406,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["TopicEnvironmentOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -38710,7 +40420,7 @@ export interface operations {
             };
         };
     };
-    set_topic_compute_profile_topics__topic_id__compute_profile_put: {
+    set_environment_default_topics__topic_id__environment_default_put: {
         parameters: {
             query?: never;
             header?: never;
@@ -38721,9 +40431,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    [key: string]: unknown;
-                };
+                "application/json": components["schemas"]["EnvironmentDefaultIn"];
             };
         };
         responses: {
@@ -38733,9 +40441,43 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["EnvironmentDefaultOutEnvelope"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_session_environment_topics__topic_id__sessions__session_id__environment_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SessionEnvironmentIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionEnvironmentChangeOutEnvelope"];
                 };
             };
             /** @description Validation Error */
@@ -39202,6 +40944,84 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_topic_read_topics__topic_id__read_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_topic_notify_level_topics__topic_id__notify_level_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                topic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {
@@ -41895,6 +43715,42 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    finish_onboarding_users_me_onboarding_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-User-Id"?: number | null;
+                Authorization?: string | null;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OnboardingIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OnboardingOutEnvelope"];
                 };
             };
             /** @description Validation Error */

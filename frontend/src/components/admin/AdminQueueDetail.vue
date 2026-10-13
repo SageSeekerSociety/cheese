@@ -201,8 +201,15 @@ function onSecurity(v: unknown) {
             </div>
 
             <div class="qdet__field">
-              <div class="t-eyebrow-read qdet__label">{{ t('feedback.queueDetail.priority') }}</div>
+              <!-- 标签在框外：id 得是「控件 id + -label」，Vuetify 的输入框认的就是它（见 BaseField）。
+                   label-has-for 默认要「套住控件」和「for 指过去」两样都有；控件是 v-select 组件，
+                   它看不见组件里那个 input，for/id 这一对已经把它们连上了。 -->
+              <!-- eslint-disable-next-line vuejs-accessibility/label-has-for -->
+              <label id="qdet-priority-label" for="qdet-priority" class="t-eyebrow-read qdet__label">{{
+                t('feedback.queueDetail.priority')
+              }}</label>
               <v-select
+                id="qdet-priority"
                 :model-value="item.priority"
                 :items="priorityItems"
                 autocomplete="off"

@@ -6,7 +6,7 @@ The rules, as stated before the migration was written:
 - every project gets a slug of its own;
 - tasks, documents of the project's own and channels are numbered from 1 within
   their project, in the order they were made;
-- a private chat, a task's document and the project overview get no number;
+- a private chat, a task's document and the project's goals get no number;
 - the next one made continues after the last number given.
 """
 

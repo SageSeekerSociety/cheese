@@ -33,7 +33,7 @@
  * 取数、同意、退出登录都在 `usePendingConsent`（应用外壳 App.vue 调它）——
  * 组件拿 props 画、把意图 emit 出去（.claude/rules/architecture.md 第一条）。
  */
-import type { LegalDocumentSummary } from '@/network/api/legal/types'
+import type { LegalDocumentSummary } from '@/types/apiLegal'
 
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import NavLink from '@/components/common/NavLink.vue'

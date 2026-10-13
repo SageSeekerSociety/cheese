@@ -316,17 +316,15 @@ async function seed(page: Page): Promise<Seed> {
     data: { id: string; owner_handle: string }[];
   };
   const projectId = projects.data.find((p) => p.owner_handle === "alice")!.id;
-  // A room with a started task: creating and starting it leaves platform
-  // notices in the room, and the task is what the accept card is filed against.
+  // A room with a started task: making it starts it — alice makes it, so alice
+  // reviews it — and leaves platform notices in the room. The task is what the
+  // accept card is filed against.
   const room = (await api(page, "post", "/topics", {
     project_id: projectId,
     title: "Release checklist",
   })) as { id: string };
-  const created = (await api(page, "post", `/topics/${room.id}/tasks`, {
+  const task = (await api(page, "post", `/topics/${room.id}/tasks`, {
     title: "Write the release notes",
-  })) as { id: string };
-  const task = (await api(page, "post", `/topics/${created.id}/start`, {
-    reviewer_handle: "alice",
   })) as { id: string; branch_name: string };
   await pushToTaskBranch(page, projectId, task.branch_name);
   await api(page, "post", `/topics/${task.id}/accept-card`, {
@@ -413,13 +411,13 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
       },
     },
     {
-      name: "room's members and work computer",
+      name: "room's members and environments",
       path: `${project}/topics/${roomId}`,
       ready: visible(".members-mini"),
       act: async (page) => {
         await page.locator(".members-mini").first().click();
-        await page.locator(".cp-action").first().click();
-        await page.locator(".cp-menu").waitFor();
+        await page.locator(".env-action").first().click();
+        await page.locator(".env-menu").waitFor();
       },
     },
     {

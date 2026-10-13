@@ -13,9 +13,8 @@
 from __future__ import annotations
 
 import uuid
-from itertools import chain
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlalchemy.orm import Session
 
 from app.core import background
@@ -32,11 +31,46 @@ def _channels(card: AcceptCard) -> set[str]:
     return {str(place) for place in places}
 
 
+#: When the merge state was last looked at. Rewritten on every check, shown
+#: nowhere: a check that found what the card already says changes only this.
+_UNSHOWN = frozenset({"checked_at"})
+
+
+def _shown(state: object) -> object:
+    if isinstance(state, dict):
+        return {k: v for k, v in state.items() if k not in _UNSHOWN}
+    return state
+
+
+def _changed_on_screen(card: AcceptCard) -> bool:
+    """Whether this flush changed anything a page shows of the card.
+
+    Reading a room's cards re-checks the merge state of a pending one that is
+    a minute old, and every GitHub event on its pull request does too. Telling
+    every open page each time made each of them read the cards again, which
+    re-checked the next card due: a room with five pending cards was told every
+    two seconds."""
+    for attr in inspect(card).attrs:
+        history = attr.history
+        if not history.has_changes():
+            continue
+        if attr.key != "merge_state":
+            return True
+        before = history.deleted[0] if history.deleted else None
+        after = history.added[0] if history.added else None
+        if _shown(before) != _shown(after):
+            return True
+    return False
+
+
 @event.listens_for(Session, "after_flush")
 def _note_cards(session: Session, _context) -> None:
     # `new` / `dirty` still describe what this flush wrote while it runs.
-    for row in chain(session.new, session.dirty):
+    for row in session.new:
         if isinstance(row, AcceptCard):
+            session.info.setdefault(_PENDING, set()).update(_channels(row))
+    for row in session.dirty:
+        if isinstance(row, AcceptCard) and _changed_on_screen(row):
             session.info.setdefault(_PENDING, set()).update(_channels(row))
 
 

@@ -27,9 +27,9 @@ import { attemptMessage } from '../attemptWait'
 
 import StartView, { type SignUpValues } from './StartView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { UserApi } from '@/network/api/users'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import { useSignupStore } from '@/stores/signup'
 
 const error = ref('')
@@ -49,11 +49,11 @@ const router = useRouter()
 
 onMounted(async () => {
   try {
-    const { data } = await UserApi.getRegistrationConfig()
+    const data = await UserAuthApi.getRegistrationConfig()
     requireInviteCode.value = data.requireInviteCode
     registrationConfigReady.value = true
   } catch (e) {
-    error.value = requestErrorMessage(e, t('account.registrationSettingsCouldNotBeLoadedRefresh'))
+    error.value = axiosErrorMessage(e, t('account.registrationSettingsCouldNotBeLoadedRefresh'))
   }
 })
 
@@ -73,7 +73,7 @@ const submit = async (value: SignUpValues) => {
 
     router.push('/account/signup/verify-email')
   } catch (e) {
-    error.value = attemptMessage(e) ?? requestErrorMessage(e, t('account.signUp.failed'))
+    error.value = attemptMessage(e) ?? axiosErrorMessage(e, t('account.signUp.failed'))
   } finally {
     submitting.value = false
   }

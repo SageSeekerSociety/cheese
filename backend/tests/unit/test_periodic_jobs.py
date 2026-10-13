@@ -240,7 +240,7 @@ def test_a_job_is_the_lock_holder_s_until_it_is_moved_out():
 
 
 def _jobs():
-    from app.core.background import periodic_jobs
+    from app.periodic_jobs import periodic_jobs
 
     async def _noop(*_args, **_kwargs):
         return None
@@ -248,13 +248,19 @@ def _jobs():
     return periodic_jobs(
         chat=SimpleNamespace(
             remind_silent_turns=_noop,
+            # 同一件事的另一半：一轮可以一直在说话，清单却停在开工那一版。
+            remind_stale_checklists=_noop,
             sweep_memory_dreams=_noop,
             session_factory=lambda: None,
         ),
-        machines=SimpleNamespace(sweep=_noop),
-        sandboxes=SimpleNamespace(sweep=_noop),
-        compute=SimpleNamespace(sweep=_noop),
+        machines=_noop,
+        sandboxes=_noop,
+        compute=_noop,
         sessions=lambda: None,
+        get_runner=lambda: SimpleNamespace(
+            resume_lost_messages=_noop,
+            submit=lambda *args, **kwargs: None,
+        ),
     )
 
 

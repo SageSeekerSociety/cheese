@@ -1,11 +1,11 @@
 // 项目设置里「成员自己的 Claude Code」那一块的数据：项目允不允许成员接入，以及谁接了、
-// 跑在谁的哪几台电脑上（#2991）。改开关只有管理者能做。
+// 跑在谁的哪几台电脑上（#2991）。改开关只有管理者能做；谁可以叫某一位，只有它的主人能改。
 import type { MaybeRefOrGetter } from 'vue'
-import type { OwnAgentsSettings } from '@/types/ownAgents'
+import type { OwnAgentCallers, OwnAgentsSettings } from '@/types/ownAgents'
 
 import { ref, toValue, watch } from 'vue'
 
-import { getOwnAgents, setOwnAgentsAllowed } from '@/api/ownAgents'
+import { getOwnAgents, setOwnAgentCallers, setOwnAgentsAllowed } from '@/api/ownAgents'
 import { t } from '@/i18n'
 
 export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
@@ -35,7 +35,19 @@ export function useOwnAgents(projectId: MaybeRefOrGetter<string>) {
     }
   }
 
+  async function setCallers(handle: string, callers: OwnAgentCallers) {
+    saving.value = true
+    error.value = ''
+    try {
+      state.value = await setOwnAgentCallers(toValue(projectId), handle, callers)
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : t('work.projectSettings.ownAgents.saveFailed')
+    } finally {
+      saving.value = false
+    }
+  }
+
   watch(() => toValue(projectId), load)
 
-  return { state, error, saving, load, setAllowed }
+  return { state, error, saving, load, setAllowed, setCallers }
 }

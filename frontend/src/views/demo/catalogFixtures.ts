@@ -16,6 +16,7 @@
 import type { RouteLocationRaw } from 'vue-router'
 import type { MenuCommand } from '@/commands'
 import type { DocConnection, DocPeer, DocSession } from '@/composables/useDocCollab'
+import type { MentionPoolEntry } from '@/composables/useRoomMentionPicker'
 import type { OpenFileTab } from '@/composables/useTopicMemory'
 import type {
   AcceptCard,
@@ -35,7 +36,7 @@ import type { FileDiff } from '@/lib/diff'
 import type { DocThreadActions, DocThreadState } from '@/lib/docThreadTypes'
 import type { RailMemberMark } from '@/lib/memberActivity'
 import type { VisibleRow } from '@/lib/topicTree'
-import type { SpaceLearningExcerpt } from '@/network/api/spaces/types'
+import type { SpaceLearningExcerpt } from '@/types/apiSpaces'
 import type { ChangesScene, ChatLine, Frame } from './demoScene'
 
 import { ref } from 'vue'
@@ -112,6 +113,22 @@ export const WANG_LINES = messagesOf(0, 'wang')
 export const CHEESE_LINES = messagesOf(1, 'cheese')
 /** 房间收尾那一句。 */
 export const WANG_CLOSING = latest(messagesOf(5, 'wang'))
+/** 整段对话（到收尾那一句为止）：预览站里「正在改最后一条」那一格摆的就是这些行。 */
+export const CHAT_ROWS_FULL: RoomRow[] = rows(5)
+/** 正在改的那一条：收尾那句，末尾是刚敲下的一个 `@` —— `@` 一落下候选就开着，所以
+ *  这一格不用谁先打字，打开就看得见菜单。 */
+export const WANG_EDITING_ROW: RoomRow = {
+  ...WANG_CLOSING,
+  line: { ...WANG_CLOSING.line, text: `${WANG_CLOSING.line.text} @` },
+  block: { ...WANG_CLOSING.block, content: `${WANG_CLOSING.block.content} @` },
+}
+/** 「这一条是不是我说的」：剧本里说话的那位是 `wang`，而改消息只改自己的。 */
+export const isMineWang = (b: Block): boolean => b.author === 'wang'
+/** 改消息那个框里的 @ 候选：房间里的人，AI 队友排最前（和产品里一个口径）。 */
+export const ROOM_MENTION_POOL: MentionPoolEntry[] = [
+  { handle: 'cheese', label: NAMES.cheese ?? '芝士', avatar: null, agent: true },
+  { handle: 'wang', label: NAMES.wang ?? '王长鑫', avatar: null, agent: false },
+]
 /** 这一轮结束时折出来的那几条：本轮摘要、待审阅、已采纳。 */
 export const TURN_SUMMARY = latest(noticesOf(3))
 export const CARD_FILED = latest(noticesOf(4))
@@ -709,7 +726,6 @@ const CHANGES_BASE = {
   refreshing: false,
   errorMsg: null,
   noRepo: false,
-  missing: null,
   fileDiffs: CHANGES_FILE_DIFFS,
   diffByPath: CHANGES_BY_PATH,
   treeFiles: CHANGES_TREE,
@@ -862,7 +878,7 @@ const DOC_BASE = {
     stopAgent: noopAsync,
   } as DocThreadActions,
   fetchDocNodes: async () => [],
-  imageSrc: (src: string) => src,
+  imageSrc: async (src: string) => src,
   toggleEditable: noop,
   setError: noop,
 }
@@ -916,8 +932,7 @@ const CHAT_BASE = {
   retryBusy: false,
   working: false,
   showStarters: false,
-  starterPrompts: [] as { label: string; text: string }[],
-  agentSeat: undefined as { handle?: string } | undefined,
+  starterPrompts: [] as { label: string; hint: string; text: string }[],
   agentName: AGENT_NAME,
   refs: ROOM_REFS,
   outbox: [] as Outgoing[],
@@ -961,8 +976,8 @@ export function chatTimelineProps(over: Record<string, unknown> = {}): Record<st
   }
 }
 
-/** 工作电脑表单：两台自有设备（一台离线）。 */
+/** 环境选择：两台登记的电脑，实验室那台是别人的，家里那台是读者自己的（离线）。 */
 export const COMPUTE_DEVICES = [
-  { device_id: 'lab', name: '实验室工作站', online: true },
-  { device_id: 'home', name: '家里那台', online: false },
+  { device_id: 'lab', name: '实验室工作站', online: true, owned: false },
+  { device_id: 'home', name: '家里那台', online: false, owned: true },
 ]

@@ -9,21 +9,26 @@ room is reached through `TopicService.place_or_404`. The module mounts itself:
 """
 
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
+from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession
+from app.api.routes.topics_tasks import _task_out
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
+    UnprocessableEntityError,
     ValidationError,
 )
 from app.core.sentences import say
+from app.domain.agent.chat import ChatService
 from app.domain.agent.staleness import announce_stale
-from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from app.domain.topic.schemas import TopicOut
 from app.domain.topic.services import TopicService
 
@@ -32,7 +37,11 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 
 @router.post("/{topic_id}/title")
 async def set_title(
-    topic_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
+    topic_id: uuid.UUID,
+    body: dict,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """给这个地方起/改标题: a person renaming a channel or a task, or a task's
     own session naming it (`cheese_title`, only where the platform cannot).
@@ -62,18 +71,25 @@ async def set_title(
         own_session = resolver.credential_conversation() == task.id
         if not own_session and not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
+        # A task's own session names it to the same width a teammate creating
+        # one is held to (`cheese_title`): told, not cut. A person renaming a
+        # task is left to `title[:80]` — the width rule is about what an AI
+        # teammate writes, and a person can be trusted to know what they meant.
+        if own_session and not title_fits(title):
+            raise UnprocessableEntityError(
+                say("taskTitleTooLong", limit=TITLE_WIDTH, now=title_width(title))
+            )
         TaskService(db).rename(
             task,
             title[:80],
             by=actor.handle,
             by_person=not own_session,
         )
-        out = TaskOut.model_validate(task).model_dump(mode="json")
+        # The task as its page holds it, board line included: the page writes
+        # this answer over what it has, and a task without its line drew no
+        # header until the next reload.
+        out = await _task_out(db, chat, task)
         await db.commit()
-        await announce_stale(place.room_id, "topics", id=place.room_id)
-        # The task's own page listens on the task's conversation, but the row
-        # that changed is the ROOM's in the sidebar — a task id is not a row.
-        await announce_stale(task.id, "topics", id=place.room_id)
         return ok(out)
     # Renaming a channel takes no more than being able to be in it — the rest of
     # its settings (说明、可见范围) still belong to whoever manages it

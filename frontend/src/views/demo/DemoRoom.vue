@@ -205,6 +205,10 @@ const cardKey = computed(() => JSON.stringify([props.frame.card, props.frame.che
 const accept = provideAcceptCard({
   topicId: 'demo',
   topicStatus: 'active',
+  // 读者扮的是剧本里那张卡点名的审阅人：采纳和退回只给他。
+  get viewer() {
+    return props.frame.card?.reviewer_handle
+  },
   get taskId() {
     return props.frame.card?.task_id ?? null
   },

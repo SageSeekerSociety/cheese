@@ -1,4 +1,4 @@
-// 发题页：挂的是真页面、真表单、真附件那一格，接口在 `@/network/api/*` 那一层答着
+// 发题页：挂的是真页面、真表单、真附件那一格，接口在 API 层答着
 // （真 axios 会被 `src/test/setup-network.ts` 逮住，未预期的请求直接判失败）。量的是人
 // 在这一页上做一件事之后真的发出去了什么：
 //
@@ -37,8 +37,8 @@ const uploadAttachment = vi.fn()
 const attachmentLimits = vi.fn()
 const toastError = vi.fn()
 
-vi.mock('@/network/api/tasks', () => ({
-  TasksApi: {
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: {
     previewFromPdf: (...a: unknown[]) => previewFromPdf(...a),
     confirmFromPdf: (...a: unknown[]) => confirmFromPdf(...a),
     create: (...a: unknown[]) => createTask(...a),
@@ -46,7 +46,7 @@ vi.mock('@/network/api/tasks', () => ({
   },
 }))
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spaceDetail(...a),
     listCategories: (...a: unknown[]) => listCategories(...a),
@@ -58,7 +58,7 @@ vi.mock('@/network/api/spaces', () => ({
 
 // 附件卡片选中即传（`POST /attachments`），发题请求带的是它回来的那串 id；卡片上那句
 // 「单个文件不超过…」问的是 `GET /attachments/limits`（与上传同一道门）。
-vi.mock('@/network/api/attachments', () => ({
+vi.mock('@/api/attachments', () => ({
   AttachmentsApi: {
     upload: (...a: unknown[]) => uploadAttachment(...a),
     limits: (...a: unknown[]) => attachmentLimits(...a),
@@ -198,21 +198,19 @@ async function check(input: Element) {
 /** 这条板子的分类/域名组/空间那一份（`activeCategories` 按 `displayOrder` 排、
  *  滤掉已归档，`TaskForm` 那枚下拉的选项就是它）。 */
 function categoriesBody() {
-  return { data: { categories: [{ id: 3, name: '基础题', displayOrder: 1, archivedAt: null }] } }
+  return { categories: [{ id: 3, name: '基础题', displayOrder: 1, archivedAt: null }] }
 }
 
 /** 空间那一份：角色是拿登录的人跟 `admins` 对出来的。 */
 function spaceBody() {
   return {
-    data: {
-      space: {
-        id: SPACE_ID,
-        name: '数据结构空间',
-        admins: [
-          { role: 'OWNER', user: { id: 1, username: 'owner', nickname: '所有者' } },
-          { role: 'ADMIN', user: MANAGER },
-        ],
-      },
+    space: {
+      id: SPACE_ID,
+      name: '数据结构空间',
+      admins: [
+        { role: 'OWNER', user: { id: 1, username: 'owner', nickname: '所有者' } },
+        { role: 'ADMIN', user: MANAGER },
+      ],
     },
   }
 }
@@ -280,17 +278,15 @@ function previewBody() {
 beforeEach(() => {
   spaceDetail.mockImplementation(async () => spaceBody())
   listCategories.mockImplementation(async () => categoriesBody())
-  listDomainGroups.mockImplementation(async () => ({ data: { groups: [] } }))
-  listMaterials.mockImplementation(async () => ({ data: { materials: [], canManage: false } }))
-  listTasks.mockImplementation(async () => ({ data: { tasks: [], distinctParticipants: 0 } }))
-  previewFromPdf.mockImplementation(async () => ({ data: previewBody() }))
-  confirmFromPdf.mockImplementation(async () => ({
-    data: { tasks: [{ id: 101, name: '用 gdb 定位一次段错误' }], count: 1 },
-  }))
-  createTask.mockImplementation(async () => ({ data: { task: { id: 501, approved: false } } }))
-  uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ data: { id: 41, file } }))
+  listDomainGroups.mockImplementation(async () => ({ groups: [] }))
+  listMaterials.mockImplementation(async () => ({ materials: [], canManage: false }))
+  listTasks.mockImplementation(async () => ({ tasks: [], distinctParticipants: 0 }))
+  previewFromPdf.mockImplementation(async () => previewBody())
+  confirmFromPdf.mockImplementation(async () => ({ tasks: [{ id: 101, name: '用 gdb 定位一次段错误' }], count: 1 }))
+  createTask.mockImplementation(async () => ({ task: { id: 501, approved: false } }))
+  uploadAttachment.mockImplementation(async ({ file }: { file: File }) => ({ id: 41, file }))
   // 故意不是任何「眼熟」的数（真部署那个默认是 100MB）：页面上若写了死数，下面对不上。
-  attachmentLimits.mockImplementation(async () => ({ data: { maxFileBytes: LIMIT_BYTES } }))
+  attachmentLimits.mockImplementation(async () => ({ maxFileBytes: LIMIT_BYTES }))
 })
 
 afterEach(() => {
@@ -370,7 +366,7 @@ describe('发题页：发一道', () => {
     await boardAs(MEMBER)
     spaceDetail.mockImplementation(async () => {
       const body = spaceBody()
-      ;(body.data.space as Record<string, unknown>).taskTemplates = JSON.stringify([
+      ;(body.space as Record<string, unknown>).taskTemplates = JSON.stringify([
         { name: '实验题', description: '每周实验', title: '实验 N：', content: '', submitterType: 'USER', rank: 2 },
       ])
       return body
@@ -395,7 +391,7 @@ describe('发题页：从文件导入', () => {
     previewFromPdf.mockImplementation(async () => {
       const body = previewBody()
       body.drafts = body.drafts.slice(0, 1)
-      return { data: body }
+      return body
     })
     const view = await mount()
 
@@ -425,7 +421,7 @@ describe('发题页：从文件导入', () => {
     previewFromPdf.mockImplementation(async () => {
       const body = previewBody()
       body.drafts.push({ ...body.drafts[1], name: '附录：评分细则', intro: '评分细则。' })
-      return { data: body }
+      return body
     })
     const view = await mount()
 
@@ -464,7 +460,7 @@ describe('发题页：从文件导入', () => {
     previewFromPdf.mockImplementation(async () => {
       const body = previewBody()
       body.drafts[1].name = ''
-      return { data: body }
+      return body
     })
     const view = await mount()
     await importFile(view, pdfFile())

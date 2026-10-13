@@ -10,6 +10,10 @@ work.
 The place decides that, not the credential: one signed before its task was
 started goes on saying so until the session goes quiet, and the started task
 works all the same.
+
+Making a task starts it, so the only task that keeps nothing is the one an AI
+teammate raised on its own idea and nobody has said to do yet
+(:func:`teammate_task`); a task a person made is ``place="started"``.
 """
 
 import uuid
@@ -27,12 +31,14 @@ from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
+from tests.conftest import wait_work_idle
 from tests.integration.conftest import (
     in_thread,
     open_task,
     post_project,
     room_agent_seat,
     session_auth_headers,
+    teammate_task,
 )
 
 pytestmark = pytest.mark.anyio
@@ -52,10 +58,13 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
     ).json()["data"]
     if place == "thread":
         conversation = in_thread(client, room["id"], "alice")
+    elif place == "unstarted":
+        # 建出来即已开始之后，还没开始的活只剩芝士自己想、没人让它做的那种。
+        # 造完先等它那场开场轮落地：下面要往库里写这个会话，轮子还在写就清了库。
+        conversation = teammate_task(client, room["id"], "Task", owner="alice")["id"]
+        wait_work_idle()
     else:
-        conversation = open_task(
-            client, room["id"], "Task", owner="alice", start=place == "started"
-        )["id"]
+        conversation = open_task(client, room["id"], "Task", owner="alice")["id"]
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
     seat = room_agent_seat(client, room_id)
     async with client.test_factory() as db:
@@ -111,6 +120,10 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
     )
     return {
         "conversation": conversation,
+        "room": room["id"],
+        "owner": owner.id,
+        "session": session_id,
+        "device": device.device_id,
         "resource": resource,
         # What a turn of this session presents to the executor route.
         "turn": bind_resource_token(
@@ -265,3 +278,37 @@ async def test_a_started_task_gets_the_token_that_pushes(client, monkeypatch):
     data = _forge_token(client, monkeypatch, held)
     assert data["token"] == "pushes"
     assert data["read_only"] is False
+
+
+async def _move(client, monkeypatch, held: dict) -> dict:
+    """The session moves itself into a sandbox on its owner's computers."""
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+    response = client.put(
+        f"/topics/{held['conversation']}/sessions/{held['session']}/environment",
+        headers={"X-Cheese-Token": held["turn"]},
+        json={
+            "environment": {"kind": "sandbox", "spec": f"devices_of:{held['owner']}"}
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
+
+
+@pytest.mark.parametrize("place", ["thread", "unstarted"])
+async def test_a_session_that_keeps_nothing_is_told_so_when_it_moves(
+    client, monkeypatch, place
+):
+    """Moving does not let it keep its work: the answer to the move says so,
+    rather than its first push being refused and sending it to look for an
+    environment that would take it."""
+    held = await _session(client, place)
+    moved = await _move(client, monkeypatch, held)
+    assert moved["keeps_nothing"] is True
+
+
+async def test_a_started_task_that_moves_is_not_told_it_keeps_nothing(
+    client, monkeypatch
+):
+    held = await _session(client, "started")
+    moved = await _move(client, monkeypatch, held)
+    assert moved["keeps_nothing"] is False

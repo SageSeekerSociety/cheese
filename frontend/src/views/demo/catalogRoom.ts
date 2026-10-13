@@ -16,7 +16,6 @@
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `ROOM_ENTRIES` 这个
  * 值，运行时不构成循环。
  */
-import type { GettingStartedStep } from '@/composables/useGettingStarted'
 import type { MentionItem } from '@/composables/useRoomMentionPicker'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { TaskLine } from '@/lib/channelTasks'
@@ -26,13 +25,15 @@ import AskQuickReplies from '../../components/ask/AskQuickReplies.vue'
 
 import { AGENT_NAME } from './catalogFixtures'
 
+import GuideBubble from '@/components/common/GuideBubble.vue'
 import AttachmentChip from '@/components/room/AttachmentChip.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerChipRow from '@/components/room/ComposerChipRow.vue'
-import GettingStartedCard from '@/components/room/GettingStartedCard.vue'
 import MentionMenu from '@/components/room/MentionMenu.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import TaskCreatedPost from '@/components/room/TaskCreatedPost.vue'
+import TaskHeader from '@/components/task/TaskHeader.vue'
+import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 
 /** 这几件都要 vuetify（`v-icon` / `v-spacer` / `v-btn`），还都有不写死在模板里的字：
  *  「外部」、「取消回复」、`t('work.room.composer.summon')`。 */
@@ -149,7 +150,113 @@ function taskLine(over: Partial<TaskLine>): TaskLine {
   }
 }
 
+/** 任务页页头那一格：一件还没开始的任务，一位 AI 队友，它的会话在标准沙箱里。 */
+const TASK_HEADER_PROPS = {
+  room: { id: 'demo-room', project_id: 'demo', title: '前端', kind: 'topic', status: 'active' },
+  task: {
+    id: 'demo-task',
+    project_id: 'demo',
+    room_id: 'demo-room',
+    title: '登录页加「记住我」',
+    title_source: 'human',
+    status: 'open',
+    owner_handle: 'alice',
+    started_at: null,
+    created_at: '2026-10-05T00:00:00Z',
+    updated_at: '2026-10-05T00:00:00Z',
+    presentation: { column: 'not_started', phrase: 'discussing' },
+  },
+  memberNames: { 'cheese-topica': AGENT_NAME },
+  agentName: AGENT_NAME,
+  people: [{ member_handle: 'alice', agent: false }],
+  agents: [{ member_handle: 'cheese-topica', agent: true }],
+  machine: {
+    default: { kind: 'sandbox', spec: 'standard' },
+    default_from: 'room',
+    devices: [],
+    specs: [{ spec: 'standard', label: '标准' }],
+    sessions: [
+      {
+        session_id: 'demo-session',
+        agent_handle: 'cheese-topica',
+        seat_handle: 'cheese-topica',
+        environment: { kind: 'sandbox', spec: 'standard' },
+        status: 'ready',
+        online: true,
+      },
+    ],
+  },
+  machineError: false,
+  starting: false,
+  startError: null,
+  actionError: null,
+  start: async () => {},
+  close: async () => true,
+  reopen: async () => true,
+  handOver: async () => true,
+  rename: async () => true,
+  setCollaborators: async () => true,
+  setAgent: async () => true,
+  loadMachine: async () => {},
+  setMachine: async () => ({}),
+  setMachineDefault: async () => ({}),
+}
+
 const TASK_ENTRIES: CatalogEntry[] = [
+  {
+    id: 'task-header',
+    title: 'TaskHeader',
+    about:
+      '任务页的页头：「# 频道 / 任务名」和此刻的状态，右边是负责人、协作者和「开始」；点开任务信息能看到每条会话的环境。',
+    file: 'src/components/task/TaskHeader.vue',
+    component: TaskHeader,
+    needs: UI_T,
+    states: [
+      {
+        name: '还没开始',
+        note: '一件刚建好的任务：标题在左，状态写着在讨论；数据都从 props 来，开始、改环境这些动作交给上面。',
+        props: TASK_HEADER_PROPS,
+        expect: '登录页加「记住我」',
+      },
+    ],
+  },
+  {
+    id: 'task-source-line',
+    title: 'TaskSourceLine',
+    about: '任务页「概览」顶上那一行：这个任务是从哪句话来的。点它回到说这句话的那段对话，停在这一条上。',
+    file: 'src/components/task/TaskSourceLine.vue',
+    component: TaskSourceLine,
+    needs: UI_T,
+    args: {
+      task: { ...TASK_HEADER_PROPS.task, created_by: 'alice' },
+      memberNames: { alice: 'Alice', 'cheese-topica': AGENT_NAME },
+    },
+    states: [
+      {
+        name: '从支线里的一句话来',
+        note: '引原话：谁说的、在哪个频道的支线里、什么时候；@ 过的人读成名字。',
+        props: {
+          source: {
+            block_id: 'demo-block',
+            author: 'alice',
+            content: '<@cheese-topica> 登录页加一个「记住我」，勾上以后七天内不用再登录',
+            created_at: '2026-10-05T00:00:00Z',
+            conversation_id: 'demo-thread',
+            room_id: 'demo-room',
+            where: 'thread',
+            title: '前端',
+          },
+        },
+        expect: '来自 #前端 的一条支线',
+      },
+      {
+        name: '自己新建的',
+        note: '不是从哪句话转来的任务，照实说是谁新建的，不拿别的话顶替。',
+        props: { source: null },
+        expect: 'Alice 新建的任务，不是从对话里转出来的',
+      },
+    ],
+  },
   {
     id: 'room-task-card',
     title: 'TaskCard',
@@ -219,24 +326,6 @@ const CHIP_FAILED: PendingAttachment = {
   error: true,
 }
 const CHIP_IMAGE: PendingAttachment = { path: 'uploads/demo/板书.png', mime: 'image/png', name: '板书.png' }
-
-// ---- 开始清单（GettingStartedCard）-------------------------------------------
-
-/** 四步一步都没做。 */
-const GS_NONE: GettingStartedStep[] = [
-  { key: 'talk', done: false },
-  { key: 'materials', done: false },
-  { key: 'repo', done: false },
-  { key: 'people', done: false },
-]
-
-/** 说上话了、也放过材料了，仓库还没接、同事已经请了一个。 */
-const GS_SOME: GettingStartedStep[] = [
-  { key: 'talk', done: true },
-  { key: 'materials', done: true },
-  { key: 'repo', done: false },
-  { key: 'people', done: true },
-]
 
 export const ROOM_ENTRIES: CatalogEntry[] = [
   {
@@ -387,14 +476,14 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     id: 'ask-quick-replies',
     title: 'AskQuickReplies',
     about:
-      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」。输入框始终在，不被它占用。',
+      '芝士问的一道题下面那排快捷回复：点一个就是把那几个字作为对这道题的回复发出去，和在输入框里打字是同一件事；有人答过之后换成「谁说了什么」，答的那位旁边多一个「撤回」。输入框始终在，不被它占用。选项之外永远多一颗「其他」：点开就地长出输入框，发的是他自己打的字，不是「其他」这两个字。',
     file: 'src/components/ask/AskQuickReplies.vue',
     component: AskQuickReplies,
     needs: UI_T,
     states: [
       {
         name: '刚问出来',
-        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。',
+        note: '选项各自带一句说明；模型标了推荐的那一项多一个「推荐」。末尾那颗「其他」点开就地长出输入框——模型没给的答案从这儿写，发出去的仍然是他自己那句话。',
         props: {
           block: askBlock([]),
           names: {},
@@ -402,14 +491,25 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '有人答过了',
-        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。',
+        note: '按钮收起，列出答过的每一句：点的选项，或他自己打的字。答的人不是看着这一页的人，所以没有撤回的入口。',
         props: {
           block: askBlock([
             { kind: 'option', option: '按部门', note: null, by: 'alice', at: null },
             { kind: 'note', option: null, note: '外包单列一栏', by: 'bob', at: null },
           ]),
           names: { alice: 'Alice', bob: 'Bob' },
+          viewer: 'me',
         },
+      },
+      {
+        name: '自己答的，可以撤回',
+        note: '答过的那一条旁边多一个「撤回」；点它先弹确认框，题回到重新等回答。',
+        props: {
+          block: askBlock([{ kind: 'option', option: '按部门', note: null, by: 'alice', at: null }]),
+          names: { alice: 'Alice' },
+          viewer: 'alice',
+        },
+        expect: '撤回',
       },
     ],
   },
@@ -445,26 +545,32 @@ export const ROOM_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
-    id: 'room-getting-started',
-    title: 'GettingStartedCard',
-    about: '项目本体里那张「开始清单」：四步，勾完自己就不见了。判据全在别处推出来，这里只画和跳转。',
-    file: 'src/components/room/GettingStartedCard.vue',
-    component: GettingStartedCard,
-    // 四步的记号是 `v-icon`，右边那颗动作是 `BaseButton`（`v-btn`）。跳转走
-    // `useNavigation()`：没装路由时它是 null，按钮点了不动，但卡片照画得出来。
+    id: 'room-guide-bubble',
+    title: 'GuideBubble',
+    about:
+      '界面导览的一站：目标控件四周一圈高亮，旁边浮着一个小窗，写这里是什么、怎么用。导览里带上一步 / 下一步和第几站；「第一次」提示只有一颗「知道了」。',
+    file: 'src/components/common/GuideBubble.vue',
+    component: GuideBubble,
     needs: ['vuetify'],
+    teleport: true,
     states: [
       {
-        name: '一步都还没做',
-        note: '四步各自带一串说明和一颗动作：材料、仓库、同事各去一页（「打开资料库 / 连接仓库 / 去名册」），第一步就在下面那个输入框里做，所以给一句提示、不给去处。',
-        props: { steps: GS_NONE, projectId: 'p1', agentName: AGENT_NAME },
-        expect: '打开资料库',
+        name: '导览的一站',
+        note: '第 1 站，圈着左上角一个固定的框（预览站里没有真页面可指）：没有「上一步」。',
+        props: {
+          target: new DOMRect(16, 16, 160, 32),
+          title: '频道',
+          text: '项目里的对话按频道分开。',
+          step: 1,
+          total: 5,
+        },
+        expect: '1/5',
       },
       {
-        name: '做过两步',
-        note: '做完的那两步打勾、写名字划掉、右边不再给动作；只剩「连接仓库」那一颗还在。',
-        props: { steps: GS_SOME, projectId: 'p1', agentName: AGENT_NAME },
-        expectSelector: '.gs__mark--done',
+        name: '「第一次」提示',
+        note: '不在导览里，只有一颗「知道了」。',
+        props: { target: new DOMRect(16, 16, 160, 32), title: '任务', text: '芝士把你交给它的事做成了任务。' },
+        expect: '芝士把你交给它的事做成了任务。',
       },
     ],
   },

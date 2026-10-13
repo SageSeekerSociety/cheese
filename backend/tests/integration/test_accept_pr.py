@@ -22,6 +22,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
+from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_publish import dispatch as _REAL_DISPATCH
 from tests.conftest import wait_work_idle
 from tests.delivery import delivery_headers, delivery_task, delivery_task_id
@@ -182,7 +183,7 @@ def _poll(client) -> dict:
 
     在 TestClient 自己的 portal 上跑，而不是新起一个事件循环：轮询会 `submit`
     真正的轮次，它们得落在 work runner 所在的那个循环上——生产上这一轮也正是
-    从那里跑的（`app/core/background.py` 的 "pr poll"）。
+    从那里跑的（`app/domain/review/periodic.py` 的 "pr poll"）。
     """
     from app.domain.review import pr_poll
 
@@ -210,6 +211,29 @@ def _room_settled(client, topic_id: str, needle: str, *, tries: int = 40) -> str
 def _task_settled(client, topic_id: str, needle: str) -> str:
     """一张卡的结局说在递它的那个任务里，频道主线上那件任务只占一行。"""
     return _room_settled(client, str(delivery_task_id(client, topic_id)), needle)
+
+
+def _room_event_count(client, topic_id: str, event_type: str) -> int:
+    """这个房间落了几块这种事件。同一件事每拍重说一遍，这个数就涨。
+
+    查库里那些块，不走 `/topics/{id}/blocks`：平台提示送到人那里，不占房间可见的
+    那条时间线。
+    """
+    from sqlalchemy import select
+
+    from app.domain.block.models import Block
+    from app.domain.conversation.services import of_room
+
+    async def go() -> int:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Block).where(of_room(Block.conversation_id, uuid.UUID(topic_id)))
+            )
+            return sum(
+                1 for r in rows if (r.meta or {}).get("event_type") == event_type
+            )
+
+    return asyncio.run(go())
 
 
 class FakeGitHubPrClient:
@@ -254,13 +278,21 @@ class FakeGitHubPrClient:
 
     # ---- test helpers ------------------------------------------------------
 
-    def seed_pr(self, number: int, *, head: str, base: str = "main") -> str:
+    def seed_pr(
+        self, number: int, *, head: str, base: str = "main", title: str = ""
+    ) -> str:
         """Register a PR (the App lane opens PRs through a different client, so
-        the poller side has to be told it exists). Returns its head sha."""
+        the poller side has to be told it exists). Returns its head sha.
+
+        `title` 是**平台按卡片 subject 写上去的那一行**（`pr_publish.sync_pr_text`）：
+        两条合并路径都比对它和卡片，不一致就停下（`pr_text.pr_title_matches_subject`），
+        所以这里不是可选的装饰 —— 一个不带标题的 PR 会被读成「标题读不出来」而合不
+        了（`_give_card_a_pr` 因此默认取卡片自己的 subject）。"""
         head_sha = f"sha-{head}-1"
         self.prs[number] = {
             "head": head,
             "base": base,
+            "title": title,
             "head_sha": head_sha,
             "state": "open",
             "merged": False,
@@ -327,7 +359,7 @@ class FakeGitHubPrClient:
     ) -> github_pr.PullRequest:
         self._next_number += 1
         number = self._next_number
-        head_sha = self.seed_pr(number, head=head, base=base)
+        head_sha = self.seed_pr(number, head=head, base=base, title=title)
         self.opened.append({"head": head, "base": base, "title": title, "body": body})
         return github_pr.PullRequest(
             number=number,
@@ -341,7 +373,7 @@ class FakeGitHubPrClient:
 
     async def pull_request_status(
         self, *, owner, repo, number, token
-    ) -> github_pr.PullRequestStatus:
+    ) -> PullRequestStatus:
         if self.status_delay_s:
             await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:
@@ -349,7 +381,7 @@ class FakeGitHubPrClient:
         pr = self.prs[number]
         self.status_calls.append(number)
         self.status_tokens.append(token)
-        return github_pr.PullRequestStatus(
+        return PullRequestStatus(
             head_sha=pr["head_sha"],
             head_ref=pr["head"],
             base_ref=pr["base"],
@@ -360,6 +392,7 @@ class FakeGitHubPrClient:
             mergeable=self.mergeable_by_number.get(number),
             mergeable_state=self._derived_mergeable_state(number),
             draft=self.draft_by_number.get(number, False),
+            title=pr.get("title") or "",
             review_comment_count=sum(
                 1 for s in self.reviews_by_number.get(number, []) if s.kind == "comment"
             ),
@@ -537,7 +570,7 @@ def app_world(client, monkeypatch):
                     "adopted": False,
                 }
             )
-            fake.seed_pr(number, head=head, base=base)
+            fake.seed_pr(number, head=head, base=base, title=title)
             fake.draft_by_number[number] = draft
             pr = {
                 "number": number,
@@ -559,8 +592,13 @@ def app_world(client, monkeypatch):
                 if value is not None
             }
             recorded["patched"].append({"number": number, **fields})
-            if base is not None:
-                fake.prs[number]["base"] = base
+            # 改写真的落到另一只 client 读得到的地方：`base` 决定「目标分支是
+            # 哪条」，`title` 是平台按卡片 subject 重写的那一行（`redescribe` 走
+            # 这里），两条合并路径都读它。
+            if number in fake.prs:
+                for key in ("base", "title"):
+                    if key in fields:
+                        fake.prs[number][key] = fields[key]
             for pr in recorded["prs_by_head"].values():
                 if pr["number"] == number:
                     pr.update(fields)
@@ -578,6 +616,16 @@ def app_world(client, monkeypatch):
             for pr in recorded["prs_by_head"].values():
                 if pr["number"] == number:
                     return pr
+            # 生产上这两只 client 读的是同一个仓库：递卡时就已经开好的 PR
+            # （`_give_card_a_pr` 直接 `fake.seed_pr` 登记的，轮询/点击那一路看的）
+            # 在这里也读得到。少了这一步，`redescribe` 按卡改 PR 标题时会在一只
+            # client 找不到另一只登记过的 PR。
+            if number in fake.prs:
+                return {
+                    "number": number,
+                    "html_url": f"https://github.com/{REPO}/pull/{number}",
+                    "title": fake.prs[number].get("title") or "",
+                }
             raise AssertionError(f"no such PR: {number}")
 
         async def pr_status(self, number: int):
@@ -687,22 +735,27 @@ def _give_card_a_pr(
     sha 的常态。`mirrored=False` 是刚递上来的那 60 秒：PR 有了，卡面还是空的，
     人没有任何一版可看。"""
     branch = _disk_branch(client, topic_id)
-    head_sha = app_world["fake"].seed_pr(number, head=branch)
 
     from app.domain.review.repositories import AcceptCardRepository
 
-    async def _do() -> None:
+    async def _do() -> str:
         async with client.test_factory() as s:
             card = await AcceptCardRepository(s).get(_uuid.UUID(card_id))
             assert card is not None
+            # 平台递卡时按卡片的 subject 写 PR 标题（`pr_publish.sync_pr_text`），
+            # 所以这张假 PR 的标题就是卡片自己的那一行 —— 少了它，两条合并路径
+            # 都会把这张卡读成「标题和卡片不一致」而拒绝合并。
+            head_sha = app_world["fake"].seed_pr(
+                number, head=branch, title=card.change_subject or ""
+            )
             card.pr_number = number
             card.pr_url = f"https://github.com/{REPO}/pull/{number}"
             if mirrored:
                 card.pr_head_sha = head_sha
             await s.commit()
+            return head_sha
 
-    asyncio.run(_do())
-    return head_sha
+    return asyncio.run(_do())
 
 
 def _ready_card(
@@ -1539,6 +1592,136 @@ def test_a_closed_unmerged_pr_stops_the_accept(client, app_world):
     assert fake.merge_calls == []
 
 
+# ---- 标题分家：仓库检查评判的那一行，必须就是落进历史的那一行 ----------------
+#
+# 平台按卡片 subject 写 PR 标题、按同一个 subject 落 squash 提交；仓库自己的检查
+# 评判的是 PR 上那一行（编辑它就会重跑 `pull_request` 工作流）。谁在 GitHub 上把
+# PR 标题改了 —— 或者卡片 subject 自己动了而 PR 没跟上 —— 两行就分家，再合下去，
+# 写进历史的是一行仓库从没检查过的字。平台不判断哪一行才对（标题怎么写在仓库），
+# 只确认这三个读者读的是同一个字符串（`pr_text.pr_title_matches_subject`）。
+
+
+def test_accept_is_refused_when_the_pr_title_is_not_the_line_the_card_would_land(
+    client, app_world
+):
+    """点采纳这一条路：PR 标题和卡片不是同一行就停下，一行都不合；把两行都告诉
+    执行者，让他们从卡片这边改。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    # 有人在 GitHub 上把 PR 标题改了 —— 检查会按新标题重跑，但那不是卡片这行。
+    fake.prs[number]["title"] = "fix(review): land the title the checks judged"
+
+    r = _accept(client, cid)
+    assert r.status_code == 422, r.text
+    assert "标题" in r.json()["message"]
+    assert fake.merge_calls == []  # 一行都没合下去
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+    assert card["pr_number"] == number  # PR 还挂在卡上：改完卡就能重试
+    # 执行者是唯一该醒的人 —— 改卡会把 PR 标题一起改掉，检查按新标题重跑。
+    settled = _task_settled(client, tid, "标题和卡片不一致")
+    assert "fix(review): land the title the checks judged" in settled
+    assert "chore(test): file an accept card" in settled
+
+
+def test_accept_merges_again_once_the_card_says_the_line_the_pr_shows(
+    client, app_world
+):
+    """停下之后唯一的那条出路：把**卡片**改成该落的那一行。`cheese_describe` 会
+    同时把 PR 标题改掉（`pr_publish.sync_pr_text`），两行又成同一个字符串，合并照
+    常 —— 这道闸拦住的是「分家」，不是这一次合并本身。"""
+    fake = app_world["fake"]
+    _, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.prs[number]["title"] = "fix(review): land the title the checks judged"
+    assert _accept(client, cid).status_code == 422
+
+    r = _describe(
+        client, tid, change_subject="fix(review): land the title the checks judged"
+    )
+    assert r.status_code == 200, r.text
+    # 平台自己把 PR 标题改成了卡片那一行，不是反过来读回卡里。
+    assert fake.prs[number]["title"] == "fix(review): land the title the checks judged"
+
+    merged = _accept(client, cid)
+    assert merged.status_code == 200, merged.text
+    assert [m["number"] for m in fake.merge_calls] == [number]
+    assert fake.merge_calls[0]["commit_title"].startswith(
+        "fix(review): land the title the checks judged"
+    )
+
+
+def test_poll_holds_the_notice_and_the_armed_merge_while_the_titles_disagree(
+    client, app_world
+):
+    """自动合并这条路上也一样：检查绿不绿和「该落哪一行」是两回事，标题分家就
+    合不了。卡片转而提醒执行者，布防保持不动。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    assert _arm(client, cid, "alice").status_code == 200
+    # 布防之后，标题在 GitHub 上被改了。
+    fake.prs[number]["title"] = "fix(review): land the title the checks judged"
+
+    _poll(client)
+    wait_work_idle()
+
+    assert fake.merge_calls == []  # 检查绿也不合
+    settled = _task_settled(client, tid, "标题和卡片不一致")
+    assert "fix(review): land the title the checks judged" in settled
+    assert "chore(test): file an accept card" in settled
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"  # 没有以布防人的名义被合掉
+
+
+def test_the_poll_clears_the_title_mismatch_face_once_the_two_lines_agree_again(
+    client, app_world
+):
+    """两行又对上之后，卡面那行「合并已暂停」要跟着消失。
+
+    改 PR 标题**不动 head**，所以换 head 时那次清理永远轮不到它：只有「还分不
+    分家」这条判据自己收回，卡面才会空下来。不清，卡面一直亮着红灯，而同一
+    次轮询已经在下边报了「可以合了」—— 同屏两句话互相打脸。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    # 先把两行拆开：轮询把这句写到卡面上。
+    fake.prs[number]["title"] = "fix(review): land the title the checks judged"
+    _poll(client)
+    wait_work_idle()
+    assert "不一致" in _cards(client, tid)[0]["note"]
+    assert fake.merge_calls == []  # 检查绿也不合
+
+    # 人把 GitHub 上的标题改回卡片那一行。**head 一个字没动**。
+    fake.prs[number]["title"] = "chore(test): file an accept card"
+    _poll(client)
+    wait_work_idle()
+
+    card = _cards(client, tid)[0]
+    assert card["pr_head_sha"] == head_sha  # 这一轮 head 没动
+    assert card["note"] == ""  # 那句说的是过去，跟着消失
+    assert card["note_level"] is None
+
+
+def test_merge_anyway_will_not_land_a_line_the_repository_never_checked(
+    client, app_world
+):
+    """「放行」是一条能盖过检查的路，但它盖不过这件事：别人没评判过的那一行，谁
+    点头也不该被写进历史。要求还是同一条 —— 从卡片这边改成该落的那一行。"""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.prs[number]["title"] = "fix(review): land the title the checks judged"
+
+    r = _merge_anyway(client, cid, "alice", reason="我看过了")
+    assert r.status_code == 422, r.text
+    assert "标题" in r.json()["message"]
+    assert fake.merge_calls == []
+    card = _cards(client, tid)[0]
+    assert card["status"] == "pending"
+
+
 def test_a_pr_already_merged_on_github_is_taken_as_the_accept(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
@@ -1962,6 +2145,32 @@ def test_a_required_check_missing_too_long_goes_to_a_human(client, app_world):
     assert "迟迟没有报到" in _cards(client, tid)[0]["note"] or "test" in note
 
 
+def test_the_grace_page_is_rung_once_not_once_a_poll(client, app_world):
+    """宽限期那句「转人」只说一次，卡面上还压着别的理由也不行。
+
+    一张卡可能同时摊上两件事：必须跑的检查一直没报到（超时转人），PR 标题又和卡上
+    不一致（另一条待发）。卡面那一行要是每拍都被后者重写一遍，前者按整行文字做的
+    那次去重就永远认不出自己说过 —— 验收人每 60 秒被重新叫一次，一直叫到那张卡
+    不再等为止。
+    """
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, required_checks=[{"name": "test"}])
+    fake.check_runs_by_sha[head_sha] = []  # 必须跑的检查从未报到
+    fake.prs[number]["title"] = "a line the card did not write"  # 标题也和卡上分家
+
+    _poll(client)
+    _set_merge_since(client, cid, "2020-01-01T00:00:00+00:00")
+
+    said = []
+    for _ in range(3):
+        _poll(client)
+        wait_work_idle()
+        said.append(_room_event_count(client, tid, "merge_withheld"))
+
+    assert said == [1, 1, 1]
+
+
 def test_poll_reads_with_the_read_mint_not_the_write_one(client, app_world):
     fake = app_world["fake"]
     pid, tid, cid, number, head_sha = _ready_card(client, app_world)
@@ -2096,6 +2305,55 @@ def test_external_merge_closes_a_returned_batch_without_rewriting_its_review(
 
     asyncio.run(check_delivery_boundary())
     assert _poll(client)["cards_checked"] == 0
+
+
+def test_the_merge_that_closed_a_task_does_not_close_it_again(client, app_world):
+    """一次交付只落地一次：已经合过的那一笔不会再关一次重开出来的任务。
+
+    任务 #58（2026-10-11）：同一张 PR 上有一张退回过的卡。最后一步被采纳、合
+    并落地、任务关掉，负责人重开去接着做（新分支，`pr_number` 归 None）。下一
+    跳轮询又把那张退回卡读了一遍 —— 它自己从没结算过，而 PR 已经合了 —— 于是
+    同一笔合并第二次落到这个任务上，它一分钟后又进了一次写总结的窗口。开着却
+    写「已采纳」的任务谁都不收：左侧栏要 `closing_since` 为空，「未完成」要
+    presentation 不是 done，「已关闭」要 status 是 closed（2026-10-11，任务 #58）。"""
+    fake = app_world["fake"]
+    pid, tid, returned, number, head_sha = _ready_card(client, app_world)
+    rejected = client.post(
+        f"/accept-cards/{returned}/reject",
+        json={"decided_by": "alice", "note": "这批的边界还没证明"},
+        headers=session_auth_headers("alice"),
+    )
+    assert rejected.status_code == 200, rejected.text
+    # 同一张 PR 上再递一张 —— 生产上这是改完又交的那一版。
+    resent = _make_card(client, tid)
+    _give_card_a_pr(client, app_world, tid, resent, number)
+    fake.check_state_by_sha[head_sha] = ("success", "全部通过")
+    fake.merge_sha_by_number[number] = "merge-sha-1"
+    accepted = _accept(client, resent)
+    assert accepted.status_code == 200, accepted.text
+    task_id = delivery_task_id(client, tid)
+    summary_turn_ends(client, task_id)
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "closed"
+
+    reopened = client.post(
+        f"/topics/{task_id}/reopen",
+        headers=session_auth_headers(task["owner_handle"]),
+    )
+    assert reopened.status_code == 200, reopened.text
+    assert reopened.json()["data"]["pr_number"] is None
+
+    result = _poll(client)
+
+    assert result["errors"] == []
+    cards = {card["id"]: card for card in _cards(client, tid)}
+    # 这张退回卡自己从没结算过，所以它还在这条轮询路径上 —— 下面这一条就是
+    # 「这一跳真的读了那张已经合掉的 PR」的证据。
+    assert cards[returned]["status"] == "rejected"
+    assert cards[returned]["pr_merged_at"] is not None
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"
+    assert task["presentation"]["column"] != "done"
 
 
 @pytest.mark.parametrize("closed", [False, True])

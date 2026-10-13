@@ -39,10 +39,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.websockets import WebSocketState
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
+from app.api.write_access import ROUTE_DECIDES
 from app.common.auth import AccessClaims, verify_access_token
 from app.core import background
 from app.core.config import settings
-from app.core.db import get_db
 from app.core.errors import (
     ForbiddenError,
     NotFoundError,
@@ -57,8 +58,8 @@ from app.domain.agent.device_hub import (
     device_hub,
 )
 from app.domain.agent.device_storage import keep_device_room_files
-from app.domain.agent.harness.claude_code import owner_login
-from app.domain.device import owner_reads
+from app.domain.agent.harness.claude_code import executor_launch, owner_login
+from app.domain.device import owner_reads, sandbox
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.sql_repository import SqlDeviceRepository
@@ -76,8 +77,6 @@ from app.domain.user.sessions import SessionService
 
 router = APIRouter(prefix="/connector", tags=["connector"])
 logger = logging.getLogger(__name__)
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def get_device_service(db: DbSession) -> DeviceService:
@@ -123,8 +122,32 @@ async def recover_business_state(device_id: str) -> None:
         owner_login.refresh_on_connect(async_session_factory, device_hub, device_id),
         name="claude login device reconnect",
     )
+    # Whether it can give a session a sandbox: settled now, as it joins, rather
+    # than first found out when a room runs a command there.
+    background.spawn(
+        _check_sandbox(async_session_factory, device_id),
+        name="sandbox check device reconnect",
+    )
     async with _recovering:
         await _recover_business_state(device_id)
+
+
+async def _check_sandbox(session_factory, device_id: str) -> None:
+    """Ask a machine as it connects whether it can give a session a sandbox,
+    and keep the answer. One that goes again before answering is asked on its
+    next connection."""
+    try:
+        async with session_factory() as session:
+            service = sql_device_service(session)
+            device = await service.get_device(device_id)
+            if device is None:
+                return
+            await sandbox.refresh(
+                service, device_hub, device, executor_launch.sandbox_check_script()
+            )
+            await session.commit()
+    except Exception:
+        logger.warning("sandbox not checked on %s", device_id, exc_info=True)
 
 
 async def _recover_business_state(device_id: str) -> None:
@@ -160,8 +183,8 @@ async def _recover_business_state(device_id: str) -> None:
     # deferred-import: tests patch this name on app.core.db
     from app.core.db import async_session_factory
 
-    # deferred-import: tests patch this name on app.domain.topic.retire
-    from app.domain.topic.retire import sweep_retired_storage
+    # deferred-import: tests patch this name on app.domain.room_cleanup.retire
+    from app.domain.room_cleanup.retire import sweep_retired_storage
 
     background.spawn(
         sweep_retired_storage(async_session_factory, checkpoint=checkpoint_room),
@@ -700,6 +723,11 @@ async def my_devices(
         # they enrolled themselves runs it; a cloud machine says nothing.
         if device.supply == Supply.self_hosted:
             view["claude_code"] = await owner_login.status(db, device.device_id)
+            # Whether it can give a session a sandbox, and if not the machine's
+            # own reason, worded for its owner: theirs to act on.
+            view["sandbox"] = sandbox.status(
+                await service.sandbox_check(device.device_id)
+            )
         # Its system, as its connector last said (`windows`, `darwin`,
         # `linux`), for the page to name a command that runs there; None
         # while it has not been heard from.
@@ -732,6 +760,31 @@ async def check_my_claude_code(
             await owner_login.remember(db, device_id, login)
             await db.commit()
     return await owner_login.status(db, device_id)
+
+
+# The handler decides: only the machine's owner, a person, may ask it.
+@router.post("/my/devices/{device_id}/sandbox", dependencies=[ROUTE_DECIDES])
+async def check_my_sandbox(
+    device_id: str, resolver: ActorResolverDep, service: DeviceServiceDep, db: DbSession
+) -> dict[str, Any] | None:
+    """Ask one of the caller's machines again whether it can give a session a
+    sandbox: after its owner changed what it lacked, the page asks rather than
+    leaving the answer from its last connection standing."""
+    user_id = await _require_user(resolver)
+    owned = {d.device_id: d for d in await service.list_owned(user_id)}
+    device = owned.get(device_id)
+    if device is None or device.supply != Supply.self_hosted:
+        raise NotFoundError(say("deviceNotYours"))
+    if device_hub.is_online(device_id):
+        try:
+            await sandbox.refresh(
+                service, device_hub, device, executor_launch.sandbox_check_script()
+            )
+            await db.commit()
+        except Exception:
+            # Gone or slow to answer: what it said last still stands.
+            logger.warning("sandbox not checked on %s", device_id, exc_info=True)
+    return sandbox.status(await service.sandbox_check(device_id))
 
 
 @router.patch("/my/devices/{device_id}")

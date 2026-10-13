@@ -38,27 +38,21 @@ vi.mock('@/api', () => ({
   respondToInvitation: vi.fn(),
   unregisterDeviceFromTeam: vi.fn(),
 }))
-vi.mock('@/network/api/teams', () => ({
+vi.mock('@/api/teams', () => ({
   TeamsApi: {
     getMembers: vi.fn(async () => ({
-      data: {
-        members: [
-          { role: 'OWNER', user: { id: 1, nickname: 'Alice', avatarId: 1 } },
-          { role: 'ADMIN', user: { id: 2, nickname: 'Bob', avatarId: 1 } },
-        ],
-      },
+      members: [
+        { role: 'OWNER', user: { id: 1, nickname: 'Alice', avatarId: 1 } },
+        { role: 'ADMIN', user: { id: 2, nickname: 'Bob', avatarId: 1 } },
+      ],
     })),
-    listTeamJoinRequests: vi.fn(async () => ({ data: { applications: [] } })),
-    listTeamInvitations: vi.fn(async () => ({ data: { invitations: [] } })),
+    listTeamJoinRequests: vi.fn(async () => ({ applications: [] })),
+    listTeamInvitations: vi.fn(async () => ({ invitations: [] })),
     listMyJoinRequests: vi.fn(async () => ({
-      data: {
-        requests: [{ id: 1, status: 'PENDING', createdAt: 0, team: { name: 'Crew', avatarId: 1 } }],
-      },
+      requests: [{ id: 1, status: 'PENDING', createdAt: 0, team: { name: 'Crew', avatarId: 1 } }],
     })),
     listMyInvitations: vi.fn(async () => ({
-      data: {
-        invitations: [{ id: 2, status: 'PENDING', createdAt: 0, team: { name: 'Crew', avatarId: 1 } }],
-      },
+      invitations: [{ id: 2, status: 'PENDING', createdAt: 0, team: { name: 'Crew', avatarId: 1 } }],
     })),
   },
 }))

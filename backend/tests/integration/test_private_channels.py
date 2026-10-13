@@ -15,8 +15,9 @@ import pytest
 from starlette.websockets import WebSocketDisconnect
 
 from app.core.sandbox_auth import mint_scoped_token
-from tests.conftest import seed_claim, seed_space, seed_task_with_protocol
+from tests.conftest import seed_claim, seed_space, seed_task_with_protocol, seed_user
 from tests.integration.conftest import (
+    inbox,
     join_project_team,
     post_message,
     post_project,
@@ -34,6 +35,8 @@ from tests.integration.test_project_artifacts import (
 
 def _project(client) -> dict:
     """dave's project; alice, bob and carol are on its team."""
+    for who in ("alice", "bob", "carol", "dave"):
+        seed_user(client, who)
     p = post_project(client, json={"name": "P"}, owner="dave").json()["data"]
     for handle in ("alice", "bob", "carol"):
         join_project_team(client, p["id"], handle)
@@ -83,12 +86,6 @@ def _task(client, tid: str, by: str = "alice") -> str:
     )
     assert r.status_code == 200, r.text
     return r.json()["data"]["id"]
-
-
-def _alerts(client, pid: str, who: str) -> list[dict]:
-    r = client.get(f"/projects/{pid}/alerts", headers=session_auth_headers(who))
-    assert r.status_code == 200, r.text
-    return r.json()["data"]["data"]
 
 
 def _seated_agent(client, tid: str) -> str:
@@ -234,8 +231,8 @@ def test_a_mention_of_someone_outside_does_not_reach_them(client):
 
     post_message(client, tid, "alice", {"content": "<@bob> <@carol> 看一下"})
 
-    assert [a["kind"] for a in _alerts(client, p["id"], "bob")].count("MENTION") == 1
-    assert not any(a["kind"] == "MENTION" for a in _alerts(client, p["id"], "carol"))
+    assert len(inbox(client, "bob", "MENTION")) == 1
+    assert inbox(client, "carol", "MENTION") == []
 
 
 def test_its_name_is_not_linked_from_another_channel(client):

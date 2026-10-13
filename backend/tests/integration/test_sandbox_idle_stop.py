@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -27,14 +28,13 @@ from sqlalchemy import select, update
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
-from app.domain.agent.compute_configs import standard_choice
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.machine import lifecycle
 from app.domain.machine import session_work as work_lease
-from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
 from app.domain.machine.sandbox_wait import SANDBOX_LOST
@@ -179,7 +179,7 @@ def cloud(client, monkeypatch, tmp_path):
             seats = []
             for room_id in rooms:
                 topic = await db.get(Topic, room_id)
-                topic.compute_config = standard_choice("cloud").model_dump()
+                topic.default_environment = {"kind": "sandbox", "spec": "standard"}
                 agent = await IdentityService(db).ensure_room_agent_user(room_id)
                 row = await AgentSessionService(db).ensure(
                     room_id, "cheese", harness="claude-code"
@@ -188,7 +188,7 @@ def cloud(client, monkeypatch, tmp_path):
                 row.runtime_location = {
                     "device_id": "center",
                     "resource_id": resource,
-                    "channel": "cloud",
+                    "channel": "device",
                 }
                 token = bind_resource_token(
                     mint_scoped_token(
@@ -228,7 +228,7 @@ def tool_call(case, seat, timeout=5, *, tells_agent=False):
     ).json()["data"]
 
 
-def home_of(case, seat) -> CloudHostHome | None:
+def home_of(case, seat) -> SandboxHome | None:
     async def read():
         async with case.client.test_request_factory() as db:
             return await CloudHostRepository(db).current_home(seat.session)
@@ -297,8 +297,8 @@ def time_passes(case, seat, idle: timedelta):
     async def age():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(CloudHostHome)
-                .where(CloudHostHome.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(active_at=datetime.now(UTC) - idle)
             )
             await db.commit()
@@ -344,7 +344,7 @@ def room_cleanup_after_its_home_left(case, seat, resource, monkeypatch) -> dict:
     recorded the home on that host when it took its inventory — the rooms
     PR #2749 left waiting on "device … is offline". Returns what one sweep of
     room cleanups answered."""
-    from app.domain.topic import retire
+    from app.domain.room_cleanup import retire
     from app.domain.topic.services import TopicService
 
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
@@ -432,6 +432,34 @@ def test_an_idle_sandbox_is_destroyed_and_the_next_tool_call_gets_a_new_one(clou
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
 
 
+def test_a_session_that_will_not_wait_is_answered_however_slow_the_new_sandbox(
+    cloud, monkeypatch
+):
+    """A session that asks for its hands without waiting for them (a relaunch,
+    or a tool asking first so that it can say the machine is being prepared)
+    is answered within its own time, not the 50 s a waiting call may take,
+    however long a step of making its new sandbox takes (dev, 2026-10-12: a
+    relaunch held 50 s and then failed its start)."""
+    monkeypatch.setattr(work_lease, "PREPARING_WAIT_S", 50.0)
+    monkeypatch.setattr(work_lease, "ANSWER_S", 1.0, raising=False)
+    seat = cloud.seats[0]
+    working_on(cloud, seat, "host-a")
+    time_passes(cloud, seat, timedelta(minutes=11))
+    assert sweep(cloud)["destroyed"] == 1
+
+    async def slow(target, method, params, **kwargs):
+        # The new sandbox's executor takes its time to come up.
+        await asyncio.sleep(30)
+        return await cloud.hosts.executor(target, method, params, **kwargs)
+
+    monkeypatch.setattr(execution, "call", slow)
+    asked = time.monotonic()
+    answer = tool_call(cloud, seat, timeout=0.001)
+    assert time.monotonic() - asked < 10
+    assert answer.get("preparing"), answer
+    assert "target" not in answer
+
+
 def test_a_sandbox_is_kept_while_its_conversation_runs_a_turn_or_it_was_just_used(
     cloud,
 ):
@@ -511,8 +539,8 @@ def test_a_tool_call_during_an_unfinished_removal_waits_and_then_gets_a_new_sand
     async def later():
         async with cloud.client.test_request_factory() as db:
             await db.execute(
-                update(CloudHostHome)
-                .where(CloudHostHome.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(stopped_at=datetime.now(UTC) - lifecycle.STOP_HOLD)
             )
             await db.commit()

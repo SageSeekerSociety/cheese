@@ -24,7 +24,8 @@
         {{ record ? t('account.realName.editTitle') : t('account.realName.fillTitle') }}
       </h2>
       <div v-for="field in FIELDS" :key="field.key" class="srow srow--pair srow--field">
-        <label class="srow__k" :for="`realname-${field.key}`">
+        <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+        <label :id="`realname-${field.key}-label`" class="srow__k" :for="`realname-${field.key}`">
           {{ t(field.label) }}
           <span v-if="field.optional" class="realname__optional">{{ t('account.realName.optional') }}</span>
         </label>
@@ -160,7 +161,7 @@
 
 <script setup lang="ts">
 import type { UserRefTarget } from '@/lib/userRef'
-import type { RealNameInfo, UserIdentityAccessLog } from '@/network/api/users/types'
+import type { RealNameInfo, UserIdentityAccessLog } from '@/types/apiUsers'
 
 import { computed, reactive, ref, watch } from 'vue'
 

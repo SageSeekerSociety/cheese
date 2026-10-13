@@ -142,8 +142,8 @@
       "d30": "30 days",
       "d90": "90 days"
     },
-    "updatedAt": "Updated {time}",
-    "updatedAtStale": "Updated {time} · {n} min ago",
+    "updatedAt": "Updated {time} (Beijing time)",
+    "updatedAtStale": "Updated {time} (Beijing time) · {n} min ago",
     "retry": "Retry",
     "noteTip": {
       "aria": "About this metric"
@@ -166,7 +166,7 @@
     "cost": {
       "kpi": "Cost",
       "unpricedLabel": "Unpriced tokens",
-      "note": "Priced at each model's rate in the gateway's price table; subscription calls are estimated at the same model's rate. Unpriced tokens have no rate and are not in that figure."
+      "note": "Cost is an estimate at list price, not money paid. Gateway calls are priced at each model's rate in the gateway's price table; subscription calls are estimated at the same model's rate, though the subscription is paid monthly; models the gateway serves from our own hardware are priced from the table too, and the platform does not pay per call for them. Unpriced tokens have no rate and are not in that figure."
     },
     "empty": {
       "title": "No data yet",
@@ -215,7 +215,7 @@
       "chart": "Tokens per day",
       "top": "Top projects by tokens",
       "byModel": "By model",
-      "byModelNote": "Bar is tokens; the last two columns are money and unpriced tokens. All three together answer \"is it the model or the billing\".",
+      "byModelNote": "Bar is tokens; then money, unpriced tokens and the cache-hit rate. The first three together answer \"is it the model or the billing\"; a — rate means the model's calls did not record their cache.",
       "byRoute": "By supply route",
       "byRouteNote": "The unpriced column is tokens with no rate; split by route, it shows which route they came from, and where the KPI's number comes from.",
       "unknownModel": "(unlabelled model)",
@@ -223,7 +223,34 @@
         "gateway": "Gateway",
         "subscription": "Subscription",
         "native": "Pinned credentials",
-        "unknown": "(old row, unlabelled)"
+        "unknown": "(old row, unlabelled)",
+        "own": "Member's own Claude Code"
+      },
+      "cacheKpi": "Cache hits",
+      "cacheNote": "Cache-read tokens ÷ input tokens (input includes cache reads and writes). Only calls that recorded their cache count: each route and kind of call counts from its first recorded cache read in the window. Gateway calls written before the gateway recorded cache show 0 only because nothing was recorded, so they are left out. {tokens} input tokens in this window are left out.",
+      "cacheCell": "cache {pct}",
+      "hourly": "Tokens per hour (Beijing time)",
+      "byUser": "Who triggered the usage",
+      "byUserNote": "Calls inside a project count for the person who started the turn; calls outside a project count for the person who made them. This is who triggered how much, not who contributed. Turns the platform started count for nobody: {tokens} tokens, {cost} in this window.",
+      "byPlatform": "Platform",
+      "projectModels": "Models each project used",
+      "recent": "Recent usage rows",
+      "recentNote": "The latest {n} usage rows in the window, in Beijing time. A row is not always one request: a subscription row is one request; a gateway row (marked “batch”) is what the gateway totalled for one model over a stretch of time and can cover many requests; a row from own credentials or a member's own Claude Code totals one model over one turn. The ledger does not record how many requests a row covers. A — in the cache column means the row did not record its cache.",
+      "batch": "batch",
+      "batchTitle": "What the gateway totalled for this model over a stretch of time; it can cover many requests, and the ledger does not record how many.",
+      "col": {
+        "person": "Who",
+        "tokens": "Tokens",
+        "calls": "Calls",
+        "cost": "Cost",
+        "cache": "Cache hits",
+        "project": "Project",
+        "models": "Models",
+        "time": "Time",
+        "model": "Model",
+        "route": "Route",
+        "input": "Input",
+        "output": "Output"
       }
     },
     "people": {
@@ -704,7 +731,11 @@
     "field": {
       "title": {
         "label": "Title",
-        "placeholder": "What happened, in one sentence"
+        "placeholder": {
+          "bug": "What happened, in one sentence",
+          "suggestion": "What you would like improved, in one sentence",
+          "other": "What this is about, in one sentence"
+        }
       },
       "body": {
         "bug": {

@@ -11,7 +11,17 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { AGENT_NAME, CHAT_ROWS, CHAT_TOPIC, chatTimelineProps } from './catalogFixtures'
+import {
+  AGENT_NAME,
+  CHAT_ROWS,
+  CHAT_ROWS_FULL,
+  CHAT_TOPIC,
+  chatTimelineProps,
+  isMineWang,
+  ROOM_MENTION_POOL,
+  WANG_CLOSING,
+  WANG_EDITING_ROW,
+} from './catalogFixtures'
 
 import ChatErrorToast from '@/components/chat/ChatErrorToast.vue'
 import ChatNewMessagesPill from '@/components/chat/ChatNewMessagesPill.vue'
@@ -34,6 +44,9 @@ const HEADER_BASE = {
   titleOverride: null as string | null,
   backLabel: null as string | null,
 }
+
+/** 整段对话，收尾那一句换成「正在改」的那一版（末尾敲了一个 `@`）。 */
+const EDIT_ROWS = CHAT_ROWS_FULL.map((r) => (r.block.id === WANG_CLOSING.block.id ? WANG_EDITING_ROW : r))
 
 // ---- 对话栏（ChatPanel）拆出来的那一组「只管画」的件 -------------------------
 //
@@ -131,6 +144,18 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
         expect: '王长鑫',
       },
       {
+        name: '正在改一条消息：@ 候选开着',
+        note: '改自己刚发的那一条，框里已经敲下一个 `@`：候选从框的上边弹出**这一行**，所以打开这一格就该看见一整块菜单，而不是贴着框沿的一条。框自己按折行长高，字号和消息正文同一档。',
+        props: chatTimelineProps({
+          rows: EDIT_ROWS,
+          editingId: WANG_CLOSING.block.id,
+          isMine: isMineWang,
+          mentionPool: ROOM_MENTION_POOL,
+        }),
+        expect: '所有人',
+        expectSelector: '.mention-menu',
+      },
+      {
         name: '空房间',
         note: '一条都没有：不画骨架、不画加载器，就是一栏空的——新话题第一次打开时就是这样。',
         props: chatTimelineProps({ rows: [] }),
@@ -149,18 +174,19 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '还没人说过话',
-        note: '芝士还没开口：起手区块递上三件具体的事，点一下就是一句现成的话。',
+        note: '芝士还没开口：四张起手卡各是一件具体的事，点一张就是一句写好的请求，放进输入框等人改。',
         props: chatTimelineProps({
           rows: [],
           showStarters: true,
-          agentSeat: { handle: 'cheese', label: '芝士' },
           agentName: AGENT_NAME,
           starterPrompts: [
-            { label: '查一份资料', text: '帮我查一下这个项目的背景' },
-            { label: '起一份文档', text: '把刚才说的整理成一份文档' },
+            { label: '整理或改写一份材料', hint: '课件、论文、报告、表格', text: '帮我整理或改写附件里的材料。' },
+            { label: '查资料，写成一份报告', hint: '带来源，可下载', text: '帮我查找资料，整理成一份报告。' },
+            { label: '做一个网页或小工具', hint: '做好就能打开预览', text: '帮我做一个网页。' },
+            { label: '拆解一件事，排好分工', hint: '适合团队项目', text: '帮我把目标拆成可执行的任务。' },
           ],
         }),
-        expect: '从一件具体的事开始',
+        expect: '你想先做点什么？',
       },
     ],
   },

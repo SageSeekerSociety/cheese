@@ -14,6 +14,7 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.sentences import say
+from app.domain.agent.credits_notice import spent_reason
 from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
@@ -66,6 +67,7 @@ from app.domain.delivery.receipts import inputs_answered_inside
 from app.domain.usage.credits import (
     CREDITS_EXHAUSTED_META,
     credits_event,
+    refused_for_credits,
 )
 
 logger = logging.getLogger(__name__)
@@ -348,16 +350,27 @@ class HookEvents:
                             detail_label=say("labelDetails"),
                         ),
                     )
-                elif await self.credits_refused(turn_id):
+                elif (braked := refused_for_credits(event.text)) or (
+                    await self.credits_refused(turn_id)
+                ):
                     # Admission already told the room WHY this turn is ending
                     # (#715): it refused every `/v1/messages` call for spent
                     # credits, and Claude Code's own reading of that refusal
                     # — "Invalid API key" — is wrong advice for a spent
                     # balance. Repeat the platform's own line, with the reason
                     # the credits give now, rather than Claude Code's text.
+                    # The gateway's budget brake stops a turn admission let
+                    # through, with no stamp; its refusal in the turn's own
+                    # failure is the same news, and a retry cannot succeed.
 
                     policy = await self.policy(topic_id)
-                    line = credits_event((policy or {}).get("credits_exhausted"))
+                    reason = (policy or {}).get("credits_exhausted")
+                    if reason is None and braked:
+                        # The brake fires before the turn's spend is settled,
+                        # so admission does not know yet; the ledger says
+                        # what ran out and when it comes back.
+                        reason = await spent_reason(sessions, project_id)
+                    line = credits_event(reason)
                     meta = CREDITS_EXHAUSTED_META
                 else:
                     line, meta = _turn_failure_notice(

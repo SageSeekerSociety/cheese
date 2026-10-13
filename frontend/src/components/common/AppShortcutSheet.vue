@@ -26,6 +26,7 @@ function setOpen(open: boolean) {
 
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 const mod = isMac ? '⌘' : 'Ctrl'
+const alt = isMac ? '⌥' : 'Alt'
 
 const groups = computed<ShortcutGroup[]>(() => {
   const desktop = inDesktopApp()
@@ -50,8 +51,12 @@ const groups = computed<ShortcutGroup[]>(() => {
     {
       scope: t('global.shortcuts.scope.timeline'),
       rows: [
-        { keys: ['↑', '↓'], action: t('global.shortcuts.scrollTimeline'), note: t('global.shortcuts.timelineFocus') },
-        { keys: ['PgUp', 'PgDn'], action: t('global.shortcuts.scrollTimeline') },
+        { keys: ['↑', '↓'], action: t('global.shortcuts.moveMessage'), note: t('global.shortcuts.timelineFocus') },
+        { keys: ['Home', 'End'], action: t('global.shortcuts.edgeMessage') },
+        { keys: ['PgUp', 'PgDn'], action: t('global.shortcuts.pageMessage') },
+        { keys: ['Enter'], action: t('global.shortcuts.enterMessage') },
+        { keys: ['Esc'], action: t('global.shortcuts.leaveMessage') },
+        { keys: [`${alt}+Shift+C`], action: t('global.shortcuts.focusComposer'), note: t('global.shortcuts.inRoom') },
       ],
     },
     {

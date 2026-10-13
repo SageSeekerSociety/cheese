@@ -21,13 +21,29 @@ import logging
 from dataclasses import dataclass
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import String, Text, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
-from app.domain.docs_site.models import ServiceCredential
+from app.core.db import Base
+from app.domain.common import Timestamps
 
 logger = logging.getLogger(__name__)
+
+
+class ServiceCredential(Timestamps, Base):
+    """A credential the platform mints for itself at run time and must keep.
+
+    The gateway's virtual key for 问芝士 is the first: minting one is not
+    idempotent on the gateway, so it is minted once, under an advisory lock, and
+    stored here rather than in any deployment's env file.
+    """
+
+    __tablename__ = "service_credentials"
+
+    name: Mapped[str] = mapped_column(String(64), primary_key=True)
+    secret: Mapped[str] = mapped_column(Text)
 
 
 @dataclass(frozen=True)

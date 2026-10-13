@@ -3,8 +3,8 @@ import type { useTaskData } from './useTaskData'
 import { useRouter } from 'vue-router'
 import { toast } from 'vuetify-sonner'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
-import { TasksApi } from '@/network/api/tasks'
 import { useDialog } from '@/plugins/dialog'
 export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>) {
   const { taskData } = taskDataModule
@@ -24,7 +24,7 @@ export function useTaskManagement(taskDataModule: ReturnType<typeof useTaskData>
 
     if (confirmed) {
       try {
-        await TasksApi.del(taskData.value.id)
+        await TaskBoardApi.del(taskData.value.id)
         toast.success(t('tasks.manage.deleted'))
         router.replace({ name: 'HomeDefault' })
       } catch (error) {

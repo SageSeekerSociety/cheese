@@ -1,6 +1,6 @@
 """The liveness probe the orphan sweep judges silence on.
 
-`background.last_block_at` is the only DB-backed half of the wedged-turn
+`block.services.last_block_at` is the only DB-backed half of the wedged-turn
 verdict, and the whole feature rests on it: if it reports a topic as quieter
 than it is, the sweep cancels live work. It is also the signal a human checks by
 hand (「最后一块是几点」), so it has to agree with what the topic shows.
@@ -12,9 +12,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import update
 
-from app.core.background import last_block_at
 from app.domain.block.models import AuthorType, Block
 from app.domain.block.repositories import BlockRepository
+from app.domain.block.services import last_block_at
 from app.domain.project.services import ProjectService
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered

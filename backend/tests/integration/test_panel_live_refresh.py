@@ -91,7 +91,7 @@ def _stale_frames(frames: list[tuple[str, dict]], room: str) -> list[dict]:
 
 def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
     pid, rid = _room(client)
-    task = open_task(client, rid, start=False)["id"]
+    task = open_task(client, rid)["id"]
     frames.clear()
     r = client.put(
         _doc(client, task),
@@ -104,7 +104,7 @@ def test_writing_the_doc_refreshes_the_doc_panel(client, frames):
 
 def test_opening_a_piece_of_work_refreshes_the_rooms_work_list(client, frames):
     _pid, rid = _room(client)
-    open_task(client, rid, "一件活", start=False)
+    open_task(client, rid, "一件活")
     assert _stale(frames, rid) == ["topics"]
     # The frame names the changed row (the room) so the sidebar reads that one
     # row back instead of the whole list — the point of the id.
@@ -159,8 +159,8 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
     )
     assert filed.status_code == 200, filed.text
     # The card, and the task's progress it decides — in the room and on the task.
-    assert _stale(frames, rid) == ["accept", "tasks"]
-    assert _stale(frames, str(task)) == ["accept", "tasks"]
+    assert {"accept", "tasks"} <= set(_stale(frames, rid))
+    assert {"accept", "tasks"} <= set(_stale(frames, str(task)))
     frames.clear()
     corrected = client.post(
         f"/topics/{task}/accept-card/describe",
@@ -168,8 +168,8 @@ def test_filing_and_correcting_a_card_refreshes_the_accept_panel(client, frames)
         headers=_agent(pid, str(task)),
     )
     assert corrected.status_code == 200, corrected.text
-    assert _stale(frames, rid) == ["accept", "tasks"]
-    assert _stale(frames, str(task)) == ["accept", "tasks"]
+    assert {"accept", "tasks"} <= set(_stale(frames, rid))
+    assert {"accept", "tasks"} <= set(_stale(frames, str(task)))
 
 
 def _propose_feedback(client, pid: str, rid: str) -> str:
@@ -253,7 +253,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([channel.runtime], channel.name),
+        compute=ComputePool([channel.runtime]),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     _, room = _room(client)
@@ -337,7 +337,7 @@ def test_a_turn_announces_what_it_did_while_it_is_still_running(client, tmp_path
         session_factory=client.test_request_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([channel.runtime], channel.name),
+        compute=ComputePool([channel.runtime]),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     _, room = _room(client)

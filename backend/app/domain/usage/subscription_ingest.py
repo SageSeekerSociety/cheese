@@ -14,7 +14,7 @@ line stays for the next pass — and a fingerprint of the file's head detects
 rotation: a replaced file is a new generation and restarts from zero.
 
 Credits: a subscription call is priced like a gateway call. The gateway's
-model table (``feature_stats.pricing.model_rates``) carries price-only entries
+model table (``usage.pricing.model_rates``) carries price-only entries
 for the Claude models, and each call's buckets — fresh input, output, cache
 reads, cache writes to the five-minute and to the one-hour cache — are billed at
 that model's rates; the credits are
@@ -27,7 +27,7 @@ the pass logs which models those were. The table is read once per pass; when
 the gateway is configured but cannot be asked, the pass lands nothing and the
 checkpoint stays put, so an outage never makes a stretch of the log free.
 
-``ingest_once`` runs on its own interval (``app/core/background.py``) when
+``ingest_once`` runs on its own interval (``app/domain/usage/periodic.py``) when
 ``SUBSCRIPTION_USAGE_LOG`` is set.
 """
 
@@ -49,8 +49,8 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.block.models import Block
 from app.domain.conversation.models import Conversation
-from app.domain.feature_stats import pricing
 from app.domain.project.repositories import ProjectRepository
+from app.domain.usage import pricing
 from app.domain.usage.credits import spend_to_credits
 from app.domain.usage.ledger import Ledger, Rates, payer_for_project
 from app.domain.usage.models import IngestCheckpoint

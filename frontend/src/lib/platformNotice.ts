@@ -144,6 +144,9 @@ export const AGENT_STATUS_EVENTS = new Set([
   'doc_missing',
 ])
 
+/** detail 是一个人写的一句话（不是日志）的事件：这句话直接跟在那一行后面。 */
+const QUOTED_DETAIL = new Set(['card_rejected'])
+
 /** 折叠成一行的那一堆里，每一次各自的原文 —— 一次都不能丢。 */
 export interface NoticeOccurrence {
   /** 这一次的那行人话。 */
@@ -273,6 +276,8 @@ export type PlatformNotice =
       whoLabel: string
       /** >1 时显示 ×N；1 表示没有折叠。 */
       count: number
+      /** 一个人自己写的那句话（退回的理由），跟着这一行直接写出来，不收进展开区。 */
+      quote?: string
       occurrences: NoticeOccurrence[]
       /** 后端说现在点一下重试有用（`meta.retryable`）。 */
       retryable: boolean
@@ -444,13 +449,17 @@ export function platformNotice(block: Block, run: Block[] = [block]): PlatformNo
   if (mail) return { mode: 'mail-draft', mail, outcome: null }
 
   if (str(m?.detail)) {
+    // 退回的理由是审阅的人写给芝士的话，不是日志：读时间线的人要一眼看到为什么退回，
+    // 不该再点开一次。
+    const quote = run.length === 1 && QUOTED_DETAIL.has(str(m?.event_type)) ? noticeText(block, 'detail') : ''
     return {
       mode: 'fold',
       line: noticeText(block),
       who: whoTag(block),
       whoLabel: whoLabel(block),
       count: run.length,
-      occurrences: run.map(occurrenceOf).filter((o) => o.detail),
+      ...(quote ? { quote } : {}),
+      occurrences: quote ? [] : run.map(occurrenceOf).filter((o) => o.detail),
       retryable: m?.retryable === true,
     }
   }
@@ -474,6 +483,8 @@ export interface ConfirmTarget {
 export function confirmTarget(block: Block, projectId: string | null | undefined): ConfirmTarget | null {
   const m = meta(block)
   if (!projectId) return null
+  // 人已经定下来了（保存、拒绝、删除）：这一行只说结果，没有要去确认的了。
+  if (str(m?.state) === 'over') return null
   const kind = str(m?.event_type)
   if (kind === 'routine_proposed' && str(m?.routine_id))
     return { name: 'project-routines', params: { projectId }, query: { routine: str(m?.routine_id) } }
@@ -513,6 +524,16 @@ function foldKey(block: Block): string | null {
   return eventType || null
 }
 
+/**
+ * 说「这件任务在这里开始」的那种行（`task_created`、更早的 `split`）：它画成那件任务的
+ * 卡，一行一件。两件都是没起名时新建的，正文一字不差（「创建了任务「新任务」」），按
+ * 正文折就把后一件的卡整张吞了。
+ */
+function startsTask(block: Block): boolean {
+  const action = meta(block)?.action
+  return action === 'task_created' || action === 'split'
+}
+
 /** 时间线上的一行：要渲染的块，以及被折进它的那一串。 */
 export interface NoticeRow {
   block: Block
@@ -526,7 +547,7 @@ export interface NoticeRow {
  * 两条折叠规则并存：
  *  1. content 全等 —— 老规则，管住 `编辑了文档` 这类一模一样的连发。只对**两边都
  *     没有 detail** 的事件生效：淡行和动作行没有展开区，把带原话的那条折进去就
- *     真丢了；
+ *     真丢了；新建任务的行也不折，每一行是一件任务的卡；
  *  2. 同 `meta.event_type` —— 新规则，管住失败类事件。它们带时间、耗时、HTTP 码，
  *     content 永远不相等，规则 1 从来没在它们身上生效过。折进来的每一条原话都摆
  *     在展开区里，一条不少。
@@ -555,7 +576,8 @@ export function collapseNotices(blocks: Block[]): NoticeRow[] {
     if (prevBlock && prevBlock.kind === 'event' && showsInRoom(prevBlock)) {
       const key = foldKey(block)
       const sameType = key !== null && key === foldKey(prevBlock)
-      const bothPlain = !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail)
+      const bothPlain =
+        !str(meta(block)?.detail) && !str(meta(prevBlock)?.detail) && !startsTask(block) && !startsTask(prevBlock)
       // 平台替一轮写的通知署名都是 system：是哪位队友的那一轮在 `seat` 上，两位的
       // 并成一行，后一位的就署成了前一位。
       const sameAuthor =
@@ -616,7 +638,7 @@ function aboutTheCard(block: Block): boolean {
 /**
  * 卡上的「谁在管这件事」只对最新的那一句成立。
  *
- * `who` 是写下这一行那一刻的事实：「等 alice 采纳 · 需要手动处理」「退回了 · 芝士正在
+ * `who` 是写下这一行那一刻的事实：「等 alice 采纳 · 等人处理」「退回了 · 芝士正在
  * 处理」。之后这段对话里关于这张卡又有一句说了现在归谁（芝士重新递了卡、PR 合了），
  * 前一句的尾标就过时了 —— 留着它，一张早已采纳的卡还在说等人手动处理。所以卡的那
  * 些提示里，尾标只留在最后一句说了归谁的那一行上，更早的只剩那件事本身。别的提示

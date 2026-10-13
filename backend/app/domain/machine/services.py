@@ -38,7 +38,7 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
-from app.domain.agent.compute_configs import ComputeChoice
+from app.domain.agent import environment
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.conversation.services import room_of
 from app.domain.device.models import DeviceRow
@@ -47,6 +47,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.machine import enrollment
+from app.domain.machine.infra_records import keep_host_lost
 from app.domain.machine.lifecycle import SandboxRemoving
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -60,8 +61,8 @@ from app.domain.machine.models import (
     TRANSITIONAL,
     AiStatus,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
+    SandboxHome,
     capacity,
 )
 from app.domain.machine.progress import (
@@ -76,7 +77,7 @@ from app.domain.machine.supply import pick_offering
 from app.domain.machine.warm import WarmPoolService
 from app.domain.membership.roster import roster
 from app.domain.project.repositories import ProjectRepository
-from app.domain.topic.models import TopicStatus
+from app.domain.topic.models import Topic, TopicStatus
 from app.domain.usage.compute import VM, admit_start, vm_spec
 from app.domain.user.services import user_by_handle
 
@@ -139,6 +140,17 @@ def accepting(host: CloudHost) -> bool:
     )
 
 
+def host_failed(host: CloudHost) -> bool:
+    """Whether a host is in the pool's error state — a sandbox that could not
+    come up.
+
+    房间读那条路由借它把状态说成 ``failed`` 而不是 ``pending``（见
+    ``routes/project_environment.py``）。判据收在 machine 领域里，路由就不必为了
+    这一个比较 import ``machine.models`` 的 ``MachineStatus``。
+    """
+    return host.status == MachineStatus.error
+
+
 def _counts_toward_cap(host: CloudHost) -> bool:
     return host.released_at is None
 
@@ -163,13 +175,6 @@ class HostPool:
         return self._client.configured
 
     # --- who may run on cloud ------------------------------------------------
-
-    async def admit_choice(
-        self, project_id: uuid.UUID, actor: Actor, choice: ComputeChoice
-    ) -> None:
-        """Let a saved cloud choice stand only for someone on the project."""
-        if choice.profile == "cloud":
-            await self.require_use_authority(project_id, actor)
 
     async def require_use_authority(self, project_id: uuid.UUID, actor: Actor) -> None:
         """Being on the project authorizes running its sessions on cloud.
@@ -245,7 +250,12 @@ class HostPool:
         home = await self._repo.current_home(session_id)
         if home is not None and home.stopped_at is not None:
             raise SandboxRemoving()
-        if home is not None:
+        if home is not None and home.host_id is None:
+            # Its sandbox was on a person's computer; that one is left to the
+            # idle sweep, and the session is placed on a host below.
+            await self.leave(session_id)
+            home = None
+        if home is not None and home.host_id is not None:
             host = await self._repo.get(home.host_id)
             assert host is not None
             if host.warm_claim_pending:
@@ -285,7 +295,7 @@ class HostPool:
             home = await self._repo.lock_home(home.id)
         if home is not None and home.stopped_at is not None:
             raise SandboxRemoving()
-        if home is not None:
+        if home is not None and home.host_id is not None:
             host = await self._repo.get(home.host_id)
             assert host is not None
             await self._session.refresh(host)
@@ -308,6 +318,7 @@ class HostPool:
                     whole_machine=whole_machine,
                 )
         home = {
+            "spec": environment.VM if whole_machine else environment.STANDARD,
             "project_id": topic.project_id,
             "topic_id": topic.id,
             "room_resource_id": str(topic.resource_id or topic.id),
@@ -334,7 +345,7 @@ class HostPool:
         await self._require_room_to_grow()
         return await self._acquire(body, home)
 
-    async def current_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
+    async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._repo.current_home(session_id)
 
     async def _place_on_own_vm(
@@ -557,11 +568,55 @@ class HostPool:
         return customer_id, account_id
 
     async def leave(self, session_id: uuid.UUID) -> None:
-        """The session moves off its host, and its home goes."""
+        """The session moves off its machine. A host's home goes, and with it
+        the slot; a home on a person's computer stays there, no session's, for
+        the idle sweep to destroy like any sandbox (``lifecycle``)."""
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
-        if home is not None:
+        if home is None:
+            return
+        if home.host_id is None:
+            home.session_id = None
+            await self._session.flush()
+        else:
             await self._repo.delete_home(home)
+
+    async def keep_on_device(
+        self,
+        session_id: uuid.UUID,
+        *,
+        topic: Topic,
+        device_id: str,
+        spec: str,
+        resource_id: str,
+    ) -> None:
+        """The session's sandbox is on ``device_id``, a person's computer: its
+        home there is kept up to date, or made. Every tool call of the session
+        comes through here, as it does through ``place`` on a host, with its
+        room ``topic`` already locked. Raises ``SandboxRemoving`` while its
+        previous sandbox is being destroyed."""
+
+        home = await self._repo.current_home(session_id)
+        if home is not None:
+            home = await self._repo.lock_home(home.id)
+        if home is not None and home.stopped_at is not None:
+            raise SandboxRemoving()
+        if home is not None and home.device_id == device_id:
+            _touch(home)
+            return
+        if home is not None:
+            await self.leave(session_id)
+        await self._repo.put_device_home(
+            device_id,
+            {
+                "spec": spec,
+                "project_id": topic.project_id,
+                "topic_id": topic.id,
+                "room_resource_id": str(topic.resource_id or topic.id),
+                "resource_id": resource_id,
+                "session_id": session_id,
+            },
+        )
 
     async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
         """Tell the session's room, once, that its sandbox is being prepared.
@@ -584,14 +639,14 @@ class HostPool:
         home.waiting_since = None
         return await tell_ready(self._session, home, await self._vm(home))
 
-    async def _vm(self, home: CloudHostHome) -> bool:
+    async def _vm(self, home: SandboxHome) -> bool:
         host = None if home.host_id is None else await self._repo.get(home.host_id)
         return host is not None and host.whole_machine
 
-    async def _locked_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
+    async def _locked_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._session.scalar(
-            select(CloudHostHome)
-            .where(CloudHostHome.session_id == session_id)
+            select(SandboxHome)
+            .where(SandboxHome.session_id == session_id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
@@ -619,9 +674,9 @@ class HostPool:
             return False
         return (
             await self._session.scalar(
-                select(CloudHostHome.id).where(
-                    CloudHostHome.host_id == host.id,
-                    CloudHostHome.resource_id == resource_id,
+                select(SandboxHome.id).where(
+                    SandboxHome.host_id == host.id,
+                    SandboxHome.resource_id == resource_id,
                 )
             )
         ) is None
@@ -838,10 +893,12 @@ class HostPool:
         the provider's record.
         """
         now = datetime.now(UTC)
+        first = host.released_at is None
         host.released_at = host.released_at or now
         if provider_failed:
             host.failed_at = host.failed_at or now
         lines = []
+        lost = replaced = 0
         for home in await self._repo.homes_on(host.id):
             row = (worked or {}).get(home.session_id)
             if row is not None:
@@ -849,8 +906,10 @@ class HostPool:
                     **(row.execution_request or {}),
                     LOST_KEY: True,
                 }
+                lost += 1
                 lines.append((home.topic_id, await tell_lost(self._session, home)))
             elif home.waiting_since is not None:
+                replaced += 1
                 lines.append(
                     (
                         home.topic_id,
@@ -858,6 +917,8 @@ class HostPool:
                     )
                 )
             await self._repo.delete_home(home)
+        if first:
+            await keep_host_lost(self._session, host, lost=lost, replaced=replaced)
         await self._session.commit()
         for topic_id, line in lines:
             await publish_line(topic_id, line)
@@ -907,8 +968,8 @@ class HostPool:
             if host.device_id is None or not self._hub.is_online(host.device_id):
                 continue
             locked = await self._session.scalar(
-                select(CloudHostHome)
-                .where(CloudHostHome.id == home.id)
+                select(SandboxHome)
+                .where(SandboxHome.id == home.id)
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -1123,6 +1184,13 @@ class HostPool:
             # Never let the token reach a log line or an API error body.
             reason = enrollment.redact(str(exc), device.token)
             logger.warning("enrolling host %s failed: %s", host.hostname, reason)
+            # The next attempt mints a device of its own, and nothing points at
+            # this one: the host records a device only once it enrolls. Kept, a
+            # host that took three tries is left as three devices of one name,
+            # two of them never online (2026-10-07).
+            await self._devices.delete_platform_provisioned(
+                device.device_id, actor_user_id=owner.id
+            )
             return await self._repo.mark_enroll_failed(host, error=reason)
         logger.info(
             "enrolled host %s as device %s: %s",
@@ -1156,7 +1224,7 @@ class HostPool:
         return {"enrolled": enrolled, "failed": failed}
 
 
-def _touch(home: CloudHostHome) -> None:
+def _touch(home: SandboxHome) -> None:
     now = datetime.now(UTC)
     if home.active_at is None or now - home.active_at >= ACTIVE_STEP:
         home.active_at = now

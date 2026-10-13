@@ -74,7 +74,7 @@ PYTHONPATH=. uv run python scripts/smoke_agent.py   # 流式 + 记忆 + 会话�
 ```
 
 ### 截图工具
-`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/看板/个人主页/章程/决策/私聊）。
+`scripts/shots.py`：一条命令截全部关键屏到 `tmp_review/`（工作台/总览/看板/个人主页/项目目标/决策/私聊）。
 
 ```bash
 # 服务要先起好 + seed
@@ -143,27 +143,49 @@ uv run --with playwright python scripts/shots.py
 
 ---
 
-## 6. 开 PR 前：task ci:fast（本地静态快检）
+## 6. 开 PR 前：task ci:fast（本地快检）
 
-Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的静态检查并真实执行，让 lint 错误、超 cap 文件这类明显问题在开 PR 前就暴露。完整 Required CI + merge queue 仍是唯一合并门禁，ci:fast 绿不代表完整 CI 通过。
+Required CI 第一条有用信号约 8 分钟墙钟。`task ci:fast` 在本地按 merge diff 选出命中的检查并真实执行，让 lint 错误、超 cap 文件、被改模块的 pure 测试和窄类型这类问题在开 PR 前就暴露。完整 Required CI + merge queue 仍是唯一合并门禁，ci:fast 绿不代表完整 CI 通过。
 
 ```bash
-task ci:fast                 # 开 PR 前跑；先把分支跟进 main（fetch + merge/rebase）
-task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc
+task ci:fast                 # quick 档（180s）：先跑静态检查，再跑选中的 pure 测试 + 窄类型/前端 related；先把分支跟进 main（fetch + merge/rebase）
+task ci:fast -- --types      # 改动碰组件 props / 共享类型时，追加 pyright / vue-tsc 全量 manual hook
 ```
+
+三档：`quick`（`task ci:fast` 默认，180s，测试+类型）、`static`（只跑 pre-commit 静态 hook，不跑测试/类型）、`extended`（同样的选中范围，只把预算放宽到 900s）。`--tier` 决定档位；`--title` 传拟用 PR 标题，不传就按 `gh` 读到的真实 PR 标题判 Conventional；两样都拿不到按未验证（unknown）处理并提示传 `--title`，绝不用可能无关的 HEAD 标题顶替已有 PR。
 
 **机器上没有 `task` 时**：本次核查覆盖的平台云执行机样本（cheese-de808b-27）未预装 task，422 作者当时所在执行机同样没有；可按 README 第 13 行的脚本装到 `~/.local/bin`（样本机上实测可装）。Taskfile 只是薄封装，不装 task 时用下面的等价入口——前提是机器上有 python3 和 uv/uvx（pre-commit 由 uvx 解析），装前端依赖还需要 pnpm：
 
 ```bash
-python3 .github/scripts/ci-fast.py               # ≡ task ci:fast
-python3 .github/scripts/ci-fast.py --types       # ≡ task ci:fast -- --types
+python3 .github/scripts/ci-fast.py --tier quick                # ≡ task ci:fast（quick 档）
+python3 .github/scripts/ci-fast.py --tier quick --types        # ≡ task ci:fast -- --types
 (cd backend && uv sync)                          # ≡ task be:deps:sync（备 backend/.venv）
 (cd frontend && pnpm install --frozen-lockfile)  # ≡ task fe:install（备 node_modules）
 ```
 
-- **它证明什么**：本次 merge diff 命中的静态检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
-- **这些都不是绿**（退出码 2/3，机器可读）：hook 被 SKIP 环境跳过、无 merge-base 或自定义 `--base` 时 file-size/migration-fork 判不了、选中了却零执行、报告写失败、hook 超时、hook 配置漂移、缺 pre-commit / `backend/.venv` / `frontend/node_modules`（按提示先 `task be:deps:sync` / `task fe:install`）。退出码 1 是所选检查真实失败。
-- **边界**：只覆盖静态检查，pytest / build / e2e 不在这一层（摘要会列出未跑项和定向建议）。不带 `--types` 会漏缺 prop 类型那类回归。
-- **pre-push hook**：opt-in，片段在 `ci-fast.py` 文件头注释里，不默认安装；也别用 `SKIP` / `--no-verify` 绕过——被跳过的 hook 一律按未执行处理，整体不会是绿。
+注意：不带 `--tier` 直接 `python3 .github/scripts/ci-fast.py` 走的是 `static` 档，不等价于 `task ci:fast`。
 
-设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释；行为层快检不在 v1 范围。
+- **它证明什么**：本次 merge diff 命中的检查真实执行并通过（scope 与 Required CI 同一个 select() + path map，guards 恒跑；测试选择走纯静态反向 import 图 + tree/i18n guard）。报告写在 gitdir 的 `ci-fast-report.json`（记 base/head/脏树内容指纹），**绿以报告落盘为准**。
+- **这些都不是绿**（退出码 2/3，机器可读）：无 merge-base 或自定义 `--base` 时 file-size/migration-fork 判不了、选中了却零执行或选中文件没被真正执行、pytest 空/跳过/无覆盖、前端 related 图为空、报告写失败、hook 或检查超时/超内存/被信号杀、hook 配置漂移、缺 pre-commit / `backend/.venv` / `frontend/node_modules`（按提示先 `task be:deps:sync` / `task fe:install`）。退出码 1 是所选检查真实失败。
+- **边界**：quick/extended 只到 pure 测试 + 窄类型/前端 related；contract / integration / build / e2e / 完整前端消费方类型不在这一层（摘要会列出未跑项和定向建议）。`extended` 不扩大选中范围，只放宽预算，超预算仍是 unknown。前端 related 只在有改动源码根时可信，配置/删文件/未知路径/无 base 一律回退全量 Vitest。详细用法见 `.github/scripts/ci-fast.md`。
+- **pre-push hook**：opt-in，片段在 `ci-fast.py` 文件头注释里，不默认安装；也别用 `--no-verify` 绕过——被跳过的 hook 一律按未执行处理，整体不会是绿。外层 shell 里的 `SKIP` / `PRE_COMMIT_COLOR` 等会改判定的变量在起子进程前被清掉，不会把某个嵌套检查悄悄跳过。
+
+设计取舍（范围、退出码语义、反例清单）写在 `.github/scripts/ci-fast.py` 的文件头注释。
+
+### 草稿 PR 只跑快检档，正式 PR / 合并队列跑完整门禁
+
+Required CI（`.github/workflows/required-ci.yml`）按事件分两档，档位由 `.github/scripts/required-ci.py` 从事件读取（`tier_for`）：
+
+- **草稿 PR**（`pull_request` 且 payload 里 `pull_request.draft` 为 `true`）：只跑快检档——一个内联 job 先 `gh api repos/$GITHUB_REPOSITORY/pulls/N > "$RUNNER_TEMP/pull.json"`，再跑 `python3 .github/scripts/ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --pull-request "$RUNNER_TEMP/pull.json"`，所有产品 suite 一律跳过。聚合 job 的名字是 **`CI required (draft quick)`**，与正式名字不同（两个档各一个聚合 job，见下）。档位给的是**选中范围**与本地 quick 档相同，**边界不是**：本地默认的 180s / 3072 MiB 是开发机自己的限制（3072 MiB 就是它的会话上限），跑在 4 vCPU / 16 GiB runner 上会让前端套件在到达上限时被杀——10-12 03:56–06:30 窗口里 12 个跑完的草稿 run 全红，12 个都死在 `frontend-unit`（超时 8、撞上限 3、测不出 1，峰值 2771–3079 MiB），后面的检查一律记 0 秒。所以草稿 job 给 runner 自己能兜住的采样上限（9216 MiB，前端 vitest 并行度按同一个数推：每 3072 MiB 一个 fork，公开仓库的标准 runner 是 4 vCPU / 16 GiB，算出 3 个，和 `frontend/vite.config.ts` 给同一台机器算的一致）和按完整 CI 各步耗时定的预算（1200s）。首次实跑（2026-10-12，恰好是最宽的那一档：未知路径把范围放大成全量套件 + 全量类型）校准了这两个数：全量前端单测 3 个 fork 584s 通过、组峰值 3580 MiB（远低于 9216 MiB 的上限），全量类型 123s 通过，随后的 `backend-pure` 撞上 1200s 预算。也就是说定向的那一档（改动相关测试 + 改动文件类型检查）在预算内有富余，回退到全量的那一半仍可能报 unknown。预算耗尽仍然是 unknown，不会为了变绿裁掉检查。
+  这个档**不判自己没有的东西**（2026-10-12 加）：草稿的标题是平台的占位标题（`WIP: <任务标题>`），所以标题一律不查——`--pull-request` 给的不是标题字符串，是 `gh api` 的 JSON 文件，`ci-fast.py` 从里面读标题和 `draft` 标志，草稿记为未执行，转正后由完整档和 `pr-title.yml` 检查；需要固定版 Claude Code / Codex / pi 的测试这里记「未执行」而不是跑出红（那三个二进制是完整 CI 装的，而伸手要它们的测试是 fail 不是 skip，`ci-fast.py` 按 import 关系从选中列表里把它们拿掉，命名出的文件写进摘要）；Redis 由这个 job 的 valkey service 提供，和完整档同一个镜像、同一个端口。合起来是**只有退出码 1（真有检查失败）才让草稿变红**：2（unknown）/3（blocked）只打一条 warning 并把每个没判到的项写进这一步的摘要（`$GITHUB_STEP_SUMMARY`），所以草稿的绿不等于「全判过了」，摘要才是那一档给的全部信息。代价是摘要没人看时，unknown 看起来和绿一样——所以 step summary 不是可选项。这几条都是从草稿 run 的日志里读出来的：截止 10-12 的两天里合并的 188 个 PR 有 83 个首推没过，而草稿档 10-12 03:47 上线后创建的 51 个 PR 只有 24% 首推通过（之前创建的 137 个是 68%）；上线后 39 个首推没过里 17 个是这几类误红。
+- **正式 PR / 合并队列**（`merge_group`，或任意 `draft` 为 `false` 的 `pull_request`，含把草稿转正的 `ready_for_review`）：跑完整门禁——merge diff 选中的每个 suite 都跑，聚合 job 名字是 **`CI required`**。
+
+关键点：
+
+- **两个档是两个聚合 job，名字都写死**。`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，谁跑由 `if` 里事件的 `draft` 决定，不依赖 scope 输出——scope 失败也不会退化成裸名字。名字是字面量而不是用表达式拼的：表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示，看起来像一条红。两边的判断仍是同一次 `required-ci.py check`（它自己按事件重算档位，和 scope 输出对不上就红），不存在两套规则。
+- **草稿的绿永远不会被当成正式门禁的绿**。分支保护要求的是 `CI required` 这个名字，只有完整档那个 job 会在它名下给出结果；草稿只在 `CI required (draft quick)` 名下判绿。不跑的那个聚合 job 在 run 里显示 skipped，而 GitHub 把 skipped 当「已满足」，所以草稿上 `CI required` 是一条 skipped。这不妨碍把关：草稿本来就合不了，真正拦住的是平台自己的判断（`merge_state.py` 把缺席和 skipped 都当没通过）和合并队列——`merge_group` 上完整档会重跑一次，队列要的是那一次的结果。
+- **`ready_for_review` 会重跑，且是完整的**。`pull_request` 触发器显式列了 `opened / synchronize / reopened / ready_for_review / converted_to_draft`；草稿转正触发的是一次全新的**完整** run，草稿那次快检的绿不会被复用。并发组按 ref 只取消**仍在途**的旧 run；已经跑完的草稿快检 run 不会被撤销，也不需要撤销——它那条 `CI required` 是 skipped（对草稿来说本来就等于没跑），要采信的是完整 run 在同名下的结果。
+- **判定失败即红，绝不放行**：`draft` 缺失、事件 JSON 读不出、事件名未知，一律按**完整档**处理（fail closed）；聚合时按事件重算档位，scope 报的档位与事件不一致就报错。草稿 run 里若有产品 suite 真的跑了（哪怕绿）也算失败——那意味着有完整 suite 在草稿名下跑过。所选 suite 缺结果、取消、空报告、超预算都不算绿。
+- **生产部署链不受影响**：部署门禁只认 `required-ci.yml` 的 `merge_group` run（`deploy/check-auto-deploy.py`）；这条链没改。
+
+**平台递卡（提验收）**：递卡本身就会把草稿 PR 转正式——`backend/app/domain/review/pr_publish.py` 在卡递出时对还开着的 draft PR 调 `mark_ready_for_review`（`test_accept_pr.py::test_filing_a_card_takes_the_batchs_pr_out_of_draft` 覆盖），于是 `ready_for_review` 触发一次**完整** Required CI。也就是说：**递卡自动开始完整门禁，不需要先手动 `cheese_ready`／标 ready**。但要拿到的验收信号是**同一 head** 上**完整的 `CI required`**（不是 `CI required (draft quick)`）变绿——递卡时那次草稿快检的绿不构成可验收信号，采纳必须等完整 `CI required` 绿。若想在递卡之前就先看完整结果，可以提前标记 ready（可选做法，不是递卡的前提）。

@@ -227,6 +227,10 @@ export function createCollabServer(config: CollabConfig): Server {
         operation?: Record<string, unknown> | null
         /** A write in Markdown from outside an editor: refuse it if it would lose text. */
         check?: boolean
+        /** Handles among the pending suggestions' authors that are agent seats
+         *  (the backend judges them): a whole-document write is dropped only if
+         *  every pending suggestion is one of theirs, never a person's. */
+        agent_authors?: string[]
       }
       const problem = body.check ? checkMarkdownWrite(body.content) : null
       if (problem) {
@@ -237,6 +241,12 @@ export function createCollabServer(config: CollabConfig): Server {
       try {
         const document = connection.document as Document
         const outcome = await document.saveMutex.runExclusive(async () => {
+          // A suggestion a person left is still waiting on a decision:
+          // rewriting the whole document from Markdown would drop it, so refuse
+          // and let them decide first. An agent's own suggestion is dropped.
+          const agents = new Set(body.agent_authors ?? [])
+          const theirs = liveSuggestions(document).filter((item) => !agents.has(item.author))
+          if (theirs.length) return { refused: { error: 'suggestions', count: theirs.length } as const }
           if (!readsAs(document, body.base)) return { conflict: true as const }
           const copy = new Y.Doc()
           Y.applyUpdate(copy, Y.encodeStateAsUpdate(document))
@@ -251,7 +261,9 @@ export function createCollabServer(config: CollabConfig): Server {
           Y.applyUpdate(document, Y.encodeStateAsUpdate(copy, Y.encodeStateVector(document)))
           return { conflict: false as const, stored }
         })
-        if (outcome.conflict) {
+        if ('refused' in outcome) {
+          respond(response, 409, outcome.refused)
+        } else if (outcome.conflict) {
           // The writer read an older document. Store what people typed since,
           // so that when it reads again it gets the document it is up against.
           const debounceId = `onStoreDocument-${name}`
@@ -283,7 +295,10 @@ export function createCollabServer(config: CollabConfig): Server {
     try {
       const document = connection.document as Document
       const outcome = await document.saveMutex.runExclusive(async () => {
-        const result = applyEdits(liveNode(document), body.edits, body.mode, body.actor)
+        const result = applyEdits(liveNode(document), body.edits, body.mode, body.actor, {
+          editorIsAgent: body.editor_is_agent,
+          agentAuthors: new Set(body.agent_authors ?? []),
+        })
         if (!result.ok) return result
         const copy = new Y.Doc()
         Y.applyUpdate(copy, Y.encodeStateAsUpdate(document))
@@ -346,6 +361,11 @@ interface EditBody {
   requested_by?: string | null
   mode: EditMode
   reason?: string | null
+  /** The writer (``actor``) is an agent seat (the backend judges it). */
+  editor_is_agent?: boolean
+  /** Handles among the pending suggestions' authors that are agent seats: an
+   *  agent's change may drop one of theirs, never a person's. */
+  agent_authors?: string[]
 }
 
 function respond(response: ServerResponse, status: number, body: unknown) {

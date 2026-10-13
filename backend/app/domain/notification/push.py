@@ -1,9 +1,10 @@
 """浏览器推送：订阅的存取、这一条该不该推、以及推出去。
 
-## 只推「下一步在人手上」的那两种
+## 偏好矩阵之外，只推「下一步在人手上」的那两种
 
-`ROOM_NOTICE` 和 `CHEESE_QUESTION` —— 平台在房间里说的那一句要人动手的话，和芝士停
-在那里等回答的一个问题。别的类别码一个都不推。
+偏好矩阵覆盖的那几类（有人 @ 我、我的消息被回复……）推不推由收件人自己定
+（`preferences.resolve`）。矩阵之外的类别码只推 `ROOM_NOTICE` 和 `CHEESE_QUESTION`
+—— 平台在房间里说的那一句要人动手的话，和芝士停在那里等回答的一个问题。
 
 这不是省事，是 #1084 定的判据：芝士跑一轮会产生几十条消息，按消息推送就是几十条推
 送，人会直接把这个渠道关掉，之后真正要他动手的那一条也就收不到了。推送的价值全在
@@ -45,6 +46,13 @@ logger = logging.getLogger(__name__)
 PUSHABLE: Final = frozenset(
     {NotificationType.ROOM_NOTICE, NotificationType.CHEESE_QUESTION}
 )
+
+#: 频道里一条消息引出的那两种 → 推送标题那一句（谁、在哪个频道）。正文是那条消息
+#: 本身（`agent.mentions`）。
+_SAID_IN_ROOM: Final = {
+    NotificationType.MENTION: "pushMentioned",
+    NotificationType.THREAD_REPLY: "pushThreadReply",
+}
 
 
 class PushSubscriptionRepository:
@@ -132,6 +140,10 @@ def push_text(
     下的中文，正文也跟着它，免得一条通知半句中文半句英文。
     """
     room = str(payload.get("topicTitle") or "").strip()
+    if type_ in _SAID_IN_ROOM and room:
+        who = str(payload.get("authorName") or payload.get("author") or "").strip()
+        title = in_language(say(_SAID_IN_ROOM[type_], who=who, room=room), locale)
+        return (title, str(payload.get("content") or "").strip())
     if type_ is NotificationType.CHEESE_QUESTION:
         question = str(payload.get("question") or "").strip()
         where = in_language(say("pushInRoom", room=room), locale) if room else ""

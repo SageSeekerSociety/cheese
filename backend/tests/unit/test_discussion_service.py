@@ -82,20 +82,21 @@ def _make_reaction_service(
 def _make_discussion_service(
     repo: AsyncMock | None = None,
     reaction_service: DiscussionReactionService | AsyncMock | None = None,
-    profile_repo: AsyncMock | None = None,
+    users: AsyncMock | None = None,
     session: AsyncMock | None = None,
 ) -> tuple[DiscussionService, AsyncMock, AsyncMock, AsyncMock]:
     repo = repo or AsyncMock()
     reaction_service = reaction_service or AsyncMock()
-    profile_repo = profile_repo or AsyncMock()
+    users = users or AsyncMock()
+    users.chosen_avatar_ids.return_value = {}
     session = session or AsyncMock()
-    svc = DiscussionService(
-        repo=repo,
-        reaction_service=reaction_service,
-        profile_repo=profile_repo,
-        session=session,
-    )
-    return svc, repo, reaction_service, profile_repo
+    with patch("app.domain.discussion.services.user_service", return_value=users):
+        svc = DiscussionService(
+            repo=repo,
+            reaction_service=reaction_service,
+            session=session,
+        )
+    return svc, repo, reaction_service, users
 
 
 # ===========================================================================
@@ -386,14 +387,14 @@ class TestCreateDiscussion:
     @pytest.mark.anyio
     @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
     async def test_creates_and_returns_dto(self, mock_deliver):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=42, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
         profile = _make_profile(5)
-        profile_repo.get_profiles_by_user_ids.return_value = {5: profile}
+        users.get_users_by_ids.return_value = {5: profile}
 
         result = await svc.create_discussion(
             user_id=5,
@@ -411,7 +412,7 @@ class TestCreateDiscussion:
     @pytest.mark.anyio
     @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
     async def test_publishes_notification_for_mentions(self, mock_deliver):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=42,
             sender_id=5,
@@ -422,7 +423,7 @@ class TestCreateDiscussion:
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {
+        users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
             20: _make_profile(20),
@@ -480,7 +481,7 @@ class TestCreateDiscussion:
     @pytest.mark.anyio
     @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
     async def test_filters_non_positive_mention_ids(self, mock_deliver):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
         )
@@ -488,7 +489,7 @@ class TestCreateDiscussion:
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {
+        users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
         }
@@ -507,7 +508,7 @@ class TestCreateDiscussion:
     @pytest.mark.anyio
     @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
     async def test_deduplicates_mention_ids(self, mock_deliver):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=1, sender_id=5, mentioned_user_ids=[10], content="hello"
         )
@@ -515,7 +516,7 @@ class TestCreateDiscussion:
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {
+        users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
         }
@@ -534,13 +535,13 @@ class TestCreateDiscussion:
     @pytest.mark.anyio
     @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
     async def test_model_type_uppercased(self, mock_deliver):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         await svc.create_discussion(
             user_id=5,
@@ -555,13 +556,13 @@ class TestCreateDiscussion:
     @pytest.mark.anyio
     @patch("app.domain.discussion.services.deliver", new_callable=AsyncMock)
     async def test_content_is_stripped(self, mock_deliver):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[])
         repo.create.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         await svc.create_discussion(
             user_id=5,
@@ -582,13 +583,13 @@ class TestCreateDiscussion:
 class TestGetDiscussion:
     @pytest.mark.anyio
     async def test_returns_dto(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=8, sender_id=5)
         repo.get_by_id.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         result = await svc.get_discussion(8, current_user_id=5)
 
@@ -606,13 +607,13 @@ class TestGetDiscussion:
 
     @pytest.mark.anyio
     async def test_includes_sub_discussions(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5)
         repo.get_by_id.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 3
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         result = await svc.get_discussion(1, current_user_id=5)
 
@@ -629,12 +630,12 @@ class TestGetDiscussion:
 class TestListDiscussions:
     @pytest.mark.anyio
     async def test_returns_items_and_page_metadata(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=i, sender_id=5) for i in range(3)]
         repo.find_all.return_value = (entities, 3)
         rxn_svc.get_reaction_summary.return_value = []
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         items, page = await svc.list_discussions(
             model_type="PROJECT",
@@ -659,12 +660,12 @@ class TestListDiscussions:
 
     @pytest.mark.anyio
     async def test_has_more_when_total_exceeds_returned(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=i, sender_id=5) for i in range(2)]
         repo.find_all.return_value = (entities, 5)
         rxn_svc.get_reaction_summary.return_value = []
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         _, page = await svc.list_discussions(
             model_type="PROJECT",
@@ -684,7 +685,7 @@ class TestListDiscussions:
 
     @pytest.mark.anyio
     async def test_page_start_none_defaults_to_zero(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         repo.find_all.return_value = ([], 0)
 
         _, page = await svc.list_discussions(
@@ -726,12 +727,12 @@ class TestListDiscussions:
 
     @pytest.mark.anyio
     async def test_last_page_has_more_false(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=3, sender_id=5)]
         repo.find_all.return_value = (entities, 4)
         rxn_svc.get_reaction_summary.return_value = []
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         _, page = await svc.list_discussions(
             model_type="PROJECT",
@@ -758,7 +759,7 @@ class TestListDiscussions:
 class TestUpdateDiscussion:
     @pytest.mark.anyio
     async def test_updates_and_returns_dto(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=5, sender_id=7)
         repo.get_by_id.return_value = entity
         updated_entity = _make_entity(
@@ -775,7 +776,7 @@ class TestUpdateDiscussion:
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {7: _make_profile(7)}
+        users.get_users_by_ids.return_value = {7: _make_profile(7)}
 
         result = await svc.update_discussion(5, content="new", user_id=7)
 
@@ -922,7 +923,7 @@ class TestDiscussionServiceRemoveReaction:
 class TestBuildDiscussionDto:
     @pytest.mark.anyio
     async def test_dto_contains_all_fields(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(
             id=42,
             model_type="TEAM",
@@ -935,12 +936,12 @@ class TestBuildDiscussionDto:
         rxn_svc.get_reaction_summary.return_value = [{"reactionTypeId": 1, "count": 2}]
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 1
-        profile_repo.get_profiles_by_user_ids.return_value = {
+        users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
         }
         # avatarId 现在取自「挑过的头像」映射，不再回档案上的 avatar_id
-        profile_repo.chosen_avatar_ids.return_value = {5: 500}
+        users.chosen_avatar_ids.return_value = {5: 500}
 
         result = await svc.get_discussion(42, current_user_id=5)
 
@@ -961,14 +962,14 @@ class TestBuildDiscussionDto:
 
     @pytest.mark.anyio
     async def test_timestamps_as_epoch_ms(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         ts = datetime(2025, 6, 15, 12, 0, 0)
         entity = _make_entity(id=1, sender_id=5, created_at=ts, updated_at=ts)
         repo.get_by_id.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         result = await svc.get_discussion(1, current_user_id=5)
 
@@ -979,10 +980,10 @@ class TestBuildDiscussionDto:
     @pytest.mark.anyio
     async def test_without_reactions(self):
         """When with_reactions=False, reactions list is empty."""
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=1, sender_id=5)]
         repo.find_all.return_value = (entities, 1)
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         items, _ = await svc.list_discussions(
             model_type="PROJECT",
@@ -1003,11 +1004,11 @@ class TestBuildDiscussionDto:
     @pytest.mark.anyio
     async def test_without_subs(self):
         """When include_subs=False, subDiscussions is None."""
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entities = [_make_entity(id=1, sender_id=5)]
         repo.find_all.return_value = (entities, 1)
         rxn_svc.get_reaction_summary.return_value = []
-        profile_repo.get_profiles_by_user_ids.return_value = {5: _make_profile(5)}
+        users.get_users_by_ids.return_value = {5: _make_profile(5)}
 
         items, _ = await svc.list_discussions(
             model_type="PROJECT",
@@ -1027,14 +1028,14 @@ class TestBuildDiscussionDto:
     @pytest.mark.anyio
     async def test_missing_profile_excluded_from_mentioned(self):
         """If a mentioned user has no profile, they are excluded from the list."""
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[10, 20])
         repo.get_by_id.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
         # Only user 10 has a profile, user 20 does not
-        profile_repo.get_profiles_by_user_ids.return_value = {
+        users.get_users_by_ids.return_value = {
             5: _make_profile(5),
             10: _make_profile(10),
         }
@@ -1047,13 +1048,13 @@ class TestBuildDiscussionDto:
     @pytest.mark.anyio
     async def test_sender_none_when_no_profile(self):
         """If the sender has no profile, sender is None."""
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5)
         repo.get_by_id.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
         repo.find_all.return_value = ([], 0)
         repo.count_children.return_value = 0
-        profile_repo.get_profiles_by_user_ids.return_value = {}
+        users.get_users_by_ids.return_value = {}
 
         result = await svc.get_discussion(1, current_user_id=5)
 
@@ -1068,7 +1069,7 @@ class TestBuildDiscussionDto:
 class TestLoadUserMap:
     @pytest.mark.anyio
     async def test_maps_profiles_by_user_id(self):
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entity = _make_entity(id=1, sender_id=5, mentioned_user_ids=[10])
         repo.get_by_id.return_value = entity
         rxn_svc.get_reaction_summary.return_value = []
@@ -1076,17 +1077,24 @@ class TestLoadUserMap:
         repo.count_children.return_value = 0
         p5 = _make_profile(5, nickname="Alice", avatar_id=50, intro="Hi")
         p10 = _make_profile(10, nickname="Bob", avatar_id=100, intro="Hey")
-        profile_repo.get_profiles_by_user_ids.return_value = {5: p5, 10: p10}
+        users.get_users_by_ids.return_value = {5: p5, 10: p10}
 
         result = await svc.get_discussion(1, current_user_id=5)
 
         assert result["sender"]["nickname"] == "Alice"
         assert result["mentionedUsers"][0]["nickname"] == "Bob"
+        assert result["sender"]["avatarId"] is None
+        assert result["mentionedUsers"][0]["avatarId"] is None
+        users.get_users_by_ids.assert_awaited_once()
+        assert set(users.get_users_by_ids.call_args.args[0]) == {5, 10}
+        users.chosen_avatar_ids.assert_awaited_once_with(
+            users.get_users_by_ids.call_args.args[0]
+        )
 
     @pytest.mark.anyio
     async def test_empty_user_ids_returns_empty_map(self):
         """When there are no mentioned users and sender has no profile."""
-        svc, repo, rxn_svc, profile_repo = _make_discussion_service()
+        svc, repo, rxn_svc, users = _make_discussion_service()
         entities = []
         repo.find_all.return_value = (entities, 0)
 
@@ -1104,14 +1112,15 @@ class TestLoadUserMap:
         )
 
         assert items == []
-        profile_repo.get_profiles_by_user_ids.assert_not_awaited()
+        users.get_users_by_ids.assert_not_awaited()
 
     @pytest.mark.anyio
-    async def test_empty_user_ids_skips_repo_call(self):
-        """_load_user_map returns {} immediately when user_ids is empty (line 271)."""
-        svc, _repo, _rxn, profile_repo = _make_discussion_service()
+    async def test_empty_user_ids_skips_service_calls(self):
+        """No user or avatar queries are needed without user IDs."""
+        svc, _repo, _rxn, users = _make_discussion_service()
 
         result = await svc._load_user_map(set())
 
         assert result == {}
-        profile_repo.get_profiles_by_user_ids.assert_not_awaited()
+        users.get_users_by_ids.assert_not_awaited()
+        users.chosen_avatar_ids.assert_not_awaited()

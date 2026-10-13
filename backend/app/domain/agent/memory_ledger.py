@@ -3,7 +3,7 @@
 从 `chat.py` 搬出来的那一簇——`_remember_memory_turn` / `_memory_scopes` /
 `_sync_memory*` / `sweep_memory_dreams` / `run_memory_dream` 与那两条说进总览的话，
 连同它们按房间记的四份状态。`ChatService` 上留 `sweep_memory_dreams` /
-`run_memory_dream` 两行委托，调用点（`core/background.py` 的周期任务、测试）一格
+`run_memory_dream` 两行委托，调用点（`agent/periodic.py` 的周期任务、测试）一格
 没动；`_output_tokens_since` 照旧从 `chat.py` 导得出来（有一条测试在那里导它），
 其余名字都从本模块取。
 
@@ -52,7 +52,6 @@ from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.state.live import LiveWork
-from app.domain.agent.work_policy import resolve_compute_id
 from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import of_room, room_column
 from app.domain.delivery.input_identity import InputEffects, InputRegistrar
@@ -328,7 +327,6 @@ class MemoryLedger:
                 session, project_id, tokens_at_start=tokens, now=now
             )
             run_id = run.id
-            compute_id = resolve_compute_id(project.settings)
             agent_handle = await _agent_handle(session, root_topic_id)
             await session.commit()
         logger.info(
@@ -358,7 +356,7 @@ class MemoryLedger:
         )
 
         self._dreams.add(root_topic_id)
-        runtime = self._compute.platform_work(compute_id)
+        runtime = self._compute.platform_work()
         system_prompt = build_system_prompt(
             self._base_prompt,
             "",  # 聊天说明不带：整理这件事的规矩在 prompt 里。

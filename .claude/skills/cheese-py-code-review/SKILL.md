@@ -14,7 +14,7 @@ description: >
 
 Review changed code against cheese-backend-py project standards.
 
-项目基础规范：@CLAUDE.md
+项目基础规范：@AGENTS.md
 (git pull 后的检查见 `post-pull` skill;迁移/后端测试/e2e 的领域坑见 `.claude/rules/`。)
 
 ## Review Workflow
@@ -59,11 +59,17 @@ task check
 
 ## Review Checklist
 
-### 1. Conventions (canonical copies live in CLAUDE.md — already in context)
+### 1. Conventions (canonical copies live in the rule files — already in context)
 
-Check the diff against every rule in CLAUDE.md's **Architecture / Python
-Conventions / API Design / Datetime / Security** sections. This skill does not
-restate them; CLAUDE.md is the single source of truth.
+Check the diff against them; this skill does not restate them.
+
+- `.claude/rules/architecture.md` — module boundaries, the checked import graph,
+  the file-size cap.
+- `backend/AGENTS.md` — the import graph, and `## Caps and conventions`.
+- `docs/manual/dev/backend-app.md` — the response envelope, how an error becomes a
+  response, and the write gate.
+- `.claude/scripts/check-repo-rules.sh` — each rule a script enforces, stated next
+  to its enforcement (naive datetimes, raw `HTTPException`).
 
 ### 2. Testing
 

@@ -4,7 +4,7 @@
 // 接口给的 `teaching` 等于 `protocol.resolve()` 的合成结果，并且去掉一层它跟着
 // 变。这里接住前半段 —— 组件不自己算、不自己拼，渲染出来的就是那份数据。两段合
 // 起来才是「界面数据 = 合成结果」。
-import type { TaskInheritanceData } from '@/network/api/tasks/types'
+import type { TaskInheritanceData } from '@/types/taskBoard'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'

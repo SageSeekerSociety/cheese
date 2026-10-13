@@ -8,24 +8,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import SignUp from './Start.vue'
 
+import { UserAuthApi } from '@/api/userAuth'
 import { setLocale } from '@/i18n'
-import { UserApi } from '@/network/api/users'
 
-vi.mock('@/network/api/users', () => ({
-  UserApi: {
-    getRegistrationConfig: vi.fn().mockResolvedValue({ data: { requireInviteCode: false } }),
+vi.mock('@/api/userAuth', () => ({
+  UserAuthApi: {
+    getRegistrationConfig: vi.fn().mockResolvedValue({ requireInviteCode: false }),
     sendEmailCode: vi.fn().mockResolvedValue({}),
   },
 }))
-vi.mock('@/network/api/legal', () => ({
+vi.mock('@/api/legal', () => ({
   LegalApi: {
     listDocuments: vi.fn().mockResolvedValue({
-      data: {
-        documents: [
-          { document: 'terms', version: '1.0' },
-          { document: 'privacy', version: '1.0' },
-        ],
-      },
+      documents: [
+        { document: 'terms', version: '1.0' },
+        { document: 'privacy', version: '1.0' },
+      ],
     }),
   },
 }))
@@ -79,19 +77,19 @@ describe('signing up without ticking the agreement', () => {
     await fireEvent.submit(view.container.querySelector('form')!)
     await view.findByRole('button', { name: 'Agree and sign up' })
     expect(isLoading(submitButton)).toBe(false)
-    expect(UserApi.sendEmailCode).not.toHaveBeenCalled()
+    expect(UserAuthApi.sendEmailCode).not.toHaveBeenCalled()
 
     // Cancelling leaves the form as it was: nothing sent, the button usable.
     await fireEvent.click(view.getByRole('button', { name: 'Cancel' }))
     await waitFor(() => expect(view.queryByRole('button', { name: 'Agree and sign up' })).toBeNull())
     expect(isLoading(submitButton)).toBe(false)
     expect(submitButton.disabled).toBe(false)
-    expect(UserApi.sendEmailCode).not.toHaveBeenCalled()
+    expect(UserAuthApi.sendEmailCode).not.toHaveBeenCalled()
 
     await fireEvent.submit(view.container.querySelector('form')!)
     await fireEvent.click(await view.findByRole('button', { name: 'Agree and sign up' }))
 
-    await waitFor(() => expect(UserApi.sendEmailCode).toHaveBeenCalledWith('new@example.com', undefined))
+    await waitFor(() => expect(UserAuthApi.sendEmailCode).toHaveBeenCalledWith('new@example.com', undefined))
     await waitFor(() => expect(router.currentRoute.value.path).toBe('/account/signup/verify-email'))
   })
 })

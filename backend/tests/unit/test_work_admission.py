@@ -69,7 +69,9 @@ class FakeChat(WorkChat):
         self.system_event_meta.append(meta)
         return {"content": content, "meta": meta}
 
-    def has_running_turn(self, topic_id: uuid.UUID) -> bool:
+    def has_running_turn(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool:
         return False
 
     async def thread_at(self, topic_id: uuid.UUID):
@@ -731,8 +733,13 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
     delivery_result,
 ):
     class FailedLiveDelivery(FakeChat):
-        def has_running_turn(self, topic_id: uuid.UUID) -> bool:
-            return True
+        def has_running_turn(
+            self, topic_id: uuid.UUID, agent_handle: str | None = None
+        ) -> bool:
+            # 收件人自己那一轮在跑 —— 有人正面问「这个席位在跑吗」时才是真的
+            # 递进正在跑的会话。房间级的询问（``agent_handle`` 为空）不该被当成
+            # 「这条消息要的一次实时投递」，那正是这条提示以前误报的地方。
+            return agent_handle is not None
 
         async def merge_into_running_turn(self, *args, **kwargs):
             return delivery_result
@@ -762,6 +769,51 @@ async def test_live_delivery_fallback_is_noted_then_runs_normally(
     assert frames[1]["block"]["meta"]["severity"] == "warn"
     assert frames[1]["block"]["meta"]["who"] == "platform"
     assert len(chat.converse_calls) == 1
+    await _until(lambda: runner.active_work_count() == 0)
+
+
+@pytest.mark.anyio
+async def test_another_teammates_turn_is_not_a_lost_delivery(db_factory):
+    """一条 @ 了空闲队友的消息，在另一位队友正跑着的房间里，按正常排队走 ——
+    不记「未能送达」。提示说的是「本该实时递进一个正在跑的会话却没递成」，而这条
+    消息的收件人根本没有在跑的会话：排队就是它本来的路，不是降级。"""
+
+    class RoomBusyRecipientIdle(FakeChat):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.merge_seats: list[str | None] = []
+
+        def has_running_turn(
+            self, topic_id: uuid.UUID, agent_handle: str | None = None
+        ) -> bool:
+            # 房间里有人在跑（不带座位的询问），但收件人自己没在跑（带了座位）。
+            return agent_handle is None
+
+        async def merge_into_running_turn(self, *args, **kwargs):
+            # 递给哪一位：收了座位就不许挑别人的会话，没有就是房间级的老路。
+            self.merge_seats.append(kwargs.get("recipient_handle"))
+            return None
+
+    class Prepared(RoomBusyRecipientIdle):
+        async def converse_prepared(self, **kwargs):
+            yield {"type": "done"}
+
+    chat = Prepared(None, db_factory)
+    runner, broker = _runner()
+    topic = await a_topic(db_factory)
+
+    async with broker.subscribe(str(topic)) as queue:
+        await runner.receive_message(
+            chat, topic, author="u", content="<@cheese-seat> 补充一条"
+        )
+        frames = await _frames_through(queue, "turn_finished")
+
+    kinds = [frame["type"] for frame in frames]
+    assert "event_block" not in kinds, [f.get("block") for f in frames]
+    assert chat.system_events == []
+    # 递给谁就得是谁：收件人的席位，不是「房间里碰巧在跑的任何一个」。
+    assert chat.merge_seats == ["cheese-seat"]
+    assert kinds == ["user_block", "turn_started", "done", "turn_finished"]
     await _until(lambda: runner.active_work_count() == 0)
 
 

@@ -40,7 +40,7 @@ beforeEach(() => {
   setLocale('zh-CN')
   vi.useFakeTimers()
   getMarketPools.mockReset().mockResolvedValue({ ai: [], compute: [] })
-  getMarketNodes.mockReset().mockResolvedValue({ nodes: [], active_turns_total: 0, current_provider: 'cloud' })
+  getMarketNodes.mockReset().mockResolvedValue({ nodes: [], active_turns_total: 0, current_provider: 'standard' })
 })
 
 afterEach(() => {

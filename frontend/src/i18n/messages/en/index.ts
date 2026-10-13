@@ -2,6 +2,7 @@ import account from './account.json'
 import admin from './admin.json'
 import apiError from './apiError.json'
 import ask from './ask.json'
+import catalog from './catalog.json'
 import compute from './compute.json'
 import credits from './credits.json'
 import design from './design.json'
@@ -26,12 +27,14 @@ import routines from './routines.json'
 import shell from './shell.json'
 import slides from './slides.json'
 import spaces from './spaces.json'
+import taskList from './taskList.json'
 import tasks from './tasks.json'
 import teams from './teams.json'
 import toolLabels from './toolLabels.json'
 import topic from './topic.json'
 import usage from './usage.json'
 import users from './users.json'
+import welcome from './welcome.json'
 import work from './work.json'
 
 // Every zh-CN key has an English value here; `frontend/src/i18n/catalog.spec.ts`
@@ -55,6 +58,8 @@ export default {
   questions,
   usage,
   users,
+  welcome,
+  taskList,
   tasks,
   teams,
   spaces,
@@ -72,4 +77,5 @@ export default {
   shell,
   slides,
   topic,
+  catalog,
 }

@@ -12,6 +12,7 @@ import uuid
 from collections.abc import Callable
 
 from sqlalchemy import (
+    BigInteger,
     DateTime,
     String,
     Uuid,
@@ -28,7 +29,12 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.indexed_rows import FAILED_TURN_ROWS
-from app.domain.block.models import AuthorType, Block, BlockKind
+from app.domain.block.models import (
+    CHECKLIST_META_KEY,
+    AuthorType,
+    Block,
+    BlockKind,
+)
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import agent_handle_column, names_a_person
 from app.domain.thread.models import Thread
@@ -39,7 +45,7 @@ _reads = table(
     "topic_read_states",
     column("topic_id", Uuid),
     column("user_handle", String),
-    column("last_read_at", DateTime(timezone=True)),
+    column("last_read_seq", BigInteger),
 )
 _tasks = table(
     "tasks",
@@ -124,33 +130,55 @@ def _reply(block: Block | None) -> dict | None:
         "author": block.author,
         "content": block.content[:LAST_REPLY_CHARS],
         "created_at": block.created_at.isoformat(),
+        "checklist": _checklist(block),
     }
 
 
-async def _failed(session: AsyncSession, threads: list[Thread]) -> set[uuid.UUID]:
-    """The 支线 whose last turn ended in an error after its last reply.
+def _checklist(block: Block) -> dict | None:
+    """The step checklist this message carries, or None when it carries none.
+
+    The line under a message in the main line shows one step of the last
+    reply, and its text cannot say which parts are steps: the line breaks that
+    tell one step from the next are folded away on the way here, and the text
+    is cut at ``LAST_REPLY_CHARS``. So the structure rides along with it — the
+    same ``{"items", "result"}`` a block's ``meta.checklist`` holds. Messages
+    written before that structure existed carry a bare ``true``: they are
+    drawn as ordinary messages, and get no checklist here either."""
+    checklist = (block.meta or {}).get(CHECKLIST_META_KEY)
+    if not isinstance(checklist, dict) or not isinstance(checklist.get("items"), list):
+        return None
+    return checklist
+
+
+async def _failed(
+    session: AsyncSession, threads: list[Thread]
+) -> dict[uuid.UUID, str | None]:
+    """The 支线 whose last turn ended in an error after its last reply, each
+    with the code of that failure (``credits_exhausted`` when the credits
+    refused it), so the line under its message can say why.
 
     Only people's and AI teammates' messages count as replies, so a 支线 where
     the AI teammate's turn failed before it said anything has no reply and no
     one answering in it: without this its message would show nothing under it,
     and the reason the question went unanswered would sit unseen in the 支线."""
     if not threads:
-        return set()
+        return {}
     rows = await session.execute(
-        select(Block.conversation_id, func.max(Block.created_at))
+        select(Block.conversation_id, Block.created_at, Block.meta["code"].as_string())
         .where(
             Block.conversation_id == _among([t.id for t in threads]),
             Block.kind == BlockKind.event,
             FAILED_TURN_ROWS,
         )
-        .group_by(Block.conversation_id)
+        .order_by(Block.created_at)
     )
     by_id = {t.id: t for t in threads}
-    return {
-        thread_id
-        for thread_id, at in rows
-        if by_id[thread_id].last_reply_at is None or at > by_id[thread_id].last_reply_at
-    }
+    failed: dict[uuid.UUID, str | None] = {}
+    for thread_id, at, code in rows:
+        last_reply = by_id[thread_id].last_reply_at
+        if last_reply is None or at > last_reply:
+            failed[thread_id] = code
+    return failed
 
 
 def _summary(thread: Thread, last: Block | None) -> dict:
@@ -261,8 +289,8 @@ async def _unread(
             Block.author_type == AuthorType.participant,
             ~agent_handle_column(Block.author),
             or_(
-                _reads.c.last_read_at.is_(None),
-                Block.created_at > _reads.c.last_read_at,
+                _reads.c.last_read_seq.is_(None),
+                Block.seq > _reads.c.last_read_seq,
             ),
         )
         .distinct()
@@ -339,6 +367,7 @@ async def _describe(
                 "root": _reply(root),
                 "participants": people,
                 "failed": thread.id in failed,
+                "failed_code": failed.get(thread.id),
                 # The tasks made from the message or its 支线, oldest first.
                 "tasks": [
                     {"id": str(task.id), "title": task.title, "status": task.status}

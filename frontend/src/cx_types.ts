@@ -25,14 +25,14 @@ export interface Project {
   created_at: string
   // 建项目的人自己写的「打算做什么」（#946 片 C）。空串 = 建的时候没答，或跳过了。
   intent?: string
-  // The project's root topic (= 本体 / 大本营). Its living doc is the 章程.
+  // The project's root topic (= 本体 / 大本营).
   root_topic_id?: string
   /** 建这个项目的人。名册上他那一行不带任何管理动作——没人能把他降职或移出。 */
   owner_handle?: string | null
   /** 这个项目归哪个团队。顶栏那颗 ← 在没记到来路时拿它当兜底。 */
   team_id?: number | null
-  /** 所属团队的 handle，团队页的地址（`/teams/<handle>`）。 */
-  team_handle?: string | null
+  team_handle?: string | null // 所属团队的 handle，团队页的地址（`/teams/<handle>`）
+  team_name?: string | null // 所属团队的名字，侧栏项目名上面那一行写的就是它
   /**
    * 当前这个人能不能管理这个项目的外部成员（邀请、撤回、移出）：项目所有者，或者
    * 所属团队的所有者、管理员。后端按同一条规则再判一次，这里只决定给不给按钮。
@@ -174,12 +174,11 @@ export interface Block {
   author_type: AuthorType
   author: string
   content: string
-  // 双树 + 引用 (spec §5): conversation tree, document tree, citations, and the
-  // live link an upgraded block points to.
+  // Its place in the order the conversation's blocks were stored: a page that
+  // missed some asks for those after the largest it holds. Absent on a message
+  // this page is still sending.
+  seq?: number
   reply_to?: string | null
-  struct_parent?: string | null
-  node_type?: string | null
-  struct_order?: number | null
   anchor_quote?: string | null
   // Render-by-type: mimeType of an artifact block (set on kind=artifact).
   mime_type?: string | null
@@ -244,8 +243,7 @@ export interface RoomTask {
   project_id: string
   room_id: string // 它挂在哪个房间里；任务不嵌套
   title: string
-  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了
-  // 会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
+  // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
   title_source?: 'placeholder' | 'auto' | 'human'
   status: string
   owner_handle?: string | null
@@ -274,6 +272,7 @@ export interface RoomTask {
   updated_at: string
   last_activity_at?: string // 最后一次有人或芝士说话（项目级列表才带）：侧栏按它排
   awaits_me?: boolean // 在不在等**看的这个人**（项目级列表才带）：侧栏的点、列表的暖色字读它
+  waiting_on?: string | null // 在等哪一个人（「待 某某 审阅」里的某某）；频道的任务列表和单个任务都带
   stalled?: boolean // 十四天没有动静（项目级列表才带）：侧栏收起，全部任务收进「已停滞」
   // 项目级（`/projects/{id}/tasks`）和房间级（`/topics/{id}/tasks`）列表都带它：没有它「等人验收」和「闲着」一样安静。
   card?: ThreadCard | null
@@ -460,10 +459,10 @@ export interface TopicMemberRow {
   // 不是座位账号的昵称 —— 座位昵称是建号时写死的常量，永远是「芝士」。
   name?: string
   name_source?: 'default' | 'human'
-  // 这个人**自己挑的**头像素材 id，同 ProjectMemberRow.avatar_id：没挑过就是
-  // null，画彩色首字母。别拿它去取 /avatars/default。
+  // 这个人**自己挑的**头像素材 id（同 ProjectMemberRow.avatar_id）：没挑过是 null，画彩色首字母，别拿它取 /avatars/default。
   avatar_id?: number | null
   agent?: boolean
+  instance_handle?: string // 队友自己的 handle（`cheese`），同 ProjectMemberRow；人没有这一项
 }
 
 // GET /api/projects/{id}/inbox?target_handle=
@@ -525,8 +524,8 @@ export type MemberTopic = Pick<Topic, 'id' | 'title' | 'status'>
 // GET /api/projects/{id}/members/{handle}/summary
 export interface MemberSummary {
   handle: string
-  /** 他在这个项目里的来路：所有者、团队成员、外部成员；查不到是 null。 */
-  source?: 'owner' | 'team' | 'external' | null
+  /** 他在这个项目里的来路：所有者、团队成员、外部成员、AI 队友（带 instance_handle）；查不到是 null。 */
+  source?: 'owner' | 'team' | 'external' | 'agent' | null
   topics_started: MemberTopic[]
   topics_active?: MemberTopic[]
   weekly_contributions?: number
@@ -536,8 +535,8 @@ export interface MemberSummary {
 
 // ---- 个人主页 / LinkedIn-GitHub profile (spec §1, §7.2, §8.4) ----
 
-/** How the person is in a project: its owner, through its team, or invited alone. */
-export type ProfileProjectRole = 'owner' | 'team' | 'external'
+/** How the person is in a project: its owner, through its team, invited alone, or as its AI teammate. */
+export type ProfileProjectRole = 'owner' | 'team' | 'external' | 'agent'
 
 // One project the person is in, as the viewer may see it.
 export interface ProfileProject {
@@ -815,7 +814,7 @@ export interface Notification {
 
 // A pool listing in the 市场 catalog / a project's settings selector.
 export interface PoolListing {
-  kind: 'ai' | 'compute' | 'visibility'
+  kind: 'ai' | 'compute'
   id: string
   label: string
   tier: string
@@ -837,8 +836,8 @@ export interface MarketPools {
 export interface MarketNode {
   id: string
   label: string
-  // Which compute pool this node IS — the same id the 市场 catalogue lists.
-  kind: 'device' | 'cloud'
+  // Which sandbox spec this node IS — the same id the 市场 catalogue lists.
+  kind: 'standard' | 'vm' | 'devices_of'
   online: boolean
   // Whether an unconfigured topic lands on this node.
   current: boolean

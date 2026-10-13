@@ -116,9 +116,11 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
     # 一行整份对下来，不是挑几个键。BlockOut 是这条线对外的契约；窗口是这一行
     # 的身份：并排摆着的几份周报，是它把它们分开的。
     newest = payload["data"][0]
+    assert isinstance(newest["seq"], int)
     assert newest == {
         "id": ids["newer"],
         "conversation_id": room,
+        "seq": newest["seq"],
         "kind": "weekly",
         "author_type": "participant",
         "author": "alice",

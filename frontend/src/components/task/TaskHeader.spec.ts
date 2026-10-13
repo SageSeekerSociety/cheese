@@ -1,7 +1,7 @@
 /** 任务页头：只有负责人能开始、能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { TopicEnvironment } from '@/types/compute'
 
 import { nextTick } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -41,19 +41,23 @@ function task(over: Partial<RoomTask> = {}): RoomTask {
   } as RoomTask
 }
 
-const LAPTOP = { name: '王宁的笔记本', profile: 'device', device_id: 'd1', whole_machine: false }
-const MACHINE = {
-  choice: LAPTOP,
-  project_default: LAPTOP,
-  current: 'device',
-  device_id: 'd1',
-  devices: [{ device_id: 'd1', name: '王宁的笔记本', online: true, owned: true, sandbox_unavailable: null }],
-  sessions: [],
-  profiles: [],
-  cloud_vm_available: false,
-  visibility: { options: [], effective: null, machine_access: false },
-  follows_room: true,
-} as unknown as TopicComputeProfile
+const LAPTOP = { kind: 'self_hosted', device_id: 'd1' } as const
+const MACHINE: TopicEnvironment = {
+  default: LAPTOP,
+  default_from: 'room',
+  devices: [{ device_id: 'd1', name: '王宁的笔记本', online: true, owned: true }],
+  sessions: [
+    {
+      session_id: 's1',
+      agent_handle: 'cheese-01',
+      seat_handle: 'cheese-01',
+      environment: LAPTOP,
+      status: 'ready',
+      online: true,
+    },
+  ],
+  specs: [{ spec: 'standard', label: '标准' }],
+}
 
 const PEOPLE = ['alice', 'bob', 'carol'].map((member_handle) => ({ member_handle, agent: false }))
 
@@ -71,7 +75,7 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
-function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
+function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
   const setCollaborators = vi.fn(async () => true)
@@ -89,7 +93,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
       machine: MACHINE,
       machineError: false,
       starting: false,
-      startError: null,
+      startError,
       actionError: null,
       start,
       close: async () => true,
@@ -99,6 +103,8 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS) {
       setCollaborators,
       setAgent,
       loadMachine,
+      setMachine: vi.fn(async () => ({})),
+      setMachineDefault: vi.fn(async () => ({})),
     },
     global: { plugins: [vuetify] },
   })
@@ -147,12 +153,23 @@ beforeEach(() => {
 })
 
 describe('任务页头', () => {
+  // 页头那一句和频道里的卡、全部任务、总览说同一件事：在等的是看的人，就写「待你开始」。
+  it('等的是看的人：写「待你开始」，等的是别人：写「讨论中」', () => {
+    me = 'alice'
+    const mine = mount({ waiting_on: 'alice' })
+    expect(mine.getByTestId('task-phrase').textContent).toBe('待你开始')
+    mine.unmount()
+
+    const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
+    expect(theirs.getByTestId('task-phrase').textContent).toBe('讨论中')
+  })
+
   it('负责人点「开始」就开始', async () => {
     const { container, start } = mount()
     const button = container.querySelector('[data-testid="task-start"]')
     expect(button).not.toBeNull()
     await fireEvent.click(button!)
-    expect(start).toHaveBeenCalledWith(null)
+    expect(start).toHaveBeenCalled()
   })
 
   it('开始之后不再有「开始」', () => {
@@ -167,46 +184,24 @@ describe('任务页头', () => {
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
   })
 
-  it('开始前负责人挑这次由谁审阅，挑的人跟着「开始」发出去', async () => {
-    const { container, start } = mount()
-    await openDetails(container)
-    const select = document.querySelector<HTMLSelectElement>('[data-testid="task-reviewer"] select')!
-    expect(select).not.toBeNull()
-    // 空的那一档是「默认」：后端按项目默认审阅人 → 这件事的负责人落定，
-    // 所以项目没配就是自己审自己，点「开始」不再被拦下来补选。
-    expect([...select.options].map((o) => o.value)).toEqual(['', 'bob', 'carol'])
-    await fireEvent.update(select, 'bob')
-    await fireEvent.click(container.querySelector('[data-testid="task-start"]')!)
-    expect(start).toHaveBeenCalledWith('bob')
+  it('开始被拒：只把原因说出来，不再让人在提示里挑审阅人', () => {
+    const { container, start } = mount({}, PEOPLE, AGENTS, '需要指定由谁审阅，或在项目设置中设置默认审阅的人')
+    const notice = container.querySelector('[role="alert"]')!
+    expect(notice.textContent).toContain('需要指定由谁审阅')
+    expect(notice.querySelector('select')).toBeNull()
+    expect(start).not.toHaveBeenCalled()
   })
 
-  it('开始之后审阅人定下来了，只读', async () => {
-    const { container } = mount({
-      started_at: '2026-10-05T01:00:00Z',
-      started_by: 'alice',
-      reviewer_handle: 'bob',
-    })
-    await openDetails(container)
-    const row = document.querySelector('[data-testid="task-reviewer"]')!
-    expect(row).not.toBeNull()
-    expect(row.querySelector('select')).toBeNull()
-  })
-
-  it('不是负责人：开始前没有可挑的，这一行也不画（还没定下来，没什么可说）', async () => {
-    me = 'bob'
-    const { container } = mount()
-    await openDetails(container)
-    expect(document.querySelector('[data-testid="task-reviewer"]')).toBeNull()
-  })
-
-  it('负责人在任务信息里看得到工作电脑，也能更换', async () => {
+  it('负责人在任务信息里看得到每条会话的环境，也能更换', async () => {
     const { container, loadMachine } = mount()
     await openDetails(container)
     expect(loadMachine).toHaveBeenCalled()
-    expect(document.querySelector('[data-testid="task-machine"] button')).not.toBeNull()
+    const row = document.querySelector('[data-testid="session-env-s1"]')!
+    expect(row.textContent).toContain('小苔：王宁的笔记本')
+    expect(row.querySelector('button')).not.toBeNull()
   })
 
-  it('不是负责人：看得到任务在哪台电脑上做，不能更换', async () => {
+  it('不是负责人：看得到任务在哪个环境里做，不能更换', async () => {
     me = 'bob'
     const { container } = mount()
     await openDetails(container)
@@ -324,6 +319,19 @@ describe('任务页头', () => {
     await fireEvent.click(helper.container.querySelector('[data-testid="task-more"]')!)
     await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
     expect(document.querySelector('[data-testid="task-reopen"]')).toBeNull()
+  })
+
+  it('「⋯」打开的是一个菜单，每一项是菜单项', async () => {
+    const { container } = mount()
+    stubViewport()
+    await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
+    const menu = await waitFor(() => {
+      const el = document.querySelector('[role="menu"]')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    const items = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((el) => el.textContent?.trim())
+    expect(items).toEqual(expect.arrayContaining(['重命名', '关闭任务']))
   })
 
   it('协作者能改名，不能转交和关闭', async () => {

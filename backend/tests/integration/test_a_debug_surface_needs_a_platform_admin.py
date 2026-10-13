@@ -90,7 +90,7 @@ def test_readiness_answers_without_a_credential(client, as_admin):
 def test_readiness_does_not_publish_a_dependency_error(client, monkeypatch):
     """503 体说哪一项没就绪，不带依赖的报错原文 —— 那段文字可能有内网地址和用户名，
     它留在要管理员的 `/health/detailed` 后面。"""
-    from app.api.routes import health
+    from app.core import health
 
     async def _down():
         return {"status": "down", "error": "no route to db.internal:5432 as cheesex"}

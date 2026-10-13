@@ -99,6 +99,31 @@ async def _agent_mentions_since(
     )
 
 
+async def named_seats(
+    session: AsyncSession,
+    *,
+    room_id: uuid.UUID,
+    author: str,
+    content: str,
+    skip: frozenset[str] = frozenset(),
+) -> list[str]:
+    """``content`` 在这间房叫得起的 AI 席位，按它点到的先后。
+
+    只认这间房名册上的 agent 席位：点到人是站内信的事（`announce_mentions`），点到
+    不在房里的队友叫不起任何东西。作者自己不算 —— 点自己的名只会让这一轮之后再跑一
+    轮。``skip`` 是调用方已经用别的办法叫起的席位（人发的消息里第一位点到的那个）。
+
+    调用方要先把「有没有人」问清楚，再去做只有确实点名才该有的副作用：一条消息被点
+    到才开它那条支线（`record_mentions` 要的 `conversation_id`），没有人点到就什么都
+    不该发生。
+    """
+    handles = mentioned_handles(content)
+    if not handles:
+        return []
+    seats = set(await TopicMemberService(session).agent_handles(room_id))
+    return [h for h in handles if h in seats and h != author and h not in skip]
+
+
 async def record_mentions(
     session: AsyncSession,
     *,
@@ -115,17 +140,12 @@ async def record_mentions(
 ) -> Summoned:
     """把 ``content`` 里点到的每一位 AI 队友记成一条投递。写调用方的 session，不提交。
 
-    只认这间房名册上的 agent 席位：点到人是站内信的事（`announce_mentions`），点到
-    不在房里的队友叫不起任何东西。作者自己不算 —— 点自己的名只会让这一轮之后再跑一
-    轮。``skip`` 是调用方已经用别的办法叫起的席位（人发的消息里第一位点到的那个）。
     ``conversation_id`` 是被点到的队友回答的地方：消息所在的支线或任务，主线上的
     消息则是它那条支线（`thread.services.answered_in`）。
     """
-    handles = mentioned_handles(content)
-    if not handles:
-        return Summoned()
-    seats = set(await TopicMemberService(session).agent_handles(room_id))
-    named = [h for h in handles if h in seats and h != author and h not in skip]
+    named = await named_seats(
+        session, room_id=room_id, author=author, content=content, skip=skip
+    )
     summoned = Summoned()
     if not named:
         return summoned
@@ -137,8 +157,9 @@ async def record_mentions(
         instance = await instance_for_seat(session, project_id, seat)
         if instance is None:
             continue
-        # A member's own agent answers its owner alone (#2991): naming it from
-        # anyone else, an agent included, reaches nobody.
+        # A member's own agent answers only whoever its owner lets call it
+        # (#2991), never another agent: naming it from anyone else reaches
+        # nobody.
         if await owned_instance(session, instance.id) is not None and (
             by_agent or not await _calls_own(session, instance.id, author)
         ):
@@ -178,7 +199,6 @@ async def _calls_own(
     session: AsyncSession, instance_id: uuid.UUID, author: str
 ) -> bool:
     # deferred-import: tests replace this name on app.domain.agent_instance.own
-    from app.domain.agent_instance.own import owner_of
+    from app.domain.agent_instance.own import callable_by
 
-    owner = await owner_of(session, instance_id)
-    return owner is not None and owner[0] == author
+    return await callable_by(session, instance_id, author)

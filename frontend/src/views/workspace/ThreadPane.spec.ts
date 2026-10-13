@@ -1,6 +1,7 @@
 /** 打开一条支线就算读过它；一条支线可以转出几件任务，转出来的都列在挂着的那条消息下面。 */
 import type { Component } from 'vue'
 import type { Block, RoomTask, Topic } from '@/cx_types'
+import type { ThreadSummary } from '@/types/threads'
 
 import { ref } from 'vue'
 import { createVuetify } from 'vuetify'
@@ -26,6 +27,8 @@ vi.mock('@/api', async (importOriginal) => ({
 import ThreadPane from './ThreadPane.vue'
 
 import { setLocale } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 setLocale('zh-CN')
 const vuetify = createVuetify({ components, directives })
@@ -58,10 +61,34 @@ function task(id: string, origin: string, title = '一件任务'): RoomTask {
   } as RoomTask
 }
 
+/** 主线上一块带着自己那条支线的消息（`GET /topics/{频道}/blocks` 就是这样的）。 */
+function summary(): ThreadSummary {
+  return {
+    id: 'th1',
+    room_id: 'r1',
+    root_block_id: 'b1',
+    reply_count: 2,
+    last_reply_at: '2026-10-06T00:01:00Z',
+    last_reply: { author: 'alice', content: '好', created_at: '2026-10-06T00:01:00Z' },
+    participants: ['alice'],
+    tasks: [],
+  }
+}
+
+// 对话那一栏的替身：支线页头那条消息要从它自己的滚动区里进去（真身上是 ChatTimeline 的
+// #timeline-start，落在 `.messages` 那一格里），所以替身也把两个槽摆出来。槽摆出来，
+// 页脚那张反馈卡就跟着挂了上来（真卡片要 pinia 和两个仓库），照下面那条用例的做法换成替身。
+const CHAT_PANEL_STUB = {
+  template: '<div data-testid="chat-scroll"><slot name="timeline-start" /><slot name="timeline-end" /></div>',
+}
+
 function mount() {
   return render(ThreadPane as Component, {
     props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
-    global: { plugins: [vuetify], stubs: { ChatPanel: true, MarkdownView: true } },
+    global: {
+      plugins: [vuetify],
+      stubs: { ChatPanel: CHAT_PANEL_STUB, MarkdownView: true, AgentFeedbackCard: true },
+    },
   })
 }
 
@@ -101,6 +128,77 @@ describe('支线', () => {
     expect(emitted()['open-task']).toEqual([['task10']])
   })
 
+  it('页头这条初始消息高过一段阅读高度就收起，点开能展开', async () => {
+    // 判据是渲染后的高度（lib/chatFold），不是字数。happy-dom 没有布局，量不到真实
+    // 的 scrollHeight，这里把它替成 600px（高过 20 行 × 24px 行高的预算），让正文层
+    // 长得像一条长消息。行高由替身自己的 inline style 给出——happy-dom 的
+    // getComputedStyle 读不出样式表里的行高，只认 inline 的。
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight')
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return this.classList.contains('thread-root__text') ? 600 : 0
+      },
+    })
+    try {
+      getThread.mockResolvedValue({
+        id: 'th1',
+        room_id: 'r1',
+        root_block_id: 'b1',
+        reply_count: 2,
+        // 队友署名（cheese-<hex>）走 MarkdownView 那一支；替身自己带 inline 行高，
+        // happy-dom 的 getComputedStyle 读不出样式表里的行高。
+        root: root({ author_type: 'participant', author: 'cheese-1', content: '很长的一段回复' }),
+      })
+      const { container, findByTestId } = render(ThreadPane as Component, {
+        props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
+        global: {
+          plugins: [vuetify],
+          stubs: {
+            ChatPanel: CHAT_PANEL_STUB,
+            AgentFeedbackCard: true,
+            MarkdownView: {
+              props: ['source'],
+              template: '<div class="thread-root__text" style="line-height: 24px">{{ source }}</div>',
+            },
+          },
+        },
+      })
+      // 量高排在下一帧的批次里（lib/foldMeasure）。
+      const toggle = await findByTestId('thread-root-fold')
+      await waitFor(() => expect(container.querySelector('.fold-clamped')).not.toBeNull())
+      expect(toggle.textContent).toContain('展开')
+
+      await fireEvent.click(toggle)
+      await waitFor(() => expect(container.querySelector('.fold-clamped')).toBeNull())
+      expect((await findByTestId('thread-root-fold')).textContent).toContain('收起')
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', original)
+      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollHeight
+    }
+  })
+
+  it('页头这条初始消息在对话的滚动区里，跟回复一起滚', async () => {
+    // 不钉在面板顶上：钉着的话，它一展开就把下面的回复挤没、把正文末尾那颗「收起」顶到
+    // 看不见的地方——点开就再收不回来。对话的滚动区是 ChatPanel 里那一格，页头这条消息
+    // 从它的 #timeline-start 进去（替身摆的是同一个位置关系）。
+    getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
+    const { container } = mount()
+    await waitFor(() => expect(container.querySelector('[data-testid="chat-scroll"] .thread-root')).not.toBeNull())
+  })
+
+  it('手上已经有它挂着的那条消息时，页头不等支线读回来就在', async () => {
+    // 打开一条支线时页头那条「开局消息」不该空着等 `GET /topics/{支线}/thread`：点它的
+    // 那条消息本来就在频道的对话窗口里。这里让那次读永远不回来，页头照样要在。
+    queryClient.setQueryData(keys.roomNewestBlocks('r1'), {
+      blocks: [{ ...root(), thread: summary() }],
+      hasMore: false,
+    })
+    getThread.mockReturnValue(new Promise(() => {}))
+    const { findByText } = mount()
+    expect(await findByText('李安')).toBeTruthy()
+  })
+
   it('反馈卡接在支线的对话后面', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { container } = render(ThreadPane as Component, {
@@ -109,7 +207,7 @@ describe('支线', () => {
         plugins: [vuetify],
         stubs: {
           MarkdownView: true,
-          ChatPanel: { template: '<div><slot name="timeline-end" /></div>' },
+          ChatPanel: CHAT_PANEL_STUB,
           AgentFeedbackCard: { props: ['topicId'], template: '<i class="feedback-probe">{{ topicId }}</i>' },
         },
       },

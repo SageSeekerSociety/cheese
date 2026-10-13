@@ -20,8 +20,8 @@ vi.mock('@/api', () => ({
   registerDeviceForTeam: vi.fn(),
   unregisterDeviceFromTeam: vi.fn(),
 }))
-vi.mock('@/network/api/teams', () => ({
-  TeamsApi: { getComputeProfile: vi.fn(async () => ({ data: { current: 'cloud', profiles: [] } })) },
+vi.mock('@/api/teams', () => ({
+  TeamsApi: { getComputeProfile: vi.fn(async () => ({ current: 'cloud', profiles: [] })) },
 }))
 // 确认框一律说「是」，这样点主操作就直接往下走。
 vi.mock('@/plugins/dialog', () => ({
@@ -171,7 +171,7 @@ it('读失败时说没读出来，不画「还没有自有设备」；重试能�
 })
 
 it('403 说没权限，不摆重试', async () => {
-  vi.mocked(listTeamDevices).mockRejectedValueOnce({ code: 403 })
+  vi.mocked(listTeamDevices).mockRejectedValueOnce({ status: 403 })
   const view = render(Compute, {
     global: {
       plugins: [createVuetify({ components, directives }), i18n],

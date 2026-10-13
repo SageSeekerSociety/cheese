@@ -13,8 +13,11 @@ from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.documents import seed
 from app.domain.living_doc.services import DocumentJournal, Documents
-from app.domain.project.models import AiMode, Project
-from app.domain.project.repositories import ProjectRepository
+from app.domain.project.models import AiMode, Project, ProjectGitInstallation
+from app.domain.project.repositories import (
+    ProjectGitInstallationRepository,
+    ProjectRepository,
+)
 from app.domain.task.models import Task, TaskMembership
 from app.domain.task.teaching import protocol_for_task
 from app.domain.team.services import team_service
@@ -28,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 def _intent_brief(intent: str) -> str:
-    """把用户写的那句话拼成新项目总览的开头；没写就返回空串，调用方不写任何东西。
+    """把用户写的那句话拼成新项目目标的开头；没写就返回空串，调用方不写任何东西。
 
     纯模板，不调模型——``seed_overview`` 的约定是「平台把已有的文字搬个地方」，
     所以它署 system 而不是芝士（见 ``ProjectService.seed_overview`` 的注释）。这也
@@ -37,7 +40,10 @@ def _intent_brief(intent: str) -> str:
     text = intent.strip()
     if not text:
         return ""
-    return f"## 这个项目要做什么\n\n{text}\n\n下一步：在下方对话中说明你要做什么。"
+    return (
+        f"## 要做成什么\n\n{text}\n\n"
+        "下一步：补上什么时候做成、这阶段不做什么，然后在下方对话中说明你要做什么。"
+    )
 
 
 class ProjectArchivedError(ConflictError):
@@ -64,6 +70,7 @@ class ProjectService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = ProjectRepository(session)
+        self._installations = ProjectGitInstallationRepository(session)
         self._topics = TopicRepository(session)
         self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
@@ -91,7 +98,7 @@ class ProjectService:
 
         ``intent`` is what the person said they wanted to do, when the creation
         form asked (#946 片 C). It is stored as written and, if non-empty, copied
-        into the project's overview — see :func:`_intent_brief`.
+        into the project's goals — see :func:`_intent_brief`.
         """
         owner_handle = owner_handle or None  # '' would seed a broken root roster
         if project_id is not None and (earlier := await self._repo.get(project_id)):
@@ -142,7 +149,7 @@ class ProjectService:
         if forge_kind == "forgejo":
             await provision_repository(project.id, self._session)
         # What the person said they wanted to do, carried into the project's
-        # overview, which 综合 shows first and every AI teammate reads.
+        # goals, which 综合 shows first and every AI teammate reads.
         brief = _intent_brief(intent)
         if brief:
             await self.seed_overview(project, brief)
@@ -188,18 +195,19 @@ class ProjectService:
 
         # The original requirements may be rich-text JSON. Keep their canonical
         # page reachable instead of copying serialized editor data into Markdown.
+        # No deadline here: this text is written once, at claim time, before the
+        # claim is approved — the participant's own deadline does not exist yet,
+        # and one fixed string cannot be in every reader's time zone. The
+        # overview page shows the live one beside this text.
         brief = (
             f"## 赛题要求\n\n{task.intro}\n\n"
             f"[查看完整赛题要求](/spaces/{task.space_id}/tasks/{task.id})"
         )
-        if task.deadline:
-            deadline = task.deadline.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
-            brief += f"\n\n提交截止时间：{deadline}"
         await self.seed_overview(project, brief)
         return project
 
     async def overview_document(self, project: Project):
-        """The project's overview, made empty (version 0) the first time anyone
+        """The project's goals document, made empty (version 0) the first time anyone
         needs it: whoever opens, writes or comments on it needs its id first."""
 
         documents = Documents(self._session)
@@ -207,7 +215,7 @@ class ProjectService:
             doc = await documents.get(project.overview_document_id)
             if doc is not None:
                 return doc
-        # Two first readers at once must not make two overviews. NO KEY
+        # Two first readers at once must not make two goals documents. NO KEY
         # UPDATE, not FOR UPDATE: this runs inside a turn's assembly, and a
         # full row lock on the project stops every write whose foreign key
         # names the project (each block takes KEY SHARE on it) until the turn
@@ -229,7 +237,7 @@ class ProjectService:
         return doc
 
     async def seed_overview(self, project: Project, content: str) -> None:
-        """Write a new project's overview from text it already had: what its
+        """Write a new project's goals from text it already had: what its
         creator said they wanted, or its 赛题. Author is `system`: the platform
         moved existing words, nobody wrote them here."""
 
@@ -238,7 +246,7 @@ class ProjectService:
         await seed(self._session, doc, content)
 
     async def is_overview(self, document_id: uuid.UUID) -> bool:
-        """Whether a document is some project's overview."""
+        """Whether a document is some project's goals document."""
         return (
             await self._session.scalar(
                 select(Project.id).where(Project.overview_document_id == document_id)
@@ -373,6 +381,36 @@ class ProjectService:
     async def list_for_team(self, team_id: int) -> list[Project]:
         """A team's 项目 page, newest first."""
         return await self._repo.list_by_team(team_id)
+
+    async def list_visible_to(
+        self, *, handle: str | None, user_id: int | None
+    ) -> list[Project]:
+        """这个人有份的项目（``/projects`` 那条侧边栏列表）。
+
+        谁算「有份」——他拥有的、在名册上的、或所属团队的——全写在
+        ``ProjectRepository.list_visible_to`` 里；路由走这道门，不自己构造仓储
+        （架构守卫）。
+        """
+        return await self._repo.list_visible_to(handle=handle, user_id=user_id)
+
+    async def list_for_external_task(self, task_id: int) -> list[Project]:
+        """这条赛题开出来的每个项目（``/projects/by-task``）。"""
+        return await self._repo.list_for_external_task(task_id)
+
+    async def get_by_team(self, team_id: int) -> Project | None:
+        """这个知是团队的那个 AI 工作台项目（P4 原生绑定），最新的一条；没有是
+        None（``/projects/by-team`` 用它显示/隐藏「AI 工作台」入口）。"""
+        return await self._repo.get_by_team(team_id)
+
+    async def installation_for_project(
+        self, project_id: uuid.UUID
+    ) -> ProjectGitInstallation | None:
+        """这个项目绑定的 GitHub 安装，没绑是 None。
+
+        ``branch-protection`` 那一页要读它绑的仓库名才问这里，不自己构造
+        ``ProjectGitInstallationRepository``（架构守卫）。
+        """
+        return await self._installations.get_by_project(project_id)
 
     async def _accept_task_protocol(self, project: Project, task_id: int) -> None:
         """Apply the 赛题's 机构协议 to a freshly created project (#370).

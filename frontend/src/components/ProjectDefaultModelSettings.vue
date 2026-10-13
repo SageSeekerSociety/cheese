@@ -1,97 +1,85 @@
 <script setup lang="ts">
-import type { ProjectDefaultModel } from '../api'
+// 项目默认模型（#1365）：主线（房间聊天）用哪一档、分身用哪一档。
+//
+// 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数与发请求在
+// `composables/useProjectDefaultModelSettings.ts` 里，由设置页接线。编辑草稿（还没保存
+// 的那个下拉值、分身那一档）留在这一层：那份 `state` 一换（首次取到、或保存后服务端
+// 回话）草稿就归位，是这一件自己一眼看得见的事。
+//
+// 之前只能手改数据库，对应事故就是「agent 配了 deepseek，主线静默换到订阅 sonnet」。
+import type { ProjectDefaultModel } from '@/api'
 
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
-import { holdRevealGate } from '@/composables/useRevealGate'
-import { useSaveState } from '@/composables/useSaveState'
-
-import { getProjectDefaultModel, setProjectDefaultModel } from '../api'
 import { t } from '../i18n'
 import { modelChoiceProps, withSaved } from '../lib/modelChoices'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SaveStatus from '@/components/base/SaveStatus.vue'
 
-// 项目默认模型：#1365 之后主线（房间聊天）读 binding.resolve(None, …)，它拿
-// catalog 里 default=True 的那条；catalog 由 model_choices 算，项目 settings 里
-// 显式写过 default_model 就把那条标 True。这一节就是那个写入口——之前只能手改
-// 数据库，对应事故就是「agent 配了 deepseek，主线静默换到订阅 sonnet」。
-const props = defineProps<{ projectId: string }>()
+const props = defineProps<{
+  /** 读到的模型现状；还没读到是 null。 */
+  state: ProjectDefaultModel | null
+  /** 读失败：那一句原话。 */
+  loadError: string
+  /** 一次保存还在路上。 */
+  saving: boolean
+  /** 刚保存成功（那一行回执还亮着）。 */
+  saved: boolean
+  /** 保存失败：那一句原话。 */
+  saveError: string
+}>()
 
-const state = ref<ProjectDefaultModel | null>(null)
-const loadError = ref('')
+const emit = defineEmits<{ (e: 'save', model: string | null, subagent: string | null): void }>()
 
 // 本地编辑态：用户在下拉里选了一个值但还没保存。null = 清掉显式设置（回落部署默认）。
+// undefined = 没动过（跟着服务端给的走）。`state` 一换就归位，见下面的 watch。
 const draft = ref<string | null | undefined>(undefined)
 const subagentDraft = ref<string | null>(null)
 
+watch(
+  () => props.state,
+  (state) => {
+    draft.value = undefined
+    subagentDraft.value = state?.subagent_model ?? null
+  },
+  { immediate: true }
+)
+
 const effective = computed({
   get() {
-    if (!state.value) return null
-    const model = draft.value !== undefined ? draft.value : state.value.model
-    return model ?? state.value.deployment_default
+    if (!props.state) return null
+    const model = draft.value !== undefined ? draft.value : props.state.model
+    return model ?? props.state.deployment_default
   },
   set(model: string | null) {
     draft.value = model
   },
 })
 
-const mainItems = computed(() => (state.value ? withSaved(state.value.choices, state.value.model) : []))
+const mainItems = computed(() => (props.state ? withSaved(props.state.choices, props.state.model) : []))
 const subagentItems = computed(() =>
-  state.value
-    ? [{ id: null, label: t('work.models.inheritMain') }, ...withSaved(state.value.choices, state.value.subagent_model)]
+  props.state
+    ? [{ id: null, label: t('work.models.inheritMain') }, ...withSaved(props.state.choices, props.state.subagent_model)]
     : []
 )
 
 const dirty = computed(() => {
-  if (!state.value) return false
-  const server = state.value.model ?? null
+  if (!props.state) return false
+  const server = props.state.model ?? null
   const now = draft.value !== undefined ? draft.value : server
-  return now !== server || subagentDraft.value !== (state.value.subagent_model ?? null)
+  return now !== server || subagentDraft.value !== (props.state.subagent_model ?? null)
 })
 
-// 保存结果就地回执（§3.11）：下拉旁边那一行，不再只靠按钮转圈。
-const {
-  saving: busy,
-  saved,
-  error: saveError,
-  run,
-} = useSaveState({
-  feedback: 'inline',
-  dirty: () => dirty.value,
-  messages: { failed: t('work.projectSettings.defaultModelBlock.saveFailed') },
-})
-
-async function load() {
-  loadError.value = ''
-  try {
-    state.value = await getProjectDefaultModel(props.projectId)
-    subagentDraft.value = state.value.subagent_model ?? null
-    draft.value = undefined
-  } catch (e) {
-    loadError.value = e instanceof Error ? e.message : t('work.projectSettings.defaultModelBlock.loadFailed')
-  }
+function save() {
+  const target = draft.value !== undefined ? draft.value : props.state?.model ?? null
+  emit('save', target, subagentDraft.value)
 }
 
-async function save() {
-  if (!state.value?.can_manage) return
-  const target = draft.value !== undefined ? draft.value : state.value.model
-  await run(async () => {
-    state.value = await setProjectDefaultModel(props.projectId, target, subagentDraft.value)
-    draft.value = undefined
-  })
-}
-
-async function resetToDeploymentDefault() {
-  if (!state.value?.can_manage) return
+/** 恢复默认：清掉显式设置（发出去的是 null，回落部署默认）。 */
+function resetToDeploymentDefault() {
   draft.value = null
 }
-
-// 首次取数期间占住设置页的显示闸，见 useRevealGate。
-const releaseGate = holdRevealGate()
-onMounted(() => load().finally(releaseGate))
-watch(() => props.projectId, load)
 </script>
 
 <template>
@@ -106,7 +94,7 @@ watch(() => props.projectId, load)
           item-title="label"
           item-value="id"
           :item-props="modelChoiceProps"
-          :disabled="busy || !state.can_manage"
+          :disabled="saving || !state.can_manage"
           autocomplete="off"
           density="compact"
           variant="outlined"
@@ -119,7 +107,7 @@ watch(() => props.projectId, load)
           item-title="label"
           item-value="id"
           :item-props="modelChoiceProps"
-          :disabled="busy || !state.can_manage"
+          :disabled="saving || !state.can_manage"
           autocomplete="off"
           density="compact"
           variant="outlined"
@@ -128,19 +116,19 @@ watch(() => props.projectId, load)
           persistent-hint
         />
         <div class="d-flex align-center" style="gap: 12px">
-          <BaseButton v-if="state.can_manage" kind="primary" size="sm" :disabled="busy || !dirty" @click="save">
+          <BaseButton v-if="state.can_manage" kind="primary" size="sm" :disabled="saving || !dirty" @click="save">
             {{ t('work.projectSettings.defaultModelBlock.save') }}
           </BaseButton>
           <BaseButton
             v-if="state.can_manage && state.model !== null"
             kind="secondary"
             size="sm"
-            :disabled="busy"
+            :disabled="saving"
             @click="resetToDeploymentDefault"
           >
             {{ t('work.projectSettings.defaultModelBlock.reset') }}
           </BaseButton>
-          <SaveStatus :saving="busy" :saved="saved" :error="saveError" />
+          <SaveStatus :saving="saving" :saved="saved" :error="saveError" />
         </div>
       </div>
       <p v-if="!state.can_manage" class="text-body-2 text-medium-emphasis mt-3">

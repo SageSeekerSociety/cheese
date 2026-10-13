@@ -19,7 +19,6 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
 from urllib.parse import urlparse
 
 import httpx
@@ -56,24 +55,14 @@ from app.domain.agent.place import (
     seat_key,
     session_platform_dirs,
 )
-from app.domain.agent.platform_failures import (
-    DEVICE_OFFLINE_MESSAGE,
-    HOST_UNREACHABLE_CODE,
-)
 from app.domain.agent.screen_model_env import screen_model_env
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation import services as conversations
-from app.domain.device.service import DeviceService
-from app.domain.device.supply import Supply, Visibility, default_visibility
-from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.topic.services import TopicService
 from app.domain.user.services import user_by_handle
 
-# Resolve the device a turn runs on for (project, topic) → (device_id, agent_user_id,
-# agent_handle). Takes both ids because the device is chosen with topic affinity, not
-# just per project (execution-architecture v4 §affinity).
 logger = logging.getLogger(__name__)
 
 # How long the launcher file write may go unanswered. The hub adds 5s of grace
@@ -81,94 +70,6 @@ logger = logging.getLogger(__name__)
 _LAUNCHER_SHIP_TIMEOUT_S = 30
 _SESSION_RECONNECT_GRACE_S = 10.0
 _SESSION_RECONNECT_POLL_S = 0.25
-
-DeviceResolver = Callable[
-    [uuid.UUID, uuid.UUID], Awaitable["tuple[str, int, str] | None"]
-]
-
-
-# #358 · what a turn gets when its only/pinned machine is enrolled as the boxed
-# `isolated` 档: a clean, actionable refusal, NOT a silent bare-on-host launch. It
-# is deliberately NOT one of platform_failures' host-scoped classifications — an
-# `isolated` machine is not unhealthy, so this must never quarantine it; it is a
-# 「该档尚未实现」 turn error the owner resolves by opting the machine into
-# whole-machine (Hosted Machine), or by waiting for the sandbox transport (step 2).
-DEVICE_ISOLATED_UNSUPPORTED_MESSAGE = say("deviceIsolatedUnsupported")
-
-DEVICE_NOT_HOSTED_MESSAGE = say("deviceNotHosted")
-
-
-async def resolve_pinned_device(
-    service: DeviceService,
-    is_online: Callable[[str], bool],
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-) -> str | None:
-    """The device this topic's turn must run on (execution-architecture v4 §affinity).
-
-    A topic's work tree + resumable claude session live on ONE machine. So:
-      * an existing binding — either a machine named before the first turn or the
-        machine frozen by an earlier automatic choice — takes precedence over
-        automatic selection. Return it **iff hosted, online, and `host`**; an
-        offline binding raises (queue/retry) and an `isolated` one raises
-        ``DEVICE_ISOLATED_UNSUPPORTED_MESSAGE``. NEVER fall back to another
-        device, which would break an explicit choice or start a resumed topic
-        from an empty tree;
-      * no binding means 「系统挑一台」 on the first turn: pick the first online,
-        **non-quarantined** hosted device serving the project and bind it at the
-        default 档 (write-once), so every later turn returns to it — when this
-        channel can run that 档, which it cannot while the default is
-        `isolated`, so it refuses and pins nothing. Quarantined = judged
-        unhealthy by ``device.health``; a topic that is already bound is never
-        moved — not here, not anywhere (``agent.host_failure``).
-
-    This channel starts the agent in a screen on the machine itself, which no
-    sandbox wraps; sessions that run in a sandbox (#2320) reach the machine
-    through their executor (`machine.session_work`) instead. So a room bound
-    `isolated` is refused here rather than launched bare-on-host: silently
-    degrading `isolated` to bare is exactly the whole-machine exposure this
-    gate exists to prevent.
-
-    Returns the device id, or ``None`` when no runnable bound device is online at all
-    (the caller turns that into a clean "no online device" turn error)."""
-    # The compute-profile route records a named machine by writing this binding
-    # before the first turn. Consequently only a NULL binding means the user chose
-    # 「系统挑一台」; do not consult the healthy-device pool when a binding exists.
-    chosen = await service.topic_binding(topic_id)
-    if chosen is not None:
-        device_id = chosen.device_id
-        if not await service.serves_project(device_id, project_id):
-            raise ScreenSetupError(say("screenDeviceRemoved"))
-        if await service.get_hosted_device(device_id) is None:
-            raise ScreenSetupError(DEVICE_NOT_HOSTED_MESSAGE)
-        if not is_online(device_id):
-            raise ScreenSetupError(
-                DEVICE_OFFLINE_MESSAGE, failure_code=HOST_UNREACHABLE_CODE
-            )
-        # An isolated binding must refuse rather than run bare — the pin does not
-        # move, but the turn will not silently expose the whole machine either.
-        if chosen.visibility is Visibility.isolated:
-            raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
-        return device_id
-    # 「系统挑一台」 on the first turn: pick from machines that are online AND not
-    # quarantined. A quarantined machine just failed two turns in a row for a reason
-    # that belongs to the box (#186), so pinning a fresh topic to it would hand the
-    # next person the failure we already diagnosed. Note this filter applies to the
-    # FIRST pin only. This resolver never moves an ALREADY-pinned topic — nothing
-    # does; a machine judged dead is named in the room (``agent.host_failure``)
-    # and waited for, because a pin that can quietly change is the original drift
-    # bug.
-    device = await service.first_healthy_device(project_id, is_online)
-    if device is None:
-        return None
-    # The same fact the market catalogue publishes as `default=True`, read from
-    # one place so the picker can never advertise a 档 the resolver does not
-    # bind — and that default is a sandbox, which this channel cannot give.
-    visibility = default_visibility()
-    if visibility is Visibility.isolated:
-        raise ScreenSetupError(DEVICE_ISOLATED_UNSUPPORTED_MESSAGE)
-    await service.bind_topic_device(topic_id, device.device_id, visibility=visibility)
-    return device.device_id
 
 
 # How long a reuse check may wait on the machine (the runner's ping, the tunnel
@@ -192,7 +93,7 @@ async def _false() -> bool:
 # The platform's footprint on the device, and a place's isolated claude home
 # inside it, relative to the device's own `$HOME` (expanded by its shell, never
 # by us). Everything below hangs off `DEVICE_ROOT` so that the launcher that
-# creates these, the retirement that removes them (topic/retire.py) and the
+# creates these, the retirement that removes them (room_cleanup/retire.py) and the
 # connector's `uninstall` are all naming one directory.
 DEVICE_ROOT = f"$HOME/{footprint_root()}"
 DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"
@@ -309,32 +210,26 @@ def _launcher_command(topic_id: uuid.UUID, seat: str = "") -> list[str]:
 
 
 class DeviceChannel(Channel):
-    """The REMOTE channel: a screen on a user's enrolled machine, opened over
-    the frozen link.Msg link (DeviceHub). The screen is a ``HubScreen``.
+    """The executor channel: a screen on a machine — one a person enrolled or
+    one the platform owns — opened over the frozen link.Msg link (DeviceHub).
+    The screen is a ``HubScreen``.
 
     Enrollment, device resolution and the launcher shipped to the machine are
     what this file is about; what runs on the screen is the harness's runner."""
 
     name = "device"
-    # 人接入的机器：平台只能停止使用它，不能销毁它。「谁开的」是一个常量，不从机器
-    # 长什么样推 (#282 决定 2)。基类的 `owns` 读的就是这一位。
-    supply = Supply.self_hosted
     # ``_ensure_screen`` below builds the whole model environment on the machine
     # — one shape, the metering-proxy env, and no other. The machine holds no
     # provider credential, and which model a request runs on is settled per
     # request at admission. Every transport that reaches a machine over a link inherits
     # this build, and inherits the declaration with it.
     builds_model_env = True
-    # 要手的一轮要不到手时说的那一句。供给不同，这一句不同，而「要不要手、要不到
-    # 就停」那条分支三种供给是同一条——所以变的是这一句，不是那条分支。
-    no_machine_message = say("boundDeviceOffline")
 
     def __init__(
         self,
         *,
         hub: DeviceHub | None = None,
         session_factory: async_sessionmaker | None = None,
-        device_resolver: DeviceResolver | None = None,
         public_base: str | None = None,
         reconnect_grace_s: float = _SESSION_RECONNECT_GRACE_S,
     ) -> None:
@@ -343,9 +238,6 @@ class DeviceChannel(Channel):
         # is refused as offline (``_wait_for_session_host``).
         self._reconnect_grace_s = reconnect_grace_s
         self._session_factory = session_factory
-        # A resolver may be injected (tests / future routing); otherwise the DB-backed
-        # resolver is used lazily (keeps this module importable without a DB).
-        self._device_resolver = device_resolver
         self._public_base = (public_base or settings.connector_public_base).rstrip("/")
         self.screen_ledger = screen_identity.ScreenLedger()
 
@@ -471,51 +363,6 @@ class DeviceChannel(Channel):
         return restored
 
     # --- device / screen resolution ----------------------------------------
-
-    async def _resolve_device_agent(
-        self, project_id: uuid.UUID, topic_id: uuid.UUID
-    ) -> tuple[str, int, str] | None:
-        """The device this topic's turn runs on + its agent identity →
-        ``(device_id, agent_user_id, agent_handle)``, or ``None`` when no bound device
-        is online. Raises ``ScreenSetupError`` when the topic's *pinned* device is
-        offline (queue, don't drift — v4 §affinity).
-
-        Device pick has **topic affinity** (``resolve_pinned_device``): a topic freezes
-        to the device its first turn ran on and every later turn returns to it — never
-        drifts to another online device (which would lose the work tree / break resume).
-
-        The device is PURE COMPUTE (execution-architecture v3: AIPool ⊥ ComputePool) —
-        it carries no agent identity. The agent a screen runs as is the *project's*
-        agent, resolved independently of the host machine (fusion-design §5: agent =
-        screen, not machine). The agent is THIS topic's 分身 — its own agent-user
-        (``cheese-<topic hex>``), the SAME identity the local path authors and mints
-        tokens as — so a turn's author is identical whether it runs locally or on a
-        self-hosted box, and is attributable to one 分身 either way. The device stays
-        pure compute."""
-        if self._device_resolver is not None:
-            return await self._device_resolver(project_id, topic_id)
-        factory = self._session_factory
-        if factory is None:
-            # deferred-import: tests replace this name on app.core.db
-            from app.core.db import async_session_factory
-
-            factory = async_session_factory
-        async with factory() as session:
-            service = sql_device_service(session)
-            device_id = await resolve_pinned_device(
-                service, self._hub.is_online, project_id, topic_id
-            )
-            if device_id is None:
-                return None
-            # The screen acts as the agent that answers this room (its own
-            # agent-user), so a turn run on a self-hosted box is attributable to the
-            # same identity as one run locally — the device stays pure compute
-            # either way.
-            agent = await IdentityService(session).ensure_room_agent_user(topic_id)
-            # Persist the pin created above (first turn) before the turn proceeds, so a
-            # concurrent/next turn sees the same device.
-            await session.commit()
-            return device_id, agent.id, agent.username
 
     async def _retire_screen(
         self, screen: HubScreen, *, topic_id: uuid.UUID, reason: str
@@ -1375,27 +1222,6 @@ class DeviceChannel(Channel):
             placement = Placement(host, agent.id, agent.username, rented=False)
         await self._wait_for_session_host(host, session)
         return placement
-
-    async def precheck(self, session: SessionRef, *, needs_place: bool) -> Placement:
-        """Resolve the topic's pinned/online device + its agent identity before
-        anything is started on it. Raises ``ScreenSetupError`` (offline pinned
-        device, or none online).
-
-        一轮不租手时解析的是这条会话自己的机器，不是项目钉住的工作机：答不出来，
-        一间私聊就会因为项目没有在线工作机而整轮开不起来，正是 I2 要禁止的那件事。"""
-        if not needs_place:
-            return await self._session_host_agent(session)
-        resolved = await self._resolve_device_agent(
-            session.project_id, session.topic_id
-        )
-        if resolved is None:
-            raise ScreenSetupError(self.no_machine_message)
-        if self._device_resolver is not None:
-            return Placement(*resolved, rented=True)
-        async with self._sessions() as db:
-            agent = await self._session_agent(db, session)
-            await db.commit()
-            return Placement(resolved[0], agent.id, agent.username, rented=True)
 
     def _credential_is_stale(self, screen: HubScreen) -> bool:
         """Whether the credential this screen's `claude` was LAUNCHED with has

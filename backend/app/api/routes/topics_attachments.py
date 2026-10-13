@@ -38,13 +38,15 @@ import uuid
 from typing import Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import Response
 
 from app.api.auth import ActorResolverDep
+from app.api.byte_response import media_bytes_response
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession
 from app.api.routes.topics_file_sources import source_bytes
+from app.core import raster_images, video_files
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
 from app.core.sentences import exception_text, say
@@ -80,20 +82,9 @@ router = APIRouter(prefix="/topics", tags=["topics"])
 # 的截图没有名字，`image.png` 是浏览器替它编的。它只属于这条消息，所以落在房间文件
 # 区一个独占的目录下。
 
-# Only these image types may render inline; other files require download.
-_IMAGE_MIME_EXT = {
-    "image/png": ".png",
-    "image/jpeg": ".jpg",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-}
-_EXT_IMAGE_MIME = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-}
+# Only inert raster images and video containers may render inline.
+_IMAGE_MIME_EXT = raster_images.MEDIA_TYPE_SUFFIX
+_EXT_MEDIA_MIME = {**raster_images.SUFFIX_MEDIA_TYPE, **video_files.SUFFIX_MEDIA_TYPE}
 #: 贴进对话的一份附件多大为止；数与落地那一层同一个（`library.MAX_FILE_BYTES`）。
 MAX_ATTACHMENT_BYTES = library.MAX_FILE_BYTES
 
@@ -190,7 +181,7 @@ async def upload_attachment(
         # 读一次：既确认它真的在，也把大小告诉输入栏。一个字节都不写。
         data = await library_records.read(db, topic.project_id, name)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
-        mime = _EXT_IMAGE_MIME.get(suffix, "application/octet-stream")
+        mime = _EXT_MEDIA_MIME.get(suffix, "application/octet-stream")
         return ok({"path": library.library_ref(name), "mime": mime, "bytes": len(data)})
     else:
         assert file is not None
@@ -209,6 +200,14 @@ async def upload_attachment(
         if len(data) > MAX_ATTACHMENT_BYTES:
             raise ValidationError(say("attachmentTooLarge"))
         name = library.clean_upload_name(file.filename)
+        suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        video_mime = video_files.SUFFIX_MEDIA_TYPE.get(suffix)
+        if video_mime:
+            mime = video_mime
+            ext = None
+        elif mime in video_files.MEDIA_TYPE_SUFFIX:
+            ext = video_files.MEDIA_TYPE_SUFFIX[mime]
+            mime = video_files.SUFFIX_MEDIA_TYPE[ext]
         if ext and not name.lower().endswith(ext):
             name += ext
         if origin == "clipboard":
@@ -245,12 +244,12 @@ async def attachment_raw(
     path: str,
     db: DbSession,
     resolver: ActorResolverDep,
+    request: Request,
     download: bool = False,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
 ) -> Response:
-    """Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted
-    to images so this can never serve executable HTML from the worktree."""
+    """Authorized raster images and video bytes, never executable HTML/SVG."""
     # A task's id reaches its room's roster, files and documents.
     topic = (await TopicService(db).place_or_404(topic_id)).room
     if download:
@@ -264,17 +263,19 @@ async def attachment_raw(
     topic_id = topic.id
     clean = clean_artifact_path(path)
     suffix = "." + clean.rsplit(".", 1)[-1].lower() if "." in clean else ""
-    mime = _EXT_IMAGE_MIME.get(suffix)
+    mime = _EXT_MEDIA_MIME.get(suffix)
     if mime is None and not download:
-        raise ValidationError(say("attachmentImageOnly"))
+        raise ValidationError(say("attachmentMediaOnly"))
     if task is not None:
         await TaskService(db).require_source_in_room(topic_id, task)
     data = await source_bytes(db, topic.project_id, topic_id, clean, task, source)
     filename = quote(clean.rsplit("/", 1)[-1], safe="")
-    return Response(
-        content=data,
-        media_type="application/octet-stream" if download else mime,
-        headers={
+    return media_bytes_response(
+        data,
+        "application/octet-stream"
+        if download
+        else (mime or "application/octet-stream"),
+        {
             "Content-Disposition": (
                 f"attachment; filename*=UTF-8''{filename}" if download else "inline"
             ),
@@ -286,6 +287,8 @@ async def attachment_raw(
                 else _cache_control_of(clean)
             ),
         },
+        request.headers.get("range"),
+        request.headers.get("if-range"),
     )
 
 

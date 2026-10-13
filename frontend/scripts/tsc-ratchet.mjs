@@ -5,6 +5,10 @@
 //   node scripts/tsc-ratchet.mjs --update   rewrite the baseline downward
 //   node scripts/tsc-ratchet.mjs --json     one JSON record on stdout, same exit code
 //
+// `--project <tsconfig>` and `--baseline <file>` judge another project against
+// another baseline. They exist so ratchet-report.test.mjs can run this script
+// on a one-file fixture instead of type-checking the whole tree a second time.
+//
 // The comparison logic lives in tsc-ratchet-core.mjs and is unit-tested; this
 // file is only the I/O around it.
 import { spawnSync } from 'node:child_process'
@@ -13,11 +17,21 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { asJson, cannotJudge, emit, verdict } from './ratchet-report.mjs'
-import { compare, formatReport, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
+import { compare, formatReport, parseTscDiagnostics, parseTscOutput, tightenedBaseline } from './tsc-ratchet-core.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '..')
-const BASELINE = resolve(ROOT, 'tsc-baseline.json')
+
+function options(name) {
+  return process.argv.flatMap((arg, i) => (arg === name ? [process.argv[i + 1]] : []))
+}
+
+function option(name, fallback) {
+  return options(name)[0] ?? fallback
+}
+
+const BASELINE = resolve(ROOT, option('--baseline', 'tsc-baseline.json'))
+const project = option('--project')
 const update = process.argv.includes('--update')
 const ID = 'vue-tsc'
 
@@ -27,7 +41,7 @@ const ID = 'vue-tsc'
 const LOCAL_BIN = resolve(ROOT, 'node_modules/.bin/vue-tsc')
 const BIN = existsSync(LOCAL_BIN) ? LOCAL_BIN : 'vue-tsc'
 
-const run = spawnSync(BIN, ['--noEmit'], {
+const run = spawnSync(BIN, ['--noEmit', ...(project ? ['-p', project] : [])], {
   cwd: ROOT,
   encoding: 'utf8',
   shell: process.platform === 'win32',
@@ -41,6 +55,7 @@ if (run.error) {
 
 const output = `${run.stdout ?? ''}${run.stderr ?? ''}`
 const current = parseTscOutput(output)
+const diagnostics = parseTscDiagnostics(output)
 const currentTotal = Object.values(current).reduce((a, b) => a + b, 0)
 
 // vue-tsc exits non-zero when it reports errors — expected while the baseline is
@@ -50,6 +65,12 @@ const currentTotal = Object.values(current).reduce((a, b) => a + b, 0)
 if (run.status !== 0 && currentTotal === 0) {
   console.error('vue-tsc failed without reporting any diagnostic:')
   console.error(output.trim() || '(no output)')
+  if (run.signal) {
+    console.error(
+      `vue-tsc was killed by ${run.signal}, most likely out of memory: a whole-tree check needs more than a 3 GiB sandbox has.`
+    )
+    console.error('Run `task ci:fast` from the repo root instead: it type-checks only the files you changed.')
+  }
   cannotJudge({ id: ID }, 'vue-tsc failed without reporting any diagnostic')
 }
 
@@ -78,15 +99,17 @@ if (update) {
 const result = compare(baseline, current)
 
 if (asJson) {
-  // Per-file counts of everything still over its frozen count, passing or not:
-  // the board groups the debt by file, and the diagnostics have no line numbers
-  // here that the counts do not already carry.
+  // Per-file counts, the shape the board groups by. The human report is not on
+  // stdout here — the collector parses stdout, and a report interleaved with
+  // the record is not a record — but on failure it goes to stderr, so a --json
+  // run (which is what ci:fast calls) still prints where and how to fix it.
   const details = Object.entries(current)
     .filter(([, count]) => count > 0)
     .map(([file, count]) => ({ file, count }))
   emit(verdict({ id: ID, result, details }))
+  if (!result.ok) console.error(formatReport(result, diagnostics))
   process.exit(result.ok ? 0 : 1)
 }
 
-console.log(formatReport(result))
+console.log(formatReport(result, diagnostics))
 process.exit(result.ok ? 0 : 1)

@@ -506,7 +506,7 @@
 ## 3. 轮询：从固定 30 秒改成**条件轮询**，并确认后台不可见时是停的
 
 - **他们的做法**：multica 的轮询全部条件化——agent 列表只在「有 agent 在线或不稳定」时才 30s 一轮，否则 `refetchInterval` 直接返回 `false`（`multica: packages/core/workspace/queries.ts:55-63`）；dashboard 是 5 分钟 + 60 秒 staleTime（`packages/core/dashboard/queries.ts:50-51`）。AO 的写操作期间会暂停对应轮询（`agent-orchestrator: frontend/src/renderer/hooks/useConversation.ts:1015` 的 `writing ? false : ...`，配合 `:1028-1032` 的 `onMutate/onSettled` 夹窗），并且刻意标注哪些数据**不该轮询**（`hooks/useShellTerminals.ts:71`）。两家都靠 TanStack Query `refetchIntervalInBackground` 默认 `false` 拿到「后台不轮询」（两边搜该关键词均零命中，即都没改默认）。
-- **我们现状**：`frontend/src/views/workspace/ProjectShell.vue` 每 30 秒无条件拉一次未读 + 话题列表。我们没有 TanStack Query，所以**这个默认行为我们不会自动拥有**——得自己接 `document.visibilityState`。
+- **我们现状**：不轮询了。项目外框订阅项目推送，未读、话题列表哪一样变了才重读那一样（`frontend/src/query/projectFeed.ts`）。
 - **抄不抄**：**抄条件化和后台暂停，两条都抄。**
 - **为什么**：这是「不改技术栈也能抄」的一条——我们的轮询是手写的 `setInterval`，加两个判断（页面不可见时跳过；没有活跃话题时降频或停）比引入任何库都便宜。而且「后台标签页还在每 30 秒打后端」在多标签场景下是纯浪费，用户还感知不到收益。注意：他们把这个当**默认**（框架给的），我们要把它当**必须显式写的代码**——这正是没有数据层库的隐性成本，值得在实现时留一行注释说明。
 

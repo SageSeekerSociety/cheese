@@ -112,6 +112,8 @@ def test_explicit_team_id_sticks_and_an_unknown_owner_is_refused(client):
     assert shared["team_id"] == tid
     # Links to the owning team go by its handle, so the project carries it.
     assert shared["team_handle"].startswith("t-")
+    # The sidebar names the team the project belongs to.
+    assert shared["team_name"] == "Proj Owners"
 
     # An owner who is no registered person and no team named: nowhere to belong.
     # Posted raw — the post_project helper would register the owner first.

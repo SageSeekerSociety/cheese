@@ -271,7 +271,7 @@ async def create_card(
             snapshot[1],
         )
     card.pr_number, card.pr_url = task.pr_number, task.pr_url
-    await self._announce_filed(topic, card, task, artifact=declared.name)
+    await self._announce_filed(topic, card, task)
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)
@@ -406,6 +406,30 @@ async def list_for_topic(
 ) -> tuple[list[AcceptCard], int]:
     cards = await self._repo.list_for_topic(topic_id)
     return cards, len(cards)
+
+
+async def latest_cards_by_task(
+    self: pkg.AcceptService, task_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, AcceptCard]:
+    """每条活最新的一张验收卡 —— 一次查完（`AcceptCardRepository.latest_by_task`）。
+
+    「待我处理」把每条活现在停在哪张卡上折进展示态，判据（最新一张、按
+    `task_id`）留在 repository，这里只把那条读接到服务上，路由不自己构造仓储。
+    """
+    return await self._repo.latest_by_task(task_ids)
+
+
+async def live_cards_for_places(
+    self: pkg.AcceptService, place_ids: list[uuid.UUID]
+) -> list[AcceptCard]:
+    """这些地点（房间或支线）上还没结算的卡 —— 房间自己那一张从这里筛。
+
+    哪些状态算「还没结算」是 `review/archive.py` 维护的那张表
+    （`OPEN_CARD_STATUSES`），所以状态由这里带上，调用方不自己数状态。
+    """
+    return await self._repo.list_live_for_places(
+        place_ids, statuses=archive.OPEN_CARD_STATUSES
+    )
 
 
 async def open_pr_card_ids(

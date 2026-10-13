@@ -4,20 +4,23 @@
 
 // [key, tab label, icon, groups: [group label, [slug, ...]]]
 export const SECTIONS = [
-  ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese']]]],
+  ['start', '开始使用', 'rocket', [['入门', ['overview', 'quickstart', 'working-with-cheese', 'apps']]]],
   // One tutorial teaches one task, step by step; grouped by what the task is about.
   ['tutorials', '教程', 'bulb', [
-    ['组队协作', ['team-project', 'invite-to-project', 'join-a-team', 'split-work']],
+    ['组队协作', ['team-project', 'join-a-team', 'invite-to-project']],
     ['做题目', ['solve-a-challenge', 'ask-about-a-challenge', 'team-challenge', 'resubmit']],
     ['出题目', ['publish-a-challenge', 'guide-the-teammate']],
-    ['成果', ['review-changes', 'publish-a-site']],
+    ['成果', ['publish-a-site']],
     ['工作电脑', ['use-your-computer']],
+    ['扩展芝士', ['connect-a-service', 'add-a-skill']],
   ]],
   ['features', '功能说明', 'layers', [
-    ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks']],
+    ['协作', ['teams', 'projects', 'rooms', 'agents', 'tasks', 'inbox', 'routines']],
     ['交付', ['files', 'submissions', 'accept', 'sites']],
-    ['教学', ['challenges']],
-    ['资源', ['devices', 'quota', 'feedback']],
+    ['教学', ['challenges', 'spaces']],
+    ['资源', ['environment', 'devices', 'quota', 'feedback']],
+    ['扩展', ['connections', 'skills']],
+    ['账号', ['account']],
   ]],
   ['faq', '常见问题', 'info', [['排障', ['troubleshooting']]]],
 ]
@@ -37,8 +40,26 @@ export const DEV = [
   ['索引（自动生成）', ['by-path']],
 ]
 
-// Pages that moved; their old URLs keep working.
-export const REDIRECTS = { compute: 'devices', members: 'teams' }
+// Pages that moved; their old URLs keep working. A target may name a section
+// (`page#anchor`); the old URL's own #fragment is then dropped, since it named a
+// section of the old page. A key that names a section (`page#anchor`) is a
+// section that moved off a page that still exists: that page sends the old
+// #fragment on to the target.
+const SPACE_SECTIONS = ['spaces', 'create', 'invite-codes', 'members', 'publish', 'audit', 'participants', 'space-library', 'teaching']
+export const REDIRECTS = {
+  compute: 'devices',
+  members: 'teams',
+  'split-work': 'team-project',
+  'review-changes': 'working-with-cheese#review-result',
+  ...Object.fromEntries(SPACE_SECTIONS.map((a) => [`challenges#${a}`, a === 'spaces' ? 'spaces' : `spaces#${a}`])),
+  // 设备与环境 was split: choosing an environment moved to its own page.
+  ...Object.fromEntries(['topic-environment', 'cloud-busy'].map((a) => [`devices#${a}`, `environment#${a}`])),
+  // 频道 was tightened: the routine-run section became its own page, and two sections folded into others.
+  'rooms#routine-runs': 'routines#runs',
+  'rooms#channel-overview': 'rooms#topic-layout',
+  'rooms#join-channel': 'rooms#create-topic',
+  'rooms#topic-runtime': 'rooms#topic-members',
+}
 
 // Hand-picked highlights per release, [text, PR]. The full list comes from git.
 export const HIGHLIGHTS = {

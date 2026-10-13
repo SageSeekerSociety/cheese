@@ -3,7 +3,8 @@
 import contextlib
 import logging
 import time
-from collections.abc import AsyncIterator, Iterable
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Callable, Iterable
 from functools import lru_cache
 
 from app.domain.agent.realtime.activity import LIVE_ONLY, RoomActivity
@@ -15,6 +16,11 @@ from app.domain.agent.realtime.subscriber_queue import (
 )
 
 logger = logging.getLogger("cheesex.runtime")
+
+#: How many turn ends `adopt` remembers. Only a database read still in flight
+#: when a turn ended needs its end remembered, and such a read takes
+#: milliseconds; this many ends cannot happen inside one.
+ENDS_KEPT = 1024
 
 
 class InProcessBroker:
@@ -40,8 +46,16 @@ class InProcessBroker:
         # Who is typing or working here; reads the turn starts above.
         self.activity = RoomActivity(self._active_since)
         self._last_activity_at: dict[str, float] = {}
+        # Every turn end this process relayed, numbered in order: what `adopt`
+        # checks a database read against (`books_read`).
+        self._ends = 0
+        self._ended: OrderedDict[tuple[str, str], int] = OrderedDict()
         self._replay_size = replay_size
         self._max_subscriber_bytes = max_subscriber_bytes
+        #: Called with a channel when it starts having a turn in flight or stops:
+        #: what a project's channel list shows as 芝士 at work there. Kept across
+        #: `reset`, since whoever listens registered once.
+        self.busy_changed: list[Callable[[str], None]] = []
 
     def reset(self) -> None:
         """Drop all buffered frames + subscriptions. The broker is a process-wide
@@ -55,11 +69,27 @@ class InProcessBroker:
         self._active_since.clear()
         self.activity.reset()
         self._last_activity_at.clear()
+        self._ended.clear()
+
+    def books_read(self) -> int:
+        """Take before reading a channel's open turns from the database, and
+        hand to `adopt` with what the read returned."""
+        return self._ends
 
     def adopt(
-        self, channel: str, turns: Iterable[tuple[str, float, str | None]]
+        self,
+        channel: str,
+        turns: Iterable[tuple[str, float, str | None]],
+        *,
+        read_at: int,
     ) -> list[tuple[str, str | None]]:
         """Take in live turns without synthesising or buffering turn progress.
+
+        ``turns`` were read from the database after ``read_at``
+        (`books_read`). A turn whose end this process relayed since then is
+        left out: the read can have run before the end was written, and
+        nothing would end the turn a second time, so its agent would show
+        working until the next reconciliation.
 
         Existing turns keep their original start and attribution. Adopted turns
         end on the same ``turn_finished`` boundary as locally observed turns.
@@ -69,7 +99,12 @@ class InProcessBroker:
         for turn_id, started, agent in turns:
             if turn_id in self._active.get(channel, ()):
                 continue
+            if self._ended.get((channel, turn_id), -1) > read_at:
+                continue
+            went_busy = not self._active.get(channel)
             self._active.setdefault(channel, set()).add(turn_id)
+            if went_busy:
+                self._busy_changed(channel)
             self._active_since.setdefault((channel, turn_id), started)
             taken.append((turn_id, agent))
             if agent:
@@ -97,7 +132,10 @@ class InProcessBroker:
         if kind == "turn_started":
             turn_id = str(frame.get("turn_id") or "")
             if turn_id:
+                went_busy = not self._active.get(channel)
                 self._active.setdefault(channel, set()).add(turn_id)
+                if went_busy:
+                    self._busy_changed(channel)
                 self._active_since.setdefault((channel, turn_id), time.time())
                 if agent := frame.get("agent"):
                     followed += self.activity.turn_started(channel, turn_id, str(agent))
@@ -116,6 +154,11 @@ class InProcessBroker:
 
         if kind == "turn_finished":
             turn_id = str(frame.get("turn_id") or "")
+            self._ends += 1
+            self._ended[(channel, turn_id)] = self._ends
+            self._ended.move_to_end((channel, turn_id))
+            if len(self._ended) > ENDS_KEPT:
+                self._ended.popitem(last=False)
             active = self._active.get(channel)
             if active is not None:
                 active.discard(turn_id)
@@ -126,11 +169,27 @@ class InProcessBroker:
                     self._active.pop(channel, None)
                     self._buffer.pop(channel, None)
                     self._last_activity_at.pop(channel, None)
+                    self._busy_changed(channel)
 
         self._fan_out(channel, frame)
         for change in followed:
             for to, extra in self.activity.told(channel, change):
                 self._fan_out(to, extra)
+
+    def _busy_changed(self, channel: str) -> None:
+        for listener in self.busy_changed:
+            try:
+                listener(channel)
+            except Exception:
+                logger.exception("broker_busy_listener_failed channel=%s", channel)
+
+    def has_subscribers(self, channel: str) -> bool:
+        """Whether anyone is listening on this channel in this process."""
+        return bool(self._subs.get(channel))
+
+    def any_subscribed(self, prefix: str) -> bool:
+        """Whether anyone is listening on a channel whose name starts so."""
+        return any(channel.startswith(prefix) for channel in self._subs)
 
     def _fan_out(self, channel: str, frame: Frame) -> None:
         if subs := self._subs.get(channel):

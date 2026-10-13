@@ -9,7 +9,7 @@ import { ref } from 'vue'
 import { confirmProjectSkill, declineProjectSkill, listProjectSkills } from '@/api/projectSkills'
 import { t } from '@/i18n'
 import { keys } from '@/query/keys'
-import { fromSnapshot } from '@/query/snapshot'
+import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
 
 export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
   /** 这个房间里芝士提议、还在等人的那些。 */
@@ -21,16 +21,21 @@ export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
 
   /** 读一次。拉不到就当没有：这张卡是顺路问一句，不该让对话栏报错。 */
   async function load() {
+    const room = roomId.value
+    const key = keys.roomSkillProposals(room)
+    // 先画上一次在这个房间看到的那几张，读回来再换（见 query/snapshot 的 `lastSeen`）。
+    proposals.value = lastSeen<ProjectSkill[]>(key) ?? []
     try {
       // 只有进房间时的第一次读用房间快照里那一块（query/snapshot），之后每次都问服务器。
-      const room = roomId.value
-      proposals.value = await fromSnapshot(keys.roomSkillProposals(room), async () =>
+      const got = await fromSnapshot(key, async () =>
         (await listProjectSkills(projectId.value)).data.filter(
           (s) => s.state === 'draft' && s.proposal && s.source_topic_id === room
         )
       )
+      seen(key, got)
+      if (roomId.value === room) proposals.value = got
     } catch {
-      proposals.value = []
+      if (roomId.value === room) proposals.value = []
     }
   }
 
@@ -40,6 +45,11 @@ export function useSkillProposals(projectId: Ref<string>, roomId: Ref<string>) {
     try {
       const row = await run()
       proposals.value = proposals.value.filter((p) => p.id !== s.id)
+      const key = keys.roomSkillProposals(roomId.value)
+      seen(
+        key,
+        (lastSeen<ProjectSkill[]>(key) ?? []).filter((p) => p.id !== s.id)
+      )
       return row
     } catch (e) {
       error.value = e instanceof Error ? e.message : failed

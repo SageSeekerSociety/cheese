@@ -80,11 +80,20 @@ export function useChatScroll(
   // the growth. Judged by distance alone, that event read as "the reader scrolled up":
   // atBottom went false, the observer stopped following, and the topic was left a
   // screen or more above its newest message.
+  //
+  // It moves scrollTop UP the same way, and `lastTop` alone reads that as the reader
+  // too: the content above shrinks (rows that were off screen take their real height,
+  // or a long reply folds down to a reading height) while the reply below keeps
+  // growing. So an upward move counts as the reader only when the content height did
+  // not change in that same frame — the shrink and the growth move scrollTop, the
+  // reader does not.
   let lastTop = 0
+  let lastHeight = 0
 
   function place(el: HTMLElement, top: number) {
     el.scrollTop = top
     lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
   }
 
   // 把这一栏钉在底部——在用户停在那儿的时候。时间线的高度会在切话题的第一帧**之后**
@@ -99,9 +108,14 @@ export function useChatScroll(
   // 的人就看着最新几条滑到键盘底下（真机反馈 2026-09-17）。两个都在同一个
   // observer 里，重钉只有一条路径，不会互相打架。
   let contentObserver: ResizeObserver | null = null
-  // A pane with no layout ignores `scrollTop` — the chat column is hidden while 专注模式
-  // is on, and a topic opened then mounts its pane hidden. The saved position waits
-  // here and is applied when the pane gets a size, which the observer below sees.
+  // A pane with no layout ignores `scrollTop`, and where it was is the browser's to
+  // forget: 专注模式 hides the chat column, a topic opened while another tab is on
+  // screen mounts its pane hidden, and on a phone every step away from 对话 hides it
+  // (`v-show`) — it then reports 0 for all three numbers. Chromium writes the number
+  // back when the pane is shown again; Safari does not, and the reader lands at the very
+  // top of a conversation they were reading in the middle of (真机反馈 2026-10-12：点开
+  // 一份预览再关掉，位置没了). So the position waits here, and the observer below
+  // applies it as soon as the pane has a size again.
   let pendingTop: number | null = null
   watch([contentRef, scrollRef], ([content, pane]) => {
     contentObserver?.disconnect()
@@ -110,6 +124,14 @@ export function useChatScroll(
     contentObserver = new ResizeObserver(() => {
       const sc = scrollRef.value
       if (!sc) return
+      if (!sc.clientHeight) {
+        // 刚没了布局（或是还藏在别处），而人正读在这一段中间：趁现在记下他停在哪。
+        // 藏起来的那一刻这张 0×0 的回调就会发一次，那时 `lastTop` 还是他最后报的位
+        // 置；之后再读这个元素只会读到 0。停在底部的人不用记——下面那条分支会把他带
+        // 到**当前**的底部，离开期间到的消息才看得见。
+        if (pendingTop === null && !atBottom.value && showingNewest()) pendingTop = lastTop
+        return
+      }
       if (pendingTop !== null) {
         if (!sc.clientHeight) return
         place(sc, pendingTop)
@@ -169,10 +191,14 @@ export function useChatScroll(
     // A hidden pane has no position to report; what is remembered stays.
     if (!el || !topicId || !el.clientHeight) return
     const movedUp = el.scrollTop < lastTop
+    const relaid = el.scrollHeight !== lastHeight
     lastTop = el.scrollTop
+    lastHeight = el.scrollHeight
     // Pinned and not scrolled up: still pinned, however far the content grew below
-    // (see `lastTop`). The resize observer follows it to the new bottom.
-    atBottom.value = isAtBottom(el) || (atBottom.value && !movedUp)
+    // (see `lastTop`). The resize observer follows it to the new bottom. An upward move
+    // in a frame where the content height moved is the browser's anchoring, not the
+    // reader.
+    atBottom.value = isAtBottom(el) || (atBottom.value && !(movedUp && !relaid))
     if (!showingNewest()) return
     scrollMemory.set(topicId, { top: el.scrollTop, atBottom: atBottom.value })
   }

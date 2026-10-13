@@ -4,7 +4,8 @@ A single catalog that backs both the 市场 (browse everything on offer) and a
 project's settings (pick which pool this project runs on). Two kinds of pool:
 
   - ``ai``      — which model/provider a turn runs on (ExecutionProfile / AIPool)
-  - ``compute`` — which machine runs the sandbox (ComputePool)
+  - ``compute`` — the sandbox specs an agent's execution environment may have
+    (``agent.environment``)
 
 `available` is the honest flag: a listing that isn't deployed/credentialed can't
 be selected, so a project never silently runs on something that isn't there.
@@ -18,34 +19,22 @@ only honest when it would.
 
 from dataclasses import dataclass
 
-from app.core.config import settings as deployment_settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
+from app.domain.agent.environment import DEVICES_OF, STANDARD, VM
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.device.supply import Visibility, default_visibility
-
-# Compute provider names (match the machine pools' names in compute.py).
-COMPUTE_DEVICE = "device"
-COMPUTE_CLOUD = "cloud"
 
 # --- 档位 (结论 3: 模型是工作占用的资源，与机器（地点）同形) --------------------
 # 一件工作占用的资源花谁的钱，模型和机器用同一套词——项目的档位策略
 # (`domain/policy/gate.py`) 拿它比对，所以它在目录里声明一次，别处只读。
 #: 订阅或平台池里包含的常规档，不额外花钱。
 TIER_INCLUDED = "included"
-#: 自带的东西：某个人自己那台机器。花的是机主的电和带宽，不是项目的钱。
+#: 自带的东西：某个人自己的凭证或机器。
 TIER_BYO = "byo"
-#: 更贵的一档：按量计费的 Cloud、更快吃掉订阅额度的模型。
+#: 更贵的一档：更快吃掉订阅额度的模型。
 TIER_PREMIUM = "premium"
 #: 前沿档。
 TIER_FRONTIER = "frontier"
-
-#: 算力池 → 档位。`compute_listings` 和档位策略读的是同一份，所以看板上写的档和
-#: 闸门比的那一档不可能对不上。
-COMPUTE_TIERS: dict[str, str] = {
-    COMPUTE_DEVICE: TIER_BYO,
-    COMPUTE_CLOUD: TIER_PREMIUM,
-}
 
 
 @dataclass(frozen=True)
@@ -122,138 +111,45 @@ def compute_listings(
     *,
     device_online: bool | None = None,
 ) -> list[PoolListing]:
-    """Every compute pool in the catalog — self-hosted and Cloud. The device pool
-    is on when a relevant machine is connected; Cloud is on when provisioning is
-    configured.
-
-    ``device_online`` scopes the device pool's availability to a CONTEXT: a route
-    that knows the project passes whether THAT project has an online enrolled
-    machine (compute belongs to the project/team, not globally). Left as ``None``
-    (the global 市场 catalog) it falls back to 'is any device connected at all'."""
-    cloud_ready = cloud_provisionable(settings)
-    fallback = compute_default_name(settings)
-    # A device is real compute the moment a relevant machine is connected (DeviceHub
-    # presence) — the honest `available` flag. Per-project when the caller knows the
-    # context; else the global 'any device online'.
+    """The sandbox specs on offer on this deployment: the platform's machines,
+    a whole VM of the platform's, and people's own computers — each person's
+    are a spec of their own in a project (``environment.devices_of``), listed
+    here once. ``device_online`` scopes the last to a project's machines; left
+    as None (the global 市场) it asks whether any machine is connected."""
     if device_online is None:
         # deferred-import: tests replace this name on app.domain.agent.device_hub
         from app.domain.agent.device_hub import device_hub
 
         device_online = bool(device_hub.online_device_ids())
-    device_ready = device_online
-    # Whose machine runs the work is the whole question, so both rows name an
-    # owner. The platform's own box was a third row that never appeared here and
-    # ran every unconfigured topic anyway (#358 "retire local"); it is gone from
-    # the ComputePool too, which is what makes `default` below a fact rather
-    # than a claim.
     return [
         PoolListing(
             kind="compute",
-            id=COMPUTE_DEVICE,
-            label="自有设备",
-            tier=COMPUTE_TIERS[COMPUTE_DEVICE],
-            price="自备",
-            description="在你自己连接的机器上跑，工作树与数据留在本地；先到『我的设备』连接一台。",
-            available=device_ready,
-            default=fallback == COMPUTE_DEVICE,
-        ),
-        PoolListing(
-            kind="compute",
-            id=COMPUTE_CLOUD,
-            label="云端沙箱",
-            tier=COMPUTE_TIERS[COMPUTE_CLOUD],
-            price="按量计费",
-            description="每条会话在平台的云端沙箱里执行；云端资源紧张时需要等几分钟。",
-            available=cloud_ready,
-            default=fallback == COMPUTE_CLOUD,
-        ),
-    ]
-
-
-def compute_selectable(
-    settings,  # type: ignore[no-untyped-def]
-    *,
-    device_online: bool | None = None,
-) -> list[PoolListing]:
-    """The compute pools a project can actually pick right now (deployed). Pass
-    ``device_online`` to scope the self-hosted pool to a project's own machines."""
-    return [
-        p
-        for p in compute_listings(settings, device_online=device_online)
-        if p.available
-    ]
-
-
-def compute_default_name(
-    settings=None,  # type: ignore[no-untyped-def]
-) -> str:
-    """Deployment default used when neither room nor project has a choice.
-
-    Cloud where the deployment can provision one, the self-hosted device pool
-    where it cannot — the machine the deployment actually has, named honestly
-    rather than aspirationally.
-
-    This is also what `build_compute_pool` hands an unconfigured turn to, which
-    is the point of putting it in ONE function. The catalogue used to declare
-    Cloud the default while the execution layer's own default was the platform's
-    own box, a pool the catalogue did not list at all: a person read 默认 next to
-    Cloud and their turn ran in a container on our host. Two answers to one
-    question can only ever disagree, so there is one.
-    """
-    if settings is None:
-        settings = deployment_settings
-    return COMPUTE_CLOUD if cloud_provisionable(settings) else COMPUTE_DEVICE
-
-
-# --- Visibility (#282 §四 / #358): the whole-machine question -------------------
-# Visibility is NOT a pool of its own — it is a sub-choice UNDER the self-hosted
-# device pool: when a room runs on an enrolled machine, does its agent see only its
-# own worktree (boxed) or the whole host (operate its services, exec into other
-# rooms, reach the internal network)? The platform exposes this 档's capability
-# description so the room can SHOW it, rather than granting whole-machine access
-# silently (#358 原则八: 平台只说能力，不静默行为).
-VISIBILITY_ISOLATED = "isolated"
-VISIBILITY_HOST = "host"
-
-# The exact honest line #282 §四 drafted — the "看得见的安全提示" — as the `host`
-# 档's description. The room badge's tooltip says the same in the reader's language
-# (frontend `work.roomMachine.wholeMachineNotice`); change both together.
-MACHINE_VISIBILITY_NOTICE = "让它看到整台机器（能操作这台机器上的服务和其他房间）"
-
-
-def visibility_listings() -> list[PoolListing]:
-    """The visibility 档 a room may run its self-hosted compute under (#282 §四).
-
-    Both run on every enrolled machine the platform supports; ``default`` says
-    which one a room gets when nobody picks, and comes from `device.supply`, the
-    answer every binding point reads too, so this catalogue cannot tell someone
-    their room is boxed while the binding gives it the whole machine. Whether
-    one particular machine can sandbox a session depends on what it runs, and
-    the room's compute profile says that per machine (``sandbox_unavailable``).
-
-    ``host``'s description IS the #282 safety line, so whoever renders the picker
-    or the room badge reads the warning straight from the catalogue."""
-    default = default_visibility()
-    return [
-        PoolListing(
-            kind="visibility",
-            id=VISIBILITY_ISOLATED,
-            label="沙箱（只看自己的工作目录）",
+            id=STANDARD,
+            label="标准沙箱",
             tier="included",
-            price="包含",
-            description="每条会话一个沙箱，只看得到自己的工作目录和本项目的包缓存，看不到机器主人的文件和别的会话。",
-            available=True,
-            default=default is Visibility.isolated,
+            price="按时长计费",
+            description="每位 AI 队友一个沙箱，在平台的机器上，"
+            "只看得到自己的工作目录。",
+            available=cloud_provisionable(settings),
+            default=True,
         ),
         PoolListing(
-            kind="visibility",
-            id=VISIBILITY_HOST,
-            label="整台机器",
+            kind="compute",
+            id=VM,
+            label="虚拟机沙箱",
+            tier="included",
+            price="按规格和时长计费",
+            description="一整台虚拟机给一位 AI 队友：能跑 Docker、KVM、装内核模块。",
+            available=cloud_vm_provisionable(settings),
+        ),
+        PoolListing(
+            kind="compute",
+            id=DEVICES_OF.rstrip(":"),
+            label="自己的设备",
             tier="byo",
-            price="自备",
-            description=MACHINE_VISIBILITY_NOTICE,
-            available=True,
-            default=default is Visibility.host,
+            price="不收费",
+            description="沙箱放在项目成员自己接入的电脑上；先到『我的设备』连接一台。",
+            available=device_online,
         ),
     ]
 

@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const invitationRecommend = vi.fn()
 const getInvitaions = vi.fn()
 
-vi.mock('@/network/api/questions', () => ({
+vi.mock('@/api/questions', () => ({
   QuestionApi: {
     invitationRecommend: (...args: unknown[]) => invitationRecommend(...args),
     getInvitaions: (...args: unknown[]) => getInvitaions(...args),
@@ -66,8 +66,8 @@ function mountList() {
 }
 
 beforeEach(() => {
-  invitationRecommend.mockReset().mockResolvedValue({ data: { users: [] } })
-  getInvitaions.mockReset().mockResolvedValue({ data: { invitations: [] } })
+  invitationRecommend.mockReset().mockResolvedValue({ users: [] })
+  getInvitaions.mockReset().mockResolvedValue({ invitations: [] })
   toastError.mockReset()
   process.on('unhandledRejection', onUnhandled)
 })
@@ -112,13 +112,11 @@ describe('the invitation list', () => {
       question_count: 0,
       answer_count: 0,
     }
-    invitationRecommend.mockResolvedValue({ data: { users: [invited] } })
+    invitationRecommend.mockResolvedValue({ users: [invited] })
     getInvitaions.mockResolvedValue({
-      data: {
-        invitations: [
-          { id: 1, question_id: QUESTION_ID, user: invited, created_at: 0, updated_at: 0, is_answered: false },
-        ],
-      },
+      invitations: [
+        { id: 1, question_id: QUESTION_ID, user: invited, created_at: 0, updated_at: 0, is_answered: false },
+      ],
     })
 
     const { container } = mountList()

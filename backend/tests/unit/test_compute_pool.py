@@ -1,7 +1,7 @@
-"""ComputePool: which machine a turn lands on (design §3 / review R2)."""
+"""ComputePool: which backend a turn lands on — one per harness, over the one
+executor channel, whatever machine the session works on."""
 
 import uuid
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,7 +23,7 @@ async def test_switch_parks_previous_harness_before_routing_mid_turn_input():
     native.close = AsyncMock(side_effect=lambda ref: calls.append("close"))
     native.steer = AsyncMock(return_value=True)
     codex.steer = AsyncMock(return_value=True)
-    pool = ComputePool([native, codex], "device")
+    pool = ComputePool([native, codex])
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="claude-code")
     await pool.activate(session, codex)
     assert calls == ["interrupt", "close"]
@@ -59,7 +59,7 @@ async def test_activate_parks_only_the_same_seats_previous_harness():
             "agent-a",
         )
     )
-    pool = ComputePool([native, codex], "device")
+    pool = ComputePool([native, codex])
     topic = uuid.uuid4()
     await pool.activate(
         SessionRef(uuid.uuid4(), topic, "agent-b", harness="claude-code"), codex
@@ -95,7 +95,7 @@ async def test_a_seat_whose_previous_runner_is_gone_is_taken_anyway(gone):
     native.close = AsyncMock()
     native.steer = AsyncMock(return_value=True)
     pi.steer = AsyncMock(return_value=True)
-    pool = ComputePool([native, pi], "device")
+    pool = ComputePool([native, pi])
     session = SessionRef(uuid.uuid4(), uuid.uuid4(), harness="pi")
 
     await pool.activate(session, pi)
@@ -159,132 +159,29 @@ class _FakeBackend:
     hard_ceiling_s = 900.0
 
 
-def test_pool_rejects_unknown_default():
+def test_a_pool_without_the_deployments_first_harness_is_refused():
+    """Platform work that names no harness lands on the deployment's first
+    preference; a pool that cannot run it would fail that work at the first
+    dream, so it is refused when it is built."""
     with pytest.raises(ValueError):
-        ComputePool([], "missing")
+        ComputePool([])
 
 
-def _two_machine_pool() -> ComputePool:
-    return ComputePool([_FakeBackend("cloud"), _FakeBackend("device")], "cloud")
-
-
-def test_select_routes_to_the_named_machine():
-    pool = _two_machine_pool()
-    assert pool.select(provider_id="device").name == "device"
-    assert pool.select(provider_id="cloud").name == "cloud"
-
-
-def test_a_machine_can_offer_more_than_one_harness():
-    """The two axes are two questions. A registry keyed by machine alone could
-    not hold a second harness at all — both backends would answer to the same
-    name and one would silently replace the other."""
-    pool = ComputePool(
-        [_FakeBackend("cloud"), _FakeBackend("cloud", harness="pi")],
-        "cloud",
-    )
-    assert pool.machines() == {"cloud"}
-    assert pool.select(provider_id="cloud", harness="pi").harness == "pi"
-    assert pool.select(provider_id="cloud").harness == "claude-code"
-
-
-def test_a_harness_this_deployment_does_not_run_is_refused_not_substituted():
-    """Running something else would answer as an agent nobody configured. The
-    machine falls back; what runs on it never does."""
-    pool = _two_machine_pool()
-    assert pool.select(provider_id="cloud", harness="pi") is None
-
-
-def test_select_falls_back_to_default_for_unknown_or_none():
-    pool = _two_machine_pool()
-    # None (topic/project chose nothing) → the pool default.
-    assert pool.select(provider_id=None).name == "cloud"
-    assert pool.select().name == "cloud"
-    # A stored id that isn't deployed here (e.g. a pool that was retired) must
-    # never break a turn — it degrades to the default, not an error.
-    assert pool.select(provider_id="gpu").name == "cloud"
-
-
-def test_pool_select_returns_available_default():
-    pool = _two_machine_pool()
-    provider = pool.select()
-    assert provider is pool.default()
-    assert provider.available() is True
-
-
-def test_the_pool_holds_only_machines_the_catalogue_offers():
-    """A turn can only land on something a person could have picked. The
-    platform's own container host was in this pool and in no catalogue, so it was
-    where every unconfigured topic ran (#358)."""
+def test_one_backend_per_harness_whatever_machine_the_room_is_on():
+    """Which machine a session works on is its own environment, settled when it
+    needs hands. The backend a turn lands on depends on the harness alone, and
+    every one of them runs its session on the session host and defers its work
+    to the machine."""
     from app.domain.agent.compute import build_compute_pool
-    from app.domain.agent.market import COMPUTE_CLOUD, COMPUTE_DEVICE
+    from app.domain.agent.harness import CLAUDE_CODE
 
     pool = build_compute_pool()
-    assert pool.machines() <= {COMPUTE_DEVICE, COMPUTE_CLOUD}
-    assert pool.has(COMPUTE_DEVICE)
 
-
-def test_an_unconfigured_turn_lands_on_the_pool_the_catalogue_marks_default(
-    monkeypatch,
-):
-    """The two answers are one function now. They used not to be, and the gap was
-    invisible: the picker said Cloud while the turn ran in a container here.
-
-    Checked in BOTH deployment shapes, because the answer moves between them and
-    only one of the two could be got right by accident."""
-
-    from app.core.config import settings
-    from app.domain.agent.cloud_provider import CloudChannel
-    from app.domain.agent.compute import build_compute_pool
-    from app.domain.agent.market import compute_default_name
-
-    def _cloud() -> CloudChannel:
-        return CloudChannel(
-            configured=True,
-        )
-
-    monkeypatch.setattr(settings, "microcloud_base_url", "")
-    monkeypatch.setattr(settings, "microcloud_tenant_secret", "")
-    pool = build_compute_pool(cloud_channel=_cloud())
-    assert pool.select(provider_id=None).name == compute_default_name()
-
-    monkeypatch.setattr(settings, "microcloud_base_url", "https://microcloud.example")
-    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
-    pool = build_compute_pool(cloud_channel=_cloud())
-    assert pool.select(provider_id=None).name == compute_default_name()
-
-
-def test_the_default_never_names_a_machine_the_pool_does_not_hold(monkeypatch):
-    """A default the pool cannot resolve is refused at construction, so it would
-    take the whole deployment down at startup. Preferring Cloud must therefore
-    never outvote what was actually wired in."""
-    from app.core.config import settings
-    from app.domain.agent.compute import build_compute_pool
-
-    monkeypatch.setattr(settings, "microcloud_base_url", "https://microcloud.example")
-    monkeypatch.setattr(settings, "microcloud_tenant_secret", "secret")
-
-    pool = build_compute_pool()  # no Cloud channel handed in
-
-    assert pool.default().name in pool.machines()
-
-
-def test_build_pool_registers_the_concrete_cloud_channel():
-
-    from app.domain.agent.cloud_provider import CloudChannel
-    from app.domain.agent.compute import build_compute_pool
-
-    cloud = CloudChannel(
-        configured=False,
-    )
-    pool = build_compute_pool(cloud_channel=cloud)
-
-    backend = pool.select(provider_id="cloud")
-    assert pool.has("cloud")
-    assert backend.channel.executor is cloud
-    # Registration is independent of readiness. Chat needs its session host;
-    # Cloud hands are acquired by a tool, never by turn admission.
-    assert backend.available() is False
+    backend = pool.select(harness=CLAUDE_CODE)
+    assert backend is not None
     assert backend.deferred_work is True
+    assert pool.choose({})[1] is pool.select(harness=pool.choose({})[0])
+    assert pool.platform_work() is pool.default()
 
 
 def test_the_pool_runs_only_the_harnesses_the_registry_lists():
@@ -301,36 +198,27 @@ def test_the_pool_runs_only_the_harnesses_the_registry_lists():
     pool = build_compute_pool()
 
     assert set(HARNESSES) == {CLAUDE_CODE, PI}
-    for machine in pool.machines():
-        assert pool.select(provider_id=machine, harness=CODEX) is None
-        assert pool.select(provider_id=machine, harness=CLAUDE_CODE) is not None
+    assert pool.select(harness=CODEX) is None
+    assert pool.select(harness=CLAUDE_CODE) is not None
 
 
-def test_pi_runs_on_every_machine_and_takes_it_only_for_work():
-    """pi's session runs on the session host and reaches the room's machine
-    for its work (#1106), as the other harnesses' do: it is on every machine
-    in the pool, and a turn on it does not wait for a machine to start."""
-
-    from app.domain.agent.cloud_provider import CloudChannel
+def test_pi_takes_the_machine_only_for_work():
+    """pi's session runs on the session host and reaches the session's machine
+    for its work (#1106), as the other harnesses' do: a turn on it does not
+    wait for a machine to start."""
     from app.domain.agent.compute import build_compute_pool
     from app.domain.agent.harness import PI
 
-    cloud = CloudChannel(
-        configured=True,
-    )
-    pool = build_compute_pool(cloud_channel=cloud)
-
-    for provider in ("device", "cloud"):
-        backend = pool.select(provider_id=provider, harness=PI)
-        assert backend is not None
-        assert backend.deferred_work is True
+    backend = build_compute_pool().select(harness=PI)
+    assert backend is not None
+    assert backend.deferred_work is True
 
 
 def test_a_room_runs_a_harness_that_hands_tools_over(monkeypatch):
     """要远端执行的场景不会派给没声明它的骨架，哪怕项目指定了它。
 
-    每台机器上，会话跑在中心机、工具交给执行机。拿掉 pi 的这一项声明，挑出来的
-    就是下一个声明了的；声明在，pi 照旧被挑中。
+    会话跑在中心机、工具交给执行机。拿掉 pi 的这一项声明，挑出来的就是下一个
+    声明了的；声明在，pi 照旧被挑中。
     """
     from app.core.config import settings
     from app.domain.agent import harness as harness_module
@@ -341,18 +229,13 @@ def test_a_room_runs_a_harness_that_hands_tools_over(monkeypatch):
         HARNESSES,
         PI,
         Harness,
-        harness_on,
     )
 
     monkeypatch.setattr(settings, "agent_harnesses", [CLAUDE_CODE, PI])
     project = {HARNESS_SETTING: PI}
 
-    def chosen() -> str | None:
-        pool = build_compute_pool()
-        return harness_on(
-            project,
-            lambda name: pool.select(provider_id="device", harness=name) is not None,
-        )
+    def chosen() -> str:
+        return build_compute_pool().choose(project)[0]
 
     assert chosen() == PI
     pi = HARNESSES[PI]
@@ -365,8 +248,8 @@ def test_a_harness_that_cannot_hand_tools_over_is_not_put_behind_the_central_hos
 ):
     """会话在中心机、手在执行机的那条路，只挂声明了远端执行的骨架。
 
-    把 Claude Code 的这一项声明拿掉，它就哪台机器都不挂：一个答不出「工具交给执行
-    机」的骨架挂在那里，跑起来是在中心机上碰项目文件。
+    把 Claude Code 的这一项声明拿掉，它就不挂：一个答不出「工具交给执行机」的骨架
+    挂在那里，跑起来是在中心机上碰项目文件。
     """
     from app.core.config import settings
     from app.domain.agent import harness as harness_module
@@ -382,22 +265,5 @@ def test_a_harness_that_cannot_hand_tools_over_is_not_put_behind_the_central_hos
     monkeypatch.setattr(settings, "agent_harnesses", [PI])
     pool = build_compute_pool()
 
-    for machine in pool.machines():
-        assert pool.select(provider_id=machine, harness=CLAUDE_CODE) is None
-    assert pool.select(provider_id="device", harness=PI) is not None
-
-
-def test_resolve_compute_id_uses_room_then_explicit_project_default():
-    from app.domain.agent.compute_configs import ComputeChoice, ProjectComputeConfigs
-    from app.domain.agent.work_policy import resolve_compute_id
-
-    configs = ProjectComputeConfigs(
-        default=ComputeChoice(name="Lab", profile="device", device_id="lab")
-    )
-    values = {"compute_configs": configs.model_dump()}
-    cloud = ComputeChoice(name="Cloud", profile="cloud")
-    room = SimpleNamespace(compute_config=cloud.model_dump())
-    fresh = SimpleNamespace(compute_config=None)
-    assert resolve_compute_id(values, room) == "cloud"
-    assert resolve_compute_id(values, fresh) == "device"
-    assert resolve_compute_id(values) == "device"
+    assert pool.select(harness=CLAUDE_CODE) is None
+    assert pool.select(harness=PI) is not None

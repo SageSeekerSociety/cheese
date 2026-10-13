@@ -103,6 +103,13 @@ const BODY_COPY: Record<FeedbackKind, () => { label: string; placeholder: string
     placeholder: t('feedback.submit.field.body.other.placeholder'),
   }),
 }
+/** 标题那一栏的占位语也跟着类型走：建议和其他不是「发生了什么」。字面量表，理由同上。 */
+const TITLE_PLACEHOLDER: Record<FeedbackKind, () => string> = {
+  bug: () => t('feedback.submit.field.title.placeholder.bug'),
+  suggestion: () => t('feedback.submit.field.title.placeholder.suggestion'),
+  other: () => t('feedback.submit.field.title.placeholder.other'),
+}
+const titlePlaceholder = computed(() => TITLE_PLACEHOLDER[store.draft.kind]())
 const bodyLabel = computed(() => BODY_COPY[store.draft.kind]().label)
 const bodyPlaceholder = computed(() => BODY_COPY[store.draft.kind]().placeholder)
 
@@ -284,7 +291,8 @@ onMounted(() => {
     <p class="sb-legend t-meta-read">{{ t('feedback.submit.requiredLegend') }}</p>
 
     <div class="sb-field">
-      <label class="sb-label" for="sb-title">
+      <!-- Each label's id is its field's id + "-label": Vuetify's text fields name their <input> with aria-labelledby="<id>-label", and with the label out here that id has to be this one. -->
+      <label id="sb-title-label" class="sb-label" for="sb-title">
         {{ t('feedback.submit.field.title.label') }}
         <span class="sb-req" aria-hidden="true">*</span>
       </label>
@@ -301,7 +309,7 @@ onMounted(() => {
             aria-required="true"
             :aria-describedby="describedby"
             :aria-invalid="invalid"
-            :placeholder="t('feedback.submit.field.title.placeholder')"
+            :placeholder="titlePlaceholder"
             @input="store.touchDraft()"
           />
         </template>

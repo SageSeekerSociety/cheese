@@ -34,6 +34,7 @@
     "inviteLabel": "Username or email",
     "invitePlaceholder": "Enter the full username or email",
     "inviteNotFound": "No one has this username or email",
+    "alreadyIn": "Already in the team",
     "inviteLookupFailed": "Could not look them up. Try again",
     "roleLabel": "Role",
     "inviteMessageLabel": "Invitation message (optional)",

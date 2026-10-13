@@ -18,6 +18,7 @@ from app.domain.review import (
     notes,
     pr_signals,
 )
+from app.domain.review.merge_state import RED_CONCLUSIONS
 from app.domain.review.models import (
     AcceptCard,
     AcceptStatus,
@@ -528,12 +529,17 @@ async def _advance_github_card(
 
 async def _mark_task_merged(
     self: pkg.AcceptService, card: AcceptCard, *, delivered_head: str | None = None
-) -> None:
+) -> bool:
+    """Record ``card``'s merge on its task; False when it does not land there.
+
+    A merge the task has already had does not land again — see
+    `task_landing._already_landed`. A caller that has words for a batch that
+    just landed says them on this answer."""
     if card.task_id is None:
-        return
+        return False
 
     task = await TaskService(self._session).require_in_room(card.topic_id, card.task_id)
-    await delivery_landed(
+    return await delivery_landed(
         self._session,
         task,
         by=card.decided_by,
@@ -600,19 +606,20 @@ async def _poll_pr_card(
             # The review remains a return. GitHub establishes a separate
             # fact about the batch, including the head that actually landed.
             card.pr_merged_at = status.merged_at or datetime.now(UTC)
-            await self._mark_task_merged(card, delivered_head=status.head_sha)
+            landed = await self._mark_task_merged(card, delivered_head=status.head_sha)
             await self._session.flush()
-            self._notify_merge_result(
-                topic,
-                say("acceptDoneAfterReturn", pr=number),
-                task_id=card.task_id,
-                meta=notice(
-                    EVENT_ACCEPT_DONE,
-                    severity=SEVERITY_INFO,
-                    who=WHO_PLATFORM,
-                    detail=card.pr_url or "",
-                ),
-            )
+            if landed:
+                self._notify_merge_result(
+                    topic,
+                    say("acceptDoneAfterReturn", pr=number),
+                    task_id=card.task_id,
+                    meta=notice(
+                        EVENT_ACCEPT_DONE,
+                        severity=SEVERITY_INFO,
+                        who=WHO_PLATFORM,
+                        detail=card.pr_url or "",
+                    ),
+                )
             return
         await self._settle_external_merge(card=card, topic=topic, status=status)
         return
@@ -629,14 +636,12 @@ async def _poll_pr_card(
             owner=owner, repo=repo, number=number, token=creds.read
         ):
             return
-        # Removal can mean failed checks or a human cancellation. Never re-enqueue.
+        # Removal can mean failed checks or a human cancellation. Never
+        # re-enqueue; but the card still reads 「已采纳」, so note it and wake
+        # the task's 芝士 instead of leaving it for someone to notice.
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
-        notes.record(
-            card,
-            notes.NoteCode.merge_refused,
-            f"PR #{number} 已离开合并队列但尚未确认合并，请检查 GitHub 后重新采纳。",
-        )
+        await self._note_left_merge_queue(card=card, topic=topic)
         await self._session.flush()
         return
 
@@ -677,12 +682,20 @@ async def _poll_pr_card(
     # 红检查按 runs 本身判，不按 verdict 的 reasons：一个和 main 冲突的 PR
     # 的 verdict 是 dirty（冲突最优先），但它上面的红检查照样是芝士要修的
     # 事 —— 三件事互不蕴含，谁都不许把别人吞掉（pr_signals 的规矩）。
+    # 词表用 `merge_state.RED_CONCLUSIONS`：`cancelled` 不算红（它没有结论），
+    # 一个只剩「已取消」的 PR 不该把人叫起来说「CI 未通过」——卡面照旧标出来。
     has_red_check = any(
-        r.conclusion in ("failure", "timed_out", "cancelled", "action_required")
-        for r in runs
-        if r.status == "completed"
+        r.conclusion in RED_CONCLUSIONS for r in runs if r.status == "completed"
     )
-    if has_red_check or kinds & {"required_check_failed", "check_failed"}:
+    checks_red = has_red_check or bool(
+        kinds & {"required_check_failed", "check_failed"}
+    )
+    if not checks_red and card.note_code is notes.NoteCode.checks_failed:
+        # 同一个 head 上的红已经不在了（重跑转绿、被顶替的取消运行收掉了）：
+        # 「检查未通过」那句说的是过去。不清它，看板一直摆在「修复检查」、验收
+        # 人的黄灯不亮 —— head 没动，上面换 head 时那次清理永远轮不到它。
+        notes.clear(card)
+    if checks_red:
         # 检查红了 → 事件到做活的 agent，带哪个检查红、日志怎么取。
         # `check_state` 是取失败详情（job 链接 + 日志片段）的那条路。
         try:
@@ -714,6 +727,20 @@ async def _poll_pr_card(
         conflict = self._conflict_nudge(card=card, status=status)
         if conflict is not None:
             pending.append(conflict)
+    # GitHub 上那行标题还是不是这张卡要落的那一行。不是就停机叫人，而且**绿了
+    # 也不算绿**：`_notify_ready` 说「可以合了」、自动合布防真的去合，两条都得
+    # 拦住 —— 合下去落进历史的是仓库检查没评判过的字（`pr_text` 的那条注释）。
+    title = self._title_nudge(card=card, topic=topic, status=status)
+    if title is None and card.note_code is notes.NoteCode.pr_title_disagrees:
+        # 两行又对上了（人用 `cheese_describe` 把卡片的 subject 改成了该落的那
+        # 一行、或者干脆把 GitHub 上的标题改回来了）：「标题和卡片不一致，合并
+        # 已暂停」那句说的是过去。改 PR 标题不动 head，上面换 head 时那次清理
+        # 永远轮不到它 —— 不清，卡面一直亮着红灯，而同一次轮询已经在下边报了
+        # 「可以合了」，同屏两句话互相打脸。放在 `_dispatch_nudges` 之前清，
+        # 卡面空下来，它才会按全部待发里最重的那条重写（此刻没有比它更重的）。
+        notes.clear(card)
+    if title is not None:
+        pending.append(title)
     await self._dispatch_nudges(
         card=card,
         topic=topic,
@@ -725,8 +752,9 @@ async def _poll_pr_card(
         await self._session.flush()  # the mirror and dispatched ledger keep
         raise deferred
 
-    if verdict.state == "clean":
-        # CLEAN → 通知验收人（按 head 去重）。
+    if verdict.state == "clean" and title is None:
+        # CLEAN → 通知验收人（按 head 去重）。标题分家时不报「可以合了」：
+        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。
         await self._notify_ready(card, topic)
     elif verdict.state == "blocked" and "required_check_missing" in kinds:
         # BLOCKED 必跑检查没报到 → 等 CI，不发；超过宽限期转人 ——
@@ -766,7 +794,11 @@ async def _poll_pr_card(
         )
         return
 
-    if card.auto_merge_armed_by and verdict.state in ("clean", "unstable"):
+    if (
+        card.auto_merge_armed_by
+        and verdict.state in ("clean", "unstable")
+        and title is None
+    ):
         await self._merge_armed_card(
             card=card,
             topic=topic,

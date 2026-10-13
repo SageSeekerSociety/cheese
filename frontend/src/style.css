@@ -753,6 +753,20 @@ body {
   box-shadow: none;
 }
 
+/* 导航列表（侧栏的频道树等）行与行之间的 4px：Vuetify 3.13 把它从「除独生子外每行下边」
+   改成了「除第一行外每行上边」，于是每一段少了最后那 4px、下面的行整体上移。按 3.9 的
+   节奏摆回来，侧栏升级前后一个像素不差。类写两遍是为了压过 Vuetify 同样长的选择器。 */
+.v-list.v-list--nav .v-list-item:not(:first-child),
+.v-list.v-list--nav .v-list-group:not(:first-child) > .v-list-item,
+.v-list.v-list--nav .v-list-group__items > .v-list-item,
+.v-list.v-list--nav .v-list-group__items > .v-list-group {
+  margin-top: 0;
+}
+
+.v-list.v-list .v-list-item--nav:not(:only-child) {
+  margin-bottom: 4px;
+}
+
 /* 菜单里的列表：上下 4px、左右 4px，每项左右 12px，字落在离菜单边 16px 的地方，
    和「我」的菜单里的头像行、偏好行对齐；悬停底色是一块缩进的 8px 圆角。 */
 .v-menu .v-list.v-list {
@@ -1343,6 +1357,13 @@ button:not(.v-btn) {
 }
 .mention:is(.file-ref, .topic-ref):hover {
   background: var(--line-2);
+}
+/* 指不到任何频道、任务或支线的 `<#id>`：照实写「引用不存在」，淡一档、没有去处，
+   读的人一眼看得出它点不开，而不是被一个借来的名字带进不存在的频道。 */
+.mention.topic-ref.ref-missing {
+  color: var(--muted);
+  background: var(--fill);
+  cursor: default;
 }
 /* 只知道名字、不知道 handle 的那一个（UserRef 没拿到 handle）：长得一样，但没有去处。 */
 .mention--static {

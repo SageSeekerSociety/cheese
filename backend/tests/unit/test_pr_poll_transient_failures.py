@@ -65,11 +65,11 @@ def _poller(monkeypatch, failure: Exception) -> tuple[SimpleNamespace, dict]:
     monkeypatch.setattr(
         "app.domain.review.services.AcceptService", _AcceptService, raising=True
     )
-    monkeypatch.setattr("app.api.deps.get_work_runner", lambda: None, raising=True)
     monkeypatch.setattr(
         pr_poll, "_note_card_poll_crashed", _nothing_on_the_card, raising=True
     )
-    return SimpleNamespace(session_factory=sessions), next_outcome
+    # The runner now comes off the chat service; nothing below uses it.
+    return SimpleNamespace(session_factory=sessions, work_runner=None), next_outcome
 
 
 async def _nothing_on_the_card(*_args, **_kwargs) -> None:

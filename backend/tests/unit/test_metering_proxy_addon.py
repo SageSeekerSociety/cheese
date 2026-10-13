@@ -1279,11 +1279,11 @@ def test_without_an_egress_the_credentials_requests_go_direct(monkeypatch, tmp_p
     assert flow.server_conn.via is None
 
 
-def test_an_offline_egress_fails_the_turn_at_once_with_its_reason(
-    monkeypatch, tmp_path
-):
-    """Claude Code retries a 502 ten times, each one waiting out a connect
-    timeout; it gives up on a 503 that says not to retry."""
+def test_an_offline_egress_asks_the_turn_to_wait_and_come_back(monkeypatch, tmp_path):
+    """A machine that is offline for a reboot is back within a turn, so the
+    refusal asks the client to wait instead of ending the reply: Claude Code
+    gives up at once on the one answer that says not to retry, and the room then
+    waits for a person to wake it (#1451, 2026-10-12)."""
     mod, flow = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
     )
@@ -1293,7 +1293,8 @@ def test_an_offline_egress_fails_the_turn_at_once_with_its_reason(
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is not None and flow.response.status_code == 503
-    assert flow.response.headers["x-should-retry"] == "false"
+    assert flow.response.headers["retry-after"] == str(mod.EGRESS_OFFLINE_RETRY_AFTER_S)
+    assert "x-should-retry" not in flow.response.headers
     assert b"subscription egress is offline" in flow.response.content
     assert flow.request.stream is False
     assert flow.server_conn.via is None
@@ -1302,6 +1303,9 @@ def test_an_offline_egress_fails_the_turn_at_once_with_its_reason(
 def test_requests_while_the_egress_is_known_offline_are_refused_without_waiting(
     monkeypatch, tmp_path
 ):
+    """The wait the refusal asks for is the client's, not the proxy's: a request
+    arriving while the verdict stands is answered from it, with the same
+    `retry-after`, instead of holding the turn here."""
     mod, first = _platform_turn(
         monkeypatch, tmp_path, credential="sk-ant-oat01-PLATFORM-SETUP"
     )
@@ -1314,6 +1318,9 @@ def test_requests_while_the_egress_is_known_offline_are_refused_without_waiting(
     asyncio.run(mod.requestheaders(second))
 
     assert second.response is not None and second.response.status_code == 503
+    assert second.response.headers["retry-after"] == str(
+        mod.EGRESS_OFFLINE_RETRY_AFTER_S
+    )
     assert time.monotonic() - started < 0.3
 
 
@@ -1866,15 +1873,289 @@ async def test_gateway_stream_failure_is_reported_without_waiting_for_client_ret
     assert mod.METER.used() == 0
 
 
-async def test_client_disconnect_does_not_raise_a_model_failure(monkeypatch, tmp_path):
+async def test_a_caller_that_hangs_up_mid_answer_is_recorded_as_such(
+    monkeypatch, tmp_path
+):
+    """The blind spot found while ruling out requirement 1 (2026-10-12): the
+    CALLER gives up first and the upstream is only cut afterwards, so mitmproxy
+    says "client disconnected" and the drop left no trace at all. It is recorded
+    — but named as what it is, so it is not counted as a model failure the room
+    has to act on."""
     mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
     flow = _make_flow()
     flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
     flow.response = _make_response()
-    flow.error = SimpleNamespace(msg="client disconnected")
     mod.responseheaders(flow)
+    _drive_tee(flow, b'data: {"type":"content_block_delta","delta":{"text":"x"}}\n\n')
+    flow.error = SimpleNamespace(msg="client disconnected")
     mod.error(flow)
-    assert not mod._failure_reports
+    await asyncio.gather(*mod._failure_reports)
+    assert len(posted) == 1
+    error = _recorded(posted)[0]
+    assert error["exc_type"] == "ClientAbandonedTurn"
+    assert error["ended_by"] == "client"
+    assert error["received_events"] == 1
+
+
+async def test_a_caller_that_hangs_up_before_any_answer_is_not_recorded(
+    monkeypatch, tmp_path
+):
+    """Nothing tells this apart from any other cancelled request, and recording
+    every cancelled request would bury the drops underneath."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
+    flow.response = None
+    flow.error = SimpleNamespace(msg="client disconnected")
+    mod.error(flow)
+    await asyncio.gather(*mod._failure_reports)
+    assert posted == []
+
+
+# --- what the two lanes record about a turn that ended early ----------------
+#
+# Everything below exists because the run records could not answer "did the
+# model answer?" for the shapes that mattered. mitmproxy runs `response` and
+# `error` for different flows, never both for one, so a body that was cut
+# mid-flight went to `error` — where the gateway lane had nothing watching, and
+# the subscription lane had no observer at all (#1447, 2026-10-12 07:12 UTC).
+
+
+def _capture_posts(mod, monkeypatch) -> list[tuple[str, dict]]:
+    """Everything the addon posts to the intake: (url, decoded body)."""
+    posted: list[tuple[str, dict]] = []
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def read(self, size):
+            return b"{}"
+
+    def post(request, timeout):
+        posted.append((request.full_url, json.loads(request.data)))
+        return Response()
+
+    monkeypatch.setattr(mod, "urlopen", post)
+    mod.ADMISSION_URL = "http://backend/llm/admission"
+    return posted
+
+
+def _recorded(posted) -> list[dict]:
+    return [body["errors"][0] for _url, body in posted]
+
+
+def _drive_tee(flow, *chunks) -> None:
+    for chunk in chunks:
+        flow.response.stream(chunk)
+
+
+async def test_a_gateway_body_cut_mid_stream_carries_its_event_count(
+    monkeypatch, tmp_path
+):
+    """The shape the gateway lane used to swallow. What has to come out is how
+    far the answer had got and which class of upstream failure cut it — the two
+    things that decide whether asking the model again would be safe."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
+    flow.response = _make_response()
+    flow.response.headers["x-litellm-call-id"] = "call-1"
+    mod.responseheaders(flow)
+    _drive_tee(
+        flow,
+        b'data: {"type":"message_start"}\n\n',
+        b'data: {"type":"content_block_delta","delta":{"text":"private"}}\n\n',
+    )
+    flow.error = SimpleNamespace(
+        msg="peer closed connection without sending complete message body"
+    )
+    mod.error(flow)
+    await asyncio.gather(*mod._failure_reports)
+    assert len(posted) == 1
+    _url, body = posted[0]
+    error = body["errors"][0]
+    assert error["exc_type"] == "GatewayStreamError"
+    assert error["where"] == "model gateway"
+    assert error["received_events"] == 2
+    assert error["upstream_failure"] == "transport"
+    assert error["ended_by"] == "upstream"
+    assert error["request_id"] == "call-1"
+    assert "private" not in json.dumps(body)
+    # The count rides in a field, not in the message: the intake fingerprints on
+    # the message, so a number in it would split one recurring failure in two
+    # every time the cut landed somewhere else.
+    assert "2" not in error["message"]
+
+
+async def test_a_gateway_that_never_answers_is_recorded_as_a_lost_call(
+    monkeypatch, tmp_path
+):
+    """A request that cannot reach the gateway leaves no response at all, so the
+    response hook never runs and the turn used to fail without a record."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
+    flow.response = None
+    flow.error = SimpleNamespace(msg="Connection refused: connect to 127.0.0.1:4000")
+    mod.error(flow)
+    await asyncio.gather(*mod._failure_reports)
+    error = _recorded(posted)[0]
+    assert error["exc_type"] == "GatewayUnreachable"
+    assert error["upstream_failure"] == "connection"
+    assert error["ended_by"] == "upstream"
+
+
+async def test_one_flow_is_recorded_once_even_when_both_hooks_see_it(
+    monkeypatch, tmp_path
+):
+    """The hooks are alternatives per flow, but not an either-or that covers it:
+    a flow that took the error hook for a caller hang-up can still reach the
+    response hook if the upstream then ends the body."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata.update(cheese_pool="gateway", cheese_attr=("project", "topic"))
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    flow.error = SimpleNamespace(msg="client disconnected")
+    mod.error(flow)
+    mod.response(flow)
+    await asyncio.gather(*mod._failure_reports)
+    assert len(posted) == 1
+
+
+async def test_a_subscription_stream_cut_is_recorded_on_its_own_lane(
+    monkeypatch, tmp_path
+):
+    """The subscription lane had no observer at all before this, so a turn that
+    died mid-answer left nothing anywhere to read."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("project", "topic")
+    flow.response = _make_response()
+    flow.response.headers["request-id"] = "req-9"
+    mod.responseheaders(flow)
+    assert "cheese_sub_stream" in flow.metadata
+    _drive_tee(flow, b'data: {"type":"content_block_delta","delta":{"text":"x"}}\n\n')
+    flow.error = SimpleNamespace(msg="Connection reset by peer")
+    mod.error(flow)
+    await asyncio.gather(*mod._failure_reports)
+    error = _recorded(posted)[0]
+    assert error["exc_type"] == "SubscriptionStreamError"
+    assert error["where"] == "model subscription"
+    assert error["upstream_failure"] == "transport"
+    assert error["received_events"] == 1
+    assert error["request_id"] == "req-9"
+
+
+async def test_a_subscription_answer_that_ends_without_finishing_is_recorded(
+    monkeypatch, tmp_path
+):
+    """The upstream ended the body itself, mid-answer, on a clean 200: the
+    stream's own sentinel runs, so nothing raises and only the tee knows the
+    answer never reached message_stop."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("project", "topic")
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    _drive_tee(
+        flow,
+        b'data: {"type":"message_start"}\n\n',
+        b'data: {"type":"content_block_delta","delta":{"text":"x"}}\n\n',
+        b"",
+    )
+    mod.response(flow)
+    await asyncio.gather(*mod._failure_reports)
+    error = _recorded(posted)[0]
+    assert error["exc_type"] == "SubscriptionStreamError"
+    assert error["received_events"] == 2
+    assert error["ended_by"] == "upstream"
+
+
+async def test_a_subscription_answer_that_finishes_is_not_recorded(
+    monkeypatch, tmp_path
+):
+    """message_stop then the sentinel: the ordinary case, recorded as nothing."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("project", "topic")
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    _drive_tee(
+        flow,
+        b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+        b'"usage":{"input_tokens":4}}}\n\n',
+        b'data: {"type":"message_stop"}\n\n',
+        b"",
+    )
+    mod.response(flow)
+    await asyncio.gather(*mod._failure_reports)
+    assert posted == []
+
+
+@pytest.mark.parametrize(
+    "status,exc_type,category",
+    [
+        (429, "SubscriptionRateLimited", "rate_limit"),
+        (403, "SubscriptionHTTPError", "http_auth"),
+        (503, "SubscriptionHTTPError", "http_error"),
+    ],
+)
+async def test_a_subscription_answer_that_is_not_200_is_recorded_with_its_class(
+    monkeypatch, tmp_path, status, exc_type, category
+):
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("project", "topic")
+    flow.response = _make_response(status_code=status, content_type="application/json")
+    mod.response(flow)
+    await asyncio.gather(*mod._failure_reports)
+    error = _recorded(posted)[0]
+    assert error["exc_type"] == exc_type
+    assert error["upstream_failure"] == category
+    assert error["where"] == "model subscription"
+
+
+async def test_the_offline_egress_is_recorded_as_its_own_failure(monkeypatch, tmp_path):
+    """#1447: the room stalled on a 503 that nothing recorded, because the
+    subscription lane had no observer at all."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("project", "topic")
+    flow.metadata["cheese_egress_offline"] = True
+    flow.response = _make_response(status_code=503, content_type="application/json")
+    mod.response(flow)
+    await asyncio.gather(*mod._failure_reports)
+    error = _recorded(posted)[0]
+    assert error["exc_type"] == "SubscriptionEgressOffline"
+    assert error["upstream_failure"] == "egress_offline"
+
+
+def test_a_refusal_is_marked_so_the_observer_can_tell_it_from_an_upstream_answer(
+    monkeypatch, tmp_path
+):
+    """Both leave a non-200 on a /v1/messages flow; only one of them means a
+    model call failed."""
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    flow = _make_flow()
+    flow.request.stream = False
+    mod._refuse(flow, 403, "invalid_request_error", "cheese: no")
+    assert flow.metadata["cheese_refused_here"] is True
+    assert flow.response.status_code == 403
 
 
 def test_a_running_turn_holds_the_cap_against_one_admitted_beside_it(
@@ -1977,11 +2258,21 @@ def test_failed_gateway_request_keeps_timing_without_error_details(
     flow.error = SimpleNamespace(msg="private-upstream-details")
     with caplog.at_level("INFO", logger="cheese.metering"):
         mod.error(flow)
-    event = json.loads(caplog.records[-1].message.split(" ", 1)[1])
+    # Named explicitly, not "the last record": an errored turn now also records
+    # what the model call did, and this test is about the timing line.
+    timing = [
+        r.message
+        for r in caplog.records
+        if r.message.startswith("gateway_request_timing ")
+    ]
+    assert len(timing) == 1
+    event = json.loads(timing[0].split(" ", 1)[1])
     assert event["request_start"] == 100.0
     assert event["failed"] is True and event["status"] is None
     assert event["response_start"] is None and event["response_end"] is None
-    assert "private-" not in caplog.records[-1].message
+    # Nothing logged about the drop carries the upstream's own words either:
+    # what the model said can hold prompt text.
+    assert not any("private-" in r.message for r in caplog.records)
 
 
 _BOOT_PATHS = (
@@ -2921,3 +3212,36 @@ def test_the_model_list_is_not_held_back_by_a_spent_account(monkeypatch, tmp_pat
     asyncio.run(mod.requestheaders(flow))
 
     assert flow.response is None
+
+
+async def test_a_line_the_metering_tolerates_does_not_break_the_observer(
+    monkeypatch, tmp_path
+):
+    """The subscription tee hands every line to the observer on its way past, on
+    the normal path, with the cap off. A byte sequence the metering skips must
+    not be a new failure here: the observer runs inside the tee, so an exception
+    it raises leaves the tee and kills a response the caller is still reading.
+
+    Found in review of the change that added the observer: the override caught
+    only JSONDecodeError, while the metering's own `_consume` also catches
+    UnicodeDecodeError — a non-UTF-8 `data:` line was a drop of the whole turn.
+    """
+    mod = _load_addon(monkeypatch, tmp_path, scoped_secret="test-secret")
+    posted = _capture_posts(mod, monkeypatch)
+    flow = _make_flow()
+    flow.metadata.update(cheese_attr=("project", "topic"))
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    watch = flow.metadata["cheese_sub_stream"]
+    _drive_tee(
+        flow,
+        b'data: {"type":"message_start"}\n\n',
+        # An incomplete UTF-8 sequence inside the JSON string: not an event
+        # then, not an event now, and never worth an exception.
+        b'data: {"type":"content_block_delta","delta":{"text":"\xe4\xb8"}}\n\n',
+        b'data: {"type":"message_stop"}\n\n',
+    )
+    assert watch.events == 2
+    assert watch.complete is True
+    await asyncio.gather(*mod._failure_reports)
+    assert _recorded(posted) == []

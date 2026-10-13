@@ -11,6 +11,7 @@
     "general": "综合",
     "routines": "定时与触发",
     "skills": "技能",
+    "channelFiles": "频道文件",
     "pages": "项目页面",
     "overview": "总览",
     "tasks": "全部任务"
@@ -28,7 +29,9 @@
     "unread": "帮助与反馈，有未读更新",
     "center": "反馈中心",
     "mine": "我的反馈",
-    "admin": "管理后台"
+    "admin": "管理后台",
+    "guide": "新手引导",
+    "tour": "界面导览"
   },
   "admin": {
     "queue": "反馈",
@@ -40,6 +43,7 @@
     "ratchet": "棘轮",
     "credits": "方案与额度",
     "runRecords": "运行记录",
+    "machines": "机器",
     "overview": "平台总览",
     "performance": "性能",
     "pipeline": "交付流水线",
@@ -153,7 +157,8 @@
     "readyHint": "也可以关上窗口，它会在后台装好",
     "restart": "重启以完成更新",
     "busyConnecting": "这台电脑正在接入，接入完成后再重启",
-    "restartFailed": "没能完成更新，稍后再试",
+    "restartFailed": "无法重启应用，退出后手动打开",
+    "installFailed": "安装更新失败，重新检查更新后再试",
     "updatesItself": "新版本会在窗口关上时自动安装",
     "changelog": "更新日志",
     "website": "访问官网",

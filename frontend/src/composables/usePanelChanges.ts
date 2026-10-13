@@ -72,6 +72,9 @@ export function usePanelChanges(props: PanelChangesProps) {
       : status
   })
   const sourceUnavailable = computed(() => tasksLoaded.value && !currentTask.value)
+  // 还没有分支的任务：没有机器打开过它，它还没有改过任何东西。这是「暂无改动」，
+  // 不是「打不开」，也不必去问。
+  const noWorkYet = computed(() => !!currentTask.value && !currentTask.value.branch_name)
   // 没人挑过时按任务的状态定：待审阅时看交上来的那一版，审阅的就是它；现场的工作区
   // 那时可能已经不在了（云沙箱空闲一会儿就收回）。其余还开着的任务看现场。
   const requestedSource = ref<FileSource | null>(null)
@@ -93,7 +96,7 @@ export function usePanelChanges(props: PanelChangesProps) {
         ? (await listRoomTasks(room, { limit: 0, ids: [taskId] })).data.find((row) => row.id === taskId)
         : undefined
       if (request !== taskRequest) return
-      taskRow.value = task?.branch_name ? task : undefined
+      taskRow.value = task
       tasksLoaded.value = true
     } catch (error) {
       if (request === taskRequest) {
@@ -107,14 +110,26 @@ export function usePanelChanges(props: PanelChangesProps) {
   const fileView = ref<FileView>('diff')
 
   const loading = ref(false)
+  // 有几个读还在路上（这件任务、diff、文件列表）。哪一个先回来都不算完：转圈要等最后
+  // 一个，不然先回来的那个把它关掉，剩下的还没到，面板就先说一句「暂无改动」。
+  let inFlight = 0
+  function startLoad(): () => void {
+    const epoch = sourceEpoch
+    inFlight += 1
+    loading.value = true
+    let done = false
+    return () => {
+      if (done || epoch !== sourceEpoch) return
+      done = true
+      inFlight -= 1
+      if (inFlight === 0) loading.value = false
+    }
+  }
   // A background re-fetch: spins only the 刷新 button, never replaces the panel.
   const refreshing = ref(false)
   const errorMsg = ref<string | null>(null)
   // 见 checkRepo。
   const noRepo = ref(false)
-  // 一枚 chip 指来的文件，在当前这个来源里找不到。不是这块面板出了错，所以它不走
-  // `errorMsg`——那一句的样子是「这一格加载失败」。
-  const missing = ref<string | null>(null)
   async function downloadOpenFile() {
     if (!openRawUrl.value || !openPath.value) return
     try {
@@ -133,9 +148,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     const task = selectedTask.value
     const pid = props.projectId
     const epoch = sourceEpoch
-    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value) return
+    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value || noWorkYet.value) return
+    const done = opts.silent ? null : startLoad()
     if (opts.silent) refreshing.value = true
-    else loading.value = true
     errorMsg.value = null
     try {
       const diff = await getGitDiff(pid, tid, task, fileSource.value)
@@ -148,10 +163,8 @@ export function usePanelChanges(props: PanelChangesProps) {
         errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
       }
     } finally {
-      if (selectedTask.value === task && sourceEpoch === epoch) {
-        loading.value = false
-        refreshing.value = false
-      }
+      done?.()
+      if (selectedTask.value === task && sourceEpoch === epoch) refreshing.value = false
     }
   }
 
@@ -400,6 +413,10 @@ export function usePanelChanges(props: PanelChangesProps) {
   // the reader actually clicked.
   let pendingOpen: string | null = null
 
+  // 上一次指名要开的文件没在这份清单里。`openFile` 拿它给调用者回话：文件不在这一支
+  // 的工作副本里，该换个地方开它（工作面板退到「项目当前版本」那一格）。
+  let openMissed = false
+
   // Two callers can ask for the listing in the same tick — `openFile` asks
   // directly, and coming on screen makes the activation watcher ask too. Letting
   // both run raced: whichever finished second re-ran the "nothing is open, select
@@ -419,11 +436,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     const task = selectedTask.value
     const pid = props.projectId
     const epoch = sourceEpoch
-    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value) return
-    if (!opts.silent) {
-      loading.value = true
-      errorMsg.value = null
-    }
+    if (!tid || !pid || !task || sourceUnavailable.value || noRepo.value || noWorkYet.value) return
+    const done = opts.silent ? null : startLoad()
+    if (!opts.silent) errorMsg.value = null
     try {
       const listed = (await listFiles(pid, tid, task, fileSource.value)).data
       // Guard against a source switch mid-flight — without it the previous source's
@@ -433,10 +448,11 @@ export function usePanelChanges(props: PanelChangesProps) {
       const want = pendingOpen
       if (want) {
         // 这个来源里没有这个文件时不要去读它：读回来的是一句后端的英文错误，它会把
-        // 整块面板顶掉，而读者只是点了一枚 chip。说清它不在这里，列表留在原地。
+        // 整块面板顶掉，而读者只是点了一枚 chip。记下这一笔，让调用者去别的地方开它
+        // （工作面板退到「项目当前版本」那一格），列表留在原地。
         if (!listed.some((f) => f.path === want)) {
           pendingOpen = null
-          missing.value = want
+          openMissed = true
           return
         }
         // Keep the directed path reserved while its read is in flight, so a
@@ -451,7 +467,7 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (sourceEpoch !== epoch || opts.silent) return
       errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
     } finally {
-      if (selectedTask.value === task && sourceEpoch === epoch) loading.value = false
+      done?.()
     }
   }
 
@@ -461,12 +477,10 @@ export function usePanelChanges(props: PanelChangesProps) {
     fileRequest += 1
     openPath.value = null
     fileConflict.value = false
-    missing.value = null
   }
 
   async function selectFile(path: string) {
     keepDraft()
-    missing.value = null
     const request = ++fileRequest
     const epoch = sourceEpoch
     const pid = props.projectId
@@ -614,12 +628,18 @@ export function usePanelChanges(props: PanelChangesProps) {
   // the drawer used ("opening the tool loads it"). One surface now, so both halves
   // load together — the tree cannot mark what the diff has not told it yet. ----
   async function loadAll(opts: { silent?: boolean; fresh?: boolean } = {}) {
-    await loadTasks()
-    if (taskLoadError.value) return
-    void checkRepo()
-    if (noRepo.value) return
-    void loadGit(opts)
-    void loadFiles(opts)
+    // 先问这件任务，再取 diff 和文件：问的这一下也算在转圈里。
+    const done = opts.silent ? null : startLoad()
+    try {
+      await loadTasks()
+      if (taskLoadError.value) return
+      void checkRepo()
+      if (noRepo.value) return
+      void loadGit(opts)
+      void loadFiles(opts)
+    } finally {
+      done?.()
+    }
   }
 
   // 项目没接代码仓库时，文件和提交记录都拿不到，后端答的是一句「项目没有代码仓库」。
@@ -689,11 +709,12 @@ export function usePanelChanges(props: PanelChangesProps) {
     fileRequest += 1
     filesInFlight = null
     pendingOpen = null
+    openMissed = false
     fileSaving.value = false
+    inFlight = 0
     loading.value = false
     gitDiff.value = ''
     errorMsg.value = null
-    missing.value = null
     resetFilePanel()
   }
 
@@ -723,12 +744,17 @@ export function usePanelChanges(props: PanelChangesProps) {
   // A <&path> chip (chat or doc) opens that file here. WorkPanel switches to this
   // tab first, then calls in. The file may be one this task never touched; it opens
   // all the same (the tree keeps listing what this task changed).
-  async function openFile(path: string) {
+  //
+  // 这一支的工作副本里根本没有它时，这里开不出来：回一句「没开着」，让 WorkPanel 换
+  // 一格去开（项目当前版本）。一枚 chip 是读者指名要看的一份文件，不该因为没归到这件
+  // 任务就点不开。
+  async function openFile(path: string): Promise<boolean> {
     if (!tasksLoaded.value) await loadTasks()
     keepDraft()
     clearSource()
     pendingOpen = path
     await Promise.all([loadGit(), loadFiles()])
+    return !openMissed
   }
 
   return {
@@ -743,7 +769,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     refreshing,
     errorMsg,
     noRepo,
-    missing,
     fileDiffs,
     diffByPath,
     treeFiles,

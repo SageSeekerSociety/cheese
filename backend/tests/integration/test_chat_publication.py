@@ -353,7 +353,7 @@ def test_silence_reminder_only_queues_for_an_active_silent_response(
         client.portal.call(release.set)
         assert sweep.result(timeout=2) == 1
         assert len(notices) == 1 and "chat_send" in notices[0]
-        assert "Ignore this only if the turn is already finished" in notices[0]
+        assert "已经结束的话才不用理会" in notices[0]
         # Inside the interval there is one reminder, not a stream of them.
         clock += timedelta(seconds=threshold - 1)
         assert client.portal.call(chat.remind_silent_turns) == 0

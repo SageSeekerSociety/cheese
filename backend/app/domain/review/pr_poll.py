@@ -4,9 +4,9 @@
 review 领域自己补上的一条读路径。产出落各自的卡和房间，和 webhook 送来的事件走同
 一条路 (`forge_repository_changed`)。
 
-So this is the review domain's own clock. `app/core/background.py` decides how
-often it turns; everything about WHAT a tick does is here and in the services it
-calls.
+So this is the review domain's own clock. `app/domain/review/periodic.py` sets
+how often it turns; everything about WHAT a tick does is here and in the services
+it calls.
 """
 
 import logging
@@ -59,14 +59,14 @@ async def poll_open_prs(chat: ChatService, project_id: uuid.UUID | None = None) 
     an armed auto-merge card whose rules are satisfied
     (`AcceptService.advance_pr_card`). One DB transaction per card so one card's
     failure can't roll back another's progress."""
-    # deferred-import: tests replace this name on app.api.deps
-    from app.api.deps import get_work_runner
-
     # deferred-import: tests replace this name on app.domain.review.services
     from app.domain.review.services import AcceptService
 
     sessions = chat.session_factory
-    runner = get_work_runner()
+    # The runner comes off the chat service — the one the composition root
+    # assembled — instead of being imported from `app.api.deps`, which is a
+    # domain importing up into the API layer (`.importlinter`, C1).
+    runner = chat.work_runner
     checked = 0
     errors: list[str] = []
     async with sessions() as session:
@@ -294,10 +294,7 @@ async def open_draft_prs(chat: ChatService) -> dict:
 
 async def deliver_dependency_notices(chat: ChatService) -> None:
     """Dispatch committed task-parent intent through the delivery ledger."""
-    # deferred-import: tests replace this name on app.api.deps
-    from app.api.deps import get_work_runner
-
-    await dispatch_pending(chat.session_factory, chat=chat, runner=get_work_runner())
+    await dispatch_pending(chat.session_factory, chat=chat, runner=chat.work_runner)
 
 
 async def forge_repository_changed(

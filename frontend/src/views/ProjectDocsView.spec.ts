@@ -1,5 +1,6 @@
 import { createVuetify } from 'vuetify'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { setLocale } from '@/i18n'
@@ -22,7 +23,7 @@ vi.mock('../api/docHistory', () => ({
 }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: vi.fn() }) }))
 vi.mock('../me', () => ({ myHandle: () => 'writer', myId: () => 'writer' }))
-// 章程是项目概览那一篇文档的面板：评论和节点照旧从接口读，这里给空的。
+// 项目目标是那一篇文档的面板：评论和节点照旧从接口读，这里给空的。
 vi.mock('../api', async () => {
   const actual = await vi.importActual<typeof import('../api')>('../api')
   return {
@@ -31,10 +32,10 @@ vi.mock('../api', async () => {
     deleteMemory: vi.fn(),
   }
 })
-// 章程开的是项目概览那一份文档，面板会读它叫什么。
+// 项目目标开的是那一份文档，面板会读它叫什么。
 vi.mock('../api/projectDocuments', async () => ({
   ...(await vi.importActual<typeof import('../api/projectDocuments')>('../api/projectDocuments')),
-  getDocumentAbout: async (id: string) => ({ id, title: '项目概览' }),
+  getDocumentAbout: async (id: string) => ({ id, title: '项目目标' }),
 }))
 vi.mock('@tiptap/extension-drag-handle-vue-3', () => ({ DragHandle: { render: () => null } }))
 vi.mock('../api/docCollab', async () => ({
@@ -53,6 +54,8 @@ import ProjectDocsView from './ProjectDocsView.vue'
 
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
+import { useWorkspaceStore } from '@/stores/workspace'
+import { seedProject, seedProjects } from '@/test/seedQueries'
 
 // 这一页读的是缓存里这个项目、这一面的那一份：每个用例先摆好它看到的，再渲染。
 function show(kind: 'charter' | 'weeklies' | 'memory', payload: Record<string, unknown> = {}) {
@@ -131,8 +134,8 @@ describe('in English', () => {
   })
 })
 
-describe('章程', () => {
-  it('打开的是项目概览那一篇协同文档，谁在别处改的都在这儿', async () => {
+describe('项目目标', () => {
+  it('打开的是项目目标那一篇协同文档，谁在别处改的都在这儿', async () => {
     seedRoom('overview', '我们给高中生做算法课。')
     const view = show('charter', {
       rootTopic: { id: 'root', kind: 'root', title: '项目', project_id: 'p' },
@@ -143,6 +146,40 @@ describe('章程', () => {
     remoteEdit('overview', '我们给高中生做算法课。\n\n每周二上课。')
 
     await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('每周二上课'))
+    view.unmount()
+  })
+})
+
+describe('称呼项目的 AI 队友用它自己的名字', () => {
+  it('队友改名叫小杉，项目目标的提示里称呼的是小杉', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    seedProjects([])
+    seedProject('p', {
+      topics: [],
+      members: [{ user_handle: 'cheese-742841cae293', name: '小杉', agent: true, project_default: true }],
+      unread: {},
+      privateUnread: {},
+      notifyLevels: {},
+    })
+    const store = useWorkspaceStore()
+    store.openProject('p')
+    await waitFor(() => expect(store.agentName).toBe('小杉'))
+    queryClient.setQueryData(keys.projectDocs('p', 'charter'), {
+      rootTopicId: 'root',
+      rootTopic: null,
+      overviewId: null,
+      weeklies: [],
+      memoryEntries: [],
+    })
+
+    const view = render(ProjectDocsView, {
+      props: { projectId: 'p', kind: 'charter' },
+      global: { plugins: [createVuetify(), pinia] },
+    })
+
+    expect(view.container.textContent).toContain('小杉')
+    expect(view.container.textContent).not.toContain('芝士')
     view.unmount()
   })
 })

@@ -1,7 +1,7 @@
 """守卫：产生事件的调用点必须从 `landing()` 取落点，不许就地挑一个 `conversation_id`。
 
 和 ``test_author_type_two_values.py`` / ``test_no_adhoc_auth_helpers.py`` 一样，
-这是一条**静态**测试 —— 被测的东西本身就是源码树的一个性质，属于 CLAUDE.md 那条
+这是一条**静态**测试 —— 被测的东西本身就是源码树的一个性质，属于 AGENTS.md 那条
 「测行为、不读源码」的例外。
 
 它守的是这次改动唯一守不住自己的一半。封闭表（``block/about.py``）只在被调用时才
@@ -113,6 +113,19 @@ def _picked_in_place(call: ast.Call, landing_names: set[str]) -> list[str]:
     return bad
 
 
+def _failure_message(offenders: list[str]) -> str:
+    return (
+        "这些事件的落点是调用点自己挑的，不是从 block/about.py 的 landing() 取的：\n"
+        + "\n".join(offenders)
+        + "\n改法：在事件写入前用 landed = landing(EventAbout.<档>, ...) 取落点，"
+        "再给 blocks.add(...) 传 project_id=landed.project_id、"
+        "conversation_id=landed.conversation_id；两个字段都从同一返回值取。\n"
+        "按事件关于 task/thread/room/project 哪一档选择 EventAbout，并补齐该档 id。"
+        "规则和四档表：backend/app/domain/block/about.py 的模块说明与 landing()。\n"
+        "复查：cd backend && uv run pytest tests/unit/test_event_landing_guard.py -q"
+    )
+
+
 def test_every_event_takes_its_landing_from_the_closed_table():
     offenders: list[str] = []
     for path, rel in _sources():
@@ -124,10 +137,17 @@ def test_every_event_takes_its_landing_from_the_closed_table():
             bad = _picked_in_place(node, landing_names)
             if bad:
                 offenders.append(f"{rel}:{node.lineno} — {', '.join(bad)}")
-    assert not offenders, (
-        "这些事件的落点是调用点自己挑的，不是从 block/about.py 的 landing() 取的：\n"
-        + "\n".join(offenders)
-    )
+    assert not offenders, _failure_message(offenders)
+
+
+def test_failure_text_contains_the_landing_repair_recipe():
+    message = _failure_message(["backend/app/example.py:12 — project_id"])
+    assert "backend/app/example.py:12" in message
+    assert "landed = landing(EventAbout.<档>" in message
+    assert "project_id=landed.project_id" in message
+    assert "conversation_id=landed.conversation_id" in message
+    assert "backend/app/domain/block/about.py" in message
+    assert "test_event_landing_guard.py" in message
 
 
 def test_the_guard_reads_an_annotated_landing_binding():

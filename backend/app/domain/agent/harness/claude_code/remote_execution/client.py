@@ -55,7 +55,7 @@ if __package__:
     )
     from app.domain.agent.harness.claude_code.remote_execution.release import (
         allow_native_tools,
-        carry_transcripts,
+        carry_conversation,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
@@ -94,7 +94,7 @@ else:
     from context_service import serve
     from release import (
         allow_native_tools,
-        carry_transcripts,
+        carry_conversation,
         forget_touched_skills,
         hook_module,
         link_forwarded_user_context,
@@ -146,10 +146,10 @@ _CWD_FILE = re.compile(r" && pwd -P >\| ('(?:[^']|'\\'')*'|\S+)\Z")
 SHELL_INPUT_BYTES = 16 * 1024 * 1024
 SHELL_OUTPUT_BYTES = 256 * 1024 * 1024
 # How long a command that never started keeps being retried across a dropped
-# link before the machine is reported out of reach.
+# link before the machine is reported out of reach; how long a reader keeps
+# retrying an executor that answers, but with an error, before giving it up.
+# Retries are hand-written, not tenacity: this ships stdlib-only (`release.sources`).
 SHELL_START_RETRY_S = 60.0
-# How long a reader keeps retrying an executor that answers, but with an error,
-# before giving the command up.
 SHELL_ERROR_RETRY_S = 60.0
 SHELL_READ_RETRY_S = (0.5, 5.0)  # first and longest wait between read retries
 PRIVATE_INSTRUCTIONS = (
@@ -318,8 +318,7 @@ def prepare(
         seen = placeholder if unavailable else info["workspace"]
         if not unavailable:
             workspace = Path(info["workspace"])
-    if seen != placeholder:
-        carry_transcripts(config, placeholder, seen)
+    carry_conversation(config, extra_args, seen)
     target = dict(
         target,
         workspace=info["workspace"],
@@ -612,16 +611,14 @@ def _take_leased_machine(target):
     The platform names where the machine holds the project (`central_provider`)
     only when the machine answered this turn, so the session is relaunched onto
     it then, and here takes the machine the way a placeholder session's first
-    command does: through the lease. It starts as one started on that machine
-    would, with the project's instructions, hooks and MCP servers. A lease the
-    platform cannot hand out now fails the start, loudly: a session at the
-    machine's path without the machine is not one that machine would run.
-    """
+    command does: through the lease, with the project's instructions, hooks and
+    MCP servers. The turn is not held for a machine being prepared: a lease not
+    to be had now starts it at the placeholder, as when its machine did not
+    answer, and its first project tool takes the machine."""
     client = RemoteClient(dict(target))
-    # Taken as it is, with no wait for a machine being prepared: the platform
-    # asked the machine this turn, and the turn is not held for it.
-    client.acquire(deadline=time.monotonic())
-    return client.config
+    if client.take_now():
+        return client.config
+    return dict(target, workspace=DEFERRED_WORKSPACE)
 
 
 def sync_context(target_path, supplied_tree=None):

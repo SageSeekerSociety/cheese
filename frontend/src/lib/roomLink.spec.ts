@@ -16,6 +16,9 @@ vi.mock('@/api/http', async (importOriginal) => ({
   authToken: () => auth.token,
 }))
 
+const pwa = vi.hoisted(() => ({ reloadIfBehind: vi.fn(async () => false) }))
+vi.mock('@/pwa', () => pwa)
+
 import { openRoomChannel, resetRoomLink } from './roomLink'
 
 const links: FakeLink[] = []
@@ -59,6 +62,7 @@ function watch(topic: string) {
 beforeEach(() => {
   links.length = 0
   auth.token = 't1'
+  pwa.reloadIfBehind.mockClear()
   vi.stubGlobal('WebSocket', FakeLink)
   resetRoomLink()
 })
@@ -96,13 +100,13 @@ describe('一个页面一条房间连接', () => {
     expect(links[0].sent.filter((f) => f.type === 'typing')).toEqual([])
   })
 
-  it('确认订阅时，房间知道那一刻最新的一条', async () => {
+  it('确认订阅时，房间知道那一刻最后存进来的是几号', async () => {
     const a = watch('room-a')
-    let newestOnOpen: string | null | undefined
+    let newestOnOpen: number | null | undefined
     a.room.onopen = () => (newestOnOpen = a.room.newest)
     links[0].up()
-    links[0].frame({ type: 'subscribed', topic: 'room-a', newest: 'b-9' })
-    expect(newestOnOpen).toBe('b-9')
+    links[0].frame({ type: 'subscribed', topic: 'room-a', newest: 9 })
+    expect(newestOnOpen).toBe(9)
   })
 
   it('每次订阅带的是此刻的 token', async () => {
@@ -177,5 +181,33 @@ describe('一个页面一条房间连接', () => {
     expect(b.events).toEqual(['open', 'close'])
     watch('room-b')
     expect(links).toHaveLength(2)
+  })
+})
+
+describe('连接一直连不上', () => {
+  // 服务器上已经没有这一页要连的接口时（后端换了地址，这一页还是旧版），重连多少次都
+  // 一样；连不上几次之后就该问问这一页是不是落后了。
+  function failOnce(topic: string) {
+    watch(topic)
+    links[links.length - 1].onclose?.()
+  }
+
+  it('连还没连上就断了三次，问一次这一页是不是落后了', () => {
+    failOnce('room-a')
+    failOnce('room-a')
+    expect(pwa.reloadIfBehind).not.toHaveBeenCalled()
+    failOnce('room-a')
+    expect(pwa.reloadIfBehind).toHaveBeenCalledTimes(1)
+  })
+
+  it('连上过一次就重新数，连上之后再断不算', () => {
+    failOnce('room-a')
+    failOnce('room-a')
+    watch('room-a')
+    links[links.length - 1].up()
+    links[links.length - 1].onclose?.()
+    failOnce('room-a')
+    failOnce('room-a')
+    expect(pwa.reloadIfBehind).not.toHaveBeenCalled()
   })
 })

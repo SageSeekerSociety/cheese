@@ -1,84 +1,78 @@
-import type { PoolListing } from '../cx_types'
+// A session's execution environment (#2320). Every agent session has its own; a
+// room, a task or a project only keeps the default a new session starts with
+// (`GET /topics/{id}/environment`, `GET /projects/{id}/compute-configs`).
 
-// A room's work computer and the project's default one: the compute picker and
-// the project settings read these (`GET /topics/{id}/compute-profile`,
-// `GET /projects/{id}/compute-configs`).
-
-// #282 §四 · whether an agent in this room can see a whole enrolled machine. `effective`: 'host' | 'isolated' | null
-// (no agent on one); `machine_access` is the flag the room's 「能访问整台机器」 notice keys on (tooltip:
-// `work.roomMachine.wholeMachineNotice`). `options`: the two 档 (isolated = default, host = the owner gives it).
-export interface TopicComputeVisibility {
-  options: PoolListing[]
-  effective: 'host' | 'isolated' | null
-  machine_access: boolean
+/**
+ * A sandbox the platform places on some machine that offers `spec`; the machine
+ * is never named to users. Specs are peers, like resource classes — `standard`,
+ * `vm` (a virtual machine of its own, for Docker, KVM or kernel work), one per
+ * person whose enrolled computers the project may use (`devices_of:<user>`) —
+ * and the GET's `specs` says which there are and what each is called.
+ */
+export interface SandboxEnvironment {
+  kind: 'sandbox'
+  spec: string
 }
 
-export interface TopicComputeDevice {
+/** 「我一定要用那台机器」：直接在某人登记的那台电脑上跑，不隔离。只有机主能选。 */
+export interface SelfHostedEnvironment {
+  kind: 'self_hosted'
+  device_id: string
+}
+
+export type Environment = SandboxEnvironment | SelfHostedEnvironment
+
+/** One sandbox spec on offer, with its name in the reader's language. */
+export interface SandboxSpec {
+  spec: string
+  label: string
+}
+
+/** A machine someone enrolled into the project; the platform's own are never listed. */
+export interface EnvironmentDevice {
   device_id: string
   name: string
   online: boolean
-  owned?: boolean // the reader enrolled it, signed in: only they may give a room the whole machine
-  sandbox_unavailable?: import('../lib/noticeText').NoticeMessage | null // why it cannot isolate a room
+  // The reader enrolled it, signed in: only they may run a session on it.
+  owned: boolean
 }
 
-// GET /topics/{id}/compute-profile — the room's one work computer (一个话题一个容器, 2026-09-28).
-// `choice` is what an agent that has not started yet will be given (room choice
-// → project default → deployment default); `sessions` is each agent session and
-// the machine it works on, `choice: null` for one that has not started working;
-// `device_id` is the self-hosted machine pinned to this room, or null while
-// 「系统挑一台」still waits for the first turn to choose one.
-export interface TopicComputeProfile {
-  choice: ComputeChoice
-  project_default: ComputeChoice
-  current: string
-  device_id: string | null
-  devices: TopicComputeDevice[]
-  sessions: RoomSessionMachine[]
-  profiles: PoolListing[]
-  // Whether cloud also offers a whole VM per session (`whole_machine`).
-  cloud_vm_available: boolean
-  visibility: TopicComputeVisibility
-  // A task's profile: whether it has no choice of its own yet and works on its
-  // room's. null for a room.
-  follows_room?: boolean | null
-}
-
-// One agent session in the room and whether its agent can see a whole machine.
-export interface RoomSessionMachine extends SessionWorkLease {
-  machine_access: boolean
-}
-
-export interface ComputeChoice {
-  name: string | null
-  profile: 'cloud' | 'device'
-  device_id: string | null
-  // Cloud only: a whole virtual machine for each session instead of a sandbox.
-  whole_machine?: boolean
-}
-
-export interface SessionWorkLease {
-  id: string
+/** One agent session in the conversation and the environment it works in. */
+export interface SessionEnvironment {
+  session_id: string
   agent_handle: string
-  harness: string
-  choice: ComputeChoice | null
-  // A cloud session's lease is only its status: the host its sandbox runs on is
-  // the platform's, and is never named to users.
-  lease: { device_id?: string; generation?: number; status: string; online: boolean } | null
+  // The roster handle the session sits under (a member's own agent may differ
+  // from `agent_handle`).
+  seat_handle: string
+  // null: it has not needed a machine yet, and will take the default.
+  environment: Environment | null
+  status: string | null
+  online: boolean
 }
 
-// GET /projects/{id}/compute-configs — the machine new agents start on, and where
-// the project's agents that have started are working now.
+// GET /topics/{id}/environment — a room's, or a task's (by the task's id).
+export interface TopicEnvironment {
+  default: Environment | null
+  default_from: 'task' | 'room' | 'project' | 'deployment'
+  sessions: SessionEnvironment[]
+  devices: EnvironmentDevice[]
+  // The sandbox specs this project can ask for.
+  specs: SandboxSpec[]
+}
+
+// GET /projects/{id}/compute-configs — the environment new agents start in, and
+// where the project's agents that have started are working now.
 export interface ProjectComputeConfigs {
-  default: ComputeChoice
+  default: Environment
   can_manage: boolean
-  devices: TopicComputeDevice[]
-  cloud_available: boolean
-  cloud_vm_available: boolean
+  devices: EnvironmentDevice[]
+  specs: SandboxSpec[]
   distribution: ComputeDistribution
 }
 
 export interface ComputeDistribution {
-  cloud: number
-  cloud_vm: number
-  devices: { device_id: string | null; name: string | null; agents: number; machine_access: boolean }[]
+  // Sessions in sandboxes, by spec: where they run is the platform's, and is not shown.
+  sandboxes: { spec: string; label: string; agents: number }[]
+  // Sessions running directly on someone's machine.
+  devices: { device_id: string; name: string | null; agents: number }[]
 }

@@ -8,8 +8,9 @@
 - **写**：正文落库之前要过的那一层——人打的走 `person_mentions`，发布路径上
   的走 `project_refs_text`。「发出去会存成什么」由 `turn/intake/rewrite.py`
   的 `text_as_sent` 答。
-- **落库之后**：`announce_mentions` 发强提醒、写 ``block.refs``、给点不到的
-  handle 在消息旁边留一行。发送与编辑走的是同一个它。
+- **落库之后**：`announce_mentions` 把被点名的人和支线里的人交给投递账本
+  （`delivery/ledger.py`，站内、推送、邮件按各人的偏好裁）、写 ``block.refs``、
+  给点不到的 handle 在消息旁边留一行。发送与编辑走的是同一个它。
 
 **和另外两个「mention」模块不是一份东西，是同一根管子上的三段。**
 
@@ -41,12 +42,17 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
-from app.domain.conversation.services import room_of
+from app.domain.conversation.services import is_task, room_of
+from app.domain.delivery.addressing import Event, Hand, address
+from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.membership.roster import roster_rows
-from app.domain.mentions import canonicalize_refs, expand_mention_names
-from app.domain.notification.models import NotificationLevel, NotificationType
-from app.domain.notification.services import ProjectNotificationService
+from app.domain.mentions import (
+    canonicalize_refs,
+    dangling_refs,
+    expand_mention_names,
+)
+from app.domain.notification.models import NotificationType
 from app.domain.thread import reads as thread_reads
 from app.domain.topic.models import Topic, TopicKind
 from app.domain.topic.repositories import TopicRepository
@@ -231,8 +237,61 @@ async def project_refs_text(
     )
 
 
+async def _where(session: AsyncSession, topic: Topic, block: Block) -> dict[str, str]:
+    """Which conversation of ``topic`` the message is in: a task, a 支线, or
+    the channel's own line (empty). A notification opens there, where the
+    message is (`push.push_link`, the frontend's renderers)."""
+    if block.conversation_id == topic.id:
+        return {}
+    if await is_task(session, block.conversation_id):
+        return {"taskId": str(block.conversation_id)}
+    return {"threadId": str(block.conversation_id)}
+
+
+async def _tell(
+    session: AsyncSession,
+    topic: Topic,
+    block: Block,
+    kind: NotificationType,
+    *,
+    author: str,
+    who: str,
+    event: Event,
+) -> None:
+    """Hand one message to the delivery ledger for the people ``event`` names.
+
+    The ledger writes the inbox row and records email and push by each
+    recipient's own settings for ``kind``. Its key is this message and this
+    kind, so an edit that names someone again does not tell them twice."""
+    await deliver(
+        session,
+        DeliveryEvent(
+            id=event_id_for(kind, str(block.id)),
+            type=kind,
+            payload={
+                "projectId": str(topic.project_id),
+                "topicId": str(topic.id),
+                "topicTitle": topic.title,
+                "blockId": str(block.id),
+                "author": author,
+                "authorName": who,
+                "content": markdown_preview(block.content, 200),
+                **await _where(session, topic, block),
+            },
+            occurred_at=block.created_at,
+        ),
+        address(event, Hand.participant),
+    )
+
+
 async def _tell_thread(
-    session: AsyncSession, topic: Topic, block: Block, author: str, *, told: set[str]
+    session: AsyncSession,
+    topic: Topic,
+    block: Block,
+    author: str,
+    roster: list[dict],
+    *,
+    told: set[str],
 ) -> None:
     """A person's reply in a 支线 reaches the people who took part in it,
     except whoever it already @-ed and whoever muted the channel. 芝士's
@@ -251,20 +310,16 @@ async def _tell_thread(
     if not people:
         return
     muted = await TopicRepository(session).muted_among(topic.id, people)
-    notifs = ProjectNotificationService(session)
-    preview = markdown_preview(block.content, 200)
-    for h in people:
-        if h in muted:
-            continue
-        await notifs.create(
-            project_id=topic.project_id,
-            level=NotificationLevel.light,
-            kind=NotificationType.THREAD_REPLY,
-            title=f"{author} 在「{topic.title}」的支线里回复了",
-            body=preview,
-            target_handle=h,
-            conversation_id=topic.id,
-            payload={"thread_id": str(block.conversation_id)},
+    reached = tuple(h for h in people if h not in muted)
+    if reached:
+        await _tell(
+            session,
+            topic,
+            block,
+            NotificationType.THREAD_REPLY,
+            author=author,
+            who=await _name_of(session, topic, author, roster),
+            event=Event(in_thread=reached),
         )
 
 
@@ -297,7 +352,7 @@ async def announce_mentions(
     flag_unresolved: bool = False,
 ) -> None:
     """What a message's mentions do once its text is written: notify each
-    teammate it @s (spec §7: @人 = strong), record them in ``block.refs``, and,
+    teammate it @s, record them in ``block.refs``, and,
     for an agent's message, leave a line beside it for each handle that names
     nobody. `<@all>`/`<@here>` expand to the topic's roster (群播,
     fusion-design §3).
@@ -330,45 +385,55 @@ async def announce_mentions(
         topic, [h for h in dict.fromkeys(concrete) if h != author]
     )
     if targets:
-        notifs = ProjectNotificationService(session)
-        preview = markdown_preview(text, 200)
-        who = await _name_of(session, topic, author, roster)
-        for h in targets:
-            await notifs.create(
-                project_id=topic.project_id,
-                level=NotificationLevel.strong,
-                kind=NotificationType.MENTION,
-                title=f"{who} 在「{topic.title}」@了你",
-                body=preview,
-                target_handle=h,
-                conversation_id=topic.id,
-            )
+        await _tell(
+            session,
+            topic,
+            block,
+            NotificationType.MENTION,
+            author=author,
+            who=await _name_of(session, topic, author, roster),
+            event=Event(mentioned=tuple(targets)),
+        )
     if not before:
-        await _tell_thread(session, topic, block, author, told=set(targets))
+        await _tell_thread(session, topic, block, author, roster, told=set(targets))
     refs = [f"user:{h}" for h in resolved] + _topic_refs(text)
     if refs or before:
         block.refs = refs
     if not flag_unresolved:
         return
-    for bad in unresolved:
-        if bad in flagged:
-            continue
-        # Beside the message it is about, not in the room the message did not
-        # go to — same landing as the message.
-        room = await room_of(session, block.conversation_id)
-        in_task = room != block.conversation_id
-        landed = landing(
-            EventAbout.task if in_task else EventAbout.room,
-            project_id=block.project_id,
-            room_id=room,
-            task_id=block.conversation_id if in_task else None,
-        )
+    lines = [
+        say("mentionUnknownMember", member=f"<@{bad}>")
+        for bad in unresolved
+        if bad not in flagged
+    ]
+    # A `<#id>` that names no channel, task or 支线 draws as a reference that
+    # opens nothing; the agent that wrote it is told beside the message, as it
+    # is for a handle that names nobody. One an edit kept was told already.
+    kept = set(await dangling_refs(session, block.project_id, before))
+    lines += [
+        say("refUnknownConversation", ref=f"<#{ref}>")
+        for ref in await dangling_refs(session, block.project_id, text)
+        if ref not in kept
+    ]
+    if not lines:
+        return
+    # Beside the message it is about, not in the room the message did not
+    # go to — same landing as the message.
+    room = await room_of(session, block.conversation_id)
+    in_task = room != block.conversation_id
+    landed = landing(
+        EventAbout.task if in_task else EventAbout.room,
+        project_id=block.project_id,
+        room_id=room,
+        task_id=block.conversation_id if in_task else None,
+    )
+    for line in lines:
         await BlockRepository(session).add(
             project_id=landed.project_id,
             conversation_id=landed.conversation_id,
             author=author,
             author_type=AuthorType.participant,
-            content=say("mentionUnknownMember", member=f"<@{bad}>"),
+            content=line,
             kind=BlockKind.event,
             turn_id=block.turn_id,
             meta={"in_room": False},

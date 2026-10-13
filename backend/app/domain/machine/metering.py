@@ -34,7 +34,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
 from app.domain.conversation.services import of_rooms, room_column
-from app.domain.machine.models import GONE, CloudHost, CloudHostHome
+from app.domain.machine.models import GONE, CloudHost, SandboxHome
 from app.domain.usage.compute import SANDBOX, VM, ComputeMeter, hourly_price, vm_spec
 from app.domain.usage.services import UsageService
 
@@ -49,15 +49,15 @@ _unpriced_logged = False
 def _running():
     return (
         select(
-            CloudHostHome.id,
-            CloudHostHome.project_id,
-            CloudHostHome.topic_id,
-            CloudHostHome.session_id,
+            SandboxHome.id,
+            SandboxHome.project_id,
+            SandboxHome.topic_id,
+            SandboxHome.session_id,
         )
-        .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
+        .join(CloudHost, CloudHost.id == SandboxHome.host_id)
         .where(
-            CloudHostHome.stopped_at.is_(None),
-            CloudHostHome.waiting_since.is_(None),
+            SandboxHome.stopped_at.is_(None),
+            SandboxHome.waiting_since.is_(None),
             CloudHost.device_id.is_not(None),
             CloudHost.released_at.is_(None),
             CloudHost.whole_machine.is_(False),
@@ -93,7 +93,7 @@ async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int,
             continue
         assert host.project_id is not None
         home = await session.scalar(
-            select(CloudHostHome).where(CloudHostHome.host_id == host.id)
+            select(SandboxHome).where(SandboxHome.host_id == host.id)
         )
         await meter.open(
             kind=VM,
@@ -149,8 +149,8 @@ async def observe(session: AsyncSession) -> dict[str, int]:
     stops: dict[uuid.UUID, datetime | None] = {}
     if ended:
         rows = await session.execute(
-            select(CloudHostHome.id, CloudHostHome.stopped_at).where(
-                CloudHostHome.id.in_([uuid.UUID(s) for s in ended])
+            select(SandboxHome.id, SandboxHome.stopped_at).where(
+                SandboxHome.id.in_([uuid.UUID(s) for s in ended])
             )
         )
         stops = {home_id: stopped_at for home_id, stopped_at in rows.all()}

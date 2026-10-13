@@ -100,7 +100,7 @@ def test_a_sandbox_token_acts_as_the_agent_it_names(client):
     holds it — previously every such write said plain ``cheese``."""
     pid, tid = _project_topic(client)
     seat = _seat(client, tid)
-    task = open_task(client, tid, start=False)["id"]
+    task = open_task(client, tid)["id"]
     # As the agent's own tools do in a task's turn: find the task's document,
     # then write it.
     doc = document_of(client, task, headers=_sandbox(pid, task, seat))
@@ -130,7 +130,7 @@ def test_two_agents_writing_in_one_room_are_told_apart(client):
         if m["member_handle"] != ops["seat_handle"]
     )
 
-    task = open_task(client, tid, start=False)["id"]
+    task = open_task(client, tid)["id"]
 
     authors = []
     for version, seat in enumerate((default_seat, ops["seat_handle"])):
@@ -149,7 +149,7 @@ def test_a_forged_author_in_the_body_is_still_ignored(client):
     """The identity comes from the signed token, never the payload."""
     pid, tid = _project_topic(client)
     seat = _seat(client, tid)
-    task = open_task(client, tid, start=False)["id"]
+    task = open_task(client, tid)["id"]
     doc = document_of(client, task, headers=_sandbox(pid, task, seat))
     r = client.put(
         f"/documents/{doc}",
@@ -220,7 +220,7 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
     """协作模式下「AI 不能采纳自己的改动」matched the literal handle ``cheese``.
     Give each 分身 its own handle and that rule silently stops applying — which
     would have turned this change into a way around the red line."""
-    pid, tid = _project_topic(client)
+    _, tid = _project_topic(client)
     handle = _seat(client, tid)
     card = client.post(
         f"/topics/{delivery_task_id(client, tid)}/accept-card",
@@ -231,14 +231,8 @@ def test_a_topic_agent_cannot_accept_its_own_work(client):
             "focus": "自己验",
         },
     )
-    assert card.status_code == 200, card.text
-    card = card.json()["data"]
-
-    r = client.post(
-        f"/accept-cards/{card['id']}/accept",
-        json={"decided_by": handle},
-        headers=_sandbox(pid, tid, handle),
-    )
-    assert r.status_code == 422
-    cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
-    assert cards[0]["status"] == "pending"
+    # The 分身's own handle is matched as an AI's, not as a person's: its own
+    # change cannot even be routed to it for review.
+    assert card.status_code == 422, card.text
+    assert card.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
+    assert client.get(f"/topics/{tid}/accept-card").json()["data"]["data"] == []

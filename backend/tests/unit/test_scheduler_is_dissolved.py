@@ -2,7 +2,7 @@
 
 结论 16「总览 = 每个项目自带的根房间，没有 scheduler 部件：总览里的芝士就是调度者」。
 `app/domain/scheduler/` 扛的五件事各回各家——巡检退役、PR/上游轮询归 review 领域、
-孤儿轮次清扫和闸门扫底进 `app/core/background.py` 的轮次活性层。
+孤儿轮次清扫和闸门扫底由应用层集中装配，`app/core/background.py` 提供通用运行器。
 
 **为什么是一条守卫而不是一条功能测试**：搬家之后，每一件事各自的行为都由它自己那
 几条测试盯着；一个包被解散这件事本身没有行为可以断言。能看见「它又回来了」的只有
@@ -28,6 +28,21 @@ REPO = Path(__file__).resolve().parents[3]
 _SKIP_PATHS = ("docs/plans/", "docs/topics/")
 
 _THIS_FILE = Path(__file__).resolve().relative_to(REPO).as_posix()
+
+#: 三条命中都指向同一个修法，所以写一次。规则：结论 16——没有 scheduler 部件，
+#: 一件事只有一个住处。修法是模块接缝：把这段逻辑登记进它所属领域的 `periodic`
+#: 模块，由应用层在 `app/periodic_jobs.py` 的 `periodic_jobs()` 里装配，通用运行器
+#: 在 `app/core/background.py`（`PeriodicJobs` / `PeriodicRunner`）。旋钮也一样，
+#: 跟着它的持有者走（例：留存下来的 `gate_sweep_interval_s` 在
+#: `backend/app/core/config.py:925`）。文档章节：`docs/manual/dev/backend-app.md` 的
+#: 「周期任务清单」（锚点 `#periodic`）。
+_REPAIR = (
+    "修法：这段逻辑属于哪个领域，就登记进它的 periodic 模块，由应用层在 "
+    "app/periodic_jobs.py 的 periodic_jobs() 里装配；通用运行器在 "
+    "app/core/background.py。不要再新建 app/domain/scheduler，或把它的名字留在配置里。"
+    "文档：docs/manual/dev/backend-app.md#periodic（周期任务清单）。"
+    "复查：cd backend && uv run pytest tests/unit/test_scheduler_is_dissolved.py -q"
+)
 
 
 def _repo_text() -> list[tuple[str, str]]:
@@ -73,13 +88,43 @@ def _hits(pattern: str) -> list[str]:
 
 def test_nothing_names_the_scheduler_package() -> None:
     """解散就是删代码：留一个 import 就等于留一个第二住处。"""
-    assert _hits(r"app[./]domain[./]scheduler") == []
+    hits = _hits(r"app[./]domain[./]scheduler")
+    assert hits == [], (
+        "又出现了对已解散的 app/domain/scheduler 包的引用：\n"
+        + "\n".join(hits)
+        + "\n"
+        + _REPAIR
+    )
 
 
 def test_the_scheduler_interval_knob_is_gone() -> None:
     """它开的那件事（定期巡检）退役了，旋钮跟着走——一个没有消费者的设置项，
     下一个人读到只会以为巡检还在，只是关着。"""
-    assert _hits(r"scheduler_interval_seconds|SCHEDULER_INTERVAL_SECONDS") == []
+    hits = _hits(r"scheduler_interval_seconds|SCHEDULER_INTERVAL_SECONDS")
+    assert hits == [], (
+        "巡检退役了，它的旋钮 scheduler_interval_seconds / SCHEDULER_INTERVAL_SECONDS"
+        " 也跟着走；配置里还留着下一个人会以为巡检还在：\n"
+        + "\n".join(hits)
+        + "\n"
+        + _REPAIR
+    )
+
+
+def test_a_leftover_reference_reports_its_file_line_and_repair(monkeypatch) -> None:
+    """命中时把 file:line 和修法一起报出来，而不是只报一个空列表。
+
+    用 monkeypatch 喂一个假的 git 命中，触发守卫真正会红的那个分支。"""
+    leftovers = [("backend/app/example.py", "from app.domain.scheduler import tick\n")]
+    monkeypatch.setattr(
+        "tests.unit.test_scheduler_is_dissolved._repo_text", lambda: leftovers
+    )
+    with pytest.raises(AssertionError) as caught:
+        test_nothing_names_the_scheduler_package()
+    message = str(caught.value)
+    assert "backend/app/example.py:1" in message
+    assert "app/domain/scheduler" in message
+    assert "periodic_jobs.py" in message
+    assert "backend-app.md#periodic" in message
 
 
 @pytest.fixture(scope="module")

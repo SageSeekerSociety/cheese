@@ -38,13 +38,13 @@ import { useRoute } from 'vue-router'
 
 import TeamProfile from './TeamProfile.vue'
 
+import { ApiError } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
-import { TeamsApi } from '@/network/api/teams'
-import { BusinessError } from '@/network/types/error'
 import { usePageTitleStore } from '@/stores/title'
 
 const route = useRoute()
@@ -77,15 +77,13 @@ const fetchTeamData = async (handle: string) => {
   // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
   loadError.value = null
   try {
-    const {
-      data: { team },
-    } = await TeamsApi.detailByHandle(handle)
+    const { team } = await TeamsApi.detailByHandle(handle)
     teamData.value = team
     // 标签页上写这个团队（自己名下就是自己的昵称），不写笼统的「团队」。
     titles.setDynamicTitle(team.name, 'TeamsDetail')
   } catch (error) {
     // 隐身小队对非成员就是 404：和不存在的小队说同一句话。
-    if (error instanceof BusinessError && error.code === 404) notFound.value = true
+    if (error instanceof ApiError && error.status === 404) notFound.value = true
     // 其余的留在这里画出来。原来这里 `throw`，抛出去就没人接 —— 页面一片空白，
     // 而「没读到」和「没有这个团队」在屏幕上是同一幅画面。
     else loadError.value = error
@@ -96,9 +94,7 @@ const fetchTeamData = async (handle: string) => {
 const retryLoad = () => fetchTeamData(String(route.params.handle))
 
 const join = async (message: string) => {
-  const {
-    data: { team },
-  } = await TeamsApi.join(teamData.value!.id, { message: message || undefined })
+  const { team } = await TeamsApi.join(teamData.value!.id, { message: message || undefined })
   teamData.value = team
 }
 

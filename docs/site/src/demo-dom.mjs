@@ -8,6 +8,8 @@ import { mountCiScope } from './ci-window.mjs'
 import { mountFlow } from './flow-window.mjs'
 import { mountMemory } from './memory-window.mjs'
 import { mountArch } from './arch-window.mjs'
+import { mountPanel } from './panel-window.mjs'
+import { mountWalk } from './walk-window.mjs'
 
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches
 const $ = (s, r = document) => r.querySelector(s)
@@ -194,6 +196,8 @@ export function themeStages(dark, root = document) {
 }
 
 export function mountDemos(root = document) {
+  $$('[data-walk]', root).forEach((el) => mountWalk(el, { reduced }))
+  $$('[data-demo="panel"]:not([data-walk-panel])', root).forEach((el) => mountPanel(el, { reduced }))
   $$('[data-demo="steps"]', root).forEach(mountSteps)
   $$('[data-demo="sim"]', root).forEach(mountSim)
   $$('[data-demo="context"]', root).forEach(mountContextWindow)

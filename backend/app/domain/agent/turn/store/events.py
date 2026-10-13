@@ -11,6 +11,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.obs import scrub_secrets
 from app.core.sentences import say
 from app.domain.agent.step_output import output_tail
 from app.domain.block.about import EventAbout, landing
@@ -134,10 +135,14 @@ async def _mark_step_failed(
     sessions: async_sessionmaker, block_id: uuid.UUID, error: str
 ) -> dict | None:
     """Stamp a 现场 step as failed, and hand back the step as it now reads.
-    Never fails a turn over a red dot."""
+    Never fails a turn over a red dot.
+
+    The error is scrubbed like the step's output (`output_tail`): it is shown to
+    everyone in the room and read back by transcript tooling, and a failed
+    command's error text is where a token on its command line comes back."""
     try:
         async with sessions() as session:
-            block = await fail_step(session, block_id, error)
+            block = await fail_step(session, block_id, scrub_secrets(error) or "")
             payload = (
                 BlockOut.model_validate(block).model_dump(mode="json")
                 if block is not None

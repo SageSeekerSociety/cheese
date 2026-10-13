@@ -10,7 +10,11 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    room_agent_seat,
+    session_auth_headers,
+)
 
 OWNER = "user-1"
 PERSON = session_auth_headers(OWNER)
@@ -300,3 +304,148 @@ def test_a_proposal_cannot_absorb_someones_private_memory(client):
         json=_proposal(absorbs=[f"private/{OWNER}/style.md"]),
     )
     assert refused.status_code == 422, "a project method absorbed a personal memory"
+
+
+def _proposal_lines(client, room: str, skill_id: str) -> list[dict]:
+    """The room's line about this proposal, as the room reads it."""
+    blocks = client.get(f"/topics/{room}/blocks", headers=PERSON).json()["data"]
+    return [
+        b
+        for b in blocks["data"]
+        if (b.get("meta") or {}).get("event_type") == "skill_proposed"
+        and b["meta"].get("skill_id") == skill_id
+    ]
+
+
+def test_the_rooms_line_about_a_proposal_says_how_a_person_decided(client):
+    project = _project(client)
+    room = _room(client, project)
+    saved = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+    [line] = _proposal_lines(client, room, saved["id"])
+    assert line["meta"]["who"] == "human", (
+        "a proposal waiting on a person said 芝士 had it"
+    )
+    assert line["meta"].get("state") != "over"
+
+    client.post(f"/skills/{saved['id']}/confirm", headers=PERSON)
+    [line] = _proposal_lines(client, room, saved["id"])
+    assert "已保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+    assert not line["meta"]["who"], "a saved proposal still says someone is handling it"
+
+    declined = client.post(f"/topics/{room}/skills", json=_proposal("grading")).json()[
+        "data"
+    ]
+    client.post(f"/skills/{declined['id']}/decline", headers=PERSON)
+    [line] = _proposal_lines(client, room, declined["id"])
+    assert "没有保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+
+
+def test_the_rooms_line_about_a_proposal_names_the_teammate_that_proposed(client):
+    """The line names the teammate by its handle, the way a mention chip does,
+    so a teammate called Nova is not announced as 「芝士」, before a person
+    decides and after."""
+    project = _project(client)
+    room = _room(client, project)
+    seat = room_agent_seat(client, room)
+    for name, decide in (("weekly-report", "confirm"), ("grading", "decline")):
+        skill = client.post(f"/topics/{room}/skills", json=_proposal(name)).json()[
+            "data"
+        ]
+        [line] = _proposal_lines(client, room, skill["id"])
+        assert line["content"].startswith(f"<@{seat}> "), line["content"]
+        assert "芝士" not in line["content"]
+
+        client.post(f"/skills/{skill['id']}/{decide}", headers=PERSON)
+        [line] = _proposal_lines(client, room, skill["id"])
+        assert line["meta"]["state"] == "over"
+        assert line["content"].startswith(f"<@{seat}> "), line["content"]
+        assert "芝士" not in line["content"]
+
+
+def test_the_rooms_line_about_a_proposed_change_names_the_teammate(client):
+    project = _project(client)
+    written = client.post(
+        f"/projects/{project}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+    room = _room(client, project, "组会")
+    seat = room_agent_seat(client, room)
+    client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "1. 先写结论\n2. 再列数字", "reason": "用户说结论放最前面"},
+    )
+    [line] = _proposal_lines(client, room, written["id"])
+    assert line["content"].startswith(f"<@{seat}> "), line["content"]
+    assert "芝士" not in line["content"]
+
+    client.post(f"/skills/{written['id']}/confirm", headers=PERSON)
+    [line] = _proposal_lines(client, room, written["id"])
+    assert line["meta"]["state"] == "over"
+    assert line["content"].startswith(f"<@{seat}> "), line["content"]
+    assert "芝士" not in line["content"]
+
+
+def test_deleting_a_pending_proposal_settles_its_line(client):
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=_proposal()).json()["data"]
+    assert client.delete(f"/skills/{skill['id']}", headers=PERSON).status_code == 200
+    [line] = _proposal_lines(client, room, skill["id"])
+    assert "没有保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+
+
+def test_a_teammates_edit_reaches_the_room_it_was_corrected_in(client):
+    project = _project(client)
+    written = client.post(
+        f"/projects/{project}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+    room = _room(client, project, "组会")
+
+    edited = client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "1. 先写结论\n2. 再列数字", "reason": "用户说结论放最前面"},
+    )
+    assert edited.status_code == 200, edited.text
+
+    listed = client.get(f"/projects/{project}/skills", headers=PERSON).json()["data"]
+    [skill] = listed["data"]
+    assert skill["state"] == "draft"
+    assert skill["source_topic_id"] == room, "the edit's card is not in the room"
+    [line] = _proposal_lines(client, room, written["id"])
+    assert "提议修改技能「项目周报」" in line["content"], line["content"]
+    assert line["meta"]["who"] == "human"
+
+    # A second correction in the same room updates the same card.
+    client.patch(
+        f"/skills/{written['id']}?topic={room}",
+        json={"body": "1. 先写结论\n2. 数字标来源", "reason": "还要标来源"},
+    )
+    assert len(_proposal_lines(client, room, written["id"])) == 1
+
+    client.post(f"/skills/{written['id']}/decline", headers=PERSON)
+    [line] = _proposal_lines(client, room, written["id"])
+    assert "修改没有保存" in line["content"], line["content"]
+    assert line["meta"]["state"] == "over"
+
+
+def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):
+    project = _project(client)
+    room = _room(client, project)
+    existing = client.post(
+        f"/topics/{room}/skills", json=METHOD, headers=PERSON
+    ).json()["data"]
+    # What a teammate reads at the end of each skill, and so what it writes.
+    related = f"最接近的是 {existing['id']}，它只管周报，这份管组会纪要"
+    drafted = client.post(
+        f"/topics/{room}/skills",
+        json=_proposal("meeting-notes", title="组会纪要", related=related),
+    )
+    assert drafted.status_code == 200, drafted.text
+
+    listed = client.get(f"/projects/{project}/skills", headers=PERSON).json()["data"]
+    [card] = [s for s in listed["data"] if s["name"] == "meeting-notes"]
+    shown = card["proposal"]["related"]
+    assert existing["id"] not in shown, shown
+    assert "「项目周报」" in shown, shown

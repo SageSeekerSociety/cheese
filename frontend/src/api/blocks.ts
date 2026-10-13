@@ -1,5 +1,7 @@
 import type { Block, ListPayload, ReactionAgg } from '../cx_types'
 
+import { rememberNumbered } from '../lib/addresses'
+
 import { request } from './http'
 
 // 机构看板 / Space 看板 (eval F3).
@@ -20,7 +22,14 @@ export interface BlockPage extends ListPayload<Block> {
 
 export function listBlocks(
   topicId: string,
-  opts?: { limit?: number; before?: string; after?: string; around?: string }
+  opts?: {
+    limit?: number
+    before?: string
+    after?: string
+    around?: string
+    /** 编号（`seq`）在这之后存进来的，按存进来的先后：手里到这个号为止的页面漏了的那些。 */
+    storedAfter?: number
+  }
 ): Promise<BlockPage> {
   // 对话栏只读房间里显示的那些：一个干着活的房间，块大多是队友干活的步骤（现场读
   // 它们，走 socket 和 `/transcript`），不筛的话一页里多半没有一行画得出来。
@@ -29,10 +38,18 @@ export function listBlocks(
   if (opts?.before) q.set('before', opts.before)
   if (opts?.after) q.set('after', opts.after)
   if (opts?.around) q.set('around', opts.around)
+  if (opts?.storedAfter !== undefined) q.set('stored_after', String(opts.storedAfter))
   const qs = q.toString()
   const query = qs ? `?${qs}` : ''
   const path = `/topics/${encodeURIComponent(topicId)}/blocks${query}`
-  return request<BlockPage>(path)
+  return request<BlockPage>(path).then((page) => {
+    // 消息下面挂着的任务卡：点开它和点侧栏里的任务一样，不再先问一趟地址。
+    rememberNumbered(
+      'tasks',
+      page.data.flatMap((block) => block.tasks ?? [])
+    )
+    return page
+  })
 }
 
 // Emoji reactions (Slack semantics): toggles (emoji, caller) on a block and
@@ -55,5 +72,17 @@ export function editMessage(blockId: string, content: string): Promise<Block> {
   return request<Block>(`/blocks/${encodeURIComponent(blockId)}`, {
     method: 'PATCH',
     body: JSON.stringify({ content }),
+  })
+}
+
+// Take back your own answer to a question asked with quick replies, so the
+// question waits again and its options come back. `blockId` is the QUESTION —
+// the answer is an ordinary message, and what comes off is the line it left on
+// the question. Only whoever answered it can; anyone else is refused. Returns
+// the question as the room now records it, which every client also gets as a
+// `block_updated` frame.
+export function withdrawAnswer(questionId: string): Promise<Block> {
+  return request<Block>(`/blocks/${encodeURIComponent(questionId)}/answer`, {
+    method: 'DELETE',
   })
 }

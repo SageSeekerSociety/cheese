@@ -96,6 +96,39 @@ def test_mention_quotes_what_was_said():
     assert letter.link == f"{settings.frontend_url}/inbox"
 
 
+def test_a_mention_in_a_channel_says_who_and_where_and_lands_on_the_message():
+    letter = letter_for(
+        {
+            "type": "MENTION",
+            "payload": {
+                **ROOM,
+                "authorName": "Alice",
+                "content": "帮忙看下这个接口",
+                "blockId": "b-3",
+                "threadId": "th-1",
+            },
+        }
+    )
+    body = render_html(letter)
+
+    assert letter.subject == "Alice 在「登录页改版」提到了你"
+    assert "帮忙看下这个接口" in body
+    assert letter.link == (
+        f"{settings.frontend_url}/projects/p-1/topics/t-1/threads/th-1?block=b-3"
+    )
+
+
+def test_a_reply_in_a_thread_says_who_replied_where():
+    letter = letter_for(
+        {
+            "type": "THREAD_REPLY",
+            "payload": {**ROOM, "authorName": "Bob", "content": "方案一"},
+        }
+    )
+    assert letter.subject == "Bob 在「登录页改版」的支线里回复了"
+    assert "方案一" in render_html(letter)
+
+
 def test_an_unknown_type_still_reads_as_a_sentence():
     letter = letter_for({"type": "SOMETHING_NEW", "payload": {}})
     assert letter.subject == "你在芝士上有一条新通知"

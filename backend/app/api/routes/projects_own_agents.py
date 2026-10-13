@@ -13,11 +13,20 @@ from fastapi import APIRouter
 from pydantic import BaseModel
 
 from app.api.auth import ActorResolverDep
-from app.api.response import ok
-from app.api.routes.projects import DbSession
-from app.core.errors import ForbiddenError
+from app.api.request_deps import DbSession
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES
+from app.core.errors import ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent_instance.own import SETTING, allows_own_agents, listing
+from app.domain.agent_instance.own import (
+    SETTING,
+    OwnCallers,
+    allows_own_agents,
+    listing,
+    owned_by_seat,
+    set_callers,
+)
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
 
@@ -26,6 +35,30 @@ router = APIRouter(prefix="/projects", tags=["projects"])
 
 class OwnAgentsUpdate(BaseModel):
     allowed: bool
+
+
+class OwnAgentCallersUpdate(BaseModel):
+    callers: OwnCallers
+
+
+class OwnAgentMachineOut(BaseModel):
+    name: str
+    online: bool
+
+
+class OwnAgentOut(BaseModel):
+    handle: str
+    name: str | None
+    callers: OwnCallers
+    owner_handle: str | None
+    owner_name: str | None
+    machines: list[OwnAgentMachineOut]
+
+
+class OwnAgentsOut(BaseModel):
+    allowed: bool
+    can_manage: bool
+    agents: list[OwnAgentOut]
 
 
 @router.get("/{project_id}/own-agents")
@@ -64,4 +97,30 @@ async def set_own_agents(
     service = ProjectService(db)
     project = await service.get_or_404(project_id)
     await service.merge_settings(project, {SETTING: body.allowed})
+    return await get_own_agents(project_id, db, resolver)
+
+
+@router.put(
+    "/{project_id}/own-agents/{handle}/callers",
+    dependencies=[ROUTE_DECIDES],
+    **typed_response(OwnAgentsOut),
+)
+async def set_own_agent_callers(
+    project_id: uuid.UUID,
+    handle: str,
+    body: OwnAgentCallersUpdate,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Who may call a member's own agent: its owner alone, or any person in the
+    project. Only its owner decides, since it is their account that pays."""
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    owned = await owned_by_seat(db, project_id, handle)
+    if owned is None:
+        raise NotFoundError(say("ownAgentNotFound"))
+    if actor.user_id is None or actor.user_id != owned.owner_user_id:
+        raise ForbiddenError(say("ownAgentCallersOwnerOnly"))
+    await set_callers(db, owned.instance_id, body.callers)
+    await db.commit()
     return await get_own_agents(project_id, db, resolver)

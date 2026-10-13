@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 
-// 队列页页头右边那排工具 —— 未读徽标、「标记为已读」、刷新、视图切换（F-05）。标题和
+// 队列页页头右边那排工具 —— 未读徽标、「标为已读」、刷新、视图切换（F-05）。标题和
 // 说明由页面交给 `AdminPage`。
 //
 // 这一件不认识接口、不认识路由、不认识 store：吃 props、往上发事件。**未读数是一个 prop

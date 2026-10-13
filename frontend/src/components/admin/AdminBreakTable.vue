@@ -9,7 +9,8 @@ import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 // 它和 `AdminBarChart` 的分工是**一行要不要带第二三个数**：柱状图那一版刻意只画一根
 // 条（长度是一个量纲，再叠钱就是两根条叠在一起，长短就没法比了），而这一版要回答的
 // 正是「贵的是模型还是计费方式」—— 所以每行除了条还有「钱」和「算不出价」两列，缺
-// 任何一个都答不了那个问题。
+// 任何一个都答不了那个问题。按模型那张表还多一列缓存命中率（`cache`），
+// 按通路那张没有。
 //
 // **每一行本身是文字**（名字、条、三个数都是真文本），读屏直接读得到，所以这里不要
 // 那张折叠的数据表孪生体 —— `AdminLineChart` 要那张表是因为整块 SVG 是 `aria-hidden`。
@@ -21,7 +22,9 @@ const props = withDefaults(
     title: string
     /** 表底那句口径。**不省略**：这三列的含义不写出来，读者会把「算不出价」当成「没花钱」。 */
     note: string
-    rows: { label: string; value: number; cost: string; unpriced: string }[]
+    /** `cache` 是可选的第五列（缓存命中率，调用方连标签一起写好）：有一行带它，整张表
+     *  就多这一列。 */
+    rows: { label: string; value: number; cost: string; unpriced: string; cache?: string }[]
     loading?: boolean
   }>(),
   { loading: false }
@@ -30,6 +33,8 @@ const props = withDefaults(
 const { t } = useI18n()
 
 const empty = computed(() => props.rows.length === 0)
+
+const withCache = computed(() => props.rows.some((row) => row.cache !== undefined))
 
 const max = computed(() => Math.max(1, ...props.rows.map((row) => row.value)))
 
@@ -58,13 +63,14 @@ function widthOf(value: number): string {
 
     <template v-else>
       <ol class="abt__rows">
-        <li v-for="(row, i) in rows" :key="i" class="abt__row">
+        <li v-for="(row, i) in rows" :key="i" class="abt__row" :class="{ 'abt__row--cache': withCache }">
           <span class="abt__label" :title="row.label">{{ row.label }}</span>
           <span class="abt__track" aria-hidden="true">
             <span class="abt__bar" :style="{ width: widthOf(row.value) }" />
           </span>
           <span class="abt__num t-num">{{ row.cost }}</span>
           <span class="abt__num abt__num--muted t-num">{{ row.unpriced || '—' }}</span>
+          <span v-if="withCache" class="abt__num abt__num--muted t-num">{{ row.cache ?? '—' }}</span>
         </li>
       </ol>
       <p class="abt__note t-meta-read">{{ note }}</p>
@@ -106,6 +112,10 @@ function widthOf(value: number): string {
   align-items: center;
   font-size: 12.5px;
   line-height: var(--lh-12);
+}
+
+.abt__row--cache {
+  grid-template-columns: minmax(72px, 1.1fr) minmax(48px, 1fr) auto auto auto;
 }
 
 .abt__label {

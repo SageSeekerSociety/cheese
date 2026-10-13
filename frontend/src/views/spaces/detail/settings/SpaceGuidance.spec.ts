@@ -16,14 +16,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 const updateSpace = vi.fn()
 const listMaterials = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     update: (...a: unknown[]) => updateSpace(...a),
     listMaterials: (...a: unknown[]) => listMaterials(...a),
   },
 }))
 
-vi.mock('@/network/api/tasks', () => ({ TasksApi: { list: vi.fn() } }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: { list: vi.fn() } }))
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -58,7 +58,7 @@ const SAVED = {
 }
 
 function mountPage(teaching?: Record<string, unknown>) {
-  listMaterials.mockResolvedValue({ data: { materials: MATERIALS, canManage: true } })
+  listMaterials.mockResolvedValue({ materials: MATERIALS, canManage: true })
   const pinia = createPinia()
   setActivePinia(pinia)
   const store = useSpaceStore(pinia)
@@ -110,7 +110,7 @@ describe('空间设置：给 AI 队友的指导', () => {
 
   it('不改一个字再点保存，存着的那一份原样发回去，存完表单还是它', async () => {
     // 服务端把存下的那一份回过来，表单照它重填。
-    updateSpace.mockResolvedValue({ data: { space: { id: SPACE_ID, name: '数据结构题板', teaching: SAVED } } })
+    updateSpace.mockResolvedValue({ space: { id: SPACE_ID, name: '数据结构题板', teaching: SAVED } })
     const view = mountPage(SAVED)
 
     await fireEvent.click(saveButton())
@@ -135,7 +135,7 @@ describe('空间设置：给 AI 队友的指导', () => {
   })
 
   it('点保存把整份发出去 —— 填上的那几格连着空格子一起', async () => {
-    updateSpace.mockResolvedValue({ data: { space: { id: SPACE_ID } } })
+    updateSpace.mockResolvedValue({ space: { id: SPACE_ID } })
     const view = mountPage()
     const { getByLabelText } = view
 
@@ -159,7 +159,7 @@ describe('空间设置：给 AI 队友的指导', () => {
   })
 
   it('六格全空 = 清掉这块板的默认（照样发一份空的上去）', async () => {
-    updateSpace.mockResolvedValue({ data: { space: { id: SPACE_ID } } })
+    updateSpace.mockResolvedValue({ space: { id: SPACE_ID } })
     const { getByLabelText } = mountPage({ systemPrompt: '从前的默认' })
 
     await fireEvent.update(getByLabelText('spaces.teaching.fields.systemPrompt'), '')

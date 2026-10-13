@@ -7,7 +7,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import ForbiddenError, UnprocessableEntityError, ValidationError
 from app.core.sentences import exception_text, say
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, BlockKind
@@ -305,6 +305,8 @@ async def reject(
 
     await self._cancel_queued_accept(card)
     card.status = AcceptStatus.rejected
+    # 退回也是结局：等验收人动手的那几句一起收掉。
+    await self._settle_the_card(card, "rejected")
     card.decided_by = decided_by
     card.decided_at = datetime.now(UTC)
     notes.record(card, None, note)
@@ -332,6 +334,9 @@ async def revoke(
         raise ValidationError(say("revokeAcceptForbidden"))
 
     card.status = AcceptStatus.revoked
+    # 已采纳的卡上通常没有积着的话（采纳那一拍就收过了）；这里管的是这张卡还有
+    # 别的话躺在谁的收件箱里的情况，收一遍是空转。
+    await self._settle_the_card(card, "voided")
     card.decided_by = decided_by
     card.decided_at = datetime.now(UTC)
 
@@ -441,6 +446,12 @@ async def _override_github_checks(
         dependency = await self._dependency_block_reason(card, status)
         if dependency:
             raise ValidationError(dependency)
+    # 放行是「明知检查没全绿也合」，不是「合一行检查从没评判过的字」：平台给 merge
+    # API 传的标题是卡片主题，而仓库自己的检查评判的是 PR 上那个标题，两者分家时
+    # 放行合下去的仍然是一行没人检查过的历史。这里只拒，不做提醒那一套 —— 轮询那
+    # 条路每 60 秒看到同一个分家，会把执行者叫起来改卡片（`_title_nudge`）。
+    if not pr_text.pr_title_matches_subject(card, topic, status.title):
+        raise UnprocessableEntityError(say("overrideTitleDisagrees", pr=card.pr_number))
     # 留痕用，不是门禁：读一次「此刻检查是什么状态」，读不到也照样放行。
     state: str | None = None
     try:
@@ -587,6 +598,8 @@ async def void(
             f"合并还是关闭：{card.pr_url or '（无链接）'}{reason}"
         )
     card.status = AcceptStatus.revoked
+    # 作废是结局：等验收人动手的那几句一起收掉。
+    await self._settle_the_card(card, "voided")
     notes.record(card, notes.NoteCode.voided, archive.prefix_note(card.note, headline))
     # 只在空的时候补：作废人始终写在 note 里，已有的决议痕迹不覆盖。
     if card.decided_by is None:

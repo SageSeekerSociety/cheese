@@ -1,22 +1,23 @@
 <script setup lang="ts">
-import type { TaskNaming, TaskNamingMode } from '../api'
-
-import { onMounted, ref, watch } from 'vue'
-
-import { holdRevealGate } from '@/composables/useRevealGate'
-
-import { getTaskNaming, setTaskNaming } from '../api'
+// 项目设置「任务命名」：两档，选中即保存；不能管理的人只看得见。
+//
+// 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数与发请求在
+// `composables/useProjectTaskNamingSettings.ts` 里，由设置页接线。这里只画收到的状态，
+// 选中了把那一档报上去。行为见后端 `room_task/naming.py`。
+import type { TaskNaming, TaskNamingMode } from '@/api'
 
 import { t } from '@/i18n'
 
-// 任务命名：没起名的任务由平台自动起名、方向变了再改（默认），还是全由人来起名。
-// 两档都不碰人定过的名字。行为见后端 room_task/naming.py。选中即保存：两个选项、
-// 没有要一起提交的别的字段。
-const props = defineProps<{ projectId: string }>()
+defineProps<{
+  /** 读到的两档现状；还没读到是 null。 */
+  state: TaskNaming | null
+  /** 上一句没说完的话：读失败或保存失败。 */
+  error: string
+  /** 一次保存还在路上。 */
+  busy: boolean
+}>()
 
-const state = ref<TaskNaming | null>(null)
-const error = ref('')
-const busy = ref(false)
+const emit = defineEmits<{ (e: 'choose', mode: TaskNamingMode): void }>()
 
 const OPTIONS: { value: TaskNamingMode; title: string; detail: string }[] = [
   {
@@ -30,32 +31,6 @@ const OPTIONS: { value: TaskNamingMode; title: string; detail: string }[] = [
     detail: t('work.projectSettings.taskNaming.manualDetail'),
   },
 ]
-
-async function load() {
-  error.value = ''
-  try {
-    state.value = await getTaskNaming(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.loadFailed')
-  }
-}
-
-async function choose(mode: TaskNamingMode | null) {
-  if (!mode || !state.value?.can_manage || mode === state.value.mode) return
-  busy.value = true
-  error.value = ''
-  try {
-    state.value = await setTaskNaming(props.projectId, mode)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectSettings.taskNaming.saveFailed')
-  } finally {
-    busy.value = false
-  }
-}
-
-const releaseGate = holdRevealGate()
-onMounted(() => load().finally(releaseGate))
-watch(() => props.projectId, load)
 </script>
 
 <template>
@@ -78,7 +53,7 @@ watch(() => props.projectId, load)
           :class="{ 'naming-option--on': state.mode === o.value }"
           :aria-checked="state.mode === o.value"
           :disabled="busy || !state.can_manage"
-          @click="choose(o.value)"
+          @click="emit('choose', o.value)"
         >
           <span class="naming-option__dot" aria-hidden="true" />
           <span class="naming-option__text">

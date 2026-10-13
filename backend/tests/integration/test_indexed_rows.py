@@ -212,14 +212,16 @@ async def _generic_plan(
 ) -> str:
     """The plan PostgreSQL gives `sql` when it plans it without its values.
 
-    `ordered` also takes the sort away, for a probe whose index earns its keep by
-    the order the scan comes back in rather than by holding few rows. Without the
-    sort the ordered scan is the only path left to that query, which is what
-    "usable at all" means for that read. The other probes keep theirs: those
-    indexes are selective, and the planner reaches for them on cost alone.
+    `ordered` also takes the sort away, full and incremental, for a probe whose
+    index earns its keep by the order the scan comes back in rather than by
+    holding few rows. Without a sort the ordered scan is the only path left to
+    that query, which is what "usable at all" means for that read. The other
+    probes keep theirs: those indexes are selective, and the planner reaches for
+    them on cost alone.
     """
     if ordered:
         await conn.exec_driver_sql("SET LOCAL enable_sort = off")
+        await conn.exec_driver_sql("SET LOCAL enable_incremental_sort = off")
     try:
         await conn.exec_driver_sql(f"PREPARE {name} AS {sql}")
         await conn.exec_driver_sql("SET LOCAL plan_cache_mode = force_generic_plan")
@@ -230,6 +232,7 @@ async def _generic_plan(
     finally:
         if ordered:
             await conn.exec_driver_sql("SET LOCAL enable_sort = on")
+            await conn.exec_driver_sql("SET LOCAL enable_incremental_sort = on")
 
 
 @contextmanager
@@ -482,7 +485,11 @@ async def test_a_page_of_what_the_room_shows_skips_the_steps_by_index(db_factory
 
         [(sql, params)] = seen
         conn = await session.connection()
-        plan = await _generic_plan(conn, "probe_shown_page", sql, params)
+        # Ordered: the page is the newest 50 shown rows, so the index also earns
+        # its keep by handing them back in order. Left to cost, the planner can
+        # instead take another index and sort, depending on what earlier tests
+        # left in the table.
+        plan = await _generic_plan(conn, "probe_shown_page", sql, params, ordered=True)
         assert "ix_blocks_shown" in plan, plan
         await session.rollback()
 

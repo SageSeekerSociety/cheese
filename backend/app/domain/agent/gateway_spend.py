@@ -136,10 +136,12 @@ async def _charge_once(
                     input_tokens=row.prompt_tokens,
                     output_tokens=row.completion_tokens,
                     cost_usd=row.spend_usd,
+                    cache_read_tokens=row.cache_read_tokens,
+                    cache_write_tokens=row.cache_write_tokens,
                 )
                 for row in rows
             ]
-            for usage in usages:
+            for row, usage in zip(rows, usages, strict=True):
                 # `model=""` is the one unattributed migration row
                 # (`drain_new_usage`): real spend, named by the default.
                 model = usage.model or charge.model
@@ -148,11 +150,14 @@ async def _charge_once(
                         kind=charge.kind,
                         model=model,
                         input_tokens=usage.input_tokens,
+                        cache_read_tokens=usage.cache_read_tokens,
+                        cache_write_tokens=usage.cache_write_tokens,
                         output_tokens=usage.output_tokens,
                         cost_usd=usage.cost_usd,
                         project_id=charge.project_id,
                         topic_id=charge.topic_id,
                         turn_id=charge.turn_id,
+                        calls=row.calls,
                     )
                     continue
                 await ledger.record(
@@ -160,6 +165,8 @@ async def _charge_once(
                     credits=spend_to_credits(usage.cost_usd),
                     model=model,
                     input_tokens=usage.input_tokens,
+                    cache_read_tokens=usage.cache_read_tokens,
+                    cache_write_tokens=usage.cache_write_tokens,
                     output_tokens=usage.output_tokens,
                     cost_usd=usage.cost_usd,
                     route="gateway",
@@ -167,6 +174,7 @@ async def _charge_once(
                     topic_id=charge.topic_id,
                     turn_id=charge.turn_id,
                     user_id=charge.user_id,
+                    calls=row.calls,
                 )
             await key.advance(session, next_checkpoint)
             await session.commit()

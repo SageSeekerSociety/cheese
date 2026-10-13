@@ -9,7 +9,7 @@ import { reactive, ref, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import { t } from '@/i18n'
-import { suggestSkillName } from '@/lib/projectSkill'
+import { spellSkillName, suggestSkillName } from '@/lib/projectSkill'
 
 const props = defineProps<{
   /** `'new'` 是新建；一份技能是修改它；null 是关着。 */
@@ -69,8 +69,11 @@ watch(
 
 watch(
   () => form.title,
-  (title) => {
-    if (props.editing === 'new' && !nameTouched.value) form.name = suggestSkillName(title, props.taken)
+  async (title) => {
+    if (props.editing !== 'new' || nameTouched.value) return
+    const name = await spellSkillName(title, props.taken)
+    // 拼音表下载的那一下里，名称可能又改了，或者人已经自己写了调用名。
+    if (form.title === title && !nameTouched.value) form.name = name
   }
 )
 

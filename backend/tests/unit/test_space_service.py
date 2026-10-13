@@ -275,8 +275,8 @@ class TestCreateSpace:
         repo.create_space.assert_awaited_once()
         cat_repo.create_category.assert_awaited_once_with(
             space_id=1,
-            name="General",
-            description="Auto generated default category",
+            name="默认分类",
+            description="新建空间时自动创建的分类",
             display_order=0,
         )
         repo.save.assert_awaited_once_with(space)

@@ -44,6 +44,8 @@ class ProjectOut(BaseModel):
     #: The owning team's handle, which links to the team go by. Filled by the
     #: route, like ``shell``: it lives on the team, not on the project row.
     team_handle: str | None = None
+    #: The owning team's display name, filled with ``team_handle``.
+    team_name: str | None = None
     external_task_id: int | None = None
     ai_mode: AiMode
     intent: str = ""
@@ -58,6 +60,21 @@ class ProjectOut(BaseModel):
     #: browser without a frontend release. None only on a payload built without
     #: a session; every route fills it.
     shell: ShellOut | None = None
+
+
+class StartStepsOut(BaseModel):
+    """What the new-user guide needs to know about the caller
+    (`GET /projects/{id}/start-steps`)."""
+
+    #: They handed 芝士 something in this project.
+    asked: bool
+    #: An AI teammate replied where they asked.
+    answered: bool
+    #: A delivery was accepted into the project.
+    accepted: bool
+    #: They have accepted a delivery themselves in some project: past the first
+    #: steps, so the panel is not shown to them.
+    learned: bool
 
 
 class ForgeAttributionUpdate(BaseModel):

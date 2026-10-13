@@ -24,7 +24,6 @@ from functools import partial
 from sqlalchemy import select as _select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.config import settings
 from app.core.errors import BaseError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent import death_evidence, own_limit, turn_inputs
@@ -162,7 +161,11 @@ from app.domain.agent.turn.intake.rooms import room_roster
 # 几张 note 表……）收在 `turn/state/live.py` 那片叶子里，`ChatService.live` 是它唯一
 # 持有者。状态与处理器之间只有「处理器读状态」一个方向。
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
-from app.domain.agent.turn.state.live import HookWorkState, LiveWork
+from app.domain.agent.turn.state.live import LiveWork
+
+# 一轮还跑着的时候平台往它里面说的两句话（沉默、清单停在原地），连同各自的扫底。
+# 用 `TurnNotices` 收窄到 `ChatService` 对外的几样，所以这里不用反向被 import。
+from app.domain.agent.turn.steps import reminders
 from app.domain.agent.turn.steps.send import SendEffects
 from app.domain.agent.turn.store.completion import CompletionEffects
 from app.domain.agent.turn_usage import record_turn_usage
@@ -175,6 +178,7 @@ from app.domain.agent_instance.services import (
 from app.domain.agent_session.models import AgentSession as _AS
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.repositories import BlockRepository
+from app.domain.conversation.services import threads_of_rooms
 from app.domain.delivery.input_identity import (
     InputEffects,
     InputOutcomeUnconfirmed,
@@ -188,7 +192,6 @@ from app.domain.delivery.receipts import (
     complete_work_inputs,
     terminate_work_inputs,
 )
-from app.domain.identity.actor import Actor
 from app.domain.identity.handles import (
     names_a_person,
     recipient_seat,
@@ -199,9 +202,10 @@ from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.thread.services import conversation_inputs, threads_of_rooms
+from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.reads import load_topic
+from app.domain.user.services import language_of
 
 CHEESE_AUTHOR = "cheese"
 
@@ -333,6 +337,18 @@ class ChatService(SessionRecovery):
             for conversation in (topic_id, *threads):
                 await self._compute.dismiss(conversation, agent.handle)
 
+    async def stop_work(self, conversation_id: uuid.UUID) -> None:
+        """Stop whatever a teammate is still doing in this conversation, a
+        task that has just closed. What it wrote so far stays."""
+        await self._compute.stop_work(conversation_id)
+
+    async def stop_work_in_closed_tasks(self) -> int:
+        """Stop the work this process's sessions still do in closed tasks
+        (`turn_inputs.stop_work_in_closed_tasks`)."""
+        return await turn_inputs.stop_work_in_closed_tasks(
+            self._sessions, self._compute
+        )
+
     @property
     def turn_preparation(self) -> TurnPreparation:
         if self._turn_preparation is None:
@@ -365,7 +381,9 @@ class ChatService(SessionRecovery):
     def messages(self) -> AssistantMessages:
         # Composition only: this stateless writer uses the service's real state
         # and transactions; it owns no copied live work or compatibility entry.
-        return AssistantMessages(self._sessions, self.live, room_roster)
+        return AssistantMessages(
+            self._sessions, self.live, room_roster, self.thread_replied
+        )
 
     @property
     def turn_completion(self) -> TurnCompletion:
@@ -394,6 +412,18 @@ class ChatService(SessionRecovery):
     @property
     def session_factory(self) -> async_sessionmaker:
         return self._sessions
+
+    @property
+    def work_runner(self) -> SessionTurnEvents:
+        """The runner the composition root gave this service.
+
+        For callers that already hold the service: review's polling clocks
+        address agents through it, and they used to import ``app.api.deps`` for
+        the runner — a domain reaching up into the API layer
+        (``app/.importlinter``, C1). Handing the same assembled collaborator
+        back keeps one runner per process, whichever way it is reached.
+        """
+        return self._work_runner
 
     async def _turn_seat_handle(
         self,
@@ -478,7 +508,6 @@ class ChatService(SessionRecovery):
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -508,15 +537,6 @@ class ChatService(SessionRecovery):
         # 重发不算：重发的 `content` 是原话再送一次，待读窗口本来就会把同
         # 一段话重新递上来，两边都拼就是同一句说两遍。
         platform_turn = platform_wrote_this and not is_resume
-        # Record the arrival-time state before persistence and acknowledgements.
-        # If live work ends during either operation, queueing is still a fallback
-        # from the user's attempted live handoff and must be reported.
-        live_delivery_expected = (
-            summon
-            and not is_resume
-            and nudge_event is None
-            and self.has_running_turn(topic_id)
-        )
         if platform_wrote_this:
             turn_id = turn_id or uuid.uuid4()
             continuation_id = continuation_id or turn_id
@@ -574,27 +594,33 @@ class ChatService(SessionRecovery):
             # transaction. Neither accepting the human message here nor an RPC
             # acknowledgement proves the native session read the input.
 
-        # A turn is already running on this topic. Don't queue behind it —
-        # hand the message to the session that is running RIGHT NOW.
-        #
-        # The platform used to be stricter than the tool it drives: an
-        # interactive Claude Code accepts input while it works and folds it into
-        # the run, but we serialized turns on top of that, so one slow command
-        # made every later message wait the whole turn out. Injecting instead
-        # gets the message in front of 芝士 in seconds.
-        #
-        # Only the hooks-driven backends can take it (they own a live screen).
-        # If the handoff fails, the message remains pending and runs through the
-        # normal queue, but that degradation must be visible in the room.
-        if user_block_id is not None and (
-            live_delivery_expected or self.has_running_turn(topic_id)
-        ):
+        # 收件人：点名的实例（恢复/重发那一类），或落库时记在消息上的那位。
+        # 注入、降级判断和座位锁共用一个答案，所以只解析一次。
+        recipient_handle = None
+        if recipient_instance_id is not None:
+            async with self._sessions() as session:
+                instance = await session.get(AgentInstance, recipient_instance_id)
+                if instance is None or not instance.is_active:
+                    raise self._refuse_turn(say("addressedAgentUnavailable"))
+                recipient_handle = instance.handle
+        seat_handle = await self._turn_seat_handle(
+            topic_id,
+            user_block_id=user_block_id,
+            recipient_handle=recipient_handle,
+        )
+
+        # A turn is already running for THIS seat: hand the message to it rather
+        # than queue behind it. 判据是收件人自己那一席在不在跑，不是房间里有没有
+        # 人在跑 —— 另一位队友在跑、收件人空闲时，排队本来就是正常路径，不记降级。
+        # 这一支进去就说明本来指望实时递交，所以除了真递进去，剩下的都是降级。
+        if user_block_id is not None and self.has_running_turn(topic_id, seat_handle):
             delivered = await self.merge_into_running_turn(
                 topic_id,
                 user_block_ids,
                 content,
                 author,
                 attachments,
+                recipient_handle=seat_handle,
             )
             if isinstance(delivered, InputReconciliationPending):
                 checking, checking_meta = delivery_checking_notice()
@@ -619,18 +645,6 @@ class ChatService(SessionRecovery):
                 topic_id, fallback_text, turn_id, meta=fallback_meta
             )
 
-        recipient_handle = None
-        if recipient_instance_id is not None:
-            async with self._sessions() as session:
-                instance = await session.get(AgentInstance, recipient_instance_id)
-                if instance is None or not instance.is_active:
-                    raise self._refuse_turn(say("addressedAgentUnavailable"))
-                recipient_handle = instance.handle
-        seat_handle = await self._turn_seat_handle(
-            topic_id,
-            user_block_id=user_block_id,
-            recipient_handle=recipient_handle,
-        )
         async with self._prompt_lock(topic_id, turn_id, seat_handle):
             async for frame in self.turn_preparation.converse(
                 topic_id=topic_id,
@@ -640,7 +654,6 @@ class ChatService(SessionRecovery):
                 user_block_id=user_block_id,
                 is_resume=is_resume,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 platform_turn=platform_turn,
                 delivery_id=delivery_id,
                 recipient_instance_id=recipient_instance_id,
@@ -656,7 +669,6 @@ class ChatService(SessionRecovery):
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         recipient_handle: str | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]:
@@ -674,7 +686,6 @@ class ChatService(SessionRecovery):
                 author=author,
                 user_block_id=user_block_id,
                 continuation_id=continuation_id,
-                provision_actor=provision_actor,
                 recipient_instance_id=recipient_instance_id,
             ):
                 yield frame
@@ -722,6 +733,9 @@ class ChatService(SessionRecovery):
         state = self.live.hook_work.get((topic_id, consuming_turn_id))
         async with self._sessions() as session:
             stored, replied = await live_inputs(session, user_block_ids)
+            # 中途插进来的话也带着平台自己那几句，同样按正在说话的那个人的
+            # 语言走（`user.language`）。
+            language = await language_of(session, author)
         lines, images = live_input_lines(
             author,
             content,
@@ -731,7 +745,7 @@ class ChatService(SessionRecovery):
             recipient=state.acting_agent if state else None,
         )
         state = self.live.hook_work.get((topic_id, consuming_turn_id))
-        line = publication_prompt("\n".join(lines))
+        line = publication_prompt("\n".join(lines), language)
         registrar = self._input_registrar(
             InputEffects(
                 held_block_ids=tuple(user_block_ids),
@@ -794,76 +808,13 @@ class ChatService(SessionRecovery):
 
     async def remind_silent_turns(self) -> int:
         """Queue an internal reminder while a room response is still running."""
-        now = datetime.now(UTC)
-        due = [
-            state
-            for state in self.live.hook_work.values()
-            # Background inspections have their own notification policy. Only
-            # work answering a person owes a periodic chat update.
-            if state.reply_to is not None
-            and (
-                now
-                - max(
-                    state.last_chat_at or state.started_at,
-                    state.last_progress_reminder_at
-                    or (state.last_chat_at or state.started_at),
-                )
-            ).total_seconds()
-            >= settings.chat_progress_reminder_after_s
-            and state.work_id in self.live.active_turn_ids.get(state.topic_id, ())
-        ]
+        return await reminders.remind_silent_turns(self, datetime.now(UTC))
 
-        async def remind(state: HookWorkState) -> bool:
-            if self.live.hook_work.get(
-                (state.topic_id, state.work_id)
-            ) is not state or state.work_id not in self.live.active_turn_ids.get(
-                state.topic_id, ()
-            ):
-                return False
-            silent_for = now - (state.last_chat_at or state.started_at)
-            minutes = int(silent_for.total_seconds() // 60)
-            try:
-                # Repeats every `chat_progress_reminder_after_s` of continued
-                # silence. A publication clears this and `last_chat_at` together,
-                # so speaking is what stops the reminders; tool output and
-                # duplicate send requests are not speaking.
-                state.last_progress_reminder_at = now
-                # A blocked terminal must not hold up reminders in other rooms.
-                async with asyncio.timeout(5):
-                    delivered = await self.notify_running_turn(
-                        state.topic_id,
-                        f"You have published nothing to this room for {minutes} "
-                        "minutes and the person who asked is still waiting. If "
-                        "this turn is still running, call chat_send now with "
-                        "what you know so far and what you are waiting on — a "
-                        "room that shows nothing cannot be told apart from one "
-                        "that is stuck. If your plan has changed, also update "
-                        "it with todo_write. Ignore this only if the turn is "
-                        "already finished.",
-                    )
-                # THAT a reminder fired was already visible — the periodic
-                # loop logs `chat progress reminder: <count>` on any cycle whose
-                # result is worth reporting (app/core/background.py). What a
-                # count cannot carry is which room, which turn, how long it had
-                # been dark, and whether the transport took it, and those are
-                # the four things needed to tell 「the agent was reminded and
-                # stayed quiet」 from 「the reminder never reached it」.
-                logger.info(
-                    "chat progress reminder topic=%s turn=%s silent_min=%d "
-                    "delivered=%s",
-                    state.topic_id,
-                    state.work_id,
-                    minutes,
-                    delivered,
-                )
-                return delivered is True
-            except Exception:  # noqa: BLE001 — one room must not stop the sweep
-                logger.exception(
-                    "chat progress reminder failed (topic=%s)", state.topic_id
-                )
-                return False
-
-        return sum(await asyncio.gather(*(remind(state) for state in due)))
+    async def remind_stale_checklists(self) -> int:
+        """Ask a running turn whose own checklist stopped moving to write it
+        again. Both sweeps share one interval: each asks whether something
+        visible about this turn has stopped moving."""
+        return await reminders.remind_stale_checklists(self, datetime.now(UTC))
 
     async def notify_running_turn(
         self,
@@ -992,6 +943,10 @@ class ChatService(SessionRecovery):
         """
 
         await finish_work_termination(self, termination, terminate_work_inputs)
+
+    async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
+        """End the inputs of a work whose session died inside it. See turn_inputs."""
+        await turn_inputs.end_inputs_of_abandoned_work(self._sessions, work_id)
 
     def session_controls(self, topic_id: uuid.UUID):
         """The runtime whose live session in this room takes controls, if any."""
@@ -1369,7 +1324,7 @@ class ChatService(SessionRecovery):
         """巡检一圈：哪些项目该整理记忆了，逐个跑（`periodic_jobs` 里的一个）。
 
         这一簇连同它按房间记的那四份状态搬去了 `memory_ledger.py`——判据、串行
-        和「派到哪个会话上」的文档都在那里。这里留一行委托：`core/background.py`
+        和「派到哪个会话上」的文档都在那里。这里留一行委托：`app/domain/agent/periodic.py`
         的周期任务和测试都按这个入口叫它。
         """
         return await self._memory.sweep()

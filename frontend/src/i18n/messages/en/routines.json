@@ -36,6 +36,7 @@
     "missed": "Didn't run",
     "missedBecause": "Didn't run: {reason}",
     "took": "Took {minutes} min",
+    "files": "Result files",
     "open": "View this run"
   },
   "run": {
@@ -54,7 +55,7 @@
   "editTitle": "Edit “{title}”",
   "pickRoom": "Choose a channel first: the work runs there and the results go there",
   "saveFailed": "Couldn't save",
-  "intro": "At a set time, or when something happens in the project, the AI teammate in a channel starts on its own, puts the results in the channel and notifies you. Say “sum up progress every Monday morning” in a channel and Cheese drafts a routine for you to confirm here",
+  "intro": "At a set time, or when something happens in the project, the AI teammate in a channel starts on its own, puts the results in the channel and notifies you. Say “sum up progress every Monday morning” in a channel and {name} drafts a routine for you to confirm here",
   "loading": "Loading routines",
   "waiting": "Waiting for you to confirm",
   "spec": {
@@ -74,7 +75,7 @@
   "outputs": "Results: ",
   "listSeparator": ", ",
   "empty": "No routines yet",
-  "emptyHint": "Click “New”, or ask Cheese in a channel to draft one",
+  "emptyHint": "Click “New”, or ask the AI teammate in a channel to draft one",
   "form": {
     "room": "Channel to run in",
     "roomHint": "The channel's AI teammate does the work, and the results go in this channel",

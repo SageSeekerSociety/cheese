@@ -25,6 +25,8 @@ import { ACCEPT_ENTRIES } from './catalogAccept'
 import { ADMIN_ENTRIES } from './catalogAdmin'
 import { ATTACHMENT_ENTRIES } from './catalogAttachments'
 import { BASE_ENTRIES } from './catalogBase'
+import { CANVAS_ENTRIES } from './catalogCanvas'
+import { CHANNEL_FILES_ENTRIES } from './catalogChannelFiles'
 import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
@@ -68,7 +70,14 @@ import { QUEUE_ENTRIES } from './catalogQueue'
 import { RAIL_ENTRIES } from './catalogRail'
 import { REVIEW_ENTRIES } from './catalogReview'
 import { ROOM_ENTRIES } from './catalogRoom'
+import { SCENES_MISC_ENTRIES } from './catalogScenesMisc'
+import { SCENES_MISC2_ENTRIES } from './catalogScenesMisc2'
+import { SCENES_MISC3_ENTRIES } from './catalogScenesMisc3'
+import { SCENES_SPACES_ENTRIES } from './catalogScenesSpaces'
+import { SCENES_SPACES_DETAIL_ENTRIES } from './catalogScenesSpacesDetail'
+import { SCENES_WORKSPACE_ENTRIES } from './catalogScenesWorkspace'
 import { SETTINGS_ENTRIES } from './catalogSettings'
+import { SETTINGS_DATA_ENTRIES } from './catalogSettingsData'
 import { SHARED_ENTRIES } from './catalogShared'
 import { SHELL_ENTRIES } from './catalogShell'
 import { SKILL_ENTRIES } from './catalogSkills'
@@ -353,7 +362,13 @@ export const CATALOG: CatalogEntry[] = [
         name: '贴在输入框上方',
         note: '一行：待谁审阅，以及退回和采纳两颗按钮。交的是什么不在这一行上。',
         // 卡上带着哪一条活的 id：不传就只看「不属于任何一条活」的那些卡（见组件里那个 filter）。
-        props: { topicId: 'demo', topicStatus: 'active', taskId: ACCEPT_CARD?.task_id },
+        // 看卡的是卡上点名的审阅人：采纳和退回只给他。
+        props: {
+          topicId: 'demo',
+          topicStatus: 'active',
+          taskId: ACCEPT_CARD?.task_id,
+          viewer: ACCEPT_CARD?.reviewer_handle,
+        },
         expect: '采纳并完成任务',
       },
     ],
@@ -576,6 +591,18 @@ export const CATALOG: CatalogEntry[] = [
   ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
+  // 几个路由页拆出来的画面那一组（设备审批、已归档的项目、打开预览 / 网站，以及项目里的
+  // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
+  // `catalogScenesWorkspaceFixtures.ts`。
+  ...SCENES_MISC_ENTRIES,
+  // 第三批拆出来的画面（管理员看板告警、小队知识库、后台成员管理）在自己的文件里：
+  // `catalogScenesMisc2.ts`，数据在 `catalogScenesMisc2Fixtures.ts`（知识库那几条复用
+  // `catalogKnowledgeFixtures.ts`）。
+  ...SCENES_MISC2_ENTRIES,
+  ...SCENES_MISC3_ENTRIES,
+  ...SCENES_SPACES_ENTRIES,
+  ...SCENES_SPACES_DETAIL_ENTRIES,
+  ...SCENES_WORKSPACE_ENTRIES,
   // 通知渲染那一组（十件「一条动态长什么样」，数据在 `catalogNotificationsFixtures.ts`）
   // 在自己的文件里：`catalogNotifications.ts`。
   ...NOTIFICATION_ENTRIES,
@@ -590,6 +617,10 @@ export const CATALOG: CatalogEntry[] = [
   // 项目设置那一组（从 1041 行的 ProjectSettingsView 拆出来的六块）在自己的文件里：
   // `catalogSettings.ts`（数据在 `catalogSettingsFixtures.ts`）。
   ...SETTINGS_ENTRIES,
+  // 再一组：设置页里那五件 `Project*Settings`（数据、保存、轮询、授权回跳都下沉到
+  // `composables/useProject*Settings.ts` 之后升成的 A 级）在自己的文件里：
+  // `catalogSettingsData.ts`（数据在 `catalogSettingsDataFixtures.ts`）。
+  ...SETTINGS_DATA_ENTRIES,
   // 市场页和节点看板、外壳上的版本徽标与首页外框：`catalogMarket.ts`、`catalogShell.ts`。
   ...MARKET_ENTRIES,
   ...SHELL_ENTRIES,
@@ -852,6 +883,7 @@ export const CATALOG: CatalogEntry[] = [
   },
   // 文档里的块、基础组件各在自己的文件里：`catalogDoc.ts`、`catalogBase.ts`。
   ...DOC_BLOCK_ENTRIES,
+  ...CANVAS_ENTRIES,
   ...BASE_ENTRIES,
   ...PANEL_ENTRIES,
   // 跨目录的共用件那一组（表壳与它的表头格、富文本编辑器与附件图、页头、句子里的人）在
@@ -859,6 +891,8 @@ export const CATALOG: CatalogEntry[] = [
   ...SHARED_ENTRIES,
   // 整页那两件（一项产物的版本历史、小队的对外一面）在自己的文件里：`catalogViews.ts`。
   ...VIEW_ENTRIES,
+  // 一个频道的文件那一页在自己的文件里：`catalogChannelFiles.ts`。
+  ...CHANNEL_FILES_ENTRIES,
   // 反馈详情那一组（从详情页右栏拆出来的处理人、评论条、评论楼、进展时间线，数据在
   // `catalogFeedbackFixtures.ts`）在自己的文件里：`catalogFeedback.ts`。
   ...FEEDBACK_ENTRIES,

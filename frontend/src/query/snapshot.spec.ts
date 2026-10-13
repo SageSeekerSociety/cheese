@@ -24,7 +24,7 @@ const { queryClient } = await import('@/query/client')
 const { keys } = await import('@/query/keys')
 const { openRoomTasksQuery, pinsQuery, roomMembersQuery, roomTaskQuery, roomTasksQuery } = await import('@/query/room')
 const { RECENT_DONE } = await import('@/lib/channelTasks')
-const { expectRoom, fromSnapshot, settleRoom } = await import('@/query/snapshot')
+const { expectRoom, fromSnapshot, readEarly, settleRoom } = await import('@/query/snapshot')
 
 const member = (handle: string) => ({ topic_id: 'room', member_handle: handle, role: 'member' })
 
@@ -113,6 +113,11 @@ describe('进一个频道', () => {
 
 describe('进一个任务', () => {
   it('任务自己、相关都在快照里；名册是它所在频道的', async () => {
+    // 从任务清单点进来：这一件手上已经有了，任务页先画它，对话栏挂得上，订阅连得上。
+    queryClient.setQueryData(keys.roomTaskList('room', { limit: 0, status: 'open' }), {
+      data: [{ id: 'task', title: '整理周报' }],
+      total: 1,
+    })
     expectRoom('task', 'room')
     const row = queryClient.fetchQuery(roomTaskQuery('task'))
     const related = fromSnapshot(keys.taskRelated('task'), () => Promise.reject(new Error('asked')))
@@ -129,5 +134,37 @@ describe('进一个任务', () => {
     expect(await related).toEqual({ origin: null, materials: [] })
     expect(queryClient.getQueryData<{ data: unknown[] }>(keys.roomMembers('room'))?.data).toHaveLength(1)
     expect(api.getTask).not.toHaveBeenCalled()
+  })
+})
+
+describe('冷打开', () => {
+  it('先发出去的那一次读，页面挂上来的读直接接着它，不再问', async () => {
+    const later = vi.fn().mockResolvedValue(['later'])
+    readEarly(keys.roomFeedbackProposals('cold'), async () => ['early'])
+
+    expect(await fromSnapshot(keys.roomFeedbackProposals('cold'), later)).toEqual(['early'])
+    expect(later).not.toHaveBeenCalled()
+  })
+
+  it('接手过一次之后，再读（推送说变了）照常问服务器', async () => {
+    readEarly(keys.roomFeedbackProposals('cold2'), async () => ['early'])
+    await fromSnapshot(keys.roomFeedbackProposals('cold2'), async () => [])
+
+    expect(await fromSnapshot(keys.roomFeedbackProposals('cold2'), async () => ['fresh'])).toEqual(['fresh'])
+  })
+})
+
+describe('冷打开一件任务', () => {
+  // 手上没有这一件：任务页要等它才挂得上对话栏，带快照的订阅又要等对话栏挂上才发。等快照
+  // 就是干等到超时，所以直接问。
+  it('手上没有这一件，不等快照，马上去问', async () => {
+    vi.useFakeTimers()
+    api.getTask.mockResolvedValue({ id: 'cold-task', title: '整理周报' })
+    expectRoom('cold-task', 'room')
+    const row = queryClient.fetchQuery(roomTaskQuery('cold-task'))
+    await vi.advanceTimersByTimeAsync(50)
+
+    expect(api.getTask).toHaveBeenCalledWith('cold-task')
+    expect((await row).id).toBe('cold-task')
   })
 })

@@ -773,7 +773,9 @@ async def test_a_turn_nobody_asked_for_ends_when_it_ends(tmp_path, harness):
     async with harness(tmp_path, steps) as session:
         await session.send(f"{PLATFORM_NOTICE}\nrun the patrol", owes_reply=False)
         await session.finished(len(steps))
-        await asyncio.sleep(3)
+        # A turn held for an answer is held as it ends, before `finished` saw it
+        # idle; this only gives a late one time to show.
+        await asyncio.sleep(1)
 
         assert len(session.requests) == len(steps)
         assert session.backend.published == []

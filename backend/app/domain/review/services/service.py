@@ -24,6 +24,7 @@ from app.domain.review import (
 from app.domain.review.merge_state import MergeVerdict, Who
 from app.domain.review.models import (
     AcceptCard,
+    AcceptStatus,
     GateOutcome,
 )
 from app.domain.review.repositories import AcceptCardRepository
@@ -44,7 +45,7 @@ from . import cards, decisions, merge_queue, notices, polling, reviewers
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.project.protection import BranchProtection
-    from app.domain.review.github_pr import PullRequestStatus
+    from app.domain.review.github_pr_status import PullRequestStatus
 
 
 class AcceptService:
@@ -121,12 +122,8 @@ class AcceptService:
             admits_reviewer=admits_reviewer,
         )
 
-    async def _announce_filed(
-        self, topic: Topic, card: AcceptCard, task: Task, *, artifact: str
-    ) -> None:
-        return await notices._announce_filed(
-            self, topic=topic, card=card, task=task, artifact=artifact
-        )
+    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
+        return await notices._announce_filed(self, topic=topic, card=card, task=task)
 
     async def _announce_new_artifact(
         self, topic: Topic, name: str, *, task_id: uuid.UUID
@@ -157,6 +154,49 @@ class AcceptService:
 
     async def list_for_topic(self, topic_id: uuid.UUID) -> tuple[list[AcceptCard], int]:
         return await cards.list_for_topic(self, topic_id=topic_id)
+
+    async def latest_cards_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        return await cards.latest_cards_by_task(self, task_ids=task_ids)
+
+    async def live_cards_for_places(
+        self, place_ids: list[uuid.UUID]
+    ) -> list[AcceptCard]:
+        return await cards.live_cards_for_places(self, place_ids=place_ids)
+
+    async def list_recent_for_places(
+        self,
+        place_ids: list[uuid.UUID],
+        *,
+        open_statuses: tuple[AcceptStatus, ...],
+        settled_since: datetime,
+    ) -> list[AcceptCard]:
+        """这些地方的卡：还没结算的全部，加上 ``settled_since`` 之后递的已结算的。
+
+        The board's one read (`_live_cards`): which card each room or piece of
+        work is parked on. A route reaching the repository for this bytes the
+        domain's reader (the status table in `review/archive.py` and the
+        lookback a caller passes) straight into the HTTP layer, so it comes
+        through here instead — the same query, one call deeper.
+        """
+        return await self._repo.list_recent_for_places(
+            place_ids,
+            open_statuses=open_statuses,
+            settled_since=settled_since,
+        )
+
+    async def latest_by_task(
+        self, task_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, AcceptCard]:
+        """每条活上最新那张卡，一次查完。
+
+        The task page (`topics_tasks.py`) reads one card per thread this way.
+        A route reaching the repository for it leaks the domain's reader into
+        the HTTP layer, so it comes through here instead — the same query, one
+        call deeper.
+        """
+        return await self._repo.latest_by_task(task_ids)
 
     async def open_pr_card_ids(
         self, project_id: uuid.UUID | None = None
@@ -460,7 +500,7 @@ class AcceptService:
 
     async def _mark_task_merged(
         self, card: AcceptCard, *, delivered_head: str | None = None
-    ) -> None:
+    ) -> bool:
         return await polling._mark_task_merged(
             self, card=card, delivered_head=delivered_head
         )
@@ -560,6 +600,9 @@ class AcceptService:
             self, card=card, topic=topic, content=content, meta=meta, also=also
         )
 
+    async def _settle_the_card(self, card: AcceptCard, outcome: str) -> None:
+        return await notices._settle_the_card(self, card=card, outcome=outcome)
+
     async def _notify_ready(self, card: AcceptCard, topic: Topic) -> None:
         return await notices._notify_ready(self, card=card, topic=topic)
 
@@ -637,6 +680,9 @@ class AcceptService:
             runner=runner,
         )
 
+    async def _note_left_merge_queue(self, *, card: AcceptCard, topic: Topic) -> None:
+        return await notices._note_left_merge_queue(self, card=card, topic=topic)
+
     def _ci_nudge(
         self,
         *,
@@ -674,6 +720,11 @@ class AcceptService:
         self, *, card: AcceptCard, status
     ) -> pr_signals.PendingNudge | None:
         return notices._conflict_nudge(self, card=card, status=status)
+
+    def _title_nudge(
+        self, *, card: AcceptCard, topic: Topic, status
+    ) -> pr_signals.PendingNudge | None:
+        return notices._title_nudge(self, card=card, topic=topic, status=status)
 
     async def _dispatch_nudges(
         self,
@@ -719,6 +770,13 @@ class AcceptService:
     ) -> NoReturn:
         return await _accept._stop_accept_pr_unavailable(
             self, card=card, topic=topic, reason=reason
+        )
+
+    async def _stop_accept_title_disagrees(
+        self, card: AcceptCard, topic: Topic, pr_title: str
+    ) -> NoReturn:
+        return await _accept._stop_accept_title_disagrees(
+            self, card=card, topic=topic, pr_title=pr_title
         )
 
     async def _stop_accept_no_branch(self, card: AcceptCard, topic: Topic) -> NoReturn:

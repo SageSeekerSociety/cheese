@@ -8,7 +8,7 @@
 进来先过 `FeedbackAdminDep`（本文件）：反馈管理员是**反馈自己的名单**
 （`settings.feedback_triage_handles`，见 `FeedbackService.is_admin`），不是平台管理员
 ——平台管理员要用管理台做别的事，但那不等于能读每一条私密反馈。拒绝 agent 与作用域
-凭证的那一问和 `admin_common.require_platform_admin` 是同一个
+凭证的那一问和 `admin_deps.require_platform_admin` 是同一个
 （`policy.refuse_management_action`）。
 
 这里**没有**把某条反馈改成公开的入口 —— 公开与否是提交者一次性的选择，管理员能改
@@ -20,11 +20,10 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import Page, ok, page, typed_response
-from app.core.db import get_db
 from app.core.errors import ForbiddenError
 from app.domain.authz import policy
 from app.domain.feedback import services as feedback_services
@@ -50,9 +49,6 @@ class FeedbackAdminCounts(FeedbackCounts):
 
 class FeedbackAdminListOut(Page[FeedbackCard]):
     counts: FeedbackAdminCounts
-
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 async def get_feedback_service(db: DbSession) -> feedback_services.FeedbackService:

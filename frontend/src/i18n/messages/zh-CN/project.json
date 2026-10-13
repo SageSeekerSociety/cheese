@@ -76,24 +76,24 @@
   },
   "docs": {
     "kind": {
-      "charter": "章程",
+      "charter": "项目目标",
       "weeklies": "周报集",
       "memory": "记忆"
     },
     "loadFailed": "加载失败",
     "askInRoom": "去「综合」请它写",
-    "charterHint": "改了就等于给芝士下指令",
+    "charterHint": "{name}在每段对话里都会读这一份",
     "memoryEmpty": "暂无记忆",
     "memoryHint": "对话里说「记住……」，或它自己判断重要时，会写进这里",
     "memoryUser": "个人记忆",
     "memoryProject": "项目记忆",
     "memoryDelete": "删除这条记忆",
     "memoryDeleteTitle": "删除这条记忆？",
-    "memoryDeleteBody": "删除后找不回来，芝士也不再记得它。",
-    "noCharter": "这个项目还没有可编辑的章程文档",
+    "memoryDeleteBody": "删除后找不回来，{name}也不再记得它。",
+    "noCharter": "这个项目还没有可编辑的项目目标",
     "fromTopic": "来自频道",
     "weekliesEmpty": "暂无周报",
-    "weekliesHint": "在「综合」里 {'@'} 芝士，说「写一份这周的项目周报」，它写完会记到这里",
+    "weekliesHint": "在「综合」里 {'@'} {name}，说「写一份这周的项目周报」，它写完会记到这里",
     "goToRoom": "去「综合」",
     "recordedOn": "{date} 记录"
   }

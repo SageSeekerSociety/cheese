@@ -9,6 +9,7 @@ import pytest
 from app.domain.agent.room_events import _known_commits
 from app.domain.project.services import ProjectService
 from app.domain.repository import forge_files
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered
@@ -40,7 +41,7 @@ async def test_a_closed_task_with_a_gone_branch_leaves_the_baseline_readable(
             created_by="u",
         )
         live.branch_name, done.branch_name = "topic/live", "topic/done"
-        await tasks.close_thread(done)
+        await close_task(session, done, None)
         await session.commit()
         pid, rid, live_id = project.id, room.id, live.id
 

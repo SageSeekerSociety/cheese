@@ -1,8 +1,8 @@
 """私聊是名册两席的房间，所以它听到的和普通房间听到的是同一套（结论 19）。
 
 判据②（ARCH §9.1「私聊」行）：``is_private`` 只剩「名册两席」和「草稿区」两类读
-点。每段对话都读的项目总览最容易被各自再问一遍那个布尔：实况文档从前问过
-``topic.is_private``，私聊于是拿不到它。这里逐字对过：同一份总览，私聊和普通两席房间
+点。每段对话都读的项目目标最容易被各自再问一遍那个布尔：实况文档从前问过
+``topic.is_private``，私聊于是拿不到它。这里逐字对过：同一份项目目标，私聊和普通两席房间
 开场时听到的一模一样。
 """
 
@@ -38,7 +38,7 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=factory,
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -68,7 +68,7 @@ async def _prompt_of(factory, tmp_path, *, private: bool) -> tuple[str, int]:
 
 
 async def test_a_dm_is_told_the_overview_a_room_is_told(client, tmp_path):
-    """合同：项目总览，两席的私聊和两席的普通房间一模一样。"""
+    """合同：项目目标，两席的私聊和两席的普通房间一模一样。"""
     private_prompt, private_seats = client.portal.call(
         lambda: _prompt_of(client.test_request_factory, tmp_path, private=True)
     )
@@ -81,5 +81,4 @@ async def test_a_dm_is_told_the_overview_a_room_is_told(client, tmp_path):
     assert room_seats == 2
 
     for prompt in (private_prompt, room_prompt):
-        assert "## 项目是什么" in prompt
         assert DOC in prompt

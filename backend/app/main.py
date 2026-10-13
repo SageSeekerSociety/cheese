@@ -26,7 +26,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 import app.api.routes as routes_pkg
-from app.api.routes.admin_common import PlatformAdminDep
+from app.api.admin_deps import PlatformAdminDep
 from app.api.write_access import refuse_unsealed_writes, seal
 from app.core import background, net_io, route_metrics
 from app.core.config import settings
@@ -40,10 +40,13 @@ from app.core.obs import (
     get_logger,
 )
 from app.core.request_limits import RequestLimits
+from app.core.route_mounting import FAILED_ROUTE_MODULES
 from app.core.work_context import current_work_id, parse_work_id
 from app.core.ws_diagnostics import LogRefusedWebSockets
 from app.core.ws_handover import EndBusinessSocketsAtHandover, business_sockets
 from app.domain import backend_log  # module import: tests swap the intake singleton
+from app.domain.review.periodic import sweep_abandoned_gates
+from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
 # every request/turn correlated. See app/core/obs.py.
@@ -148,7 +151,7 @@ async def lifespan(application: FastAPI):
         SandboxSweeper,
     )
     from app.domain.machine.session_work import checkpoint_room
-    from app.domain.topic.retire import sweep_retired_storage
+    from app.domain.room_cleanup.retire import sweep_retired_storage
 
     # The running work — sessions to listen to, turns to watch, sweeps on a
     # clock — belongs to one backend process at a time (`app.core.ownership`).
@@ -169,12 +172,13 @@ async def lifespan(application: FastAPI):
     # the ones that have left it start at boot, beside it. A job leaving the lock
     # is one flag per PR (迁移顺序 3e) — `core/job_runs.py` holds the tick lease
     # that then keeps a job scheduled on every process from running a tick twice.
-    jobs[:] = background.periodic_jobs(
+    jobs[:] = periodic_jobs(
         chat=get_chat_service(),
-        machines=CloudPoolSweeper(async_session_factory),
-        sandboxes=SandboxSweeper(async_session_factory),
-        compute=ComputeMeterSweeper(async_session_factory),
+        machines=CloudPoolSweeper(async_session_factory).sweep,
+        sandboxes=SandboxSweeper(async_session_factory).sweep,
+        compute=ComputeMeterSweeper(async_session_factory).sweep,
         sessions=async_session_factory,
+        get_runner=get_work_runner,
     )
     runs = JobRuns(async_session_factory)
 
@@ -273,7 +277,15 @@ async def lifespan(application: FastAPI):
         # gate can be running in this process yet, so everything past the deadline
         # is provably abandoned by the process that died, not by this one.
         try:
-            swept = await background.sweep_abandoned_gates(get_chat_service())
+            chat = get_chat_service()
+            swept = await sweep_abandoned_gates(
+                chat.session_factory,
+                nudge_factory=gate_nudge_factory(
+                    chat=chat,
+                    sessions=chat.session_factory,
+                    get_runner=get_work_runner,
+                ),
+            )
             if swept["condemned"] or swept["errors"]:
                 get_logger("cheesex.runtime").info(
                     "gate_sweep_startup",
@@ -457,10 +469,11 @@ async def lifespan(application: FastAPI):
                 await hub_runtime.close()
 
 
-# Route modules that failed to import this boot. Read by the `routes` check in
-# app/api/routes/health.py, which makes /readyz answer 503 — so a partially
-# mounted build fails the rollout gate instead of taking traffic quietly.
-FAILED_ROUTE_MODULES: list[str] = []
+# Route modules that failed to import this boot. Owned by app/core/route_mounting
+# and re-exported on this module for callers that already read it off here. Read
+# by the `routes` check in app/core/health.py, which makes /readyz answer
+# 503 — so a partially mounted build fails the rollout gate instead of taking
+# traffic quietly.
 
 
 def _discover_routers(application: FastAPI) -> list[str]:

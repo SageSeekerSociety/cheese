@@ -10,6 +10,7 @@ import ChatPanel from '@/components/ChatPanel.vue'
 import { t } from '@/i18n'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
+import { refRoute } from '@/lib/refDirectory'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
@@ -111,7 +112,7 @@ function backToMembers() {
 }
 
 function openTopic(topicId: string) {
-  void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
+  void router.push(refRoute(props.projectId, topicId))
 }
 
 function handleMentionClick(handle: string) {
@@ -137,6 +138,7 @@ function handleMentionClick(handle: string) {
       :pr-header="false"
       :hide-header="!mdAndUp"
       :always-summon="agentHandle !== null"
+      :hand-off="agentHandle === null"
       :title-override="title"
       :back-label="t('navigation.project.members')"
       :members="store.members"

@@ -19,6 +19,7 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent.room_events import post_system_event
 from app.domain.usage.credits import CREDITS_EXHAUSTED_META, credits_event
+from app.domain.usage.ledger import Ledger, payer_for_project
 
 logger = logging.getLogger(__name__)
 
@@ -62,3 +63,23 @@ async def note_credits_refusal(
             )
     except Exception:  # noqa: BLE001 — see docstring
         logger.exception("could not post credits-refused notice for topic %s", topic_id)
+
+
+async def spent_reason(
+    sessions: async_sessionmaker, project_id: uuid.UUID
+) -> str | None:
+    """The ledger's own sentence for credits that ran out (which pool, and the
+    day it resets), for a turn the gateway's budget brake stopped before the
+    ledger had settled what it spent, so admission had nothing to say yet.
+    None for an unlimited payer, or when it cannot be read: the room then gets
+    the general line, never no line."""
+    try:
+        async with sessions() as session:
+            payer = await payer_for_project(session, project_id)
+            if payer.terms.unlimited:
+                return None
+            balance = await Ledger(session).balance(payer)
+            return str(balance.refusal().message)
+    except Exception:  # noqa: BLE001 — the room still gets the general line
+        logger.exception("could not read the credits refusal for %s", project_id)
+        return None

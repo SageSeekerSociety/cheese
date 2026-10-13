@@ -412,7 +412,10 @@ const ACTION_META: Record<string, { btn: string }> = {
     >
       <summary class="sys-line">
         <span class="sys-text" :class="{ 'sys-lead': notice.who === 'human' }">{{ notice.line }}</span>
-        <v-icon class="sys-chev" size="14">mdi-chevron-right</v-icon>
+        <span v-if="notice.quote" class="sys-quote" data-user-content>{{
+          t('work.room.notice.quote', { text: notice.quote })
+        }}</span>
+        <v-icon v-if="notice.occurrences.length" class="sys-chev" size="14">mdi-chevron-right</v-icon>
         <span v-if="notice.count > 1" class="sys-num">×<RollingNumber :value="notice.count" /></span>
         <span v-if="notice.whoLabel" class="sys-who">{{
           notice.who === 'cheese' ? t('work.room.notice.working', { name: name || agentName }) : notice.whoLabel
@@ -515,6 +518,12 @@ details.sys-row > summary::-webkit-details-marker,
 /* 需要人读的那一句（出了什么事）比旁边的说明深一档。 */
 .sys-lead {
   color: var(--text);
+}
+/* 一个人写的那句话（退回理由）：跟在这一行后面，用引号和正文色标出是他的原话。 */
+.sys-quote {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
 }
 /* 状态和按钮推到行尾：扫一列就知道有没有在等自己。 */
 .sys-who {

@@ -21,7 +21,8 @@
 | 频道 | **channel** | 项目里人说话的地方（`work.sidebar.topics`、`navigation.term.topic`），默认那一个叫「综合 = General」。后端和路由仍叫 topic（`/topics/{topic_id}`），界面上不再出现 room 和 topic |
 | 话题 | **topic** | 只在空间里用：`views/spaces/detail/ManageTopics.vue`、`addTopic`，是给题目贴的分类标签。**不用 thread**：thread 是支线。**不用 subject**：那是「学科/主题」的意思，会和赛题的「选题」撞车 |
 | 支线 | **thread** | 频道主线一条消息下面的讨论（`work.room.thread.title = Thread`，页签 `Threads`）。**不用 reply chain / sub-channel** |
-| 项目总览 | **project overview** | `work.channel.overview.project = Project overview`，后端 `projects.overview_document_id`。面板开关「概览」和页签「总览」是 **Overview**，不带 project |
+| 项目目标 | **project goals** | 项目自己的那份文档，只写要做成什么、什么时候做成、这阶段不做什么（`work.channel.overview.project = Project goals`，后端 `projects.overview_document_id`）。**不用 project overview / charter**：overview 是进项目落地的那一页 |
+| 项目总览 | **project overview** | 进项目落地的那一页（`navigation.project.overview`，路由 `workspace-overview`）。面板开关「概览」和页签「总览」是 **Overview**，不带 project |
 | 空间 | **space** | `views/spaces/`、`components/spaces/SpaceSidebar.vue`、`navigation.spaces = "Spaces"`。**不用 area / zone / room / channel**：channel 是项目里的频道 |
 | 项目 | **project** | `views/projects/`、后端 `/projects/{project_id}`。**不用 program**：那是「项目集」 |
 | 团队 | **team** | `views/teams/`、`navigation.teams = "Teams"`。**不用 group**：group 留给「域名组」 |
@@ -165,7 +166,7 @@ Delete this question? All of its answers will be deleted too.`
    | `tasks.form.taskLevel` | **赛题**难度 | `tasks` |
    | `tasks.publish.title` | 发布**赛题** | `tasks` |
 
-   两边是同一个实体的证据：`PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TasksApi`（`@/network/api/tasks`）。
+   两边是同一个实体的证据：`PublishTask.vue` 与 `Tasks.vue` 用的是同一个 `TaskBoardApi`（`@/api/taskBoard`）。
    外部佐证是既有英文：`tasks.form.accessControl.enableAccessRestrictionHint`（开启后，只有指定域名邮箱的
    用户才能查看和参与此**赛题**）与注册页的 `account.rule.emailHint`
    （Some **challenges** are open only to…）说的是同一道门槛。

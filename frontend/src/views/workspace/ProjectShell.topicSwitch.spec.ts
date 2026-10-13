@@ -51,6 +51,8 @@ const pendingB = vi.hoisted(() => ({
 }))
 
 // 聊天栏底部的技能提议卡也会读一次；这里没有提议。
+// 项目推送在 query/projectFeed.spec 里测；这里的页面不需要那条连接。
+vi.mock('@/query/projectFeed', () => ({ useProjectFeed: () => {} }))
 vi.mock('@/api/tasks', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/tasks')>()),
 }))
@@ -62,7 +64,7 @@ vi.mock('@/api/projectSkills', () => ({
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   // The roster's work computers: a neighbour of what this test is about.
-  getTopicComputeProfile: vi.fn(() => new Promise(() => {})),
+  getTopicEnvironment: vi.fn(() => new Promise(() => {})),
   // 页面取一份采纳卡（对话栏那一条和「改动」页顶部共用）：这里没有卡。
   getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   // 频道概览里的任务：这里没有。
@@ -116,7 +118,7 @@ function setup() {
     members: [],
     unreadMap: {},
     chatPct: 50,
-    rememberTopic: vi.fn(),
+    rememberPlace: vi.fn(),
     loadingTopics: false,
     accessDenied: null,
     error: null,

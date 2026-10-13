@@ -50,6 +50,7 @@ dependencies = [
     # held the loop. It has to be in the image already — a stall is over before
     # anyone could install it — so it is a runtime dependency, not a dev one.
     "py-spy>=0.4.2",
+    "tenacity>=9.2.1",
 ]
 
 [dependency-groups]

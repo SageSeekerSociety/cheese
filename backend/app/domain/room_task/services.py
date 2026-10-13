@@ -13,8 +13,7 @@ from app.domain.block.models import Block
 from app.domain.identity.handles import names_a_person
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
-from app.domain.project.protection import branch_protection_of
-from app.domain.room_task.checkouts import after_close
+from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task.models import (
     HEAVY_LOCK_TTL,
     LockKind,
@@ -156,7 +155,9 @@ class TaskService:
         if task is None or task.room_id != room_id or task.branch_name is None:
             raise NotFoundError("Task not found")
 
-    async def list_in_project(self, project_id: uuid.UUID) -> list[Task]:
+    async def list_in_project(
+        self, project_id: uuid.UUID, *, accepted: bool | None = None
+    ) -> list[Task]:
         """这个项目里的活，最老的在前。
 
         交出去的是 ORM 行，**暂留**：room_task 这一期还没有自己的窄读出口，项目
@@ -167,7 +168,7 @@ class TaskService:
         Callers authorize and own this session and its transaction. This read
         does not explicitly begin, commit or roll back.
         """
-        return await self._repo.list_for_project(project_id)
+        return await self._repo.list_for_project(project_id, accepted=accepted)
 
     async def list_open(self) -> list[Task]:
         """全平台还开着的任务，交出 ORM 行（同 `list_in_project`，**暂留**）。"""
@@ -200,6 +201,7 @@ class TaskService:
         me: str,
         limit: int,
         before: tuple[datetime, uuid.UUID] | None,
+        accepted: bool | None = None,
     ) -> tuple[list[tuple[Task, datetime]], bool]:
         """One page of the project's tasks, as `TaskRepository.page_for_project`
         reads it."""
@@ -212,6 +214,7 @@ class TaskService:
             me=me,
             limit=limit,
             before=before,
+            accepted=accepted,
         )
 
     async def counts_in_project(
@@ -222,11 +225,17 @@ class TaskService:
         status: str,
         channel: uuid.UUID | None,
         me: str,
+        accepted: bool | None = None,
     ) -> dict[str, int]:
         """The project's tasks counted by whose they are, as
         `TaskRepository.counts_for_project` counts them."""
         return await self._repo.counts_for_project(
-            project_id, rooms=rooms, status=status, channel=channel, me=me
+            project_id,
+            rooms=rooms,
+            status=status,
+            channel=channel,
+            me=me,
+            accepted=accepted,
         )
 
     async def open_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
@@ -303,22 +312,6 @@ class TaskService:
         task.contributor_handles = contributors
         await self._session.flush()
 
-    async def close_thread(self, task: Task, *, conclusion: str | None = None) -> Task:
-        """关闭任务 —— its owner or its own session says it is over; with a
-        `conclusion` it is done, without one it was put down.
-
-        Idempotent: closing a closed thread keeps the first `closed_at` — the
-        moment it stopped being live is a fact, not a re-statement of intent.
-        """
-        if conclusion is not None:
-            task.conclusion = conclusion
-        if task.status is not TaskStatus.closed:
-            task.status = TaskStatus.closed
-            task.closed_at = datetime.now(UTC)
-            after_close(self._session, task.room_id)
-        await self._session.flush()
-        return task
-
     async def ensure_document(self, task: Task) -> uuid.UUID:
         """The task's living document, created empty the first time it is
         asked for. The row is locked so two first asks make one document."""
@@ -348,29 +341,32 @@ class TaskService:
         """「开始」：written once, with who reviews its changes and what its
         document said at that moment.
 
-        The reviewer is the one named here, else the project's default, else the
-        task's own owner — whoever asked for the work is who it goes back to for
-        review, which is what happens anyway in a project that names nobody. It
-        is written now rather than read back from the setting when changes are
+        谁审这件事，按档取第一个：这里点名的人 > 派活时定的人 > 任务的负责人 >
+        项目默认审阅人。负责人这一档是提出这件事的人 —— 他提的，改了什么本来就
+        该他看一眼；他也审不了时（协作模式下的 AI 队友）才退到项目默认，不把审
+        阅人定成一个谁也采纳不了的人。任务建出来即开始（`api.task_instructions
+        .start_task_at_once`），所以这一档平时就是建任务的人在审。
+
+        It is written now rather than read back from the setting when changes are
         submitted: the setting can change, and who a task was handed to for
         review is a fact about the moment it started.
-
-        The owner comes last on purpose: a project that took the trouble to name
-        a default reviewer means it, and this ladder must not quietly re-route
-        that work to whoever happened to open the task.
         """
 
         if task.started_at is not None:
             raise UnprocessableEntityError(say("taskStartedAlready"))
         project = await self._session.get(Project, task.project_id)
+        owner_handle = (task.owner_handle or "").strip()
         reviewer = (
             (reviewer_handle or "").strip()
-            or task.reviewer_handle
+            or (task.reviewer_handle or "").strip()
+            or (owner_handle if can_take_review(project, owner_handle) else "")
             or branch_protection_of(project).default_reviewer
-            or task.owner_handle
         )
         if not reviewer:
             raise UnprocessableEntityError(say("reviewerRequired"))
+        # 审阅人定成采纳不了的人（协作模式下的 AI 队友），这件事的每一次交付都没人能收。
+        if not can_take_review(project, reviewer):
+            raise UnprocessableEntityError(say("reviewerNotAPerson", handle=reviewer))
         doc = (
             await Documents(self._session).get(task.document_id)
             if task.document_id is not None
@@ -498,6 +494,11 @@ class TaskService:
         task.conclusion = None
         if task.branch_name is not None and task.delivered_head is not None:
             await self.next_step(task)
+        else:
+            # Closing the task closed its PR (`review.task_pr`) and kept its
+            # branch. Forgetting the PR lets the draft sweep open one for the
+            # branch again, or adopt the PR still open where that close failed.
+            task.pr_number = task.pr_url = None
         await self._session.flush()
         return task
 

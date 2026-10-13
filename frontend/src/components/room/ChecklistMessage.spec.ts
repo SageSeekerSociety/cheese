@@ -87,12 +87,33 @@ describe('步骤清单消息', () => {
     expect(view.getByText('清单更新于 5分钟前')).toBeTruthy()
   })
 
-  it('一小时以前的说钟点，改过的也标「已编辑」', () => {
+  it('今天之内说相对时间，改过的也标「已编辑」', () => {
     const at = new Date('2026-09-20T09:05:00')
     const view = mount({ updatedAt: at.toISOString(), edited: true })
-    const clock = at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    expect(view.getByText(`清单更新于 ${clock}`)).toBeTruthy()
+    expect(view.getByText('清单更新于 5小时前')).toBeTruthy()
     expect(view.getByText('已编辑')).toBeTruthy()
+  })
+
+  // 一天以上按日历天说，不按流逝时长：过了 15 小时的是「昨天」，过了 39 小时的是
+  // 「前天」——以前两条都拿秒数比大小，39 小时那条也说「昨天」。
+  it('跨过一天说「昨天 23:00」，跨过两天说「前天 23:00」', () => {
+    const yesterday = new Date('2026-09-19T23:00:00')
+    expect(mount({ updatedAt: yesterday.toISOString() }).getByText('清单更新于 昨天 23:00')).toBeTruthy()
+    const before = new Date('2026-09-18T23:00:00')
+    expect(mount({ updatedAt: before.toISOString() }).getByText('清单更新于 前天 23:00')).toBeTruthy()
+  })
+
+  it('英文界面：日词和日期都按英文出，钟点不带 AM/PM', () => {
+    setLocale('en')
+    const yesterday = new Date('2026-09-19T23:00:00')
+    expect(mount({ updatedAt: yesterday.toISOString() }).getByText('Checklist updated Yesterday 23:00')).toBeTruthy()
+    const before = new Date('2026-09-18T23:00:00')
+    expect(mount({ updatedAt: before.toISOString() }).getByText('Checklist updated 09-18 23:00')).toBeTruthy()
+  })
+
+  it('跨年带上年份', () => {
+    const lastYear = new Date('2025-12-25T09:00:00')
+    expect(mount({ updatedAt: lastYear.toISOString() }).getByText('清单更新于 2025-12-25 09:00')).toBeTruthy()
   })
 
   // 自己的清单：点一步前面的记号，那一步换到下一个状态，交出去的是改过之后的整份。

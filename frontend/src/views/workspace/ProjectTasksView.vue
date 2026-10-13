@@ -6,14 +6,16 @@
 // 进行中、未开始。等你的那几件在行上用暖色写出来，不单独拉一组——「需要我处理」
 // 只在首页「待办」一处。十四天没动静的收进最底下的「已停滞」，点开才列出来。
 //
-// 筛选：谁的（全部 / 我负责的 / 我协作的 / 其他人的）、哪个频道、看已关闭的。数据和
+// 筛选：任务归谁、任务是否关闭、交付是否采纳、哪个频道。数据和
 // 去处都由容器 ProjectTasks 给。进行中的是整份，在这里分组、筛选、数；已关闭的只会越
 // 积越多，容器一页一页读（服务端筛好、数好），这里往下滚到底时要下一页（`more`）。
-import type { TaskFilter } from '@/api/tasks'
+import type { TaskDeliveryFilter, TaskFilter } from '@/api/tasks'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { BoardColumn, RoomTask } from '@/cx_types'
 
-import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
+
+import { useLoadMoreSentinel } from '@/composables/useLoadMoreSentinel'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -27,7 +29,7 @@ import { taskTitle } from '@/lib/topicState'
 const props = defineProps<{
   tasks: RoomTask[]
   /** 我看得见的频道：筛选菜单列没归档的那些，任务行上写频道名也查它。 */
-  channels: { id: string; title: string; archived?: boolean }[]
+  channels: { id: string; title: string; glyph: string; archived?: boolean }[]
   /** 只看这个频道；null 是整个项目。 */
   channelId: string | null
   names: Record<string, string>
@@ -46,8 +48,9 @@ const props = defineProps<{
   closedFailed: boolean
 }>()
 
-/** 看哪一边：进行中的，还是已关闭的。 */
-const closed = defineModel<boolean>('closed', { default: false })
+const status = defineModel<'all' | 'open' | 'closed'>('status', { default: 'open' })
+const delivery = defineModel<TaskDeliveryFilter>('delivery', { default: 'all' })
+const includesClosed = computed(() => status.value !== 'open')
 /** 谁的。 */
 const whose = defineModel<TaskFilter>('whose', { default: 'all' })
 
@@ -64,60 +67,86 @@ const stalledOpen = ref(false)
 
 const channelTitle = computed(() => new Map(props.channels.map((c) => [c.id, c.title])))
 const helping = (task: RoomTask) => (task.contributor_handles ?? []).includes(props.me)
-const isOpen = (task: RoomTask) => task.status === 'open' && task.presentation.column !== 'done'
+const isOpen = (task: RoomTask) => task.status === 'open'
 const inChannel = computed(() =>
   props.channelId ? props.tasks.filter((task) => task.room_id === props.channelId) : props.tasks
 )
-const inView = computed(() => inChannel.value.filter(isOpen))
+const inView = computed(() =>
+  inChannel.value.filter((task) => isOpen(task) && (delivery.value === 'all' || !!task.accepted_at))
+)
 const belongs: Record<TaskFilter, (task: RoomTask) => boolean> = {
   all: () => true,
   mine: (task) => task.owner_handle === props.me,
   helping,
   others: (task) => task.owner_handle !== props.me && !helping(task),
 }
-const counts = computed<Record<TaskFilter, number> | null>(() =>
-  closed.value
-    ? props.closedCounts
-    : {
-        all: inView.value.length,
-        mine: inView.value.filter(belongs.mine).length,
-        helping: inView.value.filter(belongs.helping).length,
-        others: inView.value.filter(belongs.others).length,
-      }
-)
+const openCounts = computed<Record<TaskFilter, number>>(() => ({
+  all: inView.value.length,
+  mine: inView.value.filter(belongs.mine).length,
+  helping: inView.value.filter(belongs.helping).length,
+  others: inView.value.filter(belongs.others).length,
+}))
+const counts = computed<Record<TaskFilter, number> | null>(() => {
+  if (status.value === 'open') return openCounts.value
+  if (!props.closedCounts) return null
+  if (status.value === 'closed') return props.closedCounts
+  return Object.fromEntries(
+    Object.keys(openCounts.value).map((key) => [
+      key,
+      openCounts.value[key as TaskFilter] + props.closedCounts![key as TaskFilter],
+    ])
+  ) as Record<TaskFilter, number>
+})
 const moved = (task: RoomTask) => Date.parse(task.last_activity_at ?? task.updated_at) || 0
-const shown = computed(() =>
-  closed.value ? props.closedTasks : inView.value.filter(belongs[whose.value]).sort((a, b) => moved(b) - moved(a))
+const shownOpen = computed(() =>
+  status.value === 'closed' ? [] : inView.value.filter(belongs[whose.value]).sort((a, b) => moved(b) - moved(a))
 )
+const shownClosed = computed(() => (includesClosed.value ? props.closedTasks : []))
+const shown = computed(() => [...shownOpen.value, ...shownClosed.value])
 
 // 已关闭的滚到最底下那一行露出来时要下一页。
-const sentinel = ref<HTMLElement | null>(null)
-let observer: IntersectionObserver | undefined
-watch(sentinel, (el) => {
-  observer?.disconnect()
-  if (!el || typeof IntersectionObserver === 'undefined') return
-  observer = new IntersectionObserver((entries) => {
-    if (entries.some((entry) => entry.isIntersecting)) emit('more')
-  })
-  observer.observe(el)
-})
-onBeforeUnmount(() => observer?.disconnect())
+const sentinel = useLoadMoreSentinel(() => emit('more'))
 
 const ORDER: BoardColumn[] = ['needs_you', 'delivering', 'building', 'not_started']
-const groups = computed(() =>
-  ORDER.map((column) => ({
+const groups = computed(() => {
+  const openGroups = ORDER.map((column) => ({
     column,
-    tasks: shown.value.filter((task) => !task.stalled && task.presentation.column === column),
-  })).filter((group) => group.tasks.length)
-)
-const stalled = computed(() => shown.value.filter((task) => task.stalled))
+    label: columnLabel(column),
+    count: 0,
+    tasks: shownOpen.value.filter(
+      (task) =>
+        !task.stalled &&
+        (task.presentation.column === column || (column === 'building' && task.presentation.column === 'done'))
+    ),
+  }))
+    .filter((group) => group.tasks.length)
+    .map((group) => ({ ...group, count: group.tasks.length }))
+  if (shownClosed.value.length)
+    openGroups.push({
+      column: 'done',
+      label: t('work.channelTasks.closed'),
+      count: props.closedCounts?.[whose.value] ?? shownClosed.value.length,
+      tasks: shownClosed.value,
+    })
+  return openGroups
+})
+const stalled = computed(() => shownOpen.value.filter((task) => task.stalled))
+const statuses = computed(() => [
+  { id: 'all' as const, label: t('taskList.allStatuses') },
+  { id: 'open' as const, label: t('taskList.open') },
+  { id: 'closed' as const, label: t('work.channelTasks.closed') },
+])
+const deliveries = computed(() => [
+  { id: 'all' as const, label: t('taskList.anyDelivery') },
+  { id: 'accepted' as const, label: t('taskList.acceptedDelivery') },
+])
 
-const filters: { id: TaskFilter; label: string }[] = [
+const filters = computed<{ id: TaskFilter; label: string }[]>(() => [
   { id: 'all', label: t('work.channelTasks.all') },
   { id: 'mine', label: t('work.channelTasks.mine') },
   { id: 'helping', label: t('work.channelTasks.helping') },
   { id: 'others', label: t('work.channelTasks.others') },
-]
+])
 const channelActions = computed<MenuAction[]>(() => [
   {
     key: 'all',
@@ -129,15 +158,19 @@ const channelActions = computed<MenuAction[]>(() => [
     .filter((c) => !c.archived)
     .map((c) => ({
       key: c.id,
-      label: `# ${c.title}`,
-      icon: 'mdi-pound',
+      // 符号由图标画（私密频道是锁），名字里不再带 #：两处都写就成了「# # 综合」。
+      label: c.title,
+      icon: c.glyph,
       onSelect: () => emit('pick-channel', c.id),
     })),
 ])
 const pickedChannel = computed(() => (props.channelId ? channelTitle.value.get(props.channelId) ?? null : null))
+const pickedGlyph = computed(() => props.channels.find((c) => c.id === props.channelId)?.glyph ?? 'mdi-pound')
 const nameOf = (handle: string) => props.names[handle] || handle
 
 function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'plain' } {
+  if (task.status === 'closed') return { text: t('work.channelTasks.closed'), tone: 'plain' }
+  if (task.presentation.phrase === 'accepted') return { text: t('taskList.open'), tone: 'plain' }
   if (task.awaits_me) return { text: myPhraseLabel(task.presentation.phrase), tone: 'mine' }
   if (task.presentation.phrase === 'running') return { text: phraseLabel('running'), tone: 'running' }
   return { text: phraseLabel(task.presentation.phrase), tone: 'plain' }
@@ -152,6 +185,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
 
     <div class="tasks__filters">
       <div class="tasks__chips" role="group" :aria-label="t('work.channelTasks.whose')">
+        <span class="tasks__filter-label t-meta">{{ t('taskList.whose') }}</span>
         <button
           v-for="f in filters"
           :key="f.id"
@@ -162,7 +196,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
           @click="whose = f.id"
         >
           {{ f.label }}
-          <!-- 任务还没读到（或读失败）时不写数：那时的 0 不是真的 0。 -->
+          <!-- Unknown counts must not look like zero tasks. -->
           <span v-if="!loading && !failed && counts" class="tasks__count">{{ counts[f.id] }}</span>
         </button>
       </div>
@@ -177,20 +211,42 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
             :data-user-content="pickedChannel || undefined"
             data-testid="tasks-channel"
           >
-            {{ pickedChannel ? `# ${pickedChannel}` : t('work.projectTasks.allChannels') }}
+            <v-icon v-if="pickedChannel" size="16">{{ pickedGlyph }}</v-icon>
+            {{ pickedChannel ?? t('work.projectTasks.allChannels') }}
             <v-icon size="16">mdi-chevron-down</v-icon>
           </button>
         </template>
       </AdaptiveMenu>
-      <button
-        type="button"
-        class="tasks__chip t-body"
-        :class="{ 'tasks__chip--on': closed }"
-        :aria-pressed="closed"
-        @click="closed = !closed"
-      >
-        {{ t('work.channelTasks.closed') }}
-      </button>
+    </div>
+    <div class="tasks__filters tasks__filters--details">
+      <div class="tasks__chips" role="group" :aria-label="t('taskList.status')">
+        <span class="tasks__filter-label t-meta">{{ t('taskList.status') }}</span>
+        <button
+          v-for="option in statuses"
+          :key="option.id"
+          type="button"
+          class="tasks__chip t-body"
+          :class="{ 'tasks__chip--on': status === option.id }"
+          :aria-pressed="status === option.id"
+          @click="status = option.id"
+        >
+          {{ option.label }}
+        </button>
+      </div>
+      <div class="tasks__chips" role="group" :aria-label="t('taskList.delivery')">
+        <span class="tasks__filter-label t-meta">{{ t('taskList.delivery') }}</span>
+        <button
+          v-for="option in deliveries"
+          :key="option.id"
+          type="button"
+          class="tasks__chip t-body"
+          :class="{ 'tasks__chip--on': delivery === option.id }"
+          :aria-pressed="delivery === option.id"
+          @click="delivery = option.id"
+        >
+          {{ option.label }}
+        </button>
+      </div>
     </div>
 
     <div v-if="loading" class="tasks__empty t-body c-muted">
@@ -199,22 +255,17 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
     <div v-else-if="failed" class="tasks__empty t-body c-muted" role="alert">
       {{ t('work.channelTasks.loadFailed') }}
       <button type="button" class="tasks__retry" @click="emit('retry')">
-        {{ t('work.roomMachine.retry') }}
+        {{ t('global.loadError.retry') }}
       </button>
     </div>
-    <div v-else-if="!shown.length" class="tasks__empty t-body c-muted">
+    <div v-else-if="!shown.length && !(includesClosed && closedFailed)" class="tasks__empty t-body c-muted">
       {{ t('work.channelTasks.empty') }}
     </div>
     <template v-else>
-      <!-- 已关闭的不再分组：它们都在「已完成」那一格。 -->
-      <section
-        v-for="group in closed ? [{ column: 'done', tasks: shown }] : groups"
-        :key="group.column"
-        class="tasks__group"
-      >
+      <section v-for="group in groups" :key="group.column" class="tasks__group">
         <h2 class="tasks__group-head">
-          {{ columnLabel(group.column as BoardColumn) }}
-          <span class="tasks__count">{{ closed ? counts?.[whose] ?? '' : group.tasks.length }}</span>
+          {{ group.label }}
+          <span class="tasks__count">{{ group.count }}</span>
         </h2>
         <ul class="tasks__list">
           <li v-for="task in group.tasks" :key="task.id">
@@ -239,24 +290,27 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   >+{{ task.contributor_handles.length }}</span
                 >
               </span>
-              <span class="tasks__state" :class="`tasks__state--${stateOf(task).tone}`">{{ stateOf(task).text }}</span>
+              <span class="tasks__state" :class="`tasks__state--${stateOf(task).tone}`">
+                <span>{{ stateOf(task).text }}</span>
+                <span v-if="task.accepted_at" class="tasks__accepted">{{ t('taskList.deliveryAccepted') }}</span>
+              </span>
               <span class="tasks__when t-meta c-faint">{{ relTime(task.last_activity_at) }}</span>
             </button>
           </li>
         </ul>
       </section>
 
-      <div v-if="closed && closedFailed" class="tasks__empty t-body c-muted" role="alert">
+      <div v-if="includesClosed && closedFailed" class="tasks__empty t-body c-muted" role="alert">
         {{ t('work.channelTasks.loadFailed') }}
         <button type="button" class="tasks__retry" @click="emit('more')">
-          {{ t('work.roomMachine.retry') }}
+          {{ t('global.loadError.retry') }}
         </button>
       </div>
-      <div v-else-if="closed && closedHasMore" ref="sentinel" class="tasks__more" data-testid="tasks-more">
+      <div v-else-if="includesClosed && closedHasMore" ref="sentinel" class="tasks__more" data-testid="tasks-more">
         <v-progress-circular v-if="closedLoading" indeterminate size="16" width="2" />
       </div>
 
-      <section v-if="!closed && stalled.length" class="tasks__group" data-testid="tasks-stalled">
+      <section v-if="stalled.length" class="tasks__group" data-testid="tasks-stalled">
         <button
           type="button"
           class="tasks__fold t-body"
@@ -281,7 +335,10 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
                   nameOf(task.owner_handle)
                 }}</span>
               </span>
-              <span class="tasks__state">{{ stateOf(task).text }}</span>
+              <span class="tasks__state">
+                <span>{{ stateOf(task).text }}</span>
+                <span v-if="task.accepted_at" class="tasks__accepted">{{ t('taskList.deliveryAccepted') }}</span>
+              </span>
               <span class="tasks__when t-meta c-faint">{{ relTime(task.last_activity_at) }}</span>
             </button>
           </li>
@@ -303,8 +360,15 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   display: flex;
   gap: 8px;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.tasks__filters--details {
+  gap: 12px 24px;
+}
+.tasks__filter-label {
+  min-width: 28px;
+  color: var(--muted);
 }
 .tasks__spacer {
   flex: 1 1 auto;
@@ -314,7 +378,7 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   flex-shrink: 0;
   align-items: center;
   gap: 4px;
-  height: 32px;
+  min-height: 36px;
   padding: 0 12px;
   border: 1px solid var(--line-2);
   border-radius: var(--radius-pill);
@@ -325,9 +389,14 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   cursor: pointer;
 }
 .tasks__chip--on {
-  border-color: var(--accent);
-  background: var(--accent-wash);
-  color: var(--accent-ink);
+  border-color: var(--text);
+  background: var(--fill);
+  color: var(--ink);
+  font-weight: 600;
+}
+.tasks__chip:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
 }
 .tasks__count {
   color: var(--faint);
@@ -418,7 +487,15 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   color: var(--muted);
 }
 .tasks__state {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
   color: var(--muted);
+}
+.tasks__accepted {
+  color: var(--ok-ink);
+  font-weight: 400;
 }
 .tasks__state--mine {
   color: var(--accent-ink);
@@ -447,13 +524,26 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   text-align: left;
   cursor: pointer;
 }
-/* 窄的时候一条任务两行：任务名一行，状态、频道、负责人、时间一行。 */
+/* Keep status and delivery readable before channel and owner on narrow screens. */
 @media (max-width: 720px) {
+  .tasks__filters--details {
+    align-items: flex-start;
+  }
+  .tasks__chips {
+    width: 100%;
+  }
+  .tasks__spacer {
+    display: none;
+  }
+  .tasks__fold {
+    flex-wrap: wrap;
+  }
   .tasks__row {
-    grid-template-columns: auto auto minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     grid-template-areas:
-      'title title title'
-      'state channel who';
+      'title title'
+      'state state'
+      'channel who';
     gap: 4px 8px;
     padding: 10px 0;
   }
@@ -462,6 +552,9 @@ function stateOf(task: RoomTask): { text: string; tone: 'mine' | 'running' | 'pl
   }
   .tasks__state {
     grid-area: state;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px 12px;
   }
   .tasks__channel {
     grid-area: channel;

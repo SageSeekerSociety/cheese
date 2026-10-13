@@ -966,6 +966,51 @@
         }
       }
     },
+    "/addresses/refs": {
+      "get": {
+        "tags": [
+          "addresses"
+        ],
+        "summary": "Resolve Refs",
+        "description": "What each ``<#id>`` in ``ids`` (comma-separated) names: a channel, a\ntask or a 支线, its title and the room it is in. An id that names none of\nthem, or one the caller may not see, is absent from the answer — so a\nprivate channel is not told apart from one that was never made.",
+        "operationId": "resolve_refs_addresses_refs_get",
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 3700,
+              "default": "",
+              "title": "Ids"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationRefsEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/slug": {
       "put": {
         "tags": [
@@ -3384,7 +3429,7 @@
           "admin"
         ],
         "summary": "Usage Stats",
-        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。\n\n`claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里\n唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，\n理由见那个模块的 docstring）。",
+        "description": "用量那一块：窗口内的总量、按天序列、top-N 项目、以及**额度燃尽**。\n\n`top_projects` 每一项都带 `project_id` 和名字 —— 柱子要能点进去，只给名字的\n柱子点不开。`totals.unpriced_tokens` 与 `totals.cost_usd` 一起读才对。\n`credits` 那一组把「已耗尽 / 快烧完 / unlimited」三个互斥名单分开给 —— 三者\n不能加在一起，理由在 `gaps.py` 的模块 docstring 第 2 条。\n\n`cache` / `top_users` / `unattributed` / `hourly` / `recent` 回答缓存命中多少、\n谁触发的、什么时候用的，口径在 `platform_stats/usage_detail.py`。\n\n`claude_accounts` 是计量代理写在账本旁边的池子快照（`claude_pool.py`），这块里\n唯一不来自数据库的东西。它读不到时带一个原因代号、**不报错**（代号由前端翻，\n理由见那个模块的 docstring）。",
         "operationId": "usage_stats_admin_stats_usage_get",
         "parameters": [
           {
@@ -3611,6 +3656,28 @@
                   "additionalProperties": true,
                   "type": "object",
                   "title": "Response Integrations Stats Admin Stats Integrations Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/admin/stats/machines": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Machines Stats",
+        "description": "机器那一块：MicroCloud 上的每台宿主机、它上面的沙箱、温机池，和过去一天沙箱\n起得怎么样。口径写在 `app/domain/machine/admin.py` 的模块 docstring 上。",
+        "operationId": "machines_stats_admin_stats_machines_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MachinesOverviewOutEnvelope"
                 }
               }
             }
@@ -7221,6 +7288,392 @@
         }
       }
     },
+    "/blocks/{block_id}/answer": {
+      "delete": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Withdraw Answer",
+        "description": "Take back your own answer to a question asked with quick replies, so the\nquestion is unanswered again and its options come back for everyone.\n\n``block_id`` is the question, not the answer: an answer is an ordinary\nmessage, and what is withdrawn is the line it left on the question\n(`domain/block/questions`). Only whoever answered it can — anyone else gets\na refusal, not a way to erase somebody's answer. The message the answerer\nsent stays in the room; its words are not what this changes.\n\nWhoever was watching gets the question as a `block_updated` frame, and the\nagent that asked it runs another turn, because the turn it had been going\non was decided on an answer that no longer counts.",
+        "operationId": "withdraw_answer_blocks__block_id__answer_delete",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawnAnswerEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{document_id}/canvases": {
+      "get": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Document Canvases",
+        "description": "The canvases the document's text names, each as text, in order.",
+        "operationId": "document_canvases_documents__document_id__canvases_get",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DocumentCanvasTextOutListEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Create Canvas",
+        "description": "A new, empty canvas of this document, for a canvas block an editor just\nput in it.",
+        "operationId": "create_canvas_documents__document_id__canvases_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}": {
+      "get": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Get Canvas",
+        "operationId": "get_canvas_canvases__canvas_id__get",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Patch Canvas",
+        "operationId": "patch_canvas_canvases__canvas_id__patch",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanvasPatchIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}/text": {
+      "get": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Canvas Text",
+        "description": "The canvas as an outline an AI teammate reads; ``positions`` adds where\neach card sits.",
+        "operationId": "canvas_text_canvases__canvas_id__text_get",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          },
+          {
+            "name": "positions",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Positions"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasTextOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}/changes": {
+      "post": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Change Canvas",
+        "description": "Make the changes in order, all or none; a refusal names the change\n(``data.index``). Answers the canvas as it now is, and the numbers new\ncards got by their ``ref`` (``refs``).",
+        "operationId": "change_canvas_canvases__canvas_id__changes_post",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangesIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasChangedOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/canvases/{canvas_id}/copy": {
+      "post": {
+        "tags": [
+          "canvases"
+        ],
+        "summary": "Copy Canvas",
+        "description": "A copy of this canvas as it is now, belonging to ``document_id``: a\ncanvas block pasted into a document, or into the same one again. Whoever\nmay read the canvas and write that document may make one.",
+        "operationId": "copy_canvas_canvases__canvas_id__copy_post",
+        "parameters": [
+          {
+            "name": "canvas_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Canvas Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CanvasCopyIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanvasOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/comments/{commentId}/attitudes": {
       "post": {
         "tags": [
@@ -8057,6 +8510,58 @@
                     }
                   ],
                   "title": "Response Check My Claude Code Connector My Devices  Device Id  Claude Code Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/sandbox": {
+      "post": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Check My Sandbox",
+        "description": "Ask one of the caller's machines again whether it can give a session a\nsandbox: after its owner changed what it lacked, the page asks rather than\nleaving the answer from its last connection standing.",
+        "operationId": "check_my_sandbox_connector_my_devices__device_id__sandbox_post",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Check My Sandbox Connector My Devices  Device Id  Sandbox Post"
                 }
               }
             }
@@ -9718,6 +10223,58 @@
                   "title": "Response Stop Agent Documents  Document Id  Comments  Comment Id  Agent Stop Post"
                 }
               }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{document_id}/image": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Document Image",
+        "description": "The bytes of an image the document references by ``path``.\n\nA browser cannot send its credential with an ``<img src>``, so the editor\nfetches these and shows them from memory.",
+        "operationId": "document_image_documents__document_id__image_get",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          },
+          {
+            "name": "path",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The image's bytes.",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/gif": {},
+              "image/webp": {}
             }
           },
           "422": {
@@ -16995,7 +17552,7 @@
           "documents"
         ],
         "summary": "Project Overview Document",
-        "description": "Which document is the project's overview. It is made, empty, the first\ntime anyone asks.",
+        "description": "Which document holds the project's goals. It is made, empty, the first\ntime anyone asks.",
         "operationId": "project_overview_document_projects__project_id__overview_get",
         "parameters": [
           {
@@ -17525,7 +18082,7 @@
           "market"
         ],
         "summary": "List Pools",
-        "description": "The full catalog: every AI pool and compute pool on offer, each with its\ntier, price, and whether it's available to select. Powers the 市场 browse\nview; a project selects from these in its settings.",
+        "description": "The full catalog: every AI pool and sandbox spec on offer, each with\nits tier, price, and whether it's available to select. Powers the 市场\nbrowse view; a project selects from these in its settings.",
         "operationId": "list_pools_market_pools_get",
         "responses": {
           "200": {
@@ -17549,7 +18106,7 @@
           "market"
         ],
         "summary": "List Nodes",
-        "description": "节点看板: the compute pools this deployment can run a turn on, with\nliveness and current load (in-flight turns).\n\nBuilt from the same catalogue the 市场 browses, so the board cannot show a\nnode the picker does not offer — it used to show exactly one, the platform's\nown container host, which was the one pool the catalogue never listed.",
+        "description": "节点看板: the sandbox specs this deployment can place an agent's\nenvironment on, with liveness and current load (in-flight turns).\n\nBuilt from the same catalogue the 市场 browses, so the board cannot show a\nnode the picker does not offer.",
         "operationId": "list_nodes_market_nodes_get",
         "responses": {
           "200": {
@@ -20061,7 +20618,7 @@
           "project-context"
         ],
         "summary": "Search Documents",
-        "description": "The library's search: the project's own documents by title and by what\nthey say, and the living documents of the channels the caller may read —\ntasks' documents, the project overview — by what they say. Those are not\nin the library's list, but they are found here, under their channel and\ntask, to open there or keep a copy of.",
+        "description": "The library's search: the project's own documents by title and by what\nthey say, and the living documents of the channels the caller may read —\ntasks' documents, the project's goals — by what they say. Those are not\nin the library's list, but they are found here, under their channel and\ntask, to open there or keep a copy of.",
         "operationId": "search_documents_projects__project_id__documents_search_get",
         "parameters": [
           {
@@ -21558,7 +22115,7 @@
           "projects"
         ],
         "summary": "List Project Tasks",
-        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state. The sidebar polls for the open\nones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per\nread.\n\nWith `limit` (and a `status`) it is a page instead, of the threads that\nmost recently moved: the closed ones only grow, and the all-tasks page\nscrolls through them rather than reading them whole. A page can be narrowed\nto one `channel` and to `whose` the threads are to the reader (`mine`: they\nown it; `helping`: they are among its contributors; `others`: neither).\n`next` is the cursor to pass as `before` for the page after; `counts` says\nhow many there are in all and by whose, for the same status and channel.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
+        "description": "Every thread in the project, each with the card it currently rides on.\n\n`status` keeps only threads in that state. The sidebar polls for the open\nones: 128 of the 1,716 on dev (2026-10-08), and every row is rebuilt per\nread. `accepted` independently keeps tasks with an approved delivery\n(`true`) or without one (`false`); omitted, it keeps both. This applies to\nwhole lists as well as pages, regardless of whether the task is open.\n\nWith `limit` (and a `status`) it is a page instead, of the threads that\nmost recently moved: the closed ones only grow, and the all-tasks page\nscrolls through them rather than reading them whole. A page can be narrowed\nto one `channel` and to `whose` the threads are to the reader (`mine`: they\nown it; `helping`: they are among its contributors; `others`: neither).\n`next` is the cursor to pass as `before` for the page after; `counts` says\nhow many there are in all and by whose, for the same status, channel and\nacceptance filter.\n\nThe rail draws rooms and the work inside them, so it needs both halves at\nonce. Two round trips, not two per room and one per thread: a project here\nalready holds ~170 rooms, and the per-room shape (`/topics/{id}/tasks`)\nwould make painting one sidebar 170 requests before a single PR badge.\n\n`card` is the newest accept card ON THAT THREAD, narrowed to what a rail row\ncan show — where the work stands and the PR it rides on. Null for a thread\nthat has not been filed for acceptance, which is most of them while the work\nis still going.\n\n`presentation` is the board's answer for that row — which column it is in\nand the one phrase to print on it — derived here rather than in the client,\nso every client gives the same answer (`room_task/presentation.py`). Two\nround trips still: it is computed from the two batches already fetched.\n\n条件请求：侧栏每画一次 rail 就要整份清单，而一个项目这里有 ~1373 条活、2 MB\n出头。`ETag` 由整份信封的规范化 JSON 算出，`If-None-Match` 命中就回 304、空\nbody —— 切页面时「没有新东西」不再重传这 2 MB。指纹算的是 body，所以任何一行的\n状态、哪张卡、谁在跑变了都会换一个 tag；`stalled` 是唯一会随时间自己翻的一列，\n翻的时候本来就该重画。",
         "operationId": "list_project_tasks_projects__project_id__tasks_get",
         "parameters": [
           {
@@ -21589,6 +22146,22 @@
                 }
               ],
               "title": "Status"
+            }
+          },
+          {
+            "name": "accepted",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accepted"
             }
           },
           {
@@ -21731,6 +22304,50 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Project Progress Projects  Project Id  Progress Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/start-steps": {
+      "get": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Project Start Steps",
+        "description": "What the new-user guide needs to know about the caller in this project\n(`app/domain/onboarding/start.py`): handed 芝士 something, got a reply, had a\ndelivery accepted.",
+        "operationId": "project_start_steps_projects__project_id__start_steps_get",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StartStepsOutEnvelope"
                 }
               }
             }
@@ -23304,6 +23921,69 @@
         }
       }
     },
+    "/projects/{project_id}/own-agents/{handle}/callers": {
+      "put": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Set Own Agent Callers",
+        "description": "Who may call a member's own agent: its owner alone, or any person in the\nproject. Only its owner decides, since it is their account that pays.",
+        "operationId": "set_own_agent_callers_projects__project_id__own_agents__handle__callers_put",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handle"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnAgentCallersUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/projects/{project_id}/default-model": {
       "get": {
         "tags": [
@@ -23409,6 +24089,7 @@
           "projects"
         ],
         "summary": "Get Compute Configs",
+        "description": "The environment a new agent in this project gets, where its agents\nare now, the sandbox specs it is offered and the people's computers it\nhas.",
         "operationId": "get_compute_configs_projects__project_id__compute_configs_get",
         "parameters": [
           {
@@ -23452,6 +24133,7 @@
           "projects"
         ],
         "summary": "Save Compute Configs",
+        "description": "What a new agent in this project gets. A manager's choice; nobody\nalready working moves.",
         "operationId": "save_compute_configs_projects__project_id__compute_configs_put",
         "parameters": [
           {
@@ -23470,7 +24152,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ProjectComputeConfigs"
+                "$ref": "#/components/schemas/ComputeConfigsIn"
               }
             }
           }
@@ -23507,7 +24189,7 @@
           "projects"
         ],
         "summary": "List Device Sessions",
-        "description": "The project's agent sessions on one self-hosted device, for a project\nmanager to switch some of them elsewhere (「现在的分布」 → 查看并更换).\n\nEach switch then goes through the room's own route, with its checks. A\nsession in a room the caller cannot open is counted in ``hidden`` and not\nlisted, so its room's title stays in that room.",
+        "description": "The project's agent sessions on one self-hosted device, for a project\nmanager to switch some of them elsewhere (「现在的分布」 → 查看并更换).\n\nEach switch then goes through the session's own route, with its checks. A\nsession in a room the caller cannot open is counted in ``hidden`` and not\nlisted, so its room's title stays in that room.",
         "operationId": "list_device_sessions_projects__project_id__devices__device_id__sessions_get",
         "parameters": [
           {
@@ -27194,6 +27876,50 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReviewCommentOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/files": {
+      "get": {
+        "tags": [
+          "room-files"
+        ],
+        "summary": "List Files",
+        "description": "这个房间自己的文件：路径、大小、最后一次改动、是谁写的，最近改的在最前。\n\n这个房间的文件区此前只能按路径取一份（`files/raw`）：要打开一份，得先知道它叫\n什么名字。定时任务交回的结果、芝士交付的文档、有人放进来的文件都落在同一个目录\n下，这份清单就是那个目录本身，也是界面上看得见它的那一处。\n\n作者不在目录里，在保存记录里（`room_file_revisions`）：列完目录照最后一次保存\n补齐，没保存过的那几份照列。\n\n`truncated` 为真时说清单不是全部：超过上限的那部分没有列出来。",
+        "operationId": "list_files_topics__topic_id__files_get",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoomFileListOutEnvelope"
                 }
               }
             }
@@ -38844,7 +39570,7 @@
           "Teams"
         ],
         "summary": "Enumerate Team Members",
-        "description": "Return team members for a given team.",
+        "description": "Return team members for a given team.\n\nEach row says whether the reader may remove that member (``canRemove``),\nby the rule the remove endpoint enforces. The reader's own row says no:\nleaving is its own action, not a removal from the roster.",
         "operationId": "get_team_members_teams__teamId__members_get",
         "parameters": [
           {
@@ -40679,7 +41405,7 @@
           "topics"
         ],
         "summary": "List Topic Blocks",
-        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.\n\nEach block carries what a reader draws with it, so the page is whole on its\nown: `reactions`, the 支线 under a main-line message (`thread`), a routine's\nrun (`routine_run`), and `tasks` — the tasks made from a message, under it,\nand the task a room-line row says began there (`room_task_rows`), as the\nroom's task list has them.",
+        "description": "The topic's conversation timeline, oldest-first.\n\nAuthorized, like `/comments` and `/doc` beside it. This one carries the\nconversation ITSELF, and it was the only unguarded route of the three that\ndid: measured on a test server, a logged-in caller belonging to no part of\nthe project read another team's messages verbatim by holding a topic id.\n\nPaging is OPT-IN: with no `limit` this returns the whole timeline, exactly\nas it always has. That default is deliberate — agents read this endpoint to\nreview history (`platform_request GET /topics/{id}/blocks`), and a default window\nwould silently truncate them with no way to notice. Callers that DO page get\n`has_more` / `oldest_id` (older blocks exist above) and `has_newer` /\n`newest_id` (newer ones below), and can walk either way.\n\n- `?limit=N`                  → the newest N blocks (chat is bottom-anchored)\n- `?limit=N&before=<block_id>` → the N blocks immediately older than that one\n- `?limit=N&after=<block_id>`  → the N blocks immediately newer than that one\n- `?limit=N&around=<block_id>` → that block with about N/2 on each side: a\n  conversation opened at one message (a search hit, a quoted reply)\n- `?limit=N&stored_after=<seq>` → the N blocks stored next after the one\n  numbered so, in the order they were stored: what a page holding\n  everything up to that number missed (the rooms socket's `newest`).\n  `has_newer` says more were stored after them.\n\nFilters narrow the timeline inside the paging, so a page holds `limit` rows\nof what was asked for and `has_more` counts the same set (filtering a page\nafterwards returns fewer rows and pages through holes):\n\n- `kind` (repeatable): only these kinds of block;\n- `author`: only blocks signed by this handle;\n- `shown=true`: only what the room's conversation shows\n  (`indexed_rows.SHOWN_ROWS`), the way the room reads it; `shown=false`, only\n  what it keeps out of the room (an agent's steps, notices for an agent).\n\nCursors still name any block of the conversation, shown or not.\n\nEach block carries what a reader draws with it, so the page is whole on its\nown: `reactions`, the 支线 under a main-line message (`thread`), a routine's\nrun (`routine_run`), and `tasks` — the tasks made from a message, under it,\nand the task a room-line row says began there (`room_task_rows`), as the\nroom's task list has them.",
         "operationId": "list_topic_blocks_topics__topic_id__blocks_get",
         "parameters": [
           {
@@ -40812,6 +41538,23 @@
                 }
               ],
               "title": "Shown"
+            }
+          },
+          {
+            "name": "stored_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stored After"
             }
           }
         ],
@@ -41413,7 +42156,7 @@
           "topics"
         ],
         "summary": "Record Weekly",
-        "description": "记一份周报到周报集 (spec §7.1) —— 项目文档页的「周报集」就是从这条读的。\n\n一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是章程和话题文档\n的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一\n列 —— 它是这一条记录的属性，没有第二处会读它。\n\n`refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。",
+        "description": "记一份周报到周报集 (spec §7.1) —— 项目文档页的「周报集」就是从这条读的。\n\n一份周报讲的是一段已经过去的时间，不是项目此刻的状态（那是任务和它们的实况\n文档的事），所以它带一个窗口：`since`/`until`。窗口存在 `meta` 上而不是新开一\n列 —— 它是这一条记录的属性，没有第二处会读它。\n\n`refs` 指向它写在哪：周报集里那一行的「来自话题」靠它跳回去。",
         "operationId": "record_weekly_topics__topic_id__weekly_post",
         "parameters": [
           {
@@ -41448,122 +42191,6 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Record Weekly Topics  Topic Id  Weekly Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/read": {
-      "post": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Mark Topic Read",
-        "description": "已读位: bump the caller's read cursor on a room or on one of its tasks\n(opening either clears its unread badge, Feishu-style). ``topic_id`` is\nthe conversation's id; the door is its room's.\n\nThe cursor is per person, so whose it is comes from the verified\ncredential — ``handle`` in the body is only an assertion checked against\nit (it used to BE the identity, letting anyone move anyone's cursor).",
-        "operationId": "mark_topic_read_topics__topic_id__read_post",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Mark Topic Read Topics  Topic Id  Read Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/topics/{topic_id}/notify-level": {
-      "put": {
-        "tags": [
-          "topics"
-        ],
-        "summary": "Set Topic Notify Level",
-        "description": "这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO\n时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。",
-        "operationId": "set_topic_notify_level_topics__topic_id__notify_level_put",
-        "parameters": [
-          {
-            "name": "topic_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Topic Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Topic Notify Level Topics  Topic Id  Notify Level Put"
                 }
               }
             }
@@ -42058,7 +42685,7 @@
           "topics"
         ],
         "summary": "Attachment Raw",
-        "description": "Raw bytes of an image attachment, for <img src=…>. Extension-whitelisted\nto images so this can never serve executable HTML from the worktree.",
+        "description": "Authorized raster images and video bytes, never executable HTML/SVG.",
         "operationId": "attachment_raw_topics__topic_id__attachments_raw_get",
         "parameters": [
           {
@@ -42514,14 +43141,14 @@
         }
       }
     },
-    "/topics/{topic_id}/compute-profile": {
+    "/topics/{topic_id}/environment": {
       "get": {
         "tags": [
           "topics"
         ],
-        "summary": "Get Topic Compute Profile",
-        "description": "A conversation's work computer — a room's, or a task's: the one choice\nevery session of that conversation works on. A session that has not\nstarted answers the same choice, the machine it will get.",
-        "operationId": "get_topic_compute_profile_topics__topic_id__compute_profile_get",
+        "summary": "Get Environment",
+        "description": "Each agent's environment in this conversation, the default a new agent\ngets here and where it comes from, the sandbox specs this project is\noffered, and the people's computers one may run on unisolated.",
+        "operationId": "get_environment_topics__topic_id__environment_get",
         "parameters": [
           {
             "name": "topic_id",
@@ -42540,9 +43167,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Topic Compute Profile Topics  Topic Id  Compute Profile Get"
+                  "$ref": "#/components/schemas/TopicEnvironmentOutEnvelope"
                 }
               }
             }
@@ -42558,14 +43183,16 @@
             }
           }
         }
-      },
+      }
+    },
+    "/topics/{topic_id}/environment-default": {
       "put": {
         "tags": [
           "topics"
         ],
-        "summary": "Set Topic Compute Profile",
-        "description": "A conversation's work computer: a room's, or a task's.\n\nEvery session working on the choice moves with it, each after one\nbest-effort checkpoint (``machine/session_work.request_choice``): for the\nroom, its own sessions and those of tasks that follow it; for a task, the\ntask's. Only the task's owner, a project manager or the owner of a device\nthe task holds changes a task's, or the task's own session. A person's own\ncomputer works only that person's tasks.",
-        "operationId": "set_topic_compute_profile_topics__topic_id__compute_profile_put",
+        "summary": "Set Environment Default",
+        "description": "What a new agent in this conversation gets; None to take the room's\n(for a task) or the project's. Nobody already here moves. A person's\nchoice: an agent changes only its own environment.",
+        "operationId": "set_environment_default_topics__topic_id__environment_default_put",
         "parameters": [
           {
             "name": "topic_id",
@@ -42583,9 +43210,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "additionalProperties": true,
-                "title": "Body"
+                "$ref": "#/components/schemas/EnvironmentDefaultIn"
               }
             }
           }
@@ -42596,9 +43221,71 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Topic Compute Profile Topics  Topic Id  Compute Profile Put"
+                  "$ref": "#/components/schemas/EnvironmentDefaultOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/sessions/{session_id}/environment": {
+      "put": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Set Session Environment",
+        "description": "Give one agent here another environment. Only that agent moves, after\none best-effort checkpoint where it was. An agent may change its own,\nnever another's, and never to a machine without isolation.",
+        "operationId": "set_session_environment_topics__topic_id__sessions__session_id__environment_put",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          },
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionEnvironmentIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionEnvironmentChangeOutEnvelope"
                 }
               }
             }
@@ -43358,6 +44045,122 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Preview File Topics  Topic Id  Preview File Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/read": {
+      "post": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Mark Topic Read",
+        "description": "已读位: bump the caller's read cursor on a room or on one of its tasks\n(opening either clears its unread badge, Feishu-style). ``topic_id`` is\nthe conversation's id; the door is its room's.\n\nThe cursor is per person, so whose it is comes from the verified\ncredential — ``handle`` in the body is only an assertion checked against\nit (it used to BE the identity, letting anyone move anyone's cursor).",
+        "operationId": "mark_topic_read_topics__topic_id__read_post",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Mark Topic Read Topics  Topic Id  Read Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/topics/{topic_id}/notify-level": {
+      "put": {
+        "tags": [
+          "topics"
+        ],
+        "summary": "Set Topic Notify Level",
+        "description": "这个频道对我的通知档位（`NotifyLevel`）；静音可以带 ``muted_until``（ISO\n时间），到点算回默认。和已读位一样按人记，人是谁取自已验证的凭据。",
+        "operationId": "set_topic_notify_level_topics__topic_id__notify_level_put",
+        "parameters": [
+          {
+            "name": "topic_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true,
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Set Topic Notify Level Topics  Topic Id  Notify Level Put"
                 }
               }
             }
@@ -48401,6 +49204,81 @@
         }
       }
     },
+    "/users/me/onboarding": {
+      "post": {
+        "tags": [
+          "Users"
+        ],
+        "summary": "Finish the new-user guide: save the answers and make the project",
+        "operationId": "finish_onboarding_users_me_onboarding_post",
+        "parameters": [
+          {
+            "name": "X-User-Id",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-User-Id"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/users/{userId}/passkeys/options": {
       "post": {
         "tags": [
@@ -50910,6 +51788,103 @@
         ],
         "title": "AcceptRequest"
       },
+      "AddCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "add",
+            "title": "Op"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "content": {
+            "type": "string",
+            "maxLength": 4000,
+            "title": "Content",
+            "default": ""
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": -100000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 100000.0,
+                "minimum": -100000.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op"
+        ],
+        "title": "AddCard"
+      },
       "AddEmailCodeRequest": {
         "properties": {
           "email": {
@@ -51546,6 +52521,42 @@
               }
             ],
             "title": "Request Id"
+          },
+          "received_events": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received Events"
+          },
+          "upstream_failure": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 40
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Upstream Failure"
+          },
+          "ended_by": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 20
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended By"
           }
         },
         "type": "object",
@@ -51975,6 +52986,470 @@
         ],
         "title": "BulkUpdateRequest"
       },
+      "CanvasCardOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "number": {
+            "type": "integer",
+            "title": "Number"
+          },
+          "content": {
+            "type": "string",
+            "title": "Content"
+          },
+          "x": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "X"
+          },
+          "y": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Y"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CanvasTaskOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "task_hidden": {
+            "type": "boolean",
+            "title": "Task Hidden"
+          },
+          "updated_by": {
+            "type": "string",
+            "title": "Updated By"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "content",
+          "x",
+          "y",
+          "width",
+          "height",
+          "task",
+          "task_hidden",
+          "updated_by",
+          "updated_at"
+        ],
+        "title": "CanvasCardOut"
+      },
+      "CanvasChangedOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "writable": {
+            "type": "boolean",
+            "title": "Writable"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasCardOut"
+            },
+            "type": "array",
+            "title": "Cards"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasEdgeOut"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "refs": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Refs"
+          },
+          "added": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "title": "Added"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "document_id",
+          "height",
+          "writable",
+          "cards",
+          "edges",
+          "refs",
+          "added"
+        ],
+        "title": "CanvasChangedOut"
+      },
+      "CanvasChangedOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CanvasChangedOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "CanvasChangedOutEnvelope"
+      },
+      "CanvasCopyIn": {
+        "properties": {
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "document_id"
+        ],
+        "title": "CanvasCopyIn"
+      },
+      "CanvasEdgeOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "from": {
+            "type": "string",
+            "format": "uuid",
+            "title": "From"
+          },
+          "to": {
+            "type": "string",
+            "format": "uuid",
+            "title": "To"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "from",
+          "to",
+          "label"
+        ],
+        "title": "CanvasEdgeOut"
+      },
+      "CanvasOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "document_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Document Id"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          },
+          "writable": {
+            "type": "boolean",
+            "title": "Writable"
+          },
+          "cards": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasCardOut"
+            },
+            "type": "array",
+            "title": "Cards"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/CanvasEdgeOut"
+            },
+            "type": "array",
+            "title": "Edges"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "document_id",
+          "height",
+          "writable",
+          "cards",
+          "edges"
+        ],
+        "title": "CanvasOut"
+      },
+      "CanvasOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CanvasOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "CanvasOutEnvelope"
+      },
+      "CanvasPatchIn": {
+        "properties": {
+          "height": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 4000.0,
+                "minimum": 160.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "height"
+        ],
+        "title": "CanvasPatchIn"
+      },
+      "CanvasTaskOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Number"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "room_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Room Id"
+          },
+          "column": {
+            "type": "string",
+            "title": "Column"
+          },
+          "phrase": {
+            "type": "string",
+            "title": "Phrase"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "number",
+          "title",
+          "room_id",
+          "column",
+          "phrase"
+        ],
+        "title": "CanvasTaskOut",
+        "description": "The task a card points at, as the reader's board shows it."
+      },
+      "CanvasTextOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "CanvasTextOut"
+      },
+      "CanvasTextOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CanvasTextOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "CanvasTextOutEnvelope"
+      },
       "ChangePasswordRequest": {
         "properties": {
           "password": {
@@ -51998,6 +53473,55 @@
           "password"
         ],
         "title": "ChangePasswordRequest"
+      },
+      "ChangesIn": {
+        "properties": {
+          "changes": {
+            "items": {
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/AddCard"
+                },
+                {
+                  "$ref": "#/components/schemas/UpdateCard"
+                },
+                {
+                  "$ref": "#/components/schemas/MoveCard"
+                },
+                {
+                  "$ref": "#/components/schemas/DeleteCard"
+                },
+                {
+                  "$ref": "#/components/schemas/Connect"
+                },
+                {
+                  "$ref": "#/components/schemas/Disconnect"
+                }
+              ],
+              "discriminator": {
+                "propertyName": "op",
+                "mapping": {
+                  "add": "#/components/schemas/AddCard",
+                  "connect": "#/components/schemas/Connect",
+                  "delete": "#/components/schemas/DeleteCard",
+                  "disconnect": "#/components/schemas/Disconnect",
+                  "move": "#/components/schemas/MoveCard",
+                  "update": "#/components/schemas/UpdateCard"
+                }
+              }
+            },
+            "type": "array",
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Changes"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "changes"
+        ],
+        "title": "ChangesIn"
       },
       "ChatAttachmentIn": {
         "properties": {
@@ -52639,52 +54163,19 @@
         ],
         "title": "CompareSheetOut"
       },
-      "ComputeChoice": {
+      "ComputeConfigsIn": {
         "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 60
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name"
-          },
-          "profile": {
-            "type": "string",
-            "enum": [
-              "cloud",
-              "device"
-            ],
-            "title": "Profile"
-          },
-          "device_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Device Id"
-          },
-          "whole_machine": {
-            "type": "boolean",
-            "title": "Whole Machine",
-            "default": false
+          "default": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Default"
           }
         },
-        "additionalProperties": false,
         "type": "object",
         "required": [
-          "profile"
+          "default"
         ],
-        "title": "ComputeChoice",
-        "description": "Which machine a room works on: a cloud sandbox, a whole cloud VM, or a\nself-hosted device.\n\nCloud is either a sandbox on a platform host, or with ``whole_machine`` a\nwhole virtual machine for each session, for work a sandbox cannot do\n(Docker, KVM, kernel modules, root). Neither has a spec to choose: every\nsandbox gets the same fixed share of a host, and every VM the deployment's\none VM size. ``name`` is only ever a device's own name, a proper\nnoun that reads the same in every language. A choice the platform describes\n— the cloud, and 「any online device」 — carries no name: it is identified\nby its fields, and each reader's screen renders its own label for it. A\nstored name would be one language's words shown to every member of the\nproject."
+        "title": "ComputeConfigsIn"
       },
       "ConclusionIn": {
         "properties": {
@@ -52746,6 +54237,52 @@
           "taskOptions"
         ],
         "title": "ConfirmTaskPublishFromPdfRequest"
+      },
+      "Connect": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "connect",
+            "title": "Op"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "From"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "To"
+          },
+          "label": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Label",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "from",
+          "to"
+        ],
+        "title": "Connect",
+        "description": "A line from one card to another; between two connected cards it\nreplaces the words on the line."
       },
       "ConnectRequest": {
         "properties": {
@@ -52820,6 +54357,78 @@
           "request"
         ],
         "title": "ControlIn"
+      },
+      "ConversationRefOut": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "title",
+          "room_id",
+          "project_id"
+        ],
+        "title": "ConversationRefOut"
+      },
+      "ConversationRefs": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/ConversationRefOut"
+        },
+        "type": "object",
+        "title": "ConversationRefs",
+        "description": "What each id that names something names, by id."
+      },
+      "ConversationRefsEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ConversationRefs"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "ConversationRefsEnvelope"
       },
       "CreateInviteCodeRequest": {
         "properties": {
@@ -53357,6 +54966,33 @@
         ],
         "title": "CreateTeamRequest"
       },
+      "DeleteCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "delete",
+            "title": "Op"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Card"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "card"
+        ],
+        "title": "DeleteCard"
+      },
       "Deleted": {
         "properties": {
           "deleted": {
@@ -53446,6 +55082,45 @@
         ],
         "title": "DigestCadence"
       },
+      "Disconnect": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "disconnect",
+            "title": "Op"
+          },
+          "from": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "From"
+          },
+          "to": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "To"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "from",
+          "to"
+        ],
+        "title": "Disconnect"
+      },
       "Dismissed": {
         "properties": {
           "dismissed": {
@@ -53525,6 +55200,70 @@
           "expected_version"
         ],
         "title": "DocEditIn"
+      },
+      "DocumentCanvasTextOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "text": {
+            "type": "string",
+            "title": "Text"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "title"
+        ],
+        "title": "DocumentCanvasTextOut"
+      },
+      "DocumentCanvasTextOutListEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentCanvasTextOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "DocumentCanvasTextOutListEnvelope"
       },
       "DocumentIn": {
         "properties": {
@@ -53736,6 +55475,122 @@
         "additionalProperties": false,
         "type": "object",
         "title": "EnvironmentConfig"
+      },
+      "EnvironmentDefaultIn": {
+        "properties": {
+          "environment": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          }
+        },
+        "type": "object",
+        "title": "EnvironmentDefaultIn"
+      },
+      "EnvironmentDefaultOut": {
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sandbox"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelfHosted"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "sandbox": "#/components/schemas/Sandbox",
+                    "self_hosted": "#/components/schemas/SelfHosted"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "default"
+        ],
+        "title": "EnvironmentDefaultOut"
+      },
+      "EnvironmentDefaultOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/EnvironmentDefaultOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "EnvironmentDefaultOutEnvelope"
+      },
+      "EnvironmentDeviceOut": {
+        "properties": {
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "owned": {
+            "type": "boolean",
+            "title": "Owned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "device_id",
+          "name",
+          "online",
+          "owned"
+        ],
+        "title": "EnvironmentDeviceOut"
       },
       "EventChoiceIn": {
         "properties": {
@@ -56262,6 +58117,663 @@
         ],
         "title": "LoginRequest"
       },
+      "MachineConfigOut": {
+        "properties": {
+          "slots_per_core": {
+            "type": "integer",
+            "title": "Slots Per Core"
+          },
+          "sandbox_memory_mb": {
+            "type": "integer",
+            "title": "Sandbox Memory Mb"
+          },
+          "sandbox_idle_s": {
+            "type": "integer",
+            "title": "Sandbox Idle S"
+          },
+          "host_idle_hold_s": {
+            "type": "integer",
+            "title": "Host Idle Hold S"
+          },
+          "vm_idle_s": {
+            "type": "integer",
+            "title": "Vm Idle S"
+          }
+        },
+        "type": "object",
+        "required": [
+          "slots_per_core",
+          "sandbox_memory_mb",
+          "sandbox_idle_s",
+          "host_idle_hold_s",
+          "vm_idle_s"
+        ],
+        "title": "MachineConfigOut"
+      },
+      "MachineHistoryOut": {
+        "properties": {
+          "since": {
+            "type": "string",
+            "title": "Since"
+          },
+          "prepared": {
+            "type": "integer",
+            "title": "Prepared"
+          },
+          "ready": {
+            "type": "integer",
+            "title": "Ready"
+          },
+          "abandoned": {
+            "type": "integer",
+            "title": "Abandoned"
+          },
+          "replaced": {
+            "type": "integer",
+            "title": "Replaced"
+          },
+          "released_idle": {
+            "type": "integer",
+            "title": "Released Idle"
+          },
+          "released_unpaid": {
+            "type": "integer",
+            "title": "Released Unpaid"
+          },
+          "wait_p50_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait P50 S"
+          },
+          "wait_p95_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait P95 S"
+          },
+          "wait_max_s": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Wait Max S"
+          },
+          "refused_sessions": {
+            "type": "integer",
+            "title": "Refused Sessions"
+          },
+          "refused_by_reason": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Refused By Reason"
+          },
+          "hosts_lost": {
+            "type": "integer",
+            "title": "Hosts Lost"
+          },
+          "hosts_lost_by_reason": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Hosts Lost By Reason"
+          },
+          "sandboxes_lost": {
+            "type": "integer",
+            "title": "Sandboxes Lost"
+          }
+        },
+        "type": "object",
+        "required": [
+          "since",
+          "prepared",
+          "ready",
+          "abandoned",
+          "replaced",
+          "released_idle",
+          "released_unpaid",
+          "wait_p50_s",
+          "wait_p95_s",
+          "wait_max_s",
+          "refused_sessions",
+          "refused_by_reason",
+          "hosts_lost",
+          "hosts_lost_by_reason",
+          "sandboxes_lost"
+        ],
+        "title": "MachineHistoryOut"
+      },
+      "MachineHostOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "hostname": {
+            "type": "string",
+            "title": "Hostname"
+          },
+          "machine_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Id"
+          },
+          "whole_machine": {
+            "type": "boolean",
+            "title": "Whole Machine"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "phase": {
+            "type": "string",
+            "title": "Phase"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          },
+          "cores": {
+            "type": "integer",
+            "title": "Cores"
+          },
+          "memory_mb": {
+            "type": "integer",
+            "title": "Memory Mb"
+          },
+          "disk_gb": {
+            "type": "integer",
+            "title": "Disk Gb"
+          },
+          "slots": {
+            "type": "integer",
+            "title": "Slots"
+          },
+          "used": {
+            "type": "integer",
+            "title": "Used"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "enrolled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrolled At"
+          },
+          "last_seen_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen At"
+          },
+          "idle_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Since"
+          },
+          "offline_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Offline Since"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "released_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Released At"
+          },
+          "enroll_attempts": {
+            "type": "integer",
+            "title": "Enroll Attempts"
+          },
+          "enroll_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enroll Error"
+          },
+          "sandboxes": {
+            "items": {
+              "$ref": "#/components/schemas/MachineSandboxOut"
+            },
+            "type": "array",
+            "title": "Sandboxes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "hostname",
+          "machine_id",
+          "whole_machine",
+          "project",
+          "phase",
+          "status",
+          "online",
+          "ip",
+          "cores",
+          "memory_mb",
+          "disk_gb",
+          "slots",
+          "used",
+          "created_at",
+          "enrolled_at",
+          "last_seen_at",
+          "idle_since",
+          "offline_since",
+          "failed_at",
+          "released_at",
+          "enroll_attempts",
+          "enroll_error",
+          "sandboxes"
+        ],
+        "title": "MachineHostOut"
+      },
+      "MachinePoolOut": {
+        "properties": {
+          "hosts": {
+            "type": "integer",
+            "title": "Hosts"
+          },
+          "vms": {
+            "type": "integer",
+            "title": "Vms"
+          },
+          "max_hosts": {
+            "type": "integer",
+            "title": "Max Hosts"
+          },
+          "at_cap": {
+            "type": "boolean",
+            "title": "At Cap"
+          },
+          "slots": {
+            "type": "integer",
+            "title": "Slots"
+          },
+          "used": {
+            "type": "integer",
+            "title": "Used"
+          },
+          "free": {
+            "type": "integer",
+            "title": "Free"
+          },
+          "min_free": {
+            "type": "integer",
+            "title": "Min Free"
+          },
+          "waiting": {
+            "type": "integer",
+            "title": "Waiting"
+          },
+          "oldest_wait_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Oldest Wait Since"
+          },
+          "provider_failures": {
+            "type": "integer",
+            "title": "Provider Failures"
+          },
+          "provider_failure_limit": {
+            "type": "integer",
+            "title": "Provider Failure Limit"
+          },
+          "provider_window_min": {
+            "type": "integer",
+            "title": "Provider Window Min"
+          },
+          "provider_probe_min": {
+            "type": "integer",
+            "title": "Provider Probe Min"
+          },
+          "last_provider_failure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Provider Failure"
+          },
+          "refusing": {
+            "type": "boolean",
+            "title": "Refusing"
+          },
+          "warm_target": {
+            "type": "integer",
+            "title": "Warm Target"
+          }
+        },
+        "type": "object",
+        "required": [
+          "hosts",
+          "vms",
+          "max_hosts",
+          "at_cap",
+          "slots",
+          "used",
+          "free",
+          "min_free",
+          "waiting",
+          "oldest_wait_since",
+          "provider_failures",
+          "provider_failure_limit",
+          "provider_window_min",
+          "provider_probe_min",
+          "last_provider_failure",
+          "refusing",
+          "warm_target"
+        ],
+        "title": "MachinePoolOut"
+      },
+      "MachineSandboxOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "spec": {
+            "type": "string",
+            "title": "Spec"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "project_id": {
+            "type": "string",
+            "title": "Project Id"
+          },
+          "project": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Project"
+          },
+          "room_id": {
+            "type": "string",
+            "title": "Room Id"
+          },
+          "room": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Room"
+          },
+          "placed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Placed At"
+          },
+          "waiting_since": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Waiting Since"
+          },
+          "active_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active At"
+          },
+          "stopped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped At"
+          },
+          "idle_deadline": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idle Deadline"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "spec",
+          "state",
+          "project_id",
+          "project",
+          "room_id",
+          "room",
+          "placed_at",
+          "waiting_since",
+          "active_at",
+          "stopped_at",
+          "idle_deadline"
+        ],
+        "title": "MachineSandboxOut"
+      },
+      "MachinesOverviewOut": {
+        "properties": {
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "now": {
+            "type": "string",
+            "title": "Now"
+          },
+          "pool": {
+            "$ref": "#/components/schemas/MachinePoolOut"
+          },
+          "config": {
+            "$ref": "#/components/schemas/MachineConfigOut"
+          },
+          "hosts": {
+            "items": {
+              "$ref": "#/components/schemas/MachineHostOut"
+            },
+            "type": "array",
+            "title": "Hosts"
+          },
+          "warm": {
+            "items": {
+              "$ref": "#/components/schemas/WarmMachineOut"
+            },
+            "type": "array",
+            "title": "Warm"
+          },
+          "history": {
+            "$ref": "#/components/schemas/MachineHistoryOut"
+          }
+        },
+        "type": "object",
+        "required": [
+          "configured",
+          "now",
+          "pool",
+          "config",
+          "hosts",
+          "warm",
+          "history"
+        ],
+        "title": "MachinesOverviewOut"
+      },
+      "MachinesOverviewOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/MachinesOverviewOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "MachinesOverviewOutEnvelope"
+      },
       "MailIn": {
         "properties": {
           "label": {
@@ -56687,6 +59199,73 @@
         "title": "ModelUpdate",
         "description": "`PATCH /admin/gateway/models/{name}` 的体 —— 只传要改的，缺的都不动。\n\n每个字段都可有可无，`None` 一律表示「这次别碰它」。两处例外，都在签名上：\n\n- `api_key_unchanged` 默认 `true`：编辑界面不回显上游凭据，所以一次没带 key 的提交\n  绝不能把现有 key 清空 —— 那会让这条模型下一次调用直接失败。\n- `name` 虽然在体里（前端把同一个表单原样提交），但**改名不支持**：真正的名字以\n  路径上的 `{name}` 为准，服务层的 `update` 也是分开收这两个的。"
       },
+      "MoveCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "move",
+            "title": "Op"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Card"
+          },
+          "x": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "X"
+          },
+          "y": {
+            "type": "number",
+            "maximum": 100000.0,
+            "minimum": -100000.0,
+            "title": "Y"
+          },
+          "width": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Width"
+          },
+          "height": {
+            "anyOf": [
+              {
+                "type": "number",
+                "maximum": 4000.0,
+                "minimum": 40.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Height"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "card",
+          "x",
+          "y"
+        ],
+        "title": "MoveCard"
+      },
       "NoteCreate": {
         "properties": {
           "body": {
@@ -57025,6 +59604,330 @@
         "title": "OfficeComparisonOut",
         "description": "一份 Office 文件和它该对着读的那一版比（`documents.compare`）。"
       },
+      "OnboardingIn": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "project_name": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project Name"
+          },
+          "intent": {
+            "type": "string",
+            "maxLength": 2000,
+            "title": "Intent",
+            "default": ""
+          },
+          "nickname": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nickname"
+          },
+          "work_role": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "student",
+                  "teacher",
+                  "office",
+                  "research",
+                  "maker",
+                  "other"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Work Role"
+          },
+          "organization": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 100
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Organization"
+          },
+          "invitees": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 10,
+            "title": "Invitees"
+          },
+          "solo": {
+            "type": "boolean",
+            "title": "Solo",
+            "default": true
+          },
+          "device_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Device Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "project_name"
+        ],
+        "title": "OnboardingIn"
+      },
+      "OnboardingOut": {
+        "properties": {
+          "project_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Project Id"
+          },
+          "root_topic_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Root Topic Id"
+          },
+          "not_invited": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Not Invited"
+          },
+          "on_device": {
+            "type": "boolean",
+            "title": "On Device"
+          }
+        },
+        "type": "object",
+        "required": [
+          "project_id",
+          "root_topic_id",
+          "not_invited",
+          "on_device"
+        ],
+        "title": "OnboardingOut"
+      },
+      "OnboardingOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OnboardingOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "OnboardingOutEnvelope"
+      },
+      "OwnAgentCallersUpdate": {
+        "properties": {
+          "callers": {
+            "$ref": "#/components/schemas/OwnCallers"
+          }
+        },
+        "type": "object",
+        "required": [
+          "callers"
+        ],
+        "title": "OwnAgentCallersUpdate"
+      },
+      "OwnAgentMachineOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "online"
+        ],
+        "title": "OwnAgentMachineOut"
+      },
+      "OwnAgentOut": {
+        "properties": {
+          "handle": {
+            "type": "string",
+            "title": "Handle"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "callers": {
+            "$ref": "#/components/schemas/OwnCallers"
+          },
+          "owner_handle": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Handle"
+          },
+          "owner_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Owner Name"
+          },
+          "machines": {
+            "items": {
+              "$ref": "#/components/schemas/OwnAgentMachineOut"
+            },
+            "type": "array",
+            "title": "Machines"
+          }
+        },
+        "type": "object",
+        "required": [
+          "handle",
+          "name",
+          "callers",
+          "owner_handle",
+          "owner_name",
+          "machines"
+        ],
+        "title": "OwnAgentOut"
+      },
+      "OwnAgentsOut": {
+        "properties": {
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
+          },
+          "can_manage": {
+            "type": "boolean",
+            "title": "Can Manage"
+          },
+          "agents": {
+            "items": {
+              "$ref": "#/components/schemas/OwnAgentOut"
+            },
+            "type": "array",
+            "title": "Agents"
+          }
+        },
+        "type": "object",
+        "required": [
+          "allowed",
+          "can_manage",
+          "agents"
+        ],
+        "title": "OwnAgentsOut"
+      },
+      "OwnAgentsOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OwnAgentsOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "OwnAgentsOutEnvelope"
+      },
       "OwnAgentsUpdate": {
         "properties": {
           "allowed": {
@@ -57037,6 +59940,15 @@
           "allowed"
         ],
         "title": "OwnAgentsUpdate"
+      },
+      "OwnCallers": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "project"
+        ],
+        "title": "OwnCallers",
+        "description": "Who may set a member's own agent to work. Its owner decides; the\nplatform does not look at what the agent signs in with."
       },
       "PageCheckIn": {
         "properties": {
@@ -58775,19 +61687,6 @@
         ],
         "title": "ProgressIn"
       },
-      "ProjectComputeConfigs": {
-        "properties": {
-          "default": {
-            "$ref": "#/components/schemas/ComputeChoice"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "default"
-        ],
-        "title": "ProjectComputeConfigs"
-      },
       "ProjectCreate": {
         "properties": {
           "id": {
@@ -59805,6 +62704,129 @@
         ],
         "title": "ReviewSpaceRequest"
       },
+      "RoomFileListOut": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/RoomFileOut"
+            },
+            "type": "array",
+            "title": "Data"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "truncated": {
+            "type": "boolean",
+            "title": "Truncated"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data",
+          "total",
+          "truncated"
+        ],
+        "title": "RoomFileListOut",
+        "description": "文件区的清单：``data`` 是文件，``truncated`` 说清单是不是全部。"
+      },
+      "RoomFileListOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RoomFileListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "RoomFileListOutEnvelope"
+      },
+      "RoomFileOut": {
+        "properties": {
+          "path": {
+            "type": "string",
+            "title": "Path"
+          },
+          "bytes": {
+            "type": "integer",
+            "title": "Bytes"
+          },
+          "modified_at": {
+            "type": "string",
+            "title": "Modified At"
+          },
+          "author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author"
+          },
+          "author_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Kind"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          }
+        },
+        "type": "object",
+        "required": [
+          "path",
+          "bytes",
+          "modified_at",
+          "author",
+          "author_kind",
+          "source"
+        ],
+        "title": "RoomFileOut",
+        "description": "文件区里的一份文件：路径、大小、最后一次改动的时间，以及最后是谁从哪条路\n放下的。\n\n作者是平台按写下来的那次动作记的（谁按的保存、谁交的），不是谁自己填的。三个\n字段都可能空：目录里的一份文件可能从没有过保存记录（清单列的是目录本身，字节\n可以由别的东西直接放进去），那时界面照列，只是说不出是谁写的。"
+      },
       "RoutineIn": {
         "properties": {
           "title": {
@@ -59968,6 +62990,44 @@
         "type": "object",
         "title": "RoutinePatch"
       },
+      "Sandbox": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "sandbox",
+            "title": "Kind",
+            "default": "sandbox"
+          },
+          "spec": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Spec",
+            "default": "standard"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "Sandbox"
+      },
+      "SandboxSpecOut": {
+        "properties": {
+          "spec": {
+            "type": "string",
+            "title": "Spec"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          }
+        },
+        "type": "object",
+        "required": [
+          "spec",
+          "label"
+        ],
+        "title": "SandboxSpecOut"
+      },
       "SearchIn": {
         "properties": {
           "query": {
@@ -60074,6 +63134,28 @@
         "title": "SelectionIn",
         "description": "A selection in the living document, as the editor writes it out."
       },
+      "SelfHosted": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "const": "self_hosted",
+            "title": "Kind"
+          },
+          "device_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Device Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "kind",
+          "device_id"
+        ],
+        "title": "SelfHosted"
+      },
       "SendEmailCodeRequest": {
         "properties": {
           "email": {
@@ -60098,6 +63180,159 @@
           "email"
         ],
         "title": "SendEmailCodeRequest"
+      },
+      "SessionEnvironmentChangeOut": {
+        "properties": {
+          "environment": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sandbox"
+              },
+              {
+                "$ref": "#/components/schemas/SelfHosted"
+              }
+            ],
+            "title": "Environment",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "sandbox": "#/components/schemas/Sandbox",
+                "self_hosted": "#/components/schemas/SelfHosted"
+              }
+            }
+          },
+          "keeps_nothing": {
+            "type": "boolean",
+            "title": "Keeps Nothing"
+          }
+        },
+        "type": "object",
+        "required": [
+          "environment",
+          "keeps_nothing"
+        ],
+        "title": "SessionEnvironmentChangeOut"
+      },
+      "SessionEnvironmentChangeOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionEnvironmentChangeOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "SessionEnvironmentChangeOutEnvelope"
+      },
+      "SessionEnvironmentIn": {
+        "properties": {
+          "environment": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Environment"
+          },
+          "if_idle": {
+            "type": "boolean",
+            "title": "If Idle",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "environment"
+        ],
+        "title": "SessionEnvironmentIn"
+      },
+      "SessionEnvironmentOut": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "agent_handle": {
+            "type": "string",
+            "title": "Agent Handle"
+          },
+          "seat_handle": {
+            "type": "string",
+            "title": "Seat Handle"
+          },
+          "environment": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sandbox"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelfHosted"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "sandbox": "#/components/schemas/Sandbox",
+                    "self_hosted": "#/components/schemas/SelfHosted"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Environment"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "agent_handle",
+          "seat_handle",
+          "environment",
+          "status",
+          "online"
+        ],
+        "title": "SessionEnvironmentOut"
       },
       "SheetCellQuoteIn": {
         "properties": {
@@ -60401,6 +63636,71 @@
           "slug"
         ],
         "title": "SlugIn"
+      },
+      "StartStepsOut": {
+        "properties": {
+          "asked": {
+            "type": "boolean",
+            "title": "Asked"
+          },
+          "answered": {
+            "type": "boolean",
+            "title": "Answered"
+          },
+          "accepted": {
+            "type": "boolean",
+            "title": "Accepted"
+          },
+          "learned": {
+            "type": "boolean",
+            "title": "Learned"
+          }
+        },
+        "type": "object",
+        "required": [
+          "asked",
+          "answered",
+          "accepted",
+          "learned"
+        ],
+        "title": "StartStepsOut",
+        "description": "What the new-user guide needs to know about the caller\n(`GET /projects/{id}/start-steps`)."
+      },
+      "StartStepsOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StartStepsOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "StartStepsOutEnvelope"
       },
       "StoreIn": {
         "properties": {
@@ -61126,6 +64426,130 @@
         ],
         "title": "TopicCreate"
       },
+      "TopicEnvironmentOut": {
+        "properties": {
+          "default": {
+            "anyOf": [
+              {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Sandbox"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelfHosted"
+                  }
+                ],
+                "discriminator": {
+                  "propertyName": "kind",
+                  "mapping": {
+                    "sandbox": "#/components/schemas/Sandbox",
+                    "self_hosted": "#/components/schemas/SelfHosted"
+                  }
+                }
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default"
+          },
+          "default_from": {
+            "type": "string",
+            "enum": [
+              "task",
+              "room",
+              "project",
+              "deployment"
+            ],
+            "title": "Default From"
+          },
+          "effective_default": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Sandbox"
+              },
+              {
+                "$ref": "#/components/schemas/SelfHosted"
+              }
+            ],
+            "title": "Effective Default",
+            "discriminator": {
+              "propertyName": "kind",
+              "mapping": {
+                "sandbox": "#/components/schemas/Sandbox",
+                "self_hosted": "#/components/schemas/SelfHosted"
+              }
+            }
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionEnvironmentOut"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/EnvironmentDeviceOut"
+            },
+            "type": "array",
+            "title": "Devices"
+          },
+          "specs": {
+            "items": {
+              "$ref": "#/components/schemas/SandboxSpecOut"
+            },
+            "type": "array",
+            "title": "Specs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "default",
+          "default_from",
+          "effective_default",
+          "sessions",
+          "devices",
+          "specs"
+        ],
+        "title": "TopicEnvironmentOut"
+      },
+      "TopicEnvironmentOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TopicEnvironmentOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TopicEnvironmentOutEnvelope"
+      },
       "TopicMemberCreate": {
         "properties": {
           "handle": {
@@ -61177,6 +64601,57 @@
           "content"
         ],
         "title": "Turn"
+      },
+      "UpdateCard": {
+        "properties": {
+          "op": {
+            "type": "string",
+            "const": "update",
+            "title": "Op"
+          },
+          "card": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "title": "Card"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 4000
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "op",
+          "card"
+        ],
+        "title": "UpdateCard"
       },
       "ValidationError": {
         "properties": {
@@ -61253,6 +64728,94 @@
         "type": "object",
         "title": "VoidDecision",
         "description": "人工作废 (2026-08-11). No `decided_by`, unlike the other decisions here:\n作废 is an authorization action, so the actor comes from the session token\nonly — a caller must never be able to name someone else as the one who\ndid it. Same shape as 改验收人 (`reassign`)."
+      },
+      "WarmMachineOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "state": {
+            "type": "string",
+            "title": "State"
+          },
+          "machine_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Id"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "enrolled_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Enrolled At"
+          },
+          "attempts": {
+            "type": "integer",
+            "title": "Attempts"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "state",
+          "machine_id",
+          "ip",
+          "online",
+          "created_at",
+          "enrolled_at",
+          "attempts",
+          "error"
+        ],
+        "title": "WarmMachineOut"
       },
       "WebElementQuoteIn": {
         "properties": {
@@ -61502,6 +65065,65 @@
         ],
         "title": "WebViewportIn",
         "description": "选区当时视口的大小，和 `WebRectIn` 一起还原出位置。"
+      },
+      "WithdrawnAnswer": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "answer_log": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Answer Log",
+            "default": []
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "WithdrawnAnswer",
+        "description": "撤回一道题的回答，回的是这道题撤回之后的样子。\n\n和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，\n不必再取一次。"
+      },
+      "WithdrawnAnswerEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/WithdrawnAnswer"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "WithdrawnAnswerEnvelope"
       },
       "WorkLeaseRequest": {
         "properties": {

@@ -7,13 +7,12 @@ from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Header, Request, Response
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep, require_seated_in_its_room
 from app.api.deps import get_chat_service
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
 from app.auth.caller import may_access_project
-from app.core.db import get_db
 from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
@@ -22,17 +21,15 @@ from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.services import ProjectService
 from app.domain.repository.forge_files import ProjectFiles
-from app.domain.room_task.models import TaskStatus
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import TopicStatus
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["workspace"])
 
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
-
-async def require_project_access(
+async def require_place_access(
     project_id: uuid.UUID,
     request: Request,
     db: DbSession,
@@ -40,8 +37,8 @@ async def require_project_access(
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
-) -> None:
-    """Reject a caller with no claim on this project.
+) -> Task | None:
+    """Reject a caller with no claim on this project; answer the task it names.
 
     These routes return the source itself and checked only that the project
     EXISTS — not a check on the caller, so an unauthenticated request carrying a
@@ -59,7 +56,7 @@ async def require_project_access(
         x_cheese_token or "", project_id=str(project_id)
     )
     if not scoped and not await may_access_project(request, db, project_id):
-        raise NotFoundError("project not found")
+        raise NotFoundError(say("projectNotFound"))
 
     # Files and Git diffs contain the private room's source, not just its title.
     # The path-bound room wins over a query parameter on work-summary requests.
@@ -75,9 +72,9 @@ async def require_project_access(
     work = await TaskService(db).get(task) if task is not None else None
     if task is not None:
         if work is None or work.project_id != project_id:
-            raise NotFoundError("Task not found")
+            raise NotFoundError(say("taskNotFound"))
         if room_id is not None and str(work.room_id) != str(room_id):
-            raise NotFoundError("Task not found")
+            raise NotFoundError(say("taskNotFoundInRoom"))
         room_id = work.room_id
     if scoped and room_id is None:
         # The whole project's source, to an agent that still sits in the room
@@ -89,19 +86,31 @@ async def require_project_access(
         try:
             room_uuid = uuid.UUID(str(room_id))
         except ValueError as exc:
-            raise NotFoundError("Topic not found") from exc
+            raise NotFoundError(say("topicNotFound")) from exc
         room = await TopicService(db).get_or_404(room_uuid)
         if room.project_id != project_id:
-            raise NotFoundError("Topic not found")
+            raise NotFoundError(say("topicNotFound"))
         actor = await resolver.resolve(project_id=project_id, topic_id=room.id)
         await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
         if request.method == "PUT" and room.status == TopicStatus.archived:
             raise ValidationError(say("roomArchivedFilesReadOnly"))
-    if work is not None:
-        if request.method == "PUT" and work.status != TaskStatus.open:
-            raise ValidationError(say("taskEndedFilesReadOnly"))
-        if work.branch_name is None:
-            raise NotFoundError("Historical task has no individual workspace")
+    if work is not None and request.method == "PUT" and work.status != TaskStatus.open:
+        raise ValidationError(say("taskEndedFilesReadOnly"))
+    return work
+
+
+async def require_project_access(
+    work: Annotated[Task | None, Depends(require_place_access)],
+) -> None:
+    """Access, plus a task's own worktree for the routes that read and write it.
+
+    A task that arrived without a branch gets one only when a machine first
+    opens it (`give_branch`), so until then it has no files of its own to serve.
+    Asking what work it holds is not reading them: the work summary takes
+    `require_place_access` alone and answers "nothing changed yet".
+    """
+    if work is not None and work.branch_name is None:
+        raise NotFoundError(say("taskNoOwnFileVersion"))
 
 
 @router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
@@ -205,7 +214,7 @@ async def write_file(
     version = body.get("version") or None
     base = body.get("base")
     if not path:
-        raise ValidationError("path is required")
+        raise ValidationError(say("pathEmpty"))
     if task is None:
         raise ValidationError(say("chooseTaskToEdit"))
     actor = await resolver.resolve(project_id=project_id, topic_id=task)
@@ -258,7 +267,7 @@ async def git_diff(
 
 @router.get(
     "/{project_id}/topics/{topic_id}/work-summary",
-    dependencies=[Depends(require_project_access)],
+    dependencies=[Depends(require_place_access)],
 )
 async def topic_work_summary(
     project_id: uuid.UUID, topic_id: uuid.UUID, db: DbSession

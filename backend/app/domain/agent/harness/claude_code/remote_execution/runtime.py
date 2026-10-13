@@ -61,10 +61,9 @@ SOURCE_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 PROTOCOL_VERSION = 1
 
 # What this runtime reads from its own release, by its path there, with the
-# file it is built from in a checkout (under `backend/`). The launch ships
-# these (`launch.file_sources`), and whatever starts a copy of this runtime
-# installs them the same way (`tests/support/executor_release.py`), so a file
-# the runtime comes to need reaches the machine and every fixture, or neither.
+# file it is built from in a checkout (under `backend/`). The launch ships these
+# (`launch.file_sources`) and every copy of this runtime installs them the same
+# way (`tests/support/executor_release.py`): machine and fixture get the same.
 _OWN = (
     "runtime",
     "portable",
@@ -82,6 +81,7 @@ RELEASE_FILES = {
         for name in (*_OWN, "predecessor")
     },
     "remote-execution/project_hooks.py": "app/domain/agent/project_hooks.py",
+    "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
     "cheese": "sandbox/cheese",
 }
@@ -625,7 +625,7 @@ class Executor:
             "tools/call", {"name": tool, "arguments": args}
         )
         if result.get("isError"):
-            raise RuntimeError(json.dumps(result.get("content")))
+            raise RuntimeError(result["content"][0]["text"])
         return json.loads(result["content"][0]["text"])
 
     # --- commands ------------------------------------------------------------
@@ -1248,7 +1248,7 @@ class Executor:
         root = (home / ".cheese" / "tasks" / task_id).resolve()
         root.relative_to(home)
         if not root.is_dir():
-            return {"error": "not_found"}
+            return {"error": "not_found", "missing": "worktree"}
         operation = params["operation"]
         if operation == "diff":
 
@@ -1324,7 +1324,7 @@ class Executor:
         path = (root / relative).resolve()
         path.relative_to(root)
         if not path.is_file():
-            return {"error": "not_found"}
+            return {"error": "not_found", "missing": "file"}
         if operation == "read":
             offset = params.get("offset", 0)
             count = params.get("size", 1024 * 1024)
@@ -1416,10 +1416,7 @@ class Executor:
                 "f_bavail": fs.f_bavail,
             }
         if operation in ("directory", "list"):
-            # The project's directories, looked up one at a time: the central
-            # session keeps its shell's directory only if it exists in the
-            # forwarded view, and a directory a command just made exists only
-            # here. Directories only — files stay with the file tools.
+            # Project directories are looked up one at a time.
             relative = Path(params.get("path", ""))
             if relative.is_absolute() or ".." in relative.parts:
                 return {"missing": True}
@@ -1604,6 +1601,8 @@ class Executor:
                     include(candidate, imports=True, depth=depth + 1)
 
         for path in (
+            root / "AGENTS.override.md",
+            root / "AGENTS.md",
             root / "CLAUDE.md",
             root / "CLAUDE.local.md",
             root / ".claude/rules",
@@ -1611,30 +1610,34 @@ class Executor:
             root / ".claude/agents",
         ):
             include(path, imports=True)
-        # One walk for everything a subdirectory contributes: its instruction
-        # files, and its own `.claude/skills`, which a session offers once a
-        # file tool reaches into that subdirectory (`release.lazy_skills`).
         nested_skills = []
         for directory, directories, files in os.walk(root):
-            directories[:] = [name for name in directories if name != ".git"]
             here = Path(directory)
-            for name in ("CLAUDE.md", "CLAUDE.local.md"):
+            directories[:] = [
+                n for n in directories if n not in (".git", "node_modules")
+            ]
+            for name in directories:
+                path = here / name
+                if path.is_symlink() and project_path(path) is not None:
+                    selected.add(path)
+            for name in (
+                "AGENTS.override.md",
+                "AGENTS.md",
+                "CLAUDE.md",
+                "CLAUDE.local.md",
+            ):
                 if name in files:
                     include(here / name, imports=True)
             if here != root and (here / ".claude/skills").is_dir():
                 nested_skills.append(here)
         ignored = gitignored(root, nested_skills)
         for here in nested_skills:
-            # Claude Code skips a gitignored subdirectory's skills (a
-            # dependency's, under `node_modules`), and so does the room.
             if here not in ignored:
                 include(here / ".claude/skills")
         if (root / ".claude").is_dir() and not (root / ".claude").is_symlink():
             selected.add(root / ".claude")
         include(root / ".claude/skills")
         include(root / ".claude/workflows")
-        # Where Codex finds a repository's skills: a Codex room mirrors them
-        # from here (`codex/tools.py` `RemoteTools.sync_skills`).
         include(root / ".agents/skills")
         include(root / ".codex/skills")
 
@@ -1902,10 +1905,7 @@ def serve(state):
             try:
                 value = json.loads(self.rfile.readline())
                 if value["method"] == "shutdown":
-                    # How an executor is stopped everywhere. A signal would
-                    # name it by a pid, and the pid a sandboxed executor
-                    # reports is its own namespace's, which names some other
-                    # process outside it; Windows has no SIGTERM at all.
+                    # A sandboxed pid names the wrong process; Windows has no SIGTERM.
                     stop(None, None)
                     response = {"result": {}}
                 else:

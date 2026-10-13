@@ -14,8 +14,8 @@ from app.domain.machine.models import (
     TRANSITIONAL,
     AiStatus,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
+    SandboxHome,
 )
 
 
@@ -62,10 +62,10 @@ class CloudHostRepository:
         """How many homes each live host carries (hosts with none are
         absent): each is a sandbox, or one being placed or destroyed."""
         rows = await self._session.execute(
-            select(CloudHostHome.host_id, func.count())
-            .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
+            select(SandboxHome.host_id, func.count())
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(CloudHost.released_at.is_(None))
-            .group_by(CloudHostHome.host_id)
+            .group_by(SandboxHome.host_id)
         )
         return {host_id: int(homes) for host_id, homes in rows.all()}
 
@@ -82,75 +82,85 @@ class CloudHostRepository:
 
     # --- homes ---------------------------------------------------------------
 
-    async def put_home(self, host_id: uuid.UUID, home: dict) -> CloudHostHome:
+    async def put_home(self, host_id: uuid.UUID, home: dict) -> SandboxHome:
         """Place a new home on a host, from its fields."""
-        row = CloudHostHome(host_id=host_id, **home)
+        row = SandboxHome(host_id=host_id, **home)
         self._session.add(row)
         await self._session.flush()
         return row
 
-    async def lock_home(self, home_id: uuid.UUID) -> CloudHostHome | None:
+    async def put_device_home(self, device_id: str, home: dict) -> SandboxHome:
+        """Place a new home on a person's computer, from its fields."""
+        row = SandboxHome(device_id=device_id, **home)
+        self._session.add(row)
+        await self._session.flush()
+        return row
+
+    async def lock_home(self, home_id: uuid.UUID) -> SandboxHome | None:
         return await self._session.scalar(
-            select(CloudHostHome)
-            .where(CloudHostHome.id == home_id)
+            select(SandboxHome)
+            .where(SandboxHome.id == home_id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
 
-    async def current_home(self, session_id: uuid.UUID) -> CloudHostHome | None:
+    async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         """The home of the session's placement, as the database has it now:
         a sweep may have started destroying it since this session last read
         it."""
         return await self._session.scalar(
-            select(CloudHostHome)
-            .where(CloudHostHome.session_id == session_id)
+            select(SandboxHome)
+            .where(SandboxHome.session_id == session_id)
             .execution_options(populate_existing=True)
         )
 
-    async def homes_on(self, host_id: uuid.UUID) -> list[CloudHostHome]:
+    async def homes_on(self, host_id: uuid.UUID) -> list[SandboxHome]:
         return list(
             await self._session.scalars(
-                select(CloudHostHome).where(CloudHostHome.host_id == host_id)
+                select(SandboxHome).where(SandboxHome.host_id == host_id)
             )
         )
 
     async def room_homes(
         self, topic_id: uuid.UUID, room_resource_id: str
-    ) -> list[tuple[CloudHostHome, CloudHost]]:
+    ) -> list[tuple[SandboxHome, CloudHost]]:
         rows = await self._session.execute(
-            select(CloudHostHome, CloudHost)
-            .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
+            select(SandboxHome, CloudHost)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(
-                CloudHostHome.topic_id == topic_id,
-                CloudHostHome.room_resource_id == room_resource_id,
+                SandboxHome.topic_id == topic_id,
+                SandboxHome.room_resource_id == room_resource_id,
             )
         )
         return [(home, host) for home, host in rows.all()]
 
-    async def waiting_homes(self) -> list[tuple[CloudHostHome, CloudHost]]:
+    async def waiting_homes(self) -> list[tuple[SandboxHome, CloudHost]]:
         """Homes whose room was told their sandbox is being prepared, and that
         wait for their host to come up."""
         rows = await self._session.execute(
-            select(CloudHostHome, CloudHost)
-            .join(CloudHost, CloudHost.id == CloudHostHome.host_id)
+            select(SandboxHome, CloudHost)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(
-                CloudHostHome.waiting_since.is_not(None),
-                CloudHostHome.stopped_at.is_(None),
+                SandboxHome.waiting_since.is_not(None),
+                SandboxHome.stopped_at.is_(None),
             )
         )
         return [(home, host) for home, host in rows.all()]
 
-    async def delete_home(self, home: CloudHostHome) -> None:
+    async def delete_home(self, home: SandboxHome) -> None:
         await self._session.delete(home)
         await self._session.flush()
 
     async def delete_device_homes(self, device_id: str, resource_id: str) -> None:
-        """The homes in the directory a room's cleanup removed from a host."""
+        """The homes in the directory a room's cleanup removed from a machine."""
         hosts = select(CloudHost.id).where(CloudHost.device_id == device_id)
         await self._session.execute(
-            delete(CloudHostHome).where(
-                CloudHostHome.host_id.in_(hosts),
-                CloudHostHome.resource_id == resource_id,
+            delete(SandboxHome).where(
+                or_(
+                    SandboxHome.host_id.in_(hosts),
+                    SandboxHome.device_id == device_id,
+                ),
+                SandboxHome.resource_id == resource_id,
             )
         )
 
@@ -158,9 +168,9 @@ class CloudHostRepository:
         self, topic_id: uuid.UUID, room_resource_id: str
     ) -> None:
         await self._session.execute(
-            delete(CloudHostHome).where(
-                CloudHostHome.topic_id == topic_id,
-                CloudHostHome.room_resource_id == room_resource_id,
+            delete(SandboxHome).where(
+                SandboxHome.topic_id == topic_id,
+                SandboxHome.room_resource_id == room_resource_id,
             )
         )
 

@@ -251,7 +251,6 @@ async def resume_messages(runner, chat, *, topic_id=None, source="nudge"):
             content=block.content,
             reply_to=str(block.reply_to) if block.reply_to else None,
             attachments=None,
-            provision_actor=None,
             landed_user_block_id=block.id,
             landed_user_block_ids=[block.id],
             live_delivery_expected=False,

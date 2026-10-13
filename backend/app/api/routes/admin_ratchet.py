@@ -17,8 +17,9 @@ readable next to whether it was measured at all.
 
 from fastapi import APIRouter
 
+from app.api.admin_deps import PlatformAdminDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession, PlatformAdminDep
 from app.core.config import settings
 from app.domain.ratchet.board import build_board
 from app.domain.ratchet.ingest import ingest_once

@@ -1,7 +1,7 @@
 """Documents of the project's own: the library's documents.
 
 Members make, list, rename and delete them; a task's living document and the
-project's overview are not listed, nor renamed or deleted on their own, though a
+project's goals are not listed, nor renamed or deleted on their own, though a
 member may keep a copy of one. When 芝士 makes or changes one while working in
 a room, that room gets a line with the document on it; a person's change does
 not.
@@ -32,7 +32,7 @@ def _room(client) -> tuple[str, str]:
 
 def _task_doc(client, room) -> str:
     """The living document of a new task of owner's in the room."""
-    task = open_task(client, room, owner="owner", start=False)["id"]
+    task = open_task(client, room, owner="owner")["id"]
     return document_of(client, task, headers=OWNER)
 
 
@@ -83,7 +83,7 @@ def test_members_make_list_rename_and_delete_the_projects_documents(client):
     assert [(d["id"], d["title"], d["author"]) for d in _listed(client, project)] == [
         (made["id"], "竞品定价对比", "owner")
     ]
-    # A task's document is the task's, and the overview the project's: neither
+    # A task's document is the task's, and the goals the project's: neither
     # is in the library.
     listed = [d["id"] for d in _listed(client, project)]
     assert _task_doc(client, room) not in listed
@@ -120,7 +120,7 @@ def test_nobody_outside_the_project_reaches_its_documents(client):
 def test_the_overview_and_a_tasks_document_are_not_renamed_or_deleted_alone(client):
     [(room, project, _)] = _setup(client)
     for what, doc in (
-        ("the overview", overview_of(client, project, headers=OWNER)),
+        ("the project's goals", overview_of(client, project, headers=OWNER)),
         ("a task's document", _task_doc(client, room)),
     ):
         path = f"/documents/{doc}"
@@ -292,7 +292,7 @@ def test_a_tasks_document_is_the_tasks_not_the_librarys(client):
     """A task's living document sits in no room, like the project's own, but
     it is the task's: the library neither lists nor finds it."""
     [(room, project, _)] = _setup(client)
-    task = open_task(client, room, owner="owner", reviewer="owner")
+    task = open_task(client, room, owner="owner")
     task_doc = client.get(f"/topics/{task['id']}/document", headers=OWNER)
     assert task_doc.status_code == 200, task_doc.text
     task_doc_id = task_doc.json()["data"]["id"]

@@ -70,6 +70,11 @@ class NudgeKind(enum.StrEnum):
     review = "review"
     #: PR 和它的 base 分支冲突了，GitHub 合不了。
     conflict = "conflict"
+    #: GitHub 上的 PR 标题和卡片主题不是同一行 —— 合下去会把仓库检查没评判过
+    #: 的一行写进历史，所以平台停下并叫执行者的那张卡（`_title_nudge`）。
+    #: 成员名不叫 `title`：`str.title` 是 `str` 上的方法，成员盖掉它，pyright
+    #: 会报「Literal['title'] 不能赋给 str.title 的重载」；值仍是 `"title"`。
+    pr_title = "title"
     #: PR 满足合并规则了（CLEAN）—— 发给验收人的那条，同一个 head 只说一次。
     #: （「采纳被作废」不占一类：批准被清掉这件事一个 head 只会发生一次，
     #: 事件天然不重复。）
@@ -115,6 +120,54 @@ _REVIEW_KIND_WORDS: Final = {
     "comment": "行内评论",
 }
 
+#: GitHub's review states 芝士 is expected to act on. `APPROVED` and
+#: `DISMISSED` are left out on purpose: neither asks for a change, and a card
+#: that nudged on an approval would be pure noise.
+_ACTIONABLE_REVIEW_STATES: Final = {
+    "CHANGES_REQUESTED": "changes_requested",
+    "COMMENTED": "commented",
+}
+
+
+def review_signal(item: dict) -> ReviewSignal | None:
+    """One entry of `GET /pulls/{n}/reviews`, or None if it asks for nothing.
+
+    A `COMMENTED` review with an empty body is what GitHub records when
+    somebody submits inline comments without a summary — the comments
+    themselves come from the other endpoint, so this row would only duplicate
+    them.
+    """
+    state = str(item.get("state") or "").upper()
+    kind = _ACTIONABLE_REVIEW_STATES.get(state)
+    if kind is None:
+        return None
+    body = str(item.get("body") or "")
+    if kind == "commented" and not body.strip():
+        return None
+    return ReviewSignal(
+        id=f"review:{item.get('id')}",
+        kind=kind,
+        author=str((item.get("user") or {}).get("login") or ""),
+        body=body,
+    )
+
+
+def review_comment_signal(item: dict) -> ReviewSignal | None:
+    """One entry of `GET /pulls/{n}/comments` — an inline comment on a line."""
+    body = str(item.get("body") or "")
+    if not body.strip():
+        return None
+    path = str(item.get("path") or "")
+    line = item.get("line") or item.get("original_line")
+    where = f"{path}:{line}" if path and isinstance(line, int) else path
+    return ReviewSignal(
+        id=f"comment:{item.get('id')}",
+        kind="comment",
+        author=str((item.get("user") or {}).get("login") or ""),
+        body=body,
+        where=where,
+    )
+
 
 @dataclass
 class PendingNudge:
@@ -150,6 +203,10 @@ class PendingNudge:
 NOTE_PRIORITY: Final[dict[NudgeKind, int]] = {
     NudgeKind.ci: 3,
     NudgeKind.conflict: 2,
+    # 标题分家和冲突同档：两件都是「PR 现在根本合不进去」的硬停，而且都要执行
+    # 者动手（冲突改代码，标题改卡片）。排在评审意见那句前面，因为评审意见是
+    # 要接着做的事，这两件是先决条件。
+    NudgeKind.pr_title: 2,
     NudgeKind.review: 1,
 }
 

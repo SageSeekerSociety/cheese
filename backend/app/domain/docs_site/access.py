@@ -31,8 +31,6 @@ The backend's own reads behind the dev/ gate — the developer pages' index and
 ``internal_pass``: a separate audience no browser is ever given.
 """
 
-import hashlib
-import hmac
 import secrets
 import time
 import uuid
@@ -43,6 +41,7 @@ import jwt
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import scoped_jwt
 from app.core.config import settings
 from app.domain.docs_site import site
 from app.domain.user.sessions import SessionService
@@ -77,10 +76,8 @@ def cookie_secure() -> bool:
     return site.origin().startswith("https://")
 
 
-def _key() -> bytes:
-    return hmac.digest(
-        settings.jwt_secret.encode(), b"cheese:docs-sign-in:v1", hashlib.sha256
-    )
+#: The purpose these tokens are signed for (`app.core.scoped_jwt`).
+TOKEN_DOMAIN = b"cheese:docs-sign-in:v1"
 
 
 #: What "now" is for the docs' own tokens: when one is minted and when it has
@@ -91,7 +88,7 @@ _clock: Callable[[], float] = time.time
 
 def _mint(user_id: int, sid: uuid.UUID, kind: str, ttl: int) -> str:
     now = int(_clock())
-    return jwt.encode(
+    return scoped_jwt.sign(
         {
             "sub": str(user_id),
             "sid": str(sid),
@@ -101,8 +98,7 @@ def _mint(user_id: int, sid: uuid.UUID, kind: str, ttl: int) -> str:
             "iat": now,
             "exp": now + ttl,
         },
-        _key(),
-        algorithm="HS256",
+        domain=TOKEN_DOMAIN,
     )
 
 
@@ -111,12 +107,11 @@ def _claims(token: str | None, kind: str) -> tuple[int, uuid.UUID, str] | None:
     if not token:
         return None
     try:
-        claims = jwt.decode(
+        claims = scoped_jwt.verify(
             token,
-            _key(),
-            algorithms=["HS256"],
+            domain=TOKEN_DOMAIN,
             audience=site.origin(),
-            options={"require": ["sub", "sid", "aud", "type", "jti", "iat", "exp"]},
+            require=["sub", "sid", "aud", "type", "jti", "iat", "exp"],
         )
         if claims["type"] != kind or not str(claims["sub"]).isdigit():
             return None

@@ -75,11 +75,25 @@ other API paths continue through the active backend switch. Updating the owner
 itself is a separate release operation because it closes the connections it
 owns. Dispatch **Release device connection owner** with a tested ref and target;
 that workflow runs `deploy/release-device-connection.sh`, which pulls and
-force-recreates only `device-connection`, then waits for its health check. It is
-manual-only, waits for the owner to atomically enter draining after all device
-calls finish, and is never called by the normal app deployment workflows. It
-reads the same box-local deploy environment and compose overlays as the app
+force-recreates only `device-connection`, then waits for its health check. It
+waits for the owner to atomically enter draining after all device calls finish,
+and reads the same box-local deploy environment and compose overlays as the app
 deployment.
+
+An app deploy runs the same script itself in one case: its migrations may drop
+schema the owner's image still maps. The owner's models list every column their
+tables had when its image was built, and a query that loads a model asks for
+all of them, so a dropped column fails every such query until the owner is
+released; #3411 left the dev owner answering ~1500 executor calls with 500 that
+way. Before migrating, `hold_owners_behind_schema` in `deploy/deploy-docker.sh`
+runs `deploy/schema-map.py` in the owner and in the release image. A migration
+only drops what the previous release no longer mapped
+(`check-migration-safety.py`), so anything the owner maps and the release does
+not may go. If there is any, the deploy drains the device owner (waiting the
+usual 45 s, then interrupting what still runs), migrates, and recreates it on the
+release's image; a failed migration resumes the old owner instead. The preview
+owner, which has no drain, is recreated after the migrations the same way. An
+owner that maps nothing the release dropped is left running.
 
 Each standing owner's database pool is set in the compose file
 (`DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=5` on `device-connection`; `3` and `2` on
@@ -91,15 +105,15 @@ post-superuser budget exactly. That arithmetic is checked by
 rather than only the device one; raising either owner pool without re-checking
 it spends a connection the server does not have.
 
-Neither side moves on its own: nothing a deploy changes reaches a running owner.
-`ensure_device_connection_owner` in `deploy/deploy-docker.sh` looks only at
+Neither side moves on its own: apart from the schema case above, nothing a
+deploy changes reaches a running owner. `ensure_device_connection_owner` in `deploy/deploy-docker.sh` looks only at
 whether the container is running, and if it is, the deploy logs that it is
 leaving it alone and returns without ever calling `docker compose up` on it. So
 a change to the compose file's `device-connection` block (its pool, or an
 `extra_hosts` entry) reaches the owner exactly as a change that lives only in
 the image — `app/core/config.py`, or anything else the backend carries — does:
 when the owner is started, which on an ordinary deploy happens only if the
-deploy finds it absent, or otherwise through a release. So
+deploy finds it absent or behind the schema, or otherwise through a release. So
 on a box whose server still has the default 100 (prod, etrip), **a release that
 raises the backend pool goes out owner-first**: until the owner is released it
 holds the pool its running image was built with, and a backend rollout beside it
@@ -131,7 +145,8 @@ with the routes untouched.
 
 Updating the owner itself drops every live preview tunnel, and unlike the device
 owner it has no drain endpoint — the helper redials on its own, so there is
-nothing to wait for. It is therefore a separate manual operation: dispatch
+nothing to wait for. Apart from a deploy whose migrations may drop schema the
+owner maps (above), it is therefore a separate manual operation: dispatch
 **Release preview connection owner**, which runs
 `deploy/release-preview-connection.sh`, pulls and force-recreates only
 `preview-connection`, and waits for its health check. It demands
@@ -363,8 +378,12 @@ changes before merging.
 `.github/workflows/required-ci.yml` runs on both `pull_request` and `merge_group`.
 It calls the existing suites selected by `.github/scripts/required-ci-paths.json`.
 Documentation-only changes run repository guards. Failed scope detection, failed
-or cancelled selected suites, and unexpected skips fail `CI required`. The same
-job checks this repo's commit titles with `.github/scripts/check-commit-title.py`:
+or cancelled selected suites, and unexpected skips fail `CI required`. A draft PR
+runs the fast tier instead, aggregated by a separate job named
+`CI required (draft quick)`; both aggregating job names are literals in the
+workflow, so a cancelled run still shows its name and not its expression. The
+full-tier job checks this repo's commit titles with
+`.github/scripts/check-commit-title.py`:
 the PR title on a pull request, and every squash commit about to land in the
 merge queue. Remote
 execution acceptance remains advisory pending the stability target in #1279; the
@@ -803,6 +822,15 @@ check asks each port for `/_internal/edge-health`, which the dev front door
 answers with 404 itself, so the check covers the tunnel and the front door
 without depending on an application rollout.
 
+Neither of those saves a request already on its way down a tunnel that stalls:
+it hangs until ssh gives the line up, about 20 s, and then fails with 502. So
+reads (`GET`, `HEAD`) go through their own `reverse_proxy` with a 10 s
+`response_header_timeout`. A read with no response headers by then counts as a
+failure, marks that tunnel down for `fail_duration`, and is retried on the other
+one within `lb_try_duration` (15 s, longer than the timeout or no retry is left
+to make). Writes keep the original block with no header timeout: Caddy does not
+retry them, so a timeout would only cut off a slow write.
+
 Each tunnel also still forwards `127.0.0.1:18443` (tunnel B: `18444`) to
 api-front's TLS listener `127.0.0.1:18443`, which terminates TLS on the dev
 box. No public traffic uses it. The watchdog below probes through it, and
@@ -1093,8 +1121,9 @@ units are untouched by it.
 
 ## Campus model API: dev reaches it through 119pve, hand-managed
 
-`deepseek-flash-ruc` (deploy/gateway/config.yaml) calls RUC's self-hosted model
-at `RUC_DEEPSEEK_API_BASE` (gateway `.env`), which admits campus addresses only. Everything
+`deepseek-flash` (deploy/gateway/config.yaml) tries RUC's self-hosted model at
+`RUC_DEEPSEEK_API_BASE` (gateway `.env`) before DeepSeek's API, and that endpoint
+admits campus addresses only. Everything
 the dev box sends by default goes through router-2 and leaves off campus, and
 the endpoint drops those connections after about 5 s with an empty reply. So
 TCP to that address and port, and nothing else, takes the same path as tunnel B:

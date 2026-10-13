@@ -44,11 +44,14 @@ export interface AcceptCardHost {
   topicId: string
   topicStatus: string
   taskId?: string | null
+  /** 谁在看这张卡。默认是登录的那个账号；演示页没有登录的人，读者扮的是卡上点名的审阅人。 */
+  viewer?: string
 }
 
 export function useAcceptCard(props: AcceptCardHost) {
   const store = useWorkspaceStore()
-  const AUTHOR = myHandle()
+  // 读成 computed：演示页里卡随剧本换，扮的审阅人跟着那张卡走。
+  const me = computed(() => props.viewer ?? myHandle())
 
   const acceptCards = ref<AcceptCard[]>([])
   // This topic's cards are in. Distinguishes 「没有卡」 from 「还没问过」 for anyone
@@ -197,7 +200,7 @@ export function useAcceptCard(props: AcceptCardHost) {
         title:
           mergeBadge.value && pending.merge_state.who !== 'human'
             ? mergeBadge.value.label
-            : pending.reviewer_handle === AUTHOR
+            : pending.reviewer_handle === me.value
               ? t('work.room.accept.waitingOnYou')
               : t('work.room.accept.waitingOn', { name: reviewerName.value }),
       }
@@ -223,9 +226,11 @@ export function useAcceptCard(props: AcceptCardHost) {
   // 还在跑、芝士在修的时候按钮点了也合不进去，那一刻要人做的事是等，不是决定；真要
   // 在这时强行采纳，入口在「改动」页顶部的「更多操作」里。冲突卡留着「重新采纳」，
   // 平台托管的仓库没有检查可等，采纳纯是人的判断。
+  // 采纳和退回只有卡上点名的审阅人能做（后端 `acceptReviewerOnly` / `returnReviewerOnly`）：
+  // 别人看到的是「待某人审阅」，要接手就在「改动」页的「更多操作」里改由他人审阅。
   const decisionOpen = computed(() => {
     const card = pendingCard.value
-    if (!card) return false
+    if (!card || card.reviewer_handle !== me.value) return false
     if (card.status === 'conflict' || platformLane.value || needsPr.value) return true
     return card.merge_state.who === 'human' || !acceptBlockedTitle.value
   })
@@ -284,17 +289,20 @@ export function useAcceptCard(props: AcceptCardHost) {
     const tid = props.topicId
     const task = props.taskId
     if (!tid) return
+    // 卡只递在任务上，频道自己没有卡。按频道问回来的是它下面所有任务的卡（一个热闹的
+    // 频道两三兆），读来也全要扔掉，所以不读，直接答「没有」。
+    if (!task) {
+      acceptCards.value = []
+      loaded.value = true
+      return
+    }
     const seq = ++requested
     try {
-      // A task's cards are read through the task's own conversation.
-      const [payload] = await Promise.all([getAcceptCards(task ?? tid), alongside?.catch(() => undefined)])
+      const [payload] = await Promise.all([getAcceptCards(task), alongside?.catch(() => undefined)])
       if (props.topicId !== tid || props.taskId !== task || seq < applied) return
       applied = seq
       const first = !loaded.value
-      acceptCards.value = reconcile(
-        acceptCards.value,
-        payload.data.filter((card) => (props.taskId ? card.task_id === props.taskId : !card.task_id))
-      )
+      acceptCards.value = reconcile(acceptCards.value, payload.data)
       loaded.value = true
       // 这个话题第一次读到的卡本来就在，不演入场；之后再出现、再收走的才演。
       if (first) void nextTick(() => (animate.value = true))
@@ -380,7 +388,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      await approveCard(card.id, AUTHOR)
+      await approveCard(card.id, me.value)
       await loadAcceptCard()
     } catch (e) {
       store.reportError(e, t('topic.accept.approveFailed'))
@@ -389,11 +397,10 @@ export function useAcceptCard(props: AcceptCardHost) {
     }
   }
 
-  // 能改派给谁：名册上还在岗的那些。队友当验收人没问题——AI 队友和人的权限一样大
-  // ——要挡的只有停用的队友：停用就是为了挡住新的活，而改派就是派活。后端的
-  // `reviewer_handle` 只是个 handle，不校验这个人还在不在，点下去就是把卡停在一个没
-  // 人驱动的实例名下，界面上还照样写着「等 @xxx 验收」。
-  const reviewerChoices = computed(() => store.members.filter((m) => m.active !== false))
+  // 能改派给谁：名册上的人。AI 队友不在单子上——审阅是人对 AI 交来的东西把关，协作
+  // 模式下 AI 也采纳不了，改派给它卡就停在那儿没人收（后端同样拒绝，`reviewers.py`）。
+  // 和开始前挑审阅人那张单子是同一个口径。
+  const reviewerChoices = computed(() => store.members.filter((m) => !m.agent && m.active !== false))
 
   async function onReassignCard(handle: string) {
     const card = pendingCard.value
@@ -414,7 +421,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      const updated = await acceptCard(card.id, AUTHOR, card.merge_state.head_sha)
+      const updated = await acceptCard(card.id, me.value, card.merge_state.head_sha)
       if (updated.status === 'conflict') {
         store.error = t('topic.accept.conflict', { agent: store.agentName })
       }
@@ -437,7 +444,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      await revokeCard(card.id, AUTHOR)
+      await revokeCard(card.id, me.value)
       // 卡已经定了：开着的退回框和里面那半句理由不再适用。
       showRejectInput.value = false
       rejectNote.value = ''
@@ -489,7 +496,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     try {
       await rejectCard(
         card.id,
-        AUTHOR,
+        me.value,
         rejectNote.value,
         comments.toSend.value.map((c) => c.id)
       )
@@ -595,7 +602,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     onRejectCard,
     onVoidCard,
     // 画的时候顺手要用的
-    author: AUTHOR,
+    author: me,
     agentName: computed(() => store.agentName),
     agentHandle: computed(() => store.agentHandle),
   }

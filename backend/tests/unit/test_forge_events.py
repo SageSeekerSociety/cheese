@@ -593,7 +593,9 @@ async def test_event_refresh_is_limited_to_bound_repository(db_factory, monkeypa
                 )
             )
         await session.commit()
-    chat = SimpleNamespace(session_factory=db_factory)
+    # The runner the bridge hands a delivery now comes off the chat service;
+    # this test seeds no deliveries, so nothing below reaches it.
+    chat = SimpleNamespace(session_factory=db_factory, work_runner=None)
     poll = AsyncMock()
     monkeypatch.setattr(pr_poll, "poll_open_prs", poll)
     sweep = AsyncMock()

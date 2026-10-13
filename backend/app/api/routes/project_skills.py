@@ -6,23 +6,25 @@ because what is confirmed is what every later session in the project follows.
 
 import base64
 import binascii
+import re
 import uuid
 from datetime import datetime
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolver, ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say, with_keys
+from app.domain.agent.announce import settle_proposal
 from app.domain.agent.platform_notices import (
     EVENT_SKILL_PROPOSED,
     SEVERITY_INFO,
-    WHO_CHEESE,
+    WHO_HUMAN,
     notice,
 )
 from app.domain.agent.staleness import announce_stale
@@ -47,8 +49,6 @@ from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["project-skills"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class SkillIn(BaseModel):
@@ -100,6 +100,31 @@ async def _absorbed(
         title = titles.get(name) or parse_memory_file(row.content).description or name
         out.append({"path": path, "title": title})
     return out
+
+
+_SKILL_ID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+
+
+def _by_title(text: str, skills: list[ProjectSkill]) -> str:
+    """``text`` with each of the project's skill ids it names replaced by that
+    skill's title.
+
+    A teammate knows the project's skills by the id at the end of each one
+    (it is what it passes to `cheese_skill_update`), so the closest skill it
+    names on a proposal card arrives as an id; the person deciding reads
+    titles.
+    """
+    titles = {str(skill.id): skill.title for skill in skills}
+    return _SKILL_ID.sub(
+        lambda m: (
+            f"「{titles[m.group(0).lower()]}」"
+            if m.group(0).lower() in titles
+            else m.group(0)
+        ),
+        text,
+    )
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -204,6 +229,62 @@ async def proposals_in_room(
     ]
 
 
+def _post_line(
+    db: AsyncSession,
+    row: ProjectSkill,
+    room_id: uuid.UUID,
+    line: str,
+    detail: str,
+    *,
+    edit: bool = False,
+) -> None:
+    """The room's line about a teammate's proposal: what it is, and a way to
+    the card a person saves it from."""
+    db.add(
+        Block(
+            id=uuid.uuid4(),
+            project_id=row.project_id,
+            conversation_id=room_id,
+            author="system",
+            author_type=AuthorType.platform,
+            kind=BlockKind.event,
+            content=line,
+            # Added as a row, not through `BlockRepository.add`, so the line's
+            # key is recorded here.
+            meta=with_keys(
+                {
+                    **notice(
+                        EVENT_SKILL_PROPOSED,
+                        severity=SEVERITY_INFO,
+                        # It waits on a person saving or declining it.
+                        who=WHO_HUMAN,
+                        detail=detail,
+                        detail_label=say("labelSkillToConfirm"),
+                    ),
+                    "skill_id": str(row.id),
+                    **({"edit": True} if edit else {}),
+                },
+                content=line,
+            ),
+        )
+    )
+
+
+async def _has_open_line(
+    db: AsyncSession, room_id: uuid.UUID, skill_id: uuid.UUID
+) -> bool:
+    """Whether the room already has a line about this skill nobody decided on."""
+    rows = await db.scalars(
+        select(Block.meta).where(
+            Block.conversation_id == room_id,
+            Block.kind == BlockKind.event,
+            Block.meta["event_type"].as_string() == EVENT_SKILL_PROPOSED,
+            Block.meta["skill_id"].as_string() == str(skill_id),
+        )
+    )
+    return any((meta or {}).get("state") != "over" for meta in rows)
+
+
 @router.post("/topics/{topic_id}/skills")
 async def create_skill(
     topic_id: uuid.UUID, body: SkillIn, db: DbSession, resolver: ActorResolverDep
@@ -218,7 +299,10 @@ async def create_skill(
         proposal = {
             "taught": [t.strip() for t in body.taught if t.strip()],
             "accepted": body.accepted.strip(),
-            "related": body.related.strip(),
+            "related": _by_title(
+                body.related.strip(),
+                await service.list(place.project_id),
+            ),
             "absorbs": await _absorbed(db, place.project_id, body.absorbs),
         }
     row = await service.create(
@@ -231,36 +315,12 @@ async def create_skill(
         proposal=proposal,
     )
     if by_agent:
-        line = say("skillProposed", title=row.title)
-        db.add(
-            Block(
-                id=uuid.uuid4(),
-                project_id=place.project_id,
-                conversation_id=place.room_id,
-                author="system",
-                author_type=AuthorType.platform,
-                kind=BlockKind.event,
-                content=line,
-                # Added as a row, not through `BlockRepository.add`, so the
-                # line's key is recorded here.
-                meta=with_keys(
-                    {
-                        **notice(
-                            EVENT_SKILL_PROPOSED,
-                            severity=SEVERITY_INFO,
-                            who=WHO_CHEESE,
-                            detail=say(
-                                "skillProposedDetail",
-                                description=row.description,
-                                body=row.body,
-                            ),
-                            detail_label=say("labelSkillToConfirm"),
-                        ),
-                        "skill_id": str(row.id),
-                    },
-                    content=line,
-                ),
-            )
+        _post_line(
+            db,
+            row,
+            place.room_id,
+            say("skillProposedBy", who=f"<@{by}>", title=row.title),
+            say("skillProposedDetail", description=row.description, body=row.body),
         )
     await db.commit()
     await service.publish(place.project_id)
@@ -347,6 +407,26 @@ async def preview_import(
     return ok(read.to_json())
 
 
+async def _settled(db: AsyncSession, row: ProjectSkill, *, saved: bool) -> None:
+    """A person decided on a teammate's proposal: its line in the room says so."""
+    if row.source_topic_id is None:
+        return
+    await settle_proposal(
+        db,
+        row.source_topic_id,
+        event_type=EVENT_SKILL_PROPOSED,
+        key="skill_id",
+        value=row.id,
+        content=lambda meta: say(
+            ("skillEditSavedBy" if saved else "skillEditNotSavedBy")
+            if meta.get("edit")
+            else ("skillProposalSavedBy" if saved else "skillProposalNotSavedBy"),
+            who=f"<@{row.proposed_by}>",
+            title=row.title,
+        ),
+    )
+
+
 async def _changed(row: ProjectSkill) -> None:
     """Tell the room a method came from that its cards changed."""
     if row.source_topic_id is not None:
@@ -396,6 +476,7 @@ async def update_skill(
     row, actor = await _load(db, resolver, skill_id, topic)
     service = ProjectSkillService(db)
     by_agent = not _is_person(actor)
+    pending = row.state == "draft"
     row = await service.update(
         row,
         by=await _speaker(db, actor, topic),
@@ -403,6 +484,34 @@ async def update_skill(
         changes=body.model_dump(exclude_unset=True, exclude={"reason"}),
         proposal={"reason": body.reason.strip()} if by_agent else None,
     )
+    if by_agent and topic is not None:
+        # The card goes where the teammate was corrected: the person who just
+        # corrected it decides there, as with a new skill.
+        room_id = (await TopicService(db).place_or_404(topic)).room_id
+        row.source_topic_id = room_id
+        if not await _has_open_line(db, room_id, row.id):
+            edit = row.shipped_revision > 0
+            _post_line(
+                db,
+                row,
+                room_id,
+                say(
+                    "skillEditProposedBy" if edit else "skillProposedBy",
+                    who=f"<@{row.proposed_by}>",
+                    title=row.title,
+                ),
+                say(
+                    "skillEditProposedDetail", reason=body.reason.strip(), body=row.body
+                )
+                if edit
+                else say(
+                    "skillProposedDetail", description=row.description, body=row.body
+                ),
+                edit=edit,
+            )
+    if pending and not by_agent:
+        # A person's own edit is what gets saved; the teammate's wording is not.
+        await _settled(db, row, saved=False)
     await db.commit()
     await service.publish(row.project_id)
     await _changed(row)
@@ -423,6 +532,7 @@ async def confirm_skill(
         for item in (row.proposal or {}).get("absorbs") or []
     ]
     row = await service.confirm(row, by=actor.handle)
+    await _settled(db, row, saved=True)
     if absorbed:
         await MemoryFileStore(db).forget(
             project_id=row.project_id,
@@ -446,6 +556,7 @@ async def decline_skill(
     _person(actor, say("skillDecline"))
     service = ProjectSkillService(db)
     row = await service.decline(row, by=actor.handle)
+    await _settled(db, row, saved=False)
     await db.commit()
     await service.publish(row.project_id)
     await _changed(row)
@@ -459,7 +570,10 @@ async def restore_skill(
     row, actor = await _load(db, resolver, skill_id, None)
     _person(actor, say("skillRestoreOld"))
     service = ProjectSkillService(db)
+    pending = row.state == "draft"
     row = await service.restore(row, revision, by=actor.handle)
+    if pending:
+        await _settled(db, row, saved=False)
     await db.commit()
     await service.publish(row.project_id)
     await _changed(row)
@@ -474,6 +588,8 @@ async def delete_skill(
     _person(actor, say("skillDelete"))
     project_id = row.project_id
     service = ProjectSkillService(db)
+    if row.state == "draft":
+        await _settled(db, row, saved=False)
     await service.delete(row)
     await db.commit()
     await service.publish(project_id)

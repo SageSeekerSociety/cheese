@@ -92,6 +92,13 @@ export async function attachmentImageUrl(topicId: string, path: string): Promise
   return URL.createObjectURL(await res.blob())
 }
 
+/** A video object URL fetched with Authorization; the browser can then seek it. */
+export async function attachmentMediaUrl(topicId: string, path: string): Promise<string> {
+  const res = await fetch(attachmentRawUrl(topicId, path), { headers: authHeaders() })
+  if (!res.ok) throw new Error(t('global.request.fileReadFailed', { status: res.status }))
+  return URL.createObjectURL(await res.blob())
+}
+
 /** A published file's bytes, for a viewer that draws them in the page. */
 export async function previewFileBytes(
   topicId: string,
@@ -183,7 +190,7 @@ export interface RoomFileRevision {
   size: number
   author: string
   author_kind: 'human' | 'agent' | 'unknown'
-  source: 'baseline' | 'upload' | 'ai' | 'editor' | 'restore' | 'scheduled'
+  source: 'baseline' | 'upload' | 'template' | 'ai' | 'editor' | 'restore' | 'scheduled'
   note: string | null
   /** 存下这一版的那次编辑会话；和自己打开时的那个相同，就是自己刚存的。 */
   editor_key: string | null
@@ -245,6 +252,31 @@ export interface RoomFileEditorSession {
 
 export function openRoomFileEditor(topicId: string, path: string): Promise<RoomFileEditorSession> {
   return request(`/topics/${encodeURIComponent(topicId)}/files/editor?path=${encodeURIComponent(path)}`)
+}
+
+// ---- 这个房间自己的文件 ----
+
+/** 房间文件区里的一份文件：路径、大小、最后一次改动的时间，和最后是谁从哪条路放下的。
+ *
+ *  `author`／`author_kind`／`source` 是平台按写下来的那次动作记的（谁按的保存、谁交
+ *  的），不是谁自己填的。三个都可能空：这一页列的是目录本身，而目录里的字节可以由别的
+ *  东西直接写进去，那种文件说不出是谁写的。`author_kind` 为 `agent` 时 `author` 是队友
+ *  的 handle；`baseline` 那一版不署人（`author` 空、`author_kind` 是 `unknown`）。 */
+export interface RoomFile {
+  path: string
+  bytes: number
+  /** ISO 时刻，照 `relTime` 吃的样子给。 */
+  modified_at: string
+  author: string | null
+  author_kind: 'human' | 'agent' | 'unknown' | null
+  /** 字节从哪条路进来：`upload`、`ai`、`editor`、`restore`、`scheduled`…… */
+  source: string | null
+}
+
+/** 这个房间的文件区：它自己的东西都在这一处——芝士交付的文档、定时任务交回的结果、有
+ *  人放进来的文件。最近改的在最前；`truncated` 为真时说清单不是全部。 */
+export function listRoomFiles(topicId: string): Promise<{ data: RoomFile[]; total: number; truncated: boolean }> {
+  return request(`/topics/${encodeURIComponent(topicId)}/files`)
 }
 
 export function listDocumentTemplates(topicId: string): Promise<{ data: DocumentTemplate[]; total: number }> {

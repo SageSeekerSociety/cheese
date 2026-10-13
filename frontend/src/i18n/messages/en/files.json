@@ -3,6 +3,15 @@
     "uploadFailed": "Upload failed (HTTP {status})",
     "readFailed": "Can't read this file (HTTP {status})"
   },
+  "room": {
+    "readOnly": "Read-only",
+    "empty": "No files yet",
+    "loading": "Loading files",
+    "loadError": "Could not load the files",
+    "truncated": "Too many files — only the {n} most recently changed are listed",
+    "crumbsRoot": "All files",
+    "crumbsLabel": "Breadcrumb"
+  },
   "preview": {
     "cannotShow": "Can't display this file",
     "generateFailed": "Could not generate a preview (HTTP {status})"

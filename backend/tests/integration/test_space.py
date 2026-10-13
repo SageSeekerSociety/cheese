@@ -78,6 +78,44 @@ class TestSpaceIntegration:
         assert data["intro"] == "This is a test space."
         assert data["enableRank"] is False
 
+    @pytest.mark.parametrize(
+        ("language", "expected"),
+        [(None, "默认分类"), ("zh-CN", "默认分类"), ("en", "General")],
+    )
+    def test_a_new_board_names_its_first_category_in_its_creators_language(
+        self,
+        user_client: UserCreator,
+        api_client: TestClient,
+        language: str | None,
+        expected: str,
+    ):
+        creator = user_client.create_user()
+        token = user_client.login(api_client, creator.username, creator.password)
+        headers = {"Authorization": f"Bearer {token}"}
+        if language is not None:
+            resp = api_client.put(
+                "/users/me/language", json={"language": language}, headers=headers
+            )
+            assert resp.status_code == 200
+        resp = create_approved_space(
+            api_client,
+            json={
+                "name": f"Language Space ({unique_int(10000000, 99999999)})",
+                "intro": "",
+                "description": "",
+                "enableRank": False,
+                "taskTemplates": [],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 201
+        space_id = resp.json()["data"]["space"]["id"]
+
+        resp = api_client.get(f"/spaces/{space_id}/categories", headers=headers)
+
+        assert resp.status_code == 200
+        assert [c["name"] for c in resp.json()["data"]["categories"]] == [expected]
+
     def test_get_space_by_id(self, setup_space: dict, api_client: TestClient):
         creator = setup_space["creator"]
         space_id = setup_space["space_id"]

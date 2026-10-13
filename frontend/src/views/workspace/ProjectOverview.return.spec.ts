@@ -40,6 +40,8 @@ vi.mock('@/api/tasks', async (importOriginal) => ({
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
   listProjectArtifacts: vi.fn(async () => ({ data: [], total: 0 })),
+  // 不是领题开的项目：项目那一行里没有截止。
+  getProject: vi.fn(async () => ({ id: 'p1', name: '项目一', external_task_id: null })),
   getProjectSite: vi.fn(async () => {
     throw new Error('no site')
   }),
@@ -78,7 +80,7 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
-it('回到看过的总览，项目总览那份文档马上就在，不等重取', async () => {
+it('回到看过的总览，项目目标马上就在，不等重取', async () => {
   const first = open()
   await settle()
   expect(first.container.textContent).toContain('这是项目一要做的事')

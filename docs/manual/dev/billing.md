@@ -65,7 +65,7 @@ covers:
 
 | 路 | 谁记 | 怎么进账 |
 |---|---|---|
-| 网关路 | LiteLLM 逐次记在项目虚拟 key 上 | 主 API 读取 LiteLLM 按 key、按天、按模型记的累计值（`/user/daily/activity`），只消费差值，每笔只消费一次 |
+| 网关路 | LiteLLM 逐次记在项目虚拟 key 上 | 主 API 读取 LiteLLM 按 key、按天、按模型记的累计值（`/user/daily/activity`），只消费差值，每笔只消费一次。一次收取每个模型写一行，行上的 `calls` 是这段时间里这个模型答了几次（`successful_requests` 的差值），所以看板上的调用次数是 `calls` 之和，不是行数 |
 | 订阅路 | 计量代理每个 `/v1/messages` 响应写一行 `usage.jsonl` | 主 API 定时把新行收进 `resource_usage`，和检查点在同一个事务里推进，只收一次（`subscription_ingest.py`） |
 | 成员自己的 Claude Code | 会话在每轮结束时自报（stream-json `result` 的 `usage`、`total_cost_usd`） | 一轮结束时写一行，`route` 是 `own`，额度记 0：用的是主人自己的登录，项目不付钱（`chat._close_hook_work`） |
 
@@ -75,7 +75,7 @@ covers:
 
 两条路用同一把尺子（`backend/app/domain/usage/credits.py` 的 `spend_to_credits`）：**额度 = 这次调用的美元花费 ÷ 0.01**（`CREDIT_USD`）。1 额度就是 1 分钱，界面上叫「点」。
 
-- **网关路**：花费是网关按模型单价算出来的。
+- **网关路**：花费是网关按模型单价算出来的。LiteLLM 的 `prompt_tokens` 已经含缓存读和缓存写，所以 `input_tokens` 和订阅路一样记全部输入，`cache_read_tokens`、`cache_write_tokens` 取它按天累计的 `cache_read_input_tokens`、`cache_creation_input_tokens` 的差值；缓存写不分有效期，`cache_write_1h_tokens` 记 0。
 - **订阅路**：订阅按月付费，调用本身没有账单，所以按同一个模型在网关价目表里的单价估算。价目表在 `deploy/gateway/config.yaml`：订阅用到的 Claude 模型各有一条只记价格的条目（`model_info.blocked: true`，网关拒绝路由，也没有凭证），单价取 Anthropic 公开的 API 价格。计量代理的日志里 token 是分开记的：新输入、输出、缓存读、缓存写，缓存写再按有效期分成 5 分钟和 1 小时两部分；入库时 `input_tokens` 记全部输入（新输入、缓存读、缓存写之和），`cache_read_tokens`、`cache_write_tokens` 记其中的缓存部分，`cache_write_1h_tokens` 记缓存写里 1 小时的那部分。各部分按各自的单价计价：缓存读按缓存读价，不当新输入算；1 小时缓存写按 1 小时的价，比 5 分钟的贵。日志里的模型名带日期后缀（`claude-haiku-4-5-20251001`）时，按去掉后缀的名字查价。
 - 计量代理开始分开记录缓存写的有效期之前写下的日志行没有这一拆分，这些行的缓存写全部按 1 小时的单价算：Claude Code 用的是 1 小时缓存，而且估算宁可多算不少算。
 - 价目表里查不到的订阅模型：这一行用量照记，花费为 0、不扣额度，每一轮收取在日志里列出这些模型和行数。缺价是平台配置的问题，不该让团队因此被拒；补上价格即可。读不到价目表（网关配置了但连不上）时这一轮不收取，检查点不动，下一轮再收，不会把一段日志按 0 记掉。

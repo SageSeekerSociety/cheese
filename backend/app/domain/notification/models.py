@@ -19,9 +19,10 @@
 
 **两侧各自列出来的是各自的行。** 知是的收件箱里只有 `recipient_handle` 为空的那些
 （`repositories._my_mail`），带着名册名字的那些只在项目收件箱里列出（`_mine_in`）。
-平台报告自己的那几种在知是的铃铛里没有渲染器 —— 前端按 `type` 找模板，`MENTION`
-那一个读的是 `payload` 里的 `mentioner`/`discussionTitle`，项目通知的文字在
-`title`/`body` 上，落进去就是一排读不出内容的空壳，未读数却照加。
+项目收件箱的那几种在知是的铃铛里没有渲染器 —— 前端按 `type` 找模板，模板读的是
+`payload` 里的字段，项目通知的文字在 `title`/`body` 上，落进去就是一排读不出内容
+的空壳，未读数却照加。频道里的 @ 和支线回复因此不写项目收件箱，走投递账本
+（`agent.mentions`），落在知是的收件箱里，推送和邮件按各人的偏好走。
 
 ## 广播没有自己的形状
 
@@ -81,8 +82,8 @@ class NotificationType(str, Enum):
     TEAM_INVITATION_CANCELED = "TEAM_INVITATION_CANCELED"
     TEAM_REQUEST_CANCELED = "TEAM_REQUEST_CANCELED"
 
-    #: 我参与过的支线里有人回复了（`agent.mentions._tell_thread`）。`payload`
-    #: 带 ``thread_id``；`conversation_id` 是支线所在的频道。
+    #: 我参与过的支线里有人回复了（`agent.mentions._tell_thread`）。走投递账本，
+    #: `payload` 带频道（``topicId``）、支线（``threadId``）和那条消息（``blockId``）。
     THREAD_REPLY = "THREAD_REPLY"
 
     #: 平台在房间里说的、要人动手的那一句（`app.domain.agent.announce`）。所有

@@ -25,10 +25,12 @@ class AssistantMessages:
         read_roster: Callable[
             [AsyncSession, uuid.UUID, Topic | None], Awaitable[list[dict]]
         ],
+        thread_replied: Callable[[uuid.UUID], Awaitable[None]],
     ) -> None:
         self.sessions = sessions
         self.live = live
         self._read_roster = read_roster
+        self._thread_replied = thread_replied
 
     async def _prepare_mentions(
         self,
@@ -119,6 +121,13 @@ class AssistantMessages:
         assert payload is not None
         author = stored.author
         assert author is not None
+        if publish and inner_id is not None:
+            # A published message is what a 支线 counts (progress lines are
+            # events and do not), and both of its writers — `chat_send` and a
+            # posted checklist — pass through here, so the channel hears its
+            # 支线 grew from this one place. Without it the line under the
+            # message keeps the count it was read with.
+            await self._thread_replied(inner_id)
         if publish:
             # The caller attributes the publication to a turn when it can; an
             # agent running off this process (a remote executor) publishes over

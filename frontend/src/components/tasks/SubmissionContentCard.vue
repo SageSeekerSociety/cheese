@@ -17,7 +17,7 @@
         <v-icon class="text-medium-emphasis" size="36">mdi-file-document-outline</v-icon>
         <div class="d-flex flex-column">
           <div class="text-body-1">{{ (content.contentAttachment.meta as FileMeta).name }}</div>
-          <div class="text-caption">{{ formatFileSize(content.contentAttachment.meta.size) }}</div>
+          <div class="text-caption">{{ fmtFileSize(content.contentAttachment.meta.size) }}</div>
         </div>
       </v-card>
     </div>
@@ -27,7 +27,9 @@
 <script setup lang="ts">
 import type { FileMeta, TaskSubmissionContent } from '@/types'
 
-import { formatFileSize, getFullAttachmentUrl } from '@/utils/materials'
+import { getFullAttachmentUrl } from '@/utils/materials'
+
+import { fmtFileSize } from '@/lib/usageFormat'
 
 defineProps<{
   content: TaskSubmissionContent

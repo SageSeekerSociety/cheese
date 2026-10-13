@@ -844,10 +844,10 @@ test("pane resize recovery leaves external focus and unmounted messages alone", 
   await expect(external).toBeFocused();
 });
 
-// Keyboard parity for the very same bar. A message row is a real tab stop, Tab
-// reaches it, the bar comes up for it like a hover, Tab steps from the row into
-// the bar's buttons, and Escape puts the bar away again without the row losing
-// its place.
+// Keyboard parity for the very same bar. The message list is one tab stop that
+// lands on the newest row, the bar comes up for it like a hover, Enter steps from
+// the row into the bar's buttons, and Escape puts the bar away again without the
+// row losing its place.
 test("message actions are reachable from the row by keyboard", async ({
   page,
 }) => {
@@ -879,15 +879,15 @@ test("message actions are reachable from the row by keyboard", async ({
   // Floating the bar over the row must not push the timeline around.
   expect((await row.boundingBox())?.y).toBe(before?.y);
 
-  // Tab hands focus from the row to its actions; Shift+Tab hands it back.
+  // Enter hands focus from the row to its actions; Shift+Tab hands it back.
   const react = page.locator(".hover-bar .rx-toggle");
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
   await expect(react).toBeFocused();
   await page.keyboard.press("Shift+Tab");
   await expect(row).toBeFocused();
 
   // Escape hides the bar; the row stays focused and in place.
-  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
   await expect(react).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(bar).toHaveAttribute("aria-hidden", "true");

@@ -29,6 +29,7 @@ const attachments: Plugin = {
   install(app) {
     app.provide(ATTACHMENT_SOURCE, {
       imageUrl: api.attachmentImageUrl,
+      mediaUrl: () => Promise.reject(new Error('This test does not play video')),
       documentPdf: api.previewDocumentPdf,
       fileBytes: api.previewFileBytes,
     })
@@ -38,16 +39,21 @@ const attachments: Plugin = {
 // 发出去的消息走 POST（`postChatMessage`），这里把每一次的请求体记下来。
 const sent = vi.hoisted(() => [] as { payload: string }[])
 
+// 打 `@` 时输入区的候选里也列资料库里的文件（`useRoomMentionPicker`）。这一层不
+// 自己取数，宿主（`RoomComposer`）把取数那一步注进来，所以这里替的是**注进来的那
+// 一个**：替 `listProjectLibrary` 拦不住它（`searchLibraryFiles` 调的是同一个模块
+// 里那个函数，替身只换得掉出口）。
 vi.mock('../../lib/libraryApi', async () => ({
   ...(await vi.importActual<typeof import('../../lib/libraryApi')>('../../lib/libraryApi')),
-  listProjectLibrary: vi.fn().mockResolvedValue({ data: [], next: null }),
+  searchLibraryFiles: vi.fn().mockResolvedValue([]),
 }))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
     ...actual,
     getAgentControl: vi.fn().mockResolvedValue({ id: null, connected: false }),
-    // 项目本体上那张「开始清单」的仓库判据。
+    // 新手引导：这里的人已经会了，引导不出现。
+    getStartSteps: vi.fn().mockResolvedValue({ asked: true, answered: true, accepted: true, learned: true }),
     getForgeConnection: vi.fn().mockResolvedValue({
       kind: 'forgejo',
       connected: false,
@@ -189,13 +195,13 @@ describe('对话栏自己的输入栏', () => {
     const { container, rerender, getByRole, queryByRole } = mountPanel({}, 'starter-project')
     await rerender({ topic: { ...topic('starter-project'), kind: 'root' } })
     await flush()
-    await fireEvent.click(getByRole('button', { name: '起草文档' }))
+    await fireEvent.click(getByRole('button', { name: /查资料，写成一份报告/ }))
     const box = composerBox(container)!
     expect(box.value).toContain('@芝士')
-    expect(box.value).toContain('文档')
+    expect(box.value).toContain('报告')
     expect(document.activeElement).toBe(box)
     expect(sent).toHaveLength(0)
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
     await fireEvent.update(box, '@芝士 帮我起草一份项目介绍')
     await fireEvent.keyDown(box, { key: 'Enter' })
     await flush()
@@ -207,10 +213,29 @@ describe('对话栏自己的输入栏', () => {
   it('does not offer starter drafts in an archived project or a regular conversation', async () => {
     const { rerender, queryByRole } = mountPanel({}, 'starter-archived')
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
     await rerender({ topic: { ...topic('starter-archived'), kind: 'root', status: 'archived' } })
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
+  })
+
+  // 任务页的对话栏拿的也是频道这只房间（kind 是 root）。起手区块是频道主线的，
+  // 新建的空任务里不该冒出起手卡。
+  it('does not offer starter drafts in a task of the channel', async () => {
+    const vuetify = createVuetify({ components, directives })
+    const { queryByRole, queryByText } = render(ChatPanel, {
+      props: {
+        topic: { ...topic('starter-task-room'), kind: 'root' },
+        conversationId: 'task-in-starter-task-room',
+        showComposer: true,
+        hideHeader: true,
+        members,
+      },
+      global: { plugins: [vuetify, i18n, attachments] },
+    })
+    await flush()
+    expect(queryByText('你想先做点什么？')).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
   })
 
   // 退休判据是「芝士在这个房间里说过话」，不是「房间里有没有东西」。新用户常常先
@@ -239,7 +264,7 @@ describe('对话栏自己的输入栏', () => {
     const { rerender, queryByRole } = mountPanel({}, 'starter-talked')
     await rerender({ topic: { ...topic('starter-talked'), kind: 'root' } })
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeTruthy()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeTruthy()
   })
 
   it('retires the starter drafts once 芝士 has spoken in the room', async () => {
@@ -265,24 +290,7 @@ describe('对话栏自己的输入栏', () => {
     const { rerender, queryByRole } = mountPanel({}, 'starter-answered')
     await rerender({ topic: { ...topic('starter-answered'), kind: 'root' } })
     await flush()
-    expect(queryByRole('button', { name: '起草文档' })).toBeNull()
-  })
-
-  // 项目建的时候给 AI 队友起了名字，清单第一步说的是这个名字，不是平台的「芝士」。
-  it('names the room’s own teammate in the start checklist', async () => {
-    const api = await import('../../api')
-    vi.mocked(api.listTopicMembers).mockResolvedValueOnce({
-      data: [
-        { member_handle: 'alice', name: 'Alice', role: 'owner', agent: false },
-        { member_handle: 'cheese-spark', name: '火花', role: 'member', agent: true },
-      ],
-      total: 2,
-    } as never)
-    const { rerender, findByText, queryByText } = mountPanel({}, 'checklist-named')
-    await rerender({ topic: { ...topic('checklist-named'), kind: 'root' } })
-    await flush()
-    expect(await findByText('跟火花说第一句话')).toBeTruthy()
-    expect(queryByText('跟芝士说第一句话')).toBeNull()
+    expect(queryByRole('button', { name: /查资料，写成一份报告/ })).toBeNull()
   })
 
   it('previews a document and sends its uploaded path', async () => {

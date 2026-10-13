@@ -4,8 +4,8 @@
 // 是回自己队里。落地页选错的代价是每天都要多点一下，而且第一屏看到的是一片
 // 和你无关的队伍。
 //
-// 根地址也一样：登录后回到上次待的那个项目——每天第一件事是接着干活。一个项目
-// 都没有的人落在待办上，那一页给他新建项目和用邀请码加入空间两条路。
+// 根地址也一样：登录后回到上次待的那个项目——每天第一件事是接着干活。新账号一个
+// 项目都没有、也没走过新手引导，去引导；走过引导又没项目了的人落在待办上。
 import { createRouter, createWebHistory } from 'vue-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -14,7 +14,13 @@ import AccountService from '@/services/account'
 const listProjects = vi.fn()
 vi.mock('@/api', () => ({ listProjects: () => listProjects() }))
 
-vi.mock('@/services/account', () => ({ default: { loggedIn: false, sessionRestored: Promise.resolve() } }))
+vi.mock('@/services/account', () => ({
+  default: {
+    loggedIn: false,
+    sessionRestored: Promise.resolve(),
+    user: { username: 'lin', nickname: '林', onboarded_at: null as string | null },
+  },
+}))
 vi.mock('@/layouts/home/Home.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/home/HomeSidebar.vue', () => ({ default: { template: '<div />' } }))
 vi.mock('@/views/home/HomeHub.vue', () => ({ default: { template: '<div />' } }))
@@ -34,6 +40,7 @@ function router() {
     routes: [
       home,
       { path: '/account/signin', name: 'SignIn', component: blank },
+      { path: '/welcome', name: 'welcome', component: blank },
       { path: '/projects/:projectId', name: 'workspace-project', component: blank },
       { path: '/:pathMatch(.*)*', name: 'catch-all', component: blank },
     ],
@@ -44,6 +51,7 @@ describe('首页那一层', () => {
   beforeEach(() => {
     localStorage.clear()
     listProjects.mockReset().mockResolvedValue({ data: [{ id: 'p1' }, { id: 'p2' }] })
+    AccountService.user!.onboarded_at = null
     AccountService.loggedIn = false
     AccountService.sessionRestored = Promise.resolve()
     delete (window as { __TAURI__?: unknown }).__TAURI__
@@ -81,12 +89,29 @@ describe('首页那一层', () => {
     expect(r.currentRoute.value.params.projectId).toBe('p1')
   })
 
-  it('一个项目都没有的人登录后落在待办上', async () => {
+  it('一个项目都没有、也没走过引导的人登录后去新手引导', async () => {
     listProjects.mockResolvedValue({ data: [] })
     AccountService.loggedIn = true
     const r = router()
     await r.push('/')
+    expect(r.currentRoute.value.name).toBe('welcome')
+  })
+
+  // 走过（或跳过了）引导，后来退出或删光了项目：不再被拉回引导。
+  it('走过引导、现在一个项目都没有的人落在待办上', async () => {
+    listProjects.mockResolvedValue({ data: [] })
+    AccountService.user!.onboarded_at = '2026-10-11T00:00:00Z'
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
     expect(r.currentRoute.value.name).toBe('inbox')
+  })
+
+  it('有项目的人不进引导', async () => {
+    AccountService.loggedIn = true
+    const r = router()
+    await r.push('/')
+    expect(r.currentRoute.value.name).toBe('workspace-project')
   })
 
   it('项目清单读不到时落在待办上，而不是停在推广页', async () => {

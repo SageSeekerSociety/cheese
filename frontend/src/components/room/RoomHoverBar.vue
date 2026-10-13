@@ -20,6 +20,7 @@ import AdaptiveMenu from '../common/AdaptiveMenu.vue'
 
 import { copyMessage, QUICK_EMOJIS } from './messageActions'
 
+import { copyText } from '@/commands/copy'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -41,7 +42,7 @@ const props = defineProps<{
   /** 这条是我自己发的消息：多一颗「编辑」。 */
   editable: boolean
   /** 右键这一条时鼠标的位置：每次右键一个新对象，认到就在那一点打开 ⋯。 */
-  menuAt?: { x: number; y: number } | null
+  menuAt?: { x: number; y: number; selectedText?: string } | null
   /** 这是频道主线、我能在这里说话：⋯ 里能把消息置顶到频道。 */
   pinnable?: boolean
   /** 已经置顶的那几条（block id）：它们的 ⋯ 里是「取消置顶」。 */
@@ -130,11 +131,17 @@ async function copyLink(block: Block | null) {
 }
 
 // 浮层里鼠标已不在消息上：操作仍属于打开菜单时的那一条。
-const menuTarget = shallowRef<{ block: Block; isAgent: boolean; editable: boolean } | null>(null)
+const menuTarget = shallowRef<{ block: Block; isAgent: boolean; editable: boolean; selectedText?: string } | null>(null)
 watch(
-  menuOpen,
-  (open) => {
-    if (open && props.block) menuTarget.value = { block: props.block, isAgent: props.isAgent, editable: props.editable }
+  [menuOpen, () => props.menuAt],
+  ([open]) => {
+    if (open && props.block)
+      menuTarget.value = {
+        block: props.block,
+        isAgent: props.isAgent,
+        editable: props.editable,
+        selectedText: menuPoint.value ? props.menuAt?.selectedText : undefined,
+      }
   },
   { flush: 'sync' }
 )
@@ -166,6 +173,16 @@ const menuActions = computed<MenuAction[]>(() => {
             label: t('work.room.message.process'),
             icon: 'mdi-timeline-text-outline',
             onSelect: () => emit('process', block.turn_id!),
+          },
+        ]
+      : []),
+    ...(target.selectedText
+      ? [
+          {
+            key: 'copy-selection',
+            label: t('work.room.message.copySelection'),
+            icon: 'mdi-content-copy',
+            onSelect: () => void copyText(target.selectedText!, t('work.room.message.copied')),
           },
         ]
       : []),
@@ -265,6 +282,7 @@ function onFocusOut(event: FocusEvent) {
           class="hover-bar__act rx-toggle"
           :class="{ 'hover-bar__act--on': pickerOpen }"
           :title="t('work.room.message.react')"
+          :aria-label="t('work.room.message.react')"
           @click="emit('toggle-picker', block.id)"
         >
           <v-icon size="15">mdi-emoticon-happy-outline</v-icon>
@@ -273,6 +291,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="t('work.room.message.reply')"
+          :aria-label="t('work.room.message.reply')"
           @click="emit('reply', block)"
         >
           <v-icon size="15">mdi-reply-outline</v-icon>
@@ -304,6 +323,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="t('work.room.message.edit')"
+          :aria-label="t('work.room.message.edit')"
           @click="emit('edit', block)"
         >
           <v-icon size="15">mdi-pencil-outline</v-icon>
@@ -312,6 +332,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
+          :aria-label="copied ? t('work.room.message.copied') : t('work.room.message.copy')"
           @click="copy"
         >
           <v-icon size="15">{{ copied ? 'mdi-check' : 'mdi-content-copy' }}</v-icon>
@@ -323,6 +344,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="linkCopied ? t('work.room.message.linkCopied') : t('work.room.message.copyLink')"
+          :aria-label="linkCopied ? t('work.room.message.linkCopied') : t('work.room.message.copyLink')"
           @click="copyLink(block)"
         >
           <v-icon size="15">{{ linkCopied ? 'mdi-check' : 'mdi-link-variant' }}</v-icon>
@@ -332,6 +354,7 @@ function onFocusOut(event: FocusEvent) {
           type="button"
           class="hover-bar__act"
           :title="t('work.room.message.upgrade')"
+          :aria-label="t('work.room.message.upgrade')"
           @click="emit('upgrade', block.id)"
         >
           <v-icon size="15">mdi-comment-arrow-right-outline</v-icon>
@@ -425,6 +448,9 @@ function onFocusOut(event: FocusEvent) {
   background: none;
   color: var(--muted);
   cursor: pointer;
+  /* 键盘进到这一条、焦点落在条上时，时间线把它滚进可见区（useTimelineKeys）：连同画在
+     按钮外面 4px 的焦点环和条自己的边框一起，不只是按钮本身。 */
+  scroll-margin-block: 6px;
   transition:
     background-color var(--dur-quick) var(--ease-standard),
     color var(--dur-quick) var(--ease-standard);

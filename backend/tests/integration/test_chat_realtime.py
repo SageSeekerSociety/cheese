@@ -12,16 +12,7 @@ from sqlalchemy import select
 from app.api import deps as session_turn_deps
 from app.core.errors import ValidationError
 from app.domain.agent.chat import ChatService
-from app.domain.agent.compute_configs import (
-    ComputeChoice,
-    ProjectComputeConfigs,
-    room_choice,
-    standard_choice,
-)
-from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.channel import ScreenSetupError
-from app.domain.agent_session.models import AgentSession
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.delivery.input_identity import InputIdentity, InputReceipt
@@ -34,7 +25,6 @@ from app.domain.identity.handles import (
 from app.domain.identity.services import IdentityService
 from app.domain.project.services import ProjectService
 from app.domain.thread.models import Thread
-from app.domain.topic.repositories import TopicRepository
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.repositories import TopicMembershipRepository
 from app.domain.topic_membership.services import TopicMemberService
@@ -65,7 +55,7 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider.runtime], provider.name),
+        compute=ComputePool([provider.runtime]),
     )
     async with factory() as session:
         await registered(session, "alice")
@@ -492,7 +482,6 @@ async def test_queued_message_retains_selected_teammate(business_db_factory, tmp
         content="@First For first",
         turn_id=original,
         user_block_id=original,
-        provision_actor=None,
     )
     assert prepared.agent.handle == "first"
     assert prepared.pending_ids == [original]
@@ -1025,127 +1014,6 @@ async def test_execution_notes_are_retained_outside_public_replies(
 
 
 @pytest.mark.anyio
-async def test_first_turn_materializes_inherited_compute_before_running(
-    business_db_factory, tmp_path
-):
-    """Changing a later default must never move an existing topic session."""
-    factory = business_db_factory  # type: ignore[attr-defined]
-    screen = InstantScreen()
-    svc = ChatService(
-        work_runner=session_turn_deps.get_work_runner(),
-        session_factory=factory,
-        compute=stub_compute(screen),
-        base_system_prompt="You are Cheese.",
-        workspace_root=str(tmp_path / "ws"),
-    )
-
-    started_on = ComputeChoice(profile="device")
-    async with factory() as session:
-        await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
-        project.settings = _default_compute(started_on)
-        topic = await TopicService(session).create(
-            project_id=project.id, title="T", created_by="u"
-        )
-        project_id, topic_id = project.id, topic.id
-        await session.commit()
-
-    async for _ in svc.converse(
-        topic_id=topic_id, author="u", content="start", summon=True
-    ):
-        pass
-    await finish_turn(svc, topic_id)
-
-    async with factory() as session:
-        project = await ProjectService(session).get_or_404(project_id)
-        project.settings = _default_compute(standard_choice("cloud"))
-        topic = await TopicRepository(session).get(topic_id)
-        assert topic is not None
-        assert room_choice(topic, project.settings) == started_on
-        # The room's own Cheese: its conversation is kept under the agent,
-        # whichever seat the session authored under.
-        resumes_by = await AgentSessionService(session).resume_token(
-            topic_id, CHEESE_HANDLE, harness=harness_for(None)
-        )
-    assert resumes_by == "s-affinity"
-
-
-def _default_compute(choice: ComputeChoice) -> dict:
-    return {"compute_configs": ProjectComputeConfigs(default=choice).model_dump()}
-
-
-class DeferredScreen(InstantScreen):
-    """A session whose hands are leased later, per session — the central path."""
-
-    deferred_work = True
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "default",
-    [
-        ComputeChoice(profile="cloud"),
-        ComputeChoice(name="Lab workstation", profile="device", device_id="lab-box"),
-    ],
-    ids=["cloud", "named-device"],
-)
-async def test_a_teammate_joining_later_starts_on_the_rooms_choice(
-    business_db_factory, tmp_path, default
-):
-    """结论 60: the room's setting is the default for its new sessions, and it is
-    what the room started with — the whole choice, not the pool it belongs to."""
-    from app.domain.agent_instance.services import AgentInstanceService
-
-    factory = business_db_factory  # type: ignore[attr-defined]
-    svc = ChatService(
-        work_runner=session_turn_deps.get_work_runner(),
-        session_factory=factory,
-        compute=stub_compute(DeferredScreen()),
-        base_system_prompt="You are Cheese.",
-        workspace_root=str(tmp_path / "ws"),
-    )
-    async with factory() as session:
-        await registered(session, "u")
-        project = await ProjectService(session).create(name="P", owner_handle="u")
-        project.settings = _default_compute(default)
-        topic = await TopicService(session).create(
-            project_id=project.id, title="T", created_by="u"
-        )
-        later = await AgentInstanceService(session).create(
-            project_id=project.id,
-            handle="later",
-            type_name=None,
-            display_name="Later",
-        )
-        await TopicMemberService(session).ensure_agent_seat(
-            topic.id, agent_instance_handle(later.id)
-        )
-        topic_id = topic.id
-        await session.commit()
-
-    async for _ in svc.converse(
-        topic_id=topic_id, author="u", content="start", summon=True
-    ):
-        pass
-    await finish_turn(svc, topic_id)
-    async for _ in svc.converse(
-        topic_id=topic_id, author="u", content="@Later join in", summon=True
-    ):
-        pass
-    await finish_turn(svc, topic_id)
-
-    async with factory() as session:
-        rows = list(
-            await session.scalars(
-                select(AgentSession).where(AgentSession.conversation_id == topic_id)
-            )
-        )
-    choices = {row.agent_handle: row.execution_request["choice"] for row in rows}
-    assert set(choices) == {CHEESE_HANDLE, "later"}
-    assert choices["later"] == choices[CHEESE_HANDLE] == default.model_dump()
-
-
-@pytest.mark.anyio
 async def test_post_lands_while_agent_turn_is_running(business_db_factory, tmp_path):
     # Use the shared Postgres-backed factory: the merged Base.metadata now carries
     # main's PG-only sequences (e.g. discussion_seq), which SQLite cannot create.
@@ -1372,7 +1240,7 @@ async def test_summon_during_active_work_is_injected_without_a_second_done(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider.runtime], provider.name),
+        compute=ComputePool([provider.runtime]),
     )
 
     async with factory() as session:
@@ -1488,7 +1356,7 @@ async def test_unconfirmed_live_delivery_reports_error_without_queuing_work(
         session_factory=factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([provider.runtime], provider.name),
+        compute=ComputePool([provider.runtime]),
     )
 
     async with factory() as session:

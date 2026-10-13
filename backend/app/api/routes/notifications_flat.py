@@ -18,16 +18,14 @@ import json
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Query, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
-from app.auth.checker import require_auth_user
-from app.auth.core import AuthUserInfo
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
-from app.db.session import get_db
 from app.domain.notification.dto import NotificationDTO
 from app.domain.notification.entity_resolvers import (
     ProjectEntityResolver,
@@ -35,9 +33,10 @@ from app.domain.notification.entity_resolvers import (
     TeamMembershipApplicationEntityResolver,
     UserEntityResolver,
 )
-from app.domain.notification.models import NotificationType
-from app.domain.notification.repositories import NotificationRepository
-from app.domain.notification.services import NotificationQueryService
+from app.domain.notification.services import (
+    NotificationQueryService,
+    notification_type_of,
+)
 from app.domain.project.services import ProjectService
 from app.domain.team.repositories import TeamRepository
 from app.domain.team.services import TeamService
@@ -45,9 +44,6 @@ from app.domain.user.repositories import UserProfileRepository
 from app.domain.user.services import UserService
 
 router = APIRouter(prefix="", tags=["notifications"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
-AuthUser = Annotated[AuthUserInfo, Depends(require_auth_user)]
 
 
 # --- request bodies ----------------------------------------------------------
@@ -110,14 +106,14 @@ def _read_service(db: AsyncSession) -> NotificationQueryService:
         ProjectEntityResolver(ProjectService(db)),
         TeamMembershipApplicationEntityResolver(TeamService(TeamRepository(db))),
     ]
-    return NotificationQueryService(NotificationRepository(db), resolvers=resolvers)
+    return NotificationQueryService.from_session(db, resolvers=resolvers)
 
 
-def _parse_type(type_: str | None) -> NotificationType | None:
+def _parse_type(type_: str | None):
     if type_ is None:
         return None
     try:
-        return NotificationType(type_)
+        return notification_type_of(type_)
     except ValueError:
         raise BadRequestError(f"Unknown notification type: {type_}") from None
 

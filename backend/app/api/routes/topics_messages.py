@@ -72,13 +72,9 @@ from fastapi import APIRouter, Depends
 
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import (
-    BlockOut,
-    BlockRepository,
-    DbSession,
-    _actor_in_place,
-)
+from app.api.routes.topics import BlockOut, BlockRepository, _actor_in_place
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -143,7 +139,7 @@ async def send_chat_message(
     if task is not None:
         if actor.via == "cheese":
             if resolver.credential_conversation() != task.id:
-                raise ForbiddenError(say("taskOwnerOnly"))
+                raise ForbiddenError(say("taskOwnSessionSpeaks"))
             return ok(await _publish_as_agent(chat, place, body, actor.handle, db))
         if not TaskService.takes_part(task, actor.handle):
             raise ForbiddenError(say("taskParticipantsOnly"))
@@ -183,7 +179,6 @@ async def send_chat_message(
         quoted_context=body.quoted_context.model_dump(mode="json")
         if body.quoted_context
         else None,
-        provision_actor=actor,
         client_id=str(body.request_id),
     )
     stored = await BlockRepository(db).get(anchor_id)
@@ -227,7 +222,6 @@ async def _publish_as_agent(
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
     )
-    await chat.thread_replied(place.conversation_id)
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     # A task's session names nobody into its task: only its owner speaks there.

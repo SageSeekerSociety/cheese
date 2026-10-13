@@ -36,7 +36,9 @@ covers:
 | remote | `remote-execution.yml` | 远端执行验收 |
 | cifast | `ci-fast.yml` | `ci:fast` 本地快检的黑盒测试，驱动真实 pre-commit |
 
-最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。
+最后一步 `required` 核对每个套件的结果：选中的必须成功，没选中的必须是跳过，缺失或状态不对都判失败（`required-ci.py check`）。改到这套检查本身时，所有套件都会跑。两个档各有一个聚合 job：`required`（`name: CI required`）跑完整档，`required-draft`（`name: CI required (draft quick)`）跑快检档，名字都写死在 workflow 里，不是用表达式拼的（表达式只在 GitHub 求值时才渲染，被取消的 run 会把表达式原文当成检查名显示）。
+
+**草稿 PR 只跑快检档**：`pull_request` 的 payload 里 `draft` 为 `true` 时，只跑一个内联 job（`ci-fast.py --tier quick --budget 1200 --memory-mib 9216 --pull-request "$RUNNER_TEMP/pull.json"`，那之前先 `gh api .../pulls/N` 把 PR 的 JSON 写成文件），所有套件跳过，由 `required-draft` 聚合，名字是 `CI required (draft quick)`——和分支保护要求的 `CI required` 不同名，所以草稿的绿不可能是正式门禁的绿（完整档那个 job 在草稿上显示 skipped，GitHub 把 skipped 当已满足，但草稿合不了，平台自己也把 skipped 当没跑）。选中范围与本地 quick 档一致，边界按 runner 给（本地默认 180s / 3072 MiB 是开发机自己的限制，用它会让带前端改动的草稿全红；详见 `.github/scripts/ci-fast.md`）。这个档不判自己没有的东西：草稿的占位标题（`WIP: <任务标题>`）不查，需要固定版 Claude Code / Codex / pi 的测试记未执行，Redis 由这个 job 自带（和完整档同一个 valkey 镜像和端口）。所以只有真的判出失败（退出码 1）才让草稿变红，预算耗尽、读不出东西（2/3）只打警告并把逐条未判项写进步骤摘要——绿不等于全判过了，摘要才是全部信息。草稿转正式（`ready_for_review`）会重跑一次**完整** run，`merge_group` 永远是完整档；事件读不出、`draft` 缺失一律按完整档处理（fail closed）。档位判定在 `required-ci.py` 的 `tier_for`。让草稿进入验收不需要手动先转正式：平台递卡本身就会把还开着的 draft PR 转正式（`pr_publish.py` 递卡时调 `mark_ready_for_review`），从而触发完整的 `CI required`；采纳要等同一 head 上完整的 `CI required` 变绿，草稿快检的绿不算。
 
 这样做的好处：分支保护里只有一个名字，加减套件不用改仓库设置；只改文档不会触发后端测试，改了后端也不可能漏跑。
 
@@ -83,7 +85,7 @@ scenarios:
 
 ## 哪些跑在托管 runner，哪些跑在自己的机器上 {#runners}
 
-`Required CI` 选中的套件全部用 GitHub 托管的 `ubuntu-latest`，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个，合并队列的 job 等 runner 的 90 分位是 0.1 分钟。
+`Required CI` 选中的套件都跑在 GitHub 托管的 runner 上，cli 套件和远端执行验收也在内：每台机器一次只跑一件事，单个 job 最长 6 小时。后端测试的 pure、contract、integration 三层和前端的 check、unit 两个 job 用 `ubuntu-24.04-arm`，其余用 `ubuntu-latest`：arm64 机器是 4 个真实核心，x64 机器是 2 核超线程、CPU 代际不固定，这几个 job 在 arm64 上更快或者持平，耗时也更稳定。生产是 x64，所以 prod 发版（`deploy-prod.yml`）会在 `ubuntu-latest` 上对发版的 commit 再跑一遍完整后端测试，通过并经人批准后才部署。组织是 Free 计划，文档写的托管并发上限是 20 个 job，但这个仓库实际不受它约束：2026-09-30 到 10-01 的一天里同时在跑的托管 job 最多 61 个，合并队列的 job 等 runner 的 90 分位是 0.1 分钟。
 
 自托管 runner（标签 `cheese-ci`、`cheese-dev`、`cheese-prod`）上只跑本来就要主机资源的：部署（`cheese-dev` 在测试机，`cheese-prod` 在正式机）、部分端到端场景、备份新鲜度与恢复演练、心跳、漂移巡检和 runner 维护，它们要读机器上的文件或连内网。
 
@@ -97,7 +99,7 @@ scenarios:
 ## PR 上的两个机器人 {#bots}
 
 - `claude-review.yml`：在 PR 里写 `@claude` 可以让它评审或回答问题。每个 PR 自动评审一次的触发器 2026-08-09 起停用了（它在所有 PR 上失败，而失败的检查会卡住采纳）；要恢复，把 `pull_request:` 加回 `on:`，`auto-review` job 原样可用。
-- `claude-md-review.yml`：改了 `CLAUDE.md` 的 PR 需要人批准。`CLAUDE.md` 每一轮都会整份加载，一行错的指令会被每个 agent 执行，所以这是全仓库唯一一个需要人批准的文件。
+- `claude-md-review.yml`：改了 `AGENTS.md` 的 PR 需要人批准。`AGENTS.md` 每一轮都会整份加载，一行错的指令会被每个 agent 执行，所以这是全仓库唯一一个需要人批准的文件。
 
 ## 定时巡检 {#scheduled}
 

@@ -33,7 +33,7 @@ Everything else is import-linter's own machinery: the contracts live in
 is enough to reproduce a verdict by hand. This script adds the two things above
 and nothing more.
 
-    ... --self-test   plant each violation the seven contracts exist to catch,
+    ... --self-test   plant each violation the eight contracts exist to catch,
                       in a throwaway tree, and require them to fire
     ... --json        one JSON record on stdout instead of the report; the exit
                       code is unchanged. The record's shape is fixed in
@@ -73,6 +73,7 @@ CONTRACT_IDS = (
     "turn-no-composition-imports",
     "realtime-no-turn",
     "turn-storage-purity",
+    "routes-independent",
 )
 
 OK, BROKEN, CANNOT_JUDGE = 0, 1, 2
@@ -191,6 +192,133 @@ def _contract_rows(report, options) -> list[dict[str, Any]]:
     return rows
 
 
+def _module_file(module: str) -> Path | None:
+    """Find the source file for an import-linter module name."""
+    stem = Path.cwd() / module.replace(".", "/")
+    for candidate in (stem.with_suffix(".py"), stem / "__init__.py"):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _source_location(importer: str, imported: str, line_numbers=()) -> str:
+    """Turn import-linter's module/line pair into a clickable repo location."""
+    path = _module_file(importer)
+    lines = [int(line) for line in line_numbers if isinstance(line, int)]
+    line = str(lines[0]) if lines else "?"
+    if path is None:
+        shown = importer.replace(".", "/") + ".py"
+    else:
+        relative = path.relative_to(Path.cwd()).as_posix()
+        shown = f"backend/{relative}" if Path.cwd().name == "backend" else relative
+    return f"{shown}:{line} ({importer} -> {imported})"
+
+
+def _failure_locations(report) -> list[str]:
+    """Extract file:line locations from import-linter's failed metadata."""
+    locations: list[str] = []
+    seen: set[str] = set()
+
+    def add(importer: str, imported: str, line_numbers=()) -> None:
+        location = _source_location(importer, imported, line_numbers)
+        if location not in seen:
+            seen.add(location)
+            locations.append(location)
+
+    def walk(value: Any) -> None:
+        if isinstance(value, dict):
+            if value.get("line_numbers") and isinstance(value.get("importer"), str):
+                add(value["importer"], value["imported"], value["line_numbers"])
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, (list, tuple, set)):
+            # C3 exposes cycle-breaker pairs as a set of (importer, imported).
+            if (
+                isinstance(value, tuple)
+                and len(value) == 2
+                and all(isinstance(item, str) for item in value)
+            ):
+                for detail in report.graph.get_import_details(
+                    importer=value[0], imported=value[1]
+                ):
+                    add(value[0], value[1], (detail["line_number"],))
+            else:
+                for child in value:
+                    walk(child)
+
+    for _contract, check in report.get_contracts_and_checks():
+        if not check.kept:
+            metadata = getattr(check, "metadata", {})
+            walk(metadata)
+            for module in sorted(metadata.get("undeclared_modules", ())):
+                add(module, "undeclared turn layer", (1,))
+    return locations
+
+
+_BOUNDARY_FIXES = {
+    "C1": (
+        "C1 layers: api -> domain -> core, no imports upward. Move the dependency "
+        "down into the owning domain/core module, or call the lower layer through "
+        "the declared service seam; do not add a reverse import."
+    ),
+    "C2": (
+        "C2 routes do not import a domain's models directly. Replace the model import "
+        "with that domain's service call; the service owns model access and writes."
+    ),
+    "C3": (
+        "C3 sibling domains are acyclic. Remove one edge from the reported cycle, "
+        "or expose a declared seam instead of importing the sibling directly."
+    ),
+    "T1": (
+        "T1 turn layers are intake -> steps -> store -> state. Put the module in its "
+        "declared layer and import only downward."
+    ),
+    "T2": (
+        "T2 turn code must not import chat/runtime/API directly. Pass composed facts "
+        "through the service seam."
+    ),
+    "T3": (
+        "T3 realtime must not reach turn execution or composition. Keep broker "
+        "plumbing separate from turn orchestration."
+    ),
+    "T4": (
+        "T4 turn storage/state must not reach upper layers or realtime. Move "
+        "orchestration up and keep storage focused on persistence."
+    ),
+    "C4": (
+        "C4 route modules are independent of one another. Move what both routes "
+        "need into a neutral module (app/api/request_deps.py for request "
+        "dependencies, a domain service for behaviour) and import it from both."
+    ),
+}
+
+
+def _boundary_failure_message(config_path: Path, report, frozen: int) -> str:
+    failed = []
+    for contract, check in report.get_contracts_and_checks():
+        if not check.kept:
+            failed.append(
+                _BOUNDARY_FIXES.get(contract.name.split(" ", 1)[0], contract.name)
+            )
+    locations = _failure_locations(report)
+    location_text = "\n".join(f"  {location}" for location in locations)
+    return (
+        "a boundary broke. The exceptions already known are frozen in "
+        f"{config_path.name} ({frozen} entries).\n"
+        + "\n".join(f"{fix}" for fix in failed)
+        + (
+            f"\nViolations (fix the import at this file:line):\n{location_text}"
+            if location_text
+            else ""
+        )
+        + "\nRun `cd backend && uv run python scripts/check_boundaries.py` to recheck. "
+        "After removing a stale frozen edge, run `cd backend && uv run python "
+        "scripts/boundary_baseline.py --update`; never use --update to freeze a new "
+        "violation. Rule: `.claude/rules/architecture.md`, `Backend: the import "
+        "graph is checked, not assumed`."
+    )
+
+
 def _baseline_entries(options) -> list[tuple[str, str]]:
     """(contract id, raw expression) for every frozen exception."""
     entries = []
@@ -224,7 +352,13 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
         )
         from importlinter.application.user_options import UserOptions
     except Exception as exc:  # pragma: no cover - depends on the installed version
-        return CANNOT_JUDGE, f"import-linter is not usable here: {exc!r}", None
+        return (
+            CANNOT_JUDGE,
+            f"import-linter is not usable here: {exc!r}. A system python3 "
+            "does not have the project's dependencies; run `cd backend && uv run "
+            "python scripts/check_boundaries.py`",
+            None,
+        )
 
     try:
         parsed = read_configuration(str(config_path))
@@ -252,7 +386,12 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
 
     wildcards = [entry for entry in _baseline_entries(options) if "*" in entry[1]]
     if wildcards:
-        listing = "\n".join(f"  [{cid}] {expr}" for cid, expr in wildcards)
+        source_lines = config_path.read_text(encoding="utf-8").splitlines()
+        line_of = {line.strip(): i for i, line in enumerate(source_lines, 1)}
+        listing = "\n".join(
+            f"  {config_path}:{line_of.get(expr, '?')} [{cid}] {expr}"
+            for cid, expr in wildcards
+        )
         return (
             BROKEN,
             (
@@ -261,7 +400,12 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
                 "Name the module and its target exactly. A wildcard exemption\n"
                 "silences every future violation of that contract while looking\n"
                 "like one considered exception — the ratchet has to be able to\n"
-                "say which pair it is holding open."
+                "say which pair it is holding open.\n"
+                "Restore the exact frozen importer -> imported pair in "
+                f"{config_path.name}; do not widen ignore_imports. Recheck with "
+                "`cd backend && uv run python scripts/check_boundaries.py`. "
+                "Rule: .claude/rules/architecture.md, "
+                "Backend: the import graph is checked, not assumed."
             ),
             None,
         )
@@ -281,14 +425,7 @@ def judge(config_path: Path) -> tuple[int, str, list[dict[str, Any]] | None]:
         frozen = len(_baseline_entries(options))
         return (
             BROKEN,
-            (
-                "a boundary broke. The exceptions already known are frozen in "
-                f"{config_path.name} ({frozen} entries); one of them is now unused "
-                "if you removed an offending import, and the report above names "
-                "whatever is left over.\n"
-                "For the contract that broke: every module named there must be "
-                "reported, not read."
-            ),
+            _boundary_failure_message(config_path, report, frozen),
             rows,
         )
     return OK, "", rows
@@ -333,12 +470,12 @@ def main() -> int:
     if code == CANNOT_JUDGE:
         print(f"cannot judge: {message}", file=sys.stderr)
         _cannot_judge(message)
+    if code == BROKEN:
+        print(f"broken: {message}", file=sys.stderr)
     if _as_json():
         _emit(_record(code, rows, message))
     elif code == OK:
         print(f"PASS: module boundaries held ({config_path.name})")
-    else:
-        print(f"broken: {message}", file=sys.stderr)
     return code
 
 
@@ -355,8 +492,17 @@ _SEED = {
     "app/__init__.py": "",
     "app/api/__init__.py": "",
     "app/api/deps.py": "def get_db():\n    ...\n",
+    # C2 names the route-shared dependency modules as sources; the seed is the
+    # smallest tree every declaration holds on, so they have to exist here too.
+    "app/api/admin_deps.py": "",
+    "app/api/users_deps.py": "",
+    "app/api/space_deps.py": "",
+    "app/api/space_payloads.py": "",
+    "app/api/task_deps.py": "",
     "app/api/routes/__init__.py": "",
     "app/api/routes/demo.py": "from app.domain.bar.services import read_bar\n",
+    "app/api/routes/other.py": "",
+    "app/api/shared.py": "",
     "app/core/__init__.py": "",
     "app/domain/__init__.py": "",
     "app/domain/bar/__init__.py": "",
@@ -493,6 +639,33 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         ("turn-storage-purity",),
     ),
     (
+        "one route importing another (C4)",
+        {"app/api/routes/demo.py": "import app.api.routes.other\n"},
+        BROKEN,
+        None,
+        ("routes-independent",),
+    ),
+    (
+        "two routes meeting through a shared helper (C4 transitive)",
+        {
+            "app/api/routes/demo.py": "import app.api.shared\n",
+            "app/api/shared.py": "import app.api.routes.other\n",
+        },
+        BROKEN,
+        None,
+        ("routes-independent",),
+    ),
+    (
+        "routes sharing a neutral module that imports no route remain allowed (C4)",
+        {
+            "app/api/routes/demo.py": "import app.api.shared\n",
+            "app/api/routes/other.py": "import app.api.shared\n",
+        },
+        OK,
+        None,
+        (),
+    ),
+    (
         "real downward layers and a steps publisher remain allowed",
         {
             "app/domain/agent/turn/intake/messages.py": _IMPORT_STEPS,
@@ -503,9 +676,16 @@ _CASES: list[tuple[str, dict[str, str], int, str | None, tuple[str, ...]]] = [
         None,
         (),
     ),
+    (
+        "a shared route dependency module reaching a model directly (C2)",
+        {"app/api/space_payloads.py": "from app.domain.bar.models import Bar\n"},
+        BROKEN,
+        "app.api.space_payloads is not allowed to import app.domain.bar.models",
+        ("routes-touch-no-models",),
+    ),
 ]
 
-#: A config that declares nothing, and one that declares all seven contracts
+#: A config that declares nothing, and one that declares all eight contracts
 #: but freezes an exception as a wildcard — the one thing this format must not
 #: accept, and which import-linter itself honours happily.
 _THIN_CONFIG = "[importlinter]\nroot_package = app\n"
@@ -567,6 +747,13 @@ def _record_problem(
     if len(lines) != 1:
         return f"expected one line on stdout, got {len(lines)}: {lines!r}", None
     record = json.loads(lines[0])
+    if expected == BROKEN:
+        for needle in (
+            "scripts/check_boundaries.py",
+            "Backend: the import graph is checked, not assumed",
+        ):
+            if needle not in _err:
+                return f"missing repair guidance on stderr: {needle!r}", record
     if record.get("id") != CHECK_ID:
         return f"record names {record.get('id')!r}", record
     want = _STATUS_OF_EXIT[expected]
@@ -607,14 +794,57 @@ def self_test() -> int:
         for index, (what, files, expected, needle, _broken) in enumerate(_CASES):
             tmp = sandbox / f"case{index}"
             tmp.mkdir()
-            report(what, *_run(None, files, tmp), expected, needle)
+            code, output = _run(None, files, tmp)
+            report(what, code, output, expected, needle)
+            if expected == BROKEN:
+                report(
+                    f"{what}: repair command and rule chapter",
+                    code,
+                    output,
+                    expected,
+                    "scripts/check_boundaries.py` to recheck",
+                )
+                for contract_id in _broken:
+                    prefix = ("C1", "C2", "C3", "T1", "T2", "T3", "T4", "C4")[
+                        CONTRACT_IDS.index(contract_id)
+                    ]
+                    report(
+                        f"{what}: specific fix",
+                        code,
+                        output,
+                        expected,
+                        _BOUNDARY_FIXES[prefix],
+                    )
+                report(
+                    f"{what}: rule chapter",
+                    code,
+                    output,
+                    expected,
+                    "Backend: the import graph is checked, not assumed",
+                )
+                if index == 0:
+                    report(
+                        f"{what}: file and line",
+                        code,
+                        output,
+                        expected,
+                        "app/api/routes/demo.py:1",
+                    )
+                if index == 6:
+                    report(
+                        f"{what}: undeclared source",
+                        code,
+                        output,
+                        expected,
+                        "app/domain/agent/turn/extra.py:1",
+                    )
 
         # A config with its declarations trimmed. This is the shape a silent
         # narrowing takes: valid INI, valid contracts, fewer of them.
         tmp = sandbox / "thin"
         tmp.mkdir()
         report(
-            "a declaration that lost all seven contracts",
+            "a declaration that lost all eight contracts",
             *_run(_THIN_CONFIG, {}, tmp),
             CANNOT_JUDGE,
             "missing",
@@ -735,7 +965,7 @@ def self_test() -> int:
             for index, (what, _f, expected, _n, _broken) in enumerate(_CASES)
         ]
         json_cases.append(
-            ("thin", "a declaration that lost all seven contracts", CANNOT_JUDGE)
+            ("thin", "a declaration that lost all eight contracts", CANNOT_JUDGE)
         )
         json_cases.append(("wildcard", "an exception written as a wildcard", BROKEN))
         json_cases.append(("absent", "no config to read at all", CANNOT_JUDGE))
@@ -783,10 +1013,10 @@ def self_test() -> int:
         )
         return 1
     print(
-        "PASS: check_boundaries self-test (7 contracts fire on the violation they "
+        "PASS: check_boundaries self-test (8 contracts fire on the violation they "
         "exist to catch; an absent, a trimmed and a wildcarded declaration each "
         "come back not-passing; every case agrees with the exit code under --json, "
-        "on one line of stdout, naming all seven contracts)"
+        "on one line of stdout, naming all eight contracts)"
     )
     return 0
 

@@ -260,9 +260,10 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
 ):
     """平台发起的轮次（resume、各类提醒）作者是 system。
 
-    这种轮次里的提问指不到具体的人，因此不通知任何人：把一条多数人不需要处理的
-    通知发给全部成员，代价是他们此后关闭这个渠道。题照样挂在房间里等回答 ——
-    等的只是没有名字。
+    频道和支线里没有「这条活的人」，所以这种轮次里的提问指不到具体的人，也就谁也不
+    通知：把一条多数人不需要处理的通知发给整个名册，代价是他们此后关闭这个渠道。
+    题照样挂在房间里等回答 —— 等的只是没有名字。问在一条活里的题不在这一条上：那
+    里等它的人有名字（下面那条）。
     """
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
@@ -278,6 +279,36 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
 
     assert _questions(client, alice) == []
     assert _questions(client, bob) == []
+
+
+def test_a_question_in_a_tasks_platform_turn_reaches_the_tasks_people(
+    client, stub_hooks, monkeypatch
+):
+    """平台开的轮次里问在一条活里的题，等它的是这条活的人。
+
+    实况：这条活是平台自己点「开始」开起来的，芝士在里面问了一道题，负责人和协作者
+    谁都没收到 —— 题上没记着某一个人，平台就当它谁都不等。可它问在一条活里：活是
+    他们两个人的，答它的也是他们，两个人各收一条。频道里与这条活无关的人不收。
+    """
+    alice = seed_user(client, "alice")
+    bob = seed_user(client, "bob")
+    carol = seed_user(client, "carol")
+    pid, room = _room(client)
+    join_project_team(client, pid, "bob")
+    # 频道里与这条活无关的人：他在名册里，但这条活不是他的。
+    join_project_team(client, pid, "carol")
+    task = open_task(client, room, owner="alice", contributors=["bob"])["id"]
+
+    with active_ask(
+        client, stub_hooks, monkeypatch, task, platform_turn=True
+    ) as headers:
+        _ask(client, task, headers)
+
+    for token in (alice, bob):
+        (row,) = _questions(client, token)
+        assert row["contextMetadata"]["taskId"] == task
+        assert row["read"] is False
+    assert _questions(client, carol) == []
 
 
 def test_a_question_with_no_turn_at_all_is_asked_and_reaches_nobody(client):

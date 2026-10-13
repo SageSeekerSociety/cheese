@@ -20,6 +20,7 @@ import codecs
 import re
 from dataclasses import dataclass
 
+from app.core.obs import scrub_secrets
 from app.core.sentences import say
 from app.domain.agent.tool_preview import SHELL_TOOLS, ToolPreview, cheese_subcommand
 
@@ -88,7 +89,7 @@ def _format_tool_event(name: str, preview: ToolPreview) -> str:
     ToolPreview, so the baked line and the rendered one cannot describe the
     call differently."""
     verb = _TOOL_VERB.get(preview.action or name, name)
-    return f"{verb}\n{preview.text}" if preview.text else verb
+    return f"{verb}\n{scrub_secrets(preview.text)}" if preview.text else verb
 
 
 # 现场圆点分级: a PLATFORM action (amber dot) vs plain work (neutral dot).
@@ -163,12 +164,14 @@ def _tool_event_meta(
     rewriting removed. Only the preview is ever computed from it, so a line
     with nothing more to say carries no second copy."""
     meta: dict = {"tool": name, "platform": platform}
+    # Scrubbed like a step's output: a command line is where a credential is
+    # most often typed, and this line is shown to the whole room.
     if preview.text:
-        meta["arg"] = preview.text
+        meta["arg"] = scrub_secrets(preview.text)
     if preview.action:
         meta["as_tool"] = preview.action
     if detail:
-        meta["detail"] = detail
+        meta["detail"] = scrub_secrets(detail)
     return meta
 
 

@@ -57,39 +57,10 @@
     },
     "settingsNote": "AI 队友和代码仓库都在项目里配：进项目后打开「项目设置」，第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
   },
-  "startGuide": {
-    "aria": "上手引导",
-    "project": "从这里开一个项目",
-    "materials": "资料库里放也行",
-    "skip": "跳过引导"
-  },
   "sessionMachine": {
     "machine": "换到",
     "confirm": "推送并更换",
     "unavailable": "{name} · 不可用"
-  },
-  "roomMachine": {
-    "taskHeading": "这个任务的环境",
-    "taskHint": "更换前先把这个任务的改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。",
-    "edit": "改",
-    "heading": "这个频道的环境",
-    "hint": "频道里所有 AI 队友共用这一个环境。更换前每个队友先把改动推送到分支，推没推上去都会更换；每一轮结束时的改动都有快照保存。",
-    "more": "其他配置与设备",
-    "projectDefault": "项目默认",
-    "wholeMachine": "能访问整台电脑",
-    "wholeMachineNotice": "让它看到整台电脑（能操作这台电脑上的服务和其他频道）",
-    "online": "在线",
-    "offline": "离线",
-    "removed": "已移出团队",
-    "loadFailed": "环境加载失败",
-    "saveFailed": "选择环境失败",
-    "retry": "重试",
-    "here": "本频道运行在：{name}",
-    "accessHeading": "这个频道在 {name} 上能看到什么",
-    "isolated": "隔离环境",
-    "isolatedHint": "只有自己的工作目录和本项目的包缓存；看不到电脑主人的文件、装在主人用户目录里的工具，也看不到别的频道。",
-    "host": "整台电脑",
-    "hostOwnerOnly": "只有这台电脑的主人能开启"
   },
   "deviceInUse": {
     "line": "正在用：{project} · {room} · {agent}",
@@ -113,8 +84,7 @@
     "collapse": "收起",
     "hint": "只影响尚未开始运行的 AI 队友，已在运行的继续用原来的环境",
     "distribution": "当前分布",
-    "onCloud": "云端环境 · {agents}",
-    "onCloudVm": "整台云虚拟机 · {agents}",
+    "onPlatform": "{env} · {agents}",
     "onDevice": "{name} · {agents}",
     "agents": "{count} 个 AI 队友",
     "noneStarted": "暂无运行中的 AI 队友",
@@ -327,6 +297,7 @@
       "exitFocus": "退出专注模式",
       "newTask": "新建任务",
       "newTaskFailed": "未能新建任务，稍后重试",
+      "files": "文件",
       "rename": "重命名",
       "copyLink": "复制链接",
       "markRead": "标为已读",
@@ -345,7 +316,8 @@
       "muted": "已静音",
       "markAllRead": "全部标为已读",
       "markAllReadFailed": "全部标为已读没成功",
-      "notifyFailed": "通知设置没保存"
+      "notifyFailed": "通知设置没保存",
+      "allTasks": "全部任务"
     },
     "archiveNotice": {
       "done": "已归档",
@@ -397,7 +369,8 @@
       "voidHint": "作废会结束这次审阅：不合并，也不退回修改。之后可以重新提交审阅",
       "voidReason": "作废理由（可选）",
       "conflictsWithMain": "与主分支冲突",
-      "checkRunning": "进行中"
+      "checkRunning": "进行中",
+      "checkCancelled": "已取消"
     },
     "retry": {
       "action": "重试",
@@ -421,9 +394,10 @@
       "goConfirm": "去确认",
       "who": {
         "platform": "平台已处理",
-        "cheese": "芝士处理中",
-        "human": "需要手动处理"
+        "cheese": "AI 队友处理中",
+        "human": "等人处理"
       },
+      "quote": "「{text}」",
       "working": "{name}正在处理",
       "incident": {
         "title": "环境暂时不可用",
@@ -455,6 +429,7 @@
     },
     "message": {
       "copy": "复制",
+      "copySelection": "复制选中文字",
       "copied": "已复制",
       "copyLink": "复制链接",
       "linkCopied": "已复制链接",
@@ -488,15 +463,15 @@
       "cancelReply": "取消回复",
       "removeAttachment": "移除 {name}",
       "summon": "交给{name}",
-      "summonShort": "交给",
       "summonOn": "已 {'@'}{name}，点击取消",
       "summonOff": "发送并交给{name}（⌘/Ctrl+Enter）",
       "keysHint": "Enter 发送，Shift+Enter 换行，⌘/Ctrl+Enter 发送并交给{name}，可直接粘贴图片",
+      "keysHintSend": "Enter 发送，Shift+Enter 换行，可直接粘贴图片",
       "pasteHint": "可直接粘贴图片",
       "placeholderDm": "给{name}发消息",
       "placeholder": "输入消息，{'@'}{name} 交给它处理",
       "attachFiles": "上传文件（每个最大 10MB）",
-      "sendPhotos": "发送照片",
+      "sendPhotos": "发送照片或视频",
       "more": "更多操作",
       "send": "发送",
       "sendUploading": "附件上传中，传完再发",
@@ -548,7 +523,6 @@
       "sourceUnavailable": "无法打开这个任务，换一个来源查看",
       "noRepo": "暂无代码仓库",
       "switchToCommitted": "切换到已提交版本",
-      "missingInTask": "{path} 不在这个任务里",
       "conflict": "你编辑期间，这个文件已被修改，直接保存会覆盖这些修改",
       "reloadLatest": "载入最新版本",
       "saveAnyway": "仍要保存",
@@ -682,7 +656,7 @@
       "count": "修订 {count} 处",
       "acceptAll": "全部接受",
       "rejectAll": "全部拒绝",
-      "libraryReadOnly": "资料库里的原件不改。要改这份文档，让芝士基于它做一份新的",
+      "libraryReadOnly": "资料库里的原件不改。要改这份文档，让 AI 队友基于它做一份新的",
       "readOnlyNote": "这个版本只读，不能处理修订。",
       "where": "第 {paragraph} 段 · {author}",
       "anonymous": "未署名",
@@ -718,7 +692,8 @@
       "source": {
         "baseline": "最初的样子",
         "upload": "上传",
-        "ai": "芝士修改",
+        "template": "从模板新建",
+        "ai": "AI 队友修改",
         "editor": "在线编辑保存",
         "restore": "恢复",
         "scheduled": "定时任务"
@@ -817,7 +792,8 @@
         "math": "公式",
         "chart": "图表",
         "diagram": "流程图",
-        "status": "状态标签"
+        "status": "状态标签",
+        "canvas": "画布"
       },
       "selectionToolbar": "选区操作",
       "copy": "复制",
@@ -943,6 +919,31 @@
           "video": "视频"
         }
       },
+      "canvas": {
+        "untitled": "未命名画布",
+        "title": "画布标题",
+        "about": "画布说明",
+        "full": "全屏查看",
+        "exitFull": "退出全屏",
+        "saveFailed": "保存失败",
+        "loadFailed": "无法读取这块画布",
+        "notMade": "暂无画布",
+        "make": "新建画布",
+        "elsewhere": "这里不显示画布内容",
+        "height": "拖动调整高度",
+        "empty": "暂无格子",
+        "addCard": "添加格子",
+        "zoomIn": "放大",
+        "zoomOut": "缩小",
+        "fit": "显示全部",
+        "openTask": "打开任务",
+        "taskHidden": "你看不到这个任务",
+        "cardText": "格子内容",
+        "emptyCard": "空格子",
+        "removeCard": "删除格子",
+        "lineLabel": "连线上的字",
+        "removeLine": "删除连线"
+      },
       "historyView": "右边显示",
       "historyDiff": "与上一版比较",
       "historyFull": "这一版全文",
@@ -984,32 +985,24 @@
       "readingAttachment": "{agent}正在读附件…",
       "quoteChanged": "原文已改动"
     },
-    "gettingStarted": {
-      "title": "开始清单",
-      "dismiss": "不再提示",
-      "talk": "跟{agent}说第一句话",
-      "talkHint": "就在下面那个输入框里",
-      "materials": "把要用的材料放进来",
-      "materialsAction": "打开资料库",
-      "repo": "让成果进代码仓库",
-      "repoAction": "连接仓库",
-      "people": "把同事请进来",
-      "peopleAction": "去名册",
-      "note": "AI 队友和代码仓库都在项目设置里改：第一节是 AI 队友，仓库在「仓库与署名」那一栏。"
-    },
     "chat": {
       "pickTopic": "选择一个频道开始对话",
       "starter": {
-        "research": "查找资料",
-        "researchText": "帮我查找相关资料，注明来源，并整理成文档。我要了解的是：",
-        "draft": "起草文档",
-        "draftText": "帮我起草一份文档，先和我确认目标与读者。我想写的是：",
-        "breakdown": "拆解任务",
-        "breakdownText": "帮我把目标拆成可执行的任务，先给我看分工建议。我的目标是："
+        "tidy": "整理或改写一份材料",
+        "tidyHint": "课件、论文、报告、表格",
+        "tidyText": "帮我整理或改写附件里的材料。先给我看你打算怎么改，确认后再动手。我想要的是：",
+        "research": "查资料，写成一份报告",
+        "researchHint": "带来源，可下载",
+        "researchText": "帮我查找资料，注明来源，整理成一份报告。先给我看大纲，确认后再写全文。我要了解的是：",
+        "build": "做一个网页或小工具",
+        "buildHint": "做好就能打开预览",
+        "buildText": "帮我做一个网页，做好后给我预览链接。先给我看页面结构，确认后再开始做。我想做的是：",
+        "plan": "拆解一件事，排好分工",
+        "planHint": "适合团队项目",
+        "planText": "帮我把目标拆成可执行的任务，给出分工建议和时间安排。先给我看拆分思路。我的目标是："
       },
       "startAria": "开始项目协作",
-      "startTitle": "从一件具体的事开始",
-      "startBody": "{agent}可以查找资料、起草文档，或和你一起拆分任务",
+      "startTitle": "你想先做点什么？",
       "loadingOlder": "加载更早的消息…",
       "older": "更早的消息",
       "newMessagesBelow": "以下是新消息",
@@ -1020,9 +1013,13 @@
       "waitingConnection": "等待连接",
       "today": "今天",
       "yesterday": "昨天",
-      "topicFallback": "频道",
+      "refThread": "支线：{title}",
+      "refMissing": "引用不存在",
+      "refMissingHint": "这里引用的频道、任务或支线不存在，或者你看不到它",
       "timelineLabel": "对话记录",
-      "liveNew": "{name}：{text}"
+      "liveNew": "{name}：{text}",
+      "messageLabel": "{name}，{time}：{text}",
+      "eventLabel": "{time}：{text}"
     },
     "header": {
       "disconnected": "未连接",
@@ -1057,7 +1054,7 @@
       "notSentReason": "没有发出去：{reason}",
       "confirmSend": "确认发送",
       "discard": "放弃",
-      "hint": "发出去的就是上面这封；芝士不能替你发。",
+      "hint": "发出去的就是上面这封；{name}不能替你发。",
       "waiting": "等 {owner} 确认后才会发送",
       "discardFailed": "没有放弃成功"
     },
@@ -1087,6 +1084,14 @@
       "ci": "等待检查",
       "human": "待审阅",
       "platform": "平台处理中"
+    },
+    "video": {
+      "label": "视频：{name}",
+      "open": "打开视频",
+      "loading": "视频加载中",
+      "retry": "重新加载",
+      "loadFailed": "无法读取视频，可以重新加载或下载",
+      "playFailed": "浏览器无法播放这个视频，可以下载后观看"
     },
     "attachments": {
       "imageSnippet": "[图片]",
@@ -1207,7 +1212,8 @@
         "open": "进行中",
         "closed": "已关闭"
       },
-      "failed": "回复失败"
+      "failed": "回复失败",
+      "failedCredits": "额度已用完"
     },
     "pin": {
       "pin": "置顶到频道",
@@ -1247,6 +1253,7 @@
       "openLink": "打开",
       "checksFailed": "{n} 项检查未通过",
       "checksRunning": "{n} 项检查进行中",
+      "checksCancelled": "{n} 项检查已取消",
       "checksPassed": "{n} 项检查通过",
       "noApprovals": "暂无批准",
       "voidTitle": "作废这次审阅？",
@@ -1374,7 +1381,9 @@
     "archivedBody": "内容都还在。项目所有者取消归档后，可以继续使用",
     "backToProjects": "回到我的项目",
     "forbiddenTitle": "你不是这个项目的成员",
-    "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单"
+    "forbiddenBody": "只有项目成员能查看这里的内容。需要访问权限的话，找项目里的人把你加进成员名单",
+    "missingTitle": "打不开这个项目",
+    "missingBody": "这个项目不存在，或者你不是它的成员。需要访问权限的话，找项目里的人把你加进成员名单"
   },
   "topicState": {
     "draft": "草稿",
@@ -1416,6 +1425,7 @@
     "hiddenUnread": "含收起的子频道 {count} 条新消息",
     "moreActions": "更多操作",
     "chooseProject": "选择项目",
+    "personalTeam": "个人",
     "switchProject": "切换项目",
     "chooseProjectFirst": "先选择一个项目",
     "topics": "频道",
@@ -1425,7 +1435,11 @@
     "moreMembers": "+{count}",
     "taskNeedsYou": "需要你处理",
     "taskRunning": "运行中",
-    "allTasks": "全部任务"
+    "allTasks": "全部任务",
+    "moreTasks": "展开其余 {count} 个",
+    "fewerTasks": "收起",
+    "tasksLoading": "正在读取…",
+    "tasksFailed": "没读出来，点一下重试"
   },
   "members": {
     "leave": "退出项目",
@@ -1628,7 +1642,8 @@
         "submit": "归档",
         "body": "项目会从所有成员的项目列表中移除，不能再修改，正在运行的任务会停止。内容全部保留，可以在「已归档的项目」里取消归档",
         "confirmLabel": "输入项目名称「{name}」确认"
-      }
+      },
+      "done": "已归档「{name}」"
     },
     "export": {
       "title": "导出项目",
@@ -1640,7 +1655,6 @@
       "title": "代码仓库",
       "hosted": "由平台托管",
       "preparing": "仓库准备中",
-      "open": "打开仓库",
       "hint": "托管服务在项目创建后不能更改"
     },
     "upstream": {
@@ -1694,6 +1708,12 @@
       "online": "在线",
       "offline": "离线",
       "empty": "暂无已接入的 Claude Code",
+      "callersLabel": "谁可以叫它",
+      "callersOwner": "只有我",
+      "callersProject": "项目成员",
+      "callersDetail": "项目成员叫它时，用的是你在自己电脑上配置的模型账号，费用和账号条款由你自己负责。",
+      "callersOwnerTag": "只有主人能叫",
+      "callersProjectTag": "项目成员都能叫",
       "readOnly": "仅项目管理员可修改",
       "loadFailed": "加载成员自己的 Claude Code 失败",
       "saveFailed": "保存设置失败"
@@ -1701,7 +1721,7 @@
     "taskNaming": {
       "intro": "手动改过名的任务不会再被自动改名",
       "autoTitle": "智能命名",
-      "autoDetail": "没起名的任务在第一条消息后自动起名，首次运行结束后再校准一次。之后只在任务方向明显变化时改名。芝士提议的任务沿用提议时的标题，同样只在方向变化时改名",
+      "autoDetail": "没起名的任务在第一条消息后自动起名，首次运行结束后再校准一次。之后只在任务方向明显变化时改名。AI 队友提议的任务沿用提议时的标题，同样只在方向变化时改名",
       "manualTitle": "手动命名",
       "manualDetail": "不自动起名，新任务保持「新任务」，直到有人改名",
       "label": "任务命名",
@@ -1763,6 +1783,7 @@
         "effortHintAuto": "自动＝不指定，用模型自己的默认。",
         "effortNone": "这个模型不支持调思考强度，按模型默认运行。",
         "effortUnsupported": "当前模型不支持「{effort}」，运行时按模型默认。",
+        "effortLevelsUnsupported": "当前模型不支持「{levels}」，这几档选不了。",
         "effortLevelUnsupported": "这个模型不支持这一档",
         "advanced": "高级设置",
         "advancedReadOnly": "只有项目所有者或团队管理员能改高级设置",
@@ -1977,18 +1998,6 @@
       "hint": "项目的链接里用这个短名，只能用小写字母、数字和连字符。改名后旧链接仍能打开这个项目，旧短名也不会给别的项目使用"
     }
   },
-  "computeChoice": {
-    "cloud": "云端环境",
-    "cloudVm": "整台云虚拟机",
-    "deviceOnline": "{name} · 在线",
-    "deviceOffline": "{name} · 离线",
-    "computer": "自有设备",
-    "none": "暂无可用的环境",
-    "cloudHint": "每个会话在自己的云端环境里工作，首次运行时自动准备",
-    "cloudVmHint": "每个会话一台独立的云虚拟机，有 sudo，能跑 Docker、要 KVM 的任务和内核模块。准备要几分钟；会话闲置后先把改动推送到分支，再释放虚拟机",
-    "deviceHint": "这个项目已经可以用这台设备，无需再次授权；离线时需要等待设备上线",
-    "submit": "使用此配置"
-  },
   "projectTransfer": {
     "lookupFailed": "没有找到这个账号",
     "loadFailed": "加载成员失败",
@@ -2014,7 +2023,7 @@
     "crowded": "技能越多，越难选对合适的一项",
     "delete": "删除",
     "deleteFailed": "删除失败",
-    "deleteHint": "删除后之后的频道不再带着它，历史版本也一起删除",
+    "deleteHint": "删除后，之后的频道不再带着它，历史版本也一起删除",
     "deleteTitle": "删除「{title}」",
     "detail": {
       "callName": "调用名 {name}",
@@ -2103,7 +2112,7 @@
     "online": "在线",
     "offline": "离线",
     "device": "自有设备",
-    "cloud": "云端环境",
+    "cloud": "平台提供",
     "current": "没有选择时落在这里"
   },
   "push": {
@@ -2113,7 +2122,10 @@
   },
   "image": {
     "alt": "图片",
-    "failed": "图片加载失败"
+    "close": "关闭",
+    "failed": "图片加载失败",
+    "open": "查看大图：{name}",
+    "zoomHint": "滚轮或双指缩放，按住拖动"
   },
   "agentAvatar": {
     "defaultName": "芝士",
@@ -2157,10 +2169,6 @@
     "leaveCollaboration": "退出协作",
     "start": "开始",
     "startFailed": "未能开始，稍后重试",
-    "reviewer": "审阅人",
-    "reviewerNone": "选择审阅人",
-    "reviewerDefault": "默认",
-    "reviewerHint": "没指定时：项目设置里的默认审阅人，项目没配就是这件事的负责人",
     "startedLine": "{who} {when}开始",
     "compare": "与开始时相比",
     "compareBack": "返回文档",
@@ -2172,18 +2180,24 @@
     "checklist": "{name}这一轮的清单",
     "opening": {
       "drafting": "{name}正在整理…",
-      "draftingWhat": "把原讨论整理成这件任务的文档：目标、现状、已确定、待决",
+      "draftingWhat": "把原讨论整理成这件任务的文档",
       "waiting": "还没能开始，环境连上后会继续",
       "failed": "{name}没能整理出文档",
       "failedWhy": "这一轮没有完成",
       "retry": "重试",
       "writeMyself": "自己写"
     },
+    "source": {
+      "channel": "来自 #{title} 的一条消息",
+      "thread": "来自 #{title} 的一条支线",
+      "task": "来自任务「{title}」",
+      "quote": "{name}：{text}",
+      "byPerson": "{name} 新建的任务，不是从对话里转出来的",
+      "byAgent": "{name} 新建的任务，没有记下是从哪句话来的",
+      "unknown": "没有记下这个任务是从哪来的"
+    },
     "related": {
       "title": "相关",
-      "fromThread": "原讨论 · 支线 {count} 条回复",
-      "fromChannel": "原讨论 · 频道主线",
-      "quote": "{name}：{text}",
       "untitled": "未命名文档",
       "by": "{name}"
     },
@@ -2212,12 +2226,13 @@
   },
   "channel": {
     "overview": {
-      "project": "项目总览",
+      "project": "项目目标",
       "projectNote": "{name}在每段对话里都会读这一份",
       "expand": "展开全文",
       "collapse": "收起",
-      "noProject": "还没有项目总览",
-      "writeProject": "写一份",
+      "noProject": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+      "writeProject": "写项目目标",
+      "editProject": "编辑项目目标",
       "description": "频道说明",
       "edit": "编辑",
       "save": "保存",
@@ -2299,12 +2314,12 @@
     "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有进行中的任务时不能归档"
   },
   "overview": {
-    "document": "项目总览",
-    "edit": "编辑",
+    "document": "项目目标",
+    "edit": "编辑项目目标",
     "expand": "展开全文",
     "collapse": "收起",
-    "noDocument": "暂无项目总览",
-    "write": "写一份",
+    "noDocument": "暂无项目目标。写清楚这个项目要做成什么、什么时候做成、这阶段不做什么。",
+    "write": "写项目目标",
     "progress": "最近进展",
     "progressFailed": "无法读取最近进展",
     "noProgress": "最近两周暂无进展",
@@ -2326,7 +2341,9 @@
     "people": "谁在做什么",
     "allTasks": "全部任务 {count}",
     "nobody": "暂无进行中的任务",
-    "moreOf": "其余 {count} 个"
+    "moreOf": "其余 {count} 个",
+    "myDeadline": "提交截止：{when}",
+    "taskDeadline": "题目截止：{when}"
   },
   "projectTasks": {
     "allChannels": "所有频道",

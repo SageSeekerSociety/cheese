@@ -39,7 +39,7 @@ defaults:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     # The margin covers a cold pnpm store without letting a wedged run bill
     # for an hour.
     timeout-minutes: 15
@@ -119,6 +119,16 @@ jobs:
       # and requires this command to fail on it.
       - name: Component boundaries (eslint ratchet)
         run: pnpm run lint:boundary
+
+      # Accessibility: eslint-plugin-vuejs-accessibility's recommended rules over
+      # src/**/*.vue (a clickable <div> with no keyboard path, a control with no
+      # label, an image with no alt). Ratcheted like the boundary step above:
+      # 165 violations in 82 files are frozen in a11y-baseline.json, and only new
+      # ones fail. Read-only; the writer is `pnpm run lint:a11y:update`, which
+      # only lowers counts. Its tests are scripts/a11y-ratchet.test.mjs, run by
+      # the Ratchet unit tests step below.
+      - name: Accessibility (eslint ratchet)
+        run: pnpm run lint:a11y
 
       # The scene ratchet: a page or a workbench panel that renders standalone
       # today may not stop being able to, and every scene added from now on has
@@ -270,7 +280,7 @@ jobs:
   # setup steps repeat `check`'s and follow the same reasoning.
   unit:
     name: unit (${{ matrix.shard }}/${{ strategy.job-total }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
     strategy:
       # A failing shard must not cancel the others; each keeps its own result.

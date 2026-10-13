@@ -3,7 +3,7 @@
 A room, a task and a 支线 are each a conversation, and the things that belong to one —
 what is said in it, an agent's session, its turns and spend, its progress —
 point here (``conversation_id``) rather than at whichever table the
-conversation lives in. A row holds only who the conversation is: its id
+conversation lives in. A row holds who the conversation is: its id
 (the room's, the task's or the 支线's own), its project and its kind. Everything
 each says about itself stays in ``topics``, ``tasks`` or ``threads``.
 

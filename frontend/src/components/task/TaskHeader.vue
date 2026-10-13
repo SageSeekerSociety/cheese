@@ -4,22 +4,24 @@
 // 在哪台电脑上做，负责人在这里增减协作者），以及「开始」和 ⋯（重命名归负责人和协作者，
 // 转交、关闭只归负责人）。
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
+import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
-import TopicComputePicker from '@/components/TopicComputePicker.vue'
 import { t } from '@/i18n'
-import { phraseLabel } from '@/lib/board'
-import { choiceName } from '@/lib/computeConfig'
+import { taskPhraseLabel } from '@/lib/board'
+import { environmentName } from '@/lib/environment'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 
@@ -31,13 +33,13 @@ const props = defineProps<{
   people: TopicMemberRow[]
   /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
   agents: TopicMemberRow[]
-  machine: TopicComputeProfile | null
+  machine: TopicEnvironment | null
   machineError: boolean
   starting: boolean
   startError: string | null
   actionError: string | null
   connected?: boolean
-  start: (reviewer: string | null) => Promise<void>
+  start: () => Promise<void>
   close: (conclusion: string) => Promise<boolean>
   reopen: () => Promise<boolean>
   handOver: (owner: string) => Promise<boolean>
@@ -45,6 +47,9 @@ const props = defineProps<{
   setCollaborators: (handles: string[]) => Promise<boolean>
   setAgent: (handle: string | null) => Promise<boolean>
   loadMachine: () => Promise<void>
+  /** 换这个任务里一条会话的环境；换「新会话默认」。 */
+  setMachine: (sessionId: string, env: Environment) => Promise<{ proposal?: { content: string } | null }>
+  setMachineDefault: (env: Environment) => Promise<{ proposal?: { content: string } | null }>
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
 }>()
@@ -124,23 +129,19 @@ async function pickAgent(handle: string | null) {
   }
 }
 
+// 这个任务的会话各有各的环境，各改各的；「新会话默认」只管以后开工的。
+function saveSession(session: SessionEnvironment) {
+  return (env: Environment) => props.setMachine(session.session_id, env)
+}
+function saveDefault(env: Environment) {
+  return props.setMachineDefault(env)
+}
+const sessionName = (session: SessionEnvironment) => props.memberNames[session.seat_handle] || session.seat_handle
+
 const detailsOpen = ref(false)
 watch(detailsOpen, (open) => {
   if (open) void props.loadMachine()
 })
-
-// 审阅谁：开始前负责人在这里挑（挑谁看这次改动），开始之后它是定下来的事实，只读。
-// 空的那一档是「没指定」——后端按 项目设置的默认审阅人 → 这件事的负责人 这个次序
-// 落定（`room_task/services.py` 的 `start`），所以绝大多数情况下它就是负责人自己，
-// 点「开始」不再被拦下来补选。
-//
-// 只有负责人能改，而且只在开始之前：开始之后换人得重新开始，那不是一行的分量。
-const reviewer = ref('')
-const canPickReviewer = computed(
-  () => isOwner.value && isOpen.value && !props.task?.started_at && otherPeople.value.length > 0
-)
-// 没人可挑、又还没定下来时，这一行整行不画——空着的一格什么也没说。
-const showReviewer = computed(() => canPickReviewer.value || !!props.task?.reviewer_handle)
 
 const closeOpen = ref(false)
 const closing = ref(false)
@@ -184,7 +185,7 @@ async function confirmHandOver() {
 
 <template>
   <Teleport :key="String(mdAndUp)" to="#app-bar-slot" :disabled="mdAndUp" defer>
-    <div class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
+    <div v-guide-anchor="'task-page'" class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
       <div class="task-header__text">
         <button v-if="mdAndUp" type="button" class="task-header__room t-title" @click="emit('open-room')">
           # {{ topicTitle(room) }}
@@ -193,9 +194,7 @@ async function confirmHandOver() {
         <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
           task ? taskTitle(task) : ''
         }}</span>
-        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{
-          phraseLabel(task.presentation.phrase)
-        }}</span>
+        <span v-if="task" class="task-header__state" data-testid="task-phrase">{{ taskPhraseLabel(task, ME) }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
         }}</span>
@@ -229,18 +228,6 @@ async function confirmHandOver() {
             <div class="task-details__row">
               <dt>{{ t('work.task.owner') }}</dt>
               <dd><UserRef :handle="task.owner_handle" /></dd>
-            </div>
-            <div v-if="showReviewer" class="task-details__row" data-testid="task-reviewer">
-              <dt :title="t('work.task.reviewerHint')">{{ t('work.task.reviewer') }}</dt>
-              <dd v-if="canPickReviewer">
-                <select v-model="reviewer" class="task-notice__select t-meta" :aria-label="t('work.task.reviewer')">
-                  <option value="">{{ t('work.task.reviewerDefault') }}</option>
-                  <option v-for="m in otherPeople" :key="m.member_handle" :value="m.member_handle">
-                    {{ nameOf(m.member_handle) }}
-                  </option>
-                </select>
-              </dd>
-              <dd v-else><UserRef :handle="task.reviewer_handle" /></dd>
             </div>
             <div
               v-if="collaborators.length || (isOwner && isOpen)"
@@ -316,20 +303,61 @@ async function confirmHandOver() {
             </div>
             <div class="task-details__row" data-testid="task-machine">
               <dt>{{ t('work.task.machine') }}</dt>
-              <dd v-if="machine" class="task-details__pair">
-                <span>{{ choiceName(machine.choice) }}</span>
-                <span v-if="machine.follows_room" class="task-details__tag">{{ t('work.task.followsRoom') }}</span>
-                <TopicComputePicker
-                  v-if="isOwner && isOpen"
-                  :topic-id="task.id"
-                  :profile="machine"
-                  @changed="loadMachine"
-                />
+              <dd v-if="machine" class="task-details__envs">
+                <div
+                  v-for="session in machine.sessions"
+                  :key="session.session_id"
+                  class="task-details__pair"
+                  :data-testid="`session-env-${session.session_id}`"
+                >
+                  <span>{{
+                    t('compute.env.sessionLine', {
+                      name: sessionName(session),
+                      env: session.environment
+                        ? environmentName(session.environment, machine.devices, machine.specs)
+                        : t('compute.env.notStarted'),
+                    })
+                  }}</span>
+                  <EnvironmentMenu
+                    v-if="isOwner && isOpen"
+                    :heading="t('compute.env.sessionHeading', { name: sessionName(session) })"
+                    :hint="t('compute.env.sessionHint')"
+                    :current="session.environment ?? machine.default"
+                    :devices="machine.devices"
+                    :specs="machine.specs"
+                    :save="saveSession(session)"
+                    @changed="loadMachine"
+                  />
+                </div>
+                <div class="task-details__pair" data-testid="task-env-default">
+                  <span>{{
+                    t('compute.env.defaultHere', {
+                      name: environmentName(
+                        machine.default ?? { kind: 'sandbox', spec: 'standard' },
+                        machine.devices,
+                        machine.specs
+                      ),
+                    })
+                  }}</span>
+                  <span v-if="machine.default_from === 'room'" class="task-details__tag">{{
+                    t('work.task.followsRoom')
+                  }}</span>
+                  <EnvironmentMenu
+                    v-if="isOwner && isOpen"
+                    :heading="t('compute.env.defaultHeading')"
+                    :hint="t('compute.env.defaultHint')"
+                    :current="machine.default"
+                    :devices="machine.devices"
+                    :specs="machine.specs"
+                    :save="saveDefault"
+                    @changed="loadMachine"
+                  />
+                </div>
               </dd>
               <dd v-else-if="machineError">
-                {{ t('work.roomMachine.loadFailed') }}
+                {{ t('compute.env.loadFailed') }}
                 <button type="button" class="task-details__retry" @click="loadMachine">
-                  {{ t('work.roomMachine.retry') }}
+                  {{ t('global.loadError.retry') }}
                 </button>
               </dd>
               <dd v-else><v-progress-circular indeterminate size="14" width="2" /></dd>
@@ -340,11 +368,12 @@ async function confirmHandOver() {
 
       <BaseButton
         v-if="task && isOwner && isOpen && !task.started_at"
+        v-guide-anchor="'task-start'"
         kind="primary"
         size="sm"
         :loading="starting"
         data-testid="task-start"
-        @click="start(reviewer || null)"
+        @click="start()"
         >{{ t('work.task.start') }}</BaseButton
       >
       <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
@@ -360,31 +389,36 @@ async function confirmHandOver() {
             data-testid="task-more"
           />
         </template>
-        <v-list density="compact">
-          <v-list-item :title="t('work.task.rename')" data-testid="task-rename" @click="renameOpen = true" />
+        <v-list density="compact" role="menu" :aria-label="t('work.task.more')">
+          <v-list-item
+            role="menuitem"
+            :title="t('work.task.rename')"
+            data-testid="task-rename"
+            @click="renameOpen = true"
+          />
           <template v-if="isOwner && isOpen">
-            <v-list-item v-if="otherPeople.length" :title="t('work.task.handOver')" @click="handOverOpen = true" />
-            <v-list-item :title="t('work.task.close')" @click="closeOpen = true" />
+            <v-list-item
+              v-if="otherPeople.length"
+              role="menuitem"
+              :title="t('work.task.handOver')"
+              @click="handOverOpen = true"
+            />
+            <v-list-item role="menuitem" :title="t('work.task.close')" @click="closeOpen = true" />
           </template>
-          <v-list-item v-else-if="isOwner" :title="t('work.task.reopen')" data-testid="task-reopen" @click="reopen()" />
+          <v-list-item
+            v-else-if="isOwner"
+            role="menuitem"
+            :title="t('work.task.reopen')"
+            data-testid="task-reopen"
+            @click="reopen()"
+          />
         </v-list>
       </v-menu>
     </div>
   </Teleport>
 
   <p v-if="actionError" class="task-notice t-meta" role="alert">{{ actionError }}</p>
-  <div v-if="startError" class="task-notice t-meta" role="alert">
-    <span>{{ startError }}</span>
-    <label class="task-notice__pick">
-      <span>{{ t('work.task.reviewer') }}</span>
-      <select v-model="reviewer" class="task-notice__select t-meta">
-        <option value="">{{ t('work.task.reviewerNone') }}</option>
-        <option v-for="m in people" :key="m.member_handle" :value="m.member_handle">
-          {{ memberNames[m.member_handle] || m.member_handle }}
-        </option>
-      </select>
-    </label>
-  </div>
+  <p v-if="startError" class="task-notice t-meta" role="alert">{{ startError }}</p>
 
   <ConfirmDialog
     v-model="closeOpen"
@@ -573,6 +607,11 @@ async function confirmHandOver() {
   margin: 0;
   color: var(--text);
 }
+.task-details__envs {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
 .task-details__pair {
   display: flex;
   flex-wrap: wrap;
@@ -652,11 +691,6 @@ async function confirmHandOver() {
   border-bottom: 1px solid var(--line);
   background: var(--warn-wash);
   color: var(--warn-ink);
-}
-.task-notice__pick {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
 }
 .task-notice__select {
   padding: 2px 8px;

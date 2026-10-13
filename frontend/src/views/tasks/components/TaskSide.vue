@@ -16,6 +16,7 @@
           </AdaptiveMenu>
         </div>
         <p class="ts__status" :class="`ts__status--${status.tone}`">{{ status.label }}</p>
+        <p v-if="myDeadlineText" class="ts__deadline t-meta-read" data-testid="my-deadline">{{ myDeadlineText }}</p>
 
         <template v-if="identity.approved === 'APPROVED'">
           <p v-if="projectsFailed" class="ts__note">
@@ -62,7 +63,22 @@
         </div>
         <div v-if="task.rank">
           <dt>{{ t('tasks.side.rank') }}</dt>
-          <dd><v-rating :model-value="task.rank" readonly density="compact" size="x-small" /></dd>
+          <dd>
+            <!-- 每颗星由 v-rating 自己那个隐藏的单选框带名字（「难度 N / 5」）；它默认画的星是一颗
+                 也带同一句 aria-label 的按钮，又坐在那个单选框的 <label> 里，读屏就念两遍。
+                 这里只画星的图标，不给它名字。 -->
+            <v-rating
+              :model-value="task.rank"
+              :item-aria-label="rankStarLabel"
+              readonly
+              density="compact"
+              size="x-small"
+            >
+              <template #item="{ icon, color }">
+                <v-icon :icon="icon" :color="color" size="16" class="ts__star" aria-hidden="true" />
+              </template>
+            </v-rating>
+          </dd>
         </div>
         <div>
           <dt>{{ t('tasks.side.claimed') }}</dt>
@@ -78,11 +94,14 @@
 <script setup lang="ts">
 import type { MenuAction } from '@/components/common/menuAction'
 import type { Project } from '@/cx_types'
-import type { TaskParticipationIdentity } from '@/network/api/tasks/types'
 import type { Task, TaskSubmissionReview } from '@/types'
+import type { TaskParticipationIdentity } from '@/types/taskBoard'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import dayjs from 'dayjs'
+
+import { deadlineState } from '@/utils/tasks'
 
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
@@ -129,15 +148,26 @@ const status = computed(() => {
     : { label: t('tasks.side.versionFailed', { n }), tone: 'danger' }
 })
 
-/** 我自己的截止：出题人批准时给每人单设的那一个，不是题目的截止。 */
+/** 我自己的截止：出题人批准时给每人单设的那一个，不是题目的截止。读的是这一栏画着的
+ *  那一份报名（`identity`）；没有才退回接口按同一条规则挑出来的 `userDeadline`。 */
+const myDeadline = computed(() => {
+  if (props.identity?.approved !== 'APPROVED') return null
+  return props.identity.deadline ?? props.task.userDeadline ?? null
+})
+
+/** 截到哪一刻，按看的人自己的钟点写出来 —— 和问芝士、项目总览说的是同一个时刻。 */
+const myDeadlineText = computed(() =>
+  myDeadline.value == null
+    ? ''
+    : t('tasks.side.myDeadline', { when: dayjs(myDeadline.value).format(t('tasks.roster.dateTimeFormat')) })
+)
+
+/** 过没过、隔几天都由 `deadlineState` 说，交作业表单的「已截止」读的也是它。 */
 const remaining = computed(() => {
-  if (props.identity?.approved !== 'APPROVED') return ''
-  const at = props.task.userDeadline ?? props.identity.deadline
-  if (at == null) return ''
-  const days = Math.ceil((at - Date.now()) / DAY_MS)
-  if (days < 0) return t('tasks.side.overdue', { n: -days })
-  if (days === 0) return t('tasks.side.dueToday')
-  return t('tasks.side.daysLeft', { n: days })
+  const state = deadlineState(myDeadline.value)
+  if (state == null) return ''
+  if (state.passed) return state.days === 0 ? t('tasks.side.closed') : t('tasks.side.overdue', { n: state.days })
+  return state.days === 0 ? t('tasks.side.dueToday') : t('tasks.side.daysLeft', { n: state.days })
 })
 
 const formText = computed(() => {
@@ -148,13 +178,16 @@ const formText = computed(() => {
   return min === max ? t('tasks.side.formTeam', { n: min }) : t('tasks.side.formTeamRange', { min, max })
 })
 
+/** 每颗星的读屏名字。Vuetify 自己的那句是「评分 N / 5」，这一行说的是难度。
+ *  Vuetify 拿到这句后自己往 {0}（第几颗）{1}（一共几颗）里填数，所以这两个占位符原样
+ *  穿过 vue-i18n 交给它。 */
+const rankStarLabel = computed(() => t('tasks.side.rankStar', { n: '{0}', of: '{1}' }))
+
 const deadlineText = computed(() => {
-  const at = props.task.deadline
-  if (at == null) return t('tasks.side.deadlineNone')
-  const days = Math.ceil((at - Date.now()) / DAY_MS)
-  if (days < 0) return t('tasks.side.closedAgo', { n: -days })
-  if (days === 0) return t('tasks.side.dueToday')
-  return t('tasks.side.dueIn', { n: days })
+  const state = deadlineState(props.task.deadline)
+  if (state == null) return t('tasks.side.deadlineNone')
+  if (state.passed) return state.days === 0 ? t('tasks.side.closed') : t('tasks.side.closedAgo', { n: state.days })
+  return state.days === 0 ? t('tasks.side.dueToday') : t('tasks.side.dueIn', { n: state.days })
 })
 
 /** 领取之后给每人的提交期限（天）。发题表单存的是天数，老数据里存的是毫秒（14 天存成
@@ -247,6 +280,10 @@ watch(
   text-overflow: ellipsis;
 }
 
+.ts__deadline {
+  margin: 2px 0 0;
+}
+
 .ts__status {
   margin: 0;
   font-size: 13px;
@@ -303,6 +340,10 @@ watch(
 
 .ts__facts {
   margin: 0;
+}
+
+.ts__star {
+  margin: 0 2px;
 }
 
 .ts__facts > div {

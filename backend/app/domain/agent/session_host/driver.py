@@ -53,6 +53,9 @@ class Launched:
     launch: str
     #: The input protocol the runner speaks, for a harness that has one.
     input_protocol: int | None = None
+    #: The name its runner signs the record of its ending with, for a harness
+    #: whose runner leaves one (`last_words`).
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +187,14 @@ class Driver(Protocol):
 
     def images(self, images: tuple[Image, ...]) -> list:
         """Images as the runner takes them along with words."""
+        ...
+
+    async def last_words(
+        self, wire: Wire, host: str, ref: SessionRef, launched: Launched
+    ) -> str:
+        """What the runner of ``launched`` recorded on its process ending
+        before it ever started, or nothing: a session gone that way is a
+        session that did not start, and the room is told why."""
         ...
 
     async def adopt(self, wire: Wire, found: list[tuple[str, Access]]) -> None:

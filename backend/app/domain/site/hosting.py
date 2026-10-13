@@ -1,8 +1,6 @@
 """Serve private project websites without exposing platform routes or tokens."""
 
 import asyncio
-import hashlib
-import hmac
 import mimetypes
 import re
 import time
@@ -16,6 +14,7 @@ from starlette.requests import ClientDisconnect, Request
 from starlette.responses import RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core import scoped_jwt
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AppError, BaseError, ValidationError
@@ -62,17 +61,15 @@ def content_origin(project_id: uuid.UUID) -> str:
     return f"{settings.sites_scheme}://{project_id.hex}.{domain}{port}"
 
 
-def _key() -> bytes:
-    return hmac.digest(
-        settings.jwt_secret.encode(), b"cheese:site-read:v1", hashlib.sha256
-    )
+#: The purpose these tokens are signed for (`app.core.scoped_jwt`).
+TOKEN_DOMAIN = b"cheese:site-read:v1"
 
 
 def mint_site_token(
     project_id: uuid.UUID, handle: str, *, purpose: str, ttl: int
 ) -> str:
     now = int(time.time())
-    return jwt.encode(
+    return scoped_jwt.sign(
         {
             "sub": handle,
             "project": str(project_id),
@@ -81,19 +78,17 @@ def mint_site_token(
             "iat": now,
             "exp": now + ttl,
         },
-        _key(),
-        algorithm="HS256",
+        domain=TOKEN_DOMAIN,
     )
 
 
 def _handle(token: str, project_id: uuid.UUID, purpose: str) -> str | None:
     try:
-        claims = jwt.decode(
+        claims = scoped_jwt.verify(
             token,
-            _key(),
-            algorithms=["HS256"],
+            domain=TOKEN_DOMAIN,
             audience=content_origin(project_id),
-            options={"require": ["sub", "project", "aud", "type", "iat", "exp"]},
+            require=["sub", "project", "aud", "type", "iat", "exp"],
         )
     except (jwt.PyJWTError, AppError, BaseError):
         return None

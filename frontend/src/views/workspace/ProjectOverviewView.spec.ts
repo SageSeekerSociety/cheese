@@ -1,4 +1,4 @@
-// 项目总览：项目总览那份文档照原样显示，没写过就给一个「写一份」；谁在做什么按负责人
+// 项目总览：项目目标照原样显示，没写过就给一个去写的入口；谁在做什么按负责人
 // 分、我在最前，停住的和做完的不在里面；最近进展里点一件就去那件任务。任务和进展还
 // 没读到时不写「0」、不写「暂无」。
 import type { RoomTask } from '@/cx_types'
@@ -81,14 +81,14 @@ function mount(extra: Record<string, unknown> = {}) {
   })
 }
 
-it('项目总览那份文档照原样显示', async () => {
+it('项目目标照原样显示', async () => {
   const view = mount({ overviewText: '## 现在到哪了\n\n报名和审核已经能用。' })
   const doc = view.getByTestId('overview-document')
   await vi.waitFor(() => expect(doc.textContent).toContain('报名和审核已经能用。'))
   expect(doc.textContent).toContain('现在到哪了')
 })
 
-it('没写过项目总览：点「写一份」去写', async () => {
+it('没写过项目目标：点去写的入口', async () => {
   const view = mount({ overviewText: '' })
   await fireEvent.click(view.getByRole('button', { name: t('work.overview.write') }))
   expect(view.emitted('edit-overview')).toHaveLength(1)
@@ -133,4 +133,20 @@ it('任务和进展还没读到：不写「0」，也不写「暂无」', () => 
   expect(view.getByTestId('overview-all-tasks').textContent).not.toMatch(/\d/)
   expect(view.queryByText(t('work.overview.nobody'))).toBeNull()
   expect(view.queryByText(t('work.overview.noProgress'))).toBeNull()
+})
+
+it('领题开的项目：写着这份报名自己截到哪一刻，按看的人的钟点到分钟', () => {
+  // 本地时间造出来的时刻：不管测试机在哪个时区，这一刻在本地都是 10 月 24 日 16:05。
+  const at = new Date(2030, 9, 24, 16, 5).getTime()
+  const view = mount({ overviewText: '## 赛题要求', challengeDeadline: { at, mine: true } })
+  expect(view.getByTestId('overview-deadline').textContent).toBe('提交截止：10月24日 16:05')
+
+  cleanup()
+  const closing = mount({ overviewText: '## 赛题要求', challengeDeadline: { at, mine: false } })
+  expect(closing.getByTestId('overview-deadline').textContent).toBe('题目截止：10月24日 16:05')
+})
+
+it('不是领题开的项目：不写截止', () => {
+  const view = mount({ overviewText: '## 现在到哪了' })
+  expect(view.queryByTestId('overview-deadline')).toBeNull()
 })

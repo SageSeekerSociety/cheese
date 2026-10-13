@@ -24,7 +24,7 @@ covers:
 | 工作流 | `.github/workflows/deploy-dev.yml` | `.github/workflows/deploy-prod.yml` |
 | 执行 | 主机上的自托管 runner 运行 `deploy/deploy-docker.sh` | 同一个脚本，runner 标签 `cheese-prod` |
 
-两个环境互不继承状态。dev 从 main 持续部署，所以一次合并就是一次上线（仓库 `CLAUDE.md`「Production changes go through CI/CD」）。
+两个环境互不继承状态。dev 从 main 持续部署，所以一次合并就是一次上线（仓库 `AGENTS.md`「Production changes go through CI/CD」）。
 
 ## 镜像按提交号构建 {#images}
 

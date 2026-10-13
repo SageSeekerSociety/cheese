@@ -66,12 +66,12 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 工作台 | `views/WorkspaceView.vue` | 左栏(话题树/项目文档/成员) ｜ 对话 ｜ 实况文档 + 跨区输入栏；栏宽可拖拽(持久化) |
 | 对话 | `components/ChatPanel.vue` | 飞书群聊式；只显示 message + 系统行（doc/decision/🔧 事件不混入）；本地时区 |
 | 实况文档 | `components/DocPanel.vue` | 飞书文档式；TipTap 编辑器，块手柄(＋插入/⠿ 拖动排序，真功能)；右侧工具可**钉住停靠** |
-| 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸任务) + 项目文档(章程/周报/记忆) + 成员(私聊从名册进)；右缘可拖拽调宽 |
+| 左栏 | `components/TopicSidebar.vue` | 话题树(本体▸话题▸任务) + 项目文档(项目目标/周报/记忆) + 成员(私聊从名册进)；右缘可拖拽调宽 |
 | 项目首页 | `views/workspace/RunningWorkView.vue` | 等你决定（一叠卡，一次摆一条）+ 四列看板：施工中 / 交付中 / 待处理（按「该谁动」分列）+ 做出了什么（产物清单，网站钉在它最上面） |
 | 单项产物 | `views/ProjectArtifactView.vue` | 预览 / 下载当前版本 / 版本历史 / 发布成网站 / 任选两版比较 —— Word 按段落、表格按单元格、幻灯片按页（`domain/documents/compare.py`），其余按字节 |
 | 机构看板 | `views/SpaceBoardView.vue` | Linear 表：团队/负责人/AI模式/话题数/活跃/**最近活动**/状态 |
 | 个人主页 | `views/ProfileView.vue` | `/users/:handle` 与 `/projects/:id/members/:handle` 两个入口同一页：头像/简介/团队 + 一年活动图（点一周筛话题）+ 项目 + 最近参与的话题；自己的页多「编辑资料」和芝士眼中的你（可删）；从项目进来多「在这个项目里」 |
-| 项目文档 | `views/ProjectDocsView.vue` | 章程/周报集/记忆；**在工作台内打开、保留左栏**（docs 模式，Batch f3c631b） |
+| 项目文档 | `views/ProjectDocsView.vue` | 项目目标/周报集/记忆；**在工作台内打开、保留左栏**（docs 模式，Batch f3c631b） |
 
 ---
 
@@ -116,7 +116,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 | 关闭 | `POST /api/topics/{task}/close` | ✅ 负责人或任务自己的会话（`cheese_close_task`）；带结论是已完成，不带是已关闭；房间里落一条平台消息 |
 | 在任务里说话 | `POST /api/topics/{task}/messages` | ✅ 只收负责人和任务自己的会话；其他人能读，在房间里说 |
 
-实现：`TopicService.create_task / upgrade_block_to_place`、`TaskService.start / hand_over / close_thread`（`backend/app/domain/room_task/services.py`），路由在 `api/routes/topics_tasks.py`。任务是一段对话，地址就是任务的 id：和房间同一套 `/api/topics/{id}/…` 接口。任务有自己的会话（`agent_sessions.conversation_id` = 任务 id），平台对任务说的话经投递账本直接交给它。
+实现：`TopicService.create_task / upgrade_block_to_place`、`TaskService.start / hand_over`（`backend/app/domain/room_task/services.py`）、关闭任务的唯一入口 `room_task/closing.close_task`，路由在 `api/routes/topics_tasks.py`。任务是一段对话，地址就是任务的 id：和房间同一套 `/api/topics/{id}/…` 接口。任务有自己的会话（`agent_sessions.conversation_id` = 任务 id），平台对任务说的话经投递账本直接交给它。
 
 ### 3.4 实况文档（改文档即指令）  ✅ / 🟡
 
@@ -135,7 +135,7 @@ CheeseX 是"AI 全过程学生项目平台"：每个**项目**是一个 git 仓�
 
 ### 3.6 记忆（项目 / 关于某个人）  ✅
 
-- **行为**：项目记忆（章程/决策/进展，任何话题可引用）+ 关于某个人的记忆（"这位芝士眼中的 TA"，属于某个项目里的某位芝士，不跨项目）。私聊里 `remember` 写的就是这一份；在场的人各读一份，任何房间都读得到。
+- **行为**：项目记忆（决策/进展，任何话题可引用）+ 关于某个人的记忆（"这位芝士眼中的 TA"，属于某个项目里的某位芝士，不跨项目）。私聊里 `remember` 写的就是这一份；在场的人各读一份，任何房间都读得到。
 - **实现**：`MemoryEntry`（scope=project/user/agent_project）、`DbMemoryStore`（`backend/app/domain/memory/`）；`user` 池的 scope_id 由 `memory/models.py::user_scope_id` 拼，跨项目读不到靠的就是别的项目的键在这里拼不出来。
 
 ### 3.7 通知（分级 / 收件箱 / 拍板）  ✅

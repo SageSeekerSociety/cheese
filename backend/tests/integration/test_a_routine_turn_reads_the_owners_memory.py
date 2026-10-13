@@ -103,7 +103,7 @@ def _prompt_of_the_routine_turn(client, tmp_path, room: str, submitted: dict):
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )
@@ -166,7 +166,7 @@ def test_another_rooms_turn_does_not_carry_the_routine_owner(client, tmp_path):
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
         session_factory=client.test_request_factory,
-        compute=ComputePool([screen.runtime], screen.name),
+        compute=ComputePool([screen.runtime]),
         base_system_prompt="You are Cheese.",
         workspace_root=str(tmp_path / "ws"),
     )

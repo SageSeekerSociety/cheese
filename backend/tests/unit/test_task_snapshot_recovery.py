@@ -73,6 +73,7 @@ def test_dirty_work_restores_separately_without_changing_staged_content(
         if request.data is None:
             # Asked for the task's latest backup: there is none yet.
             raise urllib.error.HTTPError(request.full_url, 404, "", {}, None)
+        captured["built_at"] = request.data.name
         captured["bundle"] = request.data.read()
         captured["snapshot_sha"] = request.full_url.rsplit("/", 1)[1]
         captured["digest"] = hashlib.sha256(captured["bundle"]).hexdigest()
@@ -80,6 +81,10 @@ def test_dirty_work_restores_separately_without_changing_staged_content(
 
     monkeypatch.setattr(cli.urllib.request, "urlopen", upload)
     cli._sync_task(task)
+    # git writes a bundle through "<path>.lock", and a checkout's own git
+    # directory already puts that past the 260 characters Windows allows; the
+    # backup is built outside it for that reason.
+    assert not Path(captured["built_at"]).is_relative_to(work / ".git")
     assert git("rev-parse", "HEAD") == head
     assert git("show", ":report.txt") == "staged"
     assert (work / "report.txt").read_text() == "unstaged\n"

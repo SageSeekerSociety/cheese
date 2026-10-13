@@ -24,7 +24,7 @@ const THEME_BOOT = "try{var s=localStorage.getItem('cheesex.theme'),p=s==='light
 // sidebar drawer on a narrow one.
 const sectionLinks = (site, section, cls) => site.tabs.map((t) => `<a class="${cls}${t.key === section ? ' on' : ''}" href="${t.href}"${t.key === section ? ' aria-current="true"' : ''}>${esc(t.label)}${t.lock ? `<span class="lock" title="仅管理员">${ic('lock', 'width:12px;height:12px')}</span>` : ''}</a>`).join('')
 
-export function shell(ctx, { title, description, section, bodyClass = '', main, pageData }) {
+export function shell(ctx, { title, description, section, bodyClass = '', main, pageData, moved }) {
   const { site, assets } = ctx
   return `<!doctype html>
 <html lang="zh-CN">
@@ -37,6 +37,7 @@ export function shell(ctx, { title, description, section, bodyClass = '', main, 
 <link rel="alternate" type="application/rss+xml" title="知是更新日志" href="${BASE}/changelog.xml">
 <link rel="stylesheet" href="${assets.css}">
 <script>document.documentElement.classList.add('js');${THEME_BOOT}</script>
+${moved ? `<script>(function(m){function go(){var to=m[decodeURIComponent(location.hash.slice(1))];if(to)location.replace(to)}go();addEventListener('hashchange',go)})(${JSON.stringify(moved).replace(/</g, '\\u003c')})</script>` : ''}
 </head>
 <body class="${bodyClass}" data-sec="${esc(section)}">
 <a class="skip" href="#main">跳到正文</a>
@@ -139,6 +140,7 @@ export function docPage(ctx, page, nav, prev, next) {
     section: page.section,
     main,
     pageData: { kind: 'doc', section: page.section, slug: page.slug, title: page.title, md: page.mdUrl, dev },
+    moved: page.moved,
   })
 }
 
@@ -188,7 +190,7 @@ export function downloadPage(ctx, desktop) {
     <p>第一次打开若被系统拦下：Mac 到「系统设置 → 隐私与安全性」点「仍要打开」；Windows 点「更多信息 → 仍要运行」。登录后在「我的设备 → 添加设备」点「接入这台电脑」，芝士就能在这台电脑上干活。</p>
     <p>桌面端每次启动都会检查新版本，下载完成后自动安装并重启。当前版本见 <a class="link" href="${REPO}/releases/tag/desktop-latest" rel="noopener">GitHub 发布页</a>。</p>
     <h2 id="connector">连接器<a class="anchor" href="#connector">#</a></h2>
-    <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="${BASE}/devices#devices">设备与运行环境</a>。</p>
+    <p>连接器 <code>cheesehost</code> 是一个命令行程序：装在服务器或不装桌面端的电脑上，批准后芝士就能在这台机器上干活。详细步骤见<a class="link" href="${BASE}/devices#add-device">接入服务器或其他机器</a>。</p>
     <div class="code"><div class="code-bar"><span class="code-lang">Mac / Linux</span><button class="copy" data-copy aria-label="复制">${ic('copy')}</button></div><pre><span class="c"># 安装连接器 cheesehost</span>
 curl -fsSL https://okcheese.com/connector/install.sh | sh
 <span class="c"># 登录并保持连接：打开它给出的链接，点「批准并绑定到我」</span>
@@ -214,7 +216,7 @@ export function devGatePage(ctx) {
 }
 
 export function redirectPage(to) {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>已移动</title><meta http-equiv="refresh" content="0; url=${to}"><link rel="canonical" href="${to}"><script>location.replace(${JSON.stringify(to)}+location.hash)</script></head><body><a href="${to}">这一页已经移到新地址</a></body></html>`
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>已移动</title><meta http-equiv="refresh" content="0; url=${to}"><link rel="canonical" href="${to}"><script>location.replace(${JSON.stringify(to)}${to.includes('#') ? '' : '+location.hash'})</script></head><body><a href="${to}">这一页已经移到新地址</a></body></html>`
 }
 
 export function notFoundPage(ctx) {

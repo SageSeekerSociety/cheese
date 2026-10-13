@@ -184,7 +184,7 @@ def test_the_agent_reads_its_own_inbox_and_nobody_elses(client, room):
 
 def test_acceptance_stays_with_people(client, room):
     """采纳只归人：the generic path is the routes, and this route says no to an
-    agent even when the card names it as the reviewer."""
+    agent — a card cannot name it as the reviewer, and it cannot accept one."""
     _, tid, seat, agent = room
     card = client.post(
         f"/topics/{delivery_task_id(client, tid)}/accept-card",
@@ -195,12 +195,22 @@ def test_acceptance_stays_with_people(client, room):
             "focus": "自己验",
         },
     )
+    assert card.status_code == 422, card.text
+    assert card.json()["error"]["i18n"]["key"] == "reviewerNotAPerson"
+    card = client.post(
+        f"/topics/{delivery_task_id(client, tid)}/accept-card",
+        headers=delivery_headers(client, tid),
+        json={
+            "change_subject": "chore(test): file an accept card",
+            "reviewer_handle": "alice",
+            "focus": "自己验",
+        },
+    )
     assert card.status_code == 200, card.text
     card_id = card.json()["data"]["id"]
 
     accept = f"/accept-cards/{card_id}/accept"
-    assert agent.refused("POST", accept, {"decided_by": seat}) == 422
-    assert "AI 不能采纳" in agent.reason
+    assert agent.refused("POST", accept, {"decided_by": seat}) == 403
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"
 

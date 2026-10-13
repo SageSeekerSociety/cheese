@@ -29,8 +29,11 @@ import { selectSuites, fnmatchcase } from './ci-scope.mjs'
 import { fitIndex, limitBreach, indexTextOf } from './memory-limits.mjs'
 import { archSpec, archText } from './arch.mjs'
 import { archBoard, archCtl, archFallback, archSide, walkOf } from './arch-view.mjs'
+import { panelSpec, panelHtml, panelText } from './demo-panel.mjs'
 
-export const DEMO_FENCES = ['demo-steps', 'demo-timeline', 'demo-sim', 'demo-context', 'demo-ci', 'demo-flow', 'demo-memory', 'demo-arch']
+export { registerUiStrings, registerAgentAvatar } from './demo-panel.mjs'
+
+export const DEMO_FENCES = ['demo-panel', 'demo-steps', 'demo-timeline', 'demo-sim', 'demo-context', 'demo-ci', 'demo-flow', 'demo-memory', 'demo-arch']
 
 // Some fences carry no numbers of their own: they point at a `source`, a blob
 // the build composed from the code the page is about. `registerSource` is how
@@ -180,6 +183,7 @@ const shortTitle = (t) => String(t).replace(/（.*$/, '').replace(/^\s+|\s+$/g, 
 export function renderDemo(lang, body, where) {
   const spec = parseFence(body, where)
   if (!spec.title) missing(where, 'a demo needs a «title»')
+  if (lang === 'demo-panel') return panelHtml(panelSpec(spec, where, missing))
   if (lang === 'demo-sim') return renderSim(spec, where)
   if (lang === 'demo-context') return renderContext(spec, where)
   if (lang === 'demo-ci') return renderCi(spec, where)
@@ -581,6 +585,7 @@ ${varHtml}
 export function demoText(lang, body, { where }) {
   const spec = parseFence(body, where)
   if (lang === 'demo-arch') return archText(archData(spec, where))
+  if (lang === 'demo-panel') return panelText(panelSpec(spec, where, missing))
   if (lang === 'demo-sim') {
     const vars = (spec.vars || []).map((v) => {
       if (v.type === 'toggle') return `${v.label}（开关，默认${v.on === true || v.value === true ? '开' : '关'}）`

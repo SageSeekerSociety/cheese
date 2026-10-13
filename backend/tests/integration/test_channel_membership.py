@@ -11,10 +11,14 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 
+from app.domain.delivery.models import ChannelDelivery
+from app.domain.user.models import User
+from tests.conftest import seed_user
 from tests.integration.conftest import (
     add_external_member,
+    inbox,
     join_project_team,
     post_message,
     post_project,
@@ -90,10 +94,32 @@ def _level(client, tid: str, who: str, level: str, until: datetime | None = None
     )
 
 
-def _alerts(client, pid: str, who: str, kind: str) -> list[dict]:
-    r = client.get(f"/projects/{pid}/alerts", headers=session_auth_headers(who))
+def _away(client, kind: str) -> dict[str, set[str]]:
+    """{person: the channels (email, digest, push) a ``kind`` was recorded for}:
+    what reaches them away from the page."""
+
+    async def read() -> dict[str, set[str]]:
+        async with client.test_factory() as session:
+            rows = await session.execute(
+                select(User.username, ChannelDelivery.channel)
+                .join(User, User.id == ChannelDelivery.receiver_id)
+                .where(ChannelDelivery.payload["type"].as_string() == kind)
+            )
+            found: dict[str, set[str]] = {}
+            for who, channel in rows.all():
+                found.setdefault(who, set()).add(channel)
+            return found
+
+    return client.portal.call(read)
+
+
+def _prefer(client, who: str, **body) -> None:
+    r = client.put(
+        "/notifications/preferences",
+        json=body,
+        headers={"Authorization": f"Bearer {seed_user(client, who)}"},
+    )
     assert r.status_code == 200, r.text
-    return [a for a in r.json()["data"]["data"] if a["kind"] == kind]
 
 
 # ---- joining and leaving ---------------------------------------------------
@@ -372,6 +398,10 @@ def test_work_is_handed_only_to_people_of_the_project(client):
 
 
 def _three_in_a_channel(client) -> tuple[str, str]:
+    """alice's channel in dave's project, which bob and carol joined. All four
+    have accounts, so what reaches them shows up in their inbox."""
+    for who in ("alice", "bob", "carol", "dave"):
+        seed_user(client, who)
     p = _project(client)
     tid = _channel(client, p["id"], by="alice")
     for who in ("bob", "carol"):
@@ -445,7 +475,7 @@ def test_a_mute_until_a_time_ends_by_itself(client):
     assert _say(client, tid, "carol", "<@all> 开会了").status_code == 200
     back = _unread(client, pid, tid, "bob")
     assert (back["count"], back["new"]) == (1, True)
-    assert len(_alerts(client, pid, "bob", "MENTION")) == 1
+    assert len(inbox(client, "bob", "MENTION")) == 1
 
 
 def test_a_level_has_to_be_one_of_the_three_and_a_mute_has_to_end_later(client):
@@ -459,9 +489,9 @@ def test_at_all_skips_whoever_muted_the_channel(client):
     pid, tid = _three_in_a_channel(client)
     assert _level(client, tid, "bob", "mute").status_code == 200
     assert _say(client, tid, "alice", "<@all> 开会了").status_code == 200
-    assert _alerts(client, pid, "bob", "MENTION") == []
-    assert len(_alerts(client, pid, "carol", "MENTION")) == 1
-    assert _alerts(client, pid, "alice", "MENTION") == []
+    assert inbox(client, "bob", "MENTION") == []
+    assert len(inbox(client, "carol", "MENTION")) == 1
+    assert inbox(client, "alice", "MENTION") == []
 
 
 # ---- replies in a 支线 -------------------------------------------------------
@@ -475,12 +505,12 @@ def test_a_reply_in_a_thread_reaches_the_people_who_took_part(client):
     # dave never took part; carol is about to.
     assert _say(client, thread, "carol", "我也觉得方案一").status_code == 200
 
-    alice = _alerts(client, pid, "alice", "THREAD_REPLY")
-    bob = _alerts(client, pid, "bob", "THREAD_REPLY")
+    alice = inbox(client, "alice", "THREAD_REPLY")
+    bob = inbox(client, "bob", "THREAD_REPLY")
     assert len(alice) == 2  # bob's reply and carol's
     assert len(bob) == 1  # carol's; not his own
-    assert _alerts(client, pid, "carol", "THREAD_REPLY") == []
-    assert _alerts(client, pid, "dave", "THREAD_REPLY") == []
+    assert inbox(client, "carol", "THREAD_REPLY") == []
+    assert inbox(client, "dave", "THREAD_REPLY") == []
     # The 支线's replies count on the channel for whoever took part in it.
     assert _unread(client, pid, tid, "bob")["count"] == 1
 
@@ -491,8 +521,8 @@ def test_a_reply_that_names_someone_is_a_mention_not_a_reply(client):
     thread = _thread_under(client, said["id"], "alice")
     assert _say(client, thread, "bob", "<@alice> 方案一").status_code == 200
 
-    assert _alerts(client, pid, "alice", "THREAD_REPLY") == []
-    assert len(_alerts(client, pid, "alice", "MENTION")) == 1
+    assert inbox(client, "alice", "THREAD_REPLY") == []
+    assert len(inbox(client, "alice", "MENTION")) == 1
 
 
 def test_a_muted_channel_sends_no_thread_replies(client):
@@ -501,7 +531,67 @@ def test_a_muted_channel_sends_no_thread_replies(client):
     thread = _thread_under(client, said["id"], "alice")
     assert _level(client, tid, "alice", "mute").status_code == 200
     assert _say(client, thread, "bob", "方案一").status_code == 200
-    assert _alerts(client, pid, "alice", "THREAD_REPLY") == []
+    assert inbox(client, "alice", "THREAD_REPLY") == []
+
+
+# ---- away from the page -----------------------------------------------------
+
+
+def test_a_mention_reaches_each_person_by_their_own_settings(client, monkeypatch):
+    """「有人 @ 我」 goes by the matrix each person set: bob keeps the default
+    push and email for it, carol turned both off and still has it in her inbox."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "vapid_public_key", "public-key", raising=False)
+    monkeypatch.setattr(settings, "vapid_private_key", "private-key", raising=False)
+    pid, tid = _three_in_a_channel(client)
+    awake = {"emailMode": "instant", "quietHoursEnabled": False}
+    _prefer(client, "bob", **awake)
+    _prefer(
+        client,
+        "carol",
+        **awake,
+        events={"mention": {"inApp": True, "push": False, "email": False}},
+    )
+
+    said = post_message(client, tid, "alice", {"content": "<@bob> <@carol> 看一下"})
+
+    away = _away(client, "MENTION")
+    assert away.get("bob") == {"email", "push"}
+    assert "carol" not in away
+    assert "alice" not in away
+    (bob,) = inbox(client, "bob", "MENTION")
+    assert bob["contextMetadata"]["projectId"] == pid
+    assert bob["contextMetadata"]["topicId"] == tid
+    assert bob["contextMetadata"]["blockId"] == said["id"]
+    assert bob["contextMetadata"]["topicTitle"] == "前端"
+    assert len(inbox(client, "carol", "MENTION")) == 1
+
+
+def test_a_thread_reply_reaches_email_and_not_push_by_default(client, monkeypatch):
+    """「我的消息被回复」 defaults to the inbox and email, without a push; email
+    defaults to the digest. The reply opens in its 支线."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "vapid_public_key", "public-key", raising=False)
+    monkeypatch.setattr(settings, "vapid_private_key", "private-key", raising=False)
+    _, tid = _three_in_a_channel(client)
+    said = post_message(client, tid, "alice", {"content": "方案一还是方案二"})
+    thread = _thread_under(client, said["id"], "alice")
+    assert _say(client, thread, "bob", "方案一").status_code == 200
+
+    assert _away(client, "THREAD_REPLY") == {"alice": {"digest"}}
+    (reply,) = inbox(client, "alice", "THREAD_REPLY")
+    assert reply["contextMetadata"]["threadId"] == thread
+    assert reply["contextMetadata"]["content"] == "方案一"
+
+
+def test_turning_a_mention_off_in_the_inbox_keeps_it_out(client):
+    pid, tid = _three_in_a_channel(client)
+    off = {"inApp": False, "push": False, "email": False}
+    _prefer(client, "bob", events={"mention": off})
+    assert _say(client, tid, "alice", "<@bob> 看一下").status_code == 200
+    assert inbox(client, "bob", "MENTION") == []
 
 
 # ---- a project-wide notice ---------------------------------------------------

@@ -3,6 +3,7 @@ import type { AgentControlState, Block, ChatAttachment, TopicMemberRow } from '@
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { CardPhase } from '@/lib/topicState'
+import type { TaskSource } from '@/types/taskOrigin'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
@@ -31,7 +32,10 @@ import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { agentNames, memberName } from '@/lib/agentNames'
+import { dayStamp } from '@/lib/dateText'
+import { refRoute } from '@/lib/refDirectory'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
+import { sourceRoute } from '@/lib/taskSource'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -92,11 +96,14 @@ function onReview() {
   onPanelTab('changes')
 }
 
-// 地址点名的一条消息（搜索结果、别人发来的链接）：对话栏打开时停在它上面。
-const focusBlock = computed(() => {
+// 地址点名的一条消息（搜索结果、别人发来的链接、任务页顶上那句话）：打开时停在它上
+// 面。支线页上点名的是支线里的一条，交给支线那一栏；频道主线那一栏里没有它。
+const namedBlock = computed(() => {
   const q = route.query.block
   return typeof q === 'string' && q ? q : null
 })
+const focusBlock = computed(() => (props.threadId ? null : namedBlock.value))
+const threadFocusBlock = computed(() => (props.threadId ? namedBlock.value : null))
 // 任务有自己的页面：点开一个任务就去那里，浏览器的返回退回房间。
 function onOpenCard(taskId: string) {
   void router.push({ name: 'workspace-task', params: { projectId: props.projectId, topicId: props.topicId, taskId } })
@@ -119,7 +126,7 @@ function backToRoom() {
 }
 
 // Bumped on every AI turn / tool use. Watched by the documents in the panel
-// and the project overview on 综合's overview (reload what 芝士 maintained).
+// and the project's goals on 综合's overview (reload what 芝士 maintained).
 const activityTick = ref(0)
 
 // URL 里的这个 id 指向一个房间。列表里没有就直接去问它——深链接、刷新，都走这条路。
@@ -254,6 +261,12 @@ const composerClosed = computed(() => {
   return taskPage.takesPart.value ? null : t('work.task.ownerOnlyNotice', { name: store.agentName })
 })
 
+// 提问只在这件事还开着时等回答：任务关了、频道归档了，题跟着结束（待办里同样不再
+// 列它）。只是「我不能说话」（任务只有负责人能说）不算，题还在等别人。
+const askClosed = computed(() =>
+  props.taskId ? !!taskPage.task.value && !taskPage.isOpen.value : selectedTopic.value?.status === 'archived'
+)
+
 // 手机顶栏写的是当前页的标题，而这一页的标题是话题名——路由上没有，只有打开了
 // 才知道。桌面顶栏不显示它，但浏览器标签页同样受益。
 const { setDynamicTitle, clearDynamicTitle } = usePageTitle()
@@ -271,10 +284,7 @@ onUnmounted(() => clearDynamicTitle('workspace-topic'))
 onUnmounted(() => clearDynamicTitle('workspace-thread'))
 /** 支线清单里最后一条回复的时间：今天的写钟点，更早的写日期。 */
 function threadTime(iso: string): string {
-  const at = new Date(iso)
-  return at.toDateString() === new Date().toDateString()
-    ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    : at.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
+  return dayStamp(new Date(iso).getTime())
 }
 
 // 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：总览、资料库、
@@ -298,7 +308,7 @@ const resolving = computed(
 
 function openTopic(topicId: string) {
   if (topicId === props.topicId) return
-  void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId } })
+  void router.push(refRoute(props.projectId, topicId))
 }
 
 // ---- 左右两栏：分隔、专注模式、对话收起时的窄边（见 useTopicPanes）----
@@ -382,9 +392,10 @@ const taskOverview = useTaskOverview({
   reloadTask: () => taskPage.load(true),
 })
 const taskOverviewRef = ref<InstanceType<typeof TaskOverview> | null>(null)
-function openDiscussion(conversationId: string) {
-  if (conversationId === props.topicId) backToRoom()
-  else showThread(conversationId)
+// 任务页顶上那句话：回到它所在的那段对话（频道主线、支线或另一个任务），停在它上面。
+function openSource(source: TaskSource) {
+  if (source.where === 'thread') channelThreads.markSeen(source.conversation_id)
+  void router.push(sourceRoute(props.projectId, source))
 }
 
 // 页头那颗点说的是「这个房间跟不跟得上」——它和工作条必须同源。对话栏报上来的
@@ -603,6 +614,8 @@ void openPlace()
         :set-collaborators="taskPage.setCollaborators"
         :set-agent="taskPage.setAgent"
         :load-machine="taskPage.loadMachine"
+        :set-machine="taskPage.setMachine"
+        :set-machine-default="taskPage.setMachineDefault"
         :panel-open="panelOpen"
         @open-room="backToRoom"
         @toggle-panel="togglePanel"
@@ -635,6 +648,7 @@ void openPlace()
         page
         :room="selectedTopic"
         :thread-id="threadId"
+        :focus-block="threadFocusBlock"
         :members="store.members"
         :topic-list="store.topics"
         :member-names="memberNames"
@@ -669,6 +683,7 @@ void openPlace()
             :task-id="taskId ?? null"
             :task-agent-handle="currentTask?.agent_handle ?? null"
             :composer-closed="composerClosed"
+            :ask-closed="askClosed"
             :accept-elsewhere="focusMode"
             v-on="chatEvents"
             @open-room="backToRoom"
@@ -712,6 +727,7 @@ void openPlace()
             v-if="threadId && mdAndUp"
             :room="selectedTopic"
             :thread-id="threadId"
+            :focus-block="threadFocusBlock"
             :members="store.members"
             :topic-list="store.topics"
             :member-names="memberNames"
@@ -733,6 +749,7 @@ void openPlace()
             :topic="selectedTopic"
             :task-id="taskId ?? null"
             :task-read-only="!!taskId && (!taskOwner || !taskOpen)"
+            :task-has-branch="currentTask?.branch_name !== null"
             :activity-tick="activityTick"
             :working="working"
             :agent-control="agentControl"
@@ -788,7 +805,7 @@ void openPlace()
                 @open-output="(path: string) => panelRef?.openFile?.(path)"
                 @open-file="(path: string) => panelRef?.openFile?.(path)"
                 @open-document="(id: string, title: string) => panelRef?.openDocument?.({ id, title })"
-                @open-discussion="openDiscussion"
+                @open-source="openSource"
               />
               <ChannelOverview
                 v-else-if="!taskId"
@@ -837,6 +854,7 @@ void openPlace()
                 :task-id="taskId ?? null"
                 :task-agent-handle="currentTask?.agent_handle ?? null"
                 :composer-closed="composerClosed"
+                :ask-closed="askClosed"
                 accept-review-button
                 v-on="chatEvents"
                 @open-room="backToRoom"

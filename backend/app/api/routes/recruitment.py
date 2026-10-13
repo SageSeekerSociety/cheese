@@ -20,11 +20,9 @@ from app.auth.core import AuthUserInfo
 from app.common.auth import get_optional_user_id
 from app.core.errors import BadRequestError
 from app.db.session import get_db
-from app.domain.team.models import RecruitmentStatus, TeamRecruitmentPost
-from app.domain.team.recruitment_repositories import RecruitmentRepository
+from app.domain.team.protocol import RecruitmentStatus
 from app.domain.team.recruitment_services import RecruitmentService
-from app.domain.team.repositories import TeamRepository
-from app.domain.team.services import TeamService
+from app.domain.team.services import TeamService, team_service
 from app.domain.team.summary import team_summary, team_summary_seen_by
 from app.domain.user.repositories import UserProfileRepository, UserRepository
 
@@ -56,10 +54,7 @@ router = APIRouter(tags=["Recruitment"])
 
 
 async def _get_recruitment_service(db=Depends(get_db)) -> RecruitmentService:
-    return RecruitmentService(
-        repo=RecruitmentRepository(session=db),
-        team_repo=TeamRepository(session=db),
-    )
+    return RecruitmentService.from_session(db)
 
 
 def _creator_summary(user, profile, *, fallback_id: int, chosen_map: dict) -> dict:
@@ -87,7 +82,7 @@ def _ts_ms(dt: datetime | None) -> int | None:
 
 
 def _post_to_api(
-    post: TeamRecruitmentPost,
+    post,
     *,
     teams_map: dict,
     users_map: dict,
@@ -114,17 +109,15 @@ def _post_to_api(
     }
 
 
-async def _load_maps_for_posts(
-    db, posts: list[TeamRecruitmentPost]
-) -> tuple[dict, dict, dict, dict]:
+async def _load_maps_for_posts(db, posts: list) -> tuple[dict, dict, dict, dict]:
     if not posts:
         return {}, {}, {}, {}
     team_ids = list({p.team_id for p in posts})
     user_ids = list({p.created_by for p in posts})
-    team_repo = TeamRepository(session=db)
+    team_repo = team_service(db)
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
-    teams_map = await team_repo.get_by_ids(team_ids)
+    teams_map = await team_repo.get_teams_by_ids(team_ids)
     users_map = await user_repo.get_by_ids(user_ids)
     profiles_map = await profile_repo.get_profiles_by_user_ids(user_ids)
     # 作者头像单查一张「真挑过」的映射：没挑过的不在这里出现，creator 的 avatarId
@@ -134,7 +127,7 @@ async def _load_maps_for_posts(
 
 
 def _post_to_api_seen_by(
-    post: TeamRecruitmentPost,
+    post,
     *,
     teams_map: dict,
     users_map: dict,
@@ -172,7 +165,7 @@ async def _viewer_team_ids(db, viewer_id: int | None) -> set[int]:
     """看客自己所在的队 —— 一次查完，不按帖子逐条问。"""
     if viewer_id is None:
         return set()
-    teams = await TeamRepository(session=db).list_teams_of_user(user_id=viewer_id)
+    teams = await team_service(db).get_teams_of_user(viewer_id)
     return {t.id for t in teams}
 
 

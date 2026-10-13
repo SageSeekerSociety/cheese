@@ -140,9 +140,19 @@ TEMPLATES: Final[dict[str, dict[str, str]]] = {
 #: A document edit names an AI teammate by its handle, as it does a person, so
 #: the reader sees the teammate's own name (「芝士」 as the editor of every
 #: teammate's edit stays on old rooms). A drafted mail names whoever drafted it
-#: the same way (「芝士在…里写好了一封草稿」 stays on old rooms).
+#: the same way (「芝士在…里写好了一封草稿」 stays on old rooms), and so do a
+#: proposed skill, a proposed change to one or a drafted routine, how a person
+#: decided on it, and the work a routine hands its teammate (「芝士提议新增技能」,
+#: 「芝士提议修改技能」, 「芝士起草了」 and 「交给芝士的工作」 stay on old rooms).
 HISTORICAL_NOTICE_KEYS: Final = frozenset(
     {
+        # The room-wide machine choice (#2320): old room lines and proposals
+        # still name it.
+        "computeAnyDevice",
+        "computeCloud",
+        "computeCloudVm",
+        "computeDevice",
+        "policyResourceMachine",
         "actorCheese",
         "askAnswerUndelivered",
         "askAnswerUndeliveredDetail",
@@ -157,6 +167,16 @@ HISTORICAL_NOTICE_KEYS: Final = frozenset(
         "blockUpgradedToRoom",
         "blockUpgradedRoomId",
         "labelUpgradedTo",
+        "labelRoutineWork",
+        "routineProposalConfirmed",
+        "routineProposalDeleted",
+        "routineProposed",
+        "skillProposalNotSaved",
+        "skillProposalSaved",
+        "skillProposed",
+        "skillEditNotSaved",
+        "skillEditProposed",
+        "skillEditSaved",
         "mailDrafted",
         "labelResult",
         "routineResult",

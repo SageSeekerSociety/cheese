@@ -20,13 +20,13 @@ import { usePageTitle } from '@/composables/usePageTitle'
 import TaskEligibilityAlerts from './components/TaskEligibilityAlerts.vue'
 import TaskSide from './components/TaskSide.vue'
 
+import { TaskBoardApi } from '@/api/taskBoard'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
-import { TasksApi } from '@/network/api/tasks'
 import { splitOrigin } from '@/views/spaces/model'
 import { TaskDialogs } from '@/views/tasks/components'
 import { useTaskData, useTaskManagement, useTaskParticipation, useTeamParticipation } from '@/views/tasks/composables'
@@ -106,10 +106,16 @@ const myIdentity = computed(
     identities.value.find((i) => i.approved === 'NONE') ??
     null
 )
+/** 领到了：报名批过。接口的 `joined` 不是这个意思 —— 它对还在等批的报名也是 true（只排除被拒的），
+ *  拿它当「领到了」，等批的人就会看到一颗服务端不收的「提交作业」。批没批看 `submittable`
+ *  （服务端按批过的报名算）和我那份报名自己的审核状态。 */
 const joined = computed(
-  () => taskData.value?.joined === true || identities.value.some((i) => i.approved === 'APPROVED')
+  () => taskData.value?.submittable === true || identities.value.some((i) => i.approved === 'APPROVED')
 )
-const myClaimPending = computed(() => !joined.value && identities.value.some((i) => i.approved === 'NONE'))
+/** 报了还没批：接口说我在这道题里（`joined`），或者我有一份等批的报名，但还没批过。 */
+const myClaimPending = computed(
+  () => !joined.value && (taskData.value?.joined === true || identities.value.some((i) => i.approved === 'NONE'))
+)
 const myClaimRejected = computed(
   () => identities.value.length > 0 && identities.value.every((i) => i.approved === 'DISAPPROVED')
 )
@@ -163,7 +169,7 @@ async function loadMine() {
   const participantId = myIdentity.value?.id
   if (participantId === undefined || !taskData.value) return
   try {
-    const { data } = await TasksApi.listSubmissions(taskData.value.id, participantId, {
+    const data = await TaskBoardApi.listSubmissions(taskData.value.id, participantId, {
       pageSize: 1,
       sort_by: 'createdAt',
       sort_order: 'desc',
@@ -234,14 +240,13 @@ const showSide = computed(() => route.name !== routeNames.participants && route.
 // ── 逐版评审 ────────────────────────────────────────────────────────────────────
 //
 // 「领取者」页签点「评审」或「查看提交」，在总线上说要看谁的；对话框挂在这一层，因为
-// 它自己取数。关掉时发 `roster-changed`，那个页签重新取一遍，表里的状态才跟得上。
+// 它自己取数。判了一版就发 `participation-changed`：领取者的表和我自己的进度都跟着重读。
 
 const TaskSubmissionHistory = defineAsyncComponent(() => import('@/components/tasks/TaskSubmissionHistory.vue'))
 const reviewing = ref<{ id: number; name: string } | null>(null)
 
 function closeReview() {
   reviewing.value = null
-  events.emit('roster-changed')
 }
 
 function editTask() {
@@ -259,6 +264,14 @@ async function load() {
   if (myIdentity.value) loadMine()
 }
 
+/** 有人的领取或提交变了：页头的主操作和右栏的进度都从我那一份报名和它最新一版来，两样一起重读。
+ *  不转圈：页签内容（比如刚批完的领取者表）留在原地。 */
+async function reloadMine() {
+  await loadTaskData({ quiet: true })
+  if (myIdentity.value) await loadMine()
+  else myLatest.value = null
+}
+
 onMounted(() => {
   // 领取这条路上的事件由 `useTaskParticipation` / `useTeamParticipation` 处理，这里把总线接上；
   events.on('join-clicked', onJoinTaskClicked)
@@ -274,6 +287,10 @@ onMounted(() => {
   events.on('leave-team', (teamId) => leaveTaskWithTeam(teamId))
   events.on('review-participant', (who) => {
     reviewing.value = who
+  })
+  // 批了领取、判了一版、交上一版：页头、右栏的进度和页签上的版本号都跟着重读。
+  events.on('participation-changed', () => {
+    reloadMine()
   })
 
   load()
@@ -459,6 +476,7 @@ onMounted(() => {
       :outlined="true"
       :highlight-latest="true"
       :title="t('tasks.page.reviewTitle', { name: reviewing.name })"
+      @changed="events.emit('participation-changed')"
     />
   </v-dialog>
 

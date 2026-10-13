@@ -24,8 +24,8 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import BasicInfoView from './BasicInfoView.vue'
 
-import { AvatarsApi } from '@/network/api/avatars'
-import { SpacesApi } from '@/network/api/spaces'
+import { createAvatar } from '@/api/avatars'
+import { SpacesApi } from '@/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
 
@@ -47,7 +47,7 @@ const save = async (change: BasicInfoChange) => {
   try {
     let avatarId = undefined
     if (change.avatar) {
-      const { data: avatarData } = await AvatarsApi.createAvatar(change.avatar)
+      const avatarData = await createAvatar(change.avatar)
       avatarId = avatarData.avatarId
     }
     await SpacesApi.update(current.id, {

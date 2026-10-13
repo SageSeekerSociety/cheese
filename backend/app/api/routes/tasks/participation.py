@@ -14,6 +14,8 @@ from app.api.routes.tasks._common import (
     JoinTaskAsTeamRequest,
     PatchTaskParticipantRequest,
     TaskParticipantRequest,
+)
+from app.api.task_deps import (
     get_task_membership_service,
 )
 from app.api.task_serialization import (
@@ -30,6 +32,7 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
+from app.domain.notification.preferences import local_time
 from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceRepository,
@@ -38,6 +41,7 @@ from app.domain.space.repositories import (
 from app.domain.task.access import (
     ensure_task_joinable,
 )
+from app.domain.task.claims import claim_of
 from app.domain.task.inputs import (
     map_approve_type_to_int,
 )
@@ -48,11 +52,12 @@ from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
 )
-from app.domain.team.models import TeamMemberRole
-from app.domain.team.repositories import TeamRepository
+from app.domain.team.protocol import TeamMemberRole
+from app.domain.team.services import team_service
 from app.domain.user.repositories import (
     UserRepository,
 )
+from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/tasks")
 
@@ -65,25 +70,38 @@ async def list_joined_tasks(resolver: ActorResolverDep, db=Depends(get_db)) -> d
     if not actor.authenticated or actor.user_id is None:
         raise AuthenticationRequiredError("Login required")
     tasks = await TaskService.of(db).list_joined(actor.user_id)
-    return ok(
-        [
+    # On the asker's own clock, with its offset: an agent reading a UTC
+    # instant names the UTC day, which is not the day their task page shows.
+    zone = (await timezones_by_ids(db, [actor.user_id])).get(actor.user_id)
+
+    def when(moment: datetime | None) -> str | None:
+        return local_time(moment, zone).isoformat() if moment else None
+
+    rows = []
+    for task in tasks:
+        claim = await claim_of(db, task=task, user_id=actor.user_id)
+        approved = claim is not None and claim.approved == 0
+        rows.append(
             {
                 "id": task.id,
                 "title": task.name,
                 "intro": task.intro,
-                "deadline": task.deadline.isoformat() if task.deadline else None,
+                "deadline": when(task.deadline),
+                # Their own deadline, set when the claim was approved; null
+                # while it still waits for approval.
+                "myDeadline": when(claim.deadline) if approved and claim else None,
+                "approved": approved,
                 "ended": task.ended_at is not None,
             }
-            for task in tasks
-        ]
-    )
+        )
+    return ok(rows)
 
 
 async def _participation_response(db, task, membership, auth_user) -> dict:
 
     owner_id = auth_user.user_id if membership.is_team else membership.member_id
     if membership.is_team:
-        members = await TeamRepository(db).list_members_of_team(membership.member_id)
+        members = await team_service(db).get_team_members(membership.member_id)
         if not any(member.user_id == owner_id for member in members):
             owner_id = next(
                 (
@@ -184,9 +202,7 @@ async def create_task_participant(
             raise BadRequestError(f"Invalid deadline: {exc}") from exc
 
     is_team = task.submitter_type == 1
-    if is_team and not await TeamRepository(session=db).is_team_member(
-        member, auth_user.user_id
-    ):
+    if is_team and not await team_service(db).is_team_member(member, auth_user.user_id):
         # 这条路由的 ``member`` 在 TEAM 题上是**队伍 id**，而没带它时默认成了调用者
         # 自己的 **user id** —— 两张表各自自增，撞上就等于把别人的队伍报了上去。
         # 与 ``join_task_as_team`` 同一句话：要把一支队伍报上去，你先得是那支队的人。
@@ -286,8 +302,7 @@ async def join_task_as_team(
 ) -> dict:
     """Allow team to join a task."""
 
-    team_repo = TeamRepository(session=db)
-    if not await team_repo.is_team_member(payload.team_id, auth_user.user_id):
+    if not await team_service(db).is_team_member(payload.team_id, auth_user.user_id):
         raise ForbiddenError(
             "You must be a member of this team to register it for a task"
         )

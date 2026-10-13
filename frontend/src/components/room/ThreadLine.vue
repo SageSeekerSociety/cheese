@@ -2,14 +2,13 @@
 // 主线上一条消息下面的那一行：谁在支线里说过话（头像）、有几条回复、最后一句是谁说的
 // 什么（最多两行），以及 AI 队友此刻是不是正在里面回答。点它打开支线。从这条消息出来
 // 的任务列在它下面（ChatTimeline 的 TaskCard）。
-import type { Block } from '../../cx_types'
 import type { RefNames } from '../../lib/refChip'
 import type { ThreadSummary } from '../../types/threads'
 
 import { computed } from 'vue'
 
 import { isAgentHandle } from '../../lib/authorship'
-import { replySnippet } from '../../lib/blockDisplay'
+import { replyBlock, replySnippet } from '../../lib/blockDisplay'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import UserAvatar from '../common/UserAvatar.vue'
 
@@ -38,22 +37,19 @@ const replies = computed(() => props.summary?.reply_count ?? 0)
 const faces = computed(() => (props.summary?.participants ?? []).slice(0, FACES))
 // 一轮出错、还没有任何回复的支线：那句为什么没回答在支线里，这一行是去看它的入口。
 const failed = computed(() => !props.replying && !!props.summary?.failed)
+// 额度用完不是「回复失败」：重试没有用，主线上直接说额度用完了。
+const failedText = computed(() =>
+  props.summary?.failed_code === 'credits_exhausted'
+    ? t('work.room.thread.failedCredits')
+    : t('work.room.thread.failed')
+)
 
 const last = computed(() => {
   const reply = props.summary?.last_reply
   if (!reply) return null
-  const block = {
-    id: '',
-    conversation_id: '',
-    kind: 'message',
-    author_type: 'participant',
-    author: reply.author,
-    content: reply.content,
-    created_at: reply.created_at,
-  } as Block
   return t('work.room.thread.lastReply', {
     name: props.nameOf(reply.author),
-    text: replySnippet(block, props.refs, 200),
+    text: replySnippet(replyBlock(reply), props.refs, 200),
   })
 })
 </script>
@@ -92,7 +88,7 @@ const last = computed(() => {
       <v-icon v-else size="14" class="thread-line__icon">mdi-forum-outline</v-icon>
       <span v-if="replies > 0" class="thread-line__count">{{ t('work.room.thread.replies', { count: replies }) }}</span>
       <span v-if="replies > 0 && time" class="thread-line__time t-meta">{{ time }}</span>
-      <span v-if="failed" class="thread-line__failed">{{ t('work.room.thread.failed') }}</span>
+      <span v-if="failed" class="thread-line__failed">{{ failedText }}</span>
       <template v-if="replying">
         <span class="thread-line__replying">{{
           status

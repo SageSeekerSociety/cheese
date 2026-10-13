@@ -85,7 +85,7 @@ def room(client):
 def task(client, room):
     """A task in that channel, where a living document is."""
     project, channel = room
-    return project, open_task(client, channel, "", owner="alice", start=False)["id"]
+    return project, open_task(client, channel, "", owner="alice")["id"]
 
 
 def test_a_message_is_published_as_written(client, room):
@@ -219,6 +219,29 @@ def test_an_ai_teammate_creates_the_task_it_was_asked_for(client, room):
     assert task["started_at"] is None
 
 
+def test_a_title_too_wide_is_said_back_to_the_teammate_instead_of_cut(client, room):
+    """侧栏放不下的标题，后端拒绝、CLI 把平台原话交给 AI 改短。工具报的是
+    下一步怎么走（再调一次 `cheese_task`），不是一句「失败了」。"""
+    project, topic = room
+    host = BackendHost(client, project, topic)
+
+    with pytest.raises(cheese.PlatformToolError) as refused:
+        cheese.run_platform_tool(
+            "cheese_task",
+            {
+                "title": "把这一条过于冗长的任务标题改短到侧栏一行里放得下",
+                "summary": "按新口径",
+                "owner": "alice",
+                "start": False,
+            },
+            host,
+        )
+
+    assert "48" in str(refused.value)
+    assert "cheese_task" in str(refused.value)
+    assert client.get(f"/topics/{topic}/tasks").json()["data"]["data"] == []
+
+
 @pytest.mark.parametrize(
     ("tool", "arguments"),
     [
@@ -236,7 +259,7 @@ def test_a_task_session_names_its_task(client, room):
     """`cheese_title` names the task its session works in; a channel is named
     by whoever manages it, not by its AI teammate."""
     project, channel = room
-    task = open_task(client, channel, "", owner="alice", start=False)["id"]
+    task = open_task(client, channel, "", owner="alice")["id"]
     host = BackendHost(client, project, task)
     assert cheese.run_platform_tool("cheese_title", {"text": "推荐原型"}, host)
     assert client.get(f"/topics/{task}/task").json()["data"]["title"] == "推荐原型"

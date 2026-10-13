@@ -18,8 +18,8 @@ from datetime import datetime
 from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics import DbSession
 from app.core.errors import ValidationError
 from app.core.sentences import say
 from app.domain.delivery.timer import deliver_at

@@ -164,22 +164,25 @@ async def main():
         assert json.loads(await socket.recv())["t"] == "welcome"
         await socket.send(json.dumps({"t": "hello", "executor": True}))
         async with async_session_factory() as session:
-            await AgentSessionService(session).remember_place(
-                conversation_id=room_id,
-                agent_handle=actor,
-                work_lease={
-                    "kind": "device",
-                    "device_id": device["device_id"],
-                    "home": str(home),
-                    "state": str(state),
-                },
-                runtime_location={
-                    "device_id": device["device_id"],
-                    "channel": "central",
-                    "resource_id": resource,
-                },
-                harness=harness_for(None),
-            )
+            # A task's files are read from its own session's machine; here
+            # every task's session took this one.
+            for task in request["tasks"]:
+                await AgentSessionService(session).remember_place(
+                    conversation_id=uuid.UUID(task["id"]),
+                    agent_handle=actor,
+                    work_lease={
+                        "kind": "device",
+                        "device_id": device["device_id"],
+                        "home": str(home),
+                        "state": str(state),
+                    },
+                    runtime_location={
+                        "device_id": device["device_id"],
+                        "channel": "central",
+                        "resource_id": resource,
+                    },
+                    harness=harness_for(None),
+                )
             await session.commit()
         print("ready", flush=True)
         async for raw in socket:

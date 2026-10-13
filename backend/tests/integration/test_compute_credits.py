@@ -36,7 +36,7 @@ CREDITS_PER_TURN = (10 * 5e-6 + 5 * 25e-6) / CREDIT_USD
 @pytest.fixture(autouse=True)
 def _priced(monkeypatch):
     """The gateway's price table and the deployment's price per credit."""
-    from app.domain.feature_stats import pricing
+    from app.domain.usage import pricing
 
     async def rates(transport=None):
         return _RATES
@@ -304,11 +304,10 @@ def test_exhausted_credits_refuse_next_turn(client, tmp_path):
 
 
 def test_market_nodes_board(client):
-    """节点看板 shows the machine pools this deployment offers, and marks the one
-    an unconfigured topic lands on. It used to show exactly one node — the
-    platform's own container host — which was the one pool nobody could pick."""
+    """节点看板 shows the sandbox specs this deployment offers, and marks the one
+    an agent nothing was chosen for gets."""
     from app.core.config import settings
-    from app.domain.agent.market import compute_default_name, compute_listings
+    from app.domain.agent.market import compute_listings
 
     r = client.get("/market/nodes")
     assert r.status_code == 200
@@ -316,7 +315,7 @@ def test_market_nodes_board(client):
 
     ids = [n["id"] for n in data["nodes"]]
     assert ids == [p.id for p in compute_listings(settings)]
-    assert data["current_provider"] == compute_default_name(settings)
+    assert data["current_provider"] == "standard"
     assert [n["id"] for n in data["nodes"] if n["current"]] == [
         data["current_provider"]
     ]

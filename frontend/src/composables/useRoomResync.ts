@@ -34,8 +34,9 @@ import { setCachedWindow } from '@/query/blocks'
  * 位置是读的人自己的，一样不动。
  *
  * 补读（`catchUp`）是同一件事去掉断线的那一半：连接好好的，只是读的那一页早于订阅
- * 生效，中间落下的那条两头都没带来（useChatPanel 的 checkTail）。socket 不动，排队
- * 中的轮次也照旧——它们没错过什么。
+ * 生效，中间落下的那几条两头都没带来（useRoomTail）。按编号只读那几条，各自按时间
+ * 落位；漏得超过一页，就照断线那样读最新一页合进来。socket 不动，排队中的轮次也照旧
+ * ——它们没错过什么。
  */
 export function useRoomResync(room: {
   history: ReturnType<typeof useHistoryReads>
@@ -98,10 +99,35 @@ export function useRoomResync(room: {
     }
   }
 
-  async function catchUp(topicId: string) {
+  /** 读编号在 `after` 之后存进来的那几条，各自落进时间线。 */
+  async function readMissed(
+    topicId: string,
+    read: ReturnType<typeof room.history.begin>,
+    after: number
+  ): Promise<void> {
+    await ensureFreshToken()
+    if (!read.stillHere()) return
+    const payload = await listBlocks(topicId, { limit: PAGE_SIZE, storedAfter: after })
+    if (!read.stillHere()) return
+    if (payload.has_newer) {
+      await readTail(topicId, read, false)
+      return
+    }
+    room.noteRead(payload.data)
+    const missed = applyLiveChanges({ blocks: payload.data, hasMore: true }, read.changes, read.reactions)
+    const newestBefore = room.timeline.newest().blocks.at(-1)?.id
+    for (const block of missed) {
+      upsert(room.timeline, block)
+      room.settle(block)
+    }
+    setCachedWindow(topicId, room.timeline.newest())
+    if (room.timeline.newest().blocks.at(-1)?.id !== newestBefore && room.scroll.atBottom.value) room.scroll.follow()
+  }
+
+  async function catchUp(topicId: string, after: number) {
     const read = room.history.begin(topicId)
     try {
-      await readTail(topicId, read, false)
+      await readMissed(topicId, read, after)
     } catch (e) {
       if (read.stillHere()) room.failed(topicId, e)
     } finally {

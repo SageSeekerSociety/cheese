@@ -9,16 +9,16 @@
 // 第三方、令牌续签好几条路，冷打开还会直接恢复会话——只有「现在是谁登着」对所有
 // 这些都成立。协议页本身不在外壳里（router/legal.ts），所以从弹窗点开协议不会被
 // 它自己盖住。
-import type { LegalDocumentSummary } from '@/network/api/legal/types'
+import type { LegalDocumentSummary } from '@/types/apiLegal'
 
 import { ref, watch } from 'vue'
 
 import { useNavigation } from '@/composables/useNavigation'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
+import { LegalApi } from '@/api/legal'
+import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
-import { LegalApi } from '@/network/api/legal'
-import { UserApi } from '@/network/api/users'
-import { requestErrorMessage } from '@/network/utils/requestErrorMessage'
 import AccountService, { currentUserId } from '@/services/account'
 
 export function usePendingConsent() {
@@ -34,9 +34,9 @@ export function usePendingConsent() {
       error.value = ''
       if (id === undefined) return
       try {
-        const { data } = await LegalApi.getPendingConsents()
+        const { pending: list } = await LegalApi.getPendingConsents()
         // 请求途中换了人（退出、切账号）：这份答案属于上一个人。
-        if (currentUserId.value === id) pending.value = data.pending
+        if (currentUserId.value === id) pending.value = list
       } catch {
         // 查不到就不拦：这个弹窗挡住的是整个应用，一次失败的查询不该把人关在门外。
       }
@@ -51,7 +51,7 @@ export function usePendingConsent() {
       await LegalApi.acceptDocuments(Object.fromEntries(pending.value.map((d) => [d.document, d.version])))
       pending.value = []
     } catch (e) {
-      error.value = requestErrorMessage(e, t('account.consentFailed'))
+      error.value = axiosErrorMessage(e, t('account.consentFailed'))
     } finally {
       accepting.value = false
     }
@@ -62,7 +62,7 @@ export function usePendingConsent() {
     // 和用户菜单里的退出同一个顺序：先让服务端作废刷新令牌，否则下次打开页面
     // 会话又被恢复回来。退出后没有身份，弹窗也就不会再出现，直到下次登录。
     try {
-      await UserApi.logout()
+      await UserAuthApi.logout()
     } catch (e) {
       console.warn('Logout request failed; clearing local session anyway:', e)
     } finally {

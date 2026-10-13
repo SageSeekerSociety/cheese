@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.agent.turn.state.live import LiveWork
 from app.domain.delivery.addressing import Addressed
 from app.domain.delivery.input_identity import InputReconciliationPending
-from app.domain.identity.actor import Actor
 
 
 class HumanWriter(Protocol):
@@ -38,7 +37,9 @@ class MessageService(Protocol):
 
     live: LiveWork
 
-    def has_running_turn(self, topic_id: uuid.UUID) -> bool: ...
+    def has_running_turn(
+        self, topic_id: uuid.UUID, agent_handle: str | None = None
+    ) -> bool: ...
 
     def replaying(self, topic_id: uuid.UUID) -> asyncio.Task | None: ...
 
@@ -89,7 +90,6 @@ class MessageService(Protocol):
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         delivery_id: uuid.UUID | None = None,
         recipient_instance_id: uuid.UUID | None = None,
     ) -> AsyncIterator[dict]: ...
@@ -103,7 +103,6 @@ class MessageService(Protocol):
         turn_id: uuid.UUID,
         user_block_id: uuid.UUID,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         recipient_instance_id: uuid.UUID | None = None,
         recipient_handle: str | None = None,
     ) -> AsyncIterator[dict]: ...
@@ -120,7 +119,6 @@ class ReceivedMessage(TypedDict):
     content: str
     reply_to: str | None
     attachments: list[dict] | None
-    provision_actor: Actor | None
     landed_user_block_id: uuid.UUID
     landed_user_block_ids: list[uuid.UUID]
     live_delivery_expected: bool
@@ -156,7 +154,6 @@ class WorkExecutor(Protocol):
         nudge_event: str | None = None,
         nudge_meta: dict | None = None,
         continuation_id: uuid.UUID | None = None,
-        provision_actor: Actor | None = None,
         frames: AsyncIterator[dict] | None = None,
         lifecycle: dict[str, bool] | None = None,
         delivery_id: uuid.UUID | None = None,

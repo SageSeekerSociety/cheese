@@ -29,6 +29,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -115,12 +116,12 @@ class Topic(UuidPk, Timestamps, Base):
     )
     # A room keeps its script revision when project settings change.
     environment: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # The compute choice (`ComputeChoice`) every new agent session in this room
-    # starts on. NULL = the project default. Written in full the first time the
-    # room runs, so a later session gets what the first one got. It is a default
-    # and not a placement: where a conversation actually runs is its own
-    # session's business (`agent_sessions.execution_request` / `.work_lease`).
-    compute_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # The execution environment (`agent.environment`) a new agent here gets.
+    # NULL = the project's default. It moves nobody: each agent's own is in
+    # `agent_environments`.
+    default_environment: Mapped[dict | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # 私聊 (spec §1): a 1:1 conversation, not shown in the topic tree; uses the
     # participants' cross-project personal memory (spec §8.4).
@@ -226,7 +227,7 @@ class RawTranscript(UuidPk, Timestamps, Base):
     """The index of transcript chunks already uploaded to TRANSCRIPT_S3_BUCKET.
 
     Retained only as that index, pending a decision on those objects; nothing
-    writes or reads it. Transcripts are no longer uploaded (topic/retire.py
+    writes or reads it. Transcripts are no longer uploaded (room_cleanup/retire.py
     keeps them on the session host instead).
     """
 
@@ -242,9 +243,10 @@ class RawTranscript(UuidPk, Timestamps, Base):
 class TopicReadState(UuidPk, Timestamps, Base):
     """Per-user read cursor on a conversation: a room's or a task's.
 
-    One row per (conversation, user); last_read_at is bumped whenever the user
-    opens it. Unread = message blocks by OTHERS created after this cursor
-    (no row = everything by others is unread). Deliberately a cursor, not a
+    One row per (conversation, user); last_read_seq moves to the
+    conversation's newest block whenever the user opens it. Unread = message
+    blocks by OTHERS stored after this cursor (no row = everything by others is
+    unread). Deliberately a cursor, not a
     per-message read table — cheap to bump, cheap to count against. Which
     conversations count for whom is `TopicRepository.unread_counts`.
     """
@@ -259,7 +261,11 @@ class TopicReadState(UuidPk, Timestamps, Base):
         ForeignKey("conversations.id", ondelete="CASCADE"), index=True
     )
     user_handle: Mapped[str] = mapped_column(String(64), index=True)
-    last_read_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # The number of the newest block stored here when the person last read it
+    # (`Block.seq`); 0 is nothing read. A number rather than a time: a block is
+    # dated when it began, which can be before it was stored, and a time cursor
+    # passed over such a block without ever counting it.
+    last_read_seq: Mapped[int] = mapped_column(BigInteger, server_default="0")
     # 这个人对这个频道的通知档位（`NotifyLevel`）：所有新消息、只在 @我和我参与的
     # 支线有回复时（默认）、静音。读的人一律经过 `effective_level`，那里把过了期的
     # 静音当成默认。

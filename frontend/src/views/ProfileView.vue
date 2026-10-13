@@ -46,6 +46,7 @@ import i18n, { t } from '@/i18n'
 import { label, NOTIF_KIND, TOPIC_STATUS } from '@/labels'
 import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear'
 import { teammateName } from '@/lib/agentNames'
+import { agentDmKey } from '@/lib/dm'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
@@ -140,6 +141,7 @@ const activityTotal = computed(() => {
 
 // ---- 项目 ----
 function roleLabel(role: ProfileProjectRole): string {
+  if (role === 'agent') return t('users.profile.role.agent')
   return role === 'owner' ? t('users.profile.role.owner') : t('users.profile.role.team')
 }
 
@@ -242,6 +244,15 @@ async function forget(note: ProfileUnderstanding) {
 // ---- 在这个项目里 ----
 const inProject = computed(() => (props.projectId ? member.value : null))
 const roleInProject = computed(() => inProject.value?.source ?? null)
+// 和项目里的另一位（人或 AI 队友）私聊。AI 队友的私聊按它自己的 handle 开，不是
+// 名册上那个座位 handle（lib/dm.ts）。
+const dmRoute = computed(() => {
+  const here = inProject.value
+  if (!props.projectId || !here || isSelf.value) return null
+  const own = typeof here.instance_handle === 'string' ? here.instance_handle : props.handle
+  const peer = here.source === 'agent' ? agentDmKey(own) : props.handle
+  return { name: 'workspace-dm', params: { projectId: props.projectId, peer } }
+})
 </script>
 
 <template>
@@ -299,6 +310,16 @@ const roleInProject = computed(() => inProject.value?.source ?? null)
           <p v-if="profile.bio" class="t-body-readable profile__bio" data-user-content>{{ profile.bio }}</p>
           <BaseButton v-if="isSelf" :to="{ name: 'UserSettingsProfile' }" kind="secondary" block class="profile__edit">
             {{ t('users.profile.edit') }}
+          </BaseButton>
+          <BaseButton
+            v-else-if="dmRoute"
+            :to="dmRoute"
+            kind="secondary"
+            prepend-icon="mdi-message-outline"
+            block
+            class="profile__edit"
+          >
+            {{ t('users.profile.dm') }}
           </BaseButton>
           <div class="profile__facts">
             <div class="profile__fact">

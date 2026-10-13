@@ -40,10 +40,12 @@ const VISIBLE = /[\p{L}\p{N}]/gu
 const LINE_SYNTAX = /^(?:\s*>)*\s*(?:\[![A-Za-z]+\]|(?:[-*+]|\d{1,9}[.)])\s+(?:\[[ xX]\]\s+)?)?/
 // A container's opening and closing lines (with a chart's type), and a fold's tags.
 const BLOCK_SYNTAX = /^\s*:{3,}[a-z]*(?:[ \t]+[a-z]+)*\s*$|<\/?(?:details|summary)(?:\s+open)?>/g
+// A canvas block's opening words: the board it names, not text a reader sees.
+const CANVAS_REF = /^\s*:{3,}canvas[ \t]+(?:[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}|new)\b/
 // An entity is one character on screen, whatever letters spell it.
 const ENTITY = /&(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/gi
 // Attributes whose value a reader can see or follow.
-const TEXT_ATTRS = ['href', 'src', 'alt', 'title', 'language', 'source', 'latex', 'label']
+const TEXT_ATTRS = ['href', 'src', 'alt', 'title', 'language', 'source', 'latex', 'label', 'about']
 
 function count(text: string, into = new Map<string, number>()): Map<string, number> {
   for (const char of text.match(VISIBLE) ?? []) into.set(char, (into.get(char) ?? 0) + 1)
@@ -53,7 +55,7 @@ function count(text: string, into = new Map<string, number>()): Map<string, numb
 function sourceChars(raw: string): Map<string, number> {
   const counts = new Map<string, number>()
   for (const line of raw.split('\n')) {
-    count(line.replace(LINE_SYNTAX, '').replace(BLOCK_SYNTAX, '').replace(ENTITY, ' '), counts)
+    count(line.replace(CANVAS_REF, '').replace(LINE_SYNTAX, '').replace(BLOCK_SYNTAX, '').replace(ENTITY, ' '), counts)
   }
   return counts
 }

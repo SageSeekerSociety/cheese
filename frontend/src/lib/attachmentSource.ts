@@ -18,6 +18,8 @@ export interface AttachmentSource {
    * 取不到就抛，调用方自己决定画什么。
    */
   imageUrl(topicId: string, path: string): Promise<string>
+  /** A video object URL fetched with the room credentials. */
+  mediaUrl(topicId: string, path: string): Promise<string>
   /** 一份要转换才能预览的文档（.docx 这类）的 PDF 字节。 */
   documentPdf(topicId: string, path: string): Promise<ArrayBuffer>
   /** 一份附件的原始字节（能直接交给浏览器看的格式走这条）。 */
@@ -27,6 +29,7 @@ export interface AttachmentSource {
 /** 没人注入时的样子：没有字节可取。 */
 export const NO_ATTACHMENT_SOURCE: AttachmentSource = {
   imageUrl: () => Promise.reject(new Error('no attachment source')),
+  mediaUrl: () => Promise.reject(new Error('no attachment source')),
   documentPdf: () => Promise.reject(new Error('no attachment source')),
   fileBytes: () => Promise.reject(new Error('no attachment source')),
 }

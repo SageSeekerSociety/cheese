@@ -1,16 +1,16 @@
 // 一个房间（频道、任务、私聊）围着对话的那几份：名册、进度、进行中的任务、当前预览、
 // 任务房间里那个任务。房间头部、右侧面板、对话栏、@ 候选读的是同一份。
-import type { Block, ListPayload, PreviewInfo, RoomTask, TopicMemberRow, TopicProgress } from '@/cx_types'
+import type { Block, ListPayload, PreviewInfo, RoomTask, TodoItem, TopicMemberRow, TopicProgress } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
-import type { TopicComputeProfile } from '@/types/compute'
-import type { ThreadRow } from '@/types/threads'
+import type { TopicEnvironment } from '@/types/compute'
+import type { Thread, ThreadRow } from '@/types/threads'
 
 import { queryOptions } from '@tanstack/vue-query'
 
-import { getPreview, getProgress, getTask, getTopicComputeProfile, listRoomTasks, listTopicMembers } from '@/api'
+import { getPreview, getProgress, getTask, getTopicEnvironment, listRoomTasks, listTopicMembers } from '@/api'
 import { listPins } from '@/api/pins'
-import { listThreads } from '@/api/threads'
-import { queryClient } from '@/query/client'
+import { getThread, listThreads } from '@/api/threads'
+import { queryClient, refreshQueries } from '@/query/client'
 import { keys } from '@/query/keys'
 import { fromSnapshot } from '@/query/snapshot'
 
@@ -23,11 +23,11 @@ export function roomMembersQuery(roomId: string) {
   })
 }
 
-/** 这个房间在哪台电脑上做、每个会话在哪台机器上。 */
-export function computeProfileQuery(roomId: string) {
+/** 这段对话新会话默认的环境，和每条会话各自在哪个环境里。 */
+export function environmentQuery(roomId: string) {
   return queryOptions({
-    queryKey: keys.roomComputeProfile(roomId),
-    queryFn: (): Promise<TopicComputeProfile> => getTopicComputeProfile(roomId),
+    queryKey: keys.roomEnvironment(roomId),
+    queryFn: (): Promise<TopicEnvironment> => getTopicEnvironment(roomId),
   })
 }
 
@@ -51,11 +51,55 @@ export function threadsQuery(roomId: string) {
   })
 }
 
+/**
+ * 一条支线：它自己，和它挂着的那条主线消息（支线页页头画的就是那条）。
+ *
+ * 页头那条消息不该等这一次读回来才出现：点开一条支线时，它挂着的那块消息往往已经在手上了
+ * （频道那段对话的窗口里，消息带着它自己的支线），先拿它画上（`placeholderData`），读回来
+ * 再换成完整的那一份。手上没有（整页打开一条老支线）就只能等，和以前一样。
+ */
+export function threadQuery(threadId: string) {
+  return queryOptions({
+    queryKey: keys.roomThread(threadId),
+    queryFn: (): Promise<Thread> => getThread(threadId),
+    placeholderData: () => listedThread(threadId),
+  })
+}
+
+/** 缓存里拼得出来的这一条支线：任何一份对话窗口里，那一块消息带着它的支线
+ *  （`GET /topics/{id}/blocks` 在一行上带着 `thread`）。没看过是 undefined。 */
+export function listedThread(threadId: string): Thread | undefined {
+  for (const [, data] of queryClient.getQueriesData<unknown>({ predicate: holdsBlocks })) {
+    const block = blocksIn(data).find((held) => held.thread?.id === threadId)
+    if (block?.thread) {
+      return {
+        id: block.thread.id,
+        room_id: block.thread.room_id,
+        root_block_id: block.id,
+        reply_count: block.thread.reply_count,
+        last_reply_at: block.thread.last_reply_at,
+        root: block,
+      }
+    }
+  }
+  return undefined
+}
+
 export function roomProgressQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomProgress(roomId),
     queryFn: (): Promise<TopicProgress> => getProgress(roomId),
   })
+}
+
+/** 芝士写下这一轮的清单，房间连接上推来了（`todo` 帧）：放进缓存，不再去问。 */
+export function checklistPushed(roomId: string, items: TodoItem[]): void {
+  queryClient.setQueryData<TopicProgress>(keys.roomProgress(roomId), { items, updated_at: new Date().toISOString() })
+}
+
+/** 连接断过：断开期间推的清单收不到了，看着它的那处重读一次。 */
+export function checklistMissed(roomId: string): Promise<void> {
+  return refreshQueries({ queryKey: keys.roomProgress(roomId) })
 }
 
 type RoomTaskFilter = NonNullable<Parameters<typeof listRoomTasks>[1]>
@@ -107,11 +151,15 @@ export function heldPreview(roomId: string): PreviewInfo | null | undefined {
 /**
  * 任务房间里那个任务。任务清单里已经有这一件（侧栏、任务清单、时间线带回来的）时，
  * 打开任务页先画那一行，不等这一次读。
+ *
+ * 手上没有这一件（整页刷新、直接打开链接）就不等快照，直接问：任务页要先有这一件才挂
+ * 得上对话栏，而带快照的那次订阅是对话栏挂上之后才发的，等它只能干等到超时。
  */
 export function roomTaskQuery(taskId: string) {
   return queryOptions({
     queryKey: keys.roomTask(taskId),
-    queryFn: (): Promise<RoomTask> => fromSnapshot(keys.roomTask(taskId), () => getTask(taskId)),
+    queryFn: (): Promise<RoomTask> =>
+      listedTask(taskId) ? fromSnapshot(keys.roomTask(taskId), () => getTask(taskId)) : getTask(taskId),
     placeholderData: () => listedTask(taskId),
   })
 }
@@ -127,6 +175,15 @@ export function listedTask(taskId: string): RoomTask | undefined {
 
 function holdsTasks(query: { queryKey: readonly unknown[] }): boolean {
   return query.queryKey.includes('tasks') || query.queryKey.includes('blocks')
+}
+
+function holdsBlocks(query: { queryKey: readonly unknown[] }): boolean {
+  return query.queryKey.includes('blocks')
+}
+
+function blocksIn(data: unknown): Block[] {
+  const blocks = (data as { blocks?: unknown } | null)?.blocks
+  return Array.isArray(blocks) ? (blocks as Block[]) : []
 }
 
 function tasksIn(data: unknown): RoomTask[] {

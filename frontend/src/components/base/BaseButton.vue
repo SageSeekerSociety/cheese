@@ -108,6 +108,15 @@ if (import.meta.env.DEV && props.icon && !attrs['aria-label'] && !attrs.title) {
   font-size: 20px;
 }
 
+/* 带文字按钮里的 prepend / append 图标也钉到 18px，跟纯图标按钮的 sm 档一样。
+   不钉的话走 Vuetify 的 `--v-icon-size-multiplier: 0.857… × 1.5em`：sm 的 13px 字
+   算出来是 16.714px，「打开其他文件」那颗放大镜的墨迹因此比旁边的字高约 1.4px
+   （1x 屏上看着就是 2px）。md / lg 的 14px 算出来正好 18，所以这条对它们不生效。 */
+.base-btn:not(.base-btn--icon) :deep(.v-btn__prepend .v-icon),
+.base-btn:not(.base-btn--icon) :deep(.v-btn__append .v-icon) {
+  font-size: 18px;
+}
+
 /* 次要：描边用 --line-2，字用 --text。Vuetify 的 outlined 默认拿 currentColor
    画框，框和字一样深，并排时比主按钮还抢眼。 */
 .base-btn--secondary {

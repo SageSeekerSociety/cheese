@@ -20,6 +20,7 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  channelMessageNotification,
   deviceInUseNotification,
   mentionNotification,
   reactionNotification,
@@ -42,6 +43,7 @@ import RenderTeamInvitationDeclinedNotification from '@/components/common/Notifi
 import RenderTeamRequestApprovedNotification from '@/components/common/Notification/renders/RenderTeamRequestApprovedNotification.vue'
 import RenderTeamRequestCanceledNotification from '@/components/common/Notification/renders/RenderTeamRequestCanceledNotification.vue'
 import RenderTeamRequestRejectedNotification from '@/components/common/Notification/renders/RenderTeamRequestRejectedNotification.vue'
+import RenderThreadReplyNotification from '@/components/common/Notification/renders/RenderThreadReplyNotification.vue'
 
 /** 只画词条和人名（`UserRef` 认 props）：`useI18n` 那几件够了。 */
 const TEXT: CatalogNeed[] = ['i18n']
@@ -91,6 +93,28 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
         note: '`mentioner` 没解析出来：标题退回「有人在讨论中提到了你」，讨论名也没有，正文写「未知讨论」，预览那格跟着整个不画。',
         props: { notification: mentionNotification(false) },
         expect: '有人在讨论中提到了你',
+      },
+      {
+        name: '频道里的一条消息 @ 了你',
+        note: '带着 `topicId` 的是频道里的 @：标题说谁、在哪个频道，正文是那条消息的开头，点开落在那条消息上。',
+        props: { notification: channelMessageNotification('MENTION') },
+        expect: '林夏 在「课程安排」提到了你',
+      },
+    ],
+  },
+  {
+    id: 'render-thread-reply-notification',
+    title: 'RenderThreadReplyNotification',
+    about: '一条「你参与过的支线里有人回复了」的动态：谁回复的、在哪个频道，下面是那条回复的开头。',
+    file: 'src/components/common/Notification/renders/RenderThreadReplyNotification.vue',
+    component: RenderThreadReplyNotification,
+    needs: TEXT,
+    states: [
+      {
+        name: '支线里的一条回复',
+        note: '点开落在支线里的那条回复上（`threadId` + `blockId`）。',
+        props: { notification: channelMessageNotification('THREAD_REPLY') },
+        expect: '林夏 在「课程安排」的支线里回复了',
       },
     ],
   },

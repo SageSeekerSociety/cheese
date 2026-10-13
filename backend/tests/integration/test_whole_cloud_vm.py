@@ -35,8 +35,8 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
-    CloudHostHome,
     MachineStatus,
+    SandboxHome,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import ComputeMeterSweeper
@@ -57,8 +57,8 @@ VM = {
     "memoryMbMax": 131072,
     "diskGbMax": 128,
 }
-SANDBOX = {"name": None, "profile": "cloud", "device_id": None}
-WHOLE_VM = {**SANDBOX, "whole_machine": True}
+SANDBOX = {"kind": "sandbox", "spec": "standard"}
+WHOLE_VM = {"kind": "sandbox", "spec": "vm"}
 PUSHED = {"value": {"stdout": "", "stderr": "", "interrupted": False}}
 
 
@@ -115,9 +115,9 @@ def cloud(client, monkeypatch):
     )
 
 
-def _room(case, choice: dict, title: str = "Room"):
-    """A room working on ``choice``, with one agent session that has not run
-    anything yet."""
+def _room(case, environment: dict, title: str = "Room"):
+    """A room whose new agents get ``environment``, with one agent session that
+    has not run anything yet."""
     room = uuid.UUID(
         case.client.post(
             "/topics",
@@ -129,7 +129,7 @@ def _room(case, choice: dict, title: str = "Room"):
     async def seed():
         async with case.client.test_request_factory() as db:
             topic = await db.get(Topic, room)
-            topic.compute_config = choice
+            topic.default_environment = environment
             agent = await IdentityService(db).ensure_room_agent_user(room)
             row = await AgentSessionService(db).ensure(
                 room, "cheese", harness="claude-code"
@@ -138,7 +138,7 @@ def _room(case, choice: dict, title: str = "Room"):
             row.runtime_location = {
                 "device_id": "center",
                 "resource_id": resource,
-                "channel": "cloud",
+                "channel": "device",
             }
             token = bind_resource_token(
                 mint_scoped_token(
@@ -270,8 +270,8 @@ def _idle_for(case, seat, delta: timedelta):
     async def go():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(CloudHostHome)
-                .where(CloudHostHome.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(active_at=datetime.now(UTC) - delta)
             )
             await db.commit()
@@ -299,37 +299,30 @@ def _pushed_on(case, device_id) -> bool:
 # --- choosing it -------------------------------------------------------------
 
 
-def test_a_room_can_choose_a_whole_cloud_vm(cloud):
+def test_a_room_can_give_its_new_agents_a_vm_sandbox(cloud):
     case = cloud
     room = case.client.post(
         "/topics",
         json={"project_id": str(case.project_id), "title": "Docker work"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    path = f"/topics/{room}/compute-profile"
+    path = f"/topics/{room}/environment"
     headers = session_auth_headers("alice")
 
     offered = case.client.get(path, headers=headers).json()["data"]
-    assert offered["cloud_vm_available"] is True
+    assert {"standard", "vm"} <= {spec["spec"] for spec in offered["specs"]}
 
-    chosen = case.client.put(path, headers=headers, json={"choice": WHOLE_VM})
+    chosen = case.client.put(
+        f"/topics/{room}/environment-default",
+        headers=headers,
+        json={"environment": WHOLE_VM},
+    )
     assert chosen.status_code == 200, chosen.text
     now = case.client.get(path, headers=headers).json()["data"]
-    assert now["choice"]["profile"] == "cloud"
-    assert now["choice"]["whole_machine"] is True
-
-    # What the agent's own `cheese_machine` sends: a profile and the flag.
-    back = case.client.put(path, headers=headers, json={"profile": "cloud"})
-    assert back.status_code == 200, back.text
-    assert back.json()["data"]["choice"]["whole_machine"] is False
-    again = case.client.put(
-        path, headers=headers, json={"profile": "cloud", "whole_machine": True}
-    )
-    assert again.status_code == 200, again.text
-    assert again.json()["data"]["choice"]["whole_machine"] is True
+    assert (now["default"], now["default_from"]) == (WHOLE_VM, "room")
 
 
-def test_a_whole_vm_is_not_offered_where_no_vm_offering_is_set(cloud, monkeypatch):
+def test_a_vm_sandbox_is_not_offered_where_no_vm_offering_is_set(cloud, monkeypatch):
     case = cloud
     monkeypatch.setattr(settings, "microcloud_vm_offering_id", 0)
     room = case.client.post(
@@ -337,42 +330,29 @@ def test_a_whole_vm_is_not_offered_where_no_vm_offering_is_set(cloud, monkeypatc
         json={"project_id": str(case.project_id), "title": "Room"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    path = f"/topics/{room}/compute-profile"
     headers = session_auth_headers("alice")
 
-    assert (
-        case.client.get(path, headers=headers).json()["data"]["cloud_vm_available"]
-        is False
-    )
-    refused = case.client.put(path, headers=headers, json={"choice": WHOLE_VM})
-    assert refused.status_code in (400, 422), refused.text
-    assert "云虚拟机" in refused.text
-    on_device = case.client.put(
-        path,
+    offered = case.client.get(f"/topics/{room}/environment", headers=headers)
+    assert "vm" not in {spec["spec"] for spec in offered.json()["data"]["specs"]}
+    refused = case.client.put(
+        f"/topics/{room}/environment-default",
         headers=headers,
-        json={"choice": {"profile": "device", "whole_machine": True}},
+        json={"environment": WHOLE_VM},
     )
-    assert on_device.status_code in (400, 422), on_device.text
+    assert refused.status_code in (400, 422), refused.text
 
 
-def test_the_project_default_can_be_a_whole_vm(cloud):
+def test_the_project_default_can_be_a_vm_sandbox(cloud):
     case = cloud
     path = f"/projects/{case.project_id}/compute-configs"
     headers = session_auth_headers("alice")
-    assert (
-        case.client.get(path, headers=headers).json()["data"]["cloud_vm_available"]
-        is True
-    )
+    offered = case.client.get(path, headers=headers).json()["data"]["specs"]
+    assert "vm" in {spec["spec"] for spec in offered}
 
     saved = case.client.put(path, headers=headers, json={"default": WHOLE_VM})
 
     assert saved.status_code == 200, saved.text
-    assert (
-        case.client.get(path, headers=headers).json()["data"]["default"][
-            "whole_machine"
-        ]
-        is True
-    )
+    assert case.client.get(path, headers=headers).json()["data"]["default"] == WHOLE_VM
 
 
 # --- provisioning ------------------------------------------------------------
@@ -387,7 +367,7 @@ def test_each_session_on_a_whole_vm_gets_a_machine_of_its_own(cloud):
         waiting = _lease(case, seat, timeout=0.001)
         assert waiting.status_code == 200, waiting.text
         assert waiting.json()["data"]["preparing"] is True
-        assert waiting.json()["data"]["unavailable"].startswith("云虚拟机正在准备")
+        assert waiting.json()["data"]["unavailable"].startswith("虚拟机沙箱正在准备")
     assert _lease(case, sandboxed, timeout=0.001).json()["data"]["preparing"]
 
     vms = [body for body in case.provider.created if body["offeringId"] == VM["id"]]
@@ -406,7 +386,7 @@ def test_each_session_on_a_whole_vm_gets_a_machine_of_its_own(cloud):
     assert len(placed) == 3
     assert _host(case, first).whole_machine and not _host(case, sandboxed).whole_machine
     assert _host(case, first).project_id == case.project_id
-    assert _room_lines(case, first) == ["正在准备云虚拟机"]
+    assert _room_lines(case, first) == ["正在准备虚拟机沙箱"]
     assert _room_lines(case, sandboxed) == ["正在准备环境"]
 
 
@@ -443,7 +423,7 @@ def test_a_whole_vms_executor_runs_without_a_sandbox(cloud):
     configure = ast.parse(installed).body[-1].value
     payload = json.loads(ast.literal_eval(configure.args[0].args[0]))
     assert payload["sandbox"] is None
-    assert _room_lines(case, seat) == ["正在准备云虚拟机", "云虚拟机已就绪"]
+    assert _room_lines(case, seat) == ["正在准备虚拟机沙箱", "虚拟机沙箱已就绪"]
 
 
 def test_users_see_the_environment_and_never_the_vm(cloud):
@@ -453,22 +433,20 @@ def test_users_see_the_environment_and_never_the_vm(cloud):
     host = _host(case, seat)
 
     answer = case.client.get(
-        f"/topics/{seat.room}/compute-profile", headers=session_auth_headers("alice")
+        f"/topics/{seat.room}/environment", headers=session_auth_headers("alice")
     )
 
     assert answer.status_code == 200, answer.text
     [session] = answer.json()["data"]["sessions"]
-    assert session["lease"] == {"status": "ready", "online": True}
-    assert session["choice"]["whole_machine"] is True
-    # The whole machine is the session's: what it sees is all of it.
-    assert session["machine_access"] is True
+    assert (session["status"], session["online"]) == ("ready", True)
+    assert session["environment"] == WHOLE_VM
     for secret in (device_id, host.hostname, str(host.machine_id), target["home"]):
         assert not _leaked(answer.text, secret)
     distribution = case.client.get(
         f"/projects/{case.project_id}/compute-configs",
         headers=session_auth_headers("alice"),
     ).json()["data"]["distribution"]
-    assert distribution["cloud_vm"] == 1 and distribution["cloud"] == 0
+    assert [(e["spec"], e["agents"]) for e in distribution["sandboxes"]] == [("vm", 1)]
     assert device_id not in json.dumps(distribution)
 
 
@@ -481,7 +459,7 @@ def test_whole_vms_count_against_the_platforms_cap(cloud, monkeypatch):
     refused = _lease(case, second, timeout=5).json()["data"]
 
     assert "preparing" not in refused
-    assert "暂时无法准备云虚拟机" in refused["unavailable"]
+    assert "暂时无法准备虚拟机沙箱" in refused["unavailable"]
     assert len(case.provider.created) == 1
 
 
@@ -495,9 +473,9 @@ def test_a_vm_goes_once_its_room_moves_off_it_after_a_push(cloud):
     machine = _host(case, seat).machine_id
 
     moved = case.client.put(
-        f"/topics/{seat.room}/compute-profile",
+        f"/topics/{seat.room}/sessions/{seat.session}/environment",
         headers=session_auth_headers("alice"),
-        json={"choice": SANDBOX},
+        json={"environment": SANDBOX},
     )
 
     assert moved.status_code == 200, moved.text
@@ -516,9 +494,9 @@ def test_a_vm_left_when_it_cannot_be_reached_goes_all_the_same(cloud):
     case.online.discard(device_id)
 
     moved = case.client.put(
-        f"/topics/{seat.room}/compute-profile",
+        f"/topics/{seat.room}/sessions/{seat.session}/environment",
         headers=session_auth_headers("alice"),
-        json={"choice": SANDBOX},
+        json={"environment": SANDBOX},
     )
 
     assert moved.status_code == 200, moved.text
@@ -560,7 +538,7 @@ def test_an_idle_vm_is_pushed_and_released(cloud):
     assert _session_lease(case, seat) is None
     assert _host(case, seat) is None
     minutes = settings.cloud_vm_idle_release_s // 60
-    assert _room_lines(case, seat)[-1].startswith(f"云虚拟机 {minutes} 分钟没有活动")
+    assert _room_lines(case, seat)[-1].startswith(f"虚拟机沙箱 {minutes} 分钟没有活动")
     _sweep(case)
     assert case.provider.deleted == [machine]
 
@@ -707,16 +685,15 @@ def test_no_whole_vm_is_created_for_a_size_with_no_price(cloud, monkeypatch):
     answer = _lease(case, seat, timeout=0.001).json()["data"]
 
     assert answer["unavailable"] == (
-        "云虚拟机暂时无法启动：平台还没有设定这种规格的价格。对话和平台工具仍可用。"
+        "虚拟机沙箱暂时无法启动：平台还没有设定这种规格的价格。对话和平台工具仍可用。"
     )
     assert case.provider.created == []
     assert _host(case, seat) is None
 
 
-def test_only_a_sessions_own_sandbox_is_marked_as_its_own(cloud):
-    """A 支线 or a task not yet started runs freely only on a machine nothing
-    else works in (the lease's ``own``): its sandbox on a pool host. A whole VM
-    is not marked, and such a session only reads there."""
+def test_every_sandbox_is_marked_as_its_sessions_own(cloud):
+    """A 支线 or a task not yet started runs freely only where nothing else
+    works (the lease's ``own``): a sandbox of its own, a VM sandbox included."""
     case = cloud
     boxed = _room(case, SANDBOX, "Sandbox")
     _working(case, boxed)
@@ -728,4 +705,23 @@ def test_only_a_sessions_own_sandbox_is_marked_as_its_own(cloud):
             return (await AgentSessionService(db).by_id(seat.session)).work_lease
 
     assert case.client.portal.call(lease, boxed)["own"] is True
-    assert case.client.portal.call(lease, on_vm)["own"] is False
+    assert case.client.portal.call(lease, on_vm)["own"] is True
+
+
+def test_a_session_refused_a_machine_is_counted_once_however_often_it_asks(
+    cloud, monkeypatch
+):
+    case = cloud
+    monkeypatch.setattr(settings, "cloud_pool_max_hosts", 1)
+    monkeypatch.setattr(settings, "platform_admin_handles", ["ops"])
+    first, second = _room(case, WHOLE_VM, "A"), _room(case, WHOLE_VM, "B")
+    assert _lease(case, first, timeout=0.001).json()["data"]["preparing"]
+
+    for _ in range(3):
+        assert "unavailable" in _lease(case, second, timeout=5).json()["data"]
+
+    history = case.client.get(
+        "/admin/stats/machines", headers=session_auth_headers("ops")
+    ).json()["data"]["history"]
+    assert history["refused_sessions"] == 1
+    assert history["refused_by_reason"] == {"pool_full": 1}

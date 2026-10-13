@@ -14,7 +14,9 @@
 # The servers are pinned releases installed once into $SERVER_HOME: PostgreSQL 17
 # with contrib from the theseus-rs/postgresql-binaries release, ParadeDB's
 # pg_search added to it (see install_pg_search), and Valkey, the server CI runs,
-# built from its source release (see install_valkey).
+# built from its source release (see install_valkey). A host with no C compiler
+# cannot build Valkey; there Redis is fakeredis served over TCP (see
+# start_fake_redis), and the log says so.
 # The harness builds are npm packages; they land in $TOOL_CACHE, outside
 # $DATA_DIR, so `stop --purge` does not throw away the download.
 set -euo pipefail
@@ -72,11 +74,29 @@ VALKEY_SHA256=e052c45b3cbe512e24fdfdc3fd337f9f5e4b8f8b8713f349ba867b829c8ff11a
 VALKEY_HOME="$SERVER_HOME/valkey-$VALKEY_VERSION"
 REDIS_BIN="$VALKEY_HOME/bin"
 
+# What serves Redis when Valkey is not installed and this host cannot build it.
+# fakeredis[lua] runs the EVAL scripts the backend sends; it is a Python
+# re-implementation, not the server CI runs.
+FAKEREDIS_VERSION=2.39.0
+FAKE_REDIS_SERVER="$(dirname "${BASH_SOURCE[0]}")/fake_redis_server.py"
+
+can_build_valkey() { command -v make >/dev/null 2>&1 && command -v cc >/dev/null 2>&1; }
+# valkey | fakeredis, set once by pick_redis_kind before any command runs.
+REDIS_KIND=valkey
+pick_redis_kind() {
+    if [ "${CHEESEX_DEV_REDIS:-}" = fakeredis ]; then REDIS_KIND=fakeredis
+    elif valkey_installed || can_build_valkey; then REDIS_KIND=valkey; else REDIS_KIND=fakeredis; fi
+}
+
 resolve_bins() {
     mkdir -p "$SERVER_HOME"
     pg_installed || install_pg
     pg_search_installed || install_pg_search
-    valkey_installed || install_valkey
+    if [ "$REDIS_KIND" = fakeredis ]; then
+        valkey_installed || log "no C compiler (cc) here to build Valkey $VALKEY_VERSION: redis will be fakeredis $FAKEREDIS_VERSION, not the server CI runs"
+    else
+        valkey_installed || install_valkey
+    fi
 }
 
 dl_suffix() { if [ "$(uname -s)" = Darwin ]; then echo dylib; else echo so; fi; }
@@ -201,8 +221,6 @@ unpack_pg() {
 
 install_valkey() {
     needs_install "$VALKEY_HOME" || return 0
-    { command -v make && command -v cc; } >/dev/null 2>&1 \
-        || die "building Valkey $VALKEY_VERSION needs make and a C compiler (cc); this host lacks one."
     log "building Valkey $VALKEY_VERSION into $VALKEY_HOME (first run only)"
     fetch "https://github.com/valkey-io/valkey/archive/refs/tags/$VALKEY_VERSION.tar.gz" \
         "$VALKEY_SHA256" "$TOOL_CACHE/valkey/valkey-$VALKEY_VERSION.tar.gz"
@@ -368,7 +386,16 @@ pg_running() { cluster_pid "$PGDATA" >/dev/null; }
 # The install path is part of the pins, so a server started from somewhere else
 # (an older version of this script ran it out of the uv cache) is replaced too.
 pg_pins() { printf '%s' "postgresql-$PG_RELEASE pg_search==$PG_SEARCH_VERSION $PG_HOME"; }
-redis_running() { "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1; }
+redis_running() {
+    if [ "$REDIS_KIND" = fakeredis ]; then
+        # No valkey-cli here: send PING in the wire protocol over bash's own TCP.
+        local reply
+        reply="$( (exec 3<>"/dev/tcp/127.0.0.1/$REDIS_PORT" && printf '*1\r\n$4\r\nPING\r\n' >&3 && read -r -t 2 line <&3 && printf '%s' "$line") 2>/dev/null)" || return 1
+        [ "${reply%$'\r'}" = "+PONG" ]
+    else
+        "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" ping >/dev/null 2>&1
+    fi
+}
 # The pid of the Redis this data dir started on $REDIS_PORT, from its own pid
 # file: lets stop and status work without binaries, as cluster_pid does.
 redis_pid() {
@@ -376,7 +403,10 @@ redis_pid() {
     [ -s "$REDIS_PID" ] || return 1
     pid="$(cat "$REDIS_PID")"
     kill -0 "$pid" 2>/dev/null || return 1
-    case "$(ps -o args= -p "$pid" 2>/dev/null)" in *-server*":$REDIS_PORT"*) echo "$pid" ;; *) return 1 ;; esac
+    case "$(ps -o args= -p "$pid" 2>/dev/null)" in
+        *-server*":$REDIS_PORT"* | *fake_redis_server.py*"--port $REDIS_PORT "*) echo "$pid" ;;
+        *) return 1 ;;
+    esac
 }
 
 # --- identity guards -------------------------------------------------------
@@ -400,6 +430,8 @@ redis_reported_dir() {
     "$REDIS_BIN/valkey-cli" -h 127.0.0.1 -p "$REDIS_PORT" config get dir 2>/dev/null | tail -1
 }
 redis_is_ours() {
+    # fakeredis has no working directory to compare: the pid file's process is the proof.
+    [ "$REDIS_KIND" = fakeredis ] && { redis_pid >/dev/null; return; }
     local want got
     want="$( (cd "$REDIS_DIR" 2>/dev/null && pwd -P) || printf '%s' "$REDIS_DIR" )"
     got="$(redis_reported_dir)"
@@ -550,7 +582,40 @@ replace_outdated_redis() {
     die "the redis on port $REDIS_PORT did not shut down within 10s"
 }
 
+# fakeredis served over TCP by a Python process this script starts. Only used
+# where Valkey cannot be built; every identity guard of start_redis applies.
+start_fake_redis() {
+    if redis_running; then
+        redis_is_ours && { log "redis (fakeredis) already running on port $REDIS_PORT"; return; }
+        die "port $REDIS_PORT already answers to a Redis this script did not start.
+       Sharing it would mix this suite's keys with that server's.
+       Re-run with CHEESEX_DEV_REDIS_PORT=<free port>, or stop that server."
+    fi
+    if port_in_use "$REDIS_PORT"; then
+        die "port $REDIS_PORT is taken by something that does not answer PING.
+       Re-run with CHEESEX_DEV_REDIS_PORT=<free port>."
+    fi
+    mkdir -p "$REDIS_DIR"
+    rm -f "$REDIS_PID"
+    log "starting fakeredis $FAKEREDIS_VERSION on 127.0.0.1:$REDIS_PORT (in memory; not the Valkey CI runs)"
+    # setsid: the server must outlive this shell. Its stdout is the log, so the
+    # eval-ed stdout of `start` stays export lines only.
+    setsid uv run --no-project --quiet --with "fakeredis[lua]==$FAKEREDIS_VERSION" \
+        python "$FAKE_REDIS_SERVER" --port "$REDIS_PORT" --pidfile "$REDIS_PID" \
+        >"$REDIS_LOG" 2>&1 </dev/null &
+    local i
+    # The first run downloads fakeredis and lupa.
+    for i in $(seq 1 150); do
+        redis_running && break
+        sleep 0.4
+        [ "$i" = 150 ] && { log "--- redis log ---"; tail -20 "$REDIS_LOG" >&2; die "fakeredis never became ready"; }
+    done
+    redis_is_ours || { log "--- redis log ---"; tail -20 "$REDIS_LOG" >&2
+        die "port $REDIS_PORT answers, but not from the server we just started — it lost the bind to another Redis."; }
+}
+
 start_redis() {
+    [ "$REDIS_KIND" = fakeredis ] && { start_fake_redis; return; }
     if redis_running && redis_is_ours; then
         local running
         running="$(redis_server_version)"
@@ -736,16 +801,18 @@ cmd_status() {
     pg_installed || log "          NOTE: the install in $PG_HOME is missing or incomplete"
     if redis_pid >/dev/null; then
         local version=""
-        valkey_installed && version=", $(redis_server_version)"
+        if [ "$REDIS_KIND" = fakeredis ]; then version=", fakeredis"; elif valkey_installed; then version=", $(redis_server_version)"; fi
         log "redis:    RUNNING on 127.0.0.1:$REDIS_PORT ($REDIS_DIR$version)"
     elif port_in_use "$REDIS_PORT"; then
         log "redis:    port $REDIS_PORT is taken, but not by a Redis this data dir started"
     else
         log "redis:    stopped"
     fi
-    valkey_installed || log "          NOTE: the install in $VALKEY_HOME is missing or incomplete"
+    [ "$REDIS_KIND" = fakeredis ] || valkey_installed \
+        || log "          NOTE: the install in $VALKEY_HOME is missing or incomplete"
 }
 
+pick_redis_kind
 case "${1:-start}" in
     start)  cmd_start ;;
     stop)   cmd_stop "${2:-}" ;;
@@ -755,7 +822,8 @@ case "${1:-start}" in
         cat >&2 <<EOF
 usage: bash .claude/scripts/dev-db.sh <start|stop [--purge]|status|env>
 
-  start           start postgres + redis, install the pinned
+  start           start postgres + redis (fakeredis where Valkey cannot be
+                  built: no cc), install the pinned
                   harness builds, print export lines on stdout
   stop            stop the servers; --purge also deletes $DATA_DIR
                   (the servers in $SERVER_HOME and downloads in
@@ -766,6 +834,7 @@ usage: bash .claude/scripts/dev-db.sh <start|stop [--purge]|status|env>
 env overrides: CHEESEX_DEV_DB_DIR (default \${XDG_DATA_HOME:-~/.local/share}/cheesex-dev-db),
                CHEESEX_DEV_SERVER_HOME (default \${XDG_DATA_HOME:-~/.local/share}/cheesex-dev-servers),
                CHEESEX_DEV_PG_PORT (5433), CHEESEX_DEV_REDIS_PORT (6379),
+               CHEESEX_DEV_REDIS=fakeredis (use fakeredis even where Valkey could be built),
                CHEESEX_DEV_TOOL_CACHE (default \${XDG_CACHE_HOME:-~/.cache}/cheesex-dev-db)
 EOF
         exit 2 ;;

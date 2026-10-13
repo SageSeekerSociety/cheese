@@ -90,7 +90,7 @@ async def finish_deferred_message(
             session_factory=client.test_request_factory,
             base_system_prompt="你是芝士。",
             workspace_root=str(machine.workspace),
-            compute=ComputePool([runtime], channel.name),
+            compute=ComputePool([runtime]),
         )
         take_recovery(chat, runtime)
         app.dependency_overrides[get_chat_service] = lambda: chat

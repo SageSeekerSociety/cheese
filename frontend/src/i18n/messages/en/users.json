@@ -2,6 +2,7 @@
   "profile": {
     "joined": "Joined {date}",
     "edit": "Edit profile",
+    "dm": "Message",
     "notFound": "This user does not exist",
     "loadFailed": "Could not load this page",
     "retry": "Retry",
@@ -28,7 +29,8 @@
     },
     "role": {
       "owner": "Owner",
-      "team": "Team member"
+      "team": "Team member",
+      "agent": "AI teammate"
     },
     "topics": {
       "recent": "Recent channels",

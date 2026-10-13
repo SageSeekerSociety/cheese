@@ -7,13 +7,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const setLanguage = vi.fn()
 const getCurrentUser = vi.fn()
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
     setLanguage: (...args: unknown[]) => setLanguage(...args),
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
-    setTimezone: () => Promise.resolve({ data: {} }),
+    setTimezone: () => Promise.resolve({}),
   },
 }))
+
+// `account.ts` says something on screen when the server ends a sign-in. Nothing
+// here takes that path, but importing the module pulls vuetify-sonner in with
+// it, and that cold start is enough to run `freshPage`'s import past the 5s test
+// timeout. Stubbed, the way `ErrorHandler.spec.ts` stubs it.
+vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 // One tab per test: a real channel would carry an earlier test's sign-in to the
 // services earlier tests left behind.
@@ -49,7 +55,7 @@ async function freshPage() {
 beforeEach(() => {
   localStorage.clear()
   setLanguage.mockReset()
-  setLanguage.mockResolvedValue({ data: { language: 'en' } })
+  setLanguage.mockResolvedValue({ language: 'en' })
   getCurrentUser.mockReset()
   vi.stubGlobal('BroadcastChannel', LoneTab)
 })
@@ -89,7 +95,7 @@ describe('the UI language follows the account', () => {
     localStorage.setItem('cheese:locale', 'zh-CN')
     localStorage.setItem('accessToken', LIVE_TOKEN)
     localStorage.setItem('user', JSON.stringify({ ...ALICE, language: 'zh-CN' }))
-    getCurrentUser.mockResolvedValue({ data: { user: { ...ALICE, language: 'en' } } })
+    getCurrentUser.mockResolvedValue({ user: { ...ALICE, language: 'en' } })
     const { account, locale } = await freshPage()
     await account.init()
     expect(locale()).toBe('en')

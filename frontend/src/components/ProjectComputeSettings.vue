@@ -1,56 +1,35 @@
 <script setup lang="ts">
-// 项目只给默认：新 agent 开工时用哪台工作电脑。已经在干活的 agent 各有各的机器，
-// 改默认不搬它们；它们现在在哪，写在「现在的分布」里。
-import type { ComputeChoice, ProjectComputeConfigs } from '../types/compute'
+// 项目只给默认：新会话开工时用哪个环境。已经在干活的会话各有各的环境，改默认不搬
+// 它们；它们现在在哪，写在「现在的分布」里。平台挑的机器只数个数，不点名。
+// 取数与保存由页面接线；设备会话入口也由页面传入，这里只转发 changed。
+import type { Component } from 'vue'
+import type { Environment, ProjectComputeConfigs } from '../types/compute'
 
-import { onMounted, ref, watch } from 'vue'
-
-import { holdRevealGate } from '@/composables/useRevealGate'
-
-import { getProjectComputeConfigs, saveProjectComputeConfigs } from '../api'
 import { t } from '../i18n'
-import { choiceDetail, choiceName, deviceName } from '../lib/computeConfig'
+import { environmentName } from '../lib/environment'
 
-import ComputeChoiceForm from './ComputeChoiceForm.vue'
-import DeviceSessionsSwitch from './DeviceSessionsSwitch.vue'
+import EnvironmentPicker from './EnvironmentPicker.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import SettingsRow from '@/components/base/SettingsRow.vue'
 
-const props = defineProps<{ projectId: string }>()
-const state = ref<ProjectComputeConfigs | null>(null)
-const error = ref('')
-const busy = ref(false)
-const editing = ref(false)
+defineProps<{
+  projectId: string
+  deviceSessionsComponent?: Component
+  state: ProjectComputeConfigs | null
+  error: string
+  busy: boolean
+  editing: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'toggle'): void
+  (e: 'save', env: Environment): void
+  (e: 'changed'): void
+}>()
+
 // English says 1 agent / 2 agents; the count's own key carries the plural.
 const agents = (count: number) => t('work.projectMachine.agents', { count })
-async function load() {
-  error.value = ''
-  try {
-    state.value = await getProjectComputeConfigs(props.projectId)
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.loadFailed')
-  }
-}
-async function save(choice: ComputeChoice) {
-  if (!state.value?.can_manage) return
-  busy.value = true
-  error.value = ''
-  try {
-    const result = await saveProjectComputeConfigs(props.projectId, { default: choice })
-    state.value = { ...state.value, ...result }
-    window.dispatchEvent(new Event('project-compute-updated'))
-    editing.value = false
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : t('work.projectMachine.saveFailed')
-  } finally {
-    busy.value = false
-  }
-}
-// 首次取数期间占住设置页的显示闸，见 useRevealGate。
-const releaseGate = holdRevealGate()
-onMounted(() => load().finally(releaseGate))
-watch(() => props.projectId, load)
 </script>
 
 <template>
@@ -61,63 +40,59 @@ watch(() => props.projectId, load)
            detail and the change button stay in one line as the row's control. -->
       <SettingsRow data-testid="project-default" :label="t('work.projectMachine.defaultLabel')" width="list">
         <div class="default-row">
-          <span class="default-name">{{ choiceName(state.default) }}</span>
-          <span class="c-muted">{{ choiceDetail(state.default) }}</span>
+          <span class="default-name">{{ environmentName(state.default, state.devices, state.specs) }}</span>
           <BaseButton
             v-if="state.can_manage"
             kind="secondary"
             size="sm"
             class="ml-auto"
             :disabled="busy"
-            @click="editing = !editing"
+            @click="emit('toggle')"
             >{{ editing ? t('work.projectMachine.collapse') : t('work.projectMachine.change') }}</BaseButton
           >
         </div>
       </SettingsRow>
       <p class="t-body c-muted mt-1 mb-2">{{ t('work.projectMachine.hint') }}</p>
-      <ComputeChoiceForm
+      <EnvironmentPicker
         v-if="editing && state.can_manage"
+        class="mt-2"
+        :current="state.default"
         :devices="state.devices"
-        :cloud-available="state.cloud_available"
-        :cloud-vm-available="state.cloud_vm_available"
+        :specs="state.specs"
         :busy="busy"
-        @select="save"
+        @select="(env) => emit('save', env)"
+        @cancel="emit('toggle')"
       />
 
       <div class="distribution" data-testid="project-distribution">
         <div class="distribution-title">{{ t('work.projectMachine.distribution') }}</div>
-        <p
-          v-if="!state.distribution.cloud && !state.distribution.cloud_vm && !state.distribution.devices.length"
-          class="c-muted mb-0"
-        >
+        <p v-if="!state.distribution.sandboxes.length && !state.distribution.devices.length" class="c-muted mb-0">
           {{ t('work.projectMachine.noneStarted') }}
         </p>
         <ul v-else class="distribution-list">
-          <li v-if="state.distribution.cloud">
+          <li v-for="group in state.distribution.sandboxes" :key="group.spec">
             <span class="status-dot" />{{
-              t('work.projectMachine.onCloud', { agents: agents(state.distribution.cloud) })
-            }}
-          </li>
-          <li v-if="state.distribution.cloud_vm">
-            <span class="status-dot" />{{
-              t('work.projectMachine.onCloudVm', { agents: agents(state.distribution.cloud_vm) })
+              t('work.projectMachine.onPlatform', {
+                env: t('compute.env.sandboxOf', { spec: group.label }),
+                agents: agents(group.agents),
+              })
             }}
           </li>
           <li v-for="device in state.distribution.devices" :key="device.device_id ?? ''">
-            <span class="status-dot" :class="{ 'status-dot--warn': device.machine_access }" />{{
+            <span class="status-dot" />{{
               t('work.projectMachine.onDevice', {
-                name: deviceName(device.name, device.device_id),
+                name: device.name ?? t('compute.env.removedDevice'),
                 agents: agents(device.agents),
               })
-            }}<template v-if="device.machine_access"> · {{ t('work.roomMachine.wholeMachine') }}</template>
-            <DeviceSessionsSwitch
-              v-if="state.can_manage && device.device_id"
+            }}
+            <component
+              :is="deviceSessionsComponent"
+              v-if="deviceSessionsComponent && state.can_manage"
               :project-id="projectId"
-              :device="{ device_id: device.device_id, name: deviceName(device.name, device.device_id) }"
+              :device="{ device_id: device.device_id, name: device.name ?? t('compute.env.removedDevice') }"
               :devices="state.devices"
-              :cloud-available="state.cloud_available"
-              :project-default="state.default"
-              @changed="load"
+              :specs="state.specs"
+              @changed="emit('changed')"
             />
           </li>
         </ul>

@@ -71,7 +71,7 @@ def _backend(client, hub, tmp_path):
         session_factory=client.test_request_factory,
         base_system_prompt="System",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([claude], claude.name),
+        compute=ComputePool([claude]),
     )
     return service, claude
 

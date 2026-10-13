@@ -1,5 +1,7 @@
 from datetime import datetime
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.errors import ForbiddenError, NotFoundError
 from app.domain.team.models import TeamRecruitmentPost
 from app.domain.team.recruitment_repositories import RecruitmentRepository
@@ -14,6 +16,18 @@ class RecruitmentService:
     ) -> None:
         self._repo = repo
         self._team_repo = team_repo
+
+    @classmethod
+    def from_session(cls, session: AsyncSession) -> "RecruitmentService":
+        """拿 session 直接造一个 —— 给**别的领域**用。
+
+        要招人能力的调用方（HTTP 路由）不该知道底下的 repository 叫什么、怎么造：
+        那一步是跨领域摸 repository，守卫拦的就是它。
+        """
+        return cls(
+            repo=RecruitmentRepository(session=session),
+            team_repo=TeamRepository(session=session),
+        )
 
     async def create_post(
         self,

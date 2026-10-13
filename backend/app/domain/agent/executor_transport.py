@@ -71,9 +71,10 @@ READ_ONLY_REFUSED = (
 # 而这一次要把改动带出机器（同步、项目的 MCP 服务），或者机器不归它独占、它只能读
 # （`routes/execution.py`）。两种都不是故障。
 SCRATCH_REFUSED = (
-    "这个会话的改动留不下：不能同步改动，也不能用项目的 MCP 服务；工作机器不归这个"
-    "会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。这不是故障，重试"
-    "结果一样；要改项目，创建一个任务。"
+    "这个会话在支线或还没开始的任务里，改动留不下：不能同步改动，也不能用项目的 MCP "
+    "服务；工作机器不归这个会话独占时（整台机器授权的设备、整台云虚拟机），只能读文件。"
+    "这由会话所在的位置决定，不由机器决定：不是故障，重试或换机器结果都一样；要改项目，"
+    "创建一个任务。"
 )
 
 # 链路断在这次调用的半路（`_link_interrupted`）。机器多半几秒后就回来，所以不是
@@ -135,13 +136,13 @@ def _link_interrupted(response) -> bool:
 # starts: the platform says nothing else until the machine is ready or the wait
 # gives up, and a call silent that long reads as a dead shell or a lost machine.
 MACHINE_PREPARING = (
-    "工作电脑正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
+    "执行环境正在准备，这次操作会在它就绪后执行（最多等 {minutes} 分钟）。"
 )
 
 
 # What the wait gives up with when the last answer it had was a timed-out
 # request rather than the platform's own word on the machine.
-MACHINE_STILL_PREPARING = "工作电脑仍在准备，对话和平台工具仍可用"
+MACHINE_STILL_PREPARING = "执行环境仍在准备，对话和平台工具仍可用"
 
 
 class MachineOutOfReach(RuntimeError):
@@ -167,7 +168,8 @@ DEFERRED_WORKSPACE = "/unavailable-project"
 
 
 def _retry_connect(attempt: int, deadline: float) -> bool:
-    """Sleep before the next attempt, or say the window is over.
+    """Sleep before the next attempt, or say the window is over. Hand-written,
+    not tenacity: this file runs on machines with the standard library only.
 
     ONLY for a connection that was refused: `http.client` raises that before it
     writes anything, which is what makes the replay safe. A failure any later —
@@ -675,6 +677,19 @@ class RemoteClient:
                 shlex.join(command),
             ]
         return command
+
+    def take_now(self):
+        """Take this session's hands as they are, without waiting for a
+        machine being prepared. False when the platform cannot hand them out
+        at this moment (the machine still being prepared, gone, or refused);
+        a platform that failed to answer at all still raises."""
+        try:
+            self.acquire(deadline=time.monotonic())
+        except PlatformHTTPError:
+            raise
+        except RuntimeError:
+            return False
+        return True
 
     def acquire(self, *, deadline, abandoned=None, preparing=None):
         """Take this session's hands through the platform (`lease_path`): the

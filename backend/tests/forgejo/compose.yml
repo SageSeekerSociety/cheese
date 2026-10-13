@@ -1,6 +1,8 @@
 services:
   snapshots:
-    image: docker.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
+    # Through Google's Docker Hub mirror, like the e2e services: unauthenticated
+    # pulls from docker.io hit its rate limit on shared CI runners.
+    image: mirror.gcr.io/pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     command: server /data
     ports:
       - "127.0.0.1:${FORGEJO_TEST_S3_PORT:-33286}:9000"

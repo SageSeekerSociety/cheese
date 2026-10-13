@@ -1,9 +1,11 @@
 import type { Project } from '@/cx_types'
 import type { Shell } from '@/lib/shell'
+import type { RememberedPlace } from '@/stores/workspace'
 import type { MenuAction } from '../menuAction'
 import type { NavGenericItem, NavItem } from './types'
 
 import { t } from '@/i18n'
+import { projectUuid } from '@/lib/addresses'
 import { orderedNav, termParams } from '@/lib/shell'
 
 // 一级导航在两端是**两份清单**，不是一份清单加两个否定式过滤器。
@@ -51,10 +53,10 @@ export interface NavSources {
   /** 这个项目里有几件待我处理；还没读到或没有就是 0。桌面项目格子上画它。 */
   projectAwaitingCount?: (projectId: string) => number
   /**
-   * 这个项目上次打开的话题 id；记着的那一个还在的话，格子直接落回那个话题，
-   * 否则落到项目首页。第一次打开这个项目时会校验一次，不在了就忘掉。
+   * 这个项目上次待的地方（一件任务页，或一个频道）；记着的那个还在的话，格子
+   * 直接落回那里，否则落到项目首页。第一次打开这个项目时会校验一次，不在了就忘掉。
    */
-  projectLastTopic?: (projectId: string) => string | null
+  projectLastPlace?: (projectId: string) => RememberedPlace | null
   /** 有没有没读的动态（提到你、回复你……）。没有待处理的事时，用一颗小点提醒它。 */
   unreadActivity?: boolean
   /** 右键一个项目格子能做什么。由宿主拼好：里面要用到路由、剪贴板和退出确认框。 */
@@ -105,6 +107,26 @@ function projectMarks(src: NavSources, projectId: string): Pick<NavItem, 'badge'
   return badge > 0 ? { badge } : {}
 }
 
+/** 地址落在这个项目里：`/projects/<短名 | 旧短名 | UUID>` 本身或它下面的任何一页。 */
+function onProject(path: string, project: Project): boolean {
+  const m = /^\/projects\/([^/]+)(?:\/|$)/.exec(path)
+  if (!m) return false
+  const ref = decodeURIComponent(m[1])
+  return ref === project.id || ref === project.slug || projectUuid(ref) === project.id
+}
+
+/**
+ * 上次待的那个地方，落在什么地址上。
+ *
+ * 记着的是**频道**时落回那个频道；记着的是**任务**时落回那件任务——只落回它所在的
+ * 频道，「回到我昨天做的那件事」就还差最后一步。任务的地址里不带频道：它自己的编号
+ * 就够了（频道由 `addressProps` 补上），这也是这个应用里任务页的规范地址。
+ */
+export function placeHref(projectRef: string, place: RememberedPlace): string {
+  if (place.kind === 'task') return `/projects/${projectRef}/tasks/${place.id}`
+  return `/projects/${projectRef}/channels/${place.id}`
+}
+
 /**
  * 桌面 rail 的三格长什么样，按 key 摆好等壳来排。
  *
@@ -119,19 +141,22 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
       ...(src.projects.length ? [{ key: 'cx-divider', type: 'divider' as const }] : []),
       // Discord 式：一个项目一格方头像（首字母 + 颜色），不是截断的标题。
       ...src.projects.map((p) => {
-        const lastTopic = src.projectLastTopic?.(p.id) ?? null
+        const lastPlace = src.projectLastPlace?.(p.id) ?? null
+        // 地址里的项目写短名（#3029 起）；还不知道短名的项目照旧写 UUID，落地时守卫会换。
+        const ref = p.slug || p.id
         return {
           key: `cx-${p.id}`,
           type: 'item' as const,
           title: p.name,
           projectId: p.id,
-          // 上次打开的那个话题还在，就直接落回它——每天的主路径是「回到昨天那个
-          // 房间」，先落到项目首页等于多加一跳。不在了（或没记过）才落到项目首页。
-          to: lastTopic ? `/projects/${p.id}/topics/${lastTopic}` : `/projects/${p.id}`,
-          // 项目里的每一页（话题、看板、设置）都算站在这一格上。选中框靠这个画：
+          // 上次待的地方还在，就直接落回它——每天的主路径是「回到昨天那个房间」，
+          // 先落到项目首页等于多加一跳。不在了（或没记过）才落到项目首页。
+          to: lastPlace ? placeHref(ref, lastPlace) : `/projects/${ref}`,
+          // 项目里的每一页（频道、看板、设置）都算站在这一格上。左边的竖条靠这个画：
           // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
-          // 会盖掉链接本来算出的激活态。
-          match: (path: string) => path === `/projects/${p.id}` || path.startsWith(`/projects/${p.id}/`),
+          // 会盖掉链接本来算出的激活态。地址里的项目可能是短名、旧短名或 UUID
+          // （旧链接、还没换成短名的那一瞬），三种都要认。
+          match: (path: string) => onProject(path, p),
           menu: src.projectMenu?.(p),
           ...projectMarks(src, p.id),
         }

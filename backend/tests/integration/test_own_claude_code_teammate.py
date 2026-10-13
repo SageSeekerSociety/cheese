@@ -2,10 +2,10 @@
 
 It belongs to its owner and follows them into every project they are in, as
 long as the project lets members bring their own and the owner has logged it
-in on a machine. Only its owner may call it — by naming it, giving it a task
-they are responsible for, or chatting with it — because it runs on its owner's
-own account, which may serve its owner alone. It is not one of the project's
-teammates the others pick from or the agents name.
+in on a machine. It runs on the account its owner set up, so its owner decides
+who may call it — by naming it, giving it a task they are responsible for, or
+chatting with it: themselves alone, which is where it starts, or any person in
+the project. No agent calls it.
 """
 
 import asyncio
@@ -160,7 +160,7 @@ def test_it_works_only_its_owners_tasks(client):
     project_id, room_id = _project_with_bob(client)
     _log_in_claude_code(client, "alice")
     seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
-    bobs = open_task(client, room_id, "bob 的任务", owner="bob", reviewer="bob")
+    bobs = open_task(client, room_id, "bob 的任务", owner="bob")
     alices = open_task(client, room_id, "alice 的任务", owner="alice")
 
     refused = client.patch(
@@ -270,3 +270,68 @@ def test_it_carries_its_owners_current_name(client):
 
     own = _own_row(_members(client, project_id, "alice"), "alice")
     assert own["name"] == "小艾的 Claude Code"
+
+
+def _open_to_project(client, project_id, seat, as_whom="alice"):
+    return client.put(
+        f"/projects/{project_id}/own-agents/{seat}/callers",
+        json={"callers": "project"},
+        headers=session_auth_headers(as_whom),
+    )
+
+
+def test_its_owner_opens_it_to_the_project(client):
+    project_id, room_id = _project_with_bob(client)
+    _log_in_claude_code(client, "alice")
+    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+
+    opened = _open_to_project(client, project_id, seat)
+    assert opened.status_code == 200, opened.text
+    assert _own_row(_members(client, project_id, "bob"), "alice")["callers"] == (
+        "project"
+    )
+
+    called = post_message(client, room_id, "bob", {"content": f"<@{seat}> 帮我改"})
+    assert (called["meta"] or {})["agent_recipient"]["mentioned"] is True
+
+    bobs = open_task(client, room_id, "bob 的任务", owner="bob")
+    given = client.patch(
+        f"/topics/{bobs['id']}/task",
+        json={"agent_handle": seat},
+        headers=session_auth_headers("bob"),
+    )
+    assert given.status_code == 200, given.text
+
+
+def test_only_its_owner_decides_who_calls_it(client):
+    project_id, room_id = _project_with_bob(client)
+    _log_in_claude_code(client, "alice")
+    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    joined = client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    assert joined.status_code == 200, joined.text
+
+    refused = _open_to_project(client, project_id, seat, as_whom="bob")
+
+    assert refused.status_code == 403, refused.text
+    still = post_message(client, room_id, "bob", {"content": f"<@{seat}> 帮我改"})
+    assert (still["meta"] or {})["agent_recipient"]["mentioned"] is False
+
+
+def test_closing_it_again_stops_the_others_calling_it(client):
+    project_id, room_id = _project_with_bob(client)
+    _log_in_claude_code(client, "alice")
+    seat = _own_row(_members(client, project_id, "alice"), "alice")["handle"]
+    client.post(f"/topics/{room_id}/join", headers=session_auth_headers("bob"))
+    _open_to_project(client, project_id, seat)
+
+    closed = client.put(
+        f"/projects/{project_id}/own-agents/{seat}/callers",
+        json={"callers": "owner"},
+        headers=session_auth_headers("alice"),
+    )
+    assert closed.status_code == 200, closed.text
+
+    after = post_message(client, room_id, "bob", {"content": f"<@{seat}> 再来"})
+    assert (after["meta"] or {})["agent_recipient"]["mentioned"] is False

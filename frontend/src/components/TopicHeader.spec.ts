@@ -4,7 +4,7 @@
 // 名册合着的时候它也得在这一行上。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
-import type { TopicComputeProfile } from '@/types/compute'
+import type { TopicEnvironment } from '@/types/compute'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
@@ -14,14 +14,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vu
 import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const getTopicComputeProfile = vi.fn()
+const getTopicEnvironment = vi.fn()
 const archiveTopic = vi.fn(async (id: string) => ({ id, status: 'archived' }))
 const unarchiveTopic = vi.fn(async (id: string) => ({ id, status: 'active' }))
 
 vi.mock('@/api', () => ({
-  getTopicComputeProfile: (...args: unknown[]) => getTopicComputeProfile(...args),
+  getTopicEnvironment: (...args: unknown[]) => getTopicEnvironment(...args),
   listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
-  setTopicComputeChoice: vi.fn(),
   getTopicUsage: vi.fn(async () => null),
   getProjectUsage: vi.fn(async () => null),
   archiveTopic: (...args: [string]) => archiveTopic(...args),
@@ -46,28 +45,14 @@ const topic = {
   updated_at: '2026-09-01T00:00:00Z',
 } as Topic
 
-const cloud = {
-  name: null,
-  profile: 'cloud',
-  device_id: null,
-}
-
-function profile(machineAccess: boolean): TopicComputeProfile {
+function profile(): TopicEnvironment {
   return {
-    choice: cloud,
-    project_default: cloud,
-    current: 'cloud',
-    device_id: null,
+    default: { kind: 'sandbox', spec: 'standard' },
+    default_from: 'project',
     devices: [],
+    specs: [{ spec: 'standard', label: '标准' }],
     sessions: [],
-    profiles: [],
-    cloud_vm_available: false,
-    visibility: {
-      options: [],
-      effective: 'host',
-      machine_access: machineAccess,
-    },
-  } as TopicComputeProfile
+  }
 }
 
 // 专注模式只在面板和对话并排开着时成立；默认按并排开着来挂。
@@ -109,37 +94,20 @@ beforeAll(() => {
 
 beforeEach(() => {
   setLocale('zh-CN')
-  getTopicComputeProfile.mockReset()
+  getTopicEnvironment.mockReset()
 })
 
 afterEach(cleanup)
 
 describe('话题头', () => {
-  it('有 AI 队友能访问整台电脑时，名册合着这一行上也写着', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile(true))
-    mountHeader()
-
-    await waitFor(() => expect(bar().textContent).toContain('能访问整台电脑'))
-    expect(bar().querySelector('[title="让它看到整台电脑（能操作这台电脑上的服务和其他频道）"]')).toBeTruthy()
-  })
-
-  it('看不到能访问整台电脑时这一行不提它', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile(false))
-    mountHeader()
-
-    await waitFor(() => expect(getTopicComputeProfile).toHaveBeenCalled())
-    await new Promise((r) => setTimeout(r, 0))
-    expect(bar().textContent).not.toContain('能访问整台电脑')
-  })
-
-  it('⋯ 里没有工作电脑，它在成员名册里', async () => {
-    getTopicComputeProfile.mockResolvedValue(profile(false))
+  it('⋯ 里没有环境，它在成员名册里', async () => {
+    getTopicEnvironment.mockResolvedValue(profile())
     mountHeader()
 
     await fireEvent.click(screen.getByRole('button', { name: '更多' }))
     await waitFor(() => expect(document.querySelector('.room-menu')).toBeTruthy())
-    expect(document.body.textContent).not.toContain('这个频道的环境')
-    expect(bar().textContent).not.toContain('云端环境')
+    expect(document.body.textContent).not.toContain('新会话默认')
+    expect(bar().textContent).not.toContain('沙箱')
   })
 })
 
@@ -149,7 +117,7 @@ describe('手机上话题头的 ⋯', () => {
 
   beforeEach(() => {
     window.innerWidth = 390
-    getTopicComputeProfile.mockResolvedValue(profile(false))
+    getTopicEnvironment.mockResolvedValue(profile())
     // 手机上这一行画进外壳顶栏里的那一格。
     slot = document.createElement('div')
     slot.id = 'app-bar-slot'

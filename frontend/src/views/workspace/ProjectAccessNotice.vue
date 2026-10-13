@@ -5,7 +5,7 @@
 // 闪过，然后页面上再无任何解释——话题列表空白、项目名不显示，跟「一个刚建好、
 // 还什么都没有的项目」长得一模一样。错过那 4 秒就没有第二次机会。
 //
-// 三档分开写，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限，
+// 分档写，因为下一步动作不一样：没登录的人要去登录，登录了的人得去要权限，
 // 项目归档了的话，所有者可以把它取消归档，别人只能离开。
 import { computed, ref } from 'vue'
 
@@ -17,7 +17,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 
 defineOptions({ name: 'ProjectAccessNotice' })
 
-const props = defineProps<{ reason: 'unauthenticated' | 'forbidden' | 'archived' }>()
+const props = defineProps<{ reason: 'unauthenticated' | 'forbidden' | 'missing' | 'archived' }>()
 
 const store = useWorkspaceStore()
 const isOwner = computed(() => !!store.openedProject?.owner_handle && store.openedProject.owner_handle === myHandle())
@@ -43,6 +43,14 @@ const said = computed(() => {
       title: t('work.access.archivedTitle'),
       body: isOwner.value ? t('work.access.archivedOwnerBody') : t('work.access.archivedBody'),
       icon: 'mdi-archive-outline',
+      action: { label: t('work.access.backToProjects'), to: '/' },
+    }
+  // 服务端对看不到的项目答「没有」，不说它存不存在：两种可能都写上，才不算骗人。
+  if (props.reason === 'missing')
+    return {
+      title: t('work.access.missingTitle'),
+      body: t('work.access.missingBody'),
+      icon: 'mdi-lock-outline',
       action: { label: t('work.access.backToProjects'), to: '/' },
     }
   return {

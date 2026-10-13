@@ -58,7 +58,14 @@
           <!-- 这一层 div 只是给菜单和 tooltip 当锚点：UserAvatar 的根是它自己的
                `v-avatar`，没有再开插槽，tooltip 塞不进去，所以拿这层当 `activator`。
                类名 rail-avatar 留给 tooltip 的指针测试定位。 -->
-          <div class="cursor-pointer mb-4 rail-avatar" v-bind="props" @pointerenter="rememberAvatar">
+          <!-- button，不是 div：头像打开的菜单里有设置和退出登录，只用键盘的人也得够得着。 -->
+          <button
+            type="button"
+            class="mb-4 rail-avatar"
+            :aria-label="userMenu.nickname.value"
+            v-bind="props"
+            @pointerenter="rememberAvatar"
+          >
             <!-- 组件写法而不是 v-tooltip 指令：指令没有开关，浮层开出去就收不回来。 -->
             <v-tooltip
               v-model="avatarTipOpen"
@@ -73,7 +80,7 @@
               :seed="userMenu.currentUser.value?.username"
               :size="32"
             />
-          </div>
+          </button>
         </template>
 
         <UserMenuCard :menu="userMenu" />
@@ -252,6 +259,14 @@ useEventListener(
     }
   }
 
+  // 底下那段（头像）Vuetify 给的是 overflow: hidden，上边正好贴着头像：头像的
+  // :focus-visible 框伸出去的那 4px 会被切平。让它画出去，不给它留位置：留位置就得
+  // 加高这一段，上面的项目列表跟着矮 4px，滚到底时最后几格整体上移。这一段里只有
+  // 头像，没有要靠裁剪才不露出来的东西。
+  .v-navigation-drawer__append {
+    overflow: visible;
+  }
+
   // 首页那一格的未读点和件数角标往右上角外探 2px / 4px。这一段和下面的项目
   // 列表一样会裁掉溢出的东西，而它的上沿就贴着标题栏：不留出角标探出去的那
   // 4px，点的顶上就被削平一条。项目列表那一段有 8px 的上下内边距，所以一直没事。
@@ -262,6 +277,17 @@ useEventListener(
   .app-rail-item {
     flex-shrink: 0;
   }
+}
+
+/* 头像外面那颗 button 只当点击和聚焦的区域：去掉浏览器给 button 的底色、边框和内边距，
+   长相全归 UserAvatar；聚焦框用全局的 :focus-visible。 */
+.rail-avatar {
+  display: block;
+  padding: 0;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: 50%;
 }
 
 /* `.rail-avatar-char` 那份自画的彩色首字母没了：现在整支交给 UserAvatar，尺寸/字色那

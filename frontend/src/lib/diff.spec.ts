@@ -157,6 +157,39 @@ describe('diff 行号', () => {
     ])
   })
 
+  // 整份 diff 以换行结尾，最后一个文件切出来就多一个空串；它不在任何一个 hunk 的
+  // 行数里。当成 context 时它拿到下一个号——三行的新文件多出「0 4」，还带一颗
+  // 「在第 4 行写批注」。
+  it('hunk 行数之外的空行不是文件里的一行', () => {
+    const diff = [
+      'diff --git a/signup.md b/signup.md',
+      'new file mode 100644',
+      'index 0000000..e69de29',
+      '--- /dev/null',
+      '+++ b/signup.md',
+      '@@ -0,0 +1,3 @@',
+      '+时间：周四下午三点',
+      '+地点：B201',
+      '+报名找林老师',
+      '',
+      '',
+    ].join('\n')
+    const rows = numberDiffLines(parseDiffLines(splitDiffByFile(diff)[0].body))
+    expect(rows.filter((r) => r.newNumber !== null).map((r) => r.newNumber)).toEqual([1, 2, 3])
+    expect(rows.some((r) => r.text === '')).toBe(false)
+  })
+
+  it('hunk 里本来就空着的一行（git 写成一个空格）照样编号', () => {
+    const body = ['@@ -1,3 +1,3 @@', ' a', ' ', '-b', '+c', ''].join('\n')
+    expect(numberDiffLines(parseDiffLines(body)).map((r) => [r.kind, r.oldNumber, r.newNumber])).toEqual([
+      ['hunk', null, null],
+      ['context', 1, 1],
+      ['context', 2, 2],
+      ['del', 3, null],
+      ['add', null, 3],
+    ])
+  })
+
   // 二进制文件和纯 mode 改动没有内容行：它们该留空，不是显示成「0 0」。
   it('Binary files / old mode 这类行留空', () => {
     const body = [

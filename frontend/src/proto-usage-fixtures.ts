@@ -1,7 +1,7 @@
 /**
- * 用量看板上那两块**不由用量表算出来**的假数据：额度燃尽、Claude 账号池。两者都是
- * `/admin/stats/usage` 那条路由在 `usageStats()` 之外**贴上去**的（真后端里这两块也各有
- * 各的来源：额度来自 grants，池子来自那台代理机器上的快照），所以单独放一处。
+ * 用量看板上 `usageStats()` 之外**贴上去**的假数据：额度燃尽、Claude 账号池（真后端里
+ * 这两块也各有各的来源：额度来自 grants，池子来自那台代理机器上的快照），以及每小时的
+ * 序列和最近的几行账本（`withUsageExtras` 一并贴上）。
  *
  * 为什么单开一个文件：`proto-feedback-fixtures.ts` 已经越过 1000 行的尺寸上限
  * （`.claude/scripts/check-file-sizes.py`），按要求只许变小 —— 往那边加东西的唯一办法
@@ -59,4 +59,47 @@ export function creditsBurnout(): Record<string, unknown> {
       method: 'derived_from_resource_usage',
     },
   }
+}
+
+/** 每小时的 token（北京时间，带 +08:00），7 天以内的窗口才有，和真后端一样补到「现在」
+ *  这个小时为止 —— 预览里把「现在」定在最后一天的 17:00。最近的账本行：订阅通路一行
+ *  一次请求，网关一行是一个模型的一段合计（所以那一行的输入可以上百万）。 */
+function hourlyAndRecent(days: number, dates: string[]): Record<string, unknown> {
+  const hours: { hour: string; tokens: number; calls: number; cost_usd: number }[] = []
+  dates.forEach((date, d) => {
+    const last = d === dates.length - 1 ? 17 : 23
+    for (let h = 0; h <= last; h++) {
+      const tokens = (((d * 24 + h) * 7919) % 97) * 1200 + (h >= 9 && h <= 22 ? 40_000 : 2_000)
+      hours.push({ hour: `${date}T${String(h).padStart(2, '0')}:00:00+08:00`, tokens, calls: 3, cost_usd: 0.01 })
+    }
+  })
+  const today = dates[dates.length - 1] ?? '2026-10-12'
+  const row = (at: string, model: string, route: string, input: number, output: number, cache: number | null) => ({
+    at: `${today}T${at}+08:00`,
+    project_id: null,
+    project: '知是平台后端',
+    handle: route === 'gateway' ? null : 'lin',
+    model,
+    route,
+    kind: 'chat',
+    input_tokens: input,
+    output_tokens: output,
+    cache_read_tokens: cache,
+    cost_usd: Number(((input + output * 4) / 1_000_000).toFixed(4)),
+  })
+  return {
+    hourly: days <= 7 ? hours : null,
+    recent: [
+      row('17:02:41', 'claude-sonnet-5', 'subscription', 61_200, 830, 58_800),
+      row('16:58:10', 'glm-4.6', 'gateway', 8_680_000, 41_300, 7_900_000),
+      row('16:40:05', 'mimo-v2.6-pro', 'gateway', 412_000, 9_100, null),
+    ],
+  }
+}
+
+/** `usageStats()` 那一份，贴上它之外的那几块。 */
+export function withUsageExtras(usage: Record<string, unknown>): Record<string, unknown> {
+  const days = usage.days as number
+  const dates = (usage.series as { date: string }[]).map((row) => row.date)
+  return { ...usage, credits: creditsBurnout(), claude_accounts: claudePool(), ...hourlyAndRecent(days, dates) }
 }

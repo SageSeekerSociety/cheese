@@ -14,8 +14,8 @@ from app.domain.review.github_pr import (
     GitHubPrError,
     MergeResult,
     OpenedPR,
-    PullRequestStatus,
 )
+from app.domain.review.github_pr_status import PullRequestStatus
 from app.domain.review.pr_signals import ReviewSignal
 
 
@@ -83,7 +83,8 @@ class ForgejoClient:
     @staticmethod
     def status(data):
         merged = bool(data.get("merged"))
-        title = data.get("title", "").upper()
+        raw_title = str(data.get("title") or "")
+        title = raw_title.upper()
         draft = title.startswith(("WIP:", "[WIP]"))
         mergeable = data.get("mergeable")
         return PullRequestStatus(
@@ -107,6 +108,11 @@ class ForgejoClient:
             if mergeable is True
             else "unknown",
             draft=draft,
+            # 平台按卡片的 subject 写这个标题（`pr_publish.sync_pr_text`），仓库
+            # 自己的检查评判它，平台 squash 时落的也是同一行；两条合并路径都会
+            # 把它和卡片比一遍（`pr_text.pr_title_matches_subject`），不一致就停。
+            # 不带上它，每一张 Forgejo 的卡都会被读成「标题读不出来」而永远合不了。
+            title=raw_title,
             review_comment_count=data.get("review_comments", 0),
         )
 

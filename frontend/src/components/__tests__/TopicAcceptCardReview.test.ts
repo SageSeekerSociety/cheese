@@ -4,8 +4,8 @@
  *
  *   1. 主分支保护：要两个人批准时，还没批的人手上有「批准」，点下去算自己那一票；
  *      一个人批就够的卡不给这颗按钮；
- *   2. 改由他人审阅（「更多操作」里）：单子上只有在岗的成员（停用的队友不出现在
- *      派活的单子上），选一位就是把卡改派给他；
+ *   2. 改由他人审阅（「更多操作」里）：单子上只有人——AI 队友采纳不了，不出现在
+ *      单子上——选一位就是把卡改派给他；
  *   3. 采纳可撤销：归档话题上的已采纳卡给「撤回采纳」；话题还在进行中时，那张
  *      已采纳的卡不占位置；
  *   4. 已采纳、合并还没走完的那张脸是只读的：PR 在卡上，没有采纳也没有退回。
@@ -24,6 +24,13 @@ const approveCard = vi.fn()
 const reassignCard = vi.fn()
 const revokeCard = vi.fn()
 
+// 任务页的卡旁边还有这件任务的审阅意见；这里测的是卡，意见是空的。
+vi.mock('@/api/reviewComments', () => ({
+  listReviewComments: vi.fn(async () => ({ comments: [] })),
+  writeReviewComment: vi.fn(),
+  editReviewComment: vi.fn(),
+  deleteReviewComment: vi.fn(),
+}))
 vi.mock('../../api', async () => {
   const actual = await vi.importActual<typeof import('../../api')>('../../api')
   return {
@@ -100,7 +107,7 @@ async function mountWith(cards: AcceptCard[], topicStatus = 'active') {
   getAcceptCards.mockResolvedValue({ data: cards, has_more: false })
   const vuetify = createVuetify({ components, directives })
   const utils = render(AcceptPage, {
-    props: { topicId: 't1', topicStatus },
+    props: { topicId: 't1', taskId: 'k1', topicStatus },
     global: { plugins: [vuetify, i18n] },
   })
   await flush()
@@ -171,11 +178,19 @@ function withMembers(members: object[]) {
 }
 
 describe('改由谁审阅', () => {
-  it('单子上只有在岗的成员，停用的队友不出现在派活的单子上', async () => {
+  it('单子上只有人：AI 队友不管在不在岗都不出现', async () => {
     withMembers([
       { user_handle: 'alice', role: 'member', name: 'Alice' },
       { user_handle: 'bob', role: 'member', name: 'Bob' },
-      { user_handle: 'retired', role: 'member', name: 'Retired', active: false },
+      { user_handle: 'cheese-0a1b2c3d4e5f', role: 'member', name: '小苔', source: 'agent', agent: true },
+      {
+        user_handle: 'cheese-9f8e7d6c5b4a',
+        role: 'member',
+        name: 'Retired',
+        source: 'agent',
+        agent: true,
+        active: false,
+      },
     ])
 
     const { container } = await mountWith([card({})])
@@ -183,6 +198,7 @@ describe('改由谁审阅', () => {
 
     const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item')).map((n) => n.textContent ?? '')
     expect(items.some((t) => t.includes('Bob') && t.includes('bob'))).toBe(true)
+    expect(items.some((t) => t.includes('小苔'))).toBe(false)
     expect(items.some((t) => t.includes('Retired'))).toBe(false)
   })
 

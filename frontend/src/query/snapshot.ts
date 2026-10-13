@@ -7,9 +7,11 @@
 // 用快照里那一块，没到（连接被拒、超时）再自己问。重连回来再订阅一次，又是一份新的
 // 快照，在缓存里的那几格直接盖上。
 //
-// 不在缓存里的几块（提议卡、任务的相关和审阅意见，由各自的组合函数读）只交给快照到
-// 之前就在等的那一次读：快照之后才发起的读，可能是一帧「变了」叫起来的，那时快照
-// 已经旧了，得照常问服务器。
+// 不经 `useQuery` 的几块（提议卡、任务的相关和审阅意见，由各自的组合函数读）只交给
+// 快照到之前就在等的那一次读：快照之后才发起的读，可能是一帧「变了」叫起来的，那时快照
+// 已经旧了，得照常问服务器。它们上一次在这里的样子另记在缓存里（`lastSeen` / `seen`）：
+// 再进这个房间时消息是从缓存里直接画的，这几块要是从空开始等订阅一来一回，就会晚一拍
+// 才冒出来，把已经画好的对话顶一下。
 import type { ProjectSkill } from '@/api/projectSkills'
 import type { FeedbackProposal, ListPayload, RoomTask, TopicMemberRow } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
@@ -117,6 +119,11 @@ export function settleRoom(conversation: string, room: string, snapshot: RoomSna
  * 读（推送说变了、重试）照常问服务器。
  */
 export async function fromSnapshot<T>(queryKey: readonly unknown[], read: () => Promise<T>): Promise<T> {
+  const head = early.get(hashKey(queryKey))
+  if (head) {
+    early.delete(hashKey(queryKey))
+    if (Date.now() - head.at < EARLY_MS) return head.read as Promise<T>
+  }
   const expected = waiting.get(hashKey(queryKey))
   const piece = expected ? await expected.promise : undefined
   return piece !== undefined ? (piece as T) : read()
@@ -126,4 +133,36 @@ export async function fromSnapshot<T>(queryKey: readonly unknown[], read: () => 
 export function forgetRoomSnapshots(): void {
   for (const entry of waiting.values()) entry.resolve(undefined)
   waiting.clear()
+  early.clear()
+}
+
+/** 先发出去的读多久之内还算数：再晚接手，它说的就是打开页面那一刻的事了。 */
+const EARLY_MS = 15_000
+const early = new Map<string, { at: number; read: Promise<unknown> }>()
+
+/**
+ * 冷打开（整页刷新、直接打开链接）时这一块先去问：订阅要等房间页挂上才连，快照赶不上，
+ * 等它就要比消息晚一个来回。读回来就记成 `lastSeen`，挂上来的第一次 `fromSnapshot`
+ * 直接接着这一次，不另发。
+ */
+export function readEarly<T>(queryKey: readonly unknown[], read: () => Promise<T>): void {
+  const pending = read().then((value) => {
+    seen(queryKey, value)
+    return value
+  })
+  pending.catch(() => {})
+  early.set(hashKey(queryKey), { at: Date.now(), read: pending })
+}
+
+/**
+ * 这一块上一次在这里的样子（快照、服务器回来的，或者在这里改过之后的）：再进这个房间先
+ * 画它，等着的那一次读回来再换。没看过是 undefined。换人登录时整份缓存清空，它也跟着没。
+ */
+export function lastSeen<T>(queryKey: readonly unknown[]): T | undefined {
+  return queryClient.getQueryData<T>(queryKey)
+}
+
+/** 记下这一块此刻的样子，给下一次进这个房间先画。 */
+export function seen<T>(queryKey: readonly unknown[], value: T): void {
+  queryClient.setQueryData<T>(queryKey, value)
 }

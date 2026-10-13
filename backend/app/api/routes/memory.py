@@ -17,14 +17,12 @@ black box. 这一条路由就是那一面：读 `memory_files` 那棵树（`file
 """
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok, page
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.memory.files import (
@@ -37,8 +35,6 @@ from app.domain.memory.files_store import MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
 
 router = APIRouter(prefix="/memory", tags=["memory"])
-
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 def _entry_out(row: MemoryFileRecord) -> dict:

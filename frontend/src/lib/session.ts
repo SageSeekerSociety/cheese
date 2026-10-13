@@ -12,13 +12,17 @@
 // Only the refresh answering 401 means the sign-in is over. A network failure,
 // a timeout or any other status leaves the session alone.
 //
-// Deliberately free of imports from `network/` and `services/`: those import
+// Deliberately free of imports from `api/` and `services/`: those import
 // each other already, and everything that refreshes sits among them.
 import type { User } from '@/types/users'
 
 export type RefreshOutcome = { kind: 'ok'; token: string; user?: User } | { kind: 'rejected' } | { kind: 'unreachable' }
 
-export type SessionEvent = { type: 'token'; token: string; user?: User } | { type: 'signed-out' }
+export type SessionEvent =
+  | { type: 'token'; token: string; user?: User }
+  /** `refused`: the server ended the sign-in (it turned down a renewal), rather
+   *  than someone signing out here or in another tab. */
+  | { type: 'signed-out'; refused?: true }
 
 export const REFRESH_URL = '/api/users/auth/refresh-token'
 // Longer than any refresh should take; short enough that a hung one does not
@@ -83,6 +87,17 @@ export function announceSignOut() {
   tabs()?.postMessage({ type: 'signed-out' } satisfies SessionEvent)
 }
 
+/** Say the sign-in is over — to this tab as well as the others.
+ *
+ *  The pair to `announceSignOut`: someone who signs out has already let go of
+ *  the session where they are, so only the neighbours need telling. This one is
+ *  said by a tab the server has just turned down, and that tab has to hear it
+ *  too: the account service is what lets go of the session and what takes the
+ *  person back to a sign-in, and it is listening here, not "there". */
+export function announceSessionOver() {
+  announce({ type: 'signed-out', refused: true })
+}
+
 async function oneAtATime<T>(work: () => Promise<T>): Promise<T> {
   const locks = typeof navigator === 'undefined' ? undefined : navigator.locks
   if (!locks) return work()
@@ -131,7 +146,7 @@ async function refreshOnce(held: string | null): Promise<RefreshOutcome> {
   try {
     res = await withinBudget(REFRESH_URL)
     if (res.status === 401) {
-      announce({ type: 'signed-out' })
+      announceSessionOver()
       return { kind: 'rejected' }
     }
     if (!res.ok) return { kind: 'unreachable' }

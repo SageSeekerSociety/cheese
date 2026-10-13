@@ -46,10 +46,19 @@ def test_local_notes_and_rules_are_read_too(tmp_path):
             "CLAUDE.md": "# 主约定\n\n主。\n",
             "CLAUDE.local.md": "# 本机补充\n\n本机。\n",
             ".claude/rules/code.md": "# 代码规则\n\n规则。\n",
+            "pkg/AGENTS.md": "# 子目录 Agent 约定\n\nAGENT 子目录。\n",
             "pkg/CLAUDE.md": "# 子目录\n\n子。\n",
         },
     )
-    for part in ("主。", "本机。", "规则。", "子。", ".claude/rules/code.md"):
+    for part in (
+        "主。",
+        "本机。",
+        "规则。",
+        "子。",
+        "AGENT 子目录。",
+        "pkg/AGENTS.md",
+        ".claude/rules/code.md",
+    ):
         assert part in text
 
 

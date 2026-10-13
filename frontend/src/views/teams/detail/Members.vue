@@ -44,6 +44,8 @@
                     <div class="t-body">{{ found.name || found.handle }}</div>
                     <div class="t-meta c-muted">{{ found.handle }}</div>
                   </div>
+                  <v-spacer />
+                  <span v-if="alreadyIn" class="t-meta c-muted">{{ t('teams.members.alreadyIn') }}</span>
                 </div>
                 <v-select
                   v-model="inviteRoleInput"
@@ -69,7 +71,7 @@
               <v-card-actions>
                 <v-spacer></v-spacer>
                 <BaseButton type="button" @click="isActive.value = false">{{ t('teams.members.cancel') }}</BaseButton>
-                <BaseButton type="submit" kind="primary" :disabled="!found">{{
+                <BaseButton type="submit" kind="primary" :disabled="!found || alreadyIn">{{
                   t('teams.members.inviteSubmit')
                 }}</BaseButton>
               </v-card-actions>
@@ -149,7 +151,7 @@
                   >{{ t('teams.members.roleAdmin') }}</v-chip
                 >
               </v-list-item-title>
-              <!-- What this role can actually do. A bare 队长/管理员 label leaves the
+              <!-- What this role can actually do. A bare 所有者/管理员 label leaves the
                    difference between an admin and a member unstated. -->
               <v-list-item-subtitle>{{ memberRoleNote(member.role) }}</v-list-item-subtitle>
               <template #append>
@@ -178,7 +180,7 @@
                     </template>
                     <span>{{ t('teams.members.demote') }}</span>
                   </v-tooltip>
-                  <v-tooltip v-if="isSelfAdmin && member.role !== 'OWNER'" location="bottom">
+                  <v-tooltip v-if="member.canRemove" location="bottom">
                     <template #activator="{ props: activatorProps }">
                       <BaseButton
                         v-bind="activatorProps"
@@ -388,6 +390,7 @@ import { useRowMenu } from '@/composables/useRowMenu'
 import TeamJoinLinkCard from './TeamJoinLinkCard.vue'
 
 import { ApiError } from '@/api'
+import { TeamsApi } from '@/api/teams'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
@@ -396,7 +399,6 @@ import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import i18n, { t } from '@/i18n'
 import { teamDataInjectionKey } from '@/keys'
-import { TeamsApi } from '@/network/api/teams'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
 import errorHandler from '@/services/ErrorHandler'
@@ -424,7 +426,9 @@ const isSelfOwner = computed(() => {
 const isSelfAdmin = computed(() => teamData.value?.role === 'OWNER' || teamData.value?.role === 'ADMIN')
 
 // 右键一位成员：行尾那几颗（升管理员、降成员、移出）收成一份，弹在鼠标那一点上。
-// 谁看得见哪一项和那几颗按钮同一套判据。
+// 谁看得见哪一项和那几颗按钮同一套判据。移出看服务端给的 canRemove：能不能移出取决于
+// 读者和那一位各是什么角色（管理员移不了别的管理员），由移出接口用的同一条规则算出来，
+// 这里不再另写一份。
 const rowMenu = useRowMenu<number>()
 function memberActions(member: TeamMember): MenuAction[] {
   const actions: MenuAction[] = []
@@ -442,7 +446,7 @@ function memberActions(member: TeamMember): MenuAction[] {
       icon: 'mdi-account-arrow-down',
       onSelect: () => void demoteToMember(member.user.id),
     })
-  if (isSelfAdmin.value && member.role !== 'OWNER')
+  if (member.canRemove)
     actions.push({
       key: 'remove',
       label: t('teams.members.remove'),
@@ -531,6 +535,9 @@ const {
       ? e.message
       : t('teams.members.inviteLookupFailed')
 )
+// 已经在团队里的人不用再邀请——后端也会拒，但那是按下按钮之后才知道。项目的
+// 「邀请外部成员」是同一条。
+const alreadyIn = computed(() => !!found.value && teamMembers.value.some((m) => m.user.id === found.value?.id))
 const inviteRoleInput = ref('MEMBER')
 const inviteMessageInput = ref('')
 
@@ -569,9 +576,7 @@ const fetchTeamMembers = async (teamId: number) => {
   failedMembers.value = false
   membersError.value = null
   try {
-    const {
-      data: { members },
-    } = await TeamsApi.getMembers(teamId)
+    const { members } = await TeamsApi.getMembers(teamId)
     teamMembers.value = members
   } catch (error) {
     console.error('Failed to load team members', error)
@@ -591,7 +596,7 @@ const fetchJoinRequests = async (teamId: number) => {
   requestsError.value = null
   try {
     const response = await TeamsApi.listTeamJoinRequests(teamId)
-    joinRequests.value = response.data.applications
+    joinRequests.value = response.applications
   } catch (error) {
     console.error('Failed to load join requests', error)
     failedRequests.value = true
@@ -611,7 +616,7 @@ const fetchTeamInvitations = async (teamId: number) => {
   invitationsError.value = null
   try {
     const response = await TeamsApi.listTeamInvitations(teamId)
-    teamInvitations.value = response.data.invitations
+    teamInvitations.value = response.invitations
   } catch (error) {
     console.error('Failed to load sent invitations', error)
     failedInvitations.value = true
@@ -633,7 +638,7 @@ const pendingRequests = computed(() => {
 // 拿真假判断会把成功当失败——不提示、不刷新，那一行还挂着，再点一次就是「找不到」。
 const confirmInvite = async () => {
   const invitee = found.value
-  if (!teamData.value || !invitee) {
+  if (!teamData.value || !invitee || alreadyIn.value) {
     return
   }
 

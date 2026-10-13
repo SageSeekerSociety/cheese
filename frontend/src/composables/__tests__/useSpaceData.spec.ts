@@ -20,7 +20,7 @@ const addAdmin = vi.fn()
 const updateAdmin = vi.fn()
 const removeAdmin = vi.fn()
 
-vi.mock('@/network/api/spaces', () => ({
+vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     detail: (...a: unknown[]) => spaceDetail(...a),
     update: (...a: unknown[]) => spaceUpdate(...a),
@@ -81,18 +81,18 @@ function category(id: number, name = `分类 ${id}`) {
 beforeEach(() => {
   setActivePinia(createPinia())
   vi.spyOn(console, 'error').mockImplementation(() => {})
-  spaceDetail.mockReset().mockImplementation(async (id: number) => ({ data: { space: space(id) } }))
-  spaceUpdate.mockReset().mockImplementation(async (id: number) => ({ data: { space: space(id) } }))
-  listCategories.mockReset().mockImplementation(async () => ({ data: { categories: [category(1), category(2)] } }))
-  listDomainGroups.mockReset().mockImplementation(async () => ({ data: { groups: [] } }))
-  createCategory.mockReset().mockResolvedValue({ data: {} })
-  updateCategory.mockReset().mockResolvedValue({ data: {} })
-  deleteCategory.mockReset().mockResolvedValue({ data: {} })
-  archiveCategory.mockReset().mockResolvedValue({ data: {} })
-  unarchiveCategory.mockReset().mockResolvedValue({ data: {} })
-  addAdmin.mockReset().mockImplementation(async (id: number) => ({ data: { space: space(id) } }))
-  updateAdmin.mockReset().mockImplementation(async (id: number) => ({ data: { space: space(id) } }))
-  removeAdmin.mockReset().mockResolvedValue({ data: {} })
+  spaceDetail.mockReset().mockImplementation(async (id: number) => ({ space: space(id) }))
+  spaceUpdate.mockReset().mockImplementation(async (id: number) => ({ space: space(id) }))
+  listCategories.mockReset().mockImplementation(async () => ({ categories: [category(1), category(2)] }))
+  listDomainGroups.mockReset().mockImplementation(async () => ({ groups: [] }))
+  createCategory.mockReset().mockResolvedValue({})
+  updateCategory.mockReset().mockResolvedValue({})
+  deleteCategory.mockReset().mockResolvedValue({})
+  archiveCategory.mockReset().mockResolvedValue({})
+  unarchiveCategory.mockReset().mockResolvedValue({})
+  addAdmin.mockReset().mockImplementation(async (id: number) => ({ space: space(id) }))
+  updateAdmin.mockReset().mockImplementation(async (id: number) => ({ space: space(id) }))
+  removeAdmin.mockReset().mockResolvedValue({})
   vi.mocked(toast.error).mockClear()
   vi.mocked(toast.success).mockClear()
   // The toasts below are asserted in Chinese; the test environment's browser
@@ -128,7 +128,7 @@ describe('fetchSpace', () => {
     expect(state().categories).toEqual([])
     expect(state().currentSpaceId).toBe(SPACE_ID + 1)
 
-    release({ data: { space: space(SPACE_ID + 1) } })
+    release({ space: space(SPACE_ID + 1) })
     await pending
     expect(state().currentSpace?.id).toBe(SPACE_ID + 1)
     expect(before?.id).toBe(SPACE_ID)
@@ -142,7 +142,7 @@ describe('fetchSpace', () => {
     const pending = data().fetchSpace(SPACE_ID)
     expect(state().currentSpace?.id).toBe(SPACE_ID)
 
-    release({ data: { space: space(SPACE_ID) } })
+    release({ space: space(SPACE_ID) })
     await pending
   })
 
@@ -179,7 +179,7 @@ describe('fetchCategories', () => {
     const pending = data().fetchCategories()
     expect(state().loadingCategories).toBe(true)
 
-    release({ data: { categories: [] } })
+    release({ categories: [] })
     await pending
     expect(state().loadingCategories).toBe(false)
   })
@@ -212,7 +212,7 @@ describe('fetchDomainGroups', () => {
   })
 
   it('返回 null 当空列表存，不是 null', async () => {
-    listDomainGroups.mockResolvedValue({ data: { groups: null } })
+    listDomainGroups.mockResolvedValue({ groups: null })
 
     await data().fetchDomainGroups(SPACE_ID)
 
@@ -220,7 +220,7 @@ describe('fetchDomainGroups', () => {
   })
 
   it('失败了留着上一次那几组，只记一句', async () => {
-    listDomainGroups.mockResolvedValue({ data: { groups: [{ id: 1 }] } })
+    listDomainGroups.mockResolvedValue({ groups: [{ id: 1 }] })
     await data().fetchDomainGroups(SPACE_ID)
 
     listDomainGroups.mockRejectedValue(new Error('500'))
@@ -281,7 +281,7 @@ describe('分类的增删改', () => {
 describe('updateSpace', () => {
   it('把服务端回来的那版整个换进去，提示一句话', async () => {
     await data().fetchSpace(SPACE_ID)
-    spaceUpdate.mockResolvedValue({ data: { space: space(SPACE_ID, { name: '改过的名字' }) } })
+    spaceUpdate.mockResolvedValue({ space: space(SPACE_ID, { name: '改过的名字' }) })
 
     await data().updateSpace(SPACE_ID, { name: '改过的名字' })
 
@@ -323,7 +323,7 @@ describe('模板与公告', () => {
 
   it('删模板按下标删，改的是存进去的那一份', async () => {
     spaceDetail.mockResolvedValue({
-      data: { space: space(SPACE_ID, { taskTemplates: JSON.stringify([{ title: '甲' }, { title: '乙' }]) }) },
+      space: space(SPACE_ID, { taskTemplates: JSON.stringify([{ title: '甲' }, { title: '乙' }]) }),
     })
     await data().fetchSpace(SPACE_ID)
     spaceUpdate.mockClear()
@@ -342,12 +342,12 @@ describe('管理员', () => {
   })
 
   it('加、改都用服务端回来的那版板', async () => {
-    addAdmin.mockResolvedValue({ data: { space: space(SPACE_ID, { admins: [] }) } })
+    addAdmin.mockResolvedValue({ space: space(SPACE_ID, { admins: [] }) })
     await data().addAdmin(9, 'ADMIN')
     expect(addAdmin).toHaveBeenCalledWith(SPACE_ID, { userId: 9, role: 'ADMIN' })
     expect(state().currentSpace?.admins).toEqual([])
 
-    updateAdmin.mockResolvedValue({ data: { space: space(SPACE_ID, { name: '改过' }) } })
+    updateAdmin.mockResolvedValue({ space: space(SPACE_ID, { name: '改过' }) })
     await data().updateAdmin(9, 'OWNER')
     expect(state().currentSpace?.name).toBe('改过')
   })
@@ -367,12 +367,10 @@ describe('管理员', () => {
 
 describe('分类话题', () => {
   beforeEach(async () => {
-    spaceDetail.mockResolvedValue({
-      data: { space: space(SPACE_ID, { classificationTopics: [{ id: 1 }, { id: 2 }] }) },
-    })
+    spaceDetail.mockResolvedValue({ space: space(SPACE_ID, { classificationTopics: [{ id: 1 }, { id: 2 }] }) })
     // 服务端把改完之后的那张名单原样送回来，就像真接口那样。
     spaceUpdate.mockImplementation(async (id: number, patch: { classificationTopics: number[] }) => ({
-      data: { space: space(id, { classificationTopics: patch.classificationTopics.map((tid) => ({ id: tid })) }) },
+      space: space(id, { classificationTopics: patch.classificationTopics.map((tid) => ({ id: tid })) }),
     }))
     await data().fetchSpace(SPACE_ID)
     spaceUpdate.mockClear()

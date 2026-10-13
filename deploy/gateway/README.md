@@ -58,11 +58,14 @@ convention; they are estimates, not a live exchange rate. The pinned adapter
 keeps `output_config.effort` for `low`, `high`, and `max`, and removes the
 unsupported adaptive-thinking field.
 
-`deepseek-flash-ruc` is the same model self-hosted at RUC. Set
-`RUC_DEEPSEEK_API_BASE` (the endpoint's address, no path) and
-`RUC_DEEPSEEK_API_KEY` in `$HOME/gateway/compose/.env` before releasing. The
-endpoint admits campus addresses only, so a box serving it needs the route in
-docs/infrastructure.md ("Campus model API").
+`deepseek-flash` is served by RUC's self-hosted copy first, one deployment per
+RUC key, and by DeepSeek's API when every RUC key fails or is past its 3
+parallel requests. Set `RUC_DEEPSEEK_API_BASE` (the endpoint's address, no
+path) and `RUC_DEEPSEEK_API_KEY_1` to `RUC_DEEPSEEK_API_KEY_9` in
+`$HOME/gateway/compose/.env` before releasing: nine of the ten keys RUC
+issued, all but the one kept for tests. The endpoint admits campus
+addresses only, so a box serving it needs the route in docs/infrastructure.md
+("Campus model API").
 
 The gateway also joins `cheese-meter-gateway`, an internal network shared only
 with the metering proxy, where the proxy's ChatGPT accounts answer at
@@ -73,6 +76,13 @@ A request to a model routed there carries the caller's Claude Code session as
 the `session_id` header (`chatgpt_session.py`, registered under
 `litellm_settings.callbacks`). The Codex backend keeps a conversation on one
 machine by that header, and without it the conversation's prompt cache misses.
+
+A request to a model whose upstreams are all something other than Anthropic's
+API arrives there without the block Claude Code opens its system prompt with,
+`x-anthropic-billing-header: ...; cch=<hash>; ...` (`system_billing_line.py`,
+registered the same way). `cch` hashes the request body, so it changes on every
+request; at the head of the prompt it makes a prefix cache such as RUC's miss
+the whole conversation. Requests bound for Anthropic keep it.
 
 The box's `backend/.env` must contain:
 

@@ -13,12 +13,18 @@ const getCurrentUser = vi.fn()
 // The refresh endpoint, answered the way the server would.
 const refresh = vi.fn()
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
-    setTimezone: () => Promise.resolve({ data: {} }),
+    setTimezone: () => Promise.resolve({}),
   },
 }))
+
+// `account.ts` says something on screen when the server ends a sign-in. Nothing
+// here takes that path, but importing the module pulls vuetify-sonner in with
+// it, and the cold start that follows runs the first test's import past its 5s
+// timeout. Stubbed, the way `ErrorHandler.spec.ts` stubs it.
+vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 // Stands in for the browser's channel between tabs. A fresh one per test: the
 // real one would carry a message from one test's service into the next's.
@@ -68,7 +74,7 @@ beforeEach(() => {
   localStorage.clear()
   refresh.mockReset()
   getCurrentUser.mockReset()
-  getCurrentUser.mockResolvedValue({ data: { user: USER } })
+  getCurrentUser.mockResolvedValue({ user: USER })
   tabs = new Set()
   vi.stubGlobal('BroadcastChannel', FakeChannel)
   vi.stubGlobal('fetch', async (url: string) => {

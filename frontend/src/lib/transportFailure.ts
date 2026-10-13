@@ -9,7 +9,7 @@ import { t } from '@/i18n'
 // Cloudflare's 530 (error 1033: a tunnel that flapped), a captive portal's 200,
 // the SPA's own fallback — is the edge speaking for an app that did not, and
 // is neither a business error nor a success. Both API layers (`api.ts` on
-// fetch, `network/` on axios) come here, so the user reads one sentence
+// fetch, `api/**` on axios) come here, so the user reads one sentence
 // whichever layer the call went through.
 
 // A page instead of an envelope: the body is not a JSON object. The status

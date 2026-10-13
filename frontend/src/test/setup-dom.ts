@@ -1,0 +1,16 @@
+// happy-dom 缺、而每个浏览器都有的 DOM 接口，在这里补上。
+//
+// `document.elementsFromPoint`：Vuetify 的菜单「贴着鼠标位置打开」（`target` 是一个
+// 坐标，右键菜单就是这样）时，跟着滚动重新定位要拿它找那个坐标底下的元素。happy-dom
+// 没有它，菜单一开就在测试里抛一个没人接的异常。补一个「坐标底下什么都没有」的版本：
+// 测试里没有布局，本来也没有元素在哪个坐标上。
+if (typeof document.elementsFromPoint !== 'function') {
+  document.elementsFromPoint = () => []
+}
+
+// `getBBox`（SVG 元素）：画布（Vue Flow）量连线上那几个字有多大，好在字后面垫一块
+// 底色。happy-dom 不排版，补一个「量出来是零」的版本，和它别处一样什么都没有大小。
+const svg = (globalThis as { SVGElement?: { prototype: { getBBox?: unknown } } }).SVGElement
+if (svg && typeof svg.prototype.getBBox !== 'function') {
+  svg.prototype.getBBox = () => ({ x: 0, y: 0, width: 0, height: 0 })
+}

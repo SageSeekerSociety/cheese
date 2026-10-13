@@ -1,15 +1,13 @@
 """Project delivery: publish the accepted static website as a private Site."""
 
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.core.db import get_db
 from app.core.errors import AppError, AuthenticationRequiredError, BaseError
 from app.core.sentences import say
 from app.domain.site.hosting import content_origin
@@ -24,7 +22,6 @@ from app.domain.site.services import (
 )
 
 router = APIRouter(prefix="/projects", tags=["sites"])
-DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 
 class PublishSiteBody(BaseModel):

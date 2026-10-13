@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>出题引用外站题 · 每题可配领取审核 — 原型</title>
+<style>
+/* ---- token：照 frontend/src/style.css 的两套主题块抄下来（和同批的频道改动原型同一份） ---- */
+:root{
+  color-scheme:light;
+  --ink:#191a1c; --text:#36383c; --muted:#5a5e66; --faint:#747a82;
+  --line:#ecedef; --line-2:#e2e3e6; --fill:#f4f5f7; --fill-2:#eeeff1;
+  --canvas:#f7f8fa; --surface:#ffffff; --raised:#ffffff;
+  --accent:#f57f17; --accent-press:#d96e0a; --accent-ink:#9a5413; --accent-wash:#fdf1e2;
+  --ok:#1f9d55; --ok-ink:#12703a; --ok-wash:#e8f6ee;
+  --warn:#e8901c; --warn-ink:#8f5406; --warn-wash:#faf0dc;
+  --danger:#dc2626; --danger-ink:#b91c1c; --danger-wash:#fdecec;
+  --focus-ring:#c2570a; --overlay:rgba(25,26,28,.44);
+  --shadow-1:0 1px 2px rgba(25,26,28,.06), 0 2px 8px rgba(25,26,28,.06);
+  --shadow-2:0 4px 12px rgba(25,26,28,.1), 0 12px 32px rgba(25,26,28,.1);
+  --inverse-surface:#23242a; --inverse-ink:#fff; --inverse-fill:rgba(255,255,255,.14);
+  --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'PingFang SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --ink:#f3f4f6; --text:#d3d6db; --muted:#aeb4bd; --faint:#888ea0;
+  --line:#2b2e33; --line-2:#3a3e45; --fill:#212429; --fill-2:#282c31;
+  --canvas:#141517; --surface:#1b1d20; --raised:#212429;
+  --accent:#ffa733; --accent-press:#ffbc5e; --accent-ink:#ffc670; --accent-wash:#2e2216;
+  --ok:#3fbf7f; --ok-ink:#6fd9a0; --ok-wash:#14261d;
+  --warn:#f0a94a; --warn-ink:#f7c078; --warn-wash:#2a2114;
+  --danger:#f0625c; --danger-ink:#f79490; --danger-wash:#2e1a1a;
+  --focus-ring:rgba(255,167,51,.65); --overlay:rgba(0,0,0,.6);
+  --shadow-1:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
+  --shadow-2:0 4px 12px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
+  --inverse-surface:#3a3d44; --inverse-ink:#f3f4f6; --inverse-fill:rgba(255,255,255,.1);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--canvas);color:var(--text);
+  font-family:var(--font-sans);font-size:14px;line-height:20px;
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3,h4{margin:0;color:var(--ink);font-weight:600;text-wrap:balance}
+p{margin:0}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+input,select{font:inherit;color:var(--ink)}
+:focus-visible{outline:2px solid var(--focus-ring);outline-offset:2px;border-radius:4px}
+.t-meta{font-size:12px;line-height:18px;color:var(--muted)}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+/* ---- 页面外壳（不是产品的一部分） ---- */
+.chrome{
+  display:flex;align-items:center;gap:16px;flex-wrap:wrap;
+  padding:14px 24px;background:var(--surface);border-bottom:1px solid var(--line);
+  position:sticky;top:0;z-index:20;
+}
+.chrome__mark{
+  width:34px;height:34px;border-radius:var(--radius-md);flex:none;
+  background:linear-gradient(140deg,#f9b233,#e85d2c);color:#fff;
+  display:grid;place-items:center;font-weight:700;
+}
+.chrome__id{display:flex;align-items:center;gap:12px;min-width:0;flex-wrap:wrap}
+.chrome__id h1{font-size:17px;line-height:24px}
+.chrome__tools{margin-left:auto;display:flex;align-items:center;gap:8px}
+.tag{
+  font-size:11px;font-weight:600;color:var(--accent-ink);background:var(--accent-wash);
+  border-radius:var(--radius-pill);padding:2px 8px;
+}
+.tag--ok{color:var(--ok-ink);background:var(--ok-wash)}
+.tag--warn{color:var(--warn-ink);background:var(--warn-wash)}
+.tag--muted{color:var(--muted);background:var(--fill)}
+
+.tabs{display:flex;gap:4px;padding:0 24px;background:var(--surface);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tab{
+  padding:10px 14px;border-bottom:2px solid transparent;color:var(--muted);
+  font-weight:500;font-size:14px;
+}
+.tab.is-on{color:var(--accent-ink);border-bottom-color:var(--accent)}
+.tab:hover{color:var(--ink)}
+
+.stage{padding:20px 24px 48px;display:flex;flex-direction:column;gap:12px;align-items:center}
+.lead{max-width:1180px;width:100%;color:var(--muted);font-size:13px}
+.lead b{color:var(--ink)}
+
+/* ---- 浏览器框 + 假界面 ---- */
+.frame{
+  width:100%;max-width:1180px;background:var(--surface);
+  border:1px solid var(--line);border-radius:var(--radius-lg);
+  box-shadow:var(--shadow-2);overflow:hidden;
+}
+.frame__bar{
+  display:flex;align-items:center;gap:8px;padding:0 12px;height:36px;
+  background:var(--fill);border-bottom:1px solid var(--line);
+}
+.frame__dot{width:9px;height:9px;border-radius:var(--radius-pill);background:var(--line-2)}
+.frame__url{
+  margin-left:8px;flex:1;height:22px;border-radius:var(--radius-pill);
+  background:var(--surface);border:1px solid var(--line);
+  display:flex;align-items:center;padding:0 12px;font-size:12px;color:var(--muted);
+  font-family:var(--mono);overflow:hidden;white-space:nowrap;text-overflow:ellipsis;
+}
+.frame__scroll{overflow-x:auto}
+.app{min-width:1000px;background:var(--canvas);padding:0 0 40px}
+
+/* ---- 假界面的通用件 ---- */
+.bar{
+  display:flex;align-items:center;gap:12px;padding:14px 24px;
+  background:var(--surface);border-bottom:1px solid var(--line);
+}
+.bar h2{font-size:16px;line-height:24px}
+.bar__tools{margin-left:auto;display:flex;gap:8px;align-items:center}
+.wrap{max-width:760px;margin:24px auto 0;padding:0 24px;display:flex;flex-direction:column;gap:8px}
+.wrap--wide{max-width:860px}
+
+.sec{padding:20px 0;border-bottom:1px solid var(--line)}
+.sec__head{display:flex;align-items:center;gap:8px;margin-bottom:14px;min-height:28px}
+.sec__head h3{font-size:15px;line-height:22px}
+.sec__head .sp{margin-left:auto;display:flex;gap:8px}
+.sec--new{
+  background:var(--accent-wash);border-radius:var(--radius-md);
+  padding:16px;margin:0 -16px;border-bottom:1px solid var(--line);
+}
+.fields{display:flex;flex-direction:column;gap:14px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+
+.field{display:flex;flex-direction:column;gap:6px}
+.field__label{font-size:13px;font-weight:500;color:var(--text)}
+.field__label .req{color:var(--danger-ink)}
+.field__label .opt{color:var(--muted)}
+.field__hint{font-size:12px;line-height:18px;color:var(--muted)}
+.field__err{font-size:12px;line-height:18px;color:var(--danger-ink)}
+.input{
+  height:36px;border:1px solid var(--line-2);border-radius:var(--radius-md);
+  background:var(--surface);padding:0 12px;font-size:14px;width:100%;
+}
+.input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-wash)}
+select.input{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),linear-gradient(135deg,var(--muted) 50%,transparent 50%);background-position:calc(100% - 16px) 15px,calc(100% - 11px) 15px;background-size:5px 5px;background-repeat:no-repeat}
+
+.seg{display:inline-flex;background:var(--fill);border-radius:var(--radius-md);padding:2px;gap:2px}
+.seg__opt{
+  padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;color:var(--muted);
+}
+.seg__opt.is-on{background:var(--surface);color:var(--ink);box-shadow:var(--shadow-1)}
+
+.btn{
+  height:36px;padding:0 16px;border-radius:var(--radius-md);font-size:14px;font-weight:500;
+  border:1px solid var(--line-2);background:var(--surface);color:var(--ink);
+  display:inline-flex;align-items:center;gap:8px;white-space:nowrap;
+}
+.btn:hover{background:var(--fill)}
+.btn--primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn--primary:hover{background:var(--accent-press);border-color:var(--accent-press)}
+.btn--lg{height:42px;padding:0 22px;font-size:15px}
+.btn--sm{height:30px;padding:0 12px;font-size:13px}
+.btn--ghost{border-color:transparent;background:transparent;color:var(--accent-ink)}
+.btn--ghost:hover{background:var(--accent-wash)}
+.btn[disabled]{opacity:.5;cursor:not-allowed;background:var(--fill);color:var(--muted);border-color:var(--line)}
+
+.chip{
+  display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 10px;
+  border-radius:var(--radius-pill);font-size:12px;font-weight:500;
+  background:var(--fill);color:var(--text);border:1px solid var(--line);
+}
+.chip--accent{background:var(--accent-wash);color:var(--accent-ink);border-color:transparent}
+.chip--ok{background:var(--ok-wash);color:var(--ok-ink);border-color:transparent}
+.chip--warn{background:var(--warn-wash);color:var(--warn-ink);border-color:transparent}
+
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--radius-lg);
+  padding:18px;box-shadow:var(--shadow-1);
+}
+.card__t{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card__t h3{font-size:17px;line-height:26px}
+.kv{display:flex;gap:18px;flex-wrap:wrap;margin-top:8px}
+.kv div{font-size:12px;color:var(--muted)}
+.kv b{color:var(--ink);font-weight:600}
+
+.note{
+  display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--radius-md);
+  font-size:13px;line-height:20px;
+}
+.note--info{background:var(--fill);color:var(--text)}
+.note--accent{background:var(--accent-wash);color:var(--accent-ink)}
+.note--ok{background:var(--ok-wash);color:var(--ok-ink)}
+.note--warn{background:var(--warn-wash);color:var(--warn-ink)}
+.note--danger{background:var(--danger-wash);color:var(--danger-ink)}
+.note b{font-weight:600}
+
+.row{
+  display:flex;align-items:center;gap:14px;padding:14px;border:1px solid var(--line);
+  border-radius:var(--radius-md);background:var(--surface);flex-wrap:wrap;
+}
+.row + .row{margin-top:8px}
+.row__who{font-weight:600;color:var(--ink);min-width:64px}
+.row__meta{font-size:12px;color:var(--muted)}
+.row__why{flex:1;min-width:200px;font-size:13px;color:var(--muted)}
+.row__acts{margin-left:auto;display:flex;gap:8px}
+
+.switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer}
+.switch__t{width:40px;height:24px;border-radius:var(--radius-pill);background:var(--line-2);position:relative;transition:background .15s;flex:none}
+.switch__t::after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:var(--shadow-1);transition:transform .15s}
+.switch.is-on .switch__t{background:var(--accent)}
+.switch.is-on .switch__t::after{transform:translateX(16px)}
+.switch__label{font-size:14px;color:var(--ink);font-weight:500}
+
+.link{color:var(--accent-ink);text-decoration:none;border-bottom:1px solid currentColor}
+.link:hover{color:var(--accent-press)}
+
+.claimbox{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:16px;border:1px solid var(--line);border-radius:var(--radius-md);background:var(--surface)}
+.timeline{display:flex;flex-direction:column;gap:6px;margin-top:10px}
+.tl{display:flex;gap:10px;align-items:baseline;font-size:13px;color:var(--muted)}
+.tl__dot{width:8px;height:8px;border-radius:50%;background:var(--line-2);flex:none;margin-top:6px}
+.tl.is-on .tl__dot{background:var(--accent)}
+.tl.is-on{color:var(--ink)}
+
+.changes{display:flex;flex-direction:column;gap:16px}
+.changes h3{font-size:15px}
+.changes ol{margin:8px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:6px}
+.changes li{font-size:13px;line-height:20px;color:var(--text)}
+.changes code{font-family:var(--mono);font-size:12px;background:var(--fill);border-radius:4px;padding:1px 5px;color:var(--ink)}
+.changes li b{color:var(--ink)}
+@media (max-width:760px){ .chrome{padding:12px 16px} .tabs{padding:0 16px} .stage{padding:16px 12px 40px} .grid2{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+
+<header class="chrome">
+  <div class="chrome__mark">知</div>
+  <div class="chrome__id">
+    <h1>出题引用外站题 · 每题可配领取审核</h1>
+    <span class="tag">原型</span>
+  </div>
+  <div class="chrome__tools">
+    <span class="t-meta" id="theme-label">浅色</span>
+    <button class="btn btn--sm" id="theme-btn">切换深浅</button>
+  </div>
+</header>
+
+<nav class="tabs" id="tabs"></nav>
+
+<main class="stage">
+  <p class="lead" id="lead"></p>
+  <div class="frame">
+    <div class="frame__bar">
+      <span class="frame__dot"></span><span class="frame__dot"></span><span class="frame__dot"></span>
+      <span class="frame__url" id="frame-url">okcheese.com</span>
+      <span class="tag tag--muted">假界面</span>
+    </div>
+    <div class="frame__scroll"><div class="app" id="screen"></div></div>
+  </div>
+</main>
+
+<script>
+/* ==========================================================================
+   状态：三屏共用这一份。在「出题表单」里改开关、改来源，「题目详情」和
+   「领取者」当场跟着变——这正是要给人看的那件事。数据是造的，没有后端。
+   ========================================================================== */
+var S = {
+  screen: 'form',
+  sourceKind: 'external',      // site | external
+  platform: 'luogu',           // luogu | yoj
+  link: 'https://www.luogu.com.cn/problem/P1001',
+  problemId: 'P1001',
+  platformFollowed: false,     // 平台是不是刚被链接带着切的
+  requireReview: true,         // 「领取后需要教师审核」
+  claim: 'none',               // none | pending | approved | rejected
+  toast: ''
+};
+
+var PLATFORMS = {
+  luogu: { name: '洛谷', example: 'https://www.luogu.com.cn/problem/P1001', verified: true },
+  yoj:   { name: 'YOJ',  example: 'https://yoj.ruc.edu.cn/problem/1001',      verified: false }
+};
+
+var TASK = { name: 'A+B Problem', teacher: '王老师', deadlineDays: 30 };
+
+var TABS = [
+  { key: 'form',      label: '出题表单' },
+  { key: 'detail',    label: '题目详情' },
+  { key: 'claimants', label: '领取者' },
+  { key: 'changes',   label: '改动清单' }
+];
+
+var LEADS = {
+  form: '发题页新增两处：<b>「题目来源」</b>一节（本站出题 / 引用外部平台，贴链接自动认平台和题号），和<b>「参与」</b>一节末尾的开关 <b>「领取后需要教师审核」</b>。改这里，另两屏当场跟着变。',
+  detail: '同学看到的题目页：<b>来源徽标 + 「去做这道题」外链</b>，以及<b>领取按钮的两种走法</b>——要审核的题领取后进待批，免审的题领取即通过、当场开始计时。',
+  claimants: '出题人审领取申请的那一页：<b>要审核的题</b>有待审行和通过 / 拒绝；<b>免审的题</b>底下没有待审那一栏。',
+  changes: '真要落地时改哪些地方（<b>这一屏不是原型界面，是清单</b>）。'
+};
+
+/* ---- 从链接里认出平台和题号 ---- */
+function parseLink(url) {
+  var m = /luogu\.com\.cn\/problem\/([A-Za-z]?\d+)/i.exec(url);
+  if (m) return { platform: 'luogu', id: m[1].toUpperCase() };
+  m = /yoj\.ruc\.edu\.cn\/problem\/(\d+)/i.exec(url);
+  if (m) return { platform: 'yoj', id: m[1] };
+  return null;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function resetClaim() { S.claim = 'none'; }
+function claimNow() { S.claim = S.requireReview ? 'pending' : 'approved'; }
+function reviewClaim(a) { S.claim = a; }
+
+/* ==========================================================================
+   出题表单
+   ========================================================================== */
+function screenForm() {
+  var ext = S.sourceKind === 'external';
+  var parsed = parseLink(S.link);
+  var plat = PLATFORMS[S.platform];
+
+  var sourceWorked = 'https://okcheese.com/spaces/12/tasks/new';
+
+  var html = '';
+  html += '<div class="bar"><h2>发布新题目</h2><div class="bar__tools">';
+  html += '<button class="btn btn--sm">保存草稿</button>';
+  html += '<button class="btn btn--sm btn--primary" data-act="publish">发布</button>';
+  html += '</div></div>';
+
+  html += '<div class="wrap">';
+
+  /* 基本信息 */
+  html += '<section class="sec"><div class="sec__head"><h3>基本信息</h3></div><div class="fields">';
+  html += '<div class="field"><label class="field__label" for="f-name">题目名称<span class="req">*</span></label>';
+  html += '<input class="input" id="f-name" value="' + esc(TASK.name) + '"></div>';
+  html += '<div class="field"><label class="field__label" for="f-intro">一句话简介</label>';
+  html += '<input class="input" id="f-intro" value="输入两个整数，输出它们的和。"></div>';
+  html += '</div></section>';
+
+  /* 题目来源 —— 新增 */
+  html += '<section class="sec sec--new"><div class="sec__head"><h3>题目来源</h3><span class="tag">新增</span>';
+  html += '<span class="sp"><span class="t-meta">默认「本站出题」</span></span></div><div class="fields">';
+  html += '<div class="field"><span class="field__label">这道题从哪来</span>';
+  html += '<div class="seg" role="radiogroup" aria-label="题目来源">';
+  html += '<button class="seg__opt' + (!ext ? ' is-on' : '') + '" data-act="source" data-v="site">本站出题</button>';
+  html += '<button class="seg__opt' + (ext ? ' is-on' : '') + '" data-act="source" data-v="external">引用外部平台</button>';
+  html += '</div></div>';
+
+  if (ext) {
+    html += '<div class="grid2">';
+    html += '<div class="field"><label class="field__label" for="f-plat">平台</label>';
+    html += '<select class="input" id="f-plat" data-act="platform">';
+    html += '<option value="luogu"' + (S.platform === 'luogu' ? ' selected' : '') + '>洛谷</option>';
+    html += '<option value="yoj"' + (S.platform === 'yoj' ? ' selected' : '') + '>YOJ</option>';
+    html += '</select></div>';
+    html += '<div class="field"><label class="field__label" for="f-link">题目链接</label>';
+    html += '<input class="input" id="f-link" data-act="link" value="' + esc(S.link) + '" placeholder="https://…">';
+    html += '<span class="field__hint">只收 http(s) 链接；贴上来自动认平台和题号。</span></div>';
+    html += '</div>';
+
+    if (parsed && parsed.platform === S.platform) {
+      html += '<div class="note note--ok"><span>已认出：<b>' + esc(PLATFORMS[parsed.platform].name) + ' ' + esc(parsed.id) + '</b>' +
+              (PLATFORMS[parsed.platform].verified ? '' : '　<span class="tag tag--warn">链接格式待核实</span>') +
+              '　<span class="t-meta">（题号已自动填好，仍可改）</span>' +
+              (S.platformFollowed ? '　<span class="t-meta">平台已跟着链接切过来</span>' : '') +
+              '</span></div>';
+    } else if (parsed) {
+      html += '<div class="note note--warn"><span>链接看着是<b>' + esc(PLATFORMS[parsed.platform].name) + ' ' + esc(parsed.id) + '</b> 的题，和上面选的「' + esc(PLATFORMS[S.platform].name) + '」对不上——题号按链接填。' +
+              '<button class="btn btn--sm btn--ghost" data-act="uselink">平台改成' + esc(PLATFORMS[parsed.platform].name) + '</button></span></div>';
+    } else if (S.link.trim()) {
+      html += '<div class="note note--danger"><span>这个链接认不出平台，下面手动选平台、填题号。</span></div>';
+    }
+
+    html += '<div class="grid2">';
+    html += '<div class="field"><label class="field__label" for="f-id">题目编号<span class="opt">（选填）</span></label>';
+    html += '<input class="input" id="f-id" data-act="pid" value="' + esc(S.problemId) + '"></div>';
+    html += '<div class="field"><span class="field__label">示例链接</span><div class="seg">';
+    html += '<button class="seg__opt" data-act="example" data-v="luogu">洛谷示例</button>';
+    html += '<button class="seg__opt" data-act="example" data-v="yoj">YOJ 示例</button>';
+    html += '</div></div>';
+    html += '</div>';
+  }
+  html += '</div></section>';
+
+  /* 参与 —— 含新开关 */
+  html += '<section class="sec"><div class="sec__head"><h3>参与</h3><span class="tag">新增开关</span></div><div class="fields">';
+  html += '<div class="grid2">';
+  html += '<div class="field"><span class="field__label">参与方式<span class="req">*</span></span>';
+  html += '<div class="seg"><button class="seg__opt is-on">个人</button><button class="seg__opt">团队</button></div></div>';
+  html += '<div class="field"><span class="field__label">难度<span class="req">*</span></span>';
+  html += '<div class="seg"><button class="seg__opt is-on">入门</button><button class="seg__opt">进阶</button><button class="seg__opt">挑战</button></div></div>';
+  html += '</div>';
+  html += '<div class="grid2">';
+  html += '<div class="field"><label class="field__label" for="f-limit">参与人数上限</label>';
+  html += '<input class="input" id="f-limit" placeholder="不填＝不限"></div>';
+  html += '<div class="field"><label class="field__label" for="f-days">默认完成期限（天）</label>';
+  html += '<input class="input" id="f-days" value="' + TASK.deadlineDays + '"></div>';
+  html += '</div>';
+
+  html += '<div class="field"><span class="field__label">领取审核</span>';
+  html += '<div class="switch' + (S.requireReview ? ' is-on' : '') + '" data-act="review" role="switch" aria-checked="' + S.requireReview + '" tabindex="0">';
+  html += '<span class="switch__t"></span><span class="switch__label">领取后需要教师审核</span></div>';
+  html += '<span class="field__hint">' + (S.requireReview
+      ? '开启：同学领取后进待审，你在这道题的「领取者」页通过之后才开始计时。'
+      : '关闭：同学点领取即通过，当场开始计时。') + '</span></div>';
+
+  html += '</div></section>';
+
+  /* 顺带：另外几节只留个概貌 */
+  html += '<section class="sec"><div class="sec__head"><h3>提交与评审</h3></div>';
+  html += '<p class="t-meta">（这一节这次不改，原型里略过。）</p></section>';
+
+  html += '<div class="sec__head" style="justify-content:flex-end">';
+  html += '<button class="btn">保存草稿</button>';
+  html += '<button class="btn btn--primary" data-act="publish">发布题目</button></div>';
+  html += '</div>';
+
+  return { url: sourceWorked, html: html };
+}
+
+/* ==========================================================================
+   题目详情（同学看到的）
+   ========================================================================== */
+function screenDetail() {
+  var ext = S.sourceKind === 'external';
+  var parsed = parseLink(S.link);
+  var platName = parsed ? PLATFORMS[parsed.platform].name : '';
+  var pid = parsed ? parsed.id : S.problemId;
+
+  var html = '';
+  html += '<div class="bar"><h2>题目详情</h2><div class="bar__tools"><span class="t-meta">以同学身份看这道题</span></div></div>';
+  html += '<div class="wrap wrap--wide">';
+
+  /* 题目卡 */
+  html += '<div class="card"><div class="card__t"><h3>' + esc(TASK.name) + '</h3>';
+  if (ext && parsed) {
+    html += '<span class="chip chip--accent">来自 ' + esc(platName) + ' ' + esc(pid) + '</span>';
+  } else {
+    html += '<span class="chip">本站出题</span>';
+  }
+  html += '</div>';
+  html += '<div class="kv"><div>出题人 <b>' + esc(TASK.teacher) + '</b></div><div>难度 <b>入门</b></div><div>完成期限 <b>' + TASK.deadlineDays + ' 天</b></div></div>';
+
+  if (ext && parsed) {
+    html += '<div class="note note--info" style="margin-top:14px"><span>';
+    html += '<b>这道题在 ' + esc(platName) + ' 上：</b>';
+    html += '<a class="link" href="' + esc(S.link) + '" target="_blank" rel="noopener noreferrer">' + esc(pid) + ' · 去做这道题 ↗</a>';
+    html += '<br><span class="t-meta">在外站做完，回知是提交链接或截图，老师照常评审。' + (parsed.platform === 'yoj' ? '（YOJ 链接格式待核实）' : '') + '</span>';
+    html += '</span></div>';
+  }
+  html += '</div>';
+
+  /* 本题设置：与出题页同一个开关 */
+  html += '<div class="note note--accent" style="justify-content:space-between;align-items:center"><span><b>本题设置</b>　这道题' + (S.requireReview ? '要求领取后教师审核' : '免审：领取即通过') + '</span>';
+  html += '<span class="switch' + (S.requireReview ? ' is-on' : '') + '" data-act="review" role="switch" aria-checked="' + S.requireReview + '" tabindex="0" style="margin-left:auto"><span class="switch__t"></span><span class="switch__label">领取后需要教师审核</span></span></div>';
+  html += '<p class="t-meta">（和出题页「参与」一节里那个开关是同一个：这里拨一下，出题页也变。）</p>';
+
+  /* 领取区 */
+  var st = S.claim;
+  var btn, cls = 'btn btn--lg', disabled = '';
+  if (st === 'none') { btn = '领取这道题'; cls += ' btn--primary'; }
+  else if (st === 'pending') { btn = '领取申请待批准'; disabled = ' disabled'; }
+  else if (st === 'approved') { btn = '已领取'; disabled = ' disabled'; }
+  else { btn = '领取申请被拒绝'; disabled = ' disabled'; }
+
+  html += '<div class="claimbox">';
+  html += '<div><div style="font-weight:600;color:var(--ink)">参加这道题</div>';
+  html += '<div class="t-meta">' + (S.requireReview ? '要审核：领取后等出题人通过' : '免审：领取即开始') + '</div></div>';
+  html += '<button class="' + cls + '"' + disabled + ' data-act="claim" style="margin-left:auto">' + esc(btn) + '</button>';
+  html += '</div>';
+
+  /* 状态说明时间线 */
+  html += '<div class="timeline">';
+  if (S.requireReview) {
+    html += tl(st !== 'none', '提交领取申请');
+    html += tl(st === 'approved', '出题人通过（在「领取者」页点通过）');
+    html += tl(st === 'approved', '开始计时：' + TASK.deadlineDays + ' 天（通过那一刻起算）');
+  } else {
+    html += tl(st === 'approved', '领取即通过（本题免审，没有审批这一步）');
+    html += tl(st === 'approved', '开始计时：' + TASK.deadlineDays + ' 天（领取那一刻起算）');
+  }
+  html += tl(st === 'approved', '工作区就绪，可以下载题目、提交作业');
+  html += '</div>';
+
+  if (st === 'rejected') {
+    html += '<div class="note note--danger">领取申请被拒绝。可以改改申请理由再领一次。</div>';
+  }
+
+  /* 提交区 */
+  html += '<section class="sec"><div class="sec__head"><h3>提交</h3></div>';
+  html += '<p class="t-meta">' + (ext ? '在外站把这道题做掉，回到这里交<b>题目链接</b>或<b>截图</b>。' : '在知是里直接提交。') + '</p>';
+  html += '<div style="margin-top:12px"><button class="btn"' + (st === 'approved' ? '' : ' disabled') + ' data-act="submit">提交作业</button></div></section>';
+
+  html += '<div class="note note--info" style="margin-top:8px"><span class="t-meta">这一屏只演领取这一段；提交之后怎么评审、怎么算分，这次不改。</span></div>';
+  html += '</div>';
+
+  return { url: 'https://okcheese.com/tasks/4821', html: html };
+}
+
+function tl(on, text) {
+  return '<div class="tl' + (on ? ' is-on' : '') + '"><span class="tl__dot"></span><span>' + text + '</span></div>';
+}
+
+/* ==========================================================================
+   领取者（出题人审领取申请）
+   ========================================================================== */
+function screenClaimants() {
+  var html = '';
+  html += '<div class="bar"><h2>领取者 · ' + esc(TASK.name) + '</h2>';
+  html += '<div class="bar__tools"><span class="chip ' + (S.requireReview ? 'chip--warn' : 'chip--ok') + '">' + (S.requireReview ? '本题要求审核' : '本题免审') + '</span></div></div>';
+  html += '<div class="wrap wrap--wide">';
+
+  if (S.requireReview) {
+    var pendingCount = (S.claim === 'pending' ? 1 : 0) + 1; // 张同学按状态 + 李同学固定一条
+    html += '<section class="sec"><div class="sec__head"><h3>待审核</h3><span class="chip chip--warn">' + pendingCount + ' 条</span></div>';
+
+    if (S.claim === 'approved') {
+      html += '<div class="note note--ok">张同学的领取申请已通过。</div>';
+    } else if (S.claim === 'rejected') {
+      html += '<div class="note note--danger">张同学的领取申请已被拒绝。</div>';
+    } else if (S.claim === 'pending') {
+      html += row('张同学', '今天 09:14 提交', '想用这道题练手，之前学过一点 C++。', true);
+    }
+
+    html += row('李同学', '昨天 20:03 提交', '课堂上被要求做这道题。', true);
+    html += '<p class="t-meta" style="margin-top:10px">点「通过」后，这位同学才开始计时、工作区才开；「拒绝」也能写个理由。</p>';
+    html += '</section>';
+  } else {
+    html += '<div class="note note--ok"><span><b>本题免审</b>：同学领取即通过，所以这里没有「待审核」那一栏。下面就是领取名单。</span></div>';
+  }
+
+  html += '<section class="sec"><div class="sec__head"><h3>已通过</h3></div>';
+  html += row('王同学', '前天 14:20 通过', '', false);
+  if (S.claim === 'approved') {
+    html += row('张同学', S.requireReview ? '刚才由你通过' : '免审，领取即通过', '', false);
+  }
+  if (!S.requireReview) {
+    html += row('李同学', '免审，领取即通过', '', false);
+  }
+  html += '</section>';
+
+  html += '</div>';
+  return { url: 'https://okcheese.com/tasks/4821/participants', html: html };
+}
+
+function row(who, meta, why, actions) {
+  var h = '<div class="row"><span class="row__who">' + esc(who) + '</span>';
+  h += '<span class="row__meta">' + esc(meta) + '</span>';
+  if (why) h += '<span class="row__why">' + esc(why) + '</span>';
+  if (actions) {
+    h += '<span class="row__acts">';
+    h += '<button class="btn btn--sm btn--primary" data-act="pass" data-who="' + esc(who) + '">通过</button>';
+    h += '<button class="btn btn--sm" data-act="reject" data-who="' + esc(who) + '">拒绝</button>';
+    h += '</span>';
+  }
+  h += '</div>';
+  return h;
+}
+
+/* ==========================================================================
+   改动清单
+   ========================================================================== */
+function screenChanges() {
+  var h = '';
+  h += '<div class="bar"><h2>改动清单</h2><div class="bar__tools"><span class="t-meta">真要落地时改这些地方</span></div></div>';
+  h += '<div class="wrap wrap--wide changes">';
+
+  h += '<section class="sec"><div class="sec__head"><h3>A. 出题时引用外部平台的题</h3></div><ol>';
+  h += '<li><b>数据</b>：<code>task</code> 表加一列存外部题（平台 / 题号 / 链接，建议一格 JSON），配迁移。</li>';
+  h += '<li><b>后端</b>：<code>POST /tasks</code>、<code>PATCH /tasks/{id}</code>、序列化各加该字段；链接只收 http(s)。</li>';
+  h += '<li><b>前端</b>：新增一个「题目来源」表单节，接进发题表单（<code>TaskForm.vue</code> 与 <code>useTaskForm.ts</code> 的 zod 表、初值、提交组装）。</li>';
+  h += '<li><b>前端</b>：题目详情页显示来源徽标 + 「去做这道题」外链。</li>';
+  h += '<li><b>前端</b>：链接认出什么平台就填什么，平台下拉跟着它走；手动选的平台和链接对不上时以链接为准并提示。</li>';
+  h += '<li><b>不做</b>：外站成绩自动同步。洛谷没有面向第三方的公开接口，YOJ 未核实；文案里不承诺。</li>';
+  h += '</ol></section>';
+
+  h += '<section class="sec"><div class="sec__head"><h3>B. 每道题可配「领取后是否需要教师审核」</h3><span class="tag">不是加功能</span></div>';
+  h += '<p class="t-meta" style="margin-bottom:8px">今天每道题的领取都要教师批：领取接口都硬写「待审核」（<code>participation.py</code> 三处），出题人在「领取者」页点通过，同学工作区才开。这一版是把这固定的一步变成可关的。</p><ol>';
+  h += '<li><b>数据</b>：<code>task</code> 表加一列（如 <code>require_claim_review</code>，默认「要审核」），配迁移——老题行为不变。</li>';
+  h += '<li><b>后端</b>：<code>POST /tasks</code>、<code>PATCH /tasks/{id}</code>、序列化各加该字段。</li>';
+  h += '<li><b>后端</b>：领取的三个入口（个人自领 / 出题人代领 / 团队领）按这个字段决定「待审核」还是「直接通过」。</li>';
+  h += '<li><b>后端</b>：关掉审核会跳过三件事，要在领取那一步补上等价处理——① 个人提交期限（今天在通过那一刻由出题人给；免审要按「现在 + 本题默认天数」当场算）；② 工作区激活（今天只在审批那一步调）；③ 人数上限 / 实名 / 队伍规模三道校验（今天挂在审批分支上）。</li>';
+  h += '<li><b>前端</b>：发题表单「参与」一节加这个开关；题目详情页领取按钮按它走两种状态。</li>';
+  h += '<li><b>前端</b>：「领取者」页：要审的题有待审行（通过 / 拒绝），免审的题没有待审那一栏。</li>';
+  h += '</ol></section>';
+
+  h += '<div class="note note--info"><span>本页是<b>改动原型</b>：界面是手绘的假界面（令牌抄自 <code>frontend/src/style.css</code>），数据是造的，产品代码一行没动。真做的时候以上面这份清单为准。</span></div>';
+  h += '</div>';
+  return { url: 'okcheese.com — 改动清单', html: h };
+}
+
+/* ==========================================================================
+   渲染与交互
+   ========================================================================== */
+var SCREENS = { form: screenForm, detail: screenDetail, claimants: screenClaimants, changes: screenChanges };
+
+function renderTabs() {
+  var h = '';
+  for (var i = 0; i < TABS.length; i++) {
+    h += '<button class="tab' + (S.screen === TABS[i].key ? ' is-on' : '') + '" data-act="tab" data-v="' + TABS[i].key + '" role="tab" aria-selected="' + (S.screen === TABS[i].key) + '">' + TABS[i].label + '</button>';
+  }
+  document.getElementById('tabs').innerHTML = h;
+}
+
+function render() {
+  renderTabs();
+  document.getElementById('lead').innerHTML = LEADS[S.screen];
+  var out = SCREENS[S.screen]();
+  document.getElementById('frame-url').textContent = out.url;
+  document.getElementById('screen').innerHTML = out.html;
+}
+
+function setTheme(dark) {
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  document.getElementById('theme-label').textContent = dark ? '深色' : '浅色';
+  try { localStorage.setItem('cheesex.theme', dark ? 'dark' : 'light'); } catch (e) {}
+}
+
+function onClick(e) {
+  var el = e.target.closest('[data-act]');
+  if (!el) return;
+  var act = el.getAttribute('data-act');
+  var v = el.getAttribute('data-v');
+
+  if (act === 'tab') { S.screen = v; try { location.hash = v; } catch (err) {} }
+  else if (act === 'source') { S.sourceKind = v; resetClaim(); }
+  else if (act === 'platform') { S.platform = el.value; S.platformFollowed = false; if (!S.link.trim()) { S.link = PLATFORMS[el.value].example; var p = parseLink(S.link); S.problemId = p ? p.id : ''; } resetClaim(); }
+  else if (act === 'uselink') { var u = parseLink(S.link); if (u) { S.platform = u.platform; S.platformFollowed = true; S.problemId = u.id; } }
+  else if (act === 'example') { S.platform = v; S.platformFollowed = false; S.link = PLATFORMS[v].example; var q = parseLink(S.link); S.problemId = q ? q.id : ''; }
+  else if (act === 'review') {
+    S.requireReview = !S.requireReview;
+    if (S.claim === 'pending') S.claim = 'none'; // 换了要不要审，先把领的申请收回来重演
+  }
+  else if (act === 'claim') { claimNow(); }
+  else if (act === 'pass') { reviewClaim('approved'); }
+  else if (act === 'reject') { reviewClaim('rejected'); }
+  else if (act === 'publish') { /* 假按钮 */ }
+  else if (act === 'submit') { /* 假按钮 */ }
+  else { return; }
+  render();
+}
+
+/* 链接和题号是输入框，改动走 input 事件（点选走上面的委托）。 */
+function onInput(e) {
+  var el = e.target;
+  var act = el.getAttribute && el.getAttribute('data-act');
+  if (act === 'link') {
+    S.link = el.value;
+    var p = parseLink(S.link);
+    if (p) { S.platformFollowed = (S.platform !== p.platform); S.platform = p.platform; S.problemId = p.id; }
+    else { S.platformFollowed = false; }
+    var keep = el.selectionStart;
+    render();
+    var again = document.getElementById('f-link');
+    if (again) { again.focus(); try { again.setSelectionRange(keep, keep); } catch (err) {} }
+  } else if (act === 'pid') {
+    S.problemId = el.value;
+  }
+}
+
+document.addEventListener('click', onClick);
+document.addEventListener('input', onInput);
+document.addEventListener('keydown', function (e) {
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.classList && e.target.classList.contains('switch')) {
+    e.preventDefault(); onClick({ target: e.target });
+  }
+});
+
+document.getElementById('theme-btn').addEventListener('click', function () {
+  setTheme(document.documentElement.getAttribute('data-theme') !== 'dark');
+});
+
+(function boot() {
+  var pref = 'light';
+  try { var stored = localStorage.getItem('cheesex.theme'); if (stored === 'dark' || stored === 'light') pref = stored; } catch (e) {}
+  setTheme(pref === 'dark');
+  var h = (location.hash || '').replace('#', '');
+  if (SCREENS[h]) S.screen = h;
+  render();
+})();
+</script>
+</body>
+</html>

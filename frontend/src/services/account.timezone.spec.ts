@@ -7,13 +7,19 @@ const setTimezone = vi.fn()
 const setLanguage = vi.fn()
 const getCurrentUser = vi.fn()
 
-vi.mock('@/network/api/users', () => ({
+vi.mock('@/api/users', () => ({
   UserApi: {
     setTimezone: (...args: unknown[]) => setTimezone(...args),
     setLanguage: (...args: unknown[]) => setLanguage(...args),
     getCurrentUser: (...args: unknown[]) => getCurrentUser(...args),
   },
 }))
+
+// `account.ts` says something on screen when the server ends a sign-in. Nothing
+// here takes that path, but importing the module pulls vuetify-sonner in with
+// it, and that cold start is enough to run `freshPage`'s import past the 5s test
+// timeout. Stubbed, the way `ErrorHandler.spec.ts` stubs it.
+vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 class LoneTab {
   addEventListener() {}
@@ -42,9 +48,9 @@ async function freshPage() {
 beforeEach(() => {
   localStorage.clear()
   setTimezone.mockReset()
-  setTimezone.mockResolvedValue({ data: { timezone: browserZone } })
+  setTimezone.mockResolvedValue({ timezone: browserZone })
   setLanguage.mockReset()
-  setLanguage.mockResolvedValue({ data: { language: 'zh-CN' } })
+  setLanguage.mockResolvedValue({ language: 'zh-CN' })
   getCurrentUser.mockReset()
   vi.stubGlobal('BroadcastChannel', LoneTab)
 })

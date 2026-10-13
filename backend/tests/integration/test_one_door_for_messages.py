@@ -9,9 +9,10 @@ in the order they were sent.
 
 import uuid
 
-from tests.conftest import wait_work_idle
+from tests.conftest import seed_user, wait_work_idle
 from tests.integration.conftest import (
     in_thread,
+    inbox,
     join_project_team,
     post_message,
     post_project,
@@ -156,13 +157,11 @@ def test_a_message_that_names_nobody_wakes_nobody(client, stub_hooks):
 
 
 def test_naming_a_person_tells_them(client):
-    project_id, topic_id = _room(client, members=("bob",))
+    seed_user(client, "bob")
+    _, topic_id = _room(client, members=("bob",))
     post_message(client, topic_id, "alice", {"content": "<@bob> 帮我看下数据"})
 
-    alerts = client.get(
-        f"/projects/{project_id}/alerts", headers=session_auth_headers("bob")
-    ).json()["data"]["data"]
-    assert len(alerts) == 1
+    assert len(inbox(client, "bob", "MENTION")) == 1
 
 
 def test_a_retried_send_lands_once_and_wakes_once(client, stub_hooks):

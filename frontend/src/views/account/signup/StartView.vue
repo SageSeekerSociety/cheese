@@ -112,7 +112,7 @@
 </template>
 
 <script lang="ts" setup>
-import type { AcceptedDocuments } from '@/network/api/legal/types'
+import type { AcceptedDocuments } from '@/types/apiLegal'
 
 import { computed, ref } from 'vue'
 import { toTypedSchema } from '@vee-validate/zod'

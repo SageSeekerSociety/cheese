@@ -29,8 +29,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from starlette.status import HTTP_502_BAD_GATEWAY
 
+from app.api.admin_deps import PlatformAdminDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession, PlatformAdminDep
 from app.core.config import settings
 from app.core.errors import BaseError, GatewayUnavailableError
 from app.core.sentences import exception_text

@@ -1,11 +1,11 @@
-"""The project has an overview; a channel has no living document (migration
+"""The project has a goals document; a channel has no living document (migration
 53267de872b8).
 
 The rules, as stated before the migration was written:
 
-- 综合's document becomes the project's overview, with what it said — also in
+- 综合's document becomes the project's goals, with what it said — also in
   an archived project;
-- the library does not list the overview;
+- the library does not list the project's goals;
 - an active channel's document that was never written is deleted, one that was
   becomes a document of the project's own under its channel's name;
 - an archived room keeps its document where it is: it is an old room still

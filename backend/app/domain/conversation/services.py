@@ -80,6 +80,28 @@ async def rooms_of_inner(
     return found
 
 
+async def threads_of_rooms(
+    session: AsyncSession, rooms: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """Every 支线 of these rooms, mapped to its room.
+
+    A room's tasks are not among them, unlike `rooms_of_inner`: a task is a
+    board of its own with a card of its own, and what is said in one is not the
+    room's own doings (`waits._last_said`)."""
+    if not rooms:
+        return {}
+    # One array parameter rather than an `IN` list: rooms are counted in
+    # hundreds, and a list binds one value each, so the SQL text changes with
+    # its length and is compiled again at every call (`waits._among`).
+    bound = bindparam(None, list(rooms), type_=ARRAY(Uuid))
+    rows = await session.execute(
+        select(_threads.c.id, _threads.c.room_id).where(
+            _threads.c.room_id == any_(bound)
+        )
+    )
+    return {thread_id: room_id for thread_id, room_id in rows}
+
+
 def conversations_of(room_ids) -> Subquery:
     """Every conversation of these rooms — each room's own, its tasks' and its
     支线' — as rows of ``(id, room_id)``.

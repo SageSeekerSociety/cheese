@@ -3,6 +3,8 @@
  * 频道里没有人改项目的文件，所以频道里提到的一份文件就是项目现在的样子：右侧开一格
  * 只读的页签，读的是项目当前版本，不是哪件任务改过的那份。当前版本里没有它时，说清
  * 这一点，并给出改过它的任务。
+ *
+ * 还没有自己分支的任务（没有电脑打开过它）同理：它没有工作区，文件就是项目现在的样子。
  */
 import type { Topic } from '../../cx_types'
 
@@ -120,5 +122,40 @@ describe('频道里点一份项目文件', () => {
     expect(await findByText('项目当前版本里没有这个文件')).toBeTruthy()
     await fireEvent.click(await findByText('在任务「报名表单改版」里看'))
     await waitFor(() => expect(openCard).toHaveBeenCalledWith('task-1'))
+  })
+})
+
+describe('还没有自己分支的任务里点一份项目文件', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    readPreviewFile.mockRejectedValue(new ApiError(404, 'not found'))
+  })
+
+  it('开一格只读页签读项目当前版本，不去「改动」说打不开这件任务', async () => {
+    readFile.mockResolvedValue({
+      path: 'src/form.ts',
+      content: 'export const fields = 4\n',
+      version: 'v1',
+      bytes: 24,
+      binary: false,
+      too_large: false,
+    })
+    const panel = ref<{ openFile: (path: string) => Promise<void> } | null>(null)
+    const Host = defineComponent(
+      () => () =>
+        h(WorkPanel, { ref: panel, topic: channel(), taskId: 'task-new', taskHasBranch: false, activityTick: 0 })
+    )
+    const { container, getByRole, queryByText } = render(Host, {
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
+    await flush()
+    await panel.value!.openFile('src/form.ts')
+    await flush()
+
+    expect(readFile).toHaveBeenCalledWith('p1', 'src/form.ts', 'chan-1', null, 'committed')
+    expect(container.querySelector<HTMLTextAreaElement>('.stub-editor')?.value).toBe('export const fields = 4\n')
+    expect(getByRole('tab', { name: /form\.ts/ }).getAttribute('aria-selected')).toBe('true')
+    expect(getByRole('tab', { name: /改动/ }).getAttribute('aria-selected')).toBe('false')
+    expect(queryByText('无法打开这个任务，换一个来源查看')).toBeNull()
   })
 })

@@ -306,12 +306,11 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
     // 视口默认 1280 宽，详情是按**页面内**那一套画的（`.qdet`），不是抽屉。
     //
-    // 用 `getByRole('textbox')` 而不是 `getByLabel('指派给')`：那个字段的
-    // accessible name 是「指派给 指派给」（label 拼上 placeholder），旁边那颗
-    // 清除图标的 aria-label 是「清除 指派给」——两个都被 `getByLabel('指派给')`
-    // 子串命中，locator 当场变成 2 个元素。
+    // 按角色找指派那一格，不用 `getByLabel('指派给')`：旁边那颗清除图标的
+    // aria-label 是「清除 指派给」，`getByLabel` 子串也会命中它，locator 当场变成
+    // 2 个元素。这一格是可搜索的下拉，输入框的角色是 combobox。
     const detail = page.locator('.qdet');
-    await expect(detail.getByRole('textbox', { name: /指派给/ })).toBeVisible();
+    await expect(detail.getByRole('combobox', { name: /指派给/ })).toBeVisible();
     expect(await fieldDefects(detail)).toEqual([]);
   });
 

@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import listing, say, with_keys
+from app.domain.agent.announce import settle_proposal
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.platform_notices import (
     EVENT_ROUTINE_PROPOSED,
@@ -31,7 +32,7 @@ from app.domain.agent.platform_notices import (
     EVENT_TURN_FAILED,
     EVENT_TURN_TIMEOUT,
     SEVERITY_INFO,
-    WHO_CHEESE,
+    WHO_HUMAN,
     WHO_PLATFORM,
     notice,
 )
@@ -234,7 +235,7 @@ class RoutineService:
         self._session.add(row)
         await self._session.flush()
         if by_agent:
-            line = say("routineProposed", title=row.title)
+            line = say("routineProposedBy", who=f"<@{by}>", title=row.title)
             self._session.add(
                 Block(
                     id=uuid.uuid4(),
@@ -250,7 +251,8 @@ class RoutineService:
                             **notice(
                                 EVENT_ROUTINE_PROPOSED,
                                 severity=SEVERITY_INFO,
-                                who=WHO_CHEESE,
+                                # It waits on a person confirming it.
+                                who=WHO_HUMAN,
                                 detail=self.summary_text(row),
                                 detail_label=say("labelRoutineToConfirm"),
                             ),
@@ -296,7 +298,26 @@ class RoutineService:
             raise ValidationError(say("routineAlreadyConfirmed"))
         self._activate(row, confirmed_by=by)
         await self._session.flush()
+        await self._settled(
+            row,
+            say(
+                "routineProposalConfirmedBy",
+                who=f"<@{row.proposed_by}>",
+                title=row.title,
+            ),
+        )
         return row
+
+    async def _settled(self, row: Routine, content: str) -> None:
+        """A person decided on a teammate's draft: its line in the room says so."""
+        await settle_proposal(
+            self._session,
+            row.topic_id,
+            event_type=EVENT_ROUTINE_PROPOSED,
+            key="routine_id",
+            value=row.id,
+            content=content,
+        )
 
     async def pause(self, row: Routine) -> Routine:
         if row.state != RoutineState.active.value:
@@ -358,6 +379,15 @@ class RoutineService:
         return run
 
     async def delete(self, row: Routine) -> None:
+        if row.state == RoutineState.draft.value:
+            await self._settled(
+                row,
+                say(
+                    "routineProposalDeletedBy",
+                    who=f"<@{row.proposed_by}>",
+                    title=row.title,
+                ),
+            )
         await self._session.delete(row)
         await self._session.flush()
 
@@ -625,7 +655,9 @@ async def _fire(
                         severity=SEVERITY_INFO,
                         who=WHO_PLATFORM,
                         detail=content,
-                        detail_label=say("labelRoutineWork"),
+                        detail_label=say(
+                            "labelRoutineWorkFor", who=f"<@{routine.agent_handle}>"
+                        ),
                     ),
                     "routine_id": str(routine.id),
                     "routine_run_id": str(run.id),

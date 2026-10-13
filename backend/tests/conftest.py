@@ -35,9 +35,16 @@ from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import NullPool, QueuePool
+from sqlalchemy.util import LRUCache
 
 from scripts.assert_suite_ran import SuiteDidNotRun, read_quarantine
 
@@ -139,7 +146,7 @@ from tests.support.seat_channel import SeatChannel  # noqa: E402
 # decide test behavior.
 settings.authz_enforce_topic_access = True
 # The `client` fixture enters lifespan, which starts every periodic job the
-# platform runs (app/core/background.py). Two of them would act on the test's
+# platform runs (app/periodic_jobs.py). Two of them would act on the test's
 # own data behind its back: the email drain claims whatever a notification test
 # queued and dead-letters it after three tries, and the deadline sweep flips a
 # membership to FAILED. Zero is the same "not on this box" switch a deployment
@@ -151,6 +158,9 @@ settings.task_deadline_sweep_interval_s = 0
 # The queued-message sweep starts turns for messages a test may be holding
 # back on purpose; tests that want it run it themselves.
 settings.queued_message_sweep_interval_s = 0
+# Stopping work in closed tasks would interrupt a test's stub session behind
+# its back; the tests about it run the look themselves.
+settings.closed_task_stop_interval_s = 0
 # Request limits stay on, set far above anything a test does. Their rate state
 # lives in Redis, which no test resets, and across a suite the same handles
 # ("alice") and the same test client address are reused far faster than any
@@ -162,9 +172,38 @@ settings.request_rate_burst = 1_000_000_000
 settings.request_concurrency = 1_000_000
 
 
-def _production_test_engine(url: str):
+#: Compiled SQL shared by the engines tests build. SQLAlchemy keys a compiled
+#: statement by the dialect object that compiled it, and every engine
+#: ``create_async_engine`` builds gets a dialect of its own, so without sharing,
+#: a fresh engine per test compiles every statement it runs again. Each test
+#: gets its own engine (and pool, and event listeners); ``_fresh_engine`` makes
+#: them share only one dialect per URL and this cache, bounded like the one
+#: SQLAlchemy gives each engine (500 by default) but sized for a whole suite.
+_COMPILED_CACHE = LRUCache(5000)
+_TEMPLATE_ENGINES: dict[tuple, AsyncEngine] = {}
+
+
+def _fresh_engine(url: str, **pool_options) -> AsyncEngine:
+    """A new engine with an empty pool, on the dialect shared by every engine
+    with this URL and these pool options."""
+    key = (url, tuple(sorted(pool_options.items())))
+    template = _TEMPLATE_ENGINES.get(key)
+    if template is None:
+        template = _TEMPLATE_ENGINES[key] = create_async_engine(url, **pool_options)
+    sync = template.sync_engine
+    return AsyncEngine(
+        Engine(
+            sync.pool.recreate(),
+            sync.dialect,
+            sync.url,
+            execution_options={"compiled_cache": _COMPILED_CACHE},
+        )
+    )
+
+
+def _production_test_engine(url: str) -> AsyncEngine:
     """Build the same bounded pool shape the application uses in production."""
-    return create_async_engine(
+    return _fresh_engine(
         url,
         pool_size=settings.db_pool_size,
         max_overflow=settings.db_max_overflow,
@@ -885,7 +924,7 @@ def stub_compute(channel: StubChannel | None = None) -> ComputePool:
     """A pool holding one screen, for the many tests that build a ChatService
     by hand. Pass the channel when the test asserts against it."""
     screen = channel or StubChannel()
-    return ComputePool([screen.runtime], screen.name)
+    return ComputePool([screen.runtime])
 
 
 @pytest.fixture
@@ -990,10 +1029,10 @@ def _fresh_dependency_probe() -> Iterator[None]:
     """No test reads a readiness answer another test left behind.
 
     The database and Redis probes are shared and their answer reused for a
-    second (``dependency_probe`` in app/api/routes/health.py), so a test that
+    second (``dependency_probe`` in app/core/health.py), so a test that
     patches a probe would otherwise read the previous test's answer.
     """
-    from app.api.routes.health import dependency_probe
+    from app.core.health import dependency_probe
 
     dependency_probe.forget()
     yield
@@ -1354,7 +1393,7 @@ def client(
     # connections with the portal would cross event-loop ownership.
     engine = _production_test_engine(TEST_DATABASE_URL)
     test_factory = async_sessionmaker(engine, expire_on_commit=False)
-    setup_engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+    setup_engine = _fresh_engine(TEST_DATABASE_URL, poolclass=NullPool)
     setup_factory = async_sessionmaker(setup_engine, expire_on_commit=False)
 
     # agent-as-user baseline (P1): 芝士 is a real user with a platform agent-
@@ -1376,7 +1415,7 @@ def client(
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
+        compute=ComputePool([stub_hooks.runtime]),
     )
 
     def override_get_chat_service() -> ChatService:
@@ -2456,7 +2495,7 @@ async def python_client(
         session_factory=test_factory,
         base_system_prompt="你是芝士。",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([stub_hooks.runtime], stub_hooks.name),
+        compute=ComputePool([stub_hooks.runtime]),
     )
 
     def override_get_chat_service() -> ChatService:

@@ -7,6 +7,7 @@ back. These tests drive it through a host that records both and answers like the
 backend would, so each one says what a call does, not how it is built.
 """
 
+import base64
 import importlib.util
 import json
 from importlib.machinery import SourceFileLoader
@@ -353,6 +354,18 @@ def test_a_write_back_says_what_does_not_read_like_state():
     assert "正文 9000 字" in said
 
 
+def test_a_read_says_what_the_document_points_at_that_is_not_there():
+    """A reference that names nothing is said when the document is read, not
+    only when it was written: whoever reads it next is about to write it."""
+    warning = "`<#9f8e>` 指不到这个项目里的任何频道、任务或支线。"
+    host = _doc_host(envelope={"warnings": [warning]})
+
+    said = run("cheese_doc_get", {}, host)
+
+    assert said.startswith("# 现在的文档")
+    assert warning in said
+
+
 def test_a_clean_write_back_carries_no_warning():
     host = _doc_host()
 
@@ -511,16 +524,63 @@ def test_note_says_whether_anyone_caught_it(delivered, expected):
     assert run("cheese_note", {"thread": "t", "content": "看一眼 CI"}, host) == expected
 
 
-def test_machine_reports_its_session_choice():
+_SESSION = "55555555-5555-4555-8555-555555555555"
+
+
+def _own_credential() -> str:
+    claims = json.dumps({"session": _SESSION}).encode()
+    return "cxss_" + base64.urlsafe_b64encode(claims).decode().rstrip("=") + ".sig"
+
+
+def _moved(keeps_nothing):
     host = Host(
         {
-            ("PUT", f"/topics/{_ROOM}/compute-profile"): {
-                "session": {"choice": {"name": "Workstation", "profile": "device"}}
+            ("PUT", f"/topics/{_ROOM}/sessions/{_SESSION}/environment"): {
+                "environment": {"kind": "sandbox", "spec": "vm"},
+                "keeps_nothing": keeps_nothing,
             }
-        }
+        },
+        environ={"CHEESE_TOKEN": _own_credential()},
     )
-    out = run("cheese_machine", {"profile": "device", "device_id": "workstation"}, host)
-    assert "Workstation" in out and "推送到分支" in out and "点头" not in out
+    return host, run("cheese_environment", {"spec": "vm"}, host)
+
+
+def test_an_agent_changes_only_its_own_sessions_environment():
+    host, said = _moved(False)
+    [plan] = host.requests
+    assert plan["path"] == f"/topics/{_ROOM}/sessions/{_SESSION}/environment"
+    assert plan["body"] == {"environment": {"kind": "sandbox", "spec": "vm"}}
+    assert "vm" in said
+
+
+def test_a_session_that_keeps_nothing_is_told_moving_does_not_change_it():
+    """A 支线's session, or an unstarted task's, that moves is told that its
+    work is still not kept and that a task is how to change the project, so it
+    does not move again looking for a push."""
+    assert "创建一个任务" in _moved(True)[1]
+    assert "创建一个任务" not in _moved(False)[1]
+
+
+def test_asked_with_no_spec_it_lists_what_it_may_choose():
+    host = Host(
+        {
+            ("GET", f"/topics/{_ROOM}/environment"): {
+                "sessions": [
+                    {
+                        "session_id": _SESSION,
+                        "environment": {"kind": "sandbox", "spec": "standard"},
+                    }
+                ],
+                "specs": [
+                    {"spec": "standard", "label": "标准沙箱"},
+                    {"spec": "vm", "label": "虚拟机沙箱"},
+                ],
+            }
+        },
+        environ={"CHEESE_TOKEN": _own_credential()},
+    )
+    said = run("cheese_environment", {}, host)
+    assert "标准沙箱" in said and "vm：虚拟机沙箱" in said
 
 
 def test_a_page_that_could_not_be_read_says_how_each_rung_failed():

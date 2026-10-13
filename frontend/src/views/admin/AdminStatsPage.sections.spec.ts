@@ -157,10 +157,10 @@ describe('统计页 · 集成健康那一屏', () => {
 })
 
 describe('统计页 · 用量那一屏', () => {
-  it('四张 KPI、额度燃尽的三个名单与燃烧速率、两张拆分表、账号池那一段', async () => {
+  it('五张 KPI、额度燃尽的三个名单与燃烧速率、两张拆分表、账号池那一段', async () => {
     const { container } = await openTab('用量')
 
-    expect(kpiLabels(container)).toEqual(['窗口内 token', '窗口内调用', '成本', '未定价 token'])
+    expect(kpiLabels(container)).toEqual(['窗口内 token', '窗口内调用', '成本', '未定价 token', '缓存命中'])
 
     // 额度燃尽：已耗尽一条（容器 -10）、快烧完一条（城西社区 10），各自带着它的提示。
     const meters = Array.from(container.querySelectorAll('.amb'))

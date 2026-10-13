@@ -1,7 +1,7 @@
-"""项目总览：注入每段对话的只有「项目是什么」那一块。
+"""项目目标：按小节写的老文档，注入每段对话的只有「项目是什么」那一块。
 
-人和芝士都只该写「项目是什么」；写进别的小节的正文，注入的总览里一个字都不该
-出现——而一份还没按这个结构写过的总览，不能因此整个消失。
+写进别的小节的正文，注入的那一份里一个字都不该出现——而一份没有这一节的文档
+（写成项目目标的那种），不能因此整个消失。
 """
 
 from app.domain.project.overview import project_brief
@@ -30,5 +30,5 @@ def test_only_the_project_brief_reaches_the_prompt():
 
 
 def test_a_document_without_the_brief_heading_still_arrives():
-    # 一份还没按新结构写过的总览不能整个消失——静默丢掉项目共识更糟。
+    # 没有这一节的文档整篇注入，不能整个消失——静默丢掉项目共识更糟。
     assert project_brief("## 目标\n\n做一件事。\n") == "## 目标\n\n做一件事。"

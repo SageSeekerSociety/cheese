@@ -2,7 +2,8 @@
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
 find, browser automation, and the runtime the connector itself needs where
 the system lacks it (Python and a POSIX shell on Windows, a recent enough Python
-elsewhere).
+elsewhere), and on Linux the bwrap a room's sandbox is made with, which it
+places whatever the system has.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -52,6 +53,9 @@ GIT_VERSION = "2.55.0.windows.5"
 #: relocatable builds, the ones uv installs.
 PBS_RELEASE = "20261003"
 PBS_PYTHON_VERSION = "3.13.16"
+#: The bwrap a Linux connector places for its rooms' sandboxes, whatever the
+#: system has (`cli/internal/devenv`): built by `scripts/build-bubblewrap.sh`.
+BUBBLEWRAP_REVISION = "0.13.0-cheese.1"
 
 #: The commits `Sans2.004` and `Serif2.003` pointed at when these were pinned.
 _SANS_COMMIT = "523d033d6cb47f4a80c58a35753646f5c3608a78"
@@ -75,6 +79,10 @@ _PBS_BASE = (
 _FJ_BASE = (
     "https://github.com/SageSeekerSociety/cheese/releases/download/"
     f"forgejo-cli-v{FJ_VERSION}"
+)
+_BWRAP_BASE = (
+    "https://github.com/SageSeekerSociety/cheese/releases/download/"
+    f"bubblewrap-v{BUBBLEWRAP_REVISION}/bubblewrap-{BUBBLEWRAP_REVISION}"
 )
 _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 
@@ -100,6 +108,18 @@ class Artifact:
 
 
 ARTIFACTS: dict[tuple[str, str], Artifact] = {
+    ("bubblewrap", "linux-x64"): Artifact(
+        f"{_BWRAP_BASE}-linux-x64.tar.gz",
+        "3cea2c7dee3c4a24aa3d46cd3691b4f1cc45f397c958c807d56c004acb18d816",
+        85451,
+        ".tar.gz",
+    ),
+    ("bubblewrap", "linux-arm64"): Artifact(
+        f"{_BWRAP_BASE}-linux-arm64.tar.gz",
+        "ef555f752c2a17c1fd74f989aae0933599bbec1e1f900c3d7a96ab748d64e056",
+        96939,
+        ".tar.gz",
+    ),
     # scripts/build-forge-cli.sh applies the merged-status localization fix.
     ("fj", "darwin-arm64"): Artifact(
         f"{_FJ_BASE}/fj-{FJ_VERSION}-aarch64-apple-darwin.tar.gz",

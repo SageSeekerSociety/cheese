@@ -165,6 +165,21 @@ describe('芝士额度', () => {
       expect(within(month).getByText(new RegExp(`^${spent}\\D`))).toBeTruthy()
   })
 
+  it('past the plan, the bar splits by what each line used', async () => {
+    const view = show(
+      usage({
+        period: { ...PERIOD, credits_used: 500, used_ratio: 1, remaining_ratio: 0 },
+        lines: { collab: 7000, ask: 0, write: 0, compute: 1000 },
+        packs: [PACK],
+      })
+    )
+    const month = await view.findByRole('region', { name: '本月' })
+    const bar = within(month).getByRole('img')
+    const width = (line: string) => parseFloat((bar.querySelector(`.upc__seg--${line}`) as HTMLElement).style.width)
+    expect(width('collab') + width('compute')).toBeCloseTo(100)
+    expect(width('collab') / width('compute')).toBeCloseTo(7)
+  })
+
   it('cloud compute is a line of its own, next to the model lines', async () => {
     const view = show(usage())
     const month = await view.findByRole('region', { name: '本月' })

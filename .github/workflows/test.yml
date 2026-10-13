@@ -9,6 +9,19 @@ name: Backend Test
 # remote-execution).
 on:
   workflow_call:
+    inputs:
+      # The layers run on arm64: its standard runners have four real cores,
+      # while the x64 ones are two cores with hyperthreading on CPUs of
+      # different generations, and these layers keep every core busy. The
+      # prod release runs the same suite once on x64 (deploy-prod.yml),
+      # because production does.
+      runner:
+        type: string
+        default: ubuntu-24.04-arm
+      # The commit to test; empty means the commit the caller ran for.
+      ref:
+        type: string
+        default: ""
 # Least privilege: none of these jobs write anything back to GitHub, so the
 # token they run with should not be able to.
 permissions:
@@ -42,6 +55,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
 
       - name: Use a fresh virtual environment
         run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
@@ -181,18 +196,26 @@ jobs:
         run: python3 .claude/scripts/check-migration-safety.py
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     name: ${{ matrix.layer }} (${{ matrix.shard }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - {layer: pure, shard: '0/1', floor: 4000, timeout: 10}
+          # Two pure shards: at one, the pure layer was often the merge queue's
+          # slowest job, CPU-bound on its runner. Go back to one if the queue's
+          # wait for a runner grows by more than the second shard saves.
+          - {layer: pure, shard: '0/2', floor: 4000, timeout: 10}
+          - {layer: pure, shard: '1/2', floor: 4000, timeout: 10}
           - {layer: contract, shard: '0/1', floor: 200, timeout: 5}
-          - {layer: integration, shard: '0/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '1/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '2/4', floor: 2400, timeout: 15}
-          - {layer: integration, shard: '3/4', floor: 2400, timeout: 15}
+          # Five integration shards: at four, an integration shard was usually the
+          # merge queue's slowest job. Go back to four if the queue's wait for a
+          # runner grows by more than the fifth shard saves.
+          - {layer: integration, shard: '0/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '1/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '2/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '3/5', floor: 2400, timeout: 15}
+          - {layer: integration, shard: '4/5', floor: 2400, timeout: 15}
     # Floors apply to the complete layer before sharding, not each runner.
     env:
       REDIS_URL: redis://localhost:6389/0
@@ -220,20 +243,22 @@ jobs:
         # Bound tmpfs to 4 GiB on 16 GiB runners; sample filesystem and RAM below.
         options: >-
           ${{ matrix.layer == 'integration' && '--tmpfs /var/lib/postgresql/data:rw,size=4g' || '' }}
-          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 10s
-          --health-timeout 5s --health-retries 5
+          --health-cmd "pg_isready -h 127.0.0.1 -U postgres" --health-interval 1s
+          --health-timeout 5s --health-retries 60
       valkey:
         image: mirror.gcr.io/valkey/valkey:8.0.2@sha256:57bcc49c6ade1813ef25206c571b65b66bb0094235ff7fb767941622892297d9
         ports:
           - 6389:6379
         options: >-
-          --health-cmd "valkey-cli ping" --health-interval 10s
-          --health-timeout 5s --health-retries 5
+          --health-cmd "valkey-cli ping" --health-interval 1s
+          --health-timeout 5s --health-retries 60
     # Each runner has its own services and xdist workers. This ceiling detects
     # hangs; the artifact timings measure whether the feedback budget is met.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
 
       # Hosted matrix runners have isolated service containers. Keep the slot
       # namespace for reproductions on a machine shared by multiple test runs.
@@ -311,15 +336,27 @@ jobs:
       # tests/pinned_claude.py: every command an executor runs goes through the
       # pinned build's `mcp serve`, so the remote-execution tests need the
       # binary itself. The pool has it preinstalled; a hosted runner does not.
+      #
+      # The contract layer runs none of them: its harness cases feed recorded
+      # provider records through each harness's own Assembler
+      # (tests/contract/test_harness_contract.py), and nothing under
+      # tests/contract names a CHEESE_TEST_* variable. Installing anyway made
+      # that layer depend on the network for nothing — run 38251886139's
+      # `backend / contract` job died here on an HTTP 500 from pi's checksum
+      # fetch and ran zero tests. Its own steps are `uv sync`, a database and
+      # pytest; no binary of these three.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        if: matrix.layer != 'contract'
         with:
           node-version: 22
       # Restore only: warm-caches.yml saves this key on main.
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: matrix.layer != 'contract'
         with:
           path: ~/.npm
           key: npm-harness-pins-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('backend/app/domain/agent/harness/claude_code/device_launch.py', 'backend/app/domain/agent/harness/claude_code/remote_execution/client.py', 'backend/app/domain/agent/harness/codex/**') }}
       - name: Install pinned harness binaries
+        if: matrix.layer != 'contract'
         run: |
           packages="$(uv run python - <<'PY'
           from app.domain.agent.capability.matrix import written
@@ -383,9 +420,16 @@ jobs:
           # can read the run's own output, so tee it here. pipefail keeps the
           # step's status pytest's, not tee's — a bare pipe would report success.
           set -o pipefail
+          tests=tests/
           if [ "$TEST_LAYER" = pure ]; then
             export TEST_PG_BASE=postgresql+asyncpg://postgres:postgres@localhost:1
             export DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:1/no_database_here
+            # A pure case can only live under tests/unit (`_layer_of`), so the
+            # workers need not import and collect the other directories to
+            # deselect them; on a fresh checkout that is about half of each
+            # worker's collection. The coverage-complete job still compares the
+            # cases that ran against a collection of all of tests/.
+            tests=tests/unit
           fi
           observe=(uv run python -m scripts.observe_ci_resources --output "$RUNNER_TEMP/backend-results/resources")
           if [ "$TEST_LAYER" = pure ]; then
@@ -396,13 +440,13 @@ jobs:
           # Silent worker losses tracked in #3005 have an unknown cause.
           # ci_evidence records retries and hang stacks; verification names
           # the cases that passed only on a retry without claiming a fix.
-          "${observe[@]}" -- uv run python -m pytest tests/ -m "$TEST_LAYER" -k 'not kotlin' \
+          "${observe[@]}" -- uv run python -m pytest "$tests" -m "$TEST_LAYER" -k 'not kotlin' \
             --ignore=tests/forgejo -n "$CHEESE_CI_TEST_WORKERS" \
             -p scripts.ci_shard --ci-shard "$TEST_SHARD" \
             --ci-selection-output="$RUNNER_TEMP/backend-results" \
             -p scripts.ci_evidence --ci-evidence-dir="$RUNNER_TEMP/backend-results" \
             --reruns 1 --reruns-delay 1 \
-            --dist worksteal --tb=short --durations=30 \
+            --dist loadfile --no-loadscope-reorder --tb=short --durations=30 \
             --junitxml="$RUNNER_TEMP/backend-results/results.xml" 2>&1 \
             | tee "$RUNNER_TEMP/backend-results/pytest.log"
 
@@ -472,6 +516,8 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: backend-*

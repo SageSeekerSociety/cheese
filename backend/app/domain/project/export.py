@@ -231,7 +231,7 @@ async def create_archive(
             .order_by(Block.created_at)
         )
     )
-    # The project's overview and the living documents of the tasks in the
+    # The project's goals and the living documents of the tasks in the
     # channels the caller reads, with their node trees: a document is `doc`,
     # its blocks are `doc_node` under it.
     living = Documents(db)

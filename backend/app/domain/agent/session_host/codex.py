@@ -87,11 +87,13 @@ class CodexDriver:
             # launch, so the host would only say so again.
             return known
         codex_config = (
+            "project_doc_max_bytes = 32768\n"
             'model_provider = "cheese"\n'
             '[model_providers.cheese]\nname = "Cheese"\n'
             f"base_url = {json.dumps(api + '/llm/v1')}\n"
             'wire_api = "responses"\nenv_key = "CHEESE_TOKEN"\n'
-            "requires_openai_auth = false\n[analytics]\nenabled = false\n"
+            "requires_openai_auth = false\n"
+            "[analytics]\nenabled = false\n"
         )
         launch = {
             "state": ref.state,
@@ -132,6 +134,12 @@ class CodexDriver:
             f"data:{image.media_type};base64,{base64.b64encode(image.data).decode()}"
             for image in images
         ]
+
+    async def last_words(
+        self, wire: Wire, host: str, ref: SessionRef, launched: Launched
+    ) -> str:
+        # Its runner leaves no record of its process ending.
+        return ""
 
     async def adopt(self, wire: Wire, found: list[tuple[str, Access]]) -> None:
         return None

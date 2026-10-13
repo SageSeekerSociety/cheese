@@ -56,26 +56,104 @@ def _placeholders(template: str) -> set[str]:
     return set(re.findall(r"\{(\w+)\}", template))
 
 
+#: 目录一致性的修法（三处目录/键对齐断言共用）。
+_REPAIR_CATALOG = (
+    "修法：后端与前端共用一份目录。每个键要同时存在于 frontend/src/i18n/messages/ "
+    "每个 locale（zh-CN 与 en）下的 roomNotice.json（后端在房间里说的句子）或 "
+    "apiError.json（后端拒绝时说的句子）；两份 locale 的 {占位符} 集合必须一致，"
+    "en 不能有 zh-CN 没有的键，值也不能为空。"
+    "规则：docs/i18n.md 第 2 节（目录与命名空间）、第 4 节（缺翻译怎么办）、"
+    "第 5 节（机器闸门）。"
+    "复查：cd backend && uv run pytest tests/unit/test_sentences.py -q"
+)
+
+#: say() 与目录对不上的修法（键不在目录里、或参数不是该键的占位符）。
+_REPAIR_SAY = (
+    "修法：say(键, ...) 的键必须在目录里，关键字参数名要正好等于该键模板里的 "
+    "{占位符} 集合。加新键就在 frontend/src/i18n/messages 的两个 locale 的 "
+    "roomNotice.json 或 apiError.json 里同时补中英两份；参数对不上就改调用点的关键字，"
+    "不要改模板。规则：docs/i18n.md 第 4 节（缺翻译怎么办）、第 5 节（机器闸门）。"
+    "复查：cd backend && uv run pytest tests/unit/test_sentences.py -q"
+)
+
+#: 孤儿键（目录里有、没有 say() 说过）的修法。
+_REPAIR_ORPHAN = (
+    "修法：每个现用键都要有源码里的 say(...) 调用点。确实只该留给旧房间重放的退役句，"
+    "把它加进 backend/app/core/sentences.py 的 HISTORICAL_NOTICE_KEYS，并从 "
+    "frontend/src/i18n/messages 两个 locale 的 roomNotice.json 里删掉这个键；"
+    "还在用的句，在说它的地方写 say(键, ...)。"
+    "规则：docs/i18n.md 第 4 节、第 5 节。"
+    "复查：cd backend && uv run pytest tests/unit/test_sentences.py -q"
+)
+
+
+def _catalog_diff(backend: dict[str, str], catalog: dict[str, str]) -> list[str]:
+    """后端 Python 目录与某 locale 的 json 目录逐键比，报出每一处不一致。"""
+    out: list[str] = []
+    for key in sorted(set(backend) | set(catalog)):
+        if key not in catalog:
+            out.append(f"  {key}: 只在后端有，json 目录缺这个键")
+        elif key not in backend:
+            out.append(f"  {key}: 只在 json 目录有，后端不认这个键")
+        elif backend[key] != catalog[key]:
+            out.append(f"  {key}: 后端={backend[key]!r} json={catalog[key]!r}")
+    return out
+
+
 @pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
 def test_the_backend_says_the_frontend_chinese_catalog(namespace, templates):
-    assert _catalog("zh-CN", namespace) == templates
+    diff = _catalog_diff(templates, _catalog("zh-CN", namespace))
+    assert diff == [], (
+        f"后端 {namespace} 目录与 "
+        f"frontend/src/i18n/messages/zh-CN/{namespace}.json 对不上：\n"
+        + "\n".join(diff)
+        + "\n"
+        + _REPAIR_CATALOG
+    )
 
 
 def test_every_language_a_person_can_pick_has_both_catalogs():
+    problems: list[str] = []
     for locale in LOCALES:
         for namespace, templates in CATALOGS:
-            assert set(_catalog(locale, namespace)) == set(templates)
+            catalog = set(_catalog(locale, namespace))
+            expected = set(templates)
+            if catalog != expected:
+                problems.append(
+                    f"{locale}/{namespace}.json: 缺 {sorted(expected - catalog)}，"
+                    f"多 {sorted(catalog - expected)}"
+                )
+    assert problems == [], (
+        "这些语言的目录键集合与 zh-CN 不一致（运行时回落到中文，但仓库里不允许缺）：\n"
+        + "\n".join(problems)
+        + "\n"
+        + _REPAIR_CATALOG
+    )
 
 
 @pytest.mark.parametrize(("namespace", "templates"), CATALOGS)
 def test_every_sentence_has_english_with_the_same_placeholders(namespace, templates):
     english = _catalog("en", namespace)
-    assert set(english) == set(templates)
-    assert {
-        key: (_placeholders(templates[key]), _placeholders(english[key]))
-        for key in templates
-        if _placeholders(templates[key]) != _placeholders(english[key])
-    } == {}
+    problems: list[str] = []
+    if set(english) != set(templates):
+        problems.append(
+            f"en/{namespace}.json 的键集合与 zh-CN 不一致：缺 "
+            f"{sorted(set(templates) - set(english))}，"
+            f"多 {sorted(set(english) - set(templates))}"
+        )
+    for key in templates:
+        if key in english:
+            zh_placeholders = _placeholders(templates[key])
+            en_placeholders = _placeholders(english[key])
+            if zh_placeholders != en_placeholders:
+                problems.append(
+                    f"{key}: zh-CN {sorted(zh_placeholders)} != "
+                    f"en {sorted(en_placeholders)}"
+                )
+    assert problems == [], (
+        f"en/{namespace}.json 缺中文里的句子，或同一键的占位符对不上——"
+        "译文会渲染出 undefined：\n" + "\n".join(problems) + "\n" + _REPAIR_CATALOG
+    )
 
 
 def _say_calls() -> list[tuple[str, int, str | None, set[str] | None]]:
@@ -113,16 +191,23 @@ def test_every_say_names_a_sentence_and_fills_exactly_its_placeholders():
     assert calls, "no say() call found — is the scan looking in the right place?"
     # A key chosen from a table (`say(_LABEL[kind])`) is checked where it is
     # named, by the test below; its parameters only when the call is made.
-    wrong = [
-        f"{file}:{line} say({key!r}) with {sorted(names or ())}"
-        for file, line, key, names in calls
-        if key is not None
-        and (
-            key not in MESSAGES
-            or (names is not None and names != _placeholders(MESSAGES[key]))
-        )
-    ]
-    assert wrong == []
+    wrong: list[str] = []
+    for file, line, key, names in calls:
+        if key is None:
+            continue
+        if key not in MESSAGES:
+            wrong.append(f"{file}:{line} say({key!r})：目录里没有这个键 {key!r}")
+        elif names is not None and names != _placeholders(MESSAGES[key]):
+            wrong.append(
+                f"{file}:{line} say({key!r}) 传了 {sorted(names)}，"
+                f"而该句的关键字是 {sorted(_placeholders(MESSAGES[key]))}"
+            )
+    assert wrong == [], (
+        "这些 say() 的键或参数与目录对不上（只有在那句话真的被说出来时才会抛错）：\n"
+        + "\n".join(wrong)
+        + "\n"
+        + _REPAIR_SAY
+    )
 
 
 def _unnamed_current_sentences():
@@ -140,7 +225,11 @@ def _unnamed_current_sentences():
 def test_every_sentence_in_the_catalog_is_said_somewhere():
     """Current keys must be named in the app; only explicit historical keys
     survive without a generator so stored descriptors can still be replayed."""
-    assert _unnamed_current_sentences() == []
+    orphans = _unnamed_current_sentences()
+    assert orphans == [], (
+        "目录里有、但没有一处 say(...) 说过的键（没人用的键该删；退役留给旧房间重放的"
+        "才豁免）：\n" + "\n".join(orphans) + "\n" + _REPAIR_ORPHAN
+    )
 
 
 def test_an_unknown_orphan_is_not_exempted(monkeypatch):
@@ -148,6 +237,73 @@ def test_an_unknown_orphan_is_not_exempted(monkeypatch):
     assert _unnamed_current_sentences() == ["unregisteredHistoricalSentence"]
     with pytest.raises(AssertionError, match="unregisteredHistoricalSentence"):
         test_every_sentence_in_the_catalog_is_said_somewhere()
+
+
+def test_an_orphan_names_its_repair_and_the_doc(monkeypatch):
+    """孤儿键红了要有修法：删双方键，或声明进 HISTORICAL_NOTICE_KEYS。"""
+    monkeypatch.setitem(MESSAGES, "unregisteredHistoricalSentence", "旧消息")
+    with pytest.raises(AssertionError) as caught:
+        test_every_sentence_in_the_catalog_is_said_somewhere()
+    message = str(caught.value)
+    assert "unregisteredHistoricalSentence" in message
+    assert "HISTORICAL_NOTICE_KEYS" in message
+    assert "roomNotice.json" in message
+    assert "docs/i18n.md" in message
+    assert "test_sentences.py" in message
+
+
+def test_a_catalog_drift_names_the_key_and_the_localized_files(monkeypatch):
+    """后端目录与某个 locale 的 json 不一致时，报出具体键和该动哪些文件。"""
+    templates = {"acceptReady": "PR #{pr} 可以合并了，等 {reviewer} 采纳"}
+    drifted = {"acceptReady": "PR #{pr} 可以合并了"}
+    diff = _catalog_diff(templates, drifted)
+    assert diff and "acceptReady" in diff[0]
+    assert "json=" in diff[0]
+    # 另一头：json 多一个后端不认的键也要报出来。
+    extra = _catalog_diff(templates, {**templates, "goneKey": "旧"})
+    assert any("goneKey" in line for line in extra)
+    assert "roomNotice.json" in _REPAIR_CATALOG
+    assert "docs/i18n.md" in _REPAIR_CATALOG
+    assert "第 5 节" in _REPAIR_CATALOG
+
+
+def test_a_wrong_placeholder_set_is_named(monkeypatch):
+    """同一键中英占位符不一致要报到键上，并给出修法。"""
+    monkeypatch.setattr(
+        "tests.unit.test_sentences._catalog",
+        lambda locale, namespace: (
+            {"acceptReady": "PR #{pr} 可以合并了，等 {reviewer} 采纳"}
+            if locale == "zh-CN"
+            else {"acceptReady": "PR #{pr} is ready to merge"}
+        ),
+    )
+    with pytest.raises(AssertionError) as caught:
+        test_every_sentence_has_english_with_the_same_placeholders(
+            "roomNotice", {"acceptReady": "PR #{pr} 可以合并了，等 {reviewer} 采纳"}
+        )
+    message = str(caught.value)
+    assert "acceptReady" in message
+    assert "reviewer" in message
+    assert "占位符" in message
+    assert "docs/i18n.md" in message
+
+
+def test_a_say_key_or_parameter_mismatch_names_the_call_site(monkeypatch):
+    """say() 的键不在目录里、或参数不是该键的占位符，要报出 file:line 和修法。"""
+    monkeypatch.setattr(
+        "tests.unit.test_sentences._say_calls",
+        lambda: [
+            ("app/example.py", 7, "noSuchSentence", {"x"}),
+            ("app/example.py", 9, "acceptReady", {"pr"}),
+        ],
+    )
+    with pytest.raises(AssertionError) as caught:
+        test_every_say_names_a_sentence_and_fills_exactly_its_placeholders()
+    message = str(caught.value)
+    assert "app/example.py:7" in message and "noSuchSentence" in message
+    assert "app/example.py:9" in message and "reviewer" in message
+    assert "roomNotice.json" in message
+    assert "test_sentences.py" in message
 
 
 def test_only_retired_notices_stored_on_old_rooms_are_historical():
@@ -166,12 +322,27 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "blockUpgradedToRoom",
         "blockUpgradedRoomId",
         "labelUpgradedTo",
+        "labelRoutineWork",
+        "routineProposalConfirmed",
+        "routineProposalDeleted",
+        "routineProposed",
+        "skillProposalNotSaved",
+        "skillProposalSaved",
+        "skillProposed",
+        "skillEditNotSaved",
+        "skillEditProposed",
+        "skillEditSaved",
         "mailDrafted",
         "labelResult",
         "routineResult",
         "subagentStart",
         "subagentStopEmpty",
         "titleAutoRenamed",
+        "computeAnyDevice",
+        "computeCloud",
+        "computeCloudVm",
+        "computeDevice",
+        "policyResourceMachine",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()
@@ -189,6 +360,13 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         ),
         ("actionDecision", {"actor": "<@cheese-test>"}, "<@cheese-test> 记录了决策"),
         ("actionMilestone", {"actor": "<@cheese-test>"}, "<@cheese-test> 添加了里程碑"),
+        ("skillProposed", {"title": "周报"}, "芝士提议新增技能「周报」"),
+        (
+            "routineProposed",
+            {"title": "周报"},
+            "芝士起草了「周报」，要你确认后才会执行",
+        ),
+        ("skillProposalSaved", {"title": "周报"}, "芝士提议的技能「周报」已保存"),
     ],
 )
 def test_historical_descriptor_replays_without_allowing_generation(key, params, stored):

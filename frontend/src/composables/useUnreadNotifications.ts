@@ -2,7 +2,7 @@ import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useEventListener } from '@vueuse/core'
 
-import { NotificationsApi } from '@/network/api/notifications'
+import { getUnreadNotificationCount } from '@/api/notifications'
 import AccountService from '@/services/account'
 
 // 未读通知数：全站一份。首页那一格用它画小点，待办页的「动态」读完、标已读之后
@@ -24,7 +24,7 @@ async function fetchCount() {
   if (!AccountService._loggedIn.value) return
   lastAt = Date.now()
   try {
-    count.value = (await NotificationsApi.getUnreadCount()).data.count
+    count.value = (await getUnreadNotificationCount()).count
   } catch {
     // 保持原数：一次网络抖动不该把小点擦掉。
   }

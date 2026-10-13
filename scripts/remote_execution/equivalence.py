@@ -577,7 +577,7 @@ class Room:
         os.environ["CHEESE_API"] = self.relay.base
         self.launched = None
 
-    def prepare(self, target):
+    def prepare(self, target, resume=None):
         sync = {"type": "command", "command": "cheese sync-agents || true"}
         hooks = [{"hooks": [sync]}]
         self.launched = client.prepare(
@@ -593,6 +593,9 @@ class Room:
             },
             home_override=self.home,
             config_override=self.layout.config,
+            # Where the runner puts it: after the bootstrap's own arguments,
+            # so `prepare` sees which conversation the launch resumes.
+            extra_args=["--resume", resume] if resume else (),
         )
         if not target.get("local"):
             assert Path(self.launched["cwd"]) != self.layout.project, self.launched
@@ -690,12 +693,12 @@ def relaunched(binary, layout, port):
         _, init = run.session.wait(is_("system", "init"), 1)
         before = run.session
         before.stop()
-        again = room.prepare(dict(placeholder, workspace=str(layout.project)))
-        assert again["workspace"] == str(layout.project), again
-        run.session = room.session(
-            "relaunched",
-            dict(again, command=[*again["command"], "--resume", init["session_id"]]),
+        again = room.prepare(
+            dict(placeholder, workspace=str(layout.project)),
+            resume=init["session_id"],
         )
+        assert again["workspace"] == str(layout.project), again
+        run.session = room.session("relaunched", again)
         # The same model on the other side: it goes on from the requests it
         # has answered, as it does for a session that was never relaunched.
         run.session.server.state["requests"] = before.server.state["requests"]
@@ -748,12 +751,12 @@ def local_relaunched(binary, layout, port):
         _, init = run.session.wait(is_("system", "init"), 1)
         before = run.session
         before.stop()
-        again = room.prepare(dict(placeholder, workspace=str(layout.project)))
-        assert again["cwd"] == str(layout.project), again
-        run.session = room.session(
-            "own-relaunched",
-            dict(again, command=[*again["command"], "--resume", init["session_id"]]),
+        again = room.prepare(
+            dict(placeholder, workspace=str(layout.project)),
+            resume=init["session_id"],
         )
+        assert again["cwd"] == str(layout.project), again
+        run.session = room.session("own-relaunched", again)
         run.session.server.state["requests"] = before.server.state["requests"]
         run.session.control({"subtype": "initialize"})
         return init["session_id"]

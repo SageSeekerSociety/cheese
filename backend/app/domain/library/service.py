@@ -23,7 +23,9 @@
 import hashlib
 import re
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
+from stat import S_ISREG
 
 from app.core.config import settings
 from app.core.errors import (
@@ -54,6 +56,20 @@ def room_files_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:
     )
     root.mkdir(parents=True, exist_ok=True)
     return root.resolve()
+
+
+#: 一条消息的附件（贴进来的图、干活机器上摆出来的图）用的地址头。它们没有自己的名字，
+#: 房间里给它们的是一串随机目录名加原来的文件名。
+MESSAGE_ATTACHMENT_PREFIX = "uploads"
+
+
+def is_message_attachment(path: str) -> bool:
+    """这份东西是不是一条消息的附件 —— 认它的地址头，不看字节在哪。
+
+    附件和房间文件住在同一棵树里（那条消息读它，按地址读，读得到就行），但它不是
+    这个房间的文件：清单列的是房间里有哪些东西，而它属于那条消息。
+    """
+    return path.split("/", 1)[0] == MESSAGE_ATTACHMENT_PREFIX
 
 
 #: 一份文件落地时的字节上限。房间文件（:func:`write_room_file`）与资料库
@@ -105,6 +121,59 @@ def read_room_text_file(project_id: uuid.UUID, room_id: uuid.UUID, path: str) ->
 
 def room_file_exists(project_id: uuid.UUID, room_id: uuid.UUID, path: str) -> bool:
     return _safe_path(room_files_root(project_id, room_id), path).is_file()
+
+
+#: 一次列出多少份房间文件。频道文件区是几十份的量级（一个人往里放的东西、芝士交付
+#: 的东西、定时任务的结果）；这个数只挡一份失控的目录——目录里的路径由干活的那台机器
+#: 自己写，没有别的上限。超过的那部分由调用方照 `truncated` 说出来，不闷着。
+MAX_LISTED_ROOM_FILES = 500
+
+
+def list_room_files(
+    project_id: uuid.UUID, room_id: uuid.UUID
+) -> tuple[list[dict], int]:
+    """这个房间自己的文件：路径、大小、最后一次改动的时间，最近改的在最前。
+
+    房间文件此前只有按路径取一份的读法（:func:`read_room_file`）：一个人想知道这个
+    房间的文件区里有什么，得先知道那份文件叫什么。这份清单是那个目录本身——定时任务
+    放进来的结果、芝士交付的文档、有人放进来的文件都在里面。
+
+    一条消息的附件不在里面（:func:`is_message_attachment`）：它们和房间文件住在同一
+    棵树里，但属于那条消息，按地址读得到就够了，页面上不再占一格、也不再挤掉一格。
+
+    交出 ``(清单, 找到的总数)``；总数超过上限时清单是最近改的那些，调用方据此报
+    「只列出了一部分」。
+    """
+    root = room_files_root(project_id, room_id)
+    found: list[tuple[float, dict]] = []
+    for entry in root.rglob("*"):
+        relative = entry.relative_to(root)
+        # 点开头的层是编辑器留下的临时文件和别的东西：它们没有消息引得到（
+        # :func:`read_preview_file` 那一侧也拒绝这种地址），占一格只会让人多点一次。
+        if any(part.startswith(".") for part in relative.parts):
+            continue
+        if is_message_attachment(relative.as_posix()):
+            continue
+        try:
+            info = entry.stat()
+        except OSError:
+            continue
+        if not S_ISREG(info.st_mode):
+            continue
+        found.append(
+            (
+                info.st_mtime,
+                {
+                    "path": relative.as_posix(),
+                    "bytes": info.st_size,
+                    "modified_at": datetime.fromtimestamp(
+                        info.st_mtime, UTC
+                    ).isoformat(),
+                },
+            )
+        )
+    found.sort(key=lambda item: (-item[0], item[1]["path"]))
+    return [entry for _, entry in found[:MAX_LISTED_ROOM_FILES]], len(found)
 
 
 def _revision_root(project_id: uuid.UUID, room_id: uuid.UUID) -> Path:

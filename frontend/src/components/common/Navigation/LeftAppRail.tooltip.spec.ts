@@ -130,3 +130,16 @@ describe('account avatar tooltip', () => {
     view.unmount()
   })
 })
+
+describe('account avatar', () => {
+  // Its menu holds settings and sign-out, so a keyboard user has to be able to reach it.
+  it('is a button a keyboard can reach, named after the account', async () => {
+    const Rail = { components: { LeftAppRail }, template: '<v-layout><LeftAppRail :items="[]" /></v-layout>' }
+    const view = render(Rail, { global: { plugins: [createVuetify({ components, directives }), router] } })
+
+    const avatar = view.getByRole('button', { name: '爱丽丝' })
+    avatar.focus()
+    expect(document.activeElement).toBe(avatar)
+    view.unmount()
+  })
+})

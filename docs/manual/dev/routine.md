@@ -6,6 +6,7 @@ covers:
   - backend/app/domain/routine/
   - backend/app/api/routes/routines.py
   - backend/app/core/background.py
+  - backend/app/periodic_jobs.py
 ---
 
 # 例行与巡检 {#routine}
@@ -98,7 +99,7 @@ covers:
 
 ## 平台自己的钟：PeriodicRunner {#sweep}
 
-`backend/app/core/background.py` 里列着平台所有常驻巡检，一处读完就知道有哪些活：工单 PR 轮询、草稿 PR 扫描、孤儿轮次清扫、定时投递、周期任务（interval 30 秒）、任务截止、记忆整理、邮件与推送队列……
+`backend/app/periodic_jobs.py` 集中装配平台全部 32 项常驻巡检：工单 PR 轮询、草稿 PR 扫描、孤儿轮次清扫、定时投递、周期任务（interval 30 秒）、任务截止、记忆整理、邮件与推送队列……各领域登记自己的任务；应用层保留名称和顺序清单，缺项、重复或未列出的任务都会报错。通用运行器仍在 `backend/app/core/background.py`。
 
 `PeriodicRunner` 把每条常驻任务都会踩的四个坑一次收掉：强引用（`spawn`）、**interval ≤ 0 表示这台机器不跑它**（部署和测试共用的那个开关）、一次崩掉只算一次而不是让循环死掉、以及只在**这一轮真的做了点什么**的时候打日志（每分钟「扫了 0 条」的日志没人看，`_worth_reporting` 于是让 `{"failed": 0}` 闭嘴）。
 

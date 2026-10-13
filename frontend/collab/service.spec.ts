@@ -159,7 +159,10 @@ async function until(check: () => boolean, ms = 5000) {
   }
 }
 
-function replace(http: string, body: { content: string; base: string | null; actor: string; check?: boolean }) {
+function replace(
+  http: string,
+  body: { content: string; base: string | null; actor: string; check?: boolean; agent_authors?: string[] }
+) {
   return fetch(`${http}/internal/documents/${encodeURIComponent(DOC)}/replace`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${deriveKey(SECRET, 'internal')}`, 'Content-Type': 'application/json' },
@@ -345,6 +348,47 @@ describe('the live document', () => {
     expect(exportMarkdown(a.doc)).not.toContain('备注')
   })
 
+  it('refuses a whole-document write while a person’s suggestion is pending, and stores nothing', async () => {
+    const { backend, http, a } = await opened()
+    await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲边界。' }],
+      actor: 'teacher',
+      mode: 'suggest',
+    })
+    await until(() => liveSuggestions(a.doc).length === 1)
+    const versions = backend.versions.length
+    const response = await replace(http, {
+      content: '整份重写。\n',
+      base: backend.content,
+      actor: 'cheese-agent',
+      agent_authors: [],
+    })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: 'suggestions', count: 1 })
+    await new Promise((r) => setTimeout(r, 200))
+    expect(backend.versions.length).toBe(versions)
+    expect(exportMarkdown(a.doc)).not.toContain('整份重写')
+  })
+
+  it('takes a whole-document write when the only pending suggestions are agent seats’ own', async () => {
+    const { backend, http, a } = await opened()
+    await edit(http, {
+      edits: [{ old: '第二段讲范围。', new: '第二段讲边界。' }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    await until(() => liveSuggestions(a.doc).length === 1)
+    const response = await replace(http, {
+      content: '整份重写。\n',
+      base: backend.content,
+      actor: 'cheese-agent',
+      agent_authors: ['cheese-agent'],
+    })
+    expect(response.status).toBe(200)
+    await until(() => exportMarkdown(a.doc).includes('整份重写'))
+    expect(liveSuggestions(a.doc)).toEqual([])
+  })
+
   it('takes a Markdown write that only differs in how it is spelled', async () => {
     const { backend, url, http } = await setup('第一段。\n')
     const a = client(url, ticket('xiaowang'))
@@ -368,6 +412,8 @@ interface EditBody {
   requested_by?: string | null
   mode: 'direct' | 'suggest'
   reason?: string | null
+  editor_is_agent?: boolean
+  agent_authors?: string[]
 }
 
 describe('what the backend tells a document’s editors', () => {
@@ -540,6 +586,49 @@ describe('an edit to part of the live document', () => {
       edits: [{ old: '讲目标', new: '讲任务' }],
       actor: 'cheese-agent',
       mode: 'direct',
+    })
+    expect(response.status).toBe(409)
+    expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'suggested' })
+    expect(backend.versions.length).toBe(versions)
+    expect(exportMarkdown(a.doc)).toBe(TWO)
+  })
+
+  it('lets an agent change a passage where another agent’s suggestion is still pending, dropping it', async () => {
+    const { backend, http, a } = await opened()
+    await edit(http, {
+      edits: [{ old: '第一段讲目标。', new: '第一段讲目的。' }],
+      actor: 'cheese-agent',
+      mode: 'suggest',
+    })
+    await until(() => liveSuggestions(a.doc).length === 1)
+    const response = await edit(http, {
+      edits: [{ old: '第一段讲目标。', new: '第一段讲任务。' }],
+      actor: 'other-seat',
+      mode: 'direct',
+      editor_is_agent: true,
+      agent_authors: ['cheese-agent'],
+    })
+    expect(response.status).toBe(200)
+    expect(backend.content).toBe('第一段讲任务。\n\n第二段讲范围。')
+    await until(() => exportMarkdown(a.doc).includes('讲任务'))
+    expect(liveSuggestions(a.doc)).toEqual([])
+  })
+
+  it('still refuses an agent’s change where a person’s suggestion is pending', async () => {
+    const { backend, http, a } = await opened()
+    await edit(http, {
+      edits: [{ old: '第一段讲目标。', new: '第一段讲目的。' }],
+      actor: 'teacher',
+      mode: 'suggest',
+    })
+    await until(() => liveSuggestions(a.doc).length === 1)
+    const versions = backend.versions.length
+    const response = await edit(http, {
+      edits: [{ old: '讲目标', new: '讲任务' }],
+      actor: 'cheese-agent',
+      mode: 'direct',
+      editor_is_agent: true,
+      agent_authors: ['cheese-agent'],
     })
     expect(response.status).toBe(409)
     expect(await response.json()).toMatchObject({ error: 'edit', index: 0, reason: 'suggested' })

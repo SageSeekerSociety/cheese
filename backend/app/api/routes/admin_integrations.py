@@ -3,7 +3,7 @@
 成员不再各建一个企业自建应用（`domain/integration/models.py` 的 `FeishuApp` 讲了
 为什么），于是平台上只有这一处能写这套凭据，也只有这一处该读它。门是后台共用的
 `PlatformAdminDep` —— 进来先问「是不是平台管理员」，这里不自己判，理由和
-`admin_common.py` 头上那段一样：判据写两份就会漂开。
+`admin_deps.py` 头上那段一样：判据写两份就会漂开。
 
 **Secret 只写不回显。** `GET` 返回的 `feishu_app_view` 里没有它；`PUT` 的空串表示
 「不改已经存下的那一个」，因为页面看不到它，也就无从重打。这样改域名或 App ID
@@ -13,8 +13,9 @@
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from app.api.admin_deps import PlatformAdminDep
+from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import DbSession, PlatformAdminDep
 from app.domain.integration.service import FeishuAppService, feishu_app_view
 
 router = APIRouter(prefix="/admin/integrations", tags=["admin"])

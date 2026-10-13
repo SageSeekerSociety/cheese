@@ -23,7 +23,7 @@ from app.api.routes.users._common import (
     _signup_consent,
     _too_many_from_client,
 )
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     issue_session,
 )
 from app.core.client_address import resolved_client_address

@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   emit: vi.fn(),
   handlers: {} as Record<string, (value: number) => void>,
 }))
-vi.mock('@/network/api/tasks', () => ({ TasksApi: { join: mocks.join } }))
+vi.mock('@/api/taskBoard', () => ({ TaskBoardApi: { join: mocks.join } }))
 vi.mock('vue-router', () => ({ useRouter: () => ({ push: mocks.push }) }))
 vi.mock('@/plugins/dialog', () => ({ useDialog: () => ({}) }))
 vi.mock('@/services/account', () => ({ default: { user: { id: 11 } } }))
@@ -32,7 +32,7 @@ function setup(submitterType: 'TEAM' | 'USER') {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.join.mockResolvedValue({ data: { project: { id: 'shared-project' } } })
+  mocks.join.mockResolvedValue({ project: { id: 'shared-project' } })
 })
 
 describe('registration enters its workspace', () => {

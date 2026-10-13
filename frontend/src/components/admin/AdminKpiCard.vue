@@ -188,11 +188,12 @@ const hasThirdRow = computed(() => Boolean(props.delta) || props.spark !== undef
 }
 
 /* delta 中性呈现（不用红绿）：方向语义由 `deltaTitle` 那句话承担 —— 「待分诊 +12%」
-   是好事还是坏事取决于指标本身。 */
+   是好事还是坏事取决于指标本身。
+   功能统计页把一句话塞进这一格（「其中 3 次失败」），所以它可以折行，但只在词与词
+   之间：最小宽度留在 `auto`（= 最长那个词），也不写 `overflow-wrap: anywhere` ——
+   两者任一都让旁边的迷你折线把「-30%」挤成「-30」和下一行的「%」。 */
 .akpi__delta {
   flex: 0 1 auto;
-  min-width: 0;
-  overflow-wrap: anywhere;
   white-space: normal;
   color: var(--muted);
 }

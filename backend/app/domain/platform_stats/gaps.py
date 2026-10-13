@@ -30,16 +30,16 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.day_windows import utc_day_window
 from app.domain.delivery.ledger import MAX_ATTEMPTS
 from app.domain.delivery.models import Delivery
 from app.domain.device.models import DeviceRow, HostedDeviceRow
 from app.domain.machine.models import (
     CloudHost,
-    CloudHostHome,
+    SandboxHome,
     WarmMachine,
     capacity,
 )
-from app.domain.platform_stats.windows import utc_day_window
 from app.domain.project.models import Project
 from app.domain.usage import ledger
 from app.domain.usage.models import ComputeGrant, GrantSource, ResourceUsage
@@ -275,7 +275,7 @@ class GapRepository:
     async def _machine_census(self) -> dict[str, Any]:
         """温机/云端宿主机按状态的存量普查，和宿主机上的沙箱槽位。
 
-        槽位是 ``cloud_host_homes`` 里的行数（每条会话在宿主机上的家占一格）对
+        槽位是 ``sandbox_homes`` 里的行数（每条会话在宿主机上的家占一格）对
         ``capacity``（核数 × ``cloud_host_slots_per_core``）；只数还在池子里的宿主
         机。整台云虚拟机不出槽位，也不占槽位。这里数的是台账里的**行**与状态
         分布，不是在线进程。
@@ -320,8 +320,8 @@ class GapRepository:
             ),
             # A slot is a sandbox; one being destroyed holds it until it goes.
             "host_slots_used": await _count(
-                CloudHostHome,
-                CloudHostHome.host_id.in_(
+                SandboxHome,
+                SandboxHome.host_id.in_(
                     [host.id for host in live if not host.whole_machine]
                 ),
             ),

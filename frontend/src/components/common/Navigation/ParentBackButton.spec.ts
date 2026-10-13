@@ -1,4 +1,4 @@
-import type { RouteRecordRaw } from 'vue-router'
+import type { Router, RouteRecordRaw } from 'vue-router'
 import type { Project } from '@/cx_types'
 
 import { createMemoryHistory, createRouter, createWebHistory } from 'vue-router'
@@ -65,6 +65,17 @@ function makeRouter() {
   })
 }
 
+// 真浏览器历史：`state.back` 只在这上面才有，成环的那几对要它才复现得出来。
+function webRouter() {
+  return createRouter({
+    history: createWebHistory(),
+    routes: [
+      ...legacyProjectRedirects,
+      ...[HomeRoutes, SpacesRoutes, TeamsRoutes, UserRoutes, workspaceRoutes].map(withoutViews),
+    ],
+  })
+}
+
 async function mount(router: ReturnType<typeof makeRouter>) {
   await router.isReady()
   return render(ParentBackButton, {
@@ -96,6 +107,7 @@ describe('返回上一级', () => {
     ['/spaces/42/manage/settings/templates/2/edit', '/spaces/42/manage/settings/templates'],
     ['/spaces/42/tasks', '/spaces'],
     ['/teams/12/members', '/home'],
+    ['/projects/project-a/members/linxia', '/projects/project-a/members'],
   ])('direct entry to %s returns to %s without browser history', async (path, parent) => {
     const { router, getByRole } = await open(path)
     const link = getByRole('link', { name: '返回上一级' })
@@ -252,53 +264,155 @@ describe('页面接管 ←', () => {
   })
 })
 
-// 顶栏的 ← 回答「这一层上面是谁」；浏览器那一颗才回答「我刚才在哪」。声明了父级的
-// 页面一律按声明走：从话题 A 跳到话题 B，← 回话题列表而不是回 A——A 和 B 是并列的
-// 两层，不是上下级。只有声明不出父级的页面（下一组用例）才回退到「来路」。
-describe('声明了父级时，← 走层级而不是来路', () => {
-  function webRouter() {
-    return createRouter({
-      history: createWebHistory(),
-      routes: [
-        ...legacyProjectRedirects,
-        ...[HomeRoutes, SpacesRoutes, TeamsRoutes, UserRoutes, workspaceRoutes].map(withoutViews),
-      ],
-    })
-  }
-
+// 有来路，← 就回来处——哪怕这一页声明了上一层。声明的父级是**逻辑**上的上一层
+// （话题的上一层是话题列表、人名页的上一层是名册），来处才是人真正刚看过的那一页：
+// 从看板点进一条话题、从频道里点 @ 进人名页，← 该回到点进来的那一页。声明留着兜底，
+// 刷新后、贴链接进来时没有来路（见下一组用例）。
+//
+// 这一组只认 `createWebHistory`：内存历史不写 `state.back`，每一页都长得像直开的。
+// jsdom 里 `history.back()` 是空操作，所以断言落在「这一下会调 history.go(-1)」，
+// 以及 vue-router 记着的来处正是刚看过的那一页。
+describe('有来路时，← 回来处', () => {
   afterEach(() => vi.restoreAllMocks())
 
+  /** 点这颗 ← 之后会落到哪一页：vue-router 记在 history state 里的上一个地址。
+   *  jsdom 的 `window.history.state` 是空的，所以从 router 上读——组件读的是同一份。 */
+  const willReturnTo = (router: Router) => router.options.history.state?.back
+
+  it('频道里点 @ 进人名页，← 回那条频道', async () => {
+    const router = webRouter()
+    await router.push('/projects/project-a/channels/7')
+    await router.push('/projects/project-a/members/linxia')
+    const go = vi.spyOn(window.history, 'go')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(willReturnTo(router)).toBe('/projects/project-a/channels/7')
+    // 声明的父级是名册，来处是频道：这一页走的是来处，不是声明。
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    await fireEvent.click(getByRole('button', { name: '返回' }))
+    expect(go).toHaveBeenCalledWith(-1)
+  })
+
   it.each([
-    [
-      '从一个话题跳到另一个话题',
-      '/projects/project-a/topics/topic-a',
-      '/projects/project-a/channels/7',
-      '/projects/project-a',
-    ],
-    ['从小队页进项目设置', '/teams/12/members', '/projects/project-a/settings', '/projects/project-a'],
-  ])('%s：从 %s 跳到 %s 之后，← 去声明的父级 %s', async (_, from, to, parent) => {
+    ['从一个话题跳到另一个话题', '/projects/project-a/channels/topic-a', '/projects/project-a/channels/7'],
+    ['从小队页进项目设置', '/teams/12/members', '/projects/project-a/settings'],
+    ['从待办进项目看板', '/inbox', '/projects/project-a/overview'],
+  ])('%s：从 %s 跳到 %s 之后，← 退回来处而不是声明的父级', async (_, from, to) => {
     const router = webRouter()
     await router.push(from)
     await router.push(to)
     const go = vi.spyOn(window.history, 'go')
-    const { getByRole } = await mount(router)
-    const link = getByRole('link', { name: '返回上一级' })
-    expect(link.getAttribute('href')).toBe(parent)
-    await fireEvent.click(link)
-    await waitFor(() => expect(router.currentRoute.value.path).toBe(parent))
-    expect(go).not.toHaveBeenCalled()
-  })
-
-  // 项目看板在桌面上就是项目的根，根没有可声明的父级；这一组用例里也没有小队数据，
-  // 于是层级给不出答案——这时才回退到「从哪来的」，按浏览器的语义退一格。
-  it('层级给不出答案时，退回浏览器的一步', async () => {
-    const router = webRouter()
-    await router.push('/teams/12')
-    await router.push('/projects/project-a/running')
-    const go = vi.spyOn(window.history, 'go')
     const { getByRole, queryByRole } = await mount(router)
+    expect(willReturnTo(router)).toBe(from)
     expect(queryByRole('link', { name: /^返回/ })).toBeNull()
     await fireEvent.click(getByRole('button', { name: '返回' }))
     expect(go).toHaveBeenCalledWith(-1)
+  })
+
+  // 名册进人名页是少见的「两条规则同结果」：来处正是声明的父级。有来路时按来处走，
+  // 没有来路时按声明走（上一组用例），两条路通向同一页，用起来看不出差别。
+  it('从名册进人名页，来处和声明的父级是同一页', async () => {
+    const router = webRouter()
+    await router.push('/projects/project-a/members')
+    await router.push('/projects/project-a/members/linxia')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(willReturnTo(router)).toBe('/projects/project-a/members')
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    await fireEvent.click(getByRole('button', { name: '返回' }))
+  })
+})
+
+// 没有来路时的链子：刷新后、贴链接进来，一路点 ← 顺着声明的层级往上走，停在最外层。
+// 内存历史里 `state.back` 不存在，每一页都长得像直开的，正好演这条链子。
+describe('没有来路时，一层层点 ← 会停在最外层', () => {
+  it('看板 → 所属小队 → 最外层，一路走得上去', async () => {
+    seedProjects([
+      { id: 'project-a', name: 'A', created_at: '', team_id: 12, team_handle: 'crew-12', owner_handle: 'linxia' },
+    ])
+    seedProject('project-a', { topics: [], members: [], unread: {}, privateUnread: {}, notifyLevels: {} })
+    useWorkspaceStore().openProject('project-a')
+    const router = makeRouter()
+    await router.push('/projects/project-a/overview')
+    const { container } = await mount(router)
+    const visited = [router.currentRoute.value.path]
+    for (let i = 0; i < 6; i++) {
+      const el = container.querySelector<HTMLElement>('[aria-label^="返回"]')
+      if (!el) break
+      const before = router.currentRoute.value.path
+      await fireEvent.click(el)
+      await waitFor(() => expect(router.currentRoute.value.path).not.toBe(before))
+      visited.push(router.currentRoute.value.path)
+    }
+    expect(visited).toEqual(['/projects/project-a/overview', '/teams/crew-12', '/home'])
+    expect(container.querySelector('[aria-label^="返回"]')).toBeNull()
+  })
+})
+
+// 两个页面互相指着对方就是一个走不出去的死圈：身后的那一页声明着「我的上一层是
+// 这一页」，这一页的 ← 又退到它，点多少次都在两页之间弹。首页 ↔ 团队页、项目根 ↔
+// 频道页都是这么绕起来的。切断的办法不是丢掉「来路」这条语义，而是认出这一对之后
+// 不吃它，改去最外层那一页——那里有进无出，圈就断在那里。
+describe('两颗箭头互指时，退到最外层那一页', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  function teamIs(team: number | null) {
+    seedProjects([
+      {
+        id: 'project-a',
+        name: 'A',
+        created_at: '',
+        team_id: team,
+        team_handle: team === null ? null : `crew-${team}`,
+        owner_handle: 'linxia',
+      },
+    ])
+    seedProject('project-a', { topics: [], members: [], unread: {}, privateUnread: {}, notifyLevels: {} })
+    useWorkspaceStore().openProject('project-a')
+  }
+
+  // 团队页声明着 `backTo: 'HomeHub'`，首页身后又正是这个团队页。
+  it('首页 ↔ 团队页：首页不吃这条历史，改回待办', async () => {
+    const router = webRouter()
+    await router.push('/teams/crew-12')
+    await router.push('/home')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(queryByRole('button', { name: '返回' })).toBeNull()
+    expect(getByRole('link', { name: '返回待办' }).getAttribute('href')).toBe('/inbox')
+  })
+
+  // 频道页声明着 `backTo: 'workspace-project'`，而桌面上的项目根正是它。手机上的项目
+  // 根就是频道列表本身，那一层是真的上一层，照旧按声明走（见上一组用例）。
+  it('项目根 ↔ 频道页：根上改回待办，不是原地打转', async () => {
+    teamIs(12)
+    const router = webRouter()
+    await router.push('/projects/project-a/channels/7')
+    await router.push('/projects/project-a')
+    const { getByRole, queryByRole } = await mount(router)
+    expect(queryByRole('button', { name: '返回' })).toBeNull()
+    expect(getByRole('link', { name: '返回待办' }).getAttribute('href')).toBe('/inbox')
+  })
+
+  // 项目总览不走这条路：它身后的团队页虽然不是它的上一层，总览自己声明的上一层
+  // （项目根）在桌面上又会被弹回自己——所以它退到项目所属的团队页，是上面那组
+  // 「没有来路时，退到项目所属的小队」管的那件事。整条链子有没有环见最后一条用例。
+
+  // 最外层那一页没有上一层，就不画 ←：退一格只会在别的页面之间来回弹。
+  it('待办自己不画 ←', async () => {
+    const router = webRouter()
+    await router.push('/home')
+    await router.push('/inbox')
+    const { queryByRole } = await mount(router)
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    expect(queryByRole('button', { name: /^返回/ })).toBeNull()
+  })
+
+  // 手机上的最外层是首页，桌面上才是待办：侧栏和底栏的落点不是同一页。
+  it('手机上从团队页回首页，首页也不画 ←', async () => {
+    widthIs(PHONE)
+    const router = webRouter()
+    await router.push('/teams/12')
+    await router.push('/home')
+    const { queryByRole } = await mount(router)
+    expect(queryByRole('link', { name: /^返回/ })).toBeNull()
+    expect(queryByRole('button', { name: /^返回/ })).toBeNull()
   })
 })

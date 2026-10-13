@@ -16,7 +16,7 @@ import type { MenuAction } from '@/components/common/menuAction'
 import { computed, ref } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
-import { vGuideAnchor } from '@/composables/useStartGuide'
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
@@ -32,6 +32,8 @@ const props = defineProps<{
   showImagePicker: boolean
   /** 回车是发送（触摸屏上是换行），这一行的间距跟着它走。 */
   enterSends: boolean
+  /** 界面导览能指「交给芝士」这颗按钮（见 RoomComposer 的 `guided`）。 */
+  guided?: boolean
   /** 和芝士私聊：每条都是说给它听的，没有「交给它」这颗按钮。 */
   alwaysSummon: boolean
   /** 这条消息现在叫不叫它。读的是正文，不是一个单独存着的开关值。 */
@@ -64,8 +66,7 @@ function pickFiles() {
   fileInput.value?.click()
 }
 
-// 手机上单开一个「照片」：系统的文件选择器里翻相册要好几步，而 accept=image/*
-// 直接进相册/相机。桌面上不给这一颗——那儿贴一张截图或者拖进来就完事了。
+// 手机上单开相册入口，允许照片和视频。桌面上仍用附件选择或拖入。
 function pickImages() {
   imageInput.value?.click()
 }
@@ -121,10 +122,10 @@ const menuExtras = computed<MenuAction[]>(() => [
       ]),
 ])
 
-// 那颗按钮上的字。窄屏收掉名字，只留「交给」；读屏读的一直是全名。
+// 那颗按钮上的字。「交给谁」是这颗按钮的全部意思，所以名字在哪儿都写着；名字长了
+// 由 CSS 截断，不换一个字。
 const summonText = computed(() => ({
   label: t('work.room.composer.summon', { name: props.agentName }),
-  short: t('work.room.composer.summonShort'),
   on: t('work.room.composer.summonOn', { name: props.agentName }),
   off: t('work.room.composer.summonOff', { name: props.agentName }),
 }))
@@ -144,7 +145,7 @@ const summonText = computed(() => ({
     <input
       ref="imageInput"
       type="file"
-      accept="image/*"
+      accept="image/*,video/*"
       multiple
       class="visually-hidden"
       tabindex="-1"
@@ -153,7 +154,6 @@ const summonText = computed(() => ({
     <!-- 附件上传走的是 HTTP，和聊天那条 socket 是两回事：socket 断着的
            时候图片照样传得上去，所以这里不跟着 `connected` 一起禁用。 -->
     <BaseButton
-      v-guide-anchor="'composer-attach'"
       kind="ghost"
       class="composer-icon"
       icon="mdi-paperclip"
@@ -230,6 +230,7 @@ const summonText = computed(() => ({
            让「这条到底算不算叫了它」变成没人答得上来的问题。 -->
     <button
       v-if="!alwaysSummon"
+      v-guide-anchor="guided ? 'composer-summon' : ''"
       type="button"
       class="summon-btn"
       :class="{ 'summon-btn--on': summonOn }"
@@ -241,13 +242,13 @@ const summonText = computed(() => ({
     >
       <v-icon size="14">mdi-at</v-icon>
       <span class="summon-btn-label" aria-hidden="true">{{ summonText.label }}</span>
-      <span class="summon-btn-short" aria-hidden="true">{{ summonText.short }}</span>
     </button>
     <!-- 断线时照样能发：消息进发件箱、立刻显示，连上就自己走 (§14.1)。
            按 `connected` 禁用会把「打字」和「后端此刻在不在」绑在一起。
            附件还在传时是例外：这一刻发出去会少带附件，所以要等，并在 title 里说清
            为什么按不动（灰着不解释，看起来像是它坏了）。 -->
     <BaseButton
+      v-guide-anchor="guided ? 'composer-send' : ''"
       class="composer-send"
       kind="primary"
       icon="mdi-send"
@@ -291,6 +292,7 @@ const summonText = computed(() => ({
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-width: 0; /* 窄到下不去时缩自己，别把发送推出屏幕 */
   height: 28px;
   padding: 0 10px;
   border: 1px solid transparent;
@@ -323,18 +325,18 @@ const summonText = computed(() => ({
   background: var(--line-2);
   color: var(--ink);
 }
-/* 窄屏上名字收掉，留「交给」两个字：只剩一个 @ 图标的话，它读起来是「插入一个
-   @」，不是「这条交给它处理」。两个字加图标放得进这一行，不会换行。 */
-.summon-btn-short {
-  display: none;
+/* 交给谁：名字一直写着。收掉名字的话，这颗按钮只剩一个 @ 图标，读起来是「插入一个
+   @」而不是「这条交给它处理」——手机上最缺的恰好就是这个信息。名字长了往回收
+   （省略号），不挤发送：这行是 flex 且不换行，名字不收，宽的就会被推到看不见的地方。 */
+.summon-btn-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-@media (max-width: 480px) {
-  .summon-btn-label {
-    display: none;
-  }
-  .summon-btn-short {
-    display: inline;
-  }
+/* 图标不跟着缩：缩掉一半的 @ 比没有更糟。 */
+.summon-btn :deep(.v-icon) {
+  flex: none;
 }
 
 /* 触屏上手指点得中（设计系统 §10.1）：几颗按钮画出来的样子不变，能点的范围撑到

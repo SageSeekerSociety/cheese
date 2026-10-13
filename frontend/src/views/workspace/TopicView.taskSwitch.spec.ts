@@ -28,7 +28,7 @@ let query: Record<string, string> = {}
 const push = vi.fn()
 const replace = vi.fn()
 // 只换掉这两个取用点，模块其余部分照旧：这个页面底下会摸到 api 层的
-// `network/Interceptors/hooks/refreshToken.ts`，它 `import router from '@/router'`
+// token 刷新那条线，它 `import router from '@/router'`
 // —— 整个替掉 vue-router 的话，那棵真路由树在导入时就炸了（见 proto-router-stub.ts
 // 对同一条链的说明）。
 vi.mock('vue-router', async (importOriginal) => ({
@@ -48,7 +48,7 @@ vi.mock('@/stores/workspace', () => ({
     members: [],
     unreadMap: {},
     chatPct: 50,
-    rememberTopic: vi.fn(),
+    rememberPlace: vi.fn(),
     loadingTopics: false,
     markRead: vi.fn(),
     refreshTopics: vi.fn(),

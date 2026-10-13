@@ -16,10 +16,10 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.errors import ConflictError
 from app.domain.agent.models import AgentTurn
-from app.domain.machine.models import AiStatus, CloudHost, CloudHostHome, MachineStatus
+from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.services import ProjectService
-from app.domain.topic import retire
+from app.domain.room_cleanup import retire
 from app.domain.topic.models import RoomCleanup
 from app.domain.topic.services import TopicService
 from tests.integration.conftest import registered
@@ -793,8 +793,9 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
             (other_project.id, other_room.id, str(uuid.uuid4())),
         ):
             session.add(
-                CloudHostHome(
+                SandboxHome(
                     host_id=host.id,
+                    spec="standard",
                     project_id=project,
                     topic_id=topic,
                     room_resource_id=resource,
@@ -825,7 +826,7 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
     async with client.test_factory() as session:
         homes = list(
             await session.scalars(
-                select(CloudHostHome.topic_id).where(CloudHostHome.host_id == host_id)
+                select(SandboxHome.topic_id).where(SandboxHome.host_id == host_id)
             )
         )
         assert homes == [other_room.id]
@@ -870,8 +871,9 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
         await session.flush()
         # Placed on a host that never came up: no directory anywhere.
         session.add(
-            CloudHostHome(
+            SandboxHome(
                 host_id=host.id,
+                spec="standard",
                 project_id=operation.project_id,
                 topic_id=room_id,
                 room_resource_id=str(operation.resource_id),
@@ -903,7 +905,7 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
         assert (await session.get(RoomCleanup, cleanup_id)).state == "complete"
         assert (
             await session.scalar(
-                select(CloudHostHome.id).where(CloudHostHome.topic_id == room_id)
+                select(SandboxHome.id).where(SandboxHome.topic_id == room_id)
             )
         ) is None
 

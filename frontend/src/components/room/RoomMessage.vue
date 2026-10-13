@@ -7,18 +7,26 @@
 //
 // 它不认识名册，也不认识时间线：显示名、头像、时间、被回复的那一条，都是房间
 // 算好传进来的。它自己只回答「这一块该画成什么」。
-import type { Block, TodoItem } from '../../cx_types'
+import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
+import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
 
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, ref } from 'vue'
 
-import { artifactKind, artifactName, askOptions, isImageBlock, replySnippet } from '../../lib/blockDisplay'
-import { foldHeight, overflowsFold } from '../../lib/chatFold'
+import { useMessageFold } from '../../composables/useMessageFold'
+import {
+  artifactKind,
+  artifactName,
+  askOptions,
+  isImageBlock,
+  isVideoBlock,
+  replySnippet,
+} from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
-import { cancelMeasure, observeSize, queueMeasure } from '../../lib/foldMeasure'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
+import AttachmentVideo from '../AttachmentVideo.vue'
 import CheeseAvatar from '../CheeseAvatar.vue'
 import ExternalTag from '../common/ExternalTag.vue'
 import MarkdownView from '../common/MarkdownView.vue'
@@ -35,6 +43,8 @@ import { t } from '@/i18n'
 
 const props = defineProps<{
   block: Block
+  /** 这里已经不能回答提问了（任务关了、频道归档了）：选项不再给点。 */
+  askClosed?: boolean
   /** 被回复的那一条；没有就是 null（AI 的 reply_to 是隐式的，不画引用条）。 */
   parent: Block | null
   parentName: string | null
@@ -75,6 +85,9 @@ const props = defineProps<{
   /**
    * 正在改这条自己发过的消息：正文换成输入框，里面先放着 `editText`。
    * `saving` 是保存请求还在路上。
+   *
+   * 这一行同时挂上 `im-row--editing`（见 room-row.css）：编辑时要抬掉这一行的
+   * containment，否则 @ 候选菜单弹不出这一行，人只看得见贴着框沿的一条。
    */
   editing?: boolean
   editText?: string
@@ -83,6 +96,10 @@ const props = defineProps<{
   pinnable?: boolean
   /** 这一行置顶在频道上：名字旁边、文件旁边带一个小图钉。 */
   pinned?: boolean
+  /** 编辑时的 @ 候选：和发消息的输入区是同一份名册、同一份话题表。 */
+  mentionPool?: MentionPoolEntry[]
+  /** 编辑框自己 @ 得到的话题，和发消息那个输入区同一份表。 */
+  topicList?: Topic[]
 }>()
 
 // 在动的头像：读出来和悬停看到的是「名字 · 它此刻在干什么」，点下去去现场。
@@ -93,11 +110,23 @@ const personName = computed(() =>
   props.faceStatus ? t('work.agentAvatar.live', { name: props.authorName, status: props.faceStatus }) : props.authorName
 )
 
+// 读屏停在这一条上时听到的：谁、几点（还没送出去的那条是送达状态），再是正文开头一段。
+// 行只能被脚本聚焦（tabindex=-1）：时间线让当前那一条成为 Tab 停靠点（useTimelineKeys）。
+const itemLabel = computed(() =>
+  t('work.room.chat.messageLabel', {
+    name: props.authorName,
+    time: props.time,
+    text: replySnippet(props.block, props.refs, 140),
+  })
+)
+
 const emit = defineEmits<{
   (e: 'open-file', path: string): void
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'ask-reply', block: Block, text: string): void
+  /** 自己在那道题上的回答要撤回。 */
+  (e: 'ask-withdraw', block: Block): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -126,95 +155,22 @@ const checklist = computed(() => {
 })
 
 // ---- 长回复收起 ----
-// 一条很长的队友回复收成一段高度，底下给一颗「展开 / 收起」。要不要收，看渲染后的
-// 高度（lib/chatFold），不看字数：代码块、表格、图片的高度都不是字数能推出来的。
-// 还没落库的那条（正在写、正在送）不收——它的正文每帧都在长。
+// 一条很长的队友回复收成一段高度，底下给一颗「展开 / 收起」。判据、量高和状态都在
+// composables/useMessageFold：支线顶部那条初始消息用的是同一份。还没落库的那条
+// （正在写、正在送）不收——它的正文每帧都在长。
 const foldEl = ref<HTMLElement | null>(null)
-const foldable = ref(false)
-const expanded = ref(false)
-const foldPx = ref(0)
-let unobserveFold: (() => void) | null = null
-// 这一行在批次里的身份（lib/foldMeasure）。
-const foldOwner = {}
-
 const canFold = computed(() => !props.outgoing && !props.editing)
-const clamped = computed(() => canFold.value && foldable.value && !expanded.value)
-
-// 量的是正文那一层（MarkdownView 的根），不是外面收起来的那层：收起来的那层高度被
-// max-height 钉死，栏窄下来它也不动，观察不到「换个宽度就不用收了」。正文那一层不收，
-// 它一直报真实高度。
-function foldTarget(): HTMLElement | null {
-  return (foldEl.value?.firstElementChild as HTMLElement | null) ?? null
-}
-
-// 读和写分开排进同一帧的批次（lib/foldMeasure）：首屏几十行一起挂上来时，先全部读
-// 完布局再全部写，不在每一行之间逼浏览器重算一次布局。
-function measureFold() {
-  queueMeasure(
-    foldOwner,
-    () => {
-      const el = foldTarget()
-      if (!el || !canFold.value) return null
-      const px = foldHeight(Number.parseFloat(getComputedStyle(el).lineHeight))
-      return { px, overflows: overflowsFold(el.scrollHeight, px) }
-    },
-    (m) => {
-      if (!m) {
-        foldable.value = false
-        return
-      }
-      foldPx.value = m.px
-      foldable.value = m.overflows
-    }
-  )
-}
-
-function observeFold() {
-  unobserveFold?.()
-  unobserveFold = null
-  const el = foldTarget()
-  if (el && canFold.value) unobserveFold = observeSize(el, measureFold)
-  measureFold()
-}
-
-/** 最近的、纵向能滚的祖先——对话栏的 `.messages`。 */
-function scrollParent(el: HTMLElement | null): HTMLElement | null {
-  let node = el?.parentElement ?? null
-  while (node) {
-    const overflowY = getComputedStyle(node).overflowY
-    if (overflowY === 'auto' || overflowY === 'scroll') return node
-    node = node.parentElement
-  }
-  return null
-}
-
-// 展开/收起只改这一条自己的高度，它上面的东西一个像素都没动，滚到哪就还是哪。
-// 会动的只剩一种情况：Chrome 的滚动锚定，或壳里的 ResizeObserver 顺手挪了一下。
-// 量这一行的顶、把差补回去。停在底部的人交给壳钉底，不抢。
-function toggleFold() {
-  const row = foldEl.value?.closest('.im-row') as HTMLElement | null
-  const scroller = scrollParent(foldEl.value)
-  const beforeTop = row?.getBoundingClientRect().top ?? 0
-  const pinned = scroller ? scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80 : false
-  expanded.value = !expanded.value
-  if (row && scroller && !pinned) {
-    void nextTick(() => {
-      requestAnimationFrame(() => {
-        scroller.scrollTop += row.getBoundingClientRect().top - beforeTop
-      })
-    })
-  }
-}
-
-onMounted(() => {
-  observeFold()
-  void nextTick(observeFold)
-})
-watch([() => props.block.content, () => props.editing, canFold], () => void nextTick(observeFold))
-onBeforeUnmount(() => {
-  unobserveFold?.()
-  cancelMeasure(foldOwner)
-})
+const {
+  foldable,
+  expanded,
+  clamped,
+  foldPx,
+  toggle: toggleFold,
+} = useMessageFold(
+  foldEl,
+  canFold,
+  computed(() => [props.block.content, props.editing] as const)
+)
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, props.refs)
@@ -230,10 +186,13 @@ function renderPlain(text: string): string {
       'im-row--self': mine,
       'im-row--pending': !!outgoing,
       'im-row--active': active,
+      'im-row--editing': editing,
     }"
     :data-mid="block.id"
     :data-actions="outgoing ? undefined : ''"
-    :tabindex="outgoing ? undefined : 0"
+    role="article"
+    :aria-label="itemLabel"
+    tabindex="-1"
   >
     <!-- avatar gutter: only on the first of a run -->
     <div class="im-gutter">
@@ -287,9 +246,15 @@ function renderPlain(text: string): string {
            这一份能做的事；置顶了的带一个小图钉。 -->
       <div v-if="fileBlock" class="im-file">
         <!-- 图片输入: an attachment block renders as the image itself
-           (click opens the original in a new tab). 字节在 AttachmentImage
-           里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
+           (click opens it larger, in place, see ImageLightbox). 字节在
+           AttachmentImage 里取——raw 端点只认 Authorization 头，裸挂 URL 是匿名请求。 -->
         <AttachmentImage v-if="isImageBlock(block)" :topic-id="topicId" :path="block.content" />
+        <AttachmentVideo
+          v-else-if="isVideoBlock(block)"
+          :topic-id="topicId"
+          :path="block.content"
+          @download="emit('download', block)"
+        />
         <BaseButton
           v-else-if="block.kind === 'attachment'"
           kind="ghost"
@@ -341,6 +306,8 @@ function renderPlain(text: string): string {
         v-else-if="editing"
         :text="editText ?? block.content"
         :saving="!!saving"
+        :mention-pool="mentionPool"
+        :topic-list="topicList"
         @save="emit('save-edit', $event)"
         @cancel="emit('cancel-edit')"
       />
@@ -357,8 +324,8 @@ function renderPlain(text: string): string {
         <!-- 还没落库的那条（正在写、正在送）不带「复制」：它的代码块还在长。 -->
         <div
           ref="foldEl"
-          class="im-fold"
-          :class="{ 'im-fold-clamped': clamped }"
+          class="fold"
+          :class="{ 'fold-clamped': clamped }"
           :style="clamped ? { maxHeight: `${foldPx}px` } : undefined"
         >
           <MarkdownView
@@ -369,12 +336,12 @@ function renderPlain(text: string): string {
             :copy-code="!outgoing"
           />
           <!-- Fade at the cut edge, so a folded reply reads as "there is more" rather than "it ends here". -->
-          <div v-if="clamped" class="im-fold-fade" aria-hidden="true" />
+          <div v-if="clamped" class="fold-fade" aria-hidden="true" />
         </div>
         <button
           v-if="canFold && foldable"
           type="button"
-          class="im-fold-toggle"
+          class="fold-toggle"
           :aria-expanded="expanded"
           @click="toggleFold"
         >
@@ -405,7 +372,10 @@ function renderPlain(text: string): string {
         v-if="askOptions(block)"
         :block="block"
         :names="refs.mentionNames"
+        :closed="askClosed"
+        :viewer="viewer"
         @reply="emit('ask-reply', block, $event)"
+        @withdraw="emit('ask-withdraw', block)"
       />
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->
@@ -428,6 +398,7 @@ function renderPlain(text: string): string {
 </template>
 
 <style scoped src="./room-row.css"></style>
+<style scoped src="@/styles/message-fold.css"></style>
 
 <style scoped>
 /* 键盘走到一条消息时，焦点环画在行内（offset 取负）。行是整宽的，而且滚动区在
@@ -824,43 +795,6 @@ function renderPlain(text: string): string {
   margin-bottom: 0;
 }
 
-/* 长回复收起（见脚本里的 fold 一段）：一段高度、下切边一条渐隐、底下居中一颗
-   展开/收起。渐隐贴在下切边，收起来时读到的是「下面还有」，不是「到这儿就没了」。 */
-.im-fold {
-  position: relative;
-}
-.im-fold-clamped {
-  overflow: hidden;
-}
-.im-fold-fade {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 56px;
-  pointer-events: none;
-  background: linear-gradient(to bottom, transparent, var(--surface));
-}
-.im-fold-toggle {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-  width: fit-content;
-  margin: 6px auto 0;
-  padding: 3px 10px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  font-size: 13px;
-  line-height: var(--lh-13);
-  color: var(--text);
-  cursor: pointer;
-  transition:
-    background-color var(--dur-quick) var(--ease-standard),
-    border-color var(--dur-quick) var(--ease-standard);
-}
-.im-fold-toggle:hover {
-  border-color: var(--faint);
-  background: var(--fill);
-}
+/* 长回复收起的样式和频道里别处、支线页头共用的那一份在 styles/message-fold.css
+   （收起来的那层、下切边的渐隐、居中那颗展开/收起）。 */
 </style>

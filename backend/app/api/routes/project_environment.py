@@ -10,10 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_chat_service
+from app.api.request_deps import AuthUser, DbSession
 from app.api.response import ok
-from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.core.db import get_db
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
 from app.core.sentences import notice_keys, say
 from app.domain.agent.chat import ChatService
@@ -29,9 +28,8 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.conversation.services import of_room
-from app.domain.device.wiring import sql_device_service
-from app.domain.machine.models import MachineStatus
-from app.domain.machine.repositories import CloudHostRepository
+from app.domain.machine.services import HostPool, host_failed
+from app.domain.machine.session_reports import leases_on_peoples_devices
 from app.domain.membership.roster import roster
 from app.domain.membership.services import MemberService
 from app.domain.project.environment import EnvironmentConfig, project_environment
@@ -42,8 +40,8 @@ from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.repositories import UserRepository
 
 router = APIRouter(prefix="/projects/{project_id}/environment", tags=["environment"])
-Db = Annotated[AsyncSession, Depends(get_db)]
-User = Annotated[AuthUserInfo, Depends(require_auth_user)]
+
+
 Chat = Annotated[ChatService, Depends(get_chat_service)]
 
 
@@ -123,7 +121,7 @@ async def require_idle(db: AsyncSession, topic: Topic) -> None:
 
 
 @router.get("")
-async def get_environment(project_id: uuid.UUID, db: Db, user: User) -> dict:
+async def get_environment(project_id: uuid.UUID, db: DbSession, user: AuthUser) -> dict:
     project, can_edit = await access(db, project_id, user)
     topics = (
         await db.scalars(
@@ -161,7 +159,7 @@ async def get_environment(project_id: uuid.UUID, db: Db, user: User) -> dict:
 
 @router.put("")
 async def save_environment(
-    project_id: uuid.UUID, body: EnvironmentConfig, db: Db, user: User
+    project_id: uuid.UUID, body: EnvironmentConfig, db: DbSession, user: AuthUser
 ) -> dict:
     await access(db, project_id, user, write=True)
     project = await db.scalar(
@@ -177,33 +175,34 @@ async def save_environment(
 
 @router.get("/rooms/{topic_id}")
 async def get_room_environment(
-    project_id: uuid.UUID, topic_id: uuid.UUID, db: Db, user: User
+    project_id: uuid.UUID, topic_id: uuid.UUID, db: DbSession, user: AuthUser
 ) -> dict:
     await access(db, project_id, user)
     topic = await room(db, project_id, topic_id, viewer=user)
-    binding = await sql_device_service(db).topic_binding(topic_id)
-    if binding is None:
-        hosts = [
-            host
-            for _home, host in await CloudHostRepository(db).room_homes(
-                topic_id, str(topic.resource_id or topic.id)
-            )
-        ]
+    # The room's sessions each have an environment of their own: one on a
+    # person's computer reports that computer's environment, and the room's
+    # sandboxes on the platform's machines are reported together.
+    leases = await leases_on_peoples_devices(db, topic_id)
+    lease = leases[0] if leases else None
+    if lease is None:
+        hosts = await HostPool(db).room_hosts(
+            topic_id, str(topic.resource_id or topic.id)
+        )
         if not hosts:
             # No sandbox is placed until a session requests execution. A chat
             # message alone is not a pending placement.
             state = {"state": "unbound"}
-        elif any(host.status == MachineStatus.error for host in hosts):
+        elif any(host_failed(host) for host in hosts):
             log = say("envSandboxFailed")
             state = {"state": "failed", "log": log, **notice_keys(log=log)}
         else:
             # A sandbox on its way IS preparation, whatever stage it's at.
             state = {"state": "pending"}
-    elif not device_hub.is_online(binding.device_id):
+    elif not device_hub.is_online(lease["device_id"]):
         state = {"state": "offline"}
     else:
         state = await environment_status(
-            device_hub, binding.device_id, project_id, topic.resource_id or topic_id
+            device_hub, lease["device_id"], project_id, uuid.UUID(lease["resource_id"])
         )
     busy = await db.scalar(
         select(AgentTurn.id)
@@ -238,16 +237,18 @@ async def reset_idle_room(db: AsyncSession, topic_id: uuid.UUID, project_id: uui
     """
     topic = await room(db, project_id, topic_id)
     await require_idle(db, topic)
-    binding = await sql_device_service(db).topic_binding(topic_id)
-    resource_id = topic.resource_id or topic_id
+    leases = await leases_on_peoples_devices(db, topic_id)
     await db.commit()
-    if binding is None:
-        return
-    if not device_hub.is_online(binding.device_id):
+    if any(not device_hub.is_online(lease["device_id"]) for lease in leases):
         raise ValidationError(say("machineOfflineCannotConfirmStop"))
-    await environment_status(
-        device_hub, binding.device_id, project_id, resource_id, action="reset"
-    )
+    for lease in leases:
+        await environment_status(
+            device_hub,
+            lease["device_id"],
+            project_id,
+            uuid.UUID(lease["resource_id"]),
+            action="reset",
+        )
     # Closing each screen also releases its runtime subscription.
     for screen in device_hub.screens_for_topic(topic_id):
         await device_hub.close_screen(screen.device_id, screen.sid)
@@ -258,8 +259,8 @@ async def apply_environment(
     project_id: uuid.UUID,
     topic_id: uuid.UUID,
     body: ApplyEnvironment,
-    db: Db,
-    user: User,
+    db: DbSession,
+    user: AuthUser,
     chat: Chat,
 ) -> dict:
     # deferred-import: tests patch this name on app.api.deps
@@ -309,7 +310,7 @@ async def apply_environment(
 
 @router.post("/rooms/{topic_id}/diagnose")
 async def diagnose_environment(
-    project_id: uuid.UUID, topic_id: uuid.UUID, db: Db, user: User
+    project_id: uuid.UUID, topic_id: uuid.UUID, db: DbSession, user: AuthUser
 ) -> dict:
     """「让芝士看看」: why this channel's latest failure happened and what to
     change, read from its log and the scripts it ran. Nothing is changed:

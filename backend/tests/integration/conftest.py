@@ -34,6 +34,7 @@ from sqlalchemy.ext.asyncio import (
 from app.common.auth import create_access_token
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
+from tests.conftest import seed_user
 
 if TYPE_CHECKING:
     import httpx
@@ -379,14 +380,14 @@ def open_task(
     title: str = "一个任务",
     *,
     owner: str = "alice",
-    start: bool = True,
-    reviewer: str | None = "alice",
     contributors: list[str] | None = None,
 ) -> dict:
-    """A task in ``room_id``, created by ``owner`` (who owns it) and, unless
-    ``start`` is False, started by them with ``reviewer`` reviewing its changes
-    — the way a person makes one. ``contributors`` are brought in to work it
-    beside the owner (they write its document too)."""
+    """A task in ``room_id``, made by ``owner``: whoever makes one owns it, and
+    making it starts it — its agent may work the project from now on, and
+    ``owner`` reviews what it delivers. The one kind of task nobody has started
+    yet is an idea an AI teammate raised on its own: :func:`teammate_task`.
+    ``contributors`` are brought in to work it beside the owner (they write its
+    document too)."""
     r = client.post(
         f"/topics/{room_id}/tasks",
         json={"title": title},
@@ -401,15 +402,59 @@ def open_task(
             headers=session_auth_headers(owner),
         )
         assert r.status_code == 200, r.text
-    if start:
+    return read_task(client, task["id"], owner)
+
+
+def read_task(client, task_id: str, handle: str = "alice") -> dict:
+    """A task as its own page reads it — the shape a room's list hands back and
+    the one every route that answers with a task uses."""
+    r = client.get(f"/topics/{task_id}/task", headers=session_auth_headers(handle))
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def teammate_task(
+    client,
+    room_id: str,
+    title: str = "一件要做的活",
+    *,
+    owner: str = "alice",
+    summary: str = "把它记下来，回头做",
+    start: bool = False,
+    said_by: str = "alice",
+) -> dict:
+    """A task the room's AI teammate opened from a 支线 (``cheese_task``).
+
+    With ``start=False`` this is the one task that waits for its owner: made on
+    the teammate's own idea, nobody asked for it, so it stays in 讨论中 until
+    ``owner`` starts it. ``start=True`` is someone having asked for it — that
+    one starts where it stands, like a task a person makes."""
+    project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
+    thread = in_thread(client, room_id, said_by)
+    token = mint_scoped_token(
+        project_id=project_id,
+        topic_id=thread,
+        agent_handle=room_agent_seat(client, room_id),
+    )
+    # 一个客户端上默认挂着的会话优先于队友凭据（`resolve_actor` 里人排第一），所以
+    # 这一趟要把它摘下来：说话的是芝士。
+    bearer = client.headers.pop("Authorization", None)
+    try:
         r = client.post(
-            f"/topics/{task['id']}/start",
-            json={"reviewer_handle": reviewer},
-            headers=session_auth_headers(owner),
+            f"/topics/{thread}/teammate-tasks",
+            json={
+                "title": title,
+                "summary": summary,
+                "owner_handle": owner,
+                "start": start,
+            },
+            headers={"X-Cheese-Token": token},
         )
-        assert r.status_code == 200, r.text
-        task = r.json()["data"]
-    return task
+    finally:
+        if bearer is not None:
+            client.headers["Authorization"] = bearer
+    assert r.status_code == 200, r.text
+    return read_task(client, r.json()["data"]["id"], owner)
 
 
 class RoomSocket:
@@ -497,6 +542,26 @@ def in_thread(client, room_id: str, handle: str) -> str:
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]["id"]
+
+
+def inbox(client, handle: str, kind: str | None = None) -> list[dict]:
+    """What ``handle`` finds in their inbox (动态), only ``kind`` when given.
+
+    Only a person with an account has an inbox, and a notification reaches one
+    only if the account was there when it was sent: give the people a test
+    expects to hear something an account first (``seed_user``, which this
+    calls too, so here it only finds that account).
+    """
+    params: dict = {"pageSize": 100}
+    if kind is not None:
+        params["type"] = kind
+    r = client.get(
+        "/notifications",
+        params=params,
+        headers={"Authorization": f"Bearer {seed_user(client, handle)}"},
+    )
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["notifications"]
 
 
 def post_message(client, topic_id: str, handle: str, body: dict) -> dict:
@@ -844,7 +909,7 @@ def api_client(
     # deliberately skip ``with client:`` because it would replace our portal
     # with a fresh one for every test and run lifespan startup/shutdown
     # repeatedly — which would also start every periodic job the platform runs
-    # (app/core/background.py), once per test.
+    # (app/periodic_jobs.py), once per test.
     client.portal = _portal  # type: ignore[assignment]
     # The living document is written through the collaboration service.
     from tests.support.collab import install as install_collab

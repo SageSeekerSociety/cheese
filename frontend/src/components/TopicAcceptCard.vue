@@ -35,6 +35,7 @@ import type { CardPhase } from '@/lib/topicState'
 import { computed, watch } from 'vue'
 
 import { injectAcceptCard, useAcceptCard } from '@/composables/useAcceptCard'
+import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import AcceptDeliveringFace from '@/components/accept/AcceptDeliveringFace.vue'
 import AcceptDockBar from '@/components/accept/AcceptDockBar.vue'
@@ -46,6 +47,8 @@ const props = defineProps<{
   topicId: string
   topicStatus: string
   taskId?: string | null
+  /** 谁在看（默认登录的账号）：采纳和退回只给卡上点名的审阅人。 */
+  viewer?: string
   /** 手机上对话和「改动」是两个页签：这一条只放「审阅」，决定在「改动」页底部。 */
   reviewButton?: boolean
 }>()
@@ -130,7 +133,7 @@ defineExpose({ reload: card.reload })
   <!-- 卡出现 / 收走是房间里真发生的一件事，要看得出是这里多了一块（折叠）。
        打开房间时读到的那一张本来就在，不演：`animate` 只在第一次读完之后才打开。 -->
   <Transition name="accept-fold" :css="animate">
-    <div v-if="hasBox" class="accept-fold">
+    <div v-if="hasBox" v-guide-anchor="'accept-card'" class="accept-fold">
       <div class="accept-fold__inner">
         <div class="accept-dock">
           <!-- 历史卡（闸门那两张、交付中那张）点横条才在它上面展开当年那张卡。 -->
