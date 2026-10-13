@@ -14,7 +14,8 @@ spanning packages belongs), and the composition root
 (``app.api.deps.get_user_auth_service``) hands one to ``UserAuthService``.
 """
 
-from typing import Protocol
+from collections.abc import Mapping, Sequence
+from typing import Final, Protocol
 
 
 class UserStatistics(Protocol):
@@ -24,4 +25,29 @@ class UserStatistics(Protocol):
         """``teamCount``, ``taskParticipationCount``, ``knowledgeCount``,
         ``submissionCount``, ``questionCount``, ``answerCount`` — zeros, not
         ``None``, for a person with nothing."""
+        ...
+
+
+class BoardLabel(Protocol):
+    """How a board is named where something happened on it."""
+
+    #: Read-only: `space.SpaceLabel` is a frozen dataclass, so declaring this
+    #: settable would make the port match nothing.
+    name: Final[str]
+
+
+class BoardLabels(Protocol):
+    """Names the boards a page of real-name access records happened on.
+
+    The access log names the board each access took place on
+    (``accessEntityName``), and naming a board is a query against that board's
+    own table — which lives in ``app.domain.space``, above this package. So
+    ``user`` names the one call it needs here and the composition root hands
+    ``UserRealNameService`` the space-side implementation
+    (``app.domain.space.services.SpaceLabels``), whose shape this repeats.
+    """
+
+    async def describe(self, space_ids: Sequence[int]) -> Mapping[int, BoardLabel]:
+        """Each of these boards' labels, in one query; unknown ids are left
+        out."""
         ...
