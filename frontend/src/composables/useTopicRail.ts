@@ -25,6 +25,7 @@ import { VIRTUAL_LIST_THRESHOLD } from '../lib/virtualList'
 import { getAvatarUrl } from '../utils/materials'
 
 import { t } from '@/i18n'
+import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 /** 侧栏要画的东西全在父级的这几个 props 里；这一层不自己取数。 */
@@ -279,6 +280,14 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     return marks
   }
 
+  /** 一条任务行右边那枚签写谁：**别人**负责的那几条缀上负责人的名字（项目名册说了算），
+   *  我负责的和没有主的都不缀——那枚签说的是「这条不是你的活」，自己的活不用声明。 */
+  function ownerName(task: { owner_handle?: string | null }): string | null {
+    const owner = task.owner_handle
+    if (!owner || owner === myHandle()) return null
+    return memberOf(owner).name
+  }
+
   // ---- 折叠 ----
   // 一个房间下面挂的是**它派出去的活**，不是子话题。范式跟底部的「已归档」分组
   // 一致（一个 chevron 收起一堆行），只是这里的开关长在每一个有子话题的行上。行的
@@ -409,6 +418,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     lightOf,
     taskLight,
     memberMarks,
+    ownerName,
     toggleTitle,
   }
 }

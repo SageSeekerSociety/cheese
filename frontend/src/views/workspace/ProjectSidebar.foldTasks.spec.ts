@@ -8,7 +8,7 @@
  * 用的是真的项目框路由、真的 ProjectSidebar 和 TopicSidebar、真的 store 和缓存，只把
  * 接口换成替身。
  */
-import type { Topic } from '@/cx_types'
+import type { ProjectMemberRow, Topic } from '@/cx_types'
 
 import { defineComponent, h, ref } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
@@ -86,10 +86,10 @@ async function settle() {
   for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-async function openProject(topics: Topic[]) {
+async function openProject(topics: Topic[], members: ProjectMemberRow[] = []) {
   seedProjects([])
   // 登录的人有 handle，未读一并按它读：这里先摆好空的一份，别让它真的去请求（网络是封的）。
-  seedProject('p', { topics, members: [], notifyLevels: {}, unread: {}, privateUnread: {} })
+  seedProject('p', { topics, members, notifyLevels: {}, unread: {}, privateUnread: {} })
   useWorkspaceStore().openProject('p')
   display.width = ref(1280)
   display.mdAndUp = ref(true)
@@ -110,7 +110,7 @@ const unfold = () => screen.getByRole('button', { name: "Expand this channel's t
 beforeEach(() => {
   setActivePinia(createPinia())
   api.listProjectTasks.mockReset()
-  // 行上「我的」那颗签认的是 `owner_handle`，所以得有个登录的人。
+  // 行尾那枚签认的是「这条不是我负责的」，所以得有个登录的人。
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: '我' }))
 })
 
@@ -180,23 +180,30 @@ describe('频道下面那一整块任务，收得起来', () => {
     expect(screen.getAllByRole('button', { name: "Collapse this channel's tasks" })).toHaveLength(1)
   })
 
-  it('借来的那几条不挂签、悬浮说明说清它为什么在这儿；我负责的缀一个「我的」', async () => {
-    await openProject([
-      channel(
-        'topic-a',
-        [task(K1, '任务一', 'topic-a', { owner_handle: 'me' }), task(K2, '任务二', 'topic-a', { filling_in: true })],
-        4
-      ),
-    ])
+  it('别人的活缀上负责人是谁，我负责的不缀；借来的那几条悬浮说明说清它为什么在这儿', async () => {
+    await openProject(
+      [
+        channel(
+          'topic-a',
+          [
+            task(K1, '任务一', 'topic-a', { owner_handle: 'me' }),
+            task(K2, '任务二', 'topic-a', { owner_handle: 'wang', filling_in: true }),
+          ],
+          4
+        ),
+      ],
+      [{ user_handle: 'wang', name: '王长鑫' }]
+    )
 
-    // 借来的那一条行上没有签，靠悬浮说明说出它为什么在这儿：这个频道里我自己的不到三条。
-    // 断它必须说出的那件事，不整句比——整句比较只会在改文案时红一次
+    // 别人的那一条缀上他是谁，同时靠悬浮说明说出它为什么在这儿：这个频道里我自己的
+    // 不到三条。断它必须说出的那件事，不整句比——整句比较只会在改文案时红一次
     // （王长鑫 2026-10-12 审阅 #3498 提的，`.claude/rules` 之外的那条约定）。
-    const borrowed = screen.getByRole('button', { name: /任务二/ })
-    expect(borrowed.getAttribute('title')).toContain('Fewer than three')
+    const theirs = screen.getByRole('button', { name: /任务二/ })
+    expect(theirs.getAttribute('title')).toContain('Fewer than three')
+    expect(theirs.textContent).toContain('王长鑫')
 
-    // 我负责的那一条缀「我的」，借来的那条不缀。
-    expect(screen.getByRole('button', { name: /任务一/ }).textContent).toContain('Mine')
-    expect(screen.getAllByText('Mine')).toHaveLength(1)
+    // 我负责的那一条不缀签：签说的是「这条不是你的活」。
+    expect(screen.getByRole('button', { name: /任务一/ }).textContent).toBe('任务一')
+    expect(screen.getAllByText('王长鑫')).toHaveLength(1)
   })
 })

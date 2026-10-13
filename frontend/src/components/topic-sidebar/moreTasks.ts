@@ -22,10 +22,10 @@ export type RailTask = Pick<
   | 'moving'
   | 'unseen_delivery'
   | 'last_output_at'
-  // 我负责的那几条，行尾缀一个「我的」。
+  // 这条活归谁：不是我负责的那几条，行尾那枚签上写负责人叫什么（`useTopicRail.ownerName`）。
   | 'owner_handle'
   // 不是和我有关的、被借来把这一块凑够三条的那几条（后端 `rail_tasks`）：行上画淡
-  // 一档，不挂签，悬浮说明写清它为什么在这儿。缺省 = 和我有关的。
+  // 一档，悬浮说明写清它为什么在这儿。缺省 = 和我有关的。
   | 'filling_in'
 >
 

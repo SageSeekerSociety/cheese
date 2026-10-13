@@ -154,6 +154,7 @@ const {
   lightOf,
   taskLight,
   memberMarks,
+  ownerName,
   toggleTitle,
   topicById,
 } = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
@@ -594,6 +595,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 :key="task.id"
                 v-guide-anchor="i === 0 ? 'task-row' : ''"
                 :task="task"
+                :owner-name="ownerName(task)"
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
@@ -604,6 +606,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 v-for="task in rootTopic ? moreTaskRows(rootTopic.id) : []"
                 :key="task.id"
                 :task="task"
+                :owner-name="ownerName(task)"
                 :selected="task.id === selectedTaskId"
                 :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
@@ -615,6 +618,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 v-for="task in rootTopic ? pinnedRows(rootTopic.id) : []"
                 :key="task.id"
                 :task="task"
+                :owner-name="ownerName(task)"
                 :selected="true"
                 :light="taskLight(task)"
                 :unread="unreadOf(task.id)"
@@ -718,6 +722,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         v-for="task in taskRows(item.topic.id)"
                         :key="task.id"
                         :task="task"
+                        :owner-name="ownerName(task)"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
@@ -729,6 +734,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         v-for="task in moreTaskRows(item.topic.id)"
                         :key="task.id"
                         :task="task"
+                        :owner-name="ownerName(task)"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
                         :light="taskLight(task)"
@@ -741,6 +747,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         v-for="task in pinnedRows(item.topic.id)"
                         :key="task.id"
                         :task="task"
+                        :owner-name="ownerName(task)"
                         :depth="item.depth"
                         :selected="true"
                         :light="taskLight(task)"
