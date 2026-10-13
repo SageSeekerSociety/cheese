@@ -74,7 +74,10 @@ beforeEach(() => {
   reviews.mockReset().mockResolvedValue({ items: [application()] })
   review.mockReset().mockResolvedValue({})
 })
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
+})
 
 describe('space review queue', () => {
   it('approves an application and refreshes the queue', async () => {
@@ -169,6 +172,9 @@ describe('space review queue · 列表', () => {
 
   // 审核时间和申请时间一样按读者的时钟说成「几小时前」，不是把接口里的 ISO 串原样印出来。
   it('审过的那一条说什么时候审的，不印 ISO 时间串', async () => {
+    // Keep the three-hour example on one local calendar day so the test is not midnight-dependent.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 9, 13, 12, 0, 0))
     const reviewedAt = new Date(Date.now() - 3 * 3600_000 - 60_000).toISOString().replace('Z', '+00:00')
     reviews.mockResolvedValue({ items: [application({ reviewStatus: 'APPROVED', reviewedBy: 'admin', reviewedAt })] })
     const page = mountPage()
