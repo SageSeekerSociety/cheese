@@ -47,6 +47,8 @@ class RoutineIn(BaseModel):
     output_dir: str = ""
     trigger: str = "schedule"
     spec: dict = Field(default_factory=dict)
+    #: 执行范围：管哪几个频道。不说就是「就管这个频道」（`create` 里补上）。
+    scope_topic_ids: list[str] | None = None
     timezone: str = "Asia/Shanghai"
     owner_handle: str | None = None
     agent_handle: str | None = None
@@ -59,6 +61,8 @@ class RoutinePatch(BaseModel):
     output_dir: str | None = None
     trigger: str | None = None
     spec: dict | None = None
+    #: 空数组是「不限定」（整个项目），和没给（None，不动这一项）不是一回事。
+    scope_topic_ids: list[str] | None = None
     timezone: str | None = None
     agent_handle: str | None = None
 
@@ -74,7 +78,11 @@ def _iso(value: datetime | None) -> str | None:
 
 
 def _routine(
-    row: Routine, *, can_manage: bool = False, room_archived: bool = False
+    row: Routine,
+    *,
+    can_manage: bool = False,
+    room_archived: bool = False,
+    scope_topics: list[dict] | None = None,
 ) -> dict:
     trigger_text = describe_trigger(row)
     return {
@@ -91,6 +99,10 @@ def _routine(
         "trigger": row.trigger,
         "trigger_text": trigger_text,
         "spec": row.spec,
+        #: 执行范围：id 是勾的哪几个（存着什么就是什么），`scope_topics` 是它们
+        #: 的名字，卡片那一行和表单那排勾都照它画。
+        "scope_topic_ids": list(row.scope_topic_ids or []),
+        "scope_topics": scope_topics or [],
         "timezone": row.timezone,
         "state": row.state,
         "agent_handle": row.agent_handle,
@@ -231,11 +243,22 @@ async def _present(
     「已随话题归档停止」只能由房间答，一次问完这一批。
     """
     archived = await RoutineService(db).archived_room_ids([r.topic_id for r in rows])
+    wanted = {
+        uuid.UUID(str(value)) for r in rows for value in (r.scope_topic_ids or [])
+    }
+    named = {
+        str(topic.id): {"id": str(topic.id), "title": topic.title}
+        for topic in (await TopicService(db).get_many(wanted) if wanted else [])
+    }
     return [
         _routine(
             r,
             can_manage=_may_manage(r, actor, admin=admin),
             room_archived=r.topic_id in archived,
+            scope_topics=[
+                named.get(str(value), {"id": str(value), "title": ""})
+                for value in (r.scope_topic_ids or [])
+            ],
         )
         for r in rows
     ]
@@ -339,6 +362,7 @@ async def create_routine(
         output_dir=body.output_dir,
         trigger=body.trigger,
         spec=body.spec,
+        scope_topic_ids=body.scope_topic_ids,
         tz=body.timezone,
         owner_handle=body.owner_handle,
         agent_handle=body.agent_handle,
@@ -457,11 +481,32 @@ async def delete_routine(
 
 @router.get("/routines/{routine_id}/runs")
 async def list_runs(
-    routine_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+    routine_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    page_no: int = 1,
+    per_page: int = 10,
+    order: str = "newest",
+    failed: bool = False,
+    days: int | None = None,
 ) -> dict:
+    """执行记录那一页。默认最新在前、最近 30 天。
+
+    排序和筛选都在这里做，界面上那两颗筛子（最新/最早、只看未能执行的、时间
+    范围）就是这几个参数；一页的行数由界面按屏幕算好（`per_page`），这一层
+    只保证给的是它要的那一页。
+    """
     row, _ = await _routine_actor(db, resolver, routine_id)
-    items = [_run(r) for r in await RoutineService(db).runs(row.id)]
-    return ok(page(items, len(items)))
+    per_page = max(1, min(per_page, 100))
+    rows, total = await RoutineService(db).runs_page(
+        row.id,
+        limit=per_page,
+        offset=(max(1, page_no) - 1) * per_page,
+        order="oldest" if order == "oldest" else "newest",
+        failed_only=failed,
+        days=days if days and days > 0 else None,
+    )
+    return ok({**page([_run(r) for r in rows], total), "page": max(1, page_no)})
 
 
 @router.post("/routine-runs/{run_id}/report")

@@ -113,18 +113,16 @@ def _clean_dir(raw: str) -> str:
 
 
 def _validate(trigger: str, spec: dict, tz: str) -> dict:
+    """`spec` 只装「什么时候跑」。盯哪几个频道是 ``scope_topic_ids`` 那一列，
+    不是这里的一项 —— 它两个触发器都用得上，放在 spec 里就成了「有的触发器才有」。
+    """
     try:
         kind = RoutineTrigger(trigger)
     except ValueError as exc:
         raise ValidationError(say("routineTriggerInvalid")) from exc
     if kind is RoutineTrigger.schedule:
         return schedule.normalize(spec or {}, tz)
-    scope = (spec or {}).get("scope", "room")
-    if scope not in ("room", "project"):
-        raise ValidationError(say("routineEventScopeInvalid"))
-    if kind is RoutineTrigger.library_file_added:
-        scope = "project"
-    return {"scope": scope}
+    return {}
 
 
 NO_FEEDBACK_WAITING = "没有待分诊的反馈，这一次不执行"
@@ -145,6 +143,48 @@ class RoutineService:
             self._session, project_id
         ):
             raise ValidationError(say("routineFeedbackBatchPlatformOnly"))
+
+    async def _check_scope(self, project_id: uuid.UUID, ids: list[str]) -> list[str]:
+        """执行范围里那串频道 id，都得是这个项目里的频道。
+
+        别的项目的频道名不能从这条例行事务里透出来：它会写进卡片那一行、执行
+        时交给队友的提示和结果通知，都是这个房间的人读得到的。重复的去掉，顺序
+        留着 —— 界面上就是勾的顺序。
+        """
+        wanted: list[str] = []
+        for raw in ids or []:
+            value = str(raw).strip()
+            if value and value not in wanted:
+                wanted.append(value)
+        if not wanted:
+            return []
+        try:
+            parsed = [uuid.UUID(value) for value in wanted]
+        except ValueError as exc:
+            raise ValidationError(say("routineScopeUnknown")) from exc
+        known = set(
+            await self._session.scalars(
+                select(Topic.id).where(
+                    Topic.id.in_(parsed), Topic.project_id == project_id
+                )
+            )
+        )
+        if len(known) != len(parsed):
+            raise ValidationError(say("routineScopeUnknown"))
+        return wanted
+
+    async def scope_names(self, row: Routine) -> list[str]:
+        """执行范围里那几个频道的名字，按勾选的顺序。"""
+        ids = [uuid.UUID(str(value)) for value in (row.scope_topic_ids or [])]
+        if not ids:
+            return []
+        found = {
+            topic.id: topic.title
+            for topic in await self._session.scalars(
+                select(Topic).where(Topic.id.in_(ids))
+            )
+        }
+        return [found[i] for i in ids if i in found]
 
     async def get(self, routine_id: uuid.UUID) -> Routine:
         row = await self._session.get(Routine, routine_id)
@@ -169,6 +209,45 @@ class RoutineService:
                 .limit(limit)
             )
         )
+
+    async def runs_page(
+        self,
+        routine_id: uuid.UUID,
+        *,
+        limit: int,
+        offset: int,
+        order: str = "newest",
+        failed_only: bool = False,
+        days: int | None = None,
+    ) -> tuple[list[RoutineRun], int]:
+        """执行记录那一页：这一页的行，和筛过之后一共多少条。
+
+        「一共多少条」是筛过之后的数：界面上底下写的是「第 1 / 共 5 页」，页数
+        得配得出筛完剩多少条，而不是库里一共有多少条。
+        """
+        where = [RoutineRun.routine_id == routine_id]
+        if failed_only:
+            where.append(RoutineRun.status == RunStatus.failed.value)
+        if days is not None:
+            where.append(RoutineRun.created_at >= now() - timedelta(days=days))
+        total = await self._session.scalar(
+            select(func.count(RoutineRun.id)).where(*where)
+        )
+        ordered = (
+            RoutineRun.created_at.asc()
+            if order == "oldest"
+            else RoutineRun.created_at.desc()
+        )
+        rows = list(
+            await self._session.scalars(
+                select(RoutineRun)
+                .where(*where)
+                .order_by(ordered, RoutineRun.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+        return rows, int(total or 0)
 
     async def _agent_for(self, topic_id: uuid.UUID, requested: str | None) -> str:
         seats = await TopicMemberService(self._session).agent_handles(topic_id)
@@ -195,11 +274,16 @@ class RoutineService:
         tz: str,
         owner_handle: str | None,
         agent_handle: str | None,
+        scope_topic_ids: list[str] | None = None,
     ) -> Routine:
         if not title.strip() or not instructions.strip():
             raise ValidationError(say("routineFieldsRequired"))
         spec = _validate(trigger, spec, tz)
         await self._check_feedback_batch(spec, topic.project_id)
+        if scope_topic_ids is None:
+            # 没说的就是「就管这个频道」：从频道里建一条，本来就是这一个。
+            scope_topic_ids = [str(topic.id)]
+        scope = await self._check_scope(topic.project_id, scope_topic_ids)
         if by_agent:
             agent = await self._agent_for(topic.id, agent_handle or by)
             if not owner_handle:
@@ -226,6 +310,7 @@ class RoutineService:
             output_dir=_clean_dir(output_dir),
             trigger=trigger,
             spec=spec,
+            scope_topic_ids=scope,
             timezone=tz,
             state=RoutineState.draft.value,
             agent_handle=agent,
@@ -253,7 +338,7 @@ class RoutineService:
                                 severity=SEVERITY_INFO,
                                 # It waits on a person confirming it.
                                 who=WHO_HUMAN,
-                                detail=self.summary_text(row),
+                                detail=await self.summary_text(row),
                                 detail_label=say("labelRoutineToConfirm"),
                             ),
                             "routine_id": str(row.id),
@@ -267,16 +352,18 @@ class RoutineService:
         await self._session.flush()
         return row
 
-    @staticmethod
-    def summary_text(row: Routine) -> str:
+    async def summary_text(self, row: Routine) -> str:
+        """这一条摊开写给人看的那几行：待确认那条消息底下挂的、界面上那张卡片的
+        同一份内容。执行者不在里面 —— 它由平台派，不是人定的一项。
+        """
+        names = await self.scope_names(row)
         return say(
             "routineSummary",
             title=row.title,
             trigger=describe_trigger(row),
             instructions=row.instructions,
-            scope=row.context_scope or say("routineScopeUnset"),
+            scope=listing(names) if names else say("routineScopeUnset"),
             output=row.output_dir or say("routineOutputRoot"),
-            agent=row.agent_handle,
             owner=row.owner_handle,
         )
 
@@ -341,6 +428,10 @@ class RoutineService:
         tz = changes.get("timezone", row.timezone)
         new_spec = _validate(trigger, spec, tz)
         await self._check_feedback_batch(new_spec, row.project_id)
+        if changes.get("scope_topic_ids") is not None:
+            row.scope_topic_ids = await self._check_scope(
+                row.project_id, changes["scope_topic_ids"]
+            )
         for key in ("title", "instructions", "context_scope"):
             if key in changes and changes[key] is not None:
                 setattr(row, key, str(changes[key]).strip())
@@ -537,8 +628,17 @@ class RoutineService:
         return run
 
 
-def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
+def run_prompt(
+    routine: Routine,
+    run: RoutineRun,
+    previous: str = "",
+    names: list[str] | None = None,
+) -> str:
     folder = routine.output_dir or "房间根目录"
+    # 执行范围：这条规则管哪几个频道（空着 = 不限定，整个项目）。这一轮该看
+    # 哪几个频道的事，就这一行说了算；顺手写下的还是频道名，不是 id —— 提示词
+    # 是给人看得懂的样子写的，读它的队友也照这个找地方。
+    scope = "、".join(names or []) or "整个项目（不限定）"
     lines = [
         f"【{TRIGGER_LABELS[RoutineTrigger(routine.trigger)]}工作】{routine.title}",
         f"这是例行事务「{routine.title}」的一次执行（执行 id {run.id}）。"
@@ -547,6 +647,7 @@ def run_prompt(routine: Routine, run: RoutineRun, previous: str = "") -> str:
         f"工作内容：{routine.instructions}",
         "参考资料："
         + (routine.context_scope or "按工作内容需要，只用你有权访问的项目内容"),
+        f"执行范围：{scope}",
         f"存储位置：{folder}（用 cheese show 放进房间，文件名带上日期）",
         "",
         "做完后必须交回结果，成功失败都要交：",
@@ -620,7 +721,12 @@ async def _fire(
         run.error = f"执行者 {routine.agent_handle} 已不在这个项目里"
         run.finished_at = stamp
         return run
-    content = run_prompt(routine, run, await _previous_result(session, routine))
+    content = run_prompt(
+        routine,
+        run,
+        await _previous_result(session, routine),
+        names=await RoutineService(session).scope_names(routine),
+    )
     batch_size = routine.spec.get("feedback_batch")
     if batch_size:
         batch = await feedback_triage.untriaged(session, batch_size)
@@ -753,7 +859,9 @@ async def _events_for(
 ) -> list[tuple[str, str, datetime]]:
     """(occurrence key, human description, when) for events after `since`."""
     trigger = RoutineTrigger(routine.trigger)
-    in_room = routine.spec.get("scope") == "room"
+    # 执行范围空着 = 不限定：整个项目里发生的事都算。勾了频道的，只有那几个
+    # 频道里出的事叫得动它。资料库是整个项目的，那一档不看这一列。
+    scope = [uuid.UUID(str(value)) for value in (routine.scope_topic_ids or [])]
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
         for name, when in await library_listing.added_since(
@@ -772,8 +880,8 @@ async def _events_for(
             Task.closed_at.is_not(None),
             Task.closed_at >= since,
         )
-        if in_room:
-            query = query.where(Task.room_id == routine.topic_id)
+        if scope:
+            query = query.where(Task.room_id.in_(scope))
         # A task is created by a person (an agent only proposes one), so a
         # routine run never opens work that would fire it again.
         for task in await session.scalars(query):
@@ -794,8 +902,8 @@ async def _events_for(
                 select(Topic.id).where(Topic.project_id == routine.project_id)
             ),
         )
-        if in_room:
-            query = query.where(AcceptCard.topic_id == routine.topic_id)
+        if scope:
+            query = query.where(AcceptCard.topic_id.in_(scope))
         for card in await session.scalars(query):
             assert card.decided_at is not None
             name = card.deliverable_name or card.change_subject or str(card.id)

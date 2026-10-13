@@ -12,6 +12,29 @@ from app.domain.feedback.triage import MAX_BATCH
 
 FREQS = ("hourly", "daily", "weekly", "monthly")
 
+#: 时间后面那个括号里的时区，写人认得的名字，不写 IANA 的名字：界面上是一句话
+#: 「每天 18:00（北京时间）」，读的人不必先知道 `Asia/Shanghai` 是哪儿。名字翻成
+#: 句子 key 交给目录（`roomNotice`），所以英文读的人读到的是 "Beijing time"。没写
+#: 在这里的时区照原样写出来 —— 宁可写一个本名，也不要猜它叫什么。
+ZONE_KEYS = {
+    "UTC": "routineZoneUtc",
+    "Asia/Shanghai": "routineZoneBeijing",
+    "Asia/Urumqi": "routineZoneUrumqi",
+    "Asia/Hong_Kong": "routineZoneHongKong",
+    "Asia/Taipei": "routineZoneTaipei",
+    "Asia/Tokyo": "routineZoneJapan",
+    "Asia/Singapore": "routineZoneSingapore",
+    "Europe/London": "routineZoneLondon",
+    "Europe/Berlin": "routineZoneBerlin",
+    "America/New_York": "routineZoneNewYork",
+    "America/Los_Angeles": "routineZoneLosAngeles",
+}
+
+
+def zone_label(name: str) -> NoticeText | str:
+    key = ZONE_KEYS.get(name)
+    return say(key) if key else name
+
 
 def zone(name: str) -> ZoneInfo:
     try:
@@ -120,10 +143,11 @@ def describe(spec: dict, tz: str) -> NoticeText | str:
 
 def _describe_moment(spec: dict, tz: str) -> NoticeText | str:
     freq = spec.get("freq")
+    where = zone_label(tz)
     if freq == "hourly":
-        return say("routineTriggerHourly", minute=spec["minute"], timezone=tz)
+        return say("routineTriggerHourly", minute=spec["minute"], timezone=where)
     if freq == "daily":
-        return say("routineTriggerDaily", time=spec["time"], timezone=tz)
+        return say("routineTriggerDaily", time=spec["time"], timezone=where)
     if freq == "weekly":
         weekdays = (
             say("routineWeekdayMon"),
@@ -135,9 +159,12 @@ def _describe_moment(spec: dict, tz: str) -> NoticeText | str:
             say("routineWeekdaySun"),
         )
         days = listing(weekdays[d] for d in spec["weekdays"])
-        return say("routineTriggerWeekly", days=days, time=spec["time"], timezone=tz)
+        return say("routineTriggerWeekly", days=days, time=spec["time"], timezone=where)
     if freq == "monthly":
         return say(
-            "routineTriggerMonthly", day=spec["day"], time=spec["time"], timezone=tz
+            "routineTriggerMonthly",
+            day=spec["day"],
+            time=spec["time"],
+            timezone=where,
         )
     return ""

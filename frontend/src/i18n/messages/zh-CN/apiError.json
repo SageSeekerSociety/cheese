@@ -620,7 +620,7 @@
   "snapshotCheckFailed": "任务备份校验失败，未恢复任何文件",
   "routineNoNextRun": "这个时间安排算不出下一次执行时间",
   "routineFrequencyInvalid": "频率只能是 hourly、daily、weekly、monthly 之一",
-  "routineEventScopeInvalid": "事件范围只能是 room 或 project",
+  "routineScopeUnknown": "执行范围里有个频道不在这个项目里",
   "routineTriggerInvalid": "触发方式只能是定时或三种项目事件之一",
   "routineOnlyRunnerReports": "只有执行这条例行事务的 AI 队友能交回结果",
   "routineStatusInvalid": "status 只能是 succeeded 或 failed",

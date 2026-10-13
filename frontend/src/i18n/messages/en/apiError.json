@@ -620,7 +620,7 @@
   "snapshotCheckFailed": "The task backup failed its check, so no files were restored",
   "routineNoNextRun": "This schedule doesn't give a next run time",
   "routineFrequencyInvalid": "The frequency can only be one of hourly, daily, weekly, monthly",
-  "routineEventScopeInvalid": "The event scope can only be room or project",
+  "routineScopeUnknown": "One of the channels in the scope is not in this project",
   "routineTriggerInvalid": "The trigger can only be a schedule or one of the three project events",
   "routineOnlyRunnerReports": "Only the AI teammate running this routine can hand back its result",
   "routineStatusInvalid": "status can only be succeeded or failed",

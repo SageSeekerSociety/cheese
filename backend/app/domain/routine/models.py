@@ -82,8 +82,13 @@ class Routine(UuidPk, Timestamps, Base):
     trigger: Mapped[str] = mapped_column(String(32))
     #: schedule: {"freq": hourly|daily|weekly|monthly, "time": "HH:MM",
     #: "minute": int, "weekdays": [0..6], "day": 1..31}.
-    #: Events: {"scope": room|project}.
+    #: Events: {} —— 盯哪几个频道说的是 ``scope_topic_ids``，不在 spec 里。
     spec: Mapped[dict] = mapped_column(JSONB, default=dict)
+    #: 执行范围：这条规则管哪几个频道（id 的字符串，JSONB 数组，和 `outputs`
+    #: 同一种存法）。事件触发时它就是「盯哪几个频道发生的事」；定时的那条则是
+    #: 这次工作覆盖哪几个频道，跟着提示一起交给执行的队友。人的界面上是
+    #: 「执行范围」那排勾，从频道里建一条就是那一个频道，勾选只有一处（新建/修改）。
+    scope_topic_ids: Mapped[list] = mapped_column(JSONB, default=list)
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Shanghai")
     state: Mapped[str] = mapped_column(String(16), default=RoutineState.draft.value)
     #: The AI teammate seat that does the work.
