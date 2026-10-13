@@ -248,9 +248,14 @@ def sweep(tok, room, silent, skip, want_facts):
         n = card.get("pr_number")
         pr = None
         if n and (card.get("status") == "pending" or want_facts):
-            if n not in facts:
-                facts[n] = gh_pr(n, board=want_facts)
-            pr = facts[n]
+            # 文本清单照老样子一卡一查，失败的那次也留到下一张卡自己重试；看板模式
+            # 同一个 PR 只查一次，多出来的字段没必要读两遍。
+            if want_facts and n in facts:
+                pr = facts[n]
+            else:
+                pr = gh_pr(n, board=want_facts)
+                if want_facts:
+                    facts[n] = pr
 
         ready = [m for m in accev if meta(m).get("event_type") == "accept_ready"]
         last_ready = ready[-1]["created_at"] if ready else None
