@@ -251,6 +251,8 @@ _SECTION_WORDS = {
     "verified": (_VERIFIED_HEADING_WORDS,),
 }
 _SECTION_WORDS_FLAT = {k: tuple(w for g in gs for w in g) for k, gs in _SECTION_WORDS.items()}
+#: 两半的名字合起来 —— 一行只要提到其中任何一个，就是在给某一节起名字（§ `_names_a_section`）。
+_SECTION_NAME_WORDS = _VERIFIED_LABEL_WORDS + _SECTION_WORDS_FLAT["changed"]
 #: 标题里说「没改」的那些词：`## What did not change` 讲的是另一半，不是改动本身。
 #: 只看开头三个词 —— `## Fix a bug that no longer exists` 是在说改动。
 _NEGATING_WORDS = frozenset({"not", "no", "never", "without", "unverified", "none", "nothing"})
@@ -269,6 +271,18 @@ _LABEL = re.compile(
     r"^(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!\w{2,12}://)"
     r"(?:\*\*)?([^\n：:*`，。]{1,40}(?:[（(][^）\n]{0,80}[）)])?)"
     r"(?:\*\*)?[ \t]*[：:](?!//)[ \t]*", re.M)
+#: A label line whose name is too long for `_LABEL` to read: `Verification at final SHA
+#: 47c36ab320e84053186d5d9e6acdfcfab7d0ee87:` is 66 characters, so the line was not a
+#: label, the verification half came out empty, and the board said that body never wrote
+#: it. Raising `_LABEL`'s 40 reads the wrapped sentences of #3618 again, so the long name
+#: gets a pattern of its own and two further conditions: the line is nothing but the name
+#: and its colon, and the name says which half it is near its start (§ `_name_head`). A
+#: sentence that ends a line on a colon and only mentions the word half a line in — `The
+#: dev deploy of 452e49f (run 38037133758) failed at "Release the verified metering
+#: image":` — opens on neither half's name and stays out.
+_LABEL_HEADER = re.compile(
+    r"^(?![ \t])(?![ \t]*[-•*+][ \t])(?![ \t]*\d+[.)][ \t])(?!#)(?!\w{2,12}://)"
+    r"(?:\*\*)?([^\n：:*`，。/]{41,120}?)(?:\*\*)?[ \t]*[：:](?!//)[ \t]*$", re.M)
 _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
 #: 正文第一行的一级标题（`# feat(scope): …`）是这篇的题目，不是一节的名字：留着它，
 #: 改动的第一段会带上这行；当成标题，正文中间那种手误写成一级的提示行又会把一节切短
@@ -309,6 +323,11 @@ _CASES_MAX = 6
 #: （`Independent review at 2c3fb34a: three candidates raised…`）40 个字符也装得下，
 #: 而 `Verified on this machine:` 有 25 个字符 —— 后者点名了这一节，前者没有。
 _NAME_SHORT = 20
+#: 名字长过 `_LABEL` 那条路（§ `_LABEL_HEADER`，41–120 个字符）时，还要看名字开头的几个词：
+#: `Verification at final SHA 47c36ab3…`、`Behaviour, checked in a prototype …` 一上来就说了
+#: 自己属于哪一半，而一句在行尾碰到冒号的话不会。四个词够到 `Each test below fails …` 里的
+#: test，也拦得住 `The dev deploy of 452e49f (…) failed at …` 那一类。
+_NAME_HEAD_WORDS = 4
 #: 「这一行起不起一段」只看它上面两行就够，不用每次复制整个前缀：正文上限 64 KB，
 #: 标签行多的时候那是平方的（四万个标签行 8 秒）。
 _LOOK_BEHIND = 200
@@ -387,8 +406,9 @@ def brief(desc, limit=400):
     heads = list(_HEADING.finditer(text))
     # 可能会切走一节的行，从早到晚：带冒号的标签行，和整行只有章节名的那些。
     labels = sorted([m for m in _LABEL.finditer(text) if _is_label(text, m)]
+                    + [m for m in _LABEL_HEADER.finditer(text) if _is_label_header(text, m)]
                     + [m for m in _BARE_LABEL.finditer(text)
-                       if _names_a_section(m) and _stands_alone(text, m)],
+                       if _names_a_section(m.group(1)) and _stands_alone(text, m)],
                     key=lambda m: m.start())
     ver = [m for m in labels if _mentions(m.group(1).lower(), _VERIFIED_LABEL_WORDS)]
     verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels, heads, "verified")
@@ -437,7 +457,8 @@ def _under_heading(text, heads, want, also=()):
     # `also` 只在它前面真的还有本节内容时才切：紧贴标题的一行是本节自己的第一行，
     # 不是「本节到此为止」。
     stops = [h.start() for h in heads[i + 1:]] \
-        + [m.start() for m in also if m.start() > begin]
+        + [m.start() for m in also
+           if m.start() > begin and text[begin:m.start()].strip()]
     end = min(stops) if stops else len(text)
     return text[begin:end].strip()
 
@@ -454,7 +475,7 @@ def _is_label(text, m):
     too (`验证：全过`)."""
     if not _starts_a_block(text, m):
         return False
-    if _names_a_section(m):
+    if _names_a_section(m.group(1)):
         return True
     if len(_label_name(m)) > _NAME_SHORT:
         return False
@@ -478,10 +499,32 @@ def _label_name(m):
     return name.strip()
 
 
-def _names_a_section(m):
+def _names_a_section(name):
     """Whether a short unpunctuated line is one of the section names rather than prose."""
-    lower = m.group(1).lower()
-    return _mentions(lower, _VERIFIED_LABEL_WORDS + _SECTION_WORDS_FLAT["changed"])
+    return _mentions(name.lower(), _SECTION_NAME_WORDS)
+
+
+def _name_head(name):
+    """A name's first few words, lowercased: what a long name leads with (§ `_NAME_HEAD_WORDS`)."""
+    return " ".join(name.split()[:_NAME_HEAD_WORDS]).lower()
+
+
+def _opens_with_a_section_word(name):
+    """Whether a long name says which half it is near its start.
+
+    `Verification at final SHA 47c36ab3…` and `Behaviour, checked in a prototype …` do.
+    A sentence that ends a line on a colon and only mentions one of the words later does
+    not — `The dev deploy of 452e49f (run 38037133758) failed at "Release the verified
+    metering image":` — and reading one as a label cut the section above it in half."""
+    return _mentions(_name_head(name), _SECTION_NAME_WORDS)
+
+
+def _is_label_header(text, m):
+    """Whether a whole line of nothing but a long name and a colon is a label line.
+
+    The name is longer than `_LABEL` reads, so it gets the second condition (§
+    `_LABEL_HEADER`): the line starts a block and leads with one half's name."""
+    return _starts_a_block(text, m) and _opens_with_a_section_word(m.group(1))
 
 
 def _negates(h):
@@ -975,8 +1018,20 @@ _SELF_TEST_BODIES = (
      "改动：A。\n\n验证：绿了\n\n## 不能一起发的\n\n别的事。\n",
      "改动：A。", "绿了"),
     ("标签行贴在标题下面也算标签行",
-     "## 改动\n验证：ok\n",
+     "## 背景\n验证：ok\n",
      "", "ok"),
+    ("标签行前面的标题底下已经写了内容时，它才把这一节切在这儿",
+     "## 问题\n\n线上的报错来自 A。\n\n## 改动\n\n只改测试：用一个 `ContextVar` 包住这次调用。\n\n## 验证\n\n绿了\n",
+     "只改测试：用一个 `ContextVar` 包住这次调用。", "绿了"),
+    ("名字长过四十个字符的标签行也算标签行",
+     "改动：A。\n\nVerification at final SHA 47c36ab320e84053186d5d9e6acdfcfab7d0ee87:\n"
+     "\n- 跑过 e2e。\n",
+     "改动：A。", "- 跑过 e2e。"),
+    ("长名字的一句话在行尾碰到冒号时不算标签行",
+     "改动：A。\n\nThe dev deploy of 452e49f (run 38037133758) failed at \"Release the"
+     " verified metering image\":\n\n- 重跑就过了。\n",
+     "改动：A。\n\nThe dev deploy of 452e49f (run 38037133758) failed at \"Release the"
+     " verified metering image\":\n\n- 重跑就过了。", ""),
     ("同一节的标签行不切断这一节",
      "验证：全过。\n\nNot covered by a test: the wiring needs a live box\n",
      "", "全过。\n\nNot covered by a test: the wiring needs a live box"),
