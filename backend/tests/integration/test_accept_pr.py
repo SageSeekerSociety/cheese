@@ -917,6 +917,9 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
 
     _poll(client)  # 队列里的一跳
     first = _queue_mirror(client, cid)
+    # 和 `enqueued` 比，不和上一跳比：轮询每跳写的都是同一份字面量，两个轮询帧
+    # 之间按构造必然相等，那样的断言永远不会红。要问的是「这一跳有没有换个说法」
+    # —— 换了（比如重算成 GitHub 钉住的那份）这里就红。
     assert first["reasons"] == enqueued["reasons"]  # 判定一条没改
     assert first["checked_at"] > enqueued["checked_at"]  # 只有 checked_at 走
 
@@ -927,8 +930,12 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     _poll(client)  # 队列里的下一跳：把有效期续上
 
     again = _queue_mirror(client, cid)
-    assert again["state"] == "blocked"
-    assert again["reasons"] == first["reasons"]
+    # 同样和 `enqueued` 比：判定仍是入队那一刻那份（state 和 reasons 一起看，
+    # 两处写入分别在 `merge_queue` 和这里）。
+    assert (again["state"], again["reasons"]) == (
+        enqueued["state"],
+        enqueued["reasons"],
+    )
     assert again["checked_at"] > stale_at
     assert _waiting_on_checks(client, tid)
 
