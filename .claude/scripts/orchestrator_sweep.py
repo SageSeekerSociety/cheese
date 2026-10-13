@@ -372,8 +372,8 @@ def _negates(h):
     low = h.group(2).strip().lower()
     if low.startswith(("没", "未", "无", "不")):
         return True
-    return re.split(r"[\s:：,，—-]+", low, 1)[0] in ("not", "no", "never", "without",
-                                                    "unverified", "none", "nothing")
+    return re.split(r"[\s:：,，—-]+", low, maxsplit=1)[0] in (
+        "not", "no", "never", "without", "unverified", "none", "nothing")
 
 
 def _stands_alone(text, m):
