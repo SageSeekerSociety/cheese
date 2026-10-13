@@ -56,6 +56,11 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
   // 登录之后的第一遍排到首帧之后（`lib/afterFirstPaint.ts`）：这条角标几秒后才有人看，
   // 别在开页那一瞬间跟页面自己要的数据抢。之后的刷新照旧——换页面、窗口重新拿到焦点，
   // 都还是当场问（`asked` 挡住的是首帧那个门开了之后重复排的那几遍）。
+  //
+  // 首帧之前一次都不问，包括「换页面」这条：冷开落在深链上（刷新、从别处点进来）时，
+  // 这一次跳转是 `main.ts` 挂载之后才落地的，`from` 是起始的 `/`，看着像人换了页，其实
+  // 就是这一次打开本身——放它过去就会在首帧之前读一遍，门开了再读一遍。门开那一次读的
+  // 已经是落地后的状态，不会漏。
   let asked = false
   watch(
     [enabled, firstPaintDone],
@@ -74,7 +79,10 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
   )
   watch(
     () => route.path,
-    (_path, from) => void refresh(from === '/inbox')
+    (_path, from) => {
+      if (!firstPaintDone.value) return
+      void refresh(from === '/inbox')
+    }
   )
   useEventListener(window, 'focus', () => void refresh())
 

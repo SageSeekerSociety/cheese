@@ -59,7 +59,7 @@ vi.mock('@/lib/roomLink', () => ({
 }))
 import ProjectShell from './ProjectShell.vue'
 
-import { openFirstPaint } from '@/test/firstPaint'
+import { closeFirstPaint, openFirstPaint } from '@/test/firstPaint'
 import { seedProject } from '@/test/seedQueries'
 
 afterEach(() => {
@@ -81,6 +81,23 @@ async function mount() {
     global: { plugins: [createPinia()], stubs: { RouterView: true, VSnackbar: true } },
   })
 }
+
+it('connects the project feed only once the first frame is done', async () => {
+  // 这个文件里别的用例已经把门推开过，而门是全站一份状态、开着就一直开着（`@/test/firstPaint`）。
+  closeFirstPaint()
+  seedProject('p', { topics: [], unread: {}, privateUnread: {}, notifyLevels: {} }, 'alice')
+  const view = render(ProjectShell, {
+    props: { projectId: 'p' },
+    global: { plugins: [createPinia()], stubs: { RouterView: true, VSnackbar: true } },
+  })
+  await new Promise((r) => setTimeout(r, 0))
+  expect(feed.channels).toEqual([])
+
+  await openFirstPaint()
+  await new Promise((r) => setTimeout(r, 0))
+  expect(feed.channels.map((c) => c.topic)).toContain('project:p')
+  view.unmount()
+})
 
 it('asks nothing while nothing in the project changes', async () => {
   const view = await mount()

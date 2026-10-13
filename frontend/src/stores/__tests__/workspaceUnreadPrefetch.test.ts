@@ -32,7 +32,7 @@ vi.mock('@/api', () => ({
 import { getTopicUnread, listBlocks } from '@/api'
 import { setCachedWindow } from '@/query/blocks'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { openFirstPaint } from '@/test/firstPaint'
+import { closeFirstPaint, openFirstPaint } from '@/test/firstPaint'
 
 /** 打开项目（刷新页面后第一次进来），等第一次读完。 */
 async function opened() {
@@ -60,6 +60,24 @@ describe('未读轮询的后台预取', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.mocked(listBlocks).mockClear()
+  })
+
+  it('首帧之前不读未读：门开了才读', async () => {
+    unread({ t1: 2 })
+    // 这个文件里别的用例已经把门推开过，而门是全站一份状态、开着就一直开着（`@/test/firstPaint`）。
+    closeFirstPaint()
+    const store = useWorkspaceStore()
+    store.openProject('p1')
+    await flush()
+
+    expect(vi.mocked(getTopicUnread)).not.toHaveBeenCalled()
+    expect(store.unreadMap.t1).toBeUndefined()
+
+    await openFirstPaint()
+    await flush()
+
+    expect(vi.mocked(getTopicUnread)).toHaveBeenCalled()
+    expect(store.unreadMap.t1?.count).toBe(2)
   })
 
   it('刷新页面时不会为每个有未读的话题各发一个请求', async () => {

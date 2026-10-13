@@ -68,10 +68,14 @@ export function useUnreadNotifications() {
       },
       { immediate: true }
     )
-    // 走进待办页：人接下来看的就是那份未读列表，先把这个数对上一遍。
+    // 走进待办页：人接下来看的就是那份未读列表，先把这个数对上一遍。首帧之前那次不算
+    // 「走进」——冷开就落在待办页上时，这一次跳转是挂载之后才落地的，`from` 是起始的
+    // `/`；放它过去就会在首帧之前问一遍，门开了再问一遍。门开那一次读的已经是落地后
+    // 的状态，不会漏。
     watch(
       () => route.path,
       (path, from) => {
+        if (!firstPaintDone.value) return
         if (path === '/inbox' && from !== '/inbox') void refresh()
       }
     )
