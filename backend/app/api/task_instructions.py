@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 from app.api.deps import get_work_runner
-from app.api.routes.topics import BlockRepository
+from app.api.topics_deps import BlockRepository
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.agent.announce import announce

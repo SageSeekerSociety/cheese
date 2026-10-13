@@ -540,6 +540,7 @@ _SEED = {
     "app/api/space_deps.py": "",
     "app/api/space_payloads.py": "",
     "app/api/task_deps.py": "",
+    "app/api/topics_deps.py": "",
     "app/api/routes/__init__.py": "",
     "app/api/routes/demo.py": "from app.domain.bar.services import read_bar\n",
     "app/api/routes/other.py": "",
