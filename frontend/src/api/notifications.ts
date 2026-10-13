@@ -7,6 +7,7 @@ import type {
   UnreadCountResponse,
 } from '@/types/apiNotifications'
 
+import { changesAwaiting } from './awaitingChanged'
 import { axiosMutation, axiosRequest } from './axiosHttp'
 
 /** Notifications ride the new API origin; JSON calls expose only the payload. */
@@ -15,20 +16,24 @@ export namespace NotificationsApi {
   export const list = (params: ListNotificationsParams) =>
     axiosRequest<ListNotificationsResponse>({ url: '/notifications', method: 'GET', params }, true)
 
-  // 删除通知
+  // 删除通知。删掉、读过的变更提醒都不再在「待办」里，所以这三个写都告诉角标重读。
   export const del = (notificationId: number) =>
-    axiosMutation({ url: `/notifications/${notificationId}`, method: 'DELETE' }, true)
+    changesAwaiting(axiosMutation({ url: `/notifications/${notificationId}`, method: 'DELETE' }, true))
 
   // 标记单个通知为已读/未读
   export const updateStatus = (notificationId: number, read: boolean) =>
-    axiosRequest<{ notification: Notification }>(
-      { url: `/notifications/${notificationId}`, method: 'PATCH', data: { read } },
-      true
+    changesAwaiting(
+      axiosRequest<{ notification: Notification }>(
+        { url: `/notifications/${notificationId}`, method: 'PATCH', data: { read } },
+        true
+      )
     )
 
   // 全部标为已读
   export const markAllAsRead = () =>
-    axiosRequest<MarkAllAsReadResponse>({ url: '/notifications/status', method: 'PUT', data: { read: true } }, true)
+    changesAwaiting(
+      axiosRequest<MarkAllAsReadResponse>({ url: '/notifications/status', method: 'PUT', data: { read: true } }, true)
+    )
 
   // 获取未读通知数量
   export const getUnreadNotificationCount = () =>

@@ -1,5 +1,6 @@
 import type { ListPayload, RoomTask, Topic } from '../cx_types'
 
+import { changesAwaiting } from './awaitingChanged'
 import { readSince, request } from './http'
 
 // `last_activity_at` = 最后活动时间 (the topic's newest block). `updated_at` is
@@ -69,15 +70,19 @@ export function setTaskNaming(projectId: string, mode: TaskNamingMode): Promise<
 // ---- 归档去向: manual archive / unarchive ----
 
 export function archiveTopic(topicId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
-    method: 'POST',
-  })
+  return changesAwaiting(
+    request<Topic>(`/topics/${encodeURIComponent(topicId)}/archive`, {
+      method: 'POST',
+    })
+  )
 }
 
 export function unarchiveTopic(topicId: string): Promise<Topic> {
-  return request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
-    method: 'POST',
-  })
+  return changesAwaiting(
+    request<Topic>(`/topics/${encodeURIComponent(topicId)}/unarchive`, {
+      method: 'POST',
+    })
+  )
 }
 
 /** 把频道里的一条消息转为这个频道的一个任务，点的人是负责人（由会话认，不由

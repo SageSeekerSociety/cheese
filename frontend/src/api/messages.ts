@@ -8,11 +8,15 @@ import type { Block, ChatMessageBody } from '../cx_types'
 
 import { request } from '../api'
 
+import { changesAwaiting } from './awaitingChanged'
+
 /** 返回落库的那一条；同一个 `request_id` 重发只会得到同一条。 */
 export function postChatMessage(topicId: string, body: ChatMessageBody, signal?: AbortSignal): Promise<Block> {
-  return request<Block>(`/topics/${encodeURIComponent(topicId)}/messages`, {
-    method: 'POST',
-    body: JSON.stringify(body),
-    signal,
-  })
+  return changesAwaiting(
+    request<Block>(`/topics/${encodeURIComponent(topicId)}/messages`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+      signal,
+    })
+  )
 }

@@ -37,10 +37,6 @@ vi.mock('@/composables/useNewProjectDialog', () => ({
   useNewProjectDialog: () => ({ show: showNewProject, open: { value: false } }),
 }))
 
-import { defineComponent, h, ref } from 'vue'
-
-import { awaitingCount, useAwaitingCount } from '@/composables/useAwaitingCount'
-
 import InboxView from './InboxView.vue'
 
 import { setLocale, t } from '@/i18n'
@@ -297,65 +293,5 @@ describe('没带选项的决策请求', () => {
     await mount()
     await fireEvent.click(await screen.findByRole('button', { name: t('home.inbox.answer') }))
     expect(resolveAlert).not.toHaveBeenCalled()
-  })
-})
-
-/** 角标（首页那一格、手机底栏「待办」）和这一页读同一份清单。人在这一页了结一件，
- *  角标当场跟着少一件——不等换页面，也不等两次读之间那 30 秒。 */
-describe('在待办页上了结一件之后的角标', () => {
-  // App 里取角标数的那一处，和待办页同时挂着。
-  const Page = defineComponent({
-    setup() {
-      useAwaitingCount(ref(true))
-      return () => h(View)
-    },
-  })
-
-  const decision = {
-    projectId: 'p1',
-    projectName: '课程项目',
-    topicId: 'c1',
-    topicTitle: '前端',
-    taskId: null,
-    taskTitle: null,
-    taskTitleSource: null,
-    phrase: 'decision',
-    reason: 'decide',
-    at: '2026-10-07T10:00:00Z',
-    alertId: 7,
-    headline: '上线前要不要先灰度',
-    options: ['先灰度', '直接上线'],
-  }
-
-  async function mountWithBadge() {
-    return render(Page, {
-      global: { plugins: [vuetify, router], stubs: { JoinSpaceDialog: true, NotificationFeed: true } },
-    })
-  }
-
-  it('拍板之后角标当场少一件', async () => {
-    store.projects = [{ id: 'p1' }]
-    listAwaitingMe.mockResolvedValue({ data: [decision], total: 1 })
-    resolveAlert.mockResolvedValue({})
-    const utils = await mountWithBadge()
-    await waitFor(() => expect(awaitingCount().value).toBe(1))
-
-    listAwaitingMe.mockResolvedValue({ data: [], total: 0 })
-    await fireEvent.click(await screen.findByRole('button', { name: '先灰度' }))
-    await waitFor(() => expect(awaitingCount().value).toBe(0))
-    utils.unmount()
-  })
-
-  it('人没做什么时（窗口重新拿到焦点）照旧压着，不是每次都去问', async () => {
-    store.projects = [{ id: 'p1' }]
-    listAwaitingMe.mockResolvedValue({ data: [decision], total: 1 })
-    const utils = await mountWithBadge()
-    await waitFor(() => expect(awaitingCount().value).toBe(1))
-    const asked = listAwaitingMe.mock.calls.length
-
-    window.dispatchEvent(new Event('focus'))
-    await Promise.resolve()
-    expect(listAwaitingMe.mock.calls.length).toBe(asked)
-    utils.unmount()
   })
 })

@@ -3,7 +3,6 @@ import type { WaitingItem } from '@/cx_types'
 
 import { computed, onMounted, ref } from 'vue'
 
-import { recountAwaiting } from '@/composables/useAwaitingCount'
 import { useNewProjectDialog } from '@/composables/useNewProjectDialog'
 
 import { listAwaitingMe, markAllAlertsRead, markRead, resolveAlert } from '@/api'
@@ -130,7 +129,6 @@ async function settle(item: WaitingItem, send: (alertId: number) => Promise<unkn
   try {
     await send(item.alertId)
     items.value = items.value.filter((other) => other.alertId !== item.alertId)
-    void recountAwaiting()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('home.inbox.actionFailed')
   } finally {
@@ -157,7 +155,6 @@ async function dismissAll(projectId: string) {
   try {
     await markAllAlertsRead(projectId)
     items.value = items.value.filter((item) => item.projectId !== projectId || item.reason !== 'read')
-    void recountAwaiting()
   } catch (e) {
     actionError.value = e instanceof Error ? e.message : t('home.inbox.actionFailed')
   } finally {
