@@ -12,7 +12,7 @@ or a two-factor disable asks for — so it lives in
 `app/domain/user/passwords.py` with the bcrypt length limit it applies, the
 one home every password rule has. `get_user_auth_service` is a FastAPI
 dependency in `app/api/deps.py`.
-`_spend_sudo_ticket` is imported from `users_common.py` rather than from
+`_spend_sudo_ticket` is imported from `users_deps.py` rather than from
 `users.py`: the fourth slice of this split moved the passkey, two-factor and
 identity routes out, and a helper that many groups redeem a ticket through now
 lives with the reservation scope it claims in.
@@ -45,7 +45,7 @@ from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
-from app.api.routes.users_common import _spend_sudo_ticket
+from app.api.users_deps import _spend_sudo_ticket
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.common.auth import SudoPurpose, get_current_session_id

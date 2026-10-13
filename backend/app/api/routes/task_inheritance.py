@@ -23,8 +23,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path
 
-from app.api.routes.spaces import teaching_to_api
-from app.api.routes.tasks._common import _require_task
+from app.api.space_payloads import teaching_to_api
+from app.api.task_deps import _require_task
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError

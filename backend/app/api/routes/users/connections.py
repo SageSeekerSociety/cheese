@@ -12,7 +12,7 @@ from fastapi import (
 from app.api.deps import (
     get_oauth_service,
 )
-from app.api.routes.users_common import (
+from app.api.users_deps import (
     SudoTicketRequest,
     _spend_sudo_ticket,
 )

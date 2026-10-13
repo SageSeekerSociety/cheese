@@ -61,8 +61,6 @@
   "cheeseFetch": "读取网页",
   "cheeseDocsSearch": "检索文档",
   "cheeseDocsRead": "阅读文档",
-  "cheeseLock": "锁定资源",
-  "cheeseUnlock": "释放资源",
   "cheeseDecision": "记录决策",
   "cheeseTitle": "设置标题",
   "cheeseNotify": "发送通知",

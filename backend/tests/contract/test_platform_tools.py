@@ -105,8 +105,6 @@ CALLS = {
     "cheese_fetch": ({"url": "https://example.test"}, "POST", "/fetch"),
     "cheese_docs_search": ({"query": "验收"}, "POST", "/docs/agent/search"),
     "cheese_docs_read": ({"page": "accept"}, "POST", "/docs/agent/read"),
-    "cheese_lock": ({}, "POST", f"/topics/{TOPIC}/lock"),
-    "cheese_unlock": ({}, "POST", f"/topics/{TOPIC}/unlock"),
     "cheese_members": ({}, "GET", f"/topics/{TOPIC}/members"),
     "cheese_status": ({}, "GET", f"/topics/{TOPIC}/status"),
     "cheese_library_ls": ({}, "GET", "/projects/fixture-project/library"),

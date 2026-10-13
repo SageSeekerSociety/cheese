@@ -8,7 +8,7 @@ from fastapi import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.admin_common import PlatformAdminDep
+from app.api.admin_deps import PlatformAdminDep
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.db.session import get_db
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/users", tags=["Users"])
 # `validate_code` / `consume_code` 就是那道交换）。所以这三条路由的判据是**平台
 # 管理员**，不是「有一个登录会话」—— 建码等于发账号，停用等于关掉别人的注册通道。
 #
-# 门用的是 `admin_common.PlatformAdminDep`（部署配置里的根名单 ∪ `platform_admins`
+# 门用的是 `admin_deps.PlatformAdminDep`（部署配置里的根名单 ∪ `platform_admins`
 # 表），和 `/admin/*` 是同一道、同一份名单：这里不新判据，只把这道门装上。
 #
 # 每个 handler 上还留着 `require_auth_user`，两件事：

@@ -1,13 +1,22 @@
 """A member's own Claude Code, run on their own machine (#2991).
 
-The session works exactly as a central one does — the remote-execution client,
-the executor on the leased machine, its sandbox, the work lease, the platform
-tools — with both ends on the owner's machine: the process that talks to the
-model runs there, with the login its owner gave the platform
-(`cheesehost claude login`), and the hands are that same machine. Nothing runs
-on the platform's session host and nothing goes through the metering proxy.
+Only the process that talks to the model runs there, with the login its owner
+gave the platform (`cheesehost claude login`): a subscription's login stays on
+the machine it was given on. Its tools go to its execution environment like
+any session's (#2320) — the remote-execution client, the executor in that
+environment, its sandbox, the work lease and the platform tools are a central
+session's. Nothing runs on the platform's session host and nothing goes
+through the metering proxy.
 
-Which machine: one of the owner's, online, with that login. The one the
+The owner's machine has no forwarded project view and no namespace of its own
+(both are Linux's, and the session host here may be a Mac or a Windows PC).
+So when the environment is on that same machine the session sees the project
+where the executor holds it; when it is elsewhere, the session works in a
+directory of its own holding a copy of the project's instructions, skills,
+rules and agents, and its paths are rewritten to the executor's on their way
+there (`client.prepare`).
+
+Which machine runs the session: one of the owner's, online, with that login. The one the
 session already ran on comes first, so a conversation stays where its
 transcript is while that machine is there.
 """
@@ -66,10 +75,12 @@ class OwnerChannel(CentralChannel):
         # have gone: a conversation moves with its owner between machines.
         return precheck.machine
 
-    def _deferred_target(self, target: dict) -> dict:
-        # The hands are this same machine: the client sees the project at the
-        # executor's own path, with no forwarded view and no namespace.
-        return {**target, "local": True}
+    def _deferred_target(self, target: dict, *, apart: bool) -> dict:
+        # No forwarded view and no namespace on the owner's machine: the
+        # session sees the project at the executor's own path when the
+        # executor is on this machine, and in a directory of its own when it
+        # is on another (`apart`) or not yet leased.
+        return {**target, "local": True, **({"apart": True} if apart else {})}
 
     @asynccontextmanager
     async def prepare_session(self, **kwargs):

@@ -26,10 +26,11 @@ import logging
 import uuid
 from pathlib import Path
 
-from sqlalchemy import event, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import background
+from app.core.db import after_own_commit
 from app.domain.agent import resource_cleanup
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.services import of_room, room_column
@@ -158,11 +159,11 @@ def after_close(db: AsyncSession, room_id: uuid.UUID) -> None:
     # The committing session's own database, as a request's or a test's.
     factory = async_sessionmaker(db.bind, expire_on_commit=False)
 
-    def committed(_session) -> None:
+    def committed() -> None:
         pending.discard(room_id)
         background.spawn(
             remove_closed_checkouts(factory, room_id=room_id),
             name="closed task checkouts",
         )
 
-    event.listen(db.sync_session, "after_commit", committed, once=True)
+    after_own_commit(db, committed)

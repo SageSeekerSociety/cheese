@@ -429,8 +429,9 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_doc_set",
             "把一份文档的全文设为 content：整块覆盖，不是补丁。不用机器，"
             "任务开始前也能写。先 cheese_doc_get；期间别人改过会被拒，拒了就重读、"
-            "把别人的改动合进你的正文再写，别原样重试。文档标题会渲染成大标题，"
-            "正文别再用一级标题重复。",
+            "把别人的改动合进你的正文再写，别原样重试。文档里还有别人留下、还没"
+            "处理的修改建议时也会被拒——先请人处理，或者改用 cheese_doc_edit "
+            "逐处修改。文档标题会渲染成大标题，正文别再用一级标题重复。",
             {
                 "content": _text("文档的全文，Markdown"),
                 "document": _DOCUMENT_ARG,
@@ -445,7 +446,8 @@ PLATFORM_TOOLS = ToolTable(
             "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
             "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
             "这样的一轮里改了人写的段落，平台也会把它转成建议。"
-            "别重复提已经在待处理的建议。",
+            "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
+            "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
             {
                 "edits": {
                     "type": "array",
@@ -743,19 +745,6 @@ PLATFORM_TOOLS = ToolTable(
             "开发文档写 dev/页名（只有知是自己的项目能读）；检索结果里的链接也可以直接给。",
             {"page": _text("页名或链接，如 accept、/docs/accept#is-merge、dev/turn")},
             ["page"],
-        ),
-        _tool(
-            "cheese_lock",
-            "为当前任务占用频道的重资源锁，装依赖、跑大型测试或起服务前用；"
-            "占不到时说谁占着，不等待。",
-            {"kind": {"type": "string", "enum": ["heavy"]}},
-            [],
-        ),
-        _tool(
-            "cheese_unlock",
-            "释放当前任务持有的重资源锁；锁 30 分钟后自动到期。",
-            {"kind": {"type": "string", "enum": ["heavy"]}},
-            [],
         ),
         _tool(
             "cheese_members",
@@ -1464,13 +1453,6 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "POST", "path": here + "/accept-card/describe", "body": body}
     if tool == "cheese_ready":
         return {"method": "POST", "path": here + "/ready"}
-    if tool in {"cheese_lock", "cheese_unlock"}:
-        verb = tool.removeprefix("cheese_")
-        return {
-            "method": "POST",
-            "path": f"{here}/{verb}",
-            "body": {"kind": args.get("kind") or "heavy"},
-        }
     if tool == "cheese_doc_list":
         return {"method": "GET", "path": f"/projects/{project}/documents"}
     if tool == "cheese_canvas_get":
@@ -2275,9 +2257,18 @@ def _doc_set(args: dict, host) -> str:
         if status != 409:
             raise
         try:
-            current = json.loads(exc.body)["error"]["data"]["doc_version"]  # type: ignore[attr-defined]
+            error = json.loads(exc.body)["error"]  # type: ignore[attr-defined]
         except (ValueError, KeyError, TypeError):
-            current = "?"
+            error = {}
+        data = error.get("data") or {}
+        if data.get("reason") == "suggestions":
+            # 有人留的修改建议还挂着：整份覆盖会把它们一起丢掉，服务拒绝。
+            why = str(error.get("message") or "文档里还有别人留下、没处理的修改建议").rstrip("。")
+            raise PlatformToolError(
+                f"没写进去，文档没有变：{why}。先请人接受或退回这些建议，"
+                "或者改用 cheese_doc_edit 逐处修改，别再整份覆盖。"
+            ) from exc
+        current = data.get("doc_version", "?")
         raise PlatformToolError(
             f"没写进去：文档现在是第 {current} 版，你这份是照第 {based_on} 版改的。"
             "先 cheese_doc_get 重新读一遍，把别人的改动合进你的正文，再 "
@@ -2792,12 +2783,6 @@ def _say_task(args, data, env) -> str:
 
 
 
-def _say_lock(args, data, env) -> str:
-    if data.get("acquired"):
-        return f"占住了（{args.get('kind') or 'heavy'}）。"
-    raise PlatformToolError(f"没占到：{data.get('reason') or '别人占着'}")
-
-
 def _say_notify(args, data, env) -> str:
     # 一条通知落成几行、收件人是谁，由平台按名册算 —— 不填 to 不等于「所有人」：
     # 到的是这个房间名册上的人，不含芝士。把它当「所有人」转述，就是替平台许下
@@ -3065,10 +3050,6 @@ _SAY = {
         f"PR #{d.get('pr_number')} 已从 draft 翻成 ready：{d.get('pr_url') or ''}"
         if (d or {}).get("ready")
         else (d or {}).get("reason") or "没有可以翻的 PR。"
-    ),
-    "cheese_lock": _say_lock,
-    "cheese_unlock": lambda a, d, e: (
-        "已归还。" if (d or {}).get("released") else "你本来就没占着它。"
     ),
     "cheese_title": lambda a, d, e: (
         f"标题已设为：{(d or {}).get('title') or a['text']}"
