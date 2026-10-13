@@ -202,6 +202,30 @@ describe('改由谁审阅', () => {
     expect(items.some((t) => t.includes('Retired'))).toBe(false)
   })
 
+  it('单子上每一行都带头像：挑过的用他挑的那张，没挑过的走首字母', async () => {
+    withMembers([
+      { user_handle: 'dana', role: 'member', name: 'Dana', avatar_id: 7 },
+      { user_handle: 'erin', role: 'member', name: 'Erin' },
+    ])
+
+    const { container } = await mountWith([card({})])
+    await chooseMore(container, '改由他人审阅')
+
+    // 弹层是 teleport 出来的，前面几条用例的残留在 document 里；用这一条独有的名字定位。
+    const rows = Array.from(document.querySelectorAll('.v-overlay .v-list-item')) as HTMLElement[]
+    const dana = rows.find((r) => r.textContent?.includes('Dana'))
+    const erin = rows.find((r) => r.textContent?.includes('Erin'))
+    expect(dana, '单子上没有 Dana 这一行').toBeTruthy()
+    expect(erin, '单子上没有 Erin 这一行').toBeTruthy()
+
+    // 每一行都由共用身份视图画成「一张脸 + 名字」，不再是一串纯文本。
+    expect(dana!.querySelector('.identity-view')).not.toBeNull()
+    expect(erin!.querySelector('.identity-view')).not.toBeNull()
+    // 挑过头像的人拼出 /avatars/{id}；没挑过的人不假装有图，画自己的首字母。
+    expect(dana!.querySelector('img')?.getAttribute('src')).toContain('/avatars/7')
+    expect(erin!.querySelector('img')).toBeNull()
+  })
+
   it('选一位就是把卡改派给他', async () => {
     withMembers([
       { user_handle: 'alice', role: 'member', name: 'Alice' },

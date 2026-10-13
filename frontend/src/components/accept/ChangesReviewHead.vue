@@ -24,6 +24,7 @@ import { checkVerdictRank, isFailed, isNoVerdict } from './checkVerdict'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
@@ -425,8 +426,14 @@ const moreActions = computed<MenuAction[]>(() => {
           @click="reassign(mbr.user_handle)"
         >
           <v-list-item-title class="text-body-2">
-            {{ memberName(mbr) || mbr.user_handle }}
-            <span v-if="memberName(mbr)" class="c-muted">{{ mbr.user_handle }}</span>
+            <IdentityView
+              :handle="mbr.user_handle"
+              :name="memberName(mbr)"
+              :avatar-id="mbr.avatar_id ?? null"
+              :agent="mbr.agent ?? null"
+              :size="18"
+              handle-line
+            />
           </v-list-item-title>
           <v-list-item-subtitle class="text-caption">{{ mbr.role }}</v-list-item-subtitle>
         </v-list-item>

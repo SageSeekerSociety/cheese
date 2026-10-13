@@ -264,7 +264,7 @@ export const ACCEPT_CONFLICTED: AcceptCard = { ...ACCEPT_ONE, status: 'conflict'
 /** 「改由谁审阅」那一份名单：名册上还在岗的人（`useAcceptCard.ts` 就是拿 store 里的
  *  `members` 直接给菜单的）。 */
 export const ACCEPT_REVIEWERS: ProjectMemberRow[] = [
-  { user_handle: 'wang', name: '王长鑫', role: 'owner', source: 'owner' },
+  { user_handle: 'wang', name: '王长鑫', role: 'owner', source: 'owner', avatar_id: 3 },
   { user_handle: 'li', name: '李甘', role: 'member', source: 'team' },
 ]
 
