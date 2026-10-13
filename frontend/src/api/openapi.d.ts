@@ -2247,6 +2247,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/blocks/{block_id}/skip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Skip Question
+         * @description Skip a question asked with quick replies: you will not answer it.
+         *
+         *     Only someone the question waits on can — whoever may answer it
+         *     (`block.questions.waits_on`); anyone else is refused, and so is a question
+         *     that already has its answer. Nothing is said in the room. The question stops
+         *     waiting, as an answer would make it: it leaves that person's 待你回答 list,
+         *     and its notice is settled. The agent that asked runs another turn told that
+         *     the question was skipped, so it stops waiting for an answer that is not
+         *     coming. ``DELETE /blocks/{block_id}/answer`` undoes it.
+         */
+        post: operations["skip_question_blocks__block_id__skip_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/blocks/{block_id}/answer": {
         parameters: {
             query?: never;
@@ -2259,8 +2287,9 @@ export interface paths {
         post?: never;
         /**
          * Withdraw Answer
-         * @description Take back your own answer to a question asked with quick replies, so the
-         *     question is unanswered again and its options come back for everyone.
+         * @description Take back your own answer to a question asked with quick replies, or
+         *     your skip of it, so the question is unanswered again and its options come
+         *     back for everyone.
          *
          *     ``block_id`` is the question, not the answer: an answer is an ordinary
          *     message, and what is withdrawn is the line it left on the question
@@ -18299,9 +18328,9 @@ export interface components {
         };
         /**
          * WithdrawnAnswer
-         * @description 撤回一道题的回答，回的是这道题撤回之后的样子。
+         * @description 跳过一道题、或撤回对它的回答（跳过），回的是这道题改完之后的样子。
          *
-         *     和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，
+         *     和 `block_updated` 那条实时帧带的是同一份东西，发起的页面拿它直接替换这道题，
          *     不必再取一次。
          */
         WithdrawnAnswer: {
@@ -22605,6 +22634,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    skip_question_blocks__block_id__skip_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                block_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WithdrawnAnswerEnvelope"];
                 };
             };
             /** @description Validation Error */

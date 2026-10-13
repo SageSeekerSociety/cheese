@@ -130,8 +130,10 @@ const emit = defineEmits<{
   (e: 'open-card', taskId: string): void
   (e: 'react', block: Block, emoji: string): void
   (e: 'ask-reply', block: Block, text: string): void
-  /** 自己在那道题上的回答要撤回。 */
+  /** 自己在那道题上的回答（或跳过）要撤回。 */
   (e: 'ask-withdraw', block: Block): void
+  /** 这道题不回答，跳过。 */
+  (e: 'ask-skip', block: Block): void
   (e: 'download', block: Block): void
   /** 跳到被回复的那一条。 */
   (e: 'jump', blockId: string): void
@@ -382,6 +384,7 @@ function renderPlain(text: string): string {
         :viewer="viewer"
         @reply="emit('ask-reply', block, $event)"
         @withdraw="emit('ask-withdraw', block)"
+        @skip="emit('ask-skip', block)"
       />
       <!-- Emoji reaction chips (Slack): count per emoji, own reactions
          highlighted; click toggles. 芝士's 👀 receipt lands here too. -->

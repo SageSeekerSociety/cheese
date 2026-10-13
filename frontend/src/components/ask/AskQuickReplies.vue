@@ -16,6 +16,14 @@
  * chip's label, so the answer is recorded as something they said rather than as
  * a choice.
  *
+ * The person it waits on can also decline to answer: the ✕ beside the options
+ * skips it. Nothing is said in the room; the question records the skip the way
+ * it records an answer, stops waiting on him, and the agent that asked is told.
+ * Only whoever may answer sees it — the person asked, or anyone when it waits
+ * on nobody in particular (the server holds the same rule). A skip is undone
+ * at once, without a confirmation: it is his own, and undoing it only puts the
+ * options back in front of him.
+ *
  * The one who answered can take it back: a question takes one answer, so a
  * misclick otherwise has no way out. That is the answerer's own line — nobody
  * else's — and it comes off the question, not out of the room: the message they
@@ -28,6 +36,7 @@ import { computed, nextTick, ref } from 'vue'
 
 import { t } from '../../i18n'
 import { askAnswers, askOptions } from '../../lib/blockDisplay'
+import BaseButton from '../base/BaseButton.vue'
 import ConfirmDialog from '../base/ConfirmDialog.vue'
 
 const props = defineProps<{
@@ -40,7 +49,9 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{
   (e: 'reply', text: string): void
+  /** 撤回自己的答复，或撤销自己的跳过：服务端是同一个动作。 */
   (e: 'withdraw'): void
+  (e: 'skip'): void
 }>()
 
 const options = computed(() => askOptions(props.block) ?? [])
@@ -51,7 +62,13 @@ const stacked = computed(() => options.value.some((option) => option.explain))
 
 // 只有自己答的那一条能撤回。题已经不再等回答（任务关了）也照给：撤回是回答的人
 // 一直有的权利，后端不看这两件事。
-const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer))
+const mine = computed(() => props.viewer != null && answers.value.some((a) => a.by === props.viewer && !a.skipped))
+// 跳过只给这道题在等的人：题上记着问的是谁就只有他，没记着谁就谁都行。
+const canSkip = computed(() => {
+  if (!props.viewer) return false
+  const asked = (props.block.meta as { asked?: string | null } | null)?.asked
+  return asked == null || asked === props.viewer
+})
 const confirming = ref(false)
 
 function confirmWithdraw() {
@@ -111,62 +128,89 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
   <div class="ask-replies">
     <ul v-if="answers.length" class="ask-replies__answers t-meta">
       <li v-for="(answer, index) in answers" :key="index">
-        <span class="ask-replies__answer">{{
-          t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text })
-        }}</span>
-        <button
-          v-if="answer.by === viewer"
-          type="button"
-          class="ask-replies__withdraw"
-          :aria-label="t('ask.replies.withdrawAria', { text: answer.text })"
-          @click="confirming = true"
-        >
-          {{ t('ask.replies.withdraw') }}
-        </button>
+        <template v-if="answer.skipped">
+          <span class="ask-replies__answer">{{
+            t('ask.replies.skipped', { name: names[answer.by] ?? answer.by })
+          }}</span>
+          <button
+            v-if="answer.by === viewer"
+            type="button"
+            class="ask-replies__withdraw"
+            :aria-label="t('ask.replies.undoSkipAria')"
+            @click="emit('withdraw')"
+          >
+            {{ t('ask.replies.undoSkip') }}
+          </button>
+        </template>
+        <template v-else>
+          <span class="ask-replies__answer">{{
+            t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text })
+          }}</span>
+          <button
+            v-if="answer.by === viewer"
+            type="button"
+            class="ask-replies__withdraw"
+            :aria-label="t('ask.replies.withdrawAria', { text: answer.text })"
+            @click="confirming = true"
+          >
+            {{ t('ask.replies.withdraw') }}
+          </button>
+        </template>
       </li>
     </ul>
     <p v-else-if="closed" class="ask-replies__closed t-meta">{{ t('ask.replies.closed') }}</p>
-    <div
-      v-else
-      class="ask-replies__options"
-      :class="{ 'ask-replies__options--stacked': stacked }"
-      role="group"
-      :aria-label="t('ask.replies.label')"
-    >
-      <button
-        v-for="option in options"
-        :key="option.text"
-        type="button"
-        class="ask-replies__option"
-        @click="emit('reply', label(option.text))"
+    <div v-else class="ask-replies__open">
+      <div
+        class="ask-replies__options"
+        :class="{ 'ask-replies__options--stacked': stacked }"
+        role="group"
+        :aria-label="t('ask.replies.label')"
       >
-        <span class="ask-replies__text">{{ label(option.text) }}</span>
-        <span v-if="recommended(option.text)" class="ask-replies__tag">{{ t('ask.replies.recommended') }}</span>
-        <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
-      </button>
-      <button
-        type="button"
-        class="ask-replies__option ask-replies__other-toggle"
-        :aria-expanded="otherOpen"
-        @click="toggleOther"
-      >
-        <span class="ask-replies__text">{{ t('ask.replies.other') }}</span>
-      </button>
-      <form v-if="otherOpen" class="ask-replies__other" @submit.prevent="sendOther">
-        <input
-          ref="otherField"
-          v-model="otherText"
-          type="text"
-          autocomplete="off"
-          class="ask-replies__other-input"
-          :placeholder="t('ask.replies.otherPlaceholder')"
-          :aria-label="t('ask.replies.otherPlaceholder')"
-          @keydown="onOtherKey"
-        />
-        <button type="submit" class="ask-replies__other-send" :disabled="!otherText.trim()">
-          {{ t('ask.replies.otherSend') }}
+        <button
+          v-for="option in options"
+          :key="option.text"
+          type="button"
+          class="ask-replies__option"
+          @click="emit('reply', label(option.text))"
+        >
+          <span class="ask-replies__text">{{ label(option.text) }}</span>
+          <span v-if="recommended(option.text)" class="ask-replies__tag">{{ t('ask.replies.recommended') }}</span>
+          <span v-if="option.explain" class="ask-replies__explain">{{ option.explain }}</span>
         </button>
-      </form>
+        <button
+          type="button"
+          class="ask-replies__option ask-replies__other-toggle"
+          :aria-expanded="otherOpen"
+          @click="toggleOther"
+        >
+          <span class="ask-replies__text">{{ t('ask.replies.other') }}</span>
+        </button>
+        <form v-if="otherOpen" class="ask-replies__other" @submit.prevent="sendOther">
+          <input
+            ref="otherField"
+            v-model="otherText"
+            type="text"
+            autocomplete="off"
+            class="ask-replies__other-input"
+            :placeholder="t('ask.replies.otherPlaceholder')"
+            :aria-label="t('ask.replies.otherPlaceholder')"
+            @keydown="onOtherKey"
+          />
+          <button type="submit" class="ask-replies__other-send" :disabled="!otherText.trim()">
+            {{ t('ask.replies.otherSend') }}
+          </button>
+        </form>
+      </div>
+      <BaseButton
+        v-if="canSkip"
+        class="ask-replies__skip"
+        kind="ghost"
+        size="sm"
+        icon="mdi-close"
+        :aria-label="t('ask.replies.skip')"
+        :title="t('ask.replies.skip')"
+        @click="emit('skip')"
+      />
     </div>
     <!-- 先弹一下确认：撤错了，这道题就当着全房间的面重新长出选项，比多点一次麻烦。 -->
     <ConfirmDialog
@@ -185,6 +229,20 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
 <style scoped>
 .ask-replies {
   margin-top: 8px;
+}
+/* 跳过的 ✕ 贴在选项组右边：横排时在一行按钮之后，竖排时在第一张选项卡的右上角。 */
+.ask-replies__open {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+/* 按内容取宽，✕ 才紧跟在按钮后面，而不是被推到整行最右。 */
+.ask-replies__open > .ask-replies__options {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.ask-replies__skip {
+  flex: none;
 }
 .ask-replies__closed {
   margin: 0;

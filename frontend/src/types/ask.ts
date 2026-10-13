@@ -15,13 +15,14 @@ export interface AskOption {
   explain?: string
 }
 
-/** 答过这道题的一句话：点了它的一个选项（`option`），或者他自己说的（`note`）。 */
+/** 答过这道题的一句话：点了它的一个选项（`option`），或者他自己说的（`note`）；
+ *  `skipped` 是被问的人跳过了它，不带选项也不带话，`reply_id` 为 null。 */
 export interface AskAnswerEntry {
-  kind: 'option' | 'note' | 'reject'
+  kind: 'option' | 'note' | 'reject' | 'skipped'
   option: string | null
   note: string | null
   by: string
   at: string | null
   /** 那句回话本身（房间里的一条消息）。 */
-  reply_id?: string
+  reply_id?: string | null
 }

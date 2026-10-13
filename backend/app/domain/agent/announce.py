@@ -352,7 +352,7 @@ async def answer_questions(
     excerpt = said[:ANSWER_EXCERPT_CHARS] + (
         "…" if len(said) > ANSWER_EXCERPT_CHARS else ""
     )
-    for notice in await _notices_now_answered(session, questions):
+    for notice in await notices_now_answered(session, questions):
         await settle(session, notice, {"answered": excerpt})
     seat = questions[-1].author
     if not recipient.get("mentioned") and seat in await TopicMemberService(
@@ -401,8 +401,9 @@ def _offered(meta: dict) -> dict[str, str]:
     return offered
 
 
-async def _notices_now_answered(session: AsyncSession, questions: list[Block]):
-    """The question notices every question of which now has an answer.
+async def notices_now_answered(session: AsyncSession, questions: list[Block]):
+    """The question notices every question of which now has an answer (a skip
+    counts: it is a response recorded in the same `answer_log`).
 
     One `cheese_ask` call sends one notice for all its questions (keyed by the
     first, `meta.notice_id`); it is settled only once none of them is open.

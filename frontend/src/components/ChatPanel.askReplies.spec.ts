@@ -5,6 +5,9 @@
 //
 // 答过之后还能收回来：一道题只收一个回答，点错一下就没有别的路可走。撤回的是这道
 // 题上的那条答复，不是他说过的那句话 —— 消息留着，题回到没人答。
+//
+// 被问的人也可以不答：✕ 跳过这道题，房间里不出现任何消息，题上写着他跳过了；撤销
+// 之后题重新等他回答。
 import type { Component } from 'vue'
 import type { Block, Topic } from '@/cx_types'
 
@@ -38,8 +41,9 @@ function topicOf(id: string): Topic {
   } as Topic
 }
 
-/** 一道题。`by` 是谁答的，null 是还没人答 —— 撤回的入口只长在答过的那一位旁边。 */
-function question(topic: string, by: string | null = null): Block {
+/** 一道题。`by` 是谁答的，null 是还没人答 —— 撤回的入口只长在答过的那一位旁边。
+ *  `asked` 是它在等谁；`skipped` 为真时 `by` 那一条是一次跳过而不是答案。 */
+function question(topic: string, by: string | null = null, asked = 'me', skipped = false): Block {
   return {
     id: `q-${topic}`,
     project_id: 'p1',
@@ -52,11 +56,13 @@ function question(topic: string, by: string | null = null): Block {
     refs: [],
     created_at: '2026-08-01T00:00:00Z',
     meta: {
-      asked: 'me',
+      asked,
       options: [{ text: '按部门', explain: '和去年的报表对得上' }, { text: '按项目' }],
-      answer_log: by
-        ? [{ kind: 'option', option: '按部门', note: null, by, at: '2026-08-01T00:01:00Z', reply_id: 'r1' }]
-        : [],
+      answer_log: !by
+        ? []
+        : skipped
+          ? [{ kind: 'skipped', option: null, note: null, by, at: '2026-08-01T00:01:00Z', reply_id: null }]
+          : [{ kind: 'option', option: '按部门', note: null, by, at: '2026-08-01T00:01:00Z', reply_id: 'r1' }],
     },
   } as unknown as Block
 }
@@ -66,6 +72,8 @@ let history: Block[] = []
 let sent: Array<{ url: string; body: Record<string, unknown> }> = []
 /** 撤回那一次请求（`DELETE …/answer`）：落在这儿的就只有它。 */
 let takenBack: string[] = []
+/** 跳过那一次请求（`POST …/skip`）。 */
+let skippedIds: string[] = []
 
 beforeAll(() => {
   vuetify = createVuetify({ components, directives })
@@ -76,6 +84,7 @@ beforeEach(() => {
   history = []
   sent = []
   takenBack = []
+  skippedIds = []
   localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
@@ -96,6 +105,16 @@ beforeEach(() => {
         ok: true,
         status: 200,
         json: async () => ({ code: 200, data: { ...open, id, meta: { ...open.meta, answer_log: [] } } }),
+      }
+    }
+    // 跳过：题上记下「我跳过了」—— 服务端回来的就是这一块。
+    if (String(url).endsWith('/skip') && init?.method === 'POST') {
+      const id = String(url).split('/blocks/')[1].replace('/skip', '')
+      skippedIds.push(id)
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ code: 200, data: { ...question('skipped', 'me', 'me', true), id } }),
       }
     }
     if (String(url).includes('/messages') && init?.method === 'POST') {
@@ -248,5 +267,46 @@ describe('自己答过的题可以撤回', () => {
     await until(() => !!container.querySelector('.ask-replies__options'))
     expect(queryByRole('button', { name: /按项目/ })).toBeTruthy()
     expect(container.querySelector('.ask-replies__answers')).toBeNull()
+  })
+})
+
+describe('被问的人可以跳过这道题', () => {
+  it('点 ✕ 不发任何消息，题上写着他跳过了，旁边有撤销', async () => {
+    history = [question('t-skip')]
+    const { container, getByRole, queryByRole } = await open('t-skip')
+    await fireEvent.click(getByRole('button', { name: '跳过这道题' }))
+    await until(() => skippedIds.length > 0)
+    expect(skippedIds).toEqual(['q-t-skip'])
+    expect(sent).toHaveLength(0)
+    await until(() => !!container.querySelector('.ask-replies__answers'))
+    expect(container.querySelector('.ask-replies__answers')?.textContent).toContain('已跳过')
+    expect(queryByRole('button', { name: /按项目/ })).toBeNull()
+    expect(getByRole('button', { name: /撤销/ })).toBeTruthy()
+  })
+
+  it('撤销跳过不用确认，题重新等他回答', async () => {
+    history = [question('t-unskip', 'me', 'me', true)]
+    const { container, getByRole, queryByRole } = await open('t-unskip')
+    await fireEvent.click(getByRole('button', { name: /撤销/ }))
+    await until(() => takenBack.length > 0)
+    expect(takenBack).toEqual(['q-t-unskip'])
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    await until(() => !!container.querySelector('.ask-replies__options'))
+    expect(queryByRole('button', { name: /按项目/ })).toBeTruthy()
+    expect(getByRole('button', { name: '跳过这道题' })).toBeTruthy()
+  })
+
+  it('题在等别人时没有 ✕', async () => {
+    history = [question('t-not-mine', null, 'alice')]
+    const { getByRole, queryByRole } = await open('t-not-mine')
+    expect(getByRole('button', { name: /按项目/ })).toBeTruthy()
+    expect(queryByRole('button', { name: '跳过这道题' })).toBeNull()
+  })
+
+  it('别人跳过的题，看的人没有撤销', async () => {
+    history = [question('t-their-skip', 'alice', 'alice', true)]
+    const { container, queryByRole } = await open('t-their-skip')
+    expect(container.querySelector('.ask-replies__answers')?.textContent).toContain('已跳过')
+    expect(queryByRole('button', { name: /撤销/ })).toBeNull()
   })
 })
