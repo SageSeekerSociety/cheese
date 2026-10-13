@@ -223,15 +223,34 @@ def gh_queue_timeline(n):
 #: The template asks for `## What changed` and `## How it was verified`, but most bodies
 #: here carry neither — so the opening paragraphs answer for "what changed" when no
 #: heading claims them, and a plain `验证：` line answers for the other half.
+#:
+#: The words that name the verification half, for a heading (`## Tests`) and for a label
+#: line (`**验证**：…`) alike: the same section written two ways, so a word missing from
+#: one of them is how `## 测试` came to read as neither half. Both read this one list.
+#: `check` is the one word only a label line may use — `Checks: …` and `Checked locally: …`
+#: are verification, but a heading containing it is usually another subject (a
+#: `… checklist …` heading is not the verification section).
+_VERIFIED_WORDS = ("验证", "怎么验证", "测试", "自测", "verif", "valid", "test")
+_VERIFIED_LABEL_WORDS = _VERIFIED_WORDS + ("check",)
 _SECTION_WORDS = {
     "changed": ("what chang", "changes", "改动", "改了什么"),
-    "verified": ("verif", "valid", "test", "验证", "怎么验证"),
+    "verified": _VERIFIED_WORDS,
 }
 #: A line that labels the part after it — `**验证**：…`, `验证：`, `## Tests` alike. How
 #: this repo actually writes the second half, far more often than as a heading.
-_LABEL = re.compile(r"^[ \t]*(?:\*\*)?([^\n：:*]{1,20})(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
-_VERIFIED_LABEL = ("验证", "怎么验证", "测试", "自测", "verif", "valid", "test", "check")
+#: A list item and a URL line start the same way and are not labels: a section whose
+#: first line is `- pytest：全过` or a link would otherwise be read as ending right
+#: there, and the board would say the body never wrote it.
+_LABEL = re.compile(
+    r"^[ \t]*(?![-•*+][ \t])(?!\d+[.)][ \t])(?!\w{2,12}://)"
+    r"(?:\*\*)?([^\n：:*]{1,20})(?:\*\*)?[ \t]*[：:][ \t]*", re.M)
 _HEADING = re.compile(r"^(#{2,4})\s+(.+?)\s*$", re.M)
+#: A line that is nothing but the name of a section — `Verification`, `验证`, `Tests` —
+#: with no colon after it. The block below it is that section: a body puts the name on
+#: its own line when a list follows, rather than beside the first sentence. Only lines
+#: that really are one of the names count, so a short unpunctuated line of prose does
+#: not become one.
+_BARE_LABEL = re.compile(r"^[ \t]*(?:\*\*)?([^\n：:*]{1,20}?)(?:\*\*)?[ \t]*$", re.M)
 _HTML_COMMENT = re.compile(r"<!--.*?-->", re.S)
 #: Everything from the first of these lines down is the platform's, not the author's.
 _TRAILER_LINE = re.compile(r"^(?:Requested-by|Cheese-[A-Za-z-]+|Co-authored-by"
@@ -271,26 +290,47 @@ def brief(desc, limit=400):
     if not text:
         return "", ""
     heads = list(_HEADING.finditer(text))
-    all_labels = list(_LABEL.finditer(text))
-    ver = [m for m in all_labels
-           if any(w in m.group(1).lower() for w in _VERIFIED_LABEL)]
-    verified = _under_heading(text, heads, "verified") or _under_label(text, ver, all_labels)
+    # 可能会切走一节的行，从早到晚：带冒号的标签行，和整行只有章节名的那些。
+    labels = sorted(list(_LABEL.finditer(text))
+                    + [m for m in _BARE_LABEL.finditer(text) if _names_a_section(m)],
+                    key=lambda m: m.start())
+    ver = [m for m in labels
+           if any(w in m.group(1).lower() for w in _VERIFIED_LABEL_WORDS)]
+    verified = _under_heading(text, heads, "verified") or _under_label(text, ver, labels)
     changed = _under_heading(text, heads, "changed")
     if not changed:
         # 没有标题说「改了什么」时，正文开头到「验证」之前的那一段就是它 —— 前面是
-        # 背景，后面是验证，中间剩下的全是改动。
+        # 背景，后面是验证，中间剩下的全是改动。正文一上来就是标题（`## Summary`、
+        # `## Fix` 这类别的叫法）时，改动写在那行标题底下：从标题之后起算，否则这里
+        # 会切出一个空段，看板对着一份写了改动的正文说「没写这一节」。
         stops = [h.start() for h in heads] + [m.start() for m in ver] + [len(text)]
-        changed = text[:min(stops)].strip()
+        begin = 0
+        if heads and heads[0].start() == 0:
+            begin, stops = heads[0].end(), stops[1:]
+        changed = text[begin:min(stops)].strip()
     return cut(changed, limit), cut(verified, limit)
 
 
 def _under_heading(text, heads, want):
-    """The body of the first heading that names `want`, or "" when there is none."""
-    for i, h in enumerate(heads):
-        if any(w in h.group(2).lower() for w in _SECTION_WORDS[want]):
-            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-            return text[h.end():end].strip()
-    return ""
+    """The body of the heading that names `want`, or "" when there is none.
+
+    A heading that only mentions the word does not name the section: a change list whose
+    item reads `… 各带自己的挂载测试` is not the verification section, and when a body
+    also has a plain `## 验证方式` under it, that is the one meant. The shorter name is
+    the one about the section, so it wins."""
+    hits = [i for i, h in enumerate(heads)
+            if any(w in h.group(2).lower() for w in _SECTION_WORDS[want])]
+    if not hits:
+        return ""
+    i = min(hits, key=lambda i: (len(heads[i].group(2)), heads[i].start()))
+    end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+    return text[heads[i].end():end].strip()
+
+
+def _names_a_section(m):
+    """Whether a short unpunctuated line is one of the section names rather than prose."""
+    low = m.group(1).lower()
+    return any(w in low for w in _VERIFIED_LABEL_WORDS + _SECTION_WORDS["changed"])
 
 
 def _under_label(text, hits, labels):
@@ -438,6 +478,14 @@ def sweep(tok, room, silent, skip, want_facts):
         red_at = red[-1]["created_at"] if red else None
         tail = [m for m in sysev if meta(m).get("event_type")]
 
+        # 红在哪只进看板：文本清单照老样子一卡一查，看板的模式才去读每个检查的判定，
+        # 读日志拿用例名更贵，所以只在真的要摆出来的时候读。得在任何一行造出来之前
+        # 读：同一张卡常常同时落进两个类别，先造的那一行会把还没算出来的用例记成空
+        # 的，而类别排序后先被读到、也就是看板只印那一行的，正是它。
+        red_recent = bool(red) and red[-1]["created_at"] > last_msg and age(red[-1]["created_at"]) >= 30
+        if red_recent and want_facts and pr is not None and "error" not in pr and pr.get("cases") is None:
+            pr["cases"] = failing_cases(pr.get("checks") or [])
+
         def add(kind, text, waited=None, waiting=None):
             rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg))
 
@@ -453,14 +501,10 @@ def sweep(tok, room, silent, skip, want_facts):
                     w = age(ready_at)
                     add("可采纳未采纳", f"PR #{n} 可以合并 {w:.0f} 分钟", w)
 
-        if red and red[-1]["created_at"] > last_msg and age(red[-1]["created_at"]) >= 30:
+        if red_recent:
             w = age(red[-1]["created_at"])
-            # 红在哪只进看板：文本清单照老样子一卡一查，看板的模式才去读每个检查的
-            # 判定，读日志拿用例名更贵，所以只在真的要摆出来的时候读。
             where = ""
             if want_facts and pr is not None and "error" not in pr:
-                if pr.get("cases") is None:
-                    pr["cases"] = failing_cases(pr.get("checks") or [])
                 names = [c["name"] for c in (pr.get("checks") or [])]
                 where = "，红的是 " + "、".join(names) if names else ""
             add("红了没人修", f"{red[-1]['content'][:50]}{where}，{w:.0f} 分钟线上没新消息", w)
