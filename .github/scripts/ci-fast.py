@@ -76,6 +76,13 @@ TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
 # their own per-check timeout reports them unknown if the budget really is gone.
 JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
 MERGE_BASE_HOOKS = {"file-size", "migration-fork"}
+# Every hook this tool can select that spawns the node toolchain: the three
+# above, and the frontend type check next to pyright, which runs
+# `pnpm run typecheck`. The preflight blocks a run whose selection needs
+# frontend/node_modules; these are the hooks it needs it for, so a selection
+# that holds none of them (the pre-push entry point's, once its three have
+# left) is not blocked by a checkout that never ran `task fe:install`.
+NODE_HOOKS = JS_RUNTIME_HOOKS | {"frontend-typecheck"}
 # Prose, in any of the forms this repo keeps it: contents that cannot be the
 # code a product suite covers, so a diff of only these is unknown-path widening
 # that proves nothing about backend or frontend. The shared path map already
@@ -120,6 +127,41 @@ def load_select():
 
 def configured_hook_ids():
     return set(re.findall(r"-\s+id:\s+(\S+)", Path(REPO_ROOT, ".pre-commit-config.yaml").read_text()))
+
+
+def precommit_command():
+    """The pre-commit invocation to spawn, which is also the one to print.
+
+    `CI_FAST_PRECOMMIT` wins when the caller set it (both workflows pass
+    `uvx pre-commit`). The default adds an interpreter pin to that same
+    command: `uvx` builds its tool venv around an interpreter of its own and
+    puts that venv's `bin` first on the hooks' PATH, so a `language: system`
+    hook whose entry says `python3` runs under it rather than under the one
+    running this script. Measured 2026-10-12 on the agent work image: 3.9.25
+    there against this script's 3.13.5, which made `migration-fork` (3.10+
+    annotations in .claude/scripts/check-migration-fork.py) report fail on
+    every backend-scoped run. Pinning the spawn and the printed command to one
+    source keeps the footer's reproduce line repeating what the run did.
+    """
+    return os.environ.get("CI_FAST_PRECOMMIT") or f"uvx --python {shlex.quote(sys.executable)} pre-commit"
+
+
+def reproduce(row, precommit, hook_ids):
+    """The command that repeats one non-passing row outside the hook.
+
+    A hook is repeated through pre-commit. The rest of `ran` are checks this
+    tool runs itself — `commit-title` invoked directly, and the plan's
+    `backend-pure` / `frontend-unit` / `frontend-i18n` /
+    `frontend-typecheck-changed`, none of which is a hook: `pre-commit run
+    <id>` for one of those exits with "No hook with id ..." (reported
+    2026-10-12). They name the command that actually ran, or the input they
+    were missing.
+    """
+    if hook_ids is None or row["id"] in hook_ids:
+        return f"{precommit} run {row['id']} --all-files --hook-stage manual"
+    if row.get("command"):
+        return shlex.join(row["command"])
+    return row.get("reason") or "未记录命令"
 
 
 def collect_changes(base_ref):
@@ -206,15 +248,22 @@ def main(argv):
             # so the report has to be actionable as it stands: every item this
             # entry point did not judge names the command that runs it outside
             # the hook — the ones that failed, and the ones it left out.
-            precommit = os.environ.get("CI_FAST_PRECOMMIT", "uvx pre-commit")
+            precommit = precommit_command()
             flagged = [row for row in report["ran"] if row["result"] not in ("pass", "not_applicable")]
             # Only the pre-push filter can put a JS hook in not_run: it is the
             # one place that removes them from the selection before they run.
             dropped = [item for item in report["not_run"] if item["id"] in JS_RUNTIME_HOOKS]
             print("ci:fast: 推前自检只报告，不挡推送。")
+            try:
+                hook_ids = configured_hook_ids()
+            except OSError:
+                # A config that could not be read already settled this run's
+                # verdict — the drift check above reports unknown over it — and
+                # the footer is printed on every path out of here, so it may not
+                # raise. Every row then names the hook form.
+                hook_ids = None
             for row in flagged:
-                print(f"  复现 {row['id']}（{row['result']}）:"
-                      f" {precommit} run {row['id']} --all-files --hook-stage manual")
+                print(f"  复现 {row['id']}（{row['result']}）: {reproduce(row, precommit, hook_ids)}")
             for item in dropped:
                 print(f"  推前没跑 {item['id']}（想知道就跑）:"
                       f" {precommit} run {item['id']} --all-files --hook-stage manual")
@@ -391,7 +440,7 @@ def run(args, report, finish, started):
             else:
                 invoke("commit-title", [sys.executable, str(Path(__file__).with_name("check-commit-title.py")), title])
 
-    precommit = shlex.split(os.environ.get("CI_FAST_PRECOMMIT", "uvx pre-commit"))
+    precommit = shlex.split(precommit_command())
     ready = execute([*precommit, "--version"], REPO_ROOT,
                     min(10, max(0, deadline - time.monotonic())), args.memory_mib)
     if ready["result"] != "pass":
@@ -417,7 +466,16 @@ def run(args, report, finish, started):
                                "which a small box kills"}
             for h in dropped
         )
-    missing_deps = dependencies(REPO_ROOT, scope)
+    # The preflight follows what this run will spawn, not the raw scope:
+    # frontend/node_modules is what the node hooks need, and on the static
+    # pre-push path the three of them have already left the selection, so a
+    # frontend-scoped push from a checkout that never ran `task fe:install` is
+    # judged by the guards and the two python ratchets instead of coming back
+    # blocked with nothing run — which is the case that narrowing exists for.
+    # Every other tier (and static without --pre-push) selects a node hook
+    # whenever frontend scope is on, so its gate is unchanged.
+    needs_node = args.tier != "static" or any(h in NODE_HOOKS for h in hooks)
+    missing_deps = dependencies(REPO_ROOT, {**scope, "frontend": bool(scope.get("frontend")) and needs_node})
     if missing_deps:
         report["reasons"].extend(missing_deps)
         print("\n".join(missing_deps))

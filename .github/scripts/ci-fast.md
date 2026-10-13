@@ -56,12 +56,22 @@ described in `docs/workflows.md`). It calls this script as
   judge lint rather than reading as a pass that covered it. A push runs on
   whatever box the author has, and a check the machine killed is a red its
   reader cannot act on. The config-drift check still reads the whole hook set,
-  so a config that lost one of the three is still unknown, not green.
+  so a config that lost one of the three is still unknown, not green. The
+  preflight follows the same selection: with no node hook left, a checkout that
+  never ran `task fe:install` is not blocked by a missing `frontend/node_modules`
+  — the guards and the two python ratchets still run on it.
 - Every item that did not pass closes with the command that reproduces it
-  outside the hook (`uvx pre-commit run <id> --all-files --hook-stage manual`),
-  and so does each of the three that were left out. The reader did not choose
-  to run this and is about to push anyway, so the report has to be actionable
-  as it stands. Which files are at fault comes from the hook's own output,
+  outside the hook, and so does each of the three that were left out. The
+  reader did not choose to run this and is about to push anyway, so the report
+  has to be actionable as it stands. A hook is repeated through pre-commit in
+  the invocation this run used — `$CI_FAST_PRECOMMIT` when the caller set one,
+  otherwise the default with its interpreter pin (below) — so the repeat runs
+  on the interpreter the check ran on. A check that is not a hook — the plan's
+  `backend-pure` / `frontend-unit` / `frontend-i18n` /
+  `frontend-typecheck-changed`, and a directly invoked `commit-title` — is not
+  dressed up as one: it names the command that actually ran, or the input it
+  was missing, because `pre-commit run <id>` for one of those exits with `No
+  hook with id ...`. Which files are at fault comes from the hook's own output,
   printed above as it runs — the report's rows record the check, its verdict,
   its clock and its command, not its log; the reproduce command prints that
   output again.
@@ -75,14 +85,20 @@ checkout it lives in does not survive to retry. `--pre-push` stays honest about
 what it checked; blocking a merge remains CI's job, and it stays the hook's job
 not to lose the work it is reporting on.
 
-One machine-level caveat (measured 2026-10-12): `uvx` puts its tool venv's `bin`
-first on the hook's `PATH`, and on the agent work image that venv is built from
-Python 3.9, so a `language: system` hook whose entry says `python3` runs under
-3.9 there. `migration-fork`'s script uses 3.10+ annotation syntax and therefore
-reports fail on every backend-scoped push on that image, while the same hook
-passes under `uvx --python=3.13 pre-commit`. Its exit code is still 0 (nothing
-is blocked), and this is the machine the check runs on rather than the change;
-the fix is an interpreter for `uvx`, not a change to this tool.
+`uvx` puts its tool venv's `bin` first on the hooks' `PATH`, so a
+`language: system` hook whose entry says `python3` runs under whichever
+interpreter that venv was built from. Measured 2026-10-12 on the agent work
+image: 3.9.25 there against the 3.13.5 running this script, which made
+`migration-fork` — 3.10+ annotation syntax in
+`.claude/scripts/check-migration-fork.py` — report fail on every backend-scoped
+run, and made the reproduce line it printed repeat that instead of the check.
+The default pre-commit command therefore pins `uvx` to the interpreter running
+this script (`uvx --python <sys.executable> pre-commit`): the hooks' `python3`
+comes from a venv built on that same interpreter, which is the one the entry
+point started this run with. `CI_FAST_PRECOMMIT` replaces the command and the
+pin with it; both workflows set that variable to `uvx pre-commit`, so this
+default is what a caller that sets nothing — the entry point, `task ci:fast`, a
+plain `python3 .github/scripts/ci-fast.py` — runs.
 
 ## In Required CI (the draft tier)
 

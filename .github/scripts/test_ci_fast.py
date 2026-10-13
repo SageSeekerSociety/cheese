@@ -315,6 +315,86 @@ class CiFastTest(unittest.TestCase):
         self.assertRegex(proc.stdout, r"复现 ruff（fail）.*run ruff --all-files --hook-stage manual")
         self.assertEqual(self.report()["exit"], 1)
 
+    # --- the hooks and the tool have to run on one interpreter. `uvx` builds
+    # --- its tool venv around an interpreter of its own and puts that venv's
+    # --- bin first on the hooks' PATH, so a `language: system` hook whose
+    # --- entry says `python3` lands on it: measured 2026-10-12, 3.9.25 there
+    # --- against the 3.13.5 running the script, and `migration-fork` (3.10+
+    # --- annotations) reported fail on every backend-scoped push while the
+    # --- reproduce line it printed repeated that same machine quirk. The
+    # --- default command carries the pin, and the line the reader is told to
+    # --- run is asserted to be a prefix of the argv that ran.
+    def test_pre_push_pins_the_interpreter_the_hooks_run_under(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        tools = self.tmp / "tools"
+        tools.mkdir()
+        log = self.tmp / "uvx-argv"
+        uvx = tools / "uvx"
+        uvx.write_text(
+            "#!/bin/sh\n"
+            f'printf "%s\\n" "$(basename "$0") $*" >> {shlex.quote(str(log))}\n'
+            'case "$*" in\n'
+            '  *--version*) echo "pre-commit 4.7.0"; exit 0 ;;\n'
+            'esac\n'
+            "exit 1\n"
+        )
+        uvx.chmod(0o755)
+        env = {k: v for k, v in self.env.items() if k != "CI_FAST_PRECOMMIT"}
+        env["PATH"] = str(tools) + os.pathsep + self.env["PATH"]
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--tier", "static", "--pre-push"],
+            cwd=self.repo, capture_output=True, text=True, env=env, timeout=120,
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        spawned = log.read_text().splitlines()
+        pinned = f"uvx --python {sys.executable} pre-commit"
+        self.assertTrue(spawned, proc.stdout + proc.stderr)
+        for line in spawned:
+            self.assertTrue(line.startswith(pinned), line)
+        printed = re.search(r"复现 ruff（fail）: (.*)", proc.stdout)
+        self.assertIsNotNone(printed, proc.stdout)
+        ran_ruff = [line for line in spawned if line.startswith(pinned + " run ruff ")]
+        self.assertTrue(ran_ruff, spawned)
+        self.assertTrue(ran_ruff[-1].startswith(printed.group(1)),
+                        f"printed {printed.group(1)!r} ran {ran_ruff[-1]!r}")
+
+    # --- and the preflight follows what the run will spawn, not the raw scope:
+    # --- with the three node hooks out of the selection, a frontend-scoped
+    # --- push from a checkout that never ran `task fe:install` is judged by
+    # --- the guards and the two python ratchets instead of reporting blocked
+    # --- with nothing run. Without the flag the same checkout still blocks,
+    # --- because those three are selected again.
+    def test_pre_push_static_judges_without_node_modules(self):
+        self.write_hooks()
+        self.make_base_and_head("frontend/src/x.ts")
+        shutil.rmtree(self.repo / "frontend/node_modules")
+        proc = self.run_ci_fast("--pre-push")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        ran = self.ran_hooks()
+        self.assertTrue({"scene-ratchet", "catalog-ratchet"} <= ran)
+        self.assertIn("file-size", ran)
+        self.assertNotIn("blocked", proc.stdout)
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 3, proc.stdout)
+        self.assertIn("node_modules", proc.stdout)
+
+    # --- the footer names a pre-commit hook only for something that is one.
+    # --- `commit-title` is invoked directly and the plan's checks are run by
+    # --- this tool itself, so `pre-commit run commit-title` for those answers
+    # --- "No hook with id ..." (reported 2026-10-12): they name the command
+    # --- that ran, or the input they were missing.
+    def test_pre_push_does_not_dress_plan_checks_as_hooks(self):
+        self.write_hooks(failing={"ruff"})
+        self.make_base_and_head("backend/app/x.py")
+        proc = self.run_ci_fast("--tier", "quick", "--pre-push",
+                                "--pull-request", str(self.tmp / "absent.json"),
+                                env_extra=self.quick_tools())
+        self.assertRegex(proc.stdout, r"复现 ruff（fail）: .*run ruff --all-files --hook-stage manual")
+        self.assertIn("复现 commit-title", proc.stdout)
+        self.assertIn("cannot read --pull-request", proc.stdout)
+        self.assertNotRegex(proc.stdout, r"复现 commit-title.*pre-commit run")
+
     # --- leaving the node hooks out of the run is not a licence to lose them
     # --- from the config: the drift check reads the whole set before the
     # --- filter, so a config that no longer defines one is still unknown
