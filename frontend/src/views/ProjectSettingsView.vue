@@ -117,6 +117,7 @@ const {
   approvalsDraft,
   bpMemberItems,
   bpReviewerItems,
+  bpDispatchItems,
   loadBranchProtection,
   saveBranchProtection,
   addRequiredCheck,
@@ -406,6 +407,7 @@ function close() {
           :error="bpError"
           :member-items="bpMemberItems"
           :reviewer-items="bpReviewerItems"
+          :dispatch-seat-items="bpDispatchItems"
           :check-name="newCheckName"
           :check-paths="newCheckPaths"
           :approvals-draft="approvalsDraft"

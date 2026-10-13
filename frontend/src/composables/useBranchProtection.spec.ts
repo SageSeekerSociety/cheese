@@ -1,5 +1,5 @@
 // 分支保护的设置开关是乐观的：一翻就过去，服务端那份回来覆盖，失败弹回原值。
-import type { BranchProtection, BranchProtectionRules } from '@/cx_types'
+import type { BranchProtection, BranchProtectionRules } from '@/branchProtection'
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +8,7 @@ vi.mock('@/api', async () => ({
   getBranchProtection: vi.fn(),
   setBranchProtection: vi.fn(),
   listProjectMembers: vi.fn().mockResolvedValue({ data: [] }),
+  listProjectAgents: vi.fn().mockResolvedValue({ data: [] }),
 }))
 
 import { useBranchProtection } from './useBranchProtection'
@@ -22,6 +23,7 @@ const rules = (over: Partial<BranchProtectionRules> = {}): BranchProtection => (
   override_handles: null,
   approvals_required: 1,
   default_reviewer: '',
+  dispatch_seat: '',
   merge_method: 'squash',
   github_protection: { enforced: false, status: 'none' },
   ...over,

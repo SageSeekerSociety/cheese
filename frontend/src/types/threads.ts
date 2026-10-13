@@ -82,10 +82,21 @@ declare module '../cx_types' {
   }
 }
 
-// `GET /topics` 的每一行带着侧栏挂在它下面的任务：和我有关的几件（最多五件），和这个
-// 频道进行中的一共几件（views/workspace/ProjectSidebar）。
+// `GET /topics` 的每一行带着侧栏挂在它下面的任务：和我有关的全部，不足三条时补上这个
+// 频道别人的几条（那些行带 `filling_in`），加这个频道进行中的一共几件
+// （views/workspace/ProjectSidebar）。
 declare module '../cx_types' {
   interface Topic {
     my_tasks?: { shown: RoomTask[]; open: number }
+  }
+}
+
+// 侧栏那一块里的一条：这一条不是和我有关的，是从这个频道里别人的活借来把这一块凑够三条
+// 的（`projects.rail_tasks`）。侧栏把它画淡一档、缀一个「补足」，读的人才知道这一条为什
+// 么会在这儿。只有 `my_tasks.shown` 这份行带它；别的调用方（项目级列表、频道里的全部任务）
+// 不带，读作 false——那是「和我无关」，不是「说不清」。
+declare module '../cx_types' {
+  interface RoomTask {
+    filling_in?: boolean
   }
 }

@@ -72,16 +72,16 @@ class TestAccessToken:
 class TestUserAuthService:
     @pytest.fixture
     def mock_repos(self):
+        from app.domain.user.ports import UserStatistics
         from app.domain.user.repositories import (
             UserProfileRepository,
             UserRepository,
-            UserStatisticsRepository,
         )
 
         return {
             "user_repo": AsyncMock(spec=UserRepository),
             "profile_repo": AsyncMock(spec=UserProfileRepository),
-            "stats_repo": AsyncMock(spec=UserStatisticsRepository),
+            "stats_repo": AsyncMock(spec=UserStatistics),
         }
 
     @pytest.fixture

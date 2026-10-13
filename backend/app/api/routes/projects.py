@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Literal, Protocol
 
@@ -23,6 +23,7 @@ from app.api.place import (
 )
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
+from app.api.room_task_rows import project_task_rows
 from app.api.write_access import CHEESE_ONLY_IN_PROJECT
 from app.auth.project_access import may_read_project
 from app.core.config import settings
@@ -39,15 +40,10 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.github_app import (
     github_app_read_token_for_project,
 )
-from app.domain.agent.liveness import last_output_at, running_tasks
 from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
-from app.domain.block.queries import (
-    awaiting_an_answer,
-    weeklies_for_project,
-)
+from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
-from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.onboarding.start import start_steps
@@ -70,9 +66,7 @@ from app.domain.project.services import ProjectService
 from app.domain.project_progress import feed as progress_feed
 from app.domain.repository.identity import requester_credit_enabled
 from app.domain.review.github_pr import parse_github_repo
-from app.domain.review.queries import latest_cards_by_task
-from app.domain.room_task import naming, presentation
-from app.domain.room_task.schemas import TaskOut
+from app.domain.room_task import naming
 from app.domain.room_task.services import TaskService
 from app.domain.shell.catalog import Shell
 from app.domain.shell.schemas import ShellOut
@@ -479,7 +473,7 @@ async def list_project_tasks(
             me=actor.handle or "",
             accepted=accepted,
         )
-        items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+        items = await project_task_rows(db, chat, actor.handle or "", tasks)
         last = page_rows[-1] if page_rows and has_more else None
         return conditional_json(
             ok(
@@ -497,7 +491,7 @@ async def list_project_tasks(
         for t in await TaskService(db).list_in_project(project_id, accepted=accepted)
         if t.room_id in seen and (status is None or t.status == status)
     ]
-    items = await _project_task_rows(db, chat, actor.handle or "", tasks)
+    items = await project_task_rows(db, chat, actor.handle or "", tasks)
     return conditional_json(ok(page(items, len(items))), if_none_match)
 
 
@@ -510,114 +504,6 @@ def _task_cursor(before: str | None) -> tuple[datetime, uuid.UUID] | None:
         return datetime.fromisoformat(moved), uuid.UUID(task_id)
     except ValueError as exc:
         raise UnprocessableEntityError(say("taskPageCursorInvalid")) from exc
-
-
-async def _project_task_rows(
-    db,
-    chat: ChatService,
-    me: str,
-    tasks: list,
-    *,
-    silent_of: Callable[[uuid.UUID], float | None] | None = None,
-    delivered_of: Callable[[uuid.UUID], bool] | None = None,
-) -> list[dict]:
-    """The project rail's rows for ``tasks``: each with its board cell, its
-    card, whether it waits on ``me``, whether it stalled, when it last moved,
-    and — when the caller can say it — when its running turn last produced
-    output (`silent_of`; the sidebar's red light, `TopicRailTaskRow`) and
-    whether it holds a delivery ``me`` has not opened since (`delivered_of`;
-    the sidebar's 长绿, same row component)."""
-    task_ids = [t.id for t in tasks]
-    cards = await latest_cards_by_task(db, task_ids)
-    # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
-    # （`ix_blocks_questions`）。这是唯一会中断「运行中」的一格，所以不能留
-    # 给调用方各自去问。
-    asked = await awaiting_an_answer(db, task_ids)
-    # 一次，给全部行用同一个「现在几点」：逐行取 now 会让同一批数据里两条本该
-    # 一样的活分到不同格子，而那种差别没人再能复现。
-    now = datetime.now(UTC)
-    # 第四次批查询：哪几条此刻有一轮在跑（`agent.liveness`：不止看内存）。
-    running = await running_tasks(chat, db, tasks)
-    # 第五次：每条最后一次有人或芝士说话是什么时候 —— 侧栏按它排「最近有动静」。
-    last_said = await TaskService(db).last_block_at_for_tasks(task_ids)
-    items = []
-    for task in tasks:
-        card = cards.get(task.id)
-        said_at = last_said.get(task.id)
-        shown = presentation.task_presentation(
-            presentation.facts_for_task(
-                task,
-                card,
-                running=task.id in running,
-                awaiting_answer=task.id in asked,
-            ),
-            now=now,
-        )
-        last_activity = said_at or task.created_at
-        is_running = task.id in running
-        # 在跑的那一轮上一次有输出是什么时候（取整到分钟）。和话题清单那一头同一个
-        # 来源、同一个形状（`agent.liveness.last_output_at`），侧栏两处的红灯同一条
-        # 判据。None = 此刻没有在跑的一轮，或者这个进程说不了（那种「不知道」不当成
-        # 「很新」用，读的人自己决定，这里也不编一个）。
-        quiet_at = (
-            None if silent_of is None else last_output_at(silent_of(task.id), now)
-        )
-        # 这一条在不在等**看的这个人** —— 和「待办」同一个寻址（`address`），侧栏的
-        # 点和任务列表的橙字都读它，不各自从列再推一遍。
-        asking = asked.get(task.id)
-        awaits = address(
-            Event(
-                reviewers=(
-                    ()
-                    if card is None or not card.reviewer_handle
-                    else (card.reviewer_handle,)
-                ),
-                reporter=task.reporter_handle,
-                asked=asking,
-                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知、
-                # 待办同一个名单（`announce.notify_question`）。题根本不在等，就
-                # 没有这一层。
-                asked_also=(task.people if task.id in asked and asking is None else ()),
-                owner=(
-                    task.owner_handle
-                    if presentation.owner_acts_on(shown, running=is_running)
-                    else None
-                ),
-            ),
-            hand_of(shown.column),
-        ).reason_for(me)
-        items.append(
-            {
-                **TaskOut.model_validate(task).model_dump(mode="json"),
-                "presentation": shown.as_dict(),
-                "awaits_me": awaits is not None,
-                # 这条活此刻在不在往前走（侧栏那盏呼吸绿）。判据在
-                # `presentation.work_moving`：有一轮在跑，或者走在交付链路上 ——
-                # 和它上面那个 `presentation` 同一个来源，不由读的人各推一份。
-                "moving": presentation.work_moving(shown),
-                # 在跑、但上一次有输出是什么时候（`quiet_at`，取整到分钟）。
-                "last_output_at": None if quiet_at is None else quiet_at.isoformat(),
-                # 这件活交付完了、而这个人从那以后没点开看过（侧栏的长绿）。和频道
-                # 那一头同一个来源（`room_task/repositories.unseen_deliveries`）。
-                # 说不了（调用方没算）就是 false——不亮，不是「亮着但说不清」。
-                "unseen_delivery": bool(delivered_of(task.id))
-                if delivered_of is not None
-                else False,
-                "stalled": presentation.is_stalled(
-                    shown, running=is_running, last_activity=last_activity, now=now
-                ),
-                "last_activity_at": last_activity.isoformat(),
-                "card": None
-                if card is None
-                else {
-                    "id": str(card.id),
-                    "status": str(card.status),
-                    "pr_number": card.pr_number,
-                    "pr_url": card.pr_url,
-                },
-            }
-        )
-    return items
 
 
 @router.get("/{project_id}/progress")
@@ -1034,6 +920,7 @@ def _branch_protection_payload(bp: BranchProtection) -> dict:
         ),
         "approvals_required": bp.approvals_required,
         "default_reviewer": bp.default_reviewer,
+        "dispatch_seat": bp.dispatch_seat,
     }
 
 
@@ -1090,6 +977,7 @@ _BRANCH_PROTECTION_KEYS = (
     "auto_merge_allowed",
     "override_handles",
     "default_reviewer",
+    "dispatch_seat",
 )
 
 
@@ -1174,48 +1062,3 @@ async def set_project_upstream(
     url = f"https://github.com/{parsed[0]}/{parsed[1]}" if parsed else None
     await service.merge_settings(project, {"github_repository_url": url})
     return ok({"url": url})
-
-
-#: How many of my tasks a channel's row in the sidebar carries under it.
-RAIL_TASKS = 5
-
-
-async def rail_tasks(
-    db: AsyncSession,
-    chat: ChatService,
-    actor: Actor,
-    room_ids: list[uuid.UUID],
-    *,
-    silent_of: Callable[[uuid.UUID], float | None] | None = None,
-    delivered_of: Callable[[uuid.UUID], bool] | None = None,
-) -> dict[uuid.UUID, dict]:
-    """What the sidebar hangs under each channel, keyed by channel: how many
-    tasks are underway there (`open`, the count after 「全部任务」), and the ones
-    of them the caller owns or helps on (`shown`) — owned first, then helped,
-    each most recently moved first, at most `RAIL_TASKS`, leaving out one that
-    stalled. Every channel in ``room_ids`` gets an entry; the rows are the
-    project rail's (`_project_task_rows`).
-
-    The project's open tasks are not read for this: the count is one grouped
-    query, and only the caller's own tasks are made into rows."""
-    me = actor.handle or ""
-    service = TaskService(db)
-    counts = await service.underway_counts(room_ids)
-    mine = await service.underway_with(room_ids, me) if actor.authenticated else []
-    rows = await _project_task_rows(
-        db, chat, me, mine, silent_of=silent_of, delivered_of=delivered_of
-    )
-    shown: dict[str, list[dict]] = {}
-    for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
-        if not row["stalled"]:
-            shown.setdefault(row["room_id"], []).append(row)
-    out: dict[uuid.UUID, dict] = {}
-    for room in room_ids:
-        here = shown.get(str(room), [])
-        owned = [row for row in here if row["owner_handle"] == me]
-        helped = [row for row in here if row["owner_handle"] != me]
-        out[room] = {
-            "shown": (owned + helped)[:RAIL_TASKS],
-            "open": counts.get(room, 0),
-        }
-    return out

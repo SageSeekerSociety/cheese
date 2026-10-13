@@ -2,7 +2,7 @@ name: Architecture metrics
 
 # The board, not a gate: `.claude/scripts/arch-metrics.py` prints where the
 # architecture stands — the frontend's A/B/C/D component grades, the frozen
-# entries behind the eight backend contracts, files over their size cap, and the
+# entries behind the nine backend contracts, files over their size cap, and the
 # hotspots of the last 30 and 90 days — and how each number moved against the
 # revision 30 days back. Runs on main and weekly, never in a pull request: the
 # boundary checks (`backend/.importlinter`,
