@@ -422,6 +422,14 @@ async def _refresh_github_snapshot(
     """GitHub 那一侧的重算：读一眼现在的状态，写回卡面。"""
     number = card.pr_number
     assert number is not None  # PR lane only; the caller checked
+    if card.note_code == notes.NoteCode.waiting_merge_queue:
+        # 队列里的卡不在这里重算。GitHub 把它的 `mergeStateStatus` 钉在 BLOCKED
+        # 上，从 PR 自己的信号重算只会得到「GitHub 合并状态：blocked」——队列
+        # 自己那套检查它看不见，于是重算出来的那份会把轮询写下的「还在等 CI」
+        # 抹掉（`reasons` 里少了 `ci_running`），而环境释放判据读的正是那句话：
+        # 一张还在队里等的卡就此被当成没人再看，机器被收掉。这张卡的镜像归
+        # `_poll_pr_card` 的队列分支管，它每跳问一次 GitHub 队列条目还在不在。
+        return
     owner, repo = await self._pr_repo_of(card, topic)
     creds, reason = await self._pr_poll_credentials(card, topic)
     if creds is None:

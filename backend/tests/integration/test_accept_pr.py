@@ -887,14 +887,18 @@ def _waiting_on_checks(client, topic_id: str) -> bool:
 
 def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatch):
     """卡在合并队列里时，镜像照样一轮刷一次 —— 「还在等 CI」的持有不该在队列
-    里比普通路径短。
+    里比普通路径短，也不该被读卡那条路抹掉。
 
-    进队列时写下的那份镜像带着 `ci_running`，但队列里 PR 的
-    `mergeStateStatus` 被 GitHub 钉在 BLOCKED，判定重算没有意义，所以它之后
-    再也不变。`checked_at` 是「还在等 CI」这句话的有效期：冻在入队那一刻，
-    过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 15 分钟）就没人再当这张卡在等 CI，
-    环境释放判据把机器收掉 —— 而轮询其实一直在看，回头还要叫醒这条线重建环境、
-    重读文档。队列里这段和普通路径是同一件事，就该挂同一根钟（1 小时）。"""
+    队列里 PR 的 `mergeStateStatus` 被 GitHub 钉在 BLOCKED，判定重算没有意义，
+    所以进队以后不再重算它，只由轮询每跳把 `checked_at` 推到此刻（`state`、
+    `reasons` 一条不动）。`checked_at` 是「还在等 CI」这句话的有效期：冻在入队
+    那一刻，过 `CHECK_WATCH_TICKS` 个轮询间隔（默认 15 分钟）就没人再当这张卡在
+    等 CI，环境释放判据把机器收掉 —— 而轮询其实一直在看，回头还要叫醒这条线重建
+    环境、重读文档。队列里这段和普通路径是同一件事，就该挂同一根钟（1 小时）。
+
+    只续期还不够：读卡那条路（`_cards` → `refresh_stale_pr_snapshots`）对过期的
+    快照也会重算一遍，而它重算出来的那份不带 `ci_running`（队列自己那套检查它
+    看不见），浏览器每 15 秒来读一次就把话抹了。队列里的卡不归它管。"""
     fake = app_world["fake"]
     _pid, tid, cid, _number, head = _ready_card(client, app_world)
     fake.check_state_by_sha[head] = ("success", "green")
@@ -909,20 +913,36 @@ def test_a_queued_card_keeps_refreshing_its_mirror(client, app_world, monkeypatc
     monkeypatch.setattr(fake, "merge_queue_entry", in_queue, raising=False)
 
     assert _accept(client, cid).status_code == 200
-    _poll(client)  # 队列里的一跳：镜像该被刷到此刻
-    first = _queue_mirror(client, cid)
-    assert first["reasons"][0]["kind"] == "ci_running"
+    enqueued = _queue_mirror(client, cid)  # 入队那一刻写下的那份
 
-    # 摆成「上一次看这张卡是三个轮询间隔以前」：不刷新的话，判据就该不再认它。
+    _poll(client)  # 队列里的一跳
+    first = _queue_mirror(client, cid)
+    assert first["reasons"] == enqueued["reasons"]  # 判定一条没改
+    assert first["checked_at"] > enqueued["checked_at"]  # 只有 checked_at 走
+
+    # 摆成「上一次看这张卡是三个轮询间隔以前」：不再刷的话，判据就不认它了。
     stale_at = _age_queue_mirror(client, cid, seconds=3 * 300 + 1)
     assert not _waiting_on_checks(client, tid)
 
-    _poll(client)  # 队列里的下一跳
+    _poll(client)  # 队列里的下一跳：把有效期续上
 
     again = _queue_mirror(client, cid)
     assert again["state"] == "blocked"
-    assert again["reasons"] == first["reasons"]  # 判定没变，只有 checked_at 走
+    assert again["reasons"] == first["reasons"]
     assert again["checked_at"] > stale_at
+    assert _waiting_on_checks(client, tid)
+
+    # 这时浏览器来读一次卡。读卡这条路对「比地板（`accept_pr_snapshot_floor_s`
+    # = 60s）还旧」的快照会自己重算一遍，所以把 `checked_at` 拨到地板之外、
+    # 持有窗口（900s）之内：读卡会去重算它。
+    aged_at = _age_queue_mirror(client, cid, seconds=300)
+    assert _waiting_on_checks(client, tid)  # 还在窗口里，判据照样认它
+
+    _cards(client, tid)
+
+    # 队列里的这张不归读卡这条路管：它一重算就会把 `ci_running` 换成它自己看
+    # 得见的那份（没有队列检查），持有当场断掉。
+    assert _queue_mirror(client, cid)["checked_at"] == aged_at
     assert _waiting_on_checks(client, tid)
 
 
