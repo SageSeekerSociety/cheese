@@ -13,7 +13,9 @@ project on manual naming is left alone; the model is asked not to think before
 it answers, which is what used to eat the answer; a trigger that asks nothing
 says which task and why; an answer cut off before the model wrote anything
 leaves the task as it was without counting as a failed call, while one that
-never arrives at all still backs the task off. The gateway is a MockTransport
+never arrives at all still backs the task off; a title too wide for the
+sidebar is sent back with its width a bounded number of times, inside the one
+naming timeout, and cut to fit when that does not help. The gateway is a MockTransport
 that answers from a script and records what it was asked.
 """
 
@@ -33,6 +35,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.room_task import naming
 from app.domain.room_task.models import Task, TaskTitle
+from app.domain.room_task.title_width import TITLE_WIDTH, title_fits, title_width
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     post_message,
@@ -484,6 +487,69 @@ def test_the_naming_call_still_carries_a_ceiling(client, alice, gateway):
     runaway answer from becoming a runaway call."""
     _named(client, alice, gateway)
     assert gateway["bodies"][-1]["max_tokens"] >= 700
+
+
+# ---------- a title that fits the sidebar ----------
+
+
+def test_a_title_too_wide_goes_back_to_the_model_with_its_width(client, alice, gateway):
+    """The sidebar draws a title on one line; one wider than that is not
+    written. The model is told how wide it was, and its shorter title is the
+    one the task gets."""
+    rid = _unnamed(client, alice)
+    _say(client, rid, "问卷的显示条件要实时生效，招募文案的格式也要统一")
+    gateway["answers"] += [
+        {"keep": False, "title": "问卷显示条件实时生效与招募文案格式"},
+        {"keep": False, "title": "问卷条件与招募文案"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and renamed.title == "问卷条件与招募文案"
+    assert _shown(client, rid) == ("问卷条件与招募文案", "auto")
+    assert _history(client, rid) == [("问卷条件与招募文案", "auto", "name")]
+    assert len(gateway["asked"]) == 2
+    told = gateway["asked"][1]
+    assert str(title_width("问卷显示条件实时生效与招募文案格式")) in told
+    assert str(TITLE_WIDTH) in told
+
+
+def test_a_title_that_never_fits_is_cut_to_fit(client, alice, gateway):
+    """However often the model answers too wide, it is asked a bounded number
+    of times and what is stored still fits — at the calibration that wrote the
+    over-wide titles seen on dev as much as at the first name."""
+    rid = _named(client, alice, gateway)
+    asked = len(gateway["asked"])
+    gateway["answers"] += [
+        {"keep": False, "title": "股东平价股权转让指南 Word 文档"}
+    ] * 10
+
+    renamed = _run(client, rid, "turn")
+
+    assert renamed is not None
+    assert title_fits(renamed.title)
+    assert "股东平价股权转让指南 Word 文档".startswith(renamed.title)
+    assert title_fits(_row(client, rid).title)
+    assert 1 < len(gateway["asked"]) - asked <= 3
+
+
+def test_asking_again_stays_inside_the_naming_timeout(
+    client, alice, gateway, monkeypatch
+):
+    """A retry gets only what is left of the one budget naming has; with too
+    little left it is not started, and the title is cut instead."""
+    monkeypatch.setattr(settings, "topic_naming_timeout_seconds", 1.0)
+    rid = _unnamed(client, alice)
+    _say(client, rid, "问卷的显示条件要实时生效，招募文案的格式也要统一")
+    gateway["answers"] += [
+        {"keep": False, "title": "问卷显示条件实时生效与招募文案格式"},
+        {"keep": False, "title": "问卷条件与招募文案"},
+    ]
+
+    renamed = _run(client, rid, "message")
+
+    assert renamed is not None and title_fits(renamed.title)
+    assert len(gateway["asked"]) == 1
 
 
 def test_the_first_turn_checks_the_name_once(client, alice, gateway):

@@ -9,6 +9,7 @@ drawn at twice the length of a Chinese one that passes the same check.
 from app.domain.room_task.title_width import (
     TITLE_CHARS,
     TITLE_WIDTH,
+    fit_title,
     title_fits,
     title_width,
 )
@@ -43,3 +44,22 @@ def test_the_limit_is_reached_and_not_passed():
 def test_a_mixed_title_is_counted_by_what_it_draws():
     # 「修 bug」＝ 汉字 2 + 空格 1 + 三个字母 3 = 6。
     assert title_width("修 bug") == 6
+
+
+def test_a_title_cut_to_fit_is_cut_by_width_and_keeps_its_start():
+    assert fit_title("问卷显示条件实时生效与招募文案格式") == "问卷显示条件实时生效与招"
+    # 英文按半个算，留下的字是中文的两倍。
+    assert fit_title("a" * 40) == "a" * TITLE_WIDTH
+    # 切口落在空格后面时，不留下这个空格。
+    assert fit_title("一" * 11 + "a b") == "一" * 11 + "a"
+
+
+def test_a_title_that_fits_is_left_whole():
+    assert fit_title("dev 外网访问慢排查") == "dev 外网访问慢排查"
+    assert fit_title("一" * TITLE_CHARS) == "一" * TITLE_CHARS
+
+
+def test_an_emoji_is_never_split():
+    # 一个 emoji 在 Python 里是一个码点；切口只会落在它前后。
+    cut = fit_title("😀" * 30)
+    assert title_fits(cut) and set(cut) == {"😀"}

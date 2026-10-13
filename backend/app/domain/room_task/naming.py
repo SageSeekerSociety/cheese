@@ -61,7 +61,13 @@ from app.domain.room_task.models import (
     TaskTitle,
     TaskTitleSource,
 )
-from app.domain.room_task.title_width import TITLE_CHARS
+from app.domain.room_task.title_width import (
+    TITLE_CHARS,
+    TITLE_WIDTH,
+    fit_title,
+    title_fits,
+    title_width,
+)
 from app.domain.service_keys import KeySpec, gateway_base, service_key
 from app.domain.thread.models import Thread
 from app.domain.usage.ledger import Ledger
@@ -82,8 +88,14 @@ _MESSAGES = 12
 _MESSAGE_CHARS = 400
 _CONVERSATION_CHARS = 2400
 _GOAL_CHARS = 600
-# A title longer than this is not a title; it is cut, never wrapped.
-TITLE_MAX_CHARS = 24
+# A title too wide for the sidebar (`title_width`) goes back to the model with
+# its width, at most this many times, before it is cut to fit. Each try is a
+# short call (the answer is a dozen tokens), and all of them share one
+# `topic_naming_timeout_seconds`, so asking again never makes naming slower
+# than one call was allowed to be; a try is only started with at least
+# `_RETRY_FLOOR_S` of that left.
+_RETRIES = 2
+_RETRY_FLOOR_S = 2.0
 # The opening line has to say something before it is worth naming a task by:
 # 「在吗」「@芝士」 wait for the next message or the end of the first turn.
 # What counts is what `_said` has left, so an `@` inside a sentence is not
@@ -193,7 +205,7 @@ def normalize_title(raw: object) -> str | None:
             title = title[1:-1]
     if not title or title == PLACEHOLDER_TITLE:
         return None
-    return title[:TITLE_MAX_CHARS].rstrip()
+    return title
 
 
 def same_title(a: str, b: str) -> bool:
@@ -384,23 +396,42 @@ class Answer:
     cost_usd: float = 0.0
 
 
+def _conversation_with_model(material: str) -> list[dict[str, str]]:
+    return [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": material},
+    ]
+
+
+def _too_wide(title: str) -> str:
+    """What the model is told when its title does not fit."""
+    return (
+        f"「{title}」的宽度是 {title_width(title)}（一个汉字算 2，英文、数字、"
+        f"空格各算 1），超过了上限 {TITLE_WIDTH}，也就是 {TITLE_CHARS} 个汉字。"
+        "换一个更短的名字，说的还是这件事；keep 填 false，只输出 JSON 对象。"
+    )
+
+
 async def _ask(
-    key: str, material: str, transport: httpx.AsyncBaseTransport | None
+    key: str,
+    messages: list[dict[str, str]],
+    transport: httpx.AsyncBaseTransport | None,
+    *,
+    timeout: float,
 ) -> Answer:
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(settings.topic_naming_timeout_seconds),
-            transport=transport,
-        ) as client:
+        async with (
+            asyncio.timeout(timeout),
+            httpx.AsyncClient(
+                timeout=httpx.Timeout(timeout), transport=transport
+            ) as client,
+        ):
             r = await client.post(
                 f"{gateway_base()}/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}"},
                 json={
                     "model": settings.topic_naming_model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": material},
-                    ],
+                    "messages": messages,
                     "max_tokens": _ANSWER_TOKENS,
                     "temperature": 0.2,
                     "response_format": {"type": "json_object"},
@@ -452,6 +483,53 @@ async def _record_usage(factory: "SessionFactory", answer: Answer) -> None:
             await session.commit()
     except Exception:  # noqa: BLE001 — see the module docstring
         logger.warning("topic naming usage was not recorded", exc_info=True)
+
+
+async def _fitted(
+    key: str,
+    material: str,
+    verdict: Verdict,
+    *,
+    transport: httpx.AsyncBaseTransport | None,
+    factory: "SessionFactory",
+    deadline: float,
+) -> Verdict:
+    """`verdict`, with a new title that fits the sidebar.
+
+    A title too wide goes back to the model with its measured width, up to
+    `_RETRIES` times while the naming budget lasts; what still does not fit
+    after that is cut to the width (`fit_title`). A verdict to keep the
+    current title is left alone: it writes nothing."""
+    loop = asyncio.get_running_loop()
+    messages = _conversation_with_model(material)
+    for _ in range(_RETRIES):
+        if verdict.keep or verdict.title is None or title_fits(verdict.title):
+            return verdict
+        left = deadline - loop.time()
+        if left < _RETRY_FLOOR_S:
+            break
+        messages += [
+            {
+                "role": "assistant",
+                "content": json.dumps(
+                    {"keep": False, "title": verdict.title}, ensure_ascii=False
+                ),
+            },
+            {"role": "user", "content": _too_wide(verdict.title)},
+        ]
+        answer = await _ask(key, messages, transport, timeout=left)
+        await _record_usage(factory, answer)
+        if answer.verdict is None or (
+            not answer.verdict.keep and answer.verdict.title is None
+        ):
+            break  # nothing better came back; cut what we have
+        verdict = answer.verdict
+    if verdict.keep or verdict.title is None or title_fits(verdict.title):
+        return verdict
+    logger.info(
+        "task naming: cut a title still %d wide to fit", title_width(verdict.title)
+    )
+    return Verdict(keep=False, title=fit_title(verdict.title) or None)
 
 
 # ---------- deciding when ----------
@@ -725,7 +803,17 @@ async def run(
             if key is None:
                 _unasked(task_id, reason, "no_gateway_key")
                 return None
-            answer = await _ask(key, material, transport)
+            # One budget for the whole judgement, asking again included.
+            deadline = (
+                asyncio.get_running_loop().time()
+                + settings.topic_naming_timeout_seconds
+            )
+            answer = await _ask(
+                key,
+                _conversation_with_model(material),
+                transport,
+                timeout=settings.topic_naming_timeout_seconds,
+            )
             await _record_usage(factory, answer)
             if answer.verdict is None:
                 # An answer cut off before it said anything is not the gateway
@@ -742,7 +830,15 @@ async def run(
                     "the_answer_was_cut_off" if answer.truncated else "the_call_failed",
                 )
                 return None
-            renamed = await _write(session, task, stage=stage, verdict=answer.verdict)
+            verdict = await _fitted(
+                key,
+                material,
+                answer.verdict,
+                transport=transport,
+                factory=factory,
+                deadline=deadline,
+            )
+            renamed = await _write(session, task, stage=stage, verdict=verdict)
             if stage == "follow" and redis is not None:
                 await _redis_call(redis.delete, _redis_key("pending", task_id))
     finally:
