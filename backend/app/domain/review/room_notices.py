@@ -176,7 +176,9 @@ async def _tell_the_reviewer(
         )
 
 
-async def _tell_the_dispatch_seat(session, *, topic, block, headline, detail) -> None:
+async def _tell_the_dispatch_seat(
+    session, *, topic, block, headline, detail, skip_instance_id=None
+) -> None:
     """项目设了「调度座位」时，这条事件也在它那里开工一轮。
 
     验收人收到的是站内信，调度座位要的是**这一轮跑起来**：它是管着十几条线的
@@ -187,6 +189,11 @@ async def _tell_the_dispatch_seat(session, *, topic, block, headline, detail) ->
 
     `dispatch_seat` 为空（默认）时什么都不做，和以前一样。设了一个解析不到
     队友的 handle 也不做：那是个写坏了的设置，不是一条要送出去的话。
+
+    `skip_instance_id` 是同一件事已经因为别的理由投给了某个席位：出队那一条已经
+    给任务自己的席位投了一份完整指令（`delivery.agent.record_task_instruction`），
+    调度座位恰好就是它时再投一条，等于同一件事叫它跑两轮 —— 而且第二轮手里的
+    话比第一轮少。一个事件只叫一个席位一次。
     """
     if block is None:
         return
@@ -195,7 +202,7 @@ async def _tell_the_dispatch_seat(session, *, topic, block, headline, detail) ->
     if not seat:
         return
     instance = await instance_for_seat(session, topic.project_id, seat)
-    if instance is None:
+    if instance is None or instance.id == skip_instance_id:
         return
     meta = block.meta or {}
     await record_agent(
@@ -426,8 +433,11 @@ async def _record_task_nudge(
 
     `dispatch` 非空时，这句话在项目的调度座位那里也开工一轮（`dispatch` 是那一段
     要给它看的话）。只有「离开合并队列」那一条这么用。
-    """
 
+    递给调度座位的那一份带着任务自己席位的 id：两者是同一个席位时它不再投 ——
+    上面那份指令已经更全，同一件事只该开工一轮。
+    """
+    told: uuid.UUID | None = None
     block = await announce(
         session,
         place_id=topic.id,
@@ -436,7 +446,7 @@ async def _record_task_nudge(
         meta=meta,
     )
     if block is not None and task is not None and task.status == TaskStatus.open:
-        await record_task_instruction(
+        told = await record_task_instruction(
             session,
             DeliveryEvent(
                 id=block.id,
@@ -457,6 +467,7 @@ async def _record_task_nudge(
             block=block,
             headline=headline,
             detail=dispatch,
+            skip_instance_id=told,
         )
 
 

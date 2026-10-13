@@ -337,6 +337,61 @@ def test_leaving_the_merge_queue_wakes_the_task_once(client, app_world, monkeypa
 # --------------------------------------------------------------------------
 
 
+def _task_deliveries(client, topic_id: str) -> list:
+    """Every row of the task's own delivery ledger, oldest first — the ledger
+    the runner turns into turns. Ordered so that no test depends on which row
+    the database happens to hand back first."""
+    import uuid as _uuid
+
+    from sqlalchemy import select
+
+    from app.domain.delivery.models import Delivery
+
+    task_id = str(delivery_task_id(client, topic_id))
+
+    async def _read():
+        async with client.test_factory() as db:
+            return list(
+                await db.scalars(
+                    select(Delivery)
+                    .where(Delivery.conversation_id == _uuid.UUID(task_id))
+                    .order_by(Delivery.recorded_at, Delivery.dedup_key)
+                )
+            )
+
+    return client.portal.call(_read)
+
+
+def _dispatch_rows(rows: list, event_type: str) -> list:
+    """The 调度座位 rows for one event. `eventType` is what tells the two
+    apart: the notice template itself names both events (「可以合并」和
+    「离开合并队列」), so searching the text matches either one."""
+    return [r for r in rows if r.payload.get("eventType") == event_type]
+
+
+def _second_seat(client, pid: str) -> str:
+    """Another agent in this project, seated nowhere: only the project's
+    「调度座位」 setting can address it, which is the point — it is not the
+    agent that works the task."""
+    import uuid as _uuid
+
+    from app.domain.agent_instance.services import AgentInstanceService
+    from app.domain.identity.handles import agent_instance_handle
+
+    async def _make() -> str:
+        async with client.test_factory() as db:
+            made = await AgentInstanceService(db).create(
+                project_id=_uuid.UUID(pid),
+                handle="dispatcher",
+                type_name=None,
+                display_name="Dispatcher",
+            )
+            await db.commit()
+            return agent_instance_handle(made.id)
+
+    return client.portal.call(_make)
+
+
 def test_the_dispatch_seat_is_woken_on_ready_and_on_queue_exit(
     client, app_world, monkeypatch
 ):
@@ -349,44 +404,25 @@ def test_the_dispatch_seat_is_woken_on_ready_and_on_queue_exit(
     一个 handle，平台手里只有这一段对话，事件出在哪就在哪儿告诉它。走的是点名、
     定时投递共用的那本投递账本（`delivery/agent.record_agent`），不是站内信 ——
     要的是这一轮真的跑起来，不是收件箱里多一行。
+
+    这里的座位是项目里另一个队友（下一条用例是它正好就是这条任务的席位）：两类
+    事件各投一条，正文里是**这一条事件自己的那句话**，落到这张卡上就是它的号。
     """
     fake = app_world["fake"]
-    pid, tid, cid, _number, head = _ready_card(client, app_world)
-    seat = room_agent_seat(client, tid)
+    pid, tid, cid, number, head = _ready_card(client, app_world)
+    seat = _second_seat(client, pid)
     _protect(client, pid, dispatch_seat=seat)
-
-    import uuid as _uuid
-
-    from sqlalchemy import select
-
-    from app.domain.delivery.models import Delivery
-
-    task_id = str(delivery_task_id(client, tid))
-
-    def _dispatch_deliveries() -> list:
-        async def _read():
-            async with client.test_factory() as db:
-                rows = list(
-                    await db.scalars(
-                        select(Delivery).where(
-                            Delivery.conversation_id == _uuid.UUID(task_id)
-                        )
-                    )
-                )
-                return [r for r in rows if "调度座位" in r.payload["content"]]
-
-        return client.portal.call(_read)
 
     # ① 可以合并（`accept_ready`）
     fake.check_state_by_sha[head] = ("success", "全绿")
     _poll(client)
     _wait_for_event(client, tid, "accept_ready")
     wait_work_idle()
-    ready = _dispatch_deliveries()
+    ready = _dispatch_rows(_task_deliveries(client, tid), "accept_ready")
     assert len(ready) == 1
     assert ready[0].recipient_handle == seat
     assert ready[0].agent_instance_id is not None
-    assert "可以合并" in ready[0].payload["content"]
+    assert f"PR #{number} 可以合并了" in ready[0].payload["content"]
 
     # ② 离开合并队列（`merge_refused`）
     async def enqueue(**kwargs):
@@ -401,13 +437,56 @@ def test_the_dispatch_seat_is_woken_on_ready_and_on_queue_exit(
     _poll(client)
     _wait_for_event(client, tid, "merge_refused")
     wait_work_idle()
-    after = _dispatch_deliveries()
-    assert len(after) == 2
-    queue_exit = after[1]
-    assert queue_exit.recipient_handle == seat
-    # 出队那一条带着要动手的那两句话：怎么看、怎么修。
-    assert "离开合并队列" in queue_exit.payload["content"]
-    assert "cheese push-fix" in queue_exit.payload["content"]
+    left = _dispatch_rows(_task_deliveries(client, tid), "merge_refused")
+    assert len(left) == 1
+    assert left[0].recipient_handle == seat
+    # 出队那一条带着要动手的那两句和这张卡的号：怎么看、怎么修。
+    assert f"PR #{number} 离开了合并队列但未合并" in left[0].payload["content"]
+    assert "cheese push-fix" in left[0].payload["content"]
+
+
+def test_a_dispatch_seat_that_works_the_task_is_woken_once(
+    client, app_world, monkeypatch
+):
+    """调度座位就是这条任务自己的席位时，一次出队只叫它一轮。
+
+    任务自己的席位本来就会为出队收到一份完整指令（怎么看、在任务目录里怎么修），
+    比调度座位那份两行摘要更全。两份都投，同一个 agent 为同一件事跑两轮，第二轮
+    手里的话还更少。座位是它时不再投第二份；「可以合并」那条没有别人投过，照旧。
+    """
+    fake = app_world["fake"]
+    pid, tid, cid, _number, head = _ready_card(client, app_world)
+    seat = room_agent_seat(client, tid)  # 这条任务自己的那条线
+    task_id = str(delivery_task_id(client, tid))
+    _protect(client, pid, dispatch_seat=seat)
+
+    fake.check_state_by_sha[head] = ("success", "全绿")
+    _poll(client)
+    _wait_for_event(client, tid, "accept_ready")
+    wait_work_idle()
+    assert len(_dispatch_rows(_task_deliveries(client, tid), "accept_ready")) == 1
+
+    async def enqueue(**kwargs):
+        return github_pr.MergeResult(queued=True)
+
+    async def not_in_queue(**kwargs):
+        return False
+
+    monkeypatch.setattr(fake, "merge_pull_request", enqueue)
+    monkeypatch.setattr(fake, "merge_queue_entry", not_in_queue, raising=False)
+    before = {row.id for row in _task_deliveries(client, tid)}
+    assert _accept(client, cid).status_code == 200
+    _poll(client)
+    _wait_for_event(client, tid, "merge_refused")
+    wait_work_idle()
+
+    fresh = [r for r in _task_deliveries(client, tid) if r.id not in before]
+    # 调度座位那一路没有多投一条。
+    assert _dispatch_rows(fresh, "merge_refused") == []
+    # 叫它的是任务自己那份完整指令，还是原来那一条。
+    assert len(fresh) == 1
+    assert fresh[0].recipient_handle == seat
+    assert f"cheese worktree {task_id}" in fresh[0].payload["content"]
 
 
 # --------------------------------------------------------------------------
