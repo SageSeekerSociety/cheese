@@ -79,7 +79,13 @@ export function useUnreadNotifications() {
         if (path === '/inbox' && from !== '/inbox') void refresh()
       }
     )
-    useEventListener(window, 'focus', () => void refreshIfStale())
+    // 首帧之前不问：开机那一两秒里窗口重新拿到焦点（切走再切回来、点进后台开着的标签页）
+    // 会走这里，而 `lastAt` 还是 0、节流挡不住它——放它过去就是首帧前读一遍、门开了再读
+    // 一遍。门开那一次读的就是当下的数。
+    useEventListener(window, 'focus', () => {
+      if (!firstPaintDone.value) return
+      void refreshIfStale()
+    })
   }
   return { count: computed(() => count.value), refresh, set }
 }

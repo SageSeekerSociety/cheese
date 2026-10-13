@@ -80,6 +80,21 @@ describe('待我处理那颗角标读的数', () => {
     expect(countText()).toBe('1')
   })
 
+  it('冷开时窗口重新拿到焦点：首帧之前不读，门开了只读这一趟', async () => {
+    // 开机那一两秒里切走再切回来、或者点进一个后台开着的标签页，都会来一次 `focus`。
+    // 那一下如果不等门，就是首帧前读一遍、门开了再读一遍（`lastAt` 还是 0，节流挡不住）。
+    listAwaitingMe.mockResolvedValue({ data: [{ projectId: 'p-1' }] })
+    const { fp, countText } = await mountProbe({ open: false })
+
+    window.dispatchEvent(new Event('focus'))
+    await settle()
+    expect(listAwaitingMe).not.toHaveBeenCalled()
+
+    await fp.releaseFirstPaint()
+    await waitFor(() => expect(listAwaitingMe).toHaveBeenCalledTimes(1))
+    expect(countText()).toBe('1')
+  })
+
   it('首帧之后离开待办页：当场再读一次，不受节流', async () => {
     listAwaitingMe.mockResolvedValue({ data: [] })
     const { router } = await mountProbe()

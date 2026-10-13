@@ -82,6 +82,21 @@ describe('未读小点读的那个数', () => {
     expect(getUnreadCount).toHaveBeenCalledTimes(1)
   })
 
+  it('冷开时窗口重新拿到焦点：首帧之前不问，门开了才问', async () => {
+    // 开机那一两秒里切走再切回来：`lastAt` 还是 0，节流挡不住这一下，不等门就会
+    // 首帧前问一次、门开了再问一次。
+    getUnreadCount.mockResolvedValue({ count: 2 })
+    const { fp, countText } = await mountAt('/projects/p-1', { held: true })
+
+    window.dispatchEvent(new Event('focus'))
+    await settle()
+    expect(getUnreadCount).not.toHaveBeenCalled()
+
+    await fp.releaseFirstPaint()
+    await waitFor(() => expect(countText()).toBe('2'))
+    expect(getUnreadCount).toHaveBeenCalledTimes(1)
+  })
+
   it('请求失败保留已经读到的非零计数', async () => {
     getUnreadCount.mockResolvedValueOnce({ count: 3 })
     const { router, countText } = await mountAt('/projects/p-1')

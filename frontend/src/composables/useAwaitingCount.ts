@@ -84,7 +84,13 @@ export function useAwaitingCount(enabled: Ref<boolean>): Ref<number> {
       void refresh(from === '/inbox')
     }
   )
-  useEventListener(window, 'focus', () => void refresh())
+  // 首帧之前也不问：开机那一两秒里切走再切回来、或者点进一个后台开着的标签页，都会
+  // 来一次 `focus`。这儿不挡的话它会当场读一遍（`lastAt` 还是 0，节流挡不住），门开了
+  // 再读一遍——和上面「换页面」那条一模一样的双读。门开那一次读的就是当下的数。
+  useEventListener(window, 'focus', () => {
+    if (!firstPaintDone.value) return
+    void refresh()
+  })
 
   return count
 }
