@@ -15284,6 +15284,11 @@ export interface components {
             url: string;
             /** Prompt */
             prompt?: string | null;
+            /**
+             * Render
+             * @default false
+             */
+            render: boolean;
             /** Topic */
             topic?: string | null;
             /** Project */

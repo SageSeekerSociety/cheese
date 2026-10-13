@@ -58125,6 +58125,11 @@
             ],
             "title": "Prompt"
           },
+          "render": {
+            "type": "boolean",
+            "title": "Render",
+            "default": false
+          },
           "topic": {
             "anyOf": [
               {
