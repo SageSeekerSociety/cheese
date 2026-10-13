@@ -1434,7 +1434,8 @@
       "red": "显示在跑，但五分钟没动静",
       "yellow": "有事等你",
       "moving": "有活在往前走",
-      "delivered": "做完了，你还没看过"
+      "delivered": "做完了，你还没看过",
+      "others": "别人的活"
     },
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子频道 {count} 条新消息",

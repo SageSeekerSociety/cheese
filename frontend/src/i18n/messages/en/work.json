@@ -1434,7 +1434,8 @@
       "red": "Says it's running, but nothing for five minutes",
       "yellow": "Waiting on you",
       "moving": "Work moving",
-      "delivered": "Done and unread"
+      "delivered": "Done and unread",
+      "others": "Someone else's task"
     },
     "hiddenCount": "No items hidden | 1 item hidden | {count} items hidden",
     "hiddenUnread": "No new messages in collapsed subtopics | Includes 1 new message in collapsed subtopics | Includes {count} new messages in collapsed subtopics",

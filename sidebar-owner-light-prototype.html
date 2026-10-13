@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>侧栏任务行的签：不标我的，标别人是谁</title>
+<title>侧栏任务行：不是我负责的那几条，挂一盏蓝灯</title>
 <style>
 /* ---- token：照 frontend/src/style.css 的两套主题块抄下来 ---- */
 :root{
@@ -13,15 +13,16 @@
   --canvas:#f7f8fa; --surface:#ffffff;
   --accent:#f57f17; --accent-press:#d96e0a; --accent-ink:#9a5413; --accent-wash:#fdf1e2;
   --ok:#1f9d55; --warn:#e8901c; --warn-ink:#8f5406; --warn-wash:#faf0dc;
+  --danger:#dc2626; --signal-yellow:#eab308; --signal-blue:#2563eb;
   --radius-sm:6px; --radius-md:8px; --radius-lg:12px; --radius-pill:999px;
   --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,'PingFang SC','HarmonyOS Sans SC','MiSans','Microsoft YaHei','Noto Sans CJK SC',sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   --shadow-1:0 1px 2px rgba(25,26,28,.06), 0 2px 8px rgba(25,26,28,.06);
   --shadow-2:0 4px 12px rgba(25,26,28,.1), 0 12px 32px rgba(25,26,28,.1);
   --focus-ring:#c2570a;
-  /* 批注标的颜色：刻意不用产品里的任何一档（橙=等你、绿=在跑），
-     否则挂在行上会跟状态点混掉。 */
-  --note:#3b5bdb; --note-press:#2f4bbd; --note-wash:#e7ebfb;
+  /* 批注标的颜色：墨色，刻意不用产品里的任何一档——这次改的就是蓝灯，
+     标记要是蓝的，看的人会把批注和那盏灯看成一回事。 */
+  --note:#191a1c; --note-ink:#ffffff; --note-press:#000000; --note-wash:#e6e7ea;
 }
 :root[data-theme=dark]{
   color-scheme:dark;
@@ -30,10 +31,11 @@
   --canvas:#141517; --surface:#1b1d20;
   --accent:#ffa733; --accent-press:#ffbc5e; --accent-ink:#ffc670; --accent-wash:#2e2216;
   --ok:#3fbf7f; --warn:#f0a94a; --warn-ink:#f7c078; --warn-wash:#2a2114;
+  --danger:#f0625c; --signal-yellow:#facc15; --signal-blue:#60a5fa;
   --focus-ring:rgba(255,167,51,.65);
   --shadow-1:0 1px 2px rgba(0,0,0,.4), 0 2px 8px rgba(0,0,0,.3);
   --shadow-2:0 4px 12px rgba(0,0,0,.5), 0 12px 32px rgba(0,0,0,.4);
-  --note:#8aa5ff; --note-press:#a8bcff; --note-wash:#1c2440;
+  --note:#f3f4f6; --note-ink:#191a1c; --note-press:#ffffff; --note-wash:#2b2e33;
 }
 *{box-sizing:border-box}
 body{
@@ -120,9 +122,14 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .ch__n{font-family:var(--mono);font-size:11px;color:var(--muted);background:var(--fill);border-radius:var(--radius-sm);padding:0 5px;border:1px solid var(--line)}
 .ch__more{opacity:0;color:var(--muted);font-size:14px;line-height:1;padding:2px 4px}
 .ch:hover .ch__more,.ch.is-on .ch__more{opacity:1}
-.dot{width:7px;height:7px;border-radius:var(--radius-pill);display:block;flex:none}
-.dot--run{background:var(--ok)}
-.dot--await{background:var(--warn)}
+
+/* 行尾那盏灯：照 TopicRailLight.vue 抄——8px 实心圆，四个色相一个尺寸。
+   蓝 #2563eb 是这一版新加的 --signal-blue。 */
+.lg{width:8px;height:8px;border-radius:var(--radius-pill);display:block;flex:none}
+.lg--blue{background:var(--signal-blue)}
+.lg--red{background:var(--danger)}
+.lg--yellow{background:var(--signal-yellow)}
+.lg--green{background:var(--ok)}
 
 /* 任务行 */
 .tk{
@@ -137,7 +144,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .tk--pad .tk__t{color:var(--muted)}
 .tk__tail{display:flex;align-items:center;gap:6px;flex:none}
 .tk__badge{min-width:16px;height:16px;border-radius:var(--radius-pill);background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;padding:0 4px;font-family:var(--mono)}
-/* 这枚签：形态照 TopicRailTaskRow.vue 的 .rail-task__owner 抄——
+/* 改前那枚签：形态照 TopicRailTaskRow.vue 的 .rail-task__fill 抄——
    11px、--faint 字色、--fill 底、8px 圆角、左右各 6px 内边距。 */
 .tk__tag{font-size:11px;line-height:16px;color:var(--faint);background:var(--fill);border-radius:8px;padding:0 6px}
 
@@ -167,15 +174,17 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 .pair__demo{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px dashed var(--line-2);border-radius:var(--radius-md);background:var(--canvas)}
 .pair__demo .tk__t{max-width:15em}
 .pair--old{opacity:.75}
+.key{display:flex;flex-wrap:wrap;gap:14px;margin-top:12px;padding-top:12px;border-top:1px solid var(--line)}
+.key__i{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
 
-/* ---- 改动标记（蓝色，跟产品里的状态点分得开） ---- */
+/* ---- 改动标记（墨色，跟产品里的灯分得开） ---- */
 .mk{
   display:inline-grid;place-items:center;width:17px;height:17px;border-radius:var(--radius-pill);
-  background:var(--note);color:#fff;font-size:11px;font-weight:700;font-style:normal;
+  background:var(--note);color:var(--note-ink);font-size:11px;font-weight:700;font-style:normal;
   cursor:pointer;font-family:var(--mono);flex:none;box-shadow:0 0 0 2px var(--note-wash);
 }
 .mk:hover{background:var(--note-press)}
-.mk.is-seen{background:var(--muted);box-shadow:0 0 0 2px var(--fill)}
+.mk.is-seen{background:var(--muted);color:#fff;box-shadow:0 0 0 2px var(--fill)}
 
 /* ---- 说明卡 ---- */
 /* 靠右下角，不盖住左边那条侧栏（被改的就是它）；窄屏才铺开 */
@@ -213,8 +222,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   <div class="chrome__id">
     <span class="chrome__mark">知</span>
     <div>
-      <h1>侧栏任务行的签：不标我的，标别人是谁</h1>
-      <p class="t-meta">caisongyang 2026-10-13：我负责的东西不标记，其他人的标记为其他昵称 · 界面上那些蓝标点一下，看这处改什么</p>
+      <h1>不是我负责的那几条，行尾挂一盏蓝灯</h1>
+      <p class="t-meta">caisongyang 2026-10-13：就不要显示文字了，标记为蓝灯 · 蓝灯优先级高于一切 · 界面上那些墨色标点一下，看这处改什么</p>
     </div>
   </div>
   <div class="chrome__tools">
@@ -226,8 +235,8 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
 <main class="stage">
   <div class="hint">
     <div class="segs" id="modeSeg">
-      <button data-mode="before" class="is-on">改前：签上写「补足」</button>
-      <button data-mode="after">改后：签上写负责人是谁</button>
+      <button data-mode="before">改前：缀一枚「补足」小签</button>
+      <button data-mode="after" class="is-on">改后：别人的活挂蓝灯</button>
     </div>
     <div class="segs" id="langSeg">
       <button data-lang="zh" class="is-on">中文</button>
@@ -299,93 +308,102 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   //   rel: 'own'  我负责的（后端 owner_handle 是我）
   //        'help' 我协助的（别人负责）
   //        'pad'  这个频道里别人的、被借来把这一块凑够三条的（后端 filling_in）
-  //   who = 那一条的负责人叫什么（项目名册上的名字）；我负责的不写。
-  //   open = 这个频道进行中的任务总数
-  // 一块里我负责和协助的合起来不到三条时，才从别人的活里借。谁被借来由后端定。
+  //   who = 那一条的负责人叫什么（项目名册上的名字）
+  //   lg  = 这一条**本来的状态灯**（red/yellow/green/不亮）。改后那一版里，
+  //         只要 owner 是别人（help、pad），它就被蓝灯顶掉——所以 la 里留着它，
+  //         好让你看见被顶掉的是什么颜色。
+  //   badge = 未读数
   // ------------------------------------------------------------------
   var DATA = [
     {
       id:'general', name:'综合', nameEn:'General', on:true, open:51,
       rows:[
-        {t:'灯', rel:'own', dot:'run'},
-        {t:'电脑端待办入口位置', rel:'own', dot:'await', badge:2},
+        {t:'灯', rel:'own', lg:'green'},
+        {t:'电脑端待办入口位置', rel:'own', lg:'yellow', badge:2},
         {t:'验收卡 merge_state 快照过期', rel:'own'},
-        {t:'空间重设计', rel:'own'},
-        {t:'新建频道入口设计', rel:'help', who:'王长鑫'}
+        {t:'空间重设计', rel:'own', lg:'green'},
+        {t:'新建频道入口设计', rel:'help', who:'王长鑫', lg:'green'}
       ]
     },
     {
       id:'design', name:'产品设计', nameEn:'Product design', on:false, open:6,
       rows:[
-        {t:'出题改动原型', rel:'own', dot:'run'},
-        {t:'频道改动原型', rel:'own', dot:'await', badge:1},
-        {t:'全部频道页加搜索', rel:'pad', who:'林夏'}
+        {t:'出题改动原型', rel:'own', lg:'green'},
+        {t:'频道改动原型', rel:'own', lg:'yellow', badge:1},
+        {t:'全部频道页加搜索', rel:'pad', who:'林夏', lg:'yellow'}
       ]
     },
     {
       id:'test', name:'测试频道', nameEn:'Testing', on:false, open:3,
       rows:[
-        {t:'冒烟测试补跑一遍', rel:'pad', who:'陈默'},
-        {t:'移动端宽度回归', rel:'pad', who:'王长鑫'},
-        {t:'合并队列卡住排查', rel:'pad', who:'林夏'}
+        {t:'冒烟测试补跑一遍', rel:'pad', who:'陈默', lg:'red'},
+        {t:'移动端宽度回归', rel:'pad', who:'王长鑫', lg:'green'},
+        {t:'合并队列卡住排查', rel:'pad', who:'林夏', lg:'yellow'}
       ]
     },
     {
       id:'duty', name:'客服值班', nameEn:'Support duty', on:false, open:4,
       rows:[
-        {t:'值班表自动排班', rel:'own', dot:'run'},
+        {t:'值班表自动排班', rel:'own', lg:'green'},
         {t:'工单标签规范化', rel:'pad', who:'陈默'},
-        {t:'常见问题库更新', rel:'pad', who:'林夏'}
+        {t:'常见问题库更新', rel:'pad', who:'林夏', lg:'green'}
       ]
     }
   ];
 
-  // ---- 这一处改的东西：签上写什么、挂在哪几条上、说明挂在哪儿。 -------------------
-  // 名字不是文案：签上写的是那个人的昵称（项目名册上叫什么），中英两种界面都一样，
-  // 所以词表里为它不新增键，反而要删掉上一版加的那枚 `work.sidebar.mine`。
   var COPY = {
     zh:{
       fillIn:'补足',
       tip:'这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿',
+      others:'别人的活',
       channels:'频道', fold:'收起这个频道下面的任务', unfold:'展开这个频道下面的任务',
       more:'展开其余 {n} 个', countTip:'这个频道里进行中的任务数',
-      borrowedHint:'（淡一档的是这个频道里别人的活）'
+      lgBlue:'不是我负责的活', lgRed:'显示在跑，但五分钟没动静', lgYellow:'有事等你',
+      lgGreen:'有活在往前走 / 做完了你还没看过',
+      borrowedHint:'（淡一档的是不是和我有关的活）'
     },
     en:{
       fillIn:'Filled in',
       tip:"Fewer than three of your own tasks are here; this one is someone else's, added to fill the three",
+      others:"Someone else's task",
       channels:'Channels', fold:"Collapse this channel's tasks", unfold:"Expand this channel's tasks",
       more:'Show {n} more', countTip:'Tasks under way in this channel',
-      borrowedHint:'(dimmed rows are other people’s work in this channel)'
+      lgBlue:'Not yours', lgRed:"Says it's running, but nothing for five minutes", lgYellow:'Waiting on you',
+      lgGreen:'Work moving / done and unread',
+      borrowedHint:'(dimmed rows are work in this channel that is not mine)'
     }
   };
 
   var ITEMS = {
-    1:{t:'签上写的是谁，不是「补足」',
-       s:'caisongyang 2026-10-13：其他人的标记为其他昵称',
-       now:'借来的那几条缀「补足」/ "Filled in"——说的是「这一条是补上来的」这个动作，没说这活是谁的。',
-       fix:'别人的活缀上那个人是谁（项目名册上叫什么）：<b>林夏</b>。上面切「改前」「改后」，看的就是这枚签。'
-         + '我负责的那几条不缀——签说的是「这条不是你的活」，自己的活不用声明。',
-       ask:'签上就写名字本身（「林夏」），不加「负责」两个字。你要是想写成「林夏 负责」这种，说一声。',
+    1:{t:'别人的活不写文字，行尾挂一盏蓝灯',
+       s:'caisongyang 2026-10-13：就不要显示文字了，标记为蓝灯',
+       now:'借来的那几条缀一枚「补足」/ "Filled in" 小签——说的是「这一条是补上来的」这个动作，没说这活是谁的。我协助的那几条干脆什么都不挂。',
+       fix:'不是我负责的那几条（别人负责的、我协助的）行尾挂一盏<b>蓝灯</b>，签、名字、文字都不留。'
+         + '蓝灯只说一件事：<b>这条不归我</b>。上面切「改前」「改后」，看的就是行尾那一格。',
+       ask:'蓝灯压过状态灯：我自己协助的那条活要是「有事等你」，那盏黄灯也被蓝盖掉、看不见了。'
+         + '你要是想两样都留下，说一声——那就得换个画法（比如黄灯外面套一圈蓝）。',
        work:'两份词表 <span class="mono">frontend/src/i18n/messages/zh-CN/work.json</span> 和 '
-         + '<span class="mono">en/work.json</span>：删掉上一版加的 <span class="mono">work.sidebar.mine</span>，'
-         + '这一版不新增键（签上写的是人名）。名字从项目名册取，判据写在 '
-         + '<span class="mono">composables/useTopicRail.ts</span> 的 <span class="mono">ownerName()</span> 里。'},
-    2:{t:'整块都是别人的：一行一个名字',
-       s:'同一条规则的另一头',
-       now:'「测试频道」我一条都没有，三行全是从这个频道借来的，三行都缀「补足」——三行看起来一模一样。',
-       fix:'三行各写各的负责人：陈默、王长鑫、林夏。扫一眼就知道这几件活分别是谁的。'
-         + '（这几行的标题仍然淡一档——那是「不是我负责的活」的底色。）',
+         + '<span class="mono">en/work.json</span>：新增 <span class="mono">work.sidebar.light.others</span>'
+         + '（「别人的活」/"Someone else\'s task"，读屏和悬浮用），删掉 <span class="mono">work.sidebar.fillIn</span>。'
+         + '颜色新增 <span class="mono">--signal-blue</span>（浅色 #2563eb / 深色 #60a5fa）。'
+         + '判据写在 <span class="mono">composables/useTopicRail.ts</span> 的 <span class="mono">taskLight()</span>，'
+         + '画法在 <span class="mono">topic-sidebar/TopicRailLight.vue</span>。'},
+    2:{t:'整块都是别人的：红绿黄一个都不画',
+       s:'「蓝灯优先级高于一切」',
+       now:'「测试频道」我一条都没有，三行全是从这个频道借来的，都缀「补足」；三行行尾本来画着红、绿、黄三种状态灯。',
+       fix:'切到「改后」看三行：全是一盏蓝灯，红绿黄一个都不画了。这三件活分别出没出问题、在不在跑，侧栏不再说——'
+         + '要看清这些，点开那条任务。',
        ask:'',
-       work:'不用另外改。这是同一处判据在别处的样子。'},
-    3:{t:'我负责的：一个字都不缀',
+       work:'不用另外改。这是同一条判据在别处的样子：蓝灯是行尾唯一的一盏，谁的活不归我，谁就是蓝的。'},
+    3:{t:'我负责的：一个标记都不加',
        s:'你这次先说的一半',
-       now:'上一版我负责的那几条缀「我的」（「综合」底下四条）。',
-       fix:'现在四条都不挂签，整块只剩下「新建频道入口设计」那一条缀着<b>王长鑫</b>——'
-         + '那一条是我协助的，不是我在负责，所以它照样写清楚是谁的。',
-       ask:'',
-       work:'还是 <span class="mono">useTopicRail.ts</span> 的 <span class="mono">ownerName()</span>：'
-         + '负责人是我，回 null（不挂签）；是别人，回名册上那个名字。'}
+       now:'上一版我负责的那几条缀「我的」。',
+       fix:'我负责的只画状态灯，不挂蓝灯、不缀名字：「综合」底下四条都是我的，行尾只有绿黄两种状态灯。'
+         + '「新建频道入口设计」我协助、别人负责，所以它挂蓝灯。',
+       ask:'后端没写负责人（没有 owner_handle）的那几条，我按「我这边」算、不挂蓝灯。'
+         + '你要是想让它也标上，说一声。',
+       work:'还是 <span class="mono">useTopicRail.ts</span> 的 <span class="mono">taskLight()</span>：'
+         + '负责人是别人 → 直接返回蓝灯；是我、或者没有主 → 走原来那四条状态判据。'}
   };
 
   var seen = {}, mode = 'after', lang = 'zh';
@@ -401,22 +419,22 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
   }
   function attr(s){ return esc(s).replace(/'/g, '&#39;'); }
   function mk(n){ return '<i class="mk" data-item="'+n+'" title="这一处改什么">'+n+'</i>'; }
-  function dotHTML(d){
-    if (!d) return '';
-    return '<span class="dot dot--'+d+'" title="'+(d==='run'?'有队友在跑':'有事等你')+'"></span>';
+  // 行尾那盏灯画哪一盏。
+  //   改后：不是我负责的（help、pad）一律蓝灯；我的走它本来的状态灯。
+  //   改前：没有蓝灯这一说，谁的活都只按状态画（借来的那几条另外缀一枚签）。
+  function lightOf(row){
+    var k = row.lg;
+    if (mode === 'after' && row.rel !== 'own') k = 'blue';
+    if (!k) return '';
+    var name = { blue:S().lgBlue, red:S().lgRed, yellow:S().lgYellow, green:S().lgGreen }[k];
+    return '<span class="lg lg--'+k+'" role="img" title="'+attr(name)+'"></span>';
   }
-  // 签挂在哪几条上、写什么。
-  //   改前：借来的那几条缀「补足」。
-  //   改后：不是我的活（别人的、包括我协助的）缀负责人叫什么；我负责的不缀。
+  // 改前那枚签挂在哪几条上：借来的那几条缀「补足」。
   function chipOf(row){
-    if (mode === 'before') return row.rel === 'pad' ? S().fillIn : '';
-    if (row.rel === 'own') return '';
-    return row.who || '';
+    return (mode === 'before' && row.rel === 'pad') ? S().fillIn : '';
   }
   // 借来的那几条为什么在这儿：改前那句话挂在签上，改后挂在整行上。
-  function tipOf(row){
-    return row.rel === 'pad' ? S().tip : '';
-  }
+  function tipOf(row){ return row.rel === 'pad' ? S().tip : ''; }
 
   function renderSide(){
     var parts = [];
@@ -446,7 +464,7 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
           parts.push('<span class="tk__tag"'+(chipTip?' title="'+attr(chipTip)+'"':'')+'>'+esc(chip)+'</span>');
         }
         if (row.badge) parts.push('<span class="tk__badge">'+row.badge+'</span>');
-        parts.push(dotHTML(row.dot));
+        parts.push(lightOf(row));
         if (ch.id === 'design' && row.rel === 'pad') parts.push(mk(1));
         parts.push('</span></button>');
       });
@@ -461,6 +479,19 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     $('#sideList').innerHTML = parts.join('');
   }
 
+  function demoRow(title, rel, light){
+    var cls = 'pair__demo' + (rel==='pad'?' tk--pad':(rel==='help'?' tk--help':''));
+    var l = light ? '<span class="lg lg--'+light+'" role="img"></span>' : '';
+    return '<span class="'+cls+'"><span class="tk__t">'+esc(title)+'</span>'+l+'</span>';
+  }
+  function keyRow(){
+    var keys = ['blue','yellow','green','red'];
+    var names = { blue:S().lgBlue, yellow:S().lgYellow, green:S().lgGreen, red:S().lgRed };
+    return '<div class="key">' + keys.map(function(k){
+      return '<span class="key__i"><span class="lg lg--'+k+'"></span>'+esc(names[k])+'</span>';
+    }).join('') + '</div>';
+  }
+
   function renderView(){
     var ch = DATA.filter(function(c){ return c.id === selChannel; })[0] || DATA[0];
     var title = selTask || (lang === 'zh' ? ch.name : ch.nameEn);
@@ -470,26 +501,28 @@ button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:poin
     var tip = attr(S().tip);
     var borrowed = '<span class="pair__demo tk--pad" title="'+tip+'"><span class="tk__t">全部频道页加搜索</span>';
     $('#vbody').innerHTML =
-        '<div class="card"><h3>改的就是这枚签</h3>'
-      + '<p class="t-meta">同一个频道块，改前和这一版各画一遍。行的高度、颜色、后端那个 <span class="mono">filling_in</span> 字段都没动，动的是签上写什么、挂在谁身上。</p>'
+        '<div class="card"><h3>改的就是行尾那一格</h3>'
+      + '<p class="t-meta">同一个频道块，改前和这一版各画一遍。行高、颜色、后端那个 <span class="mono">filling_in</span> 字段都没动，动的是行尾挂什么。</p>'
       + '<div class="pair">'
       +   '<div class="pair__row pair--old"><span class="pair__k">改前</span>'
       +     '<span class="pair__demo tk--pad"><span class="tk__t">全部频道页加搜索</span>'
-      +     '<span class="tk__tag" title="'+tip+'">'+esc(S().fillIn)+'</span></span>'
-      +     '<span class="pair__demo"><span class="tk__t">新建频道入口设计</span></span>'
+      +     '<span class="tk__tag" title="'+tip+'">'+esc(S().fillIn)+'</span>'
+      +     '<span class="lg lg--yellow"></span></span>'
+      +     demoRow('新建频道入口设计','help','green')
       +   '</div>'
       +   '<div class="pair__row"><span class="pair__k">这一版</span>'
-      +     borrowed + '<span class="tk__tag">林夏</span></span>'
-      +     '<span class="pair__demo"><span class="tk__t">新建频道入口设计</span>'
-      +     '<span class="tk__tag">王长鑫</span></span>'
-      +     '<span class="pair__demo"><span class="tk__t">出题改动原型</span></span>'
+      +     borrowed + '<span class="lg lg--blue"></span></span>'
+      +     demoRow('新建频道入口设计','help','blue')
+      +     demoRow('出题改动原型','own','green')
       +   '</div>'
       + '</div>'
-      + '<p class="t-meta" style="margin-top:10px">最后一格是我负责的：不挂签。借来的那两条，鼠标停上去说：<br>'
-      +   esc(S().tip)+'</p>'
+      + '<p class="t-meta" style="margin-top:10px">第一格是借来的（这个频道里我自己的不到三条），第二格是我协助的：两格都是别人的活，'
+      +   '所以两格都是蓝灯——第二格本来画的是绿灯，被蓝顶掉了。第三格是我负责的，照旧只画状态灯。<br>'
+      +   '借来的那两条，鼠标停上去说：'+esc(S().tip)+'</p>'
+      + keyRow()
       + '</div>'
       + '<div class="card"><h3>'+esc(title)+'</h3>'
-      + '<p class="t-meta">这里是内容区，放它只为让左边点得动。这次改的是左边那条侧栏里的签。'
+      + '<p class="t-meta">这里是内容区，放它只为让左边点得动。这次改的是左边那条侧栏里的灯。'
       + esc(S().borrowedHint)+'</p></div>';
   }
 
