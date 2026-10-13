@@ -426,9 +426,11 @@ class WarmPoolService:
                 )
             )
         ).all()
+        # Every sweep, not only one that would add a machine: a failed cleanup
+        # may be a machine still running, and a full pool would never get here.
+        unresolved = await self._settle_vanished_cleanups()
         if len(active) >= settings.microcloud_warm_pool_size:
             return ""
-        unresolved = await self._settle_vanished_cleanups()
         if unresolved >= UNRESOLVED_CLEANUP_LIMIT:
             return (
                 f"not replenished: {unresolved} machines failed cleanup and may "
