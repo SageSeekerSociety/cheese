@@ -13,7 +13,7 @@ import { describe, expect, it } from 'vitest'
 
 import TaskSourceLine from './TaskSourceLine.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 setLocale('zh-CN')
 const vuetify = createVuetify({ components, directives })
@@ -36,7 +36,7 @@ function said(content: string, where: TaskSource['where'] = 'thread'): TaskSourc
 function show(source: TaskSource | null, memberNames: Record<string, string> = {}, of: RoomTask = task) {
   return render(TaskSourceLine, {
     props: { source, task: of, memberNames },
-    global: { plugins: [vuetify] },
+    global: { plugins: [vuetify, i18n] },
   })
 }
 
@@ -79,5 +79,25 @@ describe('TaskSourceLine', () => {
     const view = show(null, { 'cheese-c82aeb40555a': '芝士' }, { ...task, created_by: 'cheese-c82aeb40555a' })
 
     expect(view.getByTestId('task-source').textContent).toContain('芝士 新建的任务，没有记下是从哪句话来的')
+  })
+
+  it('名册给了身份时，引语里那个人画成头像 + 名字，不是一行纯名字', () => {
+    const view = render(TaskSourceLine, {
+      props: {
+        source: said('经常在任务里停在中间'),
+        task,
+        memberNames: { andy: 'Andy' },
+        faces: { andy: { name: 'Andy', avatarId: 5, agent: false } },
+      },
+      global: { plugins: [vuetify, i18n] },
+    })
+
+    const line = view.getByTestId('task-source')
+    // 名字照样读得到（chip 里那一行），另外多了一张头像；头像对读屏是装饰。
+    expect(line.textContent).toContain('Andy：经常在任务里停在中间')
+    const face = line.querySelector('.identity-view')
+    expect(face).not.toBeNull()
+    expect(face?.textContent).toContain('Andy')
+    expect(face?.querySelector('.identity-view__face')?.getAttribute('aria-hidden')).toBe('true')
   })
 })

@@ -1,16 +1,23 @@
 <script setup lang="ts">
 // 任务的「相关」：转出它的那段讨论里摆出来的文档、文件，点了在面板里打开。它是从哪
 // 句话来的在任务页顶上（TaskSourceLine）。直接新建的任务没有这些，整段不画。
+import type { MemberFace, MemberFaces } from '@/lib/memberFaces'
 import type { TaskRelated } from '@/types/taskOrigin'
 
 import { computed } from 'vue'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  related: TaskRelated | null
-  memberNames: Record<string, string>
-}>()
+const props = withDefaults(
+  defineProps<{
+    related: TaskRelated | null
+    memberNames: Record<string, string>
+    /** 名册来的身份（头像 id、队友身份）。有它就不用拿名字反查；没有时退回 handle + 彩色首字母。 */
+    faces?: MemberFaces
+  }>(),
+  { faces: () => ({}) }
+)
 
 const emit = defineEmits<{
   (e: 'open-document', id: string, title: string): void
@@ -21,6 +28,13 @@ const materials = computed(() => props.related?.materials ?? [])
 
 function nameOf(handle: string): string {
   return props.memberNames[handle] || handle
+}
+/** 添加材料的那个人：名册有这一行就用它，否则 null。 */
+function faceOf(handle: string): MemberFace | null {
+  return props.faces[handle] ?? null
+}
+function faceName(handle: string): string {
+  return faceOf(handle)?.name ?? nameOf(handle)
 }
 function fileName(path: string): string {
   return path.split('/').pop() || path
@@ -40,12 +54,30 @@ function fileName(path: string): string {
         >
           <v-icon size="16" class="related__icon">mdi-file-document-outline</v-icon>
           <span class="t-body related__name">{{ item.title || t('work.task.related.untitled') }}</span>
-          <span class="t-meta c-faint">{{ t('work.task.related.by', { name: nameOf(item.by) }) }}</span>
+          <i18n-t keypath="work.task.related.by" scope="global" tag="span" class="t-meta c-faint">
+            <template #name>
+              <UserRef
+                :handle="item.by"
+                :name="faceName(item.by)"
+                :avatar-id="faceOf(item.by)?.avatarId"
+                :agent="faceOf(item.by)?.agent"
+              />
+            </template>
+          </i18n-t>
         </button>
         <button v-else type="button" class="related__item" @click="emit('open-file', item.path)">
           <v-icon size="16" class="related__icon">mdi-paperclip</v-icon>
           <span class="t-body related__name">{{ fileName(item.path) }}</span>
-          <span class="t-meta c-faint">{{ t('work.task.related.by', { name: nameOf(item.by) }) }}</span>
+          <i18n-t keypath="work.task.related.by" scope="global" tag="span" class="t-meta c-faint">
+            <template #name>
+              <UserRef
+                :handle="item.by"
+                :name="faceName(item.by)"
+                :avatar-id="faceOf(item.by)?.avatarId"
+                :agent="faceOf(item.by)?.agent"
+              />
+            </template>
+          </i18n-t>
         </button>
       </li>
     </ul>
