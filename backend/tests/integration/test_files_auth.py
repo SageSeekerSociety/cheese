@@ -84,9 +84,7 @@ def test_a_member_whose_name_is_all_digits_reads_the_projects_files(client):
     token fine, which is why only this panel went red.
     """
     handle = "2026201782"
-    project = post_project(client, json={"name": "Digits"}, owner=handle).json()[
-        "data"
-    ]
+    project = post_project(client, json={"name": "Digits"}, owner=handle).json()["data"]
 
     listed = client.get(
         f"/projects/{project['id']}/files", headers=session_auth_headers(handle)
