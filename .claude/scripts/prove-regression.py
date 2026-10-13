@@ -1800,6 +1800,35 @@ def self_test() -> int:
         remove_worktree(repo, inner)
         remove_worktree(repo, outer)
 
+        # The prefix is what keeps the loop off every other registration of the
+        # repository. `repo` itself is held back by its position and the two
+        # trees above by where the run stands, but a worktree a person made —
+        # `my-feature` — is neither, and its last field is not a pid, so without
+        # the prefix it goes straight to `remove_worktree` and the directory and
+        # the registration both go. Aged, and carrying this run's pid, so
+        # neither the age nor the owner is what keeps it.
+        human = Path(scratch) / "my-feature"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(human), "HEAD"],
+            cwd=str(repo),
+            env=env,
+            check=True,
+            capture_output=True,
+        )
+        when = time.time() - STALE_AFTER - 60
+        os.utime(human, (when, when))
+        try:
+            with _Muffle():
+                reclaim_stale(repo)
+            swept = True
+        except Exception:
+            swept = False
+        tally.case(
+            "a registration that is not this tool's is left where it is",
+            swept and human.exists() and _registered(repo, human),
+        )
+        remove_worktree(repo, human)
+
         # The number the reclaim rule turns on. An hour would take a worktree
         # out from under a run that is still using it, so the boundary is where
         # the value shows; only the age can settle a recycled pid, which is what
