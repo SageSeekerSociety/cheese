@@ -32,9 +32,7 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
-import { agentNames, memberName } from '@/lib/agentNames'
 import { dayStamp } from '@/lib/dateText'
-import { memberFacesOf } from '@/lib/memberFaces'
 import { refRoute } from '@/lib/refDirectory'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
@@ -47,6 +45,7 @@ import { roomMembersQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
+import { useMemberIdentity } from '@/views/workspace/useMemberIdentity'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
 import { useTaskPage } from '@/views/workspace/useTaskPage'
 import { useTopicPanes } from '@/views/workspace/useTopicPanes'
@@ -558,12 +557,7 @@ const roomMembers = computed<TopicMemberRow[]>(() => rosterRead.data.value?.data
 // 任务那一栏「做这件事的队友」能挑的几位：这间房名册上的 AI 队友。换的时候后端也只认
 // 名册上那个座位，所以给的就是名册。
 const roomAgents = computed<TopicMemberRow[]>(() => roomMembers.value.filter((m) => m.agent))
-const memberNames = computed<Record<string, string>>(() => ({
-  ...Object.fromEntries(roomMembers.value.map((m) => [m.member_handle, memberName(m) || m.member_handle])),
-  ...Object.fromEntries(agentNames(roomMembers.value, store.members)),
-}))
-// 名册来的身份（头像 id、是不是队友）：往下传给按 handle 画人的地方，免得它们拿名字反查。
-const memberFaces = computed(() => memberFacesOf(store.members))
+const { memberNames, memberFaces } = useMemberIdentity(roomMembers)
 // 这个 id 在侧栏那张表里找不到的话，直接问它——支线走的永远是这条路。
 // 先等它答完再记已读：已读位只有房间有，不知道这是房间还是支线就记，
 // 等于对每一条支线都白打一次会 404 的请求。
