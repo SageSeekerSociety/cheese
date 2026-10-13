@@ -9,6 +9,7 @@ told of new replies, and only of what people said there.
 import time
 
 from tests.integration.conftest import (
+    chat_ws_url,
     join_project_team,
     post_message,
     post_project,
@@ -59,6 +60,14 @@ def _wait_for(predicate, timeout: float = 30.0):
     raise AssertionError("timed out")
 
 
+def _until(ws, predicate) -> dict:
+    """读到第一条满足 ``predicate`` 的帧（它之前的都丢掉）。"""
+    while True:
+        frame = ws.receive_json()
+        if predicate(frame):
+            return frame
+
+
 def test_calling_cheese_in_the_main_line_is_answered_in_that_messages_thread(
     client,
 ):
@@ -72,6 +81,25 @@ def test_calling_cheese_in_the_main_line_is_answered_in_that_messages_thread(
     # The main line carries the question, not the answer.
     main = _blocks(client, room)
     assert [b["id"] for b in main] == [asked["id"]]
+
+
+def test_the_main_line_is_told_it_is_answering_the_moment_the_thread_opens(client):
+    """@ 芝士 在频道主线上：房间会收到「有人在答」，答在哪儿也说得准。
+
+    从一次真的发出（`receive_message` 解析出点名的是哪个席位、把消息落进哪条
+    支线）走到房间那一帧，整条线在这儿锁住 —— 席位解析错了就一条支线都开不
+    起来，这一帧也就永远不来。
+    """
+    _project, room = _channel(client)
+    with client.websocket_connect(chat_ws_url(room, "alice")) as ws:
+        asked = post_message(
+            client, room, "alice", {"content": "@芝士 首页要改哪些地方？"}
+        )
+        heard = _until(ws, lambda f: f["type"] == "thread_activity" and f["active"])
+    # 谁在答：芝士坐的那个席位。答在哪儿：这条消息的支线（`_open` 是幂等的，
+    # 拿回来的就是它）。
+    assert heard["member"]
+    assert heard["thread_id"] == _open(client, asked["id"])["id"]
 
 
 def test_the_main_line_shows_how_a_thread_grew(client):

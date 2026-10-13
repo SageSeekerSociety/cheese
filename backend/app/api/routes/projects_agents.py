@@ -70,17 +70,25 @@ module-level `APIRouter` under `app.api.routes`, so the declaration below, with
 the same prefix and tags, is all it takes.
 """
 
+import asyncio
 import uuid
 from typing import Protocol
 
 from fastapi import APIRouter
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.api.write_access import ROUTE_DECIDES
+from app.core.errors import ConflictError
+from app.core.sentences import say
+from app.domain.agent_instance import editing
 from app.domain.agent_instance.configuration import AgentConfiguration
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.own import owned_instance
 from app.domain.agent_instance.schemas import (
     AgentInstanceCreate,
     AgentInstanceOut,
@@ -92,28 +100,46 @@ from app.domain.agent_instance.services import (
     ResolvedAgent,
     initial_configuration,
 )
+from app.domain.identity.actor import Actor
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.membership.services import MemberService
 from app.domain.project.services import ProjectService
+from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
-def _changes_an_advanced_setting(saved: dict, config: AgentConfiguration) -> bool:
-    """Whether this save touches what only a project manager may set.
+def _changes_what_it_costs(saved: dict, config: AgentConfiguration) -> bool:
+    """Whether this save touches a cost knob only a project manager may set.
 
-    The settings page keeps them under 「高级设置」: the highest effort, when the
-    context is compacted, and the skills a teammate carries. Each changes what
-    every turn of it costs or can do, as the project main model does, and that
-    one is a manager's too (``require_manager`` in ``projects_run_config``).
-    A save that leaves them as they were is anyone's, so a member renaming a
-    teammate or rewriting its role is not refused for what it did not touch.
+    The settings page keeps them under 「高级设置」: the highest effort, and when
+    the context is compacted. Both decide what every turn of the teammate costs,
+    as the project main model does, and that one is a manager's too
+    (``require_manager`` in ``projects_run_config``).
     """
     return (
-        (config.effort == "max" and saved.get("effort") != "max")
-        or config.compact_percent != saved.get("compact_percent")
-        or config.skills != list(saved.get("skills") or [])
-    )
+        config.effort == "max" and saved.get("effort") != "max"
+    ) or config.compact_percent != saved.get("compact_percent")
+
+
+def _changes_its_skills(saved: dict, config: AgentConfiguration) -> bool:
+    """Whether this save changes which skills the teammate carries.
+
+    The third of the 「高级设置」, and the one that is NOT a manager's alone: it
+    is the project's (``_may_configure``). A save that leaves it as it was is
+    anyone's, so a member renaming a teammate or rewriting its role is not
+    refused for what it did not touch.
+    """
+    return config.skills != list(saved.get("skills") or [])
+
+
+def _changes_an_advanced_setting(saved: dict, config: AgentConfiguration) -> bool:
+    """Either of the above — what creating a teammate is judged by.
+
+    Creation has no instance yet, so it cannot ask ``_may_configure``; a new
+    teammate is seeded by a manager or not at all.
+    """
+    return _changes_what_it_costs(saved, config) or _changes_its_skills(saved, config)
 
 
 class ProjectDefault(Protocol):
@@ -145,6 +171,7 @@ def _agent_out(
     *,
     is_default: bool,
     is_active: bool = True,
+    editing: str | None = None,
 ) -> dict:
     return AgentInstanceOut(
         id=agent.instance_id,
@@ -155,9 +182,40 @@ def _agent_out(
         display_name=agent.display_name,
         name_source=agent.name_source.value,
         configuration=AgentConfiguration.model_validate(agent.configuration),
+        version=agent.version,
         is_default=is_default,
         is_active=is_active,
+        editing=editing,
     ).model_dump(mode="json")
+
+
+async def _may_configure(
+    db: AsyncSession, project_id: uuid.UUID, instance: AgentInstance, actor: Actor
+) -> bool:
+    """Whether ``actor`` may change this agent's skills — three ways, in order.
+
+    It is their **own** agent (#2991): what runs on their machine with their
+    login is theirs to arm. Or they **are on the project** — a teammate belongs
+    to the project it works in, so the question is the project's own 「谁是项目
+    成员」 (`TopicMemberService.on_project`, the roster), the same answer the
+    project door and the sidebar already give.
+
+    It used to be 「坐进它坐的那间房」 (`share_a_room_with`). That tied a
+    project-level question to rooms, and the two only agreed by accident — they
+    part ways when the project has no public room at all (`if not topics:
+    return False`), when it has no 综合 to make 「everyone is in it」 true, or
+    when two handles' only shared place is a private chat (chats are not part of
+    the topic tree). A teammate is not a room's, it is the project's: rooms are
+    where work happens, not who a teammate belongs to.
+
+    Or they **manage the project**.
+    """
+    own = await owned_instance(db, instance.id)
+    if own is not None and own.owner_user_id == actor.user_id:
+        return True
+    if await TopicMemberService(db).on_project(project_id, actor.handle):
+        return True
+    return await MemberService(db).manages(project_id, actor.handle)
 
 
 @router.get("/{project_id}/agents")
@@ -171,14 +229,18 @@ async def list_project_agents(
     service = AgentInstanceService(db)
     await service.for_project(project)
     rows = await service.list_team(project_id)
+    # Who is editing what, in one round of reads against Valkey (one per agent;
+    # a project has a handful). None for every agent when it is not configured.
+    editors = await asyncio.gather(*(editing.holder(row.id) for row in rows))
     items = [
         _agent_out(
             project_id,
             AgentInstanceService.resolved(row),
             is_default=_holds_the_default(project, row),
             is_active=row.is_active,
+            editing=editor,
         )
-        for row in rows
+        for row, editor in zip(rows, editors, strict=True)
     ]
     return ok(page(items, len(items)))
 
@@ -238,14 +300,22 @@ async def update_project_agent(
     service = AgentInstanceService(db)
     instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
     fields = body.model_fields_set
-    if body.configuration is not None and _changes_an_advanced_setting(
-        instance.configuration or {}, body.configuration
-    ):
-        await MemberService(db).require_manager(project_id, actor)
+    if body.configuration is not None:
+        saved = instance.configuration or {}
+        # Two gates, not one. The cost knobs stay a manager's exactly as before.
+        if _changes_what_it_costs(saved, body.configuration):
+            await MemberService(db).require_manager(project_id, actor)
+        # The skills an agent carries are the project's -- its own agent's owner,
+        # anybody on the project, or a manager (``_may_configure``).
+        if _changes_its_skills(saved, body.configuration):
+            if not await _may_configure(db, project_id, instance, actor):
+                await MemberService(db).require_manager(project_id, actor)
     if "display_name" in fields and body.display_name is not None:
         await service.rename(instance, body.display_name)
     if body.configuration is not None:
-        await service.configure(instance, body.configuration)
+        await service.configure(
+            instance, body.configuration, expected_version=body.expected_version
+        )
     await db.flush()
     return ok(
         _agent_out(
@@ -255,6 +325,54 @@ async def update_project_agent(
             is_active=instance.is_active,
         )
     )
+
+
+class AgentEditingIn(BaseModel):
+    """Whether the caller is taking or giving up the 「正在编辑」 lease."""
+
+    model_config = ConfigDict(extra="forbid")
+    held: bool
+
+
+@router.put("/{project_id}/agents/{agent_id}/editing", dependencies=[ROUTE_DECIDES])
+async def set_agent_editing(
+    project_id: uuid.UUID,
+    agent_id: uuid.UUID,
+    body: AgentEditingIn,
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """Take or give up the courtesy lease that says 「我正在改这个队友」.
+
+    Not a lock. What refuses a stale save is the ``version`` on the row; this is
+    so the second person hears that the first is already here *before* spending
+    time on a change that would be refused. It therefore has to be takeable when
+    a screen opens and releasable when it closes, which is why it is its own
+    address and not a side effect of a save.
+
+    Whom it admits is ``_may_configure`` — the same three ways that admit a save,
+    so it can never say 「你可以编辑」 to somebody a save would refuse.
+    """
+    actor = await resolver.resolve(project_id=project_id)
+    await resolver.authorize_project(actor, project_id=project_id)
+    service = AgentInstanceService(db)
+    instance = await service.get_in_project(project_id=project_id, instance_id=agent_id)
+    if not await _may_configure(db, project_id, instance, actor):
+        await MemberService(db).require_manager(project_id, actor)
+    if not body.held:
+        await editing.released(instance.id, actor.handle)
+        # The envelope is the contract: the web transport refuses a 2xx whose
+        # body has no ``code`` (``http.ts``), so a bare dict here reads as
+        # "someone is editing" to the panel — the lease was fine, the reply
+        # shape was not.
+        return ok({"editing": None})
+    if not await editing.take(instance.id, actor.handle):
+        # Somebody else is in it. Naming them is the useful half of the refusal.
+        holder = await editing.holder(instance.id)
+        raise ConflictError(
+            say("agentEditingTaken", handle=holder), data={"handle": holder}
+        )
+    return ok({"editing": {"handle": actor.handle, "seconds": editing.LEASE_SECONDS}})
 
 
 @router.delete("/{project_id}/agents/{agent_id}")

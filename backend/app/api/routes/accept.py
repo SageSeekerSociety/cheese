@@ -104,6 +104,15 @@ async def _reader(place: Place, db: DbSession, resolver: ActorResolverDep) -> No
     )
 
 
+def _requested_reviewers(body: AcceptCardCreate) -> list[str] | None:
+    """请求体里点名递给谁：集合优先，其次是单个；都没给就是 None（爬默认阶梯）。"""
+    if body.reviewer_handles:
+        return body.reviewer_handles
+    if body.reviewer_handle:
+        return [body.reviewer_handle]
+    return None
+
+
 def _reviewer_admission(actor: Actor, resolver: ActorResolverDep) -> ReviewerAdmission:
     """「这个房间会放卡上那个人进来吗」——递给 `AcceptService` 的那道判据。
 
@@ -137,7 +146,7 @@ async def create_accept_card(
         # 个读点），问的是卡上那个人而不是调用者。见 `_require_reviewer_in_room`。
         admits_reviewer=_reviewer_admission(actor, resolver),
         topic_id=topic_id,
-        reviewer_handle=body.reviewer_handle,
+        reviewer_handles=_requested_reviewers(body),
         focus=body.focus,
         change_subject=body.change_subject,
         change_body=body.change_body,
@@ -397,7 +406,7 @@ async def reassign_card(
     card = await svc.reassign(
         admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
-        reviewer_handle=body.reviewer_handle,
+        reviewer_handles=_requested_reviewers(body),
     )
     return ok(await svc.describe(card))
 

@@ -635,7 +635,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             card = AcceptCard(
                 topic_id=room.id,
                 task_id=task.id,
-                reviewer_handle="reviewer",
                 pr_number=draft["number"],
                 pr_head_sha=reviewed,
                 pr_repo=binding.repo,

@@ -1122,13 +1122,22 @@ class TaskSubmissionReviewRepository:
     async def get_by_submission_id(
         self,
         submission_id: int,
+        reviewer_id: int | None = None,
     ) -> TaskSubmissionReview | None:
-        stmt: Select[tuple[TaskSubmissionReview]] = select(TaskSubmissionReview).where(
-            TaskSubmissionReview.submission_id == submission_id,
-            TaskSubmissionReview.deleted_at.is_(None),
+        """这一版的一条评审：给了 `reviewer_id` 就是那个人的那一条，没给就是最早的
+        一条（旧读者只要一条）。`reviewer_id` 是必须的，因为一版可以有多条。"""
+        stmt: Select[tuple[TaskSubmissionReview]] = (
+            select(TaskSubmissionReview)
+            .where(
+                TaskSubmissionReview.submission_id == submission_id,
+                TaskSubmissionReview.deleted_at.is_(None),
+            )
+            .order_by(TaskSubmissionReview.created_at, TaskSubmissionReview.id)
         )
+        if reviewer_id is not None:
+            stmt = stmt.where(TaskSubmissionReview.reviewer_id == reviewer_id)
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def exists_by_submission_id(self, submission_id: int) -> bool:
         stmt = select(TaskSubmissionReview.id).where(
@@ -1136,12 +1145,13 @@ class TaskSubmissionReviewRepository:
             TaskSubmissionReview.deleted_at.is_(None),
         )
         result = await self._session.execute(stmt)
-        return result.scalar_one_or_none() is not None
+        return result.scalars().first() is not None
 
     async def create_review(
         self,
         *,
         submission_id: int,
+        reviewer_id: int,
         accepted: bool,
         score: int,
         comment: str,
@@ -1149,6 +1159,7 @@ class TaskSubmissionReviewRepository:
         now = datetime.now(UTC)
         review = TaskSubmissionReview(
             submission_id=submission_id,
+            reviewer_id=reviewer_id,
             accepted=accepted,
             score=score,
             comment=comment,

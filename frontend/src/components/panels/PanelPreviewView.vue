@@ -24,6 +24,7 @@ import { useFullscreen } from '@vueuse/core'
 
 import { usePreviewEscape } from '../../composables/usePreviewEscape'
 import { t } from '../../i18n'
+import { MCP_APP_MIME, MCP_APP_SANDBOX } from '../../lib/mcpAppBridge'
 import { roomFileDestination } from '../../lib/previewSession'
 
 import DesignImage from './preview/DesignImage.vue'
@@ -93,6 +94,16 @@ const emit = defineEmits<{
   /** 点了一个人名（历史栏、编辑器上那句「谁改的」）：去他的主页由会读路由的那一层做。 */
   (e: 'mention-click', handle: string): void
 }>()
+
+// 房间自己的 artifact 与应用共用一套沙箱：它们从内容域发出来，所以带着
+// `allow-same-origin`。第三方 MCP View 不能带 —— `allow-scripts` 加
+// `allow-same-origin` 会把手写这份 HTML 的人放进内容域的存储里。同一个面板、
+// 同一个预览源，沙箱按这一帧的 mime 分：房内那套不变，第三方那套收紧（见
+// `lib/mcpAppBridge.ts`，宿主 CSP 也做了同样的收口）。
+const DEFAULT_SANDBOX = 'allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox'
+function sandboxFor(mime?: string | null): string {
+  return mime === MCP_APP_MIME ? MCP_APP_SANDBOX : DEFAULT_SANDBOX
+}
 
 const panelElement = ref<HTMLElement | null>(null)
 const {
@@ -480,7 +491,7 @@ async function onAnnotate(payload: AnnotateDraft) {
             :aria-hidden="frame.id !== displayedFrame?.id"
             :tabindex="frame.id === displayedFrame?.id ? 0 : -1"
             :title="t('work.room.preview.frameTitle')"
-            sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+            :sandbox="sandboxFor(frame.mime)"
             @load="emit('frame-load', frame.id, $event)"
             @error="emit('frame-error', frame.id, $event)"
           />
@@ -490,7 +501,7 @@ async function onAnnotate(payload: AnnotateDraft) {
           :name="frameName"
           class="preview-frame"
           :title="t('work.room.preview.frameTitle')"
-          sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+          :sandbox="DEFAULT_SANDBOX"
         />
         <!-- 应用那一档：没有桥，读不到页面，宿主在 iframe 上盖一层透明遮罩拖矩形。 -->
         <PreviewRegionPick v-if="pick.target.value === 'region' && pick.on.value" @pick="pick.fromRegion" />

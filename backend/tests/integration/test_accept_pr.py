@@ -3323,7 +3323,6 @@ def _treeless_card(client, topic_id: str, status: str) -> None:
             s.add(
                 AcceptCard(
                     topic_id=_uuid.UUID(topic_id),
-                    reviewer_handle="alice",
                     focus="",
                     status=AcceptStatus(status),
                     change_subject="chore(old): a card from before trees",

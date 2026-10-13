@@ -28,18 +28,25 @@ export type Space = {
  * 空间 → 项目集 → 题目 → 项目，整份替换、不深合 —— 某一层留空就是「没说」，
  * 下一级原样说话。
  *
- * 每次新建会话时现读：改周次之后**新会话**立刻带上，**跑着的会话**保持它启动
- * 时那一份，要冷启动才换。
+ * 每次新建会话时现读；跑着的会话也在下一轮听到变更（教学安排是被跟踪的现状）。
  */
 export type SpaceTeaching = {
   /** system prompt 模板，`{current_week}` 等占位会被当前的值替换。 */
   systemPrompt?: string | null
+  /**
+   * 出题人的**私有**指导（#944 第二种可见性）：进 AI 队友的 prompt，但不进学生
+   * 可读的响应 —— 服务端只在出题人/板管理员的读写上带这一格（`teaching_to_api`
+   * 的 `includePrivate`）。所以它**可能缺席**：缺席 = 这条读看不到它，不是「没写」。
+   */
+  privatePrompt?: string | null
   /** 这是第几周。 */
   currentWeek?: number | null
   /** 目前的内容范围，用管理员自己的话写。 */
   allowedTopics?: string[]
   /** 暂时不该用到的写法 —— 解法这周不该依赖的构造。 */
   avoidInCode?: string[]
+  /** 本节学习目标。写上它这份指导就按教育性走（要求留空时带默认教学要求）。 */
+  learningGoals?: string[]
   /** 课件 / 知识的**引用**（id），不是副本。 */
   materialIds?: number[]
   knowledgeIds?: number[]
@@ -112,6 +119,11 @@ export type SpaceCategory = {
   archivedAt: number | null
   /** 项目集级的「给 AI 队友的指导」；没设的分类六格全空。 */
   teaching?: SpaceTeaching
+  /**
+   * 项目集自己写的默认队友（#944）:平台预设名；`null` = 这一层没说（继承空间）。
+   * 这是**原始覆盖值**，与提交时的「空串 = 清掉」不同。
+   */
+  defaultRole?: string | null
 }
 
 /** One 公告 — see `SpacesApi.listAnnouncements`. */

@@ -29,6 +29,7 @@ from app.core.errors import AppError, BaseError, NotFoundError
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
+from app.domain.remote_mcp import apps
 from app.domain.room_task.place import Place, PlaceResolver
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_origin
 
@@ -39,6 +40,9 @@ ROOM_FILES_PATH = "/_cheese/room/"
 GRANT_TTL = 30
 SESSION_TTL = 8 * 3600
 APP_MIME = "application/x-cheesex-app"
+#: A third party's HTML View (`io.modelcontextprotocol/ui`). Its own mime, so the
+#: content host serves it under a policy of its own — never the room's.
+MCP_APP_MIME = apps.MIME
 
 
 def resource_key(resource: dict) -> str:
@@ -171,13 +175,57 @@ def _private(response: Response) -> Response:
     # A link the page opens in a new tab is the person leaving the preview: the
     # document's own sandbox has to allow it as well as the iframe's (each can only
     # take flags away), and the site it opens is not ours to sandbox. Same as sites.
-    response.headers["Content-Security-Policy"] = (
-        "sandbox allow-scripts allow-same-origin allow-forms allow-downloads "
-        "allow-popups allow-popups-to-escape-sandbox; "
-        "worker-src 'none'; object-src 'none'; "
-        f"frame-ancestors 'self' {platform.scheme}://{platform.netloc}"
-    )
+    #
+    # A third party's View sets its own, tighter policy in `mcp_app` — that one
+    # must not be widened (or sandboxed back to allow-same-origin) here.
+    if "content-security-policy" not in response.headers:
+        response.headers["Content-Security-Policy"] = (
+            "sandbox allow-scripts allow-same-origin allow-forms allow-downloads "
+            "allow-popups allow-popups-to-escape-sandbox; "
+            "worker-src 'none'; object-src 'none'; "
+            f"frame-ancestors 'self' {platform.scheme}://{platform.netloc}"
+        )
     return response
+
+
+def _mcp_app_csp(entry: dict) -> str:
+    """The policy a third party's View is served under.
+
+    Tighter than the room's own (`_private`), in two ways that matter. The
+    sandbox NEVER carries ``allow-same-origin`` alongside ``allow-scripts``: a
+    document we did not write gets an opaque origin, not the content host's
+    storage — that is the whole reason it cannot share the room artifact's
+    iframe policy. And the only origins it may reach are the ones the server
+    declared for this resource (``_meta.ui.csp``), not the room's wide setup.
+
+    Inline script and style stay allowed: an MCP App is one self-contained HTML
+    document, and its own bundle is inline.
+    """
+
+    def source(directive: str, *parts: str) -> str:
+        joined = " ".join(part for part in parts if part).strip()
+        return f"{directive} {joined}" if joined else f"{directive} 'none'"
+
+    connect, resources = apps.declared_origins(entry)
+    network = " ".join(dict.fromkeys((*resources, *connect)))
+    platform = urlsplit(settings.frontend_url)
+    return "; ".join(
+        [
+            "sandbox allow-scripts allow-forms",
+            "default-src 'none'",
+            source("script-src", "'unsafe-inline'", network),
+            source("style-src", "'unsafe-inline'", network),
+            source("img-src", "data:", network),
+            source("font-src", network),
+            source("connect-src", " ".join(connect)),
+            "media-src 'none'",
+            "object-src 'none'",
+            "worker-src 'none'",
+            "base-uri 'none'",
+            "form-action 'none'",
+            f"frame-ancestors 'self' {platform.scheme}://{platform.netloc}",
+        ]
+    )
 
 
 def _destination(path: str) -> bool:
@@ -393,6 +441,10 @@ class PreviewHostMiddleware:
                 return response
             # A task's files are its room's.
             project, room = place.project_id, place.room_id
+            if resource and resource["kind"] == "mcp-app":
+                # A third party's View: fetched from its server here (the session
+                # is still open for that read) and served under its own policy.
+                return await self.mcp_app(session, place, request, resource)
         if target is not None:
             if request.method not in {"GET", "HEAD"}:
                 return Response(status_code=405)
@@ -443,6 +495,56 @@ class PreviewHostMiddleware:
             media_type=media or "application/octet-stream",
         )
         response.headers["Content-Length"] = str(len(body))
+        return response
+
+    async def mcp_app(
+        self,
+        session: AsyncSession,
+        place: Place,
+        request: Request,
+        resource: dict,
+    ) -> Response:
+        """Serve a third-party server's HTML View for one mcp-app grant.
+
+        The bytes are read from the server the grant names, through the
+        project's stored connection — never from a room file, and never with an
+        agent's credential. The View document is the content origin's root; any
+        other path (its own assets) is refused rather than answered with the
+        same HTML, so a View reaches its assets through the origins its server
+        declared (which the CSP below allows) and nowhere else.
+        """
+        if request.method not in {"GET", "HEAD"}:
+            return Response(status_code=405)
+        if request.url.path not in ("/", "/index.html"):
+            return Response("Preview unavailable", status_code=404)
+        from app.domain.remote_mcp import service as remote_mcp
+
+        try:
+            result = await remote_mcp.call(
+                session,
+                project_id=place.project_id,
+                topic_id=place.conversation_id,
+                agent_handle=None,
+                name=resource["server"],
+                method="resources/read",
+                params={"uri": resource["uri"]},
+            )
+        except BaseError:
+            return Response("Preview unavailable", status_code=404)
+        except Exception:  # noqa: BLE001 — an unreachable server is a 404 here
+            return Response("Preview unavailable", status_code=404)
+        contents = result.get("contents") if isinstance(result, dict) else None
+        entry = contents[0] if isinstance(contents, list) and contents else None
+        text = entry.get("text") if isinstance(entry, dict) else None
+        if not isinstance(text, str):
+            return Response("Preview unavailable", status_code=404)
+        body = text.encode()
+        response = Response(
+            body if request.method != "HEAD" else b"", media_type=MCP_APP_MIME
+        )
+        response.headers["Content-Length"] = str(len(body))
+        # Set before `_private`, which leaves an already-set policy alone.
+        response.headers["Content-Security-Policy"] = _mcp_app_csp(entry)
         return response
 
     async def websocket(

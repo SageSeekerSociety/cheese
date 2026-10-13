@@ -24,6 +24,7 @@ from app.api.task_serialization import (
     _task_to_api_model,
 )
 from app.api.task_teaching import (
+    apply_task_default_role,
     apply_task_teaching,
     coerce_teaching,
     validate_task_teaching,
@@ -165,7 +166,12 @@ async def get_task(
         }
 
     # 组装 task DTO，并按当前用户补充 joined/submittable/userDeadline/participationEligibility 等字段（部分字段为简化版）。  # noqa: E501
-    task_dict = _task_to_api_model(task)
+    # 私有指导只给出题人/板管理员：这条读是学生也看得到的题详情，判据用同一只
+    # `may_teach_task`（与发题、打分同一个答案），不新造开关。
+    may_teach = auth_user.user_id > 0 and await may_teach_task(
+        session=db, task=task, user_id=auth_user.user_id
+    )
+    task_dict = _task_to_api_model(task, include_private_teaching=may_teach)
 
     joined = False
     joined_teams: list[dict] = []
@@ -470,6 +476,8 @@ async def patch_task(
 
     # 「给 AI 队友的指导」: 整份替换这道题的那一格，见 apply_task_teaching。
     apply_task_teaching(task, coerce_teaching(payload.teaching))
+    # 默认队友 (#944)：同一份覆盖里的另一格，省掉 = 不动。
+    apply_task_default_role(task, payload.default_role)
 
     task.updated_at = datetime.now(UTC)
     task = await service.save(task)
@@ -481,7 +489,9 @@ async def patch_task(
 
     # Fetch submissionSchema for response
     schema_entries = await service.list_submission_schema(task.id)
-    task_response = _task_to_api_model(task)
+    # PATCH 是出题人/管理员那条写（路由上已过 `may_teach_task`），回复带上私有指导，
+    # 发题页写回后不必再读一次。
+    task_response = _task_to_api_model(task, include_private_teaching=True)
     task_response["submissionSchema"] = _submission_schema_to_api(schema_entries)
     task_response = (
         await _enrich_task_models(db, [task_response], space_id=task.space_id)

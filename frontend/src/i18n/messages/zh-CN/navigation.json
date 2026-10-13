@@ -1,6 +1,7 @@
 {
   "home": "首页",
   "inbox": "待办",
+  "market": "市场",
   "newProject": "新建{project}",
   "project": {
     "library": "资料库",

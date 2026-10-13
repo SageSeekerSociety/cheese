@@ -377,6 +377,12 @@ ARTIFACT_MIME = {
     # run it — and on which port — is the agent's judgment; the platform only
     # carries what answers there.
     "app": "application/x-cheesex-app",
+    # MCP Apps: the artifact points at a THIRD party's HTML View, a `ui://`
+    # resource on a remote MCP server the project declares. Its ``content`` is a
+    # JSON pointer ``{server, uri}`` (see ``app.domain.remote_mcp.apps``); the
+    # platform fetches the bytes through that server's connection, never from a
+    # room file, and the preview host serves them under a stricter policy.
+    "mcp-app": "text/html;profile=mcp-app",
 }
 
 #: Which artifact kind a filename implies, when the caller named none.

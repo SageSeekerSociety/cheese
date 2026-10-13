@@ -1,0 +1,383 @@
+// 技能面板：**这个队友**带哪些技能、还能从哪儿加。
+//
+// 主语是「一个队友」（设计稿 F1）：技能跟着人走，学术研究的队友不该继承全栈工程队友
+// 的构建约定。技能名单落在队友自己身上（`agent_instances.configuration.skills`）。
+//
+// 可加的技能有三个来源，合成一个池子画：
+//   * 平台发货（`/projects/{id}/skill-catalog`）
+//   * **我自己**机器上的（`/connector/my/devices/{id}/skills`，要人先采纳）—— 不是房间
+//     那台：读别人的机器是隐私上的越界，别人的盘不关我的事
+//   * 我导入的（项目技能，`/projects/{id}/skills`）
+//
+// **打开面板时才读**，不做常驻拉取：没人打开的时候多读一次，只是一次没人看的网络
+// 调用。健康那一列同理，一次打开探一遍（后端自己还缓存 5 分钟），而且只探平台那几颗
+// ——别的来源后端没有探针，画成「还没探到」比编一个绿点诚实。
+import type { InstallPlanItem, MachineSkill, SkillMarket } from '../api/machineSkills'
+import type { SkillHealth } from '../api/projectSkills'
+import type { ProjectAgent } from '../cx_types'
+
+import { computed, ref } from 'vue'
+
+import {
+  fetchMachineSkill,
+  fetchSkillMarket,
+  listMachineSkills,
+  scanMachineSkills,
+  setMachineSkillAdoption,
+  setMachineSkillRoots,
+} from '../api/machineSkills'
+import { getSkillHealth, listProjectSkills, listSkillCatalog } from '../api/projectSkills'
+
+import { getProjectDefaultModel, listMyDevices, setAgentEditing, updateProjectAgent } from '@/api'
+import { ApiError } from '@/api/http'
+import { t } from '@/i18n'
+import { pickMyDevice } from '@/lib/myDevice'
+
+/** 一个队友最多带几个。和 `PROPOSAL_LIMIT = 20` 是同一条经验的同一理由：正文都进
+ *  提示词，颗数一多，模型挑对的准确率明显下降，而一个队友这里更该省着。 */
+export const MAX_CARRIED = 8
+
+export type SkillSource = 'platform' | 'machine' | 'project'
+
+export interface SkillItem {
+  name: string
+  description: string
+  source: SkillSource
+}
+
+function dedupe(items: SkillItem[]): SkillItem[] {
+  const seen = new Set<string>()
+  return items.filter((item) => (seen.has(item.name) ? false : (seen.add(item.name), true)))
+}
+
+export function useAgentSkills(
+  projectId: () => string | null,
+  agent: () => ProjectAgent | null,
+  onError: (message: string) => void,
+  onSaved?: (agentId: string, skills: string[]) => void,
+  onStale?: () => void
+) {
+  const pool = ref<SkillItem[]>([])
+  const skillHealth = ref<Record<string, SkillHealth>>({})
+  // 我自己的机器，以及它盘上的技能索引。deviceId 为 null = 没有机器可读。
+  const deviceId = ref<string | null>(null)
+  const machineSkills = ref<MachineSkill[]>([])
+  const machineProblems = ref<string[]>([])
+  // 人登记的工作区根（`<根>/.trae/skills` 也一起扫）。清单存在机器上，扫一次才知道。
+  const workspaceRoots = ref<string[]>([])
+  // 市场：两家厂商公开的技能 / 插件 / MCP。公开目录，和哪台机器无关。
+  const market = ref<SkillMarket | null>(null)
+  const marketLoading = ref(false)
+  // 待确认的网上下载：读回来、检验过，人还没说「装」。写盘前必须过这一道 —— 落下去
+  // 的是别人写的脚本，会拿本人的权限在这台机器上跑。
+  const pendingInstall = ref<{ url: string; kind: 'skill' | 'plugin'; plan: InstallPlanItem[] } | null>(null)
+  // 面板自己的名单：打开时从队友身上抄一份，保存后就地更新，父组件不必重拉。
+  const carriedNames = ref<string[]>([])
+  const loading = ref(false)
+  const scanning = ref(false)
+  const saving = ref(false)
+  const canManage = ref(false)
+  // 「正在编辑」的占用：打开面板时占一把，关掉就放掉。占不到（别人拿着）就把面板转只读，
+  // 并把持有者记下来画出来。这是礼貌性提示，不是锁 —— 真正拦住丢更新的是保存带上去的
+  // `expected_version`（409）。Valkey 没配时后端一律答「没人编辑」，这里自然也不拦。
+  const editingBlocked = ref(false)
+  const editingBy = ref<string | null>(null)
+
+  const carried = computed<string[]>(() => carriedNames.value)
+
+  /** 带上的技能，连池子里查不到的也画出来（名字认得、说明欠奉），从格子里消失更糟。 */
+  const carriedItems = computed<SkillItem[]>(() =>
+    carriedNames.value.map(
+      (name) => pool.value.find((p) => p.name === name) ?? { name, description: '', source: 'platform' }
+    )
+  )
+
+  /** 还能加的：池子里减掉已经带上的。 */
+  const available = computed<SkillItem[]>(() => pool.value.filter((p) => !carriedNames.value.includes(p.name)))
+
+  /** 打开面板：读池子、我的机器索引，顺手把平台那几颗的健康探一遍。 */
+  async function openSkills() {
+    const pid = projectId()
+    const subject = agent()
+    if (!pid || !subject) return
+    loading.value = true
+    skillHealth.value = {}
+    carriedNames.value = [...(subject.configuration.skills ?? [])]
+
+    // 平台目录是面板的核心：这一条读不到就说一声，机器和项目那两段照常出来。
+    const [catalog, project, devices, model] = await Promise.all([
+      listSkillCatalog(pid).then(
+        (r) => r.data,
+        (e) => {
+          onError(e instanceof Error ? e.message : t('work.room.skills.loadFailed'))
+          return [] as { name: string; description: string }[]
+        }
+      ),
+      listProjectSkills(pid).then(
+        (r) => r.data,
+        () => []
+      ),
+      listMyDevices().then(
+        (r) => r.devices,
+        () => []
+      ),
+      getProjectDefaultModel(pid).then(
+        (r) => r,
+        () => null
+      ),
+    ])
+    if (projectId() !== pid) return
+    canManage.value = model?.can_manage === true
+    deviceId.value = pickMyDevice(devices)?.device_id ?? null
+
+    machineSkills.value = []
+    machineProblems.value = []
+    workspaceRoots.value = []
+    pendingInstall.value = null
+    if (deviceId.value) {
+      try {
+        machineSkills.value = (await listMachineSkills(deviceId.value)).skills
+      } catch {
+        // 不是自己的机器、或者后端那一半还没上线：机器那一段空着，别的照常。
+      }
+    }
+    // 市场：和哪台机器无关，但「装」要有个落点，所以等 deviceId 定下来才拉。不 await
+    // ——它慢起来不该把整块面板按住。
+    void openMarket()
+    pool.value = dedupe([
+      ...catalog.map((s): SkillItem => ({ name: s.name, description: s.description, source: 'platform' })),
+      ...machineSkills.value
+        .filter((s) => s.adopted)
+        .map((s): SkillItem => ({ name: s.name, description: s.description, source: 'machine' })),
+      ...project
+        .filter((s) => s.state === 'active')
+        .map((s): SkillItem => ({ name: s.name, description: s.description, source: 'project' })),
+    ])
+    loading.value = false
+    // 一颗探不到就说「未知」——不该让一颗探不到的把整个面板挡住。
+    await Promise.all(
+      catalog.map(async (s) => {
+        try {
+          const health = await getSkillHealth(pid, s.name)
+          if (projectId() === pid) skillHealth.value = { ...skillHealth.value, [s.name]: health }
+        } catch {
+          // 未知：那一颗的圆点留着灰的，别的照常。
+        }
+      })
+    )
+  }
+
+  /** 加 / 减一颗。先改本地再落库，落库失败就翻回去 —— 一颗按钮不该等一个来回。 */
+  async function setSkill(name: string, on: boolean) {
+    const pid = projectId()
+    const subject = agent()
+    if (!pid || !subject || saving.value) return
+    if (on && carriedNames.value.length >= MAX_CARRIED) {
+      onError(t('work.room.skills.full', { max: MAX_CARRIED }))
+      return
+    }
+    const before = [...carriedNames.value]
+    const next = on ? [...before, name] : before.filter((n) => n !== name)
+    carriedNames.value = next
+    saving.value = true
+    try {
+      await updateProjectAgent(pid, subject.id, {
+        configuration: { ...subject.configuration, skills: next },
+        // The version this panel was built from. Somebody saving in between makes
+        // this one a 409 instead of a silent overwrite of their change.
+        expected_version: subject.version,
+      })
+      onSaved?.(subject.id, next)
+    } catch (e) {
+      if (projectId() === pid && agent()?.id === subject.id) carriedNames.value = before
+      if (e instanceof ApiError && e.status === 409) {
+        onError(t('work.room.skills.stale'))
+        // Re-read so the next attempt carries the version that won.
+        onStale?.()
+      } else {
+        onError(e instanceof Error ? e.message : t('work.room.skills.saveFailed'))
+      }
+    } finally {
+      saving.value = false
+    }
+  }
+
+  /** 占住这个队友（打开技能面板时）。占不到就把持有者记下来，面板转只读。 */
+  async function holdAgent(agentId: string) {
+    const pid = projectId()
+    if (!pid) return
+    editingBlocked.value = false
+    editingBy.value = null
+    try {
+      const got = await setAgentEditing(pid, agentId, true)
+      editingBy.value = got.editing?.handle ?? null
+    } catch (e) {
+      // 409 = 别人正拿着。名字从打开时那一行读，并如实说一声 —— 面板这一轮只读。
+      editingBlocked.value = true
+      editingBy.value = agent()?.editing ?? null
+      onError(e instanceof Error ? e.message : t('work.room.skills.editingBlocked'))
+    }
+  }
+
+  /** 放掉占用（关掉面板时）。放不掉也不打扰人：租约自己会过期。 */
+  async function releaseAgent(agentId: string) {
+    const pid = projectId()
+    editingBlocked.value = false
+    editingBy.value = null
+    if (!pid) return
+    try {
+      await setAgentEditing(pid, agentId, false)
+    } catch {
+      // 面板已经关了，报错没有落点；租约到点自己释放。
+    }
+  }
+
+  /** 让机器重新扫一遍自己的盘（人点「扫描」）。结果只入库，不替人采纳。 */
+  async function scanMachine() {
+    const device = deviceId.value
+    if (!device || scanning.value) return
+    scanning.value = true
+    try {
+      const scan = await scanMachineSkills(device, projectId())
+      machineSkills.value = scan.skills
+      machineProblems.value = scan.problems
+      workspaceRoots.value = scan.workspaces
+    } catch (e) {
+      onError(e instanceof Error ? e.message : t('work.room.skills.scanFailed'))
+    } finally {
+      scanning.value = false
+    }
+  }
+
+  /** 登记工作区根（整份名单）。写在那台机器上，写完它顺手重扫一遍。 */
+  async function setWorkspaceRoots(roots: string[]) {
+    const device = deviceId.value
+    if (!device || scanning.value) return
+    scanning.value = true
+    try {
+      const scan = await setMachineSkillRoots(device, roots, projectId())
+      machineSkills.value = scan.skills
+      machineProblems.value = scan.problems
+      workspaceRoots.value = scan.workspaces
+    } catch (e) {
+      onError(e instanceof Error ? e.message : t('work.room.skills.scanFailed'))
+    } finally {
+      scanning.value = false
+    }
+  }
+
+  /** 从网上取一份技能：**先只看不落** —— 地址发上去，取回、按 agentskills.io 规范检验，
+      答复是「会写什么」，存进 `pendingInstall` 等人点头。`kind: 'plugin'` 时地址是一个
+      插件，它带的每颗技能都会各落一份，那份清单一次列全。 */
+  async function fetchWebSkill(url: string, kind: 'skill' | 'plugin' = 'skill') {
+    const device = deviceId.value
+    if (!device || scanning.value) return
+    scanning.value = true
+    try {
+      const look = await fetchMachineSkill(device, url, projectId(), kind, false)
+      pendingInstall.value = { url, kind, plan: look.plan }
+    } catch (e) {
+      onError(e instanceof Error ? e.message : t('work.room.skills.fetchFailed'))
+    } finally {
+      scanning.value = false
+    }
+  }
+
+  /** 人确认了这份清单：真写盘，然后重扫 —— 收尾和登记工作区根一样，覆盖那三个 ref。 */
+  async function confirmWebSkill() {
+    const device = deviceId.value
+    const pending = pendingInstall.value
+    if (!device || !pending || scanning.value) return
+    scanning.value = true
+    try {
+      const scan = await fetchMachineSkill(device, pending.url, projectId(), pending.kind, true)
+      if (scan.landed) {
+        machineSkills.value = scan.skills
+        machineProblems.value = scan.problems
+        workspaceRoots.value = scan.workspaces
+      }
+      pendingInstall.value = null
+    } catch (e) {
+      onError(e instanceof Error ? e.message : t('work.room.skills.fetchFailed'))
+    } finally {
+      scanning.value = false
+    }
+  }
+
+  /** 不装了：把那份清单收起来，盘上什么都没动过。 */
+  function cancelWebSkill() {
+    pendingInstall.value = null
+  }
+
+  /** 读市场：两家厂商公开的技能 / 插件 / MCP。读不到就在那段说一声，别处照常。 */
+  async function openMarket() {
+    marketLoading.value = true
+    try {
+      market.value = await fetchSkillMarket()
+    } catch (e) {
+      market.value = null
+      onError(e instanceof Error ? e.message : t('work.room.skills.marketFailed'))
+    } finally {
+      marketLoading.value = false
+    }
+  }
+
+  /** 采纳 / 退订一项。采纳之后它可以被勾给某个队友（正文照 `source_root` 读，不搬文件）；
+      退订把它从池子里拿掉 —— 已经勾了它的队友从此不带它（`carried_bodies` 只认确认过的
+      那一行），名单里那个名字留着，和「机器上那颗没了」是同一种收场。 */
+  async function setAdoption(name: string, adopted: boolean) {
+    const device = deviceId.value
+    if (!device) return
+    try {
+      const row = await setMachineSkillAdoption(device, name, adopted)
+      machineSkills.value = machineSkills.value.map((s) => (s.name === name ? row : s))
+      if (adopted) {
+        if (!pool.value.some((p) => p.name === name))
+          pool.value = dedupe([
+            ...pool.value,
+            { name: row.name, description: row.description, source: 'machine' as const },
+          ])
+      } else {
+        pool.value = pool.value.filter((p) => !(p.name === name && p.source === 'machine'))
+      }
+    } catch (e) {
+      onError(
+        e instanceof Error ? e.message : t(adopted ? 'work.room.skills.adoptFailed' : 'work.room.skills.unadoptFailed')
+      )
+    }
+  }
+
+  return {
+    pool,
+    available,
+    carriedItems,
+    carried,
+    skillHealth,
+    machineSkills,
+    machineProblems,
+    workspaceRoots,
+    market,
+    marketLoading,
+    pendingInstall,
+    editingBlocked,
+    editingBy,
+    deviceId,
+    loading,
+    scanning,
+    saving,
+    canManage,
+    openSkills,
+    openMarket,
+    adoptSkill: (name: string) => setSkill(name, true),
+    removeSkill: (name: string) => setSkill(name, false),
+    scanMachine,
+    setWorkspaceRoots,
+    holdAgent,
+    releaseAgent,
+    fetchWebSkill,
+    confirmWebSkill,
+    cancelWebSkill,
+    adoptMachine: (name: string) => setAdoption(name, true),
+    unadoptMachine: (name: string) => setAdoption(name, false),
+  }
+}

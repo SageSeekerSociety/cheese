@@ -1,18 +1,21 @@
 <script setup lang="ts">
-// 市场（视图）：两张页签的画面，只吃 props、只往外 emit。取数在同目录的 MarketView
+// 市场（视图）：三张页签的画面，只吃 props、只往外 emit。取数在同目录的 MarketView
 // （容器）里：模型与工作电脑的目录读一次，节点状态由 composables/useMarketNodes 每
-// 15 秒刷一次。
+// 15 秒刷一次；技能市场的目录与「我有没有机器」在第一次点开那个页签时读。
 //
-// 市场 has two faces (spec §13 阶段 6 + design v3):
+// 市场 has three faces (spec §13 阶段 6 + design v3):
 //   题目匹配 — Spaces publish 题目 (Task Templates), teams apply with a project.
 //   模型与工作电脑 — the catalog (AI models + work computers) a project can
 //   select from in its 设置. The compute tab also hosts the 节点状态 board.
+//   技能与插件 — the skill/plugin/MCP market (components/skills/SkillMarket),
+//   shared with 队友技能面板. 目录公开，装要一台机器。
 //
 // The page runs on AppPage. It used to draw its own header and cap itself at a
 // hand-written 1080px; `wide` (`--page-w-wide`, 1100) is the tier for this kind
 // of multi-column content — a live node board above card grids — and keeps that
 // same column while giving the page the shared header (docs/design-system.md
 // §3.5). `read` would be a narrower, single-column tier.
+import type { InstallPlanItem, SkillMarket as SkillMarketData } from '@/api/machineSkills'
 import type { MarketNodes, MarketPools, PoolListing } from '@/cx_types'
 
 import { computed } from 'vue'
@@ -21,6 +24,7 @@ import { useI18n } from 'vue-i18n'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import NodeBoard from '@/components/NodeBoard.vue'
+import SkillMarket from '@/components/skills/SkillMarket.vue'
 
 const props = withDefaults(
   defineProps<{
@@ -30,15 +34,41 @@ const props = withDefaults(
     nodes?: MarketNodes | null
     nodesLoading?: boolean
     nodesError?: string | null
+    /** 技能市场的目录（公开，与机器无关）。 */
+    market?: SkillMarketData | null
+    marketLoading?: boolean
+    /** 技能市场的目录与机器都读过了：在那之前不急着说「先连接一台机器」。 */
+    marketLoaded?: boolean
+    /** 装到哪台机器上。没有 = 卡片上的 + 按不动。 */
+    deviceId?: string | null
+    scanning?: boolean
+    pending?: { url: string; kind: 'skill' | 'plugin'; plan: InstallPlanItem[] } | null
   }>(),
-  { loading: false, error: null, nodes: null, nodesLoading: false, nodesError: null }
+  {
+    loading: false,
+    error: null,
+    nodes: null,
+    nodesLoading: false,
+    nodesError: null,
+    market: null,
+    marketLoading: false,
+    marketLoaded: false,
+    deviceId: null,
+    scanning: false,
+    pending: null,
+  }
 )
-const emit = defineEmits<{ (e: 'retry'): void }>()
+const emit = defineEmits<{
+  (e: 'retry'): void
+  (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
+  (e: 'confirmInstall'): void
+  (e: 'cancelInstall'): void
+}>()
 
 const { t } = useI18n()
 
 // The page owns the tab: the node board only starts polling once its tab is opened.
-const tab = defineModel<'tasks' | 'pools'>('tab', { default: 'tasks' })
+const tab = defineModel<'tasks' | 'pools' | 'skills'>('tab', { default: 'tasks' })
 
 const TIER_LABEL: Record<string, string> = {
   default: 'market.tier.default',
@@ -60,6 +90,9 @@ const computePools = computed<PoolListing[]>(() => props.pools?.compute ?? [])
         <v-icon size="18" class="me-2">mdi-handshake-outline</v-icon>{{ t('market.tabs.tasks') }}
       </v-tab>
       <v-tab value="pools"> <v-icon size="18" class="me-2">mdi-server</v-icon>{{ t('market.tabs.pools') }} </v-tab>
+      <v-tab value="skills">
+        <v-icon size="18" class="me-2">mdi-storefront-outline</v-icon>{{ t('market.tabs.skills') }}
+      </v-tab>
     </v-tabs>
 
     <v-window v-model="tab">
@@ -152,6 +185,26 @@ const computePools = computed<PoolListing[]>(() => props.pools?.compute ?? [])
             </div>
           </div>
         </template>
+      </v-window-item>
+
+      <!-- 技能与插件：技能 / 插件 / MCP 的市场（components/skills/SkillMarket 画）。目录
+           公开，没机器也能看；「装」要一台机器，所以没机器时先把话说在前面，卡片上的 +
+           由组件如实禁掉。装走两步（先看清单、再确认）在共享组件里那个确认框。 -->
+      <v-window-item value="skills">
+        <p v-if="marketLoaded && !deviceId" class="t-body c-muted mb-5">
+          {{ t('work.room.skills.marketNeedMachine') }}
+        </p>
+        <SkillMarket
+          :market="market"
+          :loading="marketLoading"
+          :device-id="deviceId"
+          :scanning="scanning"
+          :pending="pending"
+          show-agents
+          @install="emit('install', $event)"
+          @confirm-install="emit('confirmInstall')"
+          @cancel-install="emit('cancelInstall')"
+        />
       </v-window-item>
     </v-window>
   </AppPage>

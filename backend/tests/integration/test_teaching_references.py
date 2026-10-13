@@ -29,12 +29,15 @@ from tests.integration.conftest import (
     unique_int,
 )
 
-#: A 项目集 that says nothing, as the API reports it.
+#: A 项目集 that says nothing, as the API reports it. Read with the board OWNER's
+#: token, so the 私有指导 (`privatePrompt`) key is present and null.
 EMPTY_TEACHING = {
     "systemPrompt": None,
+    "privatePrompt": None,
     "currentWeek": None,
     "allowedTopics": [],
     "avoidInCode": [],
+    "learningGoals": [],
     "materialIds": [],
     "knowledgeIds": [],
 }
@@ -387,7 +390,12 @@ def test_the_other_teaching_fields_are_untouched(
     )
     assert resp.status_code == 200, resp.text
 
-    assert _teaching_of(api_client, board, board["token"]) == teaching
+    # 回复带上空的两格：`learningGoals` 与（板主看得见的）`privatePrompt`。
+    assert _teaching_of(api_client, board, board["token"]) == {
+        **teaching,
+        "learningGoals": [],
+        "privatePrompt": None,
+    }
 
     task_id = _publish_task(api_client, board, name="这门课的题（其它字段）")
     project_id = _project_under(api_client, user_client, board, task_id=task_id)

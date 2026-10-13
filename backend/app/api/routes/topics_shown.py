@@ -72,6 +72,7 @@ from app.domain.project.room_files import (
     artifact_kind_for,
     clean_artifact_path,
 )
+from app.domain.remote_mcp import apps
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
@@ -162,6 +163,15 @@ async def _reject_unreachable_app(topic_id: uuid.UUID, seat: str) -> None:
         raise UnprocessableEntityError(say("previewPortSilent"))
 
 
+def _shown_kind(mime: str | None) -> str:
+    """Which of the three render kinds a shown thing is, from its mime."""
+    if mime == ARTIFACT_MIME["app"]:
+        return "app"
+    if mime == ARTIFACT_MIME["mcp-app"]:
+        return "mcp-app"
+    return "file"
+
+
 @router.post("/{topic_id}/shown")
 async def show_in_room(
     topic_id: uuid.UUID,
@@ -191,6 +201,16 @@ async def show_in_room(
         # content is a human note ("Vue dev server"), not a path.
         path = (body.get("path") or "app").strip()[:120]
         await _reject_unreachable_app(place.conversation_id, author)
+    elif declared == "mcp-app":
+        # An MCP App is not a file either: it names a third-party server's View
+        # by (server, `ui://` resource). The stored content is a pointer; the
+        # preview host fetches the HTML through that server's connection later,
+        # and refuses an undeclared server then.
+        server = str(body.get("server") or "").strip()
+        uri = str(body.get("path") or "").strip()
+        if not server or not apps.is_ui_uri(uri):
+            raise UnprocessableEntityError("mcp-app needs a server and a ui:// resource")
+        path = apps.pointer(server, uri)
     else:
         path = clean_artifact_path(body.get("path") or "")
     as_ = declared or artifact_kind_for(path)
@@ -204,7 +224,9 @@ async def show_in_room(
             )
         )
     assets: list[tuple[str, bytes]] = []
-    if as_ != "app" and ("content" in body or "content_b64" in body):
+    # `app` and `mcp-app` carry no bytes of their own (a note and a pointer).
+    carries_bytes = as_ not in {"app", "mcp-app"}
+    if carries_bytes and ("content" in body or "content_b64" in body):
         # A remote machine's file is not in the backend worktree until published.
         # Office files and PDFs are not text, so they travel base64-encoded; a
         # caller that sends them as `content` would either fail to read them or
@@ -228,7 +250,7 @@ async def show_in_room(
                 say("artifactTooLarge", mb=MAX_ARTIFACT_BYTES // (1024 * 1024))
             )
         assets = _page_assets(body, path)
-    if as_ != "app" and ("content" in body or "content_b64" in body):
+    if carries_bytes and ("content" in body or "content_b64" in body):
         # Through the draft history: the state this replaces stays restorable,
         # and `base_version` (the version `cheese pull` read) turns an overwrite
         # of somebody's newer save into a 409.
@@ -292,7 +314,7 @@ async def list_shown(
         {
             "path": block.content,
             "mime": block.mime_type,
-            "kind": "app" if block.mime_type == ARTIFACT_MIME["app"] else "file",
+            "kind": _shown_kind(block.mime_type),
             "shown_at": block.created_at.isoformat(),
         }
         for block in shown

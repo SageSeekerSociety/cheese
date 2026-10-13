@@ -366,7 +366,7 @@ def test_both_read_paths_agree_on_the_same_locked_material(
         f"/tasks/{task['id']}/inheritance", headers=_auth(board["token"])
     )
     assert inheritance.status_code == 200, inheritance.text
-    body = inheritance.json()
+    body = inheritance.json()["data"]
     assert material_id not in body["teaching"]["materialIds"]
     assert material_id not in [item["id"] for item in body["materials"]]
 

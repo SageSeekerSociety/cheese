@@ -47,6 +47,7 @@ const hasTeaching = computed(() => {
   if (!g) return false
   return (
     !!g.systemPrompt ||
+    !!g.privatePrompt ||
     (g.currentWeek !== null && g.currentWeek !== undefined) ||
     !!g.allowedTopics?.length ||
     !!g.avoidInCode?.length
@@ -54,6 +55,12 @@ const hasTeaching = computed(() => {
 })
 
 const materials = computed(() => props.inheritance?.materials ?? [])
+
+/** 建项目时那个芝士会变成的默认队友（类型 + 技能）；上层没指定 = null。 */
+const agent = computed(() => props.inheritance?.agent ?? null)
+
+/** 题目包自带的那段 prompt（建项目时并进默认队友的人设正文）；没写 = null。 */
+const protocolPrompt = computed(() => props.inheritance?.prompt ?? null)
 </script>
 
 <template>
@@ -73,6 +80,43 @@ const materials = computed(() => props.inheritance?.materials ?? [])
         <span v-else class="inheritance__value inheritance__value--none">
           {{ t('tasks.inheritance.packNone') }}
         </span>
+      </div>
+
+      <!-- 默认队友：建项目时那个芝士会带着这些技能出生（#944）。没指定也要说一句，
+           留白会被读成「已经会有一个」。 -->
+      <div class="inheritance__row">
+        <span class="inheritance__label">{{ t('tasks.inheritance.agent') }}</span>
+        <span v-if="agent" class="inheritance__value">
+          {{ agent.displayName ?? t('tasks.inheritance.agentSkillsOnly') }}
+          <span v-if="agent.typeName" class="inheritance__sublabel">· {{ agent.typeName }}</span>
+        </span>
+        <span v-else class="inheritance__value inheritance__value--none">
+          {{ t('tasks.inheritance.agentNone') }}
+        </span>
+      </div>
+      <div v-if="agent" class="inheritance__body">
+        <span class="inheritance__sublabel">{{ t('tasks.inheritance.agentSkills') }}</span>
+        <ul v-if="agent.skills.length" class="inheritance__skills">
+          <li v-for="skill in agent.skills" :key="skill">{{ skill }}</li>
+        </ul>
+        <span v-else class="inheritance__value inheritance__value--none">
+          {{ t('tasks.inheritance.agentSkillsNone') }}
+        </span>
+      </div>
+
+      <!-- 题目包里「手动加的一段 prompt」：建项目时并进默认队友的人设正文。
+           没写也要说一句，留白会被读成「已经有一段」。 -->
+      <div class="inheritance__row">
+        <span class="inheritance__label">{{ t('tasks.inheritance.prompt') }}</span>
+        <span v-if="protocolPrompt" class="inheritance__value">
+          {{ t('tasks.inheritance.promptSet') }}
+        </span>
+        <span v-else class="inheritance__value inheritance__value--none">
+          {{ t('tasks.inheritance.promptNone') }}
+        </span>
+      </div>
+      <div v-if="protocolPrompt" class="inheritance__body">
+        <p class="inheritance__prompt">{{ protocolPrompt }}</p>
       </div>
 
       <!-- 指导：来源层写在标题旁边，是这块的重点。 -->
@@ -100,6 +144,12 @@ const materials = computed(() => props.inheritance?.materials ?? [])
           <ul>
             <li v-for="item in teaching.avoidInCode" :key="item">{{ item }}</li>
           </ul>
+        </div>
+        <!-- 私有指导：只有出题人/管理员的那条读才带这一格（服务端 `includePrivate`）。
+             学生读里没有它，所以这里 `v-if` 不到就整段不出现。 -->
+        <div v-if="teaching?.privatePrompt" class="inheritance__list">
+          <span class="inheritance__sublabel">{{ t('tasks.inheritance.privateGuidance') }}</span>
+          <p class="inheritance__prompt">{{ teaching.privatePrompt }}</p>
         </div>
       </div>
 
@@ -167,6 +217,7 @@ const materials = computed(() => props.inheritance?.materials ?? [])
 }
 
 .inheritance__list ul,
+.inheritance__skills,
 .inheritance__materials {
   margin: 0;
   padding-left: 1.2em;

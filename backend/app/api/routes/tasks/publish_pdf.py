@@ -234,7 +234,10 @@ async def confirm_publish_task_from_pdf(
     # Same reason as the commit in ``create_task``.
     await db.commit()
 
-    task_models = [_task_to_api_model(task) for task in created_tasks]
+    task_models = [
+        _task_to_api_model(task, include_private_teaching=True)
+        for task in created_tasks
+    ]
     if space_id is not None:
         task_models = await _enrich_task_models(db, task_models, space_id=space_id)
 

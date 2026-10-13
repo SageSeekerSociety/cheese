@@ -21,6 +21,9 @@ class AcceptCardCreate(BaseModel):
     # default is a sentence telling them how to fix it, not pydantic's
     # `Field required`.
     reviewer_handle: str | None = Field(default=None, max_length=64)
+    # 一卡多人：递给哪几个人由递卡的人说了算。给了这个就整体替换掉那个集合
+    # （去重、去空白）；只给 `reviewer_handle` 时是「一个」。两者都空就爬默认阶梯。
+    reviewer_handles: list[str] | None = None
     # 审阅重点，长度在 review/services 里把关：超了要回一句教人怎么写的话，
     # 不是 pydantic 的 `String should have at most N characters`。
     focus: str = ""
@@ -153,7 +156,11 @@ class AcceptCardOut(BaseModel):
     id: uuid.UUID
     topic_id: uuid.UUID
     task_id: uuid.UUID | None = None
-    reviewer_handle: str
+    # 递给谁验收。不在 `accept_cards` 那一行上了（评审人在 `accept_card_reviewer`
+    # 表里），所以 `model_validate(card)` 拿不到它 —— `describe` 从表里取出来补上。
+    reviewer_handle: str | None = None
+    # 一卡多人：完整的集合。`reviewer_handle` 是它的「、」拼接，留着给旧读者。
+    reviewer_handles: list[str] = []
     focus: str
     # The commit this card will become, as filed — so the reviewer can see the
     # subject that is about to enter the project's history BEFORE accepting,

@@ -27,9 +27,11 @@ from app.api.routes.spaces import teaching_to_api
 from app.api.routes.tasks._common import _require_task
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
+from app.auth.space_access import may_teach_task
 from app.core.errors import NotFoundError
 from app.core.storage import get_storage_backend
 from app.db.session import get_db
+from app.domain.agent_type.library import preset_types
 from app.domain.space.material_service import (
     SpaceMaterialService,
     member_readable_material_ids,
@@ -40,7 +42,9 @@ from app.domain.task.services import ensure_task_readable
 router = APIRouter(prefix="/tasks", tags=["Tasks"])
 
 
-def _teaching_to_api(teaching, source: str | None, material_ids: list[int]) -> dict:
+def _teaching_to_api(
+    teaching, source: str | None, material_ids: list[int], *, include_private: bool
+) -> dict:
     """合成后的教学指导摆成接口形状 —— 与空间、项目集、题目那几份读回来的同一套
     camelCase（``teaching_to_api``）；``materialIds`` 换成过滤后的那份，再加一格
     ``source``。
@@ -48,9 +52,12 @@ def _teaching_to_api(teaching, source: str | None, material_ids: list[int]) -> d
     ``material_ids`` 由调用方过滤后传入（见 ``get_task_inheritance``）：指导里
     点名、但只在「仅管理员」档里的课件，不该出现在这份「会继承什么」的预览里 ——
     否则点名的 id 说会继承、下面的清单里却没有，同一份响应自相矛盾。
+
+    ``include_private``：私有指导只给出题人/管理员（`may_teach_task`）—— 这份
+    预览学生也看得到（领题前那道门），所以默认不给，只有出题人看得见那一份。
     """
     return {
-        **teaching_to_api(teaching),
+        **teaching_to_api(teaching, include_private=include_private),
         "materialIds": list(material_ids),
         # 这一份来自哪一层：space / category / task / project，或 null（四层都没
         # 说）。界面据此写「来自项目集」，不是一个只有结果的字符串。
@@ -58,15 +65,55 @@ def _teaching_to_api(teaching, source: str | None, material_ids: list[int]) -> d
     }
 
 
+def _agent_to_api(role: str | None) -> dict | None:
+    """题目指定的默认队友 (#944)，摆成人看的一格：类型名 + 预设标题 + 它会带的技能。
+
+    只认**发货的**预设 (`preset_types()`)。``default_role`` 是一个名字，只有平台自己
+    发的预设才配得上它；名字对不上任何预设（老数据、拼错）时不假装有一个队友 —— 返回
+    None，界面照「没指定」画，而不是编一个空技能的名字出来。
+
+    预设是 `app.domain.agent_type` 那一域的事，所以由这一层（api 可以 import 一个域）
+    去问，`app.domain.task.inheritance` 只带回那个名字 —— 和资料清单同一条分工。
+    """
+    preset = preset_types().get(role) if role else None
+    if preset is None:
+        return None
+    return {
+        "typeName": preset.name,
+        "displayName": preset.title,
+        "skills": list(preset.skills),
+    }
+
+
 def _to_api(
-    found: TaskInheritance, materials: list[dict], material_ids: list[int]
+    found: TaskInheritance,
+    materials: list[dict],
+    material_ids: list[int],
+    *,
+    include_private: bool,
 ) -> dict:
+    agent = _agent_to_api(found.default_role)
+    # 题目包自带的 prompt + skills 与默认队友的技能是两回事，摆成各自的一格：
+    # 前者是**这道题**给的（每道题可以不同），后者是**那个类型预设**带的。
+    if agent is not None and found.skills:
+        agent["skills"] = list(dict.fromkeys([*agent["skills"], *found.skills]))
+    elif agent is None and found.skills:
+        # 没指定发货预设，但题目带了技能：也给一格「题目指定的队友技能」，不然
+        # 建项目时会带上、预览里却看不到。
+        agent = {"typeName": None, "displayName": None, "skills": list(found.skills)}
     return {
         "taskId": found.task_id,
         "spaceId": found.space_id,
         "resourcePack": found.resource_pack,
+        # 建项目时这个项目的芝士会带上的默认队友（类型 + 技能）；没指定 = None。
+        "agent": agent,
+        # 题目包里的「手动加的一段 prompt」；没写 = None。
+        "prompt": found.prompt,
         "teaching": _teaching_to_api(
-            found.teaching, found.teaching_source, material_ids
+            found.teaching,
+            found.teaching_source,
+            material_ids,
+            include_private=include_private,
         ),
         "materials": materials,
     }
@@ -102,6 +149,12 @@ async def get_task_inheritance(
     if found is None:
         raise NotFoundError("Task not found", data={"type": "task", "id": task_id})
 
+    # 私有指导只给出题人 / 板管理员：这份预览领题的学生也看得到，判据用既有的
+    # `may_teach_task`（发题、打分同一个答案），不新造权限开关。
+    may_teach = auth_user.user_id > 0 and await may_teach_task(
+        session=db, task=task, user_id=auth_user.user_id
+    )
+
     try:
         # ``list_for_space`` 答的是 ``{"materials": [...], "canManage": bool}`` ——
         # 它自己按档位过滤：非管理员拿不到「仅管理员」那一档。
@@ -125,7 +178,13 @@ async def get_task_inheritance(
     material_ids = [mid for mid in found.teaching.material_ids if mid in readable]
     materials = [item for item in listed if item["id"] in readable]
 
-    # 裸响应体，不套 ``{"code", "message", "data"}`` —— ``/tasks`` 这一族
-    # （详情、附件清单、参与）都是裸的，``TasksApi`` 也是这样读的。同一个
-    # router 前缀下两种信封会让 `result.data.…` 有时对有时错。
-    return _to_api(found, materials, material_ids)
+    # 套 ``{"code", "message", "data"}`` 信封 —— 前端 ``TasksApi`` 的 axios 栈
+    # （``ResponseDataType``）每个响应都按信封取 ``.data``，裸 body 会让
+    # ``useTaskInheritance`` 拿到 ``undefined``，整块「将继承什么」静默不渲染。
+    # （这条注释的前身写反了，说「这一族都是裸的」——实测 ``POST /tasks``、
+    # ``/attachments`` 全是信封，浏览器验收第一次把它撞出来。）
+    return {
+        "code": 200,
+        "message": "OK",
+        "data": _to_api(found, materials, material_ids, include_private=may_teach),
+    }

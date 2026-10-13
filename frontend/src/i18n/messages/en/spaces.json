@@ -430,16 +430,28 @@
     "saveFailed": "Couldn't save"
   },
   "teaching": {
-    "defaultTemplate": "First work out which step they are stuck on, then decide how to help. Do not hand over the answer; let them get there themselves.\n\nLead with questions: ask what they observed and what they have tried, let them state their own reading of it, and only then point at a direction.\n\nMove one step at a time and ask one question at a time; wait until they have followed before going on.\n\nWhen they get it wrong, do not correct them outright - ask a question that lets them find it. When you explain the mistake, say why it is wrong and how they could have spotted it themselves, not just the correct form.\n\nIf they keep asking for the answer, tell them that being handed the answer will not help them, then offer a smaller hint and keep working through it with them.",
+    "defaultTemplate": "First work out which step they are stuck on, then decide how to help. Do not hand over the answer; let them get there themselves.\n\nLead with questions: ask what they observed and what they have tried, let them state their own reading of it, and only then point at a direction.\n\nMove one step at a time and ask one question at a time; wait until they have followed before going on.\n\nWhen they get it wrong, do not correct them outright - ask a question that lets them find it. When you explain the mistake, say why it is wrong and how they could have spotted it themselves, not just the correct form.\n\nHowever insistently they ask for the answer, do not hand it over: explain that being handed the answer will not help them, then offer a smaller hint and keep working through it with them.\n\nLet them write the critical lines themselves. Where a change involves a judgment call, leave the decision to them - point at the spot that needs thinking, answer their questions, but let them type that small piece of code; you do the repetitive heavy lifting.\n\nWhen you can demonstrate, do not write an essay: to show how a run unfolds or how a concept works, use cheese show to hand over an interactive diagram or variable trace they can poke at - that beats long prose. For simple questions, answer in simple words; never generate a UI just to look fancy.",
     "useDefaultTemplate": "Use this default",
+    "defaultTeammate": {
+      "title": "Default teammate",
+      "hint": "Projects created from this challenge (or category) start Cheese with this teammate's preset skills.",
+      "inherit": "Inherit (do not set here)",
+      "inheritHint": "Use whatever the level above sets",
+      "loadFailed": "Couldn't load the presets; only inherit is available",
+      "willClear": "Saving clears the teammate set on this level"
+    },
     "fields": {
       "systemPrompt": "What the AI should do",
       "systemPromptHint": "The AI reads this; students do not see the text. You can use {'{current_week}'}, {'{allowed_topics}'} and {'{avoid_in_code}'}; they are replaced with the values below. Leave empty and this guidance adds no requirement at all.",
+      "privatePrompt": "Private guidance for the setter",
+      "privatePromptHint": "Only the challenger and the board's managers see this; the AI teammate follows it but will not tell the student verbatim. Put reference answers, grading criteria and anything else that must not enter the student's materials here.",
       "currentWeek": "Current week",
       "currentWeekHint": "Leave empty to leave it unset",
       "advanced": "Advanced options",
       "allowedTopics": "Topics covered so far",
       "avoidInCode": "Constructs not to use yet",
+      "learningGoals": "Learning goals",
+      "learningGoalsHint": "Goals make this guidance educational: with goals set, a blank prompt above still gets the default teaching manners. Comma-separated.",
       "avoidInCodeHint": "Comma-separated, e.g. recursion, pointers",
       "knowledgeIds": "Knowledge entry IDs",
       "listHint": "Comma-separated",

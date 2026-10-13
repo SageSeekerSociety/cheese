@@ -12,6 +12,8 @@
 // 的事（判据都在递下去的 props 里）。
 import type { ChatAttachment, FileContent, PreviewInfo } from '../cx_types'
 import type { DocumentIdentity } from '../lib/documentIdentity'
+import type { McpAppMessage } from '../lib/mcpAppBridge'
+import type { PreviewQuestion } from '../lib/previewQuestion'
 import type { FramePick } from './usePreviewFrames'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -20,6 +22,8 @@ import { attachmentRawUrl, downloadFile, readPreviewFile, requestPreviewSession,
 import { useDocumentBytes, useDocumentPage } from '../lib/documentBytes'
 import { sameDocumentIdentity } from '../lib/documentIdentity'
 import { DOCUMENT_TYPES, IMAGE_SUFFIXES, isWebPage, pageViewOf, suffixOf, webMimeOf } from '../lib/fileKind'
+import { MCP_APP_MIME } from '../lib/mcpAppBridge'
+import { warmPreviewPointer } from '../lib/previewPointer'
 import { roomFileDestination } from '../lib/previewSession'
 
 import { useDocumentRevisions } from './useDocumentRevisions'
@@ -60,6 +64,11 @@ export interface PanelPreviewOptions {
   onEscape?: () => void
   /** 帧里圈选了一处：画不画标注条、发不发引用是画的那一半的事，这一层只往上递。 */
   onPick?: (pick: FramePick) => void
+  /**
+   * 第三方 View 里的表单点提交（`ui/message`）：这一层把它拼成一条普通提问——引用当前
+   * 这一帧的地址——再往上递，宿主拿去送进房间。地址在这一层，所以拼的那一步也在这里。
+   */
+  onAppMessage?: (question: PreviewQuestion) => void
   /** 编辑里「另存一份」另存出了一份新的：宿主要把它开成自由区的一个页签。 */
   onOpenFile?: (path: string) => void
 }
@@ -85,7 +94,35 @@ export type UploadAnnotation = (topicId: string, image: ImageUpload) => Promise<
 
 /** 「预览」这一格的全部取数：状态进、动作出，一个组件都不碰。 */
 export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewOptions) {
-  const host = usePreviewFrames(options.frameName, { onEscape: options.onEscape, onPick: options.onPick })
+  const host = usePreviewFrames(options.frameName, {
+    onEscape: options.onEscape,
+    onPick: options.onPick,
+    onAppMessage: submitAppMessage,
+  })
+
+  /** 第三方 View 填好表单点提交：把它当成一条普通提问送进下一轮对话。
+   *
+   *  MCP app 没有「文件身份」，只有这一帧的地址（见 `WebRegionQuote`），所以引用借
+   *  「应用上圈一块」那个形状——只是这里没有那块区域，`rect` 是空的。`viewport` 给的
+   *  是宿主窗口尺寸：这个形状要求两个数都为正（`isQuotedContext` 会核），而提交上来的
+   *  文本本来就不指向页面上的哪一块，这两个数没有别的用处。拿不到已显示的帧（没有地址）
+   *  就不提交。 */
+  function submitAppMessage(message: McpAppMessage) {
+    const url = host.displayed.value?.url
+    const topicId = props.topicId
+    if (!url || !topicId || !message.text.trim()) return
+    options.onAppMessage?.({
+      topicId,
+      content: message.text,
+      intent: 'ask-agent',
+      quotedContext: {
+        kind: 'web-region',
+        url,
+        rect: { x: 0, y: 0, w: 0, h: 0 },
+        viewport: { w: Math.max(1, window.innerWidth), h: Math.max(1, window.innerHeight) },
+      },
+    })
+  }
   const loading = ref(false)
   const refreshing = ref(false)
   const previewFile = ref<FileContent | null>(null)
@@ -265,7 +302,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
         art.version ?? null,
         art.instance ?? null,
       ])
-      const known = art.kind === 'app' || !!art.version
+      const known = art.kind === 'app' || art.kind === 'mcp-app' || !!art.version
       const unchanged =
         known &&
         (host.incoming.value?.identity === identity ||
@@ -327,6 +364,11 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           host.fail(t('tasks.preview.unavailable'))
           return
         }
+      } else if (art.kind === 'mcp-app') {
+        // A third party's View: no room file to read. The bytes live on the
+        // remote server and the content host fetches them under its own policy;
+        // here we only carry which resource it is.
+        previewMime.value = art.mime || MCP_APP_MIME
       } else {
         previewMime.value = art.mime || 'text/html'
         try {
@@ -376,7 +418,9 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
             ? art.instance
               ? { artifact_id: art.artifact_id, instance: art.instance }
               : undefined
-            : { artifact_id: art.artifact_id, version: art.version, path: art.path }
+            : art.kind === 'mcp-app'
+              ? { artifact_id: art.artifact_id }
+              : { artifact_id: art.artifact_id, version: art.version, path: art.path }
         )
         if (!stillCurrent()) return
         previewUrl.value = art.url
@@ -385,7 +429,7 @@ export function usePanelPreview(props: PanelPreviewProps, options: PanelPreviewO
           {
             url: art.url,
             label: art.path,
-            mime: art.mime || 'text/html',
+            mime: art.mime || (art.kind === 'mcp-app' ? MCP_APP_MIME : 'text/html'),
             version: art.version ?? null,
             live: art.kind === 'app',
             identity,

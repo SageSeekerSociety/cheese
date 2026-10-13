@@ -421,3 +421,25 @@ class TestTheNormalPathsStillWork:
         )
         assert again.status_code == 200, again.text
         assert _read_review(api_client, url, scene.teacher.token)["detail"] == _ORIGINAL
+
+    def test_two_teachers_each_keep_their_own_review(
+        self, scene: _Scene, api_client: TestClient
+    ):
+        """一版多人批阅：出题人和板的管理员各判各的，第二条不会被当成「已有评审」；
+        同一个人在同一版上再判一次才冲突。"""
+        url = _review_url(
+            scene.victim_task, scene.victim_membership, scene.victim_submission
+        )
+        first = api_client.post(
+            url, json=dict(_ORIGINAL), headers=_auth(scene.teacher.token)
+        )
+        assert first.status_code == 200, first.text
+        second = api_client.post(
+            url, json=dict(_ATTACK), headers=_auth(scene.admin.token)
+        )
+        assert second.status_code == 200, second.text
+
+        again = api_client.post(
+            url, json=dict(_ORIGINAL), headers=_auth(scene.teacher.token)
+        )
+        assert again.status_code == 409, again.text

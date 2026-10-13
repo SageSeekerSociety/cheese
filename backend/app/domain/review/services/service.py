@@ -70,15 +70,18 @@ class AcceptService:
     async def _card_or_404(self, card_id: uuid.UUID) -> AcceptCard:
         return await cards._card_or_404(self, card_id=card_id)
 
-    async def _reviewer_or_project_default(
+    async def _reviewers_or_project_default(
         self,
         project: Project | None,
-        reviewer_handle: str | None,
+        reviewer_handles: list[str] | None,
         *,
         from_work: list[Task] | None = None,
-    ) -> str:
-        return await reviewers._reviewer_or_project_default(
-            self, project=project, reviewer_handle=reviewer_handle, from_work=from_work
+    ) -> list[str]:
+        return await reviewers._reviewers_or_project_default(
+            self,
+            project=project,
+            reviewer_handles=reviewer_handles,
+            from_work=from_work,
         )
 
     async def _require_reviewer_in_room(
@@ -93,7 +96,7 @@ class AcceptService:
         *,
         topic_id: uuid.UUID,
         task_id: uuid.UUID,
-        reviewer_handle: str | None = None,
+        reviewer_handles: list[str] | None = None,
         focus: str = "",
         change_subject: str | None = None,
         change_body: str | None = None,
@@ -109,7 +112,7 @@ class AcceptService:
             self,
             topic_id=topic_id,
             task_id=task_id,
-            reviewer_handle=reviewer_handle,
+            reviewer_handles=reviewer_handles,
             focus=focus,
             change_subject=change_subject,
             change_body=change_body,
@@ -229,13 +232,13 @@ class AcceptService:
         self,
         *,
         card_id: uuid.UUID,
-        reviewer_handle: str | None = None,
+        reviewer_handles: list[str] | None = None,
         admits_reviewer: ReviewerAdmission,
     ) -> AcceptCard:
         return await reviewers.reassign(
             self,
             card_id=card_id,
-            reviewer_handle=reviewer_handle,
+            reviewer_handles=reviewer_handles,
             admits_reviewer=admits_reviewer,
         )
 

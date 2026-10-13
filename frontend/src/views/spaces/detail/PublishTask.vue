@@ -29,7 +29,7 @@ import PublishTaskView from './PublishTaskView.vue'
 import { AttachmentsApi } from '@/api/attachments'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
-import { isTeachingBlank } from '@/lib/teaching'
+import { defaultRolePayload, isTeachingBlank } from '@/lib/teaching'
 import errorHandler from '@/services/ErrorHandler'
 import { useSpaceStore } from '@/stores/space'
 
@@ -193,6 +193,10 @@ const teachingPayload = computed(() =>
   teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : undefined
 )
 
+/** 这道题指定的默认队友（#944）。新建题没有原始值，留空 = 不指定（继承项目集 / 空间）。 */
+const defaultRole = ref('')
+const defaultRoleSubmit = computed(() => defaultRolePayload(defaultRole.value, null))
+
 // --- 发布 --------------------------------------------------------------------------
 
 const publishing = ref(false)
@@ -212,6 +216,8 @@ async function publish(form: TaskFormSubmitData) {
     space: id,
     attachmentIds: uploads.ids.value.length ? uploads.ids.value : undefined,
     teaching: teachingPayload.value,
+    // 选中「继承」（新建题本来就没写过）时不带这个键：让项目集 / 空间那一层生效。
+    ...(defaultRoleSubmit.value !== undefined ? { defaultRole: defaultRoleSubmit.value } : {}),
   }
 
   publishing.value = true
@@ -248,6 +254,7 @@ async function publish(form: TaskFormSubmitData) {
     v-model:drafts="drafts"
     v-model:teaching="teaching"
     v-model:teaching-own="teachingOwn"
+    v-model:default-role="defaultRole"
     :ready="ready"
     :list-to="listTo"
     :form-key="formKey"

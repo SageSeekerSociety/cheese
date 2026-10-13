@@ -123,7 +123,13 @@ const routes: RouteRecordRaw[] = [
     name: 'market',
     path: '/market',
     component: () => import('@/views/MarketView.vue'),
-    meta: { titleKey: 'navigation.pages.market', isFullPage: true },
+    // 「市场」在 ⌘K 里也找得到（`pages.palette.ts` 只认带 `palette` 的路由）；名字复用
+    // 标题那一份，图标和桌面 rail 那一格同一颗。
+    meta: {
+      titleKey: 'navigation.pages.market',
+      isFullPage: true,
+      palette: { label: 'navigation.pages.market', icon: 'mdi-storefront-outline' },
+    },
   },
   {
     name: 'NotFound',

@@ -17,6 +17,7 @@ import { useI18n } from 'vue-i18n'
 import { draftGaps } from './publishDrafts'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import DefaultTeammatePicker from '@/components/common/DefaultTeammatePicker.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
@@ -51,6 +52,8 @@ const drafts = defineModel<PublishDraft[]>('drafts', { required: true })
 const teaching = defineModel<SpaceTeaching>('teaching', { required: true })
 /** 这道题单独写了 AI 指导；没有就沿用空间的默认。 */
 const teachingOwn = defineModel<boolean>('teachingOwn', { required: true })
+/** 这道题指定的默认队友（#944）：`''` = 这一层不单独指定。发题页没有原始值。 */
+const defaultRole = defineModel<string>('defaultRole', { required: true })
 
 const emit = defineEmits<{
   cancel: []
@@ -296,6 +299,7 @@ function discardImport() {
               <v-radio :value="false" :label="t('spaces.detail.publishTask.teaching.inherit')" />
               <v-radio :value="true" :label="t('spaces.detail.publishTask.teaching.own')" />
             </v-radio-group>
+            <DefaultTeammatePicker v-model="defaultRole" class="pub__teammate" />
             <TeachingFields
               v-if="teachingOwn"
               v-model="teaching"
@@ -527,6 +531,10 @@ function discardImport() {
 
 .pub__teaching-hint {
   margin: 4px 0 8px;
+}
+
+.pub__teammate {
+  margin-top: 12px;
 }
 
 .pub__teaching-fields {

@@ -140,6 +140,9 @@ function primary() {
       <p v-if="preview.skipped.length" class="t-meta c-muted mt-2">
         {{ t('work.skills.import.skipped', { files: preview.skipped.join(t('work.skills.listSeparator')) }) }}
       </p>
+      <p v-if="preview.notes.length" class="t-meta c-muted mt-2" data-import-notes>
+        {{ t('work.skills.import.notes', { notes: preview.notes.join(t('work.skills.listSeparator')) }) }}
+      </p>
       <p v-if="preview.scripts" class="import__warn t-body mt-3" data-import-scripts>
         {{ t('work.skills.import.scripts', { n: preview.scripts }) }}
       </p>

@@ -178,7 +178,6 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
             AcceptCard(
                 topic_id=uuid.UUID(room),
                 task_id=second.id,
-                reviewer_handle="alice",
                 status=AcceptStatus.pending,
                 pr_number=1789,
                 pr_url="https://github.com/acme/web/pull/1789",
@@ -245,7 +244,6 @@ def _carded_tasks(client, project: str, room: str, cards: list[dict]) -> dict[st
                 AcceptCard(
                     topic_id=uuid.UUID(room),
                     task_id=task.id,
-                    reviewer_handle="alice",
                     **spec,
                 )
             )

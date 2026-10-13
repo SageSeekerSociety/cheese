@@ -722,3 +722,79 @@ def test_a_time_with_an_offset_is_shown_in_utc():
     out = run("cheese_chat_get", {"message_id": block["id"]}, host)
 
     assert "2026-10-07 00:17:43 UTC" in out
+
+
+# ---------- finding installed skills (skills_search / skills_read) ----------
+
+
+def test_a_skills_search_returns_names_and_descriptions_not_bodies():
+    """搜索只回名字和说明：全文不在这里回，那是 `skills_read` 的事（省 token）。"""
+    host = Host(
+        {
+            ("POST", "/agent/skills/search"): {
+                "skills": [
+                    {
+                        "name": "weekly-report",
+                        "description": "用户要这周的周报时",
+                        "source": "项目技能",
+                    }
+                ]
+            }
+        }
+    )
+
+    said = run("skills_search", {"query": "周报"}, host)
+
+    assert host.requests[0]["method"] == "POST"
+    assert host.requests[0]["path"] == "/agent/skills/search"
+    assert host.requests[0]["body"] == {"query": "周报", "topic": _ROOM}
+    assert "weekly-report" in said and "用户要这周的周报时" in said
+    assert "skills_read" in said
+
+
+def test_an_empty_skills_search_never_reads_as_the_skill_not_existing():
+    """空结果不是「这个技能不存在」：搜索覆盖面有限，工具必须说清这一点。"""
+    host = Host({("POST", "/agent/skills/search"): {"skills": []}})
+
+    said = run("skills_search", {"query": "不存在的名字"}, host)
+
+    assert "没搜到不等于没有" in said
+    assert "不存在" in said  # 说的是「不等于没有」，不是替 agent 下「没有」的结论
+
+
+def test_a_skills_read_returns_the_whole_skill_md_and_grants_only_reading():
+    host = Host(
+        {
+            ("POST", "/agent/skills/read"): {
+                "found": True,
+                "name": "wolfram",
+                "source": "平台发货",
+                "markdown": "# 算一算\n\n用 wolfram 表达式。",
+            }
+        }
+    )
+
+    said = run("skills_read", {"name": "wolfram"}, host)
+
+    assert host.requests[0]["body"] == {"name": "wolfram", "topic": _ROOM}
+    assert "# 算一算" in said and "用 wolfram 表达式。" in said
+    # 读 ≠ 安装/运行：正文给出去的同时必须把这条边界说清楚。
+    assert "不代表可以安装或运行" in said
+    assert "采纳" in said
+
+
+def test_a_skills_read_of_an_unknown_name_does_not_overclaim():
+    host = Host({("POST", "/agent/skills/read"): {"found": False, "name": "nope"}})
+
+    said = run("skills_read", {"name": "nope"}, host)
+
+    assert "skills_search" in said
+    assert "不存在" not in said or "不算它不存在" in said
+
+
+def test_a_skill_tool_refuses_without_a_room():
+    """已装技能按房间（项目、机器）算，没有房间就不知道是谁的——发请求之前就拒。"""
+    host = Host(environ={"CHEESE_TOPIC": ""})
+    with pytest.raises(cheese.PlatformToolError, match="CHEESE_TOPIC"):
+        run("skills_search", {"query": "周报"}, host)
+    assert host.requests == []

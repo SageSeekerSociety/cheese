@@ -18,6 +18,7 @@ import type {
   ProfileProjectRole,
   ProfileTopic,
   ProfileUnderstanding,
+  ProjectAgent,
   UserProfile,
 } from '@/cx_types'
 import type { ActivityWeek } from '@/lib/activityYear'
@@ -34,7 +35,7 @@ import { usePageActive } from '@/composables/usePageActive'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
-import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics } from '@/api'
+import { deleteUnderstanding, getMemberSummary, getUserProfile, getUserTopics, listProjectAgents } from '@/api'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import AppPage from '@/components/common/AppPage.vue'
@@ -48,6 +49,7 @@ import { activityWeeks, formatUtcDay, HALF_YEAR_WEEKS } from '@/lib/activityYear
 import { teammateName } from '@/lib/agentNames'
 import { agentDmKey } from '@/lib/dm'
 import { relTime } from '@/lib/relTime'
+import { skillIcon } from '@/lib/skillIcons'
 import { topicTitle } from '@/lib/topicState'
 import { myHandle } from '@/me'
 import { patchQuery, queryClient } from '@/query/client'
@@ -71,6 +73,8 @@ interface Page {
   member: MemberSummary | null
   /** 最近参与的话题；这一段单独失败时是 null，页面其余部分照常。 */
   recent: ProfileTopic[] | null
+  /** 这个项目里他名下的 AI 队友；「带的技能」从这儿取。取不到就是空的。 */
+  agents: ProjectAgent[]
 }
 
 // 回到看过的主页先照着上一次的画，背后重取（query/client）。
@@ -82,14 +86,19 @@ const page = useQuery(
     enabled: pageActive.value,
     queryKey: pageKey.value,
     queryFn: async (): Promise<Page> => {
-      const [profile, member, recent] = await Promise.all([
+      const [profile, member, recent, agents] = await Promise.all([
         getUserProfile(props.handle),
         props.projectId ? getMemberSummary(props.projectId, props.handle).catch(() => null) : Promise.resolve(null),
         getUserTopics(props.handle, { limit: RECENT_TOPICS })
           .then((r) => r.topics)
           .catch(() => null),
+        props.projectId
+          ? listProjectAgents(props.projectId)
+              .then((r) => r.data)
+              .catch(() => [])
+          : Promise.resolve([]),
       ])
-      return { profile, member, recent }
+      return { profile, member, recent, agents }
     },
   })),
   queryClient
@@ -253,6 +262,19 @@ const dmRoute = computed(() => {
   const peer = here.source === 'agent' ? agentDmKey(own) : props.handle
   return { name: 'workspace-dm', params: { projectId: props.projectId, peer } }
 })
+
+/** 他名下那几个 AI 队友里，handle 对得上这一个。—— 人没有「带的技能」。
+ *
+ *  只画名字，不画数字：几颗是这个人自己的事，资料页只回答「是哪些」。
+ *  也不画健康圆点：圆点得拿**项目**去探（`getSkillHealth(projectId, …)`），
+ *  资料页不为看一眼技能多发一遍探针。 */
+const carriedSkills = computed<string[]>(() => {
+  // 名册里的链接用的是座位名（`seat_handle`，如 `cheese-c6cf7aefd1d5`），而
+  // `/projects/{id}/agents` 的那份把两个名字都给了（`handle` 是 `cheese`）。对座位名
+  // 才认得出是哪一个 —— 对 `handle` 永远对不上，这一格就永远不亮。
+  const agent = (data.value?.agents ?? []).find((a) => a.seat_handle === props.handle)
+  return agent?.configuration.skills ?? []
+})
 </script>
 
 <template>
@@ -352,6 +374,25 @@ const dmRoute = computed(() => {
                 t('users.profile.inProject.weekly', { count: inProject.weekly_contributions ?? 0 })
               }}</span>
             </header>
+            <!-- 带的技能：只有 AI 队友有名字可对。技能跟着人走，所以这一格挂在他身上，
+                 不是挂在房间上（见 `useAgentSkills`）。只读：编辑在项目设置里。 -->
+            <div
+              v-if="carriedSkills.length"
+              class="profile__card profile__card--pad profile__skills"
+              data-section="carried-skills"
+            >
+              <div class="profile__card-head">
+                <span class="t-eyebrow-read">{{ t('users.profile.inProject.skills') }}</span>
+              </div>
+              <ul class="profile__sockets">
+                <li v-for="name in carriedSkills" :key="name" class="profile__socket" :title="name">
+                  <span class="profile__socket-hole"
+                    ><v-icon size="18">{{ skillIcon(name) }}</v-icon></span
+                  >
+                  <span class="profile__socket-name">{{ name }}</span>
+                </li>
+              </ul>
+            </div>
             <div class="profile__pair">
               <!-- 收件箱只有本人打得开，别人的主页上这一格永远是空的，所以只在自己的页上画。 -->
               <div v-if="isSelf" class="profile__card profile__card--pad">
@@ -722,6 +763,45 @@ const dmRoute = computed(() => {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 12px;
+}
+/* 带的技能：一排插座。窄屏上在自己这一排里横着滑，不把整页顶宽。 */
+.profile__sockets {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 2px;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+.profile__sockets::-webkit-scrollbar {
+  display: none;
+}
+.profile__socket {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px 3px 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--code-bg);
+}
+.profile__socket-hole {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--ink);
+}
+.profile__socket-name {
+  font-size: 13px;
+  /* 整颗插座是深底（`--code-bg`），名字必须用配它的那种字色，不能跟着 `--ink`
+     在浅色主题里翻成深字——那样就是深底深字，名字看不见。 */
+  color: var(--code-ink);
 }
 .profile__ink {
   color: var(--ink);

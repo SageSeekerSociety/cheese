@@ -37,6 +37,7 @@ from app.domain.notification.services import (
     asks_for_decision,
 )
 from app.domain.project.repositories import ProjectRepository
+from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import awaiting, presentation
 from app.domain.room_task.repositories import TaskRepository
@@ -136,6 +137,15 @@ async def waiting_items(
     blocks = BlockRepository(db)
     task_cards = await AcceptService(db).latest_cards_by_task([b.id for b in briefs])
     room_cards = await _room_cards(db, topic_ids)
+    # 卡递给谁在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上：这两批卡
+    # 的评审人各一次查完，下面每行只做一次集合查询（`address` 要的就是这个集合）。
+    card_repo = AcceptCardRepository(db)
+    task_card_reviewers = await card_repo.reviewer_handles_for_cards(
+        [c.id for c in task_cards.values()]
+    )
+    room_card_reviewers = await card_repo.reviewer_handles_for_cards(
+        [c.id for c in room_cards.values()]
+    )
     # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻
     # 就记在题上——不是事后去问轮次：芝士问完就收尾，那一轮早就关了。
     # A question asked in a 支线 is its channel's, and opens on that 支线.
@@ -173,7 +183,7 @@ async def waiting_items(
         or b.id in asked
         or (
             task_cards.get(b.id) is not None
-            and task_cards[b.id].reviewer_handle == handle
+            and handle in (task_card_reviewers.get(task_cards[b.id].id) or ())
         )
     ]
     tasks = await TaskRepository(db).list_by_ids(task_ids)
@@ -198,9 +208,10 @@ async def waiting_items(
         )
         card = task_cards.get(task.id)
         asking = asked.get(task.id)
+        card_reviewers = tuple(task_card_reviewers.get(card.id, [])) if card else ()
         addressed = address(
             Event(
-                reviewers=() if card is None else (card.reviewer_handle,),
+                reviewers=card_reviewers,
                 reporter=task.reporter_handle,
                 asked=asking,
                 # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知
@@ -250,10 +261,8 @@ async def waiting_items(
         # 字段这里都是空的。两者都不沾的，算到哪一格都写不出他的名字，先跳过，省下
         # 一次 `room_presentation`。
         card = room_cards.get(topic.id)
-        if not (
-            asked.get(topic.id) == handle
-            or (card is not None and card.reviewer_handle == handle)
-        ):
+        room_reviewers = tuple(room_card_reviewers.get(card.id, [])) if card else ()
+        if not (asked.get(topic.id) == handle or handle in room_reviewers):
             continue
         shown = presentation.room_presentation(
             presentation.facts_for_room(
@@ -269,7 +278,7 @@ async def waiting_items(
         addressed = address(
             # 房间没有「提需求的人」这一栏 —— 那是一条活上的字段。
             Event(
-                reviewers=() if card is None else (card.reviewer_handle,),
+                reviewers=room_reviewers,
                 asked=asked.get(topic.id),
             ),
             hand_of(shown.column),

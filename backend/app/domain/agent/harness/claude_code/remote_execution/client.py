@@ -161,6 +161,20 @@ PRIVATE_INSTRUCTIONS = (
 )
 
 
+def _fuse_available() -> bool:
+    """这台机器能不能挂转发项目：能不能 import fuse（也就有没有 libfuse）。
+
+    ``fusepy`` 在 import 时就找动态库，找不到就 raise；所以一次 import 就是一次
+    现成的探测，不必自己去 find_library。
+    """
+    try:
+        # deferred-import: fusepy is optional; importing it probes for libfuse
+        import fuse  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
 def _ensure_sync_agents_hook(hooks: dict) -> None:
     """发现层（session_launch.session_settings 的同款）：模型分身定义随会话启动
     和每个提示刷新。seed 的 settings.json 可能来自任一架构、任何年代，所以
@@ -379,7 +393,15 @@ def prepare(
         from release import MOUNT_LIVE, mount_state, release_mount
 
     mount_log = directory / "forwarded-project.log"
-    if forwarded and not local and mount_state(workspace) != MOUNT_LIVE:
+    # ponytail: 没有 libfuse 的机器（macOS 未装 macFUSE）挂不了转发项目，会话会死
+    # 在启动前，一整个房间再无回应。本地开发退化成普通目录：屏幕上没有转发视图，
+    # 项目文件仍由下面的 `link_forwarded_user_context` 从 context tree 落到 view
+    # 里（本演示的 context tree 本来就是空的）。上限：屏幕里的写入不会同步回平台。
+    # 升级路径：装上 macFUSE（或 fuse-t）后 `import fuse` 成立，此分支自然消失。
+    mountable = _fuse_available()
+    if forwarded and not local and not mountable:
+        workspace.mkdir(parents=True, exist_ok=True)
+    if forwarded and not local and mountable and mount_state(workspace) != MOUNT_LIVE:
         # A previous mount whose server died still occupies this directory and
         # cannot be mounted over, so without this the spawn below fails and the
         # room is stuck reporting a mount failure on every turn from then on.
@@ -1079,6 +1101,35 @@ def enter(target_path, argv):
     ]
     problem = _unplaceable(seen, needed)
     if problem:
+        # ponytail: macOS 没有 user/mount namespace，`_place` 那套装不出来，会话本来
+        # 就死在下面那句 SystemExit。本地开发退一步：就在**执行器自己的 workspace**
+        # 里跑（`target["workspace"]`，即执行器的 root）——路径与执行机逐字一致，
+        # 屏幕上不会出现两套路径。
+        #
+        # **不能**chdir 到 `view`（`central_workspace`）：那是中央机上的项目视图，
+        # 会话的 cwd 会原样作为命令的 `cwd` 发给执行器，而那条路径不在执行器沙箱的
+        # 可读集内（`confinement.seatbelt_profile` 的 `(deny file-read* (subpath
+        # owner))`），执行器 `runtime.shell` 里那句 `cwd.is_dir()` 于是抛 EPERM
+        # （`pathlib` 只吞 ENOENT/ENOTDIR/EBADF/ELOOP），整个 502、屏幕上报「机器
+        # 够不着」。实测见 docs/manual/dev/execution.md。
+        #
+        # 上限：macOS 上看不到平台侧的项目视图，只在执行器的 checkout 里干活；执行器
+        # 不在本机时 workspace 不存在，仍按下面的 SystemExit 大声拒绝（不许悄悄换一台
+        # 机器的路径）。升级路径：装上 macFUSE（或 fuse-t）让 `_place` 有退路，或会话机
+        # 是 Linux —— 那时这条分支不触发。
+        #
+        # **机器还没租到时不能拒绝**：`kind=deferred` 的会话 `workspace` 是占位路径
+        # `/unavailable-project`，它按设计就是先起来、等租约到了再因绑定变化重开
+        # （`_take_leased_machine`）。这里拒绝会让一整个房间的屏幕再也起不来 ——
+        # 那比「起得来但命令 502」更糟。所以拿不到真 workspace 时仍落在 `view` 里，
+        # 只把那一条「命令 cwd 落到执行器看不见的路径」交给执行器那侧兜底
+        # （`runtime.shell` 的 `cwd.is_dir()` 不再因 EPERM 整轮 502）。
+        workspace = Path(target["workspace"])
+        if sys.platform != "linux":
+            usable = workspace.is_dir()
+            os.chdir(workspace if usable else view)
+            os.environ["PWD"] = os.getcwd()
+            os.execv(program, argv)
         raise SystemExit(
             f"This session cannot see its project at {seen!r}, the executor's "
             f"path: {problem}"

@@ -31,6 +31,9 @@ def delivery_task(client, room_id, *, new=False, commit=True):
                 owner_handle="alice",
                 created_by="alice",
                 reviewer_handle="alice",
+                # 递卡人 = 提需求的人（`Task.reporter_handle`）。撤回一张卡
+                # （reject/void）只认递卡人或布防人，所以这里的卡是 alice 递的。
+                reporter_handle="alice",
             )
             # A task with something to deliver is one its owner has started.
             task.started_at = datetime.now(UTC)

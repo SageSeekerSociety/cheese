@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import BaseError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent.carried_bodies import carried_bodies
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.prompt import (
     TASK_MACHINE_NOT_STARTED,
@@ -48,7 +49,6 @@ from app.domain.agent.room.thread_context import thread_context as _thread_conte
 from app.domain.agent.room.thread_context import thread_tasks as _thread_tasks
 from app.domain.agent.session_host.contract import Image
 from app.domain.agent.session_host.host import keeps_memory
-from app.domain.agent.skills import native_skill_bodies
 from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
 from app.domain.agent.turn.state.inputs import _addressed_to, _pending_input_blocks
 from app.domain.agent.turn.state.live import LiveWork
@@ -104,6 +104,27 @@ def _proposal_frames(landed: dict | None) -> list[dict]:
     return frames
 
 
+def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
+    """这一轮谁带哪些技能进提示词：队友自己带的（userskill），没带就回落到这间房
+    点亮的。
+
+    userskill 存在 `agent_instances.configuration.skills`，出厂时从 preset 抄进来
+    （`agent_instance/services.initial_configuration`），改它要 manager
+    （`projects_agents._changes_an_advanced_setting`）。技能跟着人走：学术研究的
+    队友不该继承全栈工程队友的构建约定，所以**带了自己的就不再叠加房间的**——两份
+    都进提示词，只会让模型在互相冲突的规矩里挑一份。
+
+    两边都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
+    这层不存在时逐字节相同（和 `_TurnContext.teaching` 为 None 是同一个理由）。
+    """
+    carried = [
+        name
+        for name in (agent.configuration or {}).get("skills") or []
+        if isinstance(name, str)
+    ]
+    return carried or list(topic.skills or [])
+
+
 @dataclass(frozen=True, slots=True)
 class Launch:
     """What a seat's session is started with, read without opening a turn
@@ -146,10 +167,10 @@ class TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
-    # 这间房点亮的技能（技能广场）。名字取自 `shipped_skill_names()`，正文由
-    # `native_skill_bodies()` 拼进这一轮的系统提示词，所以房间里每条会话都跟着走。
-    # 空 = 这间房只用平台自己的那份指引。
-    room_skills: list[str]
+    # 这一轮带的技能正文：队友自己的 userskill，没带就回落到这间房点亮的
+    # （`carried_skills` 定名单，`carried_bodies` 取正文 —— 平台发货的那几个平台
+    # 手里就有，机器上的那几条按索引现读回来）。空 = 只用平台自己的那份指引。
+    skill_bodies: str
 
     # What this turn was given, and what it is being asked about.
     prompt_text: str
@@ -798,7 +819,9 @@ class TurnPreparation:
             topic_refs_for_prompt=topic_refs_for_prompt,
             artifacts=artifact_refs,
             teaching=teaching,
-            room_skills=list(topic.skills or []),
+            skill_bodies=await carried_bodies(
+                session, topic, carried_skills(agent, topic)
+            ),
             turn_images=turn_images,
             untitled=untitled,
         )
@@ -868,9 +891,13 @@ class TurnPreparation:
         # on what is producing the output, not on the machine underneath it.
         runtime = provider
         yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-        # 技能广场点亮的原生技能：正文接在平台指引后面，房间里每条会话都拿到。
-        room_bodies = native_skill_bodies(prepared.room_skills)
-        guidance = f"{self.skills}\n\n---\n\n{room_bodies}" if room_bodies else self.skills
+        # 这一轮带的技能（`carried_bodies`）：平台发货的正文 + 机器上那几条现读回来
+        # 的正文，接在平台指引后面，这一轮就拿到。
+        guidance = (
+            f"{self.skills}\n\n---\n\n{prepared.skill_bodies}"
+            if prepared.skill_bodies
+            else self.skills
+        )
         system_prompt = session_system_prompt(
             self.base_prompt,
             guidance,

@@ -181,6 +181,8 @@ CALLS = {
         "PATCH",
         "/skills/m-1",
     ),
+    "skills_search": ({"query": "周报"}, "POST", "/agent/skills/search"),
+    "skills_read": ({"name": "weekly-report"}, "POST", "/agent/skills/read"),
     "platform_request": (
         {
             "method": "PUT",

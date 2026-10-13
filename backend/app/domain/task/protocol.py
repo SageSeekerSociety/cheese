@@ -46,6 +46,14 @@ from typing import Any
 #: two would disagree the first time someone edited one of them.
 _OVERRIDABLE = ("resource_pack", "conditions", "default_role", "shell", "teaching")
 
+#: 题目包 (`resource_pack`) 里那两个由出题人带的 AI 配置键。它们和 `compute_credits`
+#: 同住一个 JSON 列 —— 不新开列、不新增协议字段的写入口：题目包本来就是「这门课给
+#: 建项目的人准备的东西」，一块 prompt 与一组 skill 名字正是它的一份子。整键替换的
+#: 语义照旧（`resource_pack` 在每一层整份覆盖），所以「这道题的包」取代「项目集
+#: 那一个包」，和其余字段同一个规矩。
+_PACK_PROMPT_KEY = "prompt"
+_PACK_SKILLS_KEY = "skills"
+
 
 def _text(value: Any) -> str | None:
     """A non-blank string, or None. Whitespace-only is None: a field a teacher
@@ -113,6 +121,22 @@ class Teaching:
     #: What the course has not taught yet — constructs a solution must not lean
     #: on, e.g. `["递归"]` in a week that has only reached loops.
     avoid_in_code: list[str] = field(default_factory=list)
+    #: 本节学习目标 — what the student should be able to do by the end. Its
+    #: presence is also what makes a 教学安排 EDUCATIONAL: a config with goals
+    #: and no `system_prompt` gets the default teaching template (Socratic +
+    #: 形态纪律, see `harness.prompt`), because "学习目标" is the teacher saying
+    #: "this one is here to learn" — and a blank prompt then means "use your
+    #: teaching manners", not "have no manners".
+    learning_goals: list[str] = field(default_factory=list)
+    #: 出题人的**私有**教学指导（#944 的第二种可见性）。与 `system_prompt` 同一个
+    #: 机制、同一份继承、同一个「用 prompt 说」的实现路径 —— 区别只在**谁读得到它**：
+    #: 它进 AI 队友的 system prompt（队友照它做），但**不进任何学生可读的响应**
+    #: （`teaching_to_api` 默认不带它；只有出题人 / 板管理员那几条读写才带）。
+    #:
+    #: 这正是 #944 那句「教学指令优先用 prompt 实现，不新造权限开关」：出题人要给的
+    #: 参考答案、评分口径这类**不该进学生资料集**的东西，写在这段 prompt 里就够，
+    #: 不需要再为它造一套可见性权限 —— 不提就是私有，提给谁看是接口那一层的事。
+    private_prompt: str | None = None
     #: 课件/知识材料 by REFERENCE, not by copy. Resolved to names and links when
     #: the prompt is built (`app.domain.task.teaching`), so a renamed 课件 or a
     #: rotated link is picked up without re-saving the 项目集 — and so this key
@@ -128,9 +152,11 @@ class Teaching:
         of."""
         return not (
             self.system_prompt
+            or self.private_prompt
             or self.current_week is not None
             or self.allowed_topics
             or self.avoid_in_code
+            or self.learning_goals
             or self.material_ids
             or self.knowledge_ids
         )
@@ -146,11 +172,13 @@ class Teaching:
         """
         allowed = "、".join(self.allowed_topics) or "（未指定）"
         avoid = "、".join(self.avoid_in_code) or "（未指定）"
+        goals = "、".join(self.learning_goals) or "（未指定）"
         week = str(self.current_week) if self.current_week is not None else "（未指定）"
         for token, value in (
             ("{current_week}", week),
             ("{allowed_topics}", allowed),
             ("{avoid_in_code}", avoid),
+            ("{learning_goals}", goals),
         ):
             template = template.replace(token, value)
         return template
@@ -170,9 +198,11 @@ class Teaching:
             return cls()
         return cls(
             system_prompt=_text(raw.get("system_prompt")),
+            private_prompt=_text(raw.get("private_prompt")),
             current_week=_week(raw.get("current_week")),
             allowed_topics=_texts(raw.get("allowed_topics")),
             avoid_in_code=_texts(raw.get("avoid_in_code")),
+            learning_goals=_texts(raw.get("learning_goals")),
             material_ids=_ids(raw.get("material_ids")),
             knowledge_ids=_ids(raw.get("knowledge_ids")),
         )
@@ -217,6 +247,23 @@ class Protocol:
         if isinstance(value, bool) or not isinstance(value, int | float):
             return 0.0
         return float(value) if value > 0 else 0.0
+
+    @property
+    def prompt(self) -> str | None:
+        """题目包里的「手动加的一段 prompt」—— 建项目时并入默认队友的人设正文。
+
+        和 `compute_credits` 同住 `resource_pack`，走同一条继承（`_OVERRIDABLE` 的
+        整键替换）。空 / 非字符串读成 None：一个 tab 过去的空格不是一段 prompt。
+        """
+        return _text(self.resource_pack.get(_PACK_PROMPT_KEY))
+
+    @property
+    def skills(self) -> list[str]:
+        """题目包里指定的一组 skill 名字 —— 建项目时并入默认队友的技能。
+
+        与 `prompt` 同源同规矩；去重、去空白，顺序即给定的顺序。
+        """
+        return _texts(self.resource_pack.get(_PACK_SKILLS_KEY))
 
     def mentor_required_for(self, topic_title: str) -> bool:
         """Does a condition demand a mentor accept a topic with this title?

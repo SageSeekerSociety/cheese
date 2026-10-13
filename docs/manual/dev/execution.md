@@ -10,6 +10,7 @@ covers:
   - backend/app/domain/agent/toolchain.py
   - backend/app/domain/agent/capability/matrix.py
   - backend/app/domain/agent/harness/channel.py
+  - backend/app/domain/agent/harness/claude_code/remote_execution/client.py
 ---
 
 # 执行通道 {#execution}
@@ -23,6 +24,22 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 - 会话进程（对话、记忆、平台工具、聊天的收发）不依赖工作机器在不在；干活的那半（文件、命令、项目 MCP）要机器。
 - 这句话是被写进错误文本的：机器够不着时 agent 读到的是 `MACHINE_OUT_OF_REACH`——「这台机器现在够不着：文件、命令、项目 MCP 不可用；对话、记忆、平台工具可用。」它替掉的是 `Executor HTTP request failed: 502` 这种裸状态码，因为状态码告诉 agent「有东西坏了」，它这一轮需要知道的是还剩哪些通路。
 - 会话还没租到机器时看到的工作区是占位路径 `/unavailable-project`（`DEFERRED_WORKSPACE`）；路径在离开这台机器时才是那台机器上的路径。
+
+### 会话的 cwd 必须是**执行机上**的路径 {#cwd}
+
+会话（`client.py` 的 `enter`）给执行器的每条命令都带着自己的 cwd，执行器先 `cwd.is_dir()` 才决定用不用它（`runtime.py` 的 `shell`）。所以那个 cwd 必须落在**执行器那台机器**上，且落在执行器沙箱的可读集里：
+
+- **Linux**：`enter` 用 user + mount namespace 把平台侧的项目视图挂到执行器自己的路径上（`_place`），cwd 就是那个路径。正常。
+- **macOS**：没有 user/mount namespace（没装 macFUSE 时连挂载都没有），`_unplaceable` 直接判不可能。退让的那条路优先拿执行器自己的 workspace 当 cwd（`target["workspace"]`，即执行器的 `root`）；机器还没租到、那个路径还是占位符时就仍落在 `view`（见下）。
+- **不许**退让到平台侧的视图路径（`central_workspace`、席位里的 `forwarded-project`）：它在会话机上，不在执行器的可读集内。`confinement.seatbelt_profile` 是 `(deny file-read* (subpath owner))` + 白名单，**按前缀拒、与路径存不存在无关**；执行器 `cwd.is_dir()` 于是拿到 EPERM（`pathlib` 只吞 ENOENT/ENOTDIR/EBADF/ELOOP，**不吞 EPERM**）→ 抛 → 502 → agent 读成 `MACHINE_OUT_OF_REACH`，屏幕上整轮报「这台机器现在够不着」。
+- 2026-10-11 实测（macOS 自有设备 + 隔离档，跨机与同机都会中）：`/usr/bin/log show --predicate 'eventMessage CONTAINS "forwarded-project"'` 给出 `Sandbox: Python(<执行器 pid>) deny(1) file-read-metadata …/seats/<席位>/remote-session/forwarded-project`，就是这一条。
+
+**兜底落在两处，只有第二处是那剂解药**（2026-10-11 实测定案）：
+
+1. 会话侧（`client.py` 的 `enter`）：非 Linux 时如果 `target["workspace"]` 是**真目录**（机器已租到）就在那儿起；还是占位路径 `/unavailable-project`（`kind=deferred`，机器还没租到）就**仍旧落在 `view`** —— 这一档按设计就是先起来、等租约到了再重开，在这里拒绝会让整个房间的屏幕起不来。
+2. 执行器侧（`runtime.py` 的 `shell`）：`cwd.is_dir()` 外面包一层 `OSError`。会话给的 cwd **看不见**（EPERM）与「它不在了」当同一件事，退回执行器自己的 `root`。
+
+**实测记录**：房间档位 `isolated`、屏幕在 deferred 阶段起（cwd 落在 `view`）时，内核**仍会**记下那条 `deny(1) file-read-metadata`（一次实测：一轮里 9 条），但**不再致命** —— 执行器退回自己的 root，命令照跑。所以：屏幕上「够不着」消失、Wolfram 技能能出结果，但**会话进程的 cwd 仍是那份视图**（不是执行器的 workspace），落在执行器 workspace 的是**它跑的命令**。这一点正是 `client.py` 里那句 ponytail 说的「少了命名空间那层遮挡，路径字符串与执行机不一致」，是本地开发的已知上限。
 
 ## 传输层：三种形态 {#transport}
 

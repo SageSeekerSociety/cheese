@@ -1,6 +1,7 @@
 {
   "home": "Home",
   "inbox": "Inbox",
+  "market": "Market",
   "newProject": "New {project}",
   "project": {
     "library": "Library",

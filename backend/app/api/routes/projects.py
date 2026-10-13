@@ -542,11 +542,7 @@ async def _project_task_rows(db, chat: ChatService, me: str, tasks: list) -> lis
         asking = asked.get(task.id)
         awaits = address(
             Event(
-                reviewers=(
-                    ()
-                    if card is None or not card.reviewer_handle
-                    else (card.reviewer_handle,)
-                ),
+                reviewers=card.reviewer_handles if card is not None else (),
                 reporter=task.reporter_handle,
                 asked=asking,
                 # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知、

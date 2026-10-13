@@ -34,7 +34,7 @@ SPACE_WEEK = {
     "allowedTopics": ["空间话题"],
 }
 
-#: All six fields set, in the request's spelling — what the settings form sends.
+#: All seven fields set, in the request's spelling — what the settings form sends.
 #: No 课件 / 知识 ids: naming one needs a real row, and the reference check has
 #: its own tests (`test_teaching_references.py`).
 FULL_TEACHING = {
@@ -42,6 +42,7 @@ FULL_TEACHING = {
     "currentWeek": 3,
     "allowedTopics": ["循环", "数组"],
     "avoidInCode": ["递归"],
+    "learningGoals": ["会读栈追踪"],
     "materialIds": [],
     "knowledgeIds": [],
 }
@@ -52,6 +53,7 @@ EMPTY_TEACHING = {
     "currentWeek": None,
     "allowedTopics": [],
     "avoidInCode": [],
+    "learningGoals": [],
     "materialIds": [],
     "knowledgeIds": [],
 }

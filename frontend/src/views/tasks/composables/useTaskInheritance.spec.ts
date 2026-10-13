@@ -24,6 +24,8 @@ function payload(taskId: number): TaskInheritanceData {
     taskId,
     spaceId: 1,
     resourcePack: { compute_credits: taskId * 100 },
+    agent: null,
+    prompt: null,
     teaching: {
       systemPrompt: null,
       currentWeek: null,

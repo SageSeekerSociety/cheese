@@ -128,11 +128,18 @@ class TeachingRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     #: system prompt 模板；`{current_week}` / `{allowed_topics}` /
-    #: `{avoid_in_code}` 在里面会被本周的值替换掉。
+    #: `{avoid_in_code}` / `{learning_goals}` 在里面会被本周的值替换掉。
     system_prompt: str | None = Field(default=None, alias="systemPrompt")
+    #: 出题人的**私有**指导（#944 第二种可见性）：进 AI 队友的 prompt、**不进学生
+    #: 可读的响应**。写它和写 `systemPrompt` 同一条路，读它只在出题人/管理员那几条
+    #: 读写上（`teaching_to_api(include_private=True)`）。
+    private_prompt: str | None = Field(default=None, alias="privatePrompt")
     current_week: int | None = Field(default=None, alias="currentWeek", ge=0)
     allowed_topics: list[str] = Field(default_factory=list, alias="allowedTopics")
     avoid_in_code: list[str] = Field(default_factory=list, alias="avoidInCode")
+    #: 本节学习目标。写上它这份指导就按教育性走：`system_prompt` 留空时带上
+    #: 平台的默认教学要求（`harness.prompt.DEFAULT_TEACHING_PROMPT`）。
+    learning_goals: list[str] = Field(default_factory=list, alias="learningGoals")
     #: 课件 / 知识材料的引用。正文不在这里 —— 它们各自有自己的库和接口，这里只
     #: 存指向它们的 id。
     material_ids: list[Annotated[int, Field(gt=0)]] = Field(
@@ -143,7 +150,7 @@ class TeachingRequest(BaseModel):
     )
 
 
-def teaching_to_api(teaching: Teaching) -> dict:
+def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
     """The read side of `TeachingRequest`: the same six camelCase keys.
 
     The column stores snake_case (the spelling `Teaching.from_json` reads), and
@@ -151,15 +158,24 @@ def teaching_to_api(teaching: Teaching) -> dict:
     the stored dict: a form fills itself from what it reads and saves that back
     whole, so a read in another spelling shows it blank and the next save erases
     the stored config.
+
+    ``include_private`` is the one key that is NOT always present: the 私有指导
+    (`privatePrompt`) is 出题人可见, so it is carried only on the reads/writes a
+    teacher or a board manager is looking at. Default off — every reader that
+    did not ask is a student's, and a forgotten call site then leaks nothing.
     """
-    return {
+    data = {
         "systemPrompt": teaching.system_prompt,
         "currentWeek": teaching.current_week,
         "allowedTopics": list(teaching.allowed_topics),
         "avoidInCode": list(teaching.avoid_in_code),
+        "learningGoals": list(teaching.learning_goals),
         "materialIds": list(teaching.material_ids),
         "knowledgeIds": list(teaching.knowledge_ids),
     }
+    if include_private:
+        data["privatePrompt"] = teaching.private_prompt
+    return data
 
 
 class CreateSpaceRequest(BaseModel):
@@ -222,6 +238,10 @@ class CreateSpaceCategoryRequest(BaseModel):
     name: str = Field(..., min_length=1)
     description: str | None = None
     display_order: int = Field(default=0, alias="displayOrder")
+    #: 项目集级默认队友 (#944) — same semantics as the PATCH: omitting it leaves
+    #: the column unset; an empty string means the same as omitting it here
+    #: (there is no inherited value to clear on a row that does not exist yet).
+    default_role: str | None = Field(default=None, alias="defaultRole")
 
 
 class PatchSpaceCategoryRequest(BaseModel):
@@ -237,6 +257,10 @@ class PatchSpaceCategoryRequest(BaseModel):
     #: about than either version alone); omitting it leaves it exactly as it is,
     #: so a PATCH that only renames a 项目集 does not wipe the 教学安排.
     teaching: TeachingRequest | None = None
+    #: 项目集级默认队友 (#944) — a platform-shipped agent type name every 题目
+    #: under this 分组 starts from. Omitting it leaves the stored value alone; an
+    #: empty string clears it (the 题目 then inherits nothing at this level).
+    default_role: str | None = Field(default=None, alias="defaultRole")
 
 
 class CreateSpaceDomainGroupRequest(BaseModel):
@@ -450,7 +474,7 @@ async def _ensure_space_admin(*, db, space_id: int, user_id: int) -> None:
         raise ForbiddenError("Only a board manager can perform this action")
 
 
-def _space_to_api_model(space: SpaceRow) -> dict:
+def _space_to_api_model(space: SpaceRow, *, include_private: bool = False) -> dict:
     created_at_ms = int(space.created_at.timestamp() * 1000) if space.created_at else 0
     updated_at_ms = int(space.updated_at.timestamp() * 1000) if space.updated_at else 0
     return {
@@ -466,9 +490,11 @@ def _space_to_api_model(space: SpaceRow) -> dict:
         "defaultCategoryId": space.default_category_id,
         "taskTemplates": json.dumps(space.task_templates or []),
         # 空间级「给 AI 队友的指导」(#944) — the settings form reads it back, so it
-        # has to be here rather than only on the write path.
+        # has to be here rather than only on the write path. `include_private` is
+        # set only where the caller is a board manager (the settings page).
         "teaching": teaching_to_api(
-            Teaching.from_json(getattr(space, "teaching", None))
+            Teaching.from_json(getattr(space, "teaching", None)),
+            include_private=include_private,
         ),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
@@ -556,7 +582,9 @@ def _member_to_api_model(
     return result
 
 
-def _category_to_api_model(cat: SpaceCategoryRow) -> dict:
+def _category_to_api_model(
+    cat: SpaceCategoryRow, *, include_private: bool = False
+) -> dict:
     created_at_ms = int(cat.created_at.timestamp() * 1000) if cat.created_at else 0
     updated_at_ms = int(cat.updated_at.timestamp() * 1000) if cat.updated_at else 0
     raw_archived_at = getattr(cat, "archived_at", None)
@@ -570,8 +598,14 @@ def _category_to_api_model(cat: SpaceCategoryRow) -> dict:
         "description": cat.description,
         "displayOrder": cat.display_order,
         # 课程级教学配置 (#8d772257) — the edit form reads it back, so it has to be
-        # here rather than only on the write path.
-        "teaching": teaching_to_api(Teaching.from_json(getattr(cat, "teaching", None))),
+        # here rather than only on the write path. `include_private` mirrors the
+        # space above: only a board manager gets the 私有指导.
+        "teaching": teaching_to_api(
+            Teaching.from_json(getattr(cat, "teaching", None)),
+            include_private=include_private,
+        ),
+        # 项目集级默认队友 (#944) — the edit form reads it back too.
+        "defaultRole": getattr(cat, "default_role", None),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "archivedAt": archived_at_ms,
@@ -717,16 +751,21 @@ async def _build_full_space_payload(
     *,
     service: SpaceService,
     db,
+    include_private: bool = False,
 ) -> dict:
     """Build a Space response dict that matches the frontend Space type.
 
     Always includes `admins` (hydrated) and `classificationTopics` so that any
     GET/POST/PATCH response is interchangeable from the frontend's perspective
     (its store overwrites local state with the response payload).
+
+    ``include_private`` is passed through to the teaching payload — a board
+    manager's view (settings page, create/patch reply) carries the 私有指导;
+    a member's does not.
     """
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
-    space_data = _space_to_api_model(space)
+    space_data = _space_to_api_model(space, include_private=include_private)
     space_data["admins"] = await _build_admins_payload(
         space.id, service=service, user_repo=user_repo, profile_repo=profile_repo
     )
@@ -755,10 +794,18 @@ async def get_space(
         )
     await _ensure_space_visible(db=db, space_id=space_id, user_id=auth_user.user_id)
 
+    # 私有指导只对这块板的管理员可见（#944 的第二种可见性）。一次判定同时决定空间
+    # 与项目集两处的 `teaching` —— 一个屏幕上的两份配置要么都看得到，要么都看不到。
+    may_manage = auth_user.user_id > 0 and await is_space_admin(
+        session=db, space_id=space_id, user_id=auth_user.user_id
+    )
+
     categories = None
     if queryCategories:
         cats = await service.list_categories(space_id=space_id, include_archived=False)
-        categories = [_category_to_api_model(c) for c in cats]
+        categories = [
+            _category_to_api_model(c, include_private=may_manage) for c in cats
+        ]
 
     my_rank = None
     viewer_id = auth_user.user_id if auth_user.user_id > 0 else None
@@ -767,7 +814,9 @@ async def get_space(
 
     # admins / classificationTopics 都由这一个构建器给齐：前端拿到任何
     # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, include_private=may_manage
+    )
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.  # noqa: E501
 
     data: dict = {
@@ -901,7 +950,9 @@ async def create_space(
     # 客户端拿到 201 时这一行还没落地 —— 紧接着的 POST /admin/spaces/{id}/review
     # 就会 404「Space not found」（合并队列 run 36296605673 实测）。
     await db.commit()
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, include_private=True
+    )
     # Every 题目版 is created holding a code (see SpaceService.create_space),
     # so hand it back here rather than making the creator come and ask.
     codes = await service.list_invite_codes(
@@ -969,7 +1020,9 @@ async def patch_space(
             topic_ids=classification_topic_ids,
             actor_user_id=auth_user.user_id,
         )
-    space_data = await _build_full_space_payload(space, service=service, db=db)
+    space_data = await _build_full_space_payload(
+        space, service=service, db=db, include_private=True
+    )
     return {"code": 200, "message": "OK", "data": {"space": space_data}}
 
 

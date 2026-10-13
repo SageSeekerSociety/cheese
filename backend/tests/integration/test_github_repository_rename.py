@@ -141,7 +141,6 @@ def _bound_project(client, github, *, repository_id, card_repo=OLD):
                 AcceptCard(
                     topic_id=uuid.UUID(room),
                     task_id=uuid.UUID(task),
-                    reviewer_handle="alice",
                     status=AcceptStatus.pending,
                     pr_number=7,
                     pr_url=f"https://github.com/{card_repo}/pull/7",

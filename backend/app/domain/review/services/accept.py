@@ -75,7 +75,7 @@ async def accept(
         raise ValidationError(say("reviewEndedNoAccept"))
     # 递给某个具体的人 (spec §4.4): only the routed reviewer may accept —
     # decided_by is the caller's verified actor handle, never body-trusted.
-    if decided_by != card.reviewer_handle:
+    if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("acceptReviewerOnly"))
     topic = await self._topic_or_404(card.topic_id)
     # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。

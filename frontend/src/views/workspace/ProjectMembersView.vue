@@ -184,6 +184,12 @@ function openAgentDm(a: ProjectAgent) {
   void router.push({ name: 'workspace-dm', params: { projectId: props.projectId, peer: agentDmKey(a.handle) } })
 }
 
+/** AI 队友也有资料页。它那一格只回答「带了哪几颗」，是只读的；改在项目设置里（`AgentTeamSettings`）。
+ *  地址用**座位名**（`seat_handle`）——资料页拿它跟 `/projects/{id}/agents` 对得上（见 `ProfileView`）。 */
+function openAgentProfile(a: ProjectAgent) {
+  void router.push({ name: 'member', params: { projectId: props.projectId, handle: a.seat_handle } })
+}
+
 function messageOf(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback
 }
@@ -440,7 +446,7 @@ useCommands(() => [
       <div v-if="agents.length" class="mb-6">
         <div class="t-eyebrow mb-2">{{ t('work.members.sectionAgents') }} · {{ agents.length }}</div>
         <v-card v-for="a in agents" :key="a.handle" class="mb-2 agent-row" variant="outlined">
-          <div class="d-flex align-center pa-3">
+          <div class="d-flex align-center pa-3" @click="openAgentProfile(a)">
             <CheeseAvatar
               :name="teammateName(a.display_name, a.name_source) || a.handle"
               :handle="a.seat_handle"
@@ -469,7 +475,7 @@ useCommands(() => [
             </span>
             <BaseButton
               size="sm"
-              @click="
+              @click.stop="
                 router.push({ name: 'project-settings', params: { projectId: props.projectId, section: 'agents' } })
               "
             >
@@ -547,11 +553,13 @@ useCommands(() => [
 </template>
 
 <style scoped>
-.member-row {
+.member-row,
+.agent-row {
   cursor: pointer;
 }
 
-.member-row:hover {
+.member-row:hover,
+.agent-row:hover {
   border-color: var(--line-2);
 }
 

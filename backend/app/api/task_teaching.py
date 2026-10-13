@@ -21,7 +21,7 @@ from app.domain.task.models import Task
 from app.domain.task.protocol import Teaching
 
 
-def read_task_teaching(task: Task) -> dict:
+def read_task_teaching(task: Task, *, include_private: bool = False) -> dict:
     """This 题目's own 「给 AI 队友的指导」(#944), in the response shape.
 
     Read off `protocol_override["teaching"]` — this level's own override, not
@@ -29,10 +29,14 @@ def read_task_teaching(task: Task) -> dict:
     `Space.teaching` and `SpaceCategory.teaching` are. `protocol_override` is
     free-form and may hold other keys, so only the one this feature owns is
     reported; anything else stays internal.
+
+    ``include_private`` carries the 私有指导 (`privatePrompt`) — 出题人可见, so
+    only the reads a teacher is looking at ask for it (the 发题页 detail and the
+    PATCH reply). Default off: a student's read must not carry it.
     """
     override = getattr(task, "protocol_override", None)
     raw = override.get("teaching") if isinstance(override, dict) else None
-    return teaching_to_api(Teaching.from_json(raw))
+    return teaching_to_api(Teaching.from_json(raw), include_private=include_private)
 
 
 def coerce_teaching(raw: object) -> dict | None:
@@ -91,4 +95,32 @@ def apply_task_teaching(task: Task, teaching: dict | None) -> None:
     task.protocol_override = {
         **(task.protocol_override or {}),
         "teaching": teaching,
+    }
+
+
+def read_task_default_role(task: Task) -> str | None:
+    """This 题目's own `default_role` override (#944), or None.
+
+    The RAW override at this level — not the resolved winner — for the same
+    reason as `read_task_teaching`: the 发题页 shows what THIS 题目 wrote, and
+    blank means 「继承上层的」. A blank string in the column is not a role, so
+    it reads back as None.
+    """
+    override = getattr(task, "protocol_override", None)
+    raw = override.get("default_role") if isinstance(override, dict) else None
+    return raw if isinstance(raw, str) and raw.strip() else None
+
+
+def apply_task_default_role(task: Task, role: str | None) -> None:
+    """整份替换这道题覆盖里的 `default_role` 那一格，其它覆盖键原样保留。
+
+    `None` 是「这一格没被写」—— 直接不写（省掉这个字段 = 这道题沿用项目集那份）。
+    空串**是一次写**：这道题明说「我不要默认队友」，于是它盖住项目集那份 —— 这正是
+    `resolve` 的整键替换语义（`"" or None` 落成 None，但它已经赢了那一层）。
+    """
+    if role is None:
+        return
+    task.protocol_override = {
+        **(task.protocol_override or {}),
+        "default_role": role,
     }

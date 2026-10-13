@@ -702,7 +702,6 @@ def _room_with_card(client, *, decided_at: datetime) -> None:
             s.add(
                 AcceptCard(
                     topic_id=room.id,
-                    reviewer_handle=REPORTER,
                     focus="最懂",
                     status=AcceptStatus.accepted,
                     decided_at=decided_at,

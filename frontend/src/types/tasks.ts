@@ -115,6 +115,11 @@ export interface Task {
    * 替换、不深合；`{}` = 没说，下面（项目集）或上面（空间）的默认原样生效。
    */
   teaching?: SpaceTeaching
+  /**
+   * 这道题自己写下的默认队友（#944）：平台预设的名字；`null` = 这道题没写过（继承
+   * 项目集 / 空间）。这是**原始覆盖值**，与提交时的「空串 = 清掉」不同。
+   */
+  defaultRole?: string | null
 }
 
 export interface TaskSubmissionReview {
@@ -219,4 +224,9 @@ export type TaskFormSubmitData = {
    * （`PublishTask.vue` 那一栏据此决定要不要带上它）。
    */
   teaching?: SpaceTeaching
+  /**
+   * 这道题指定的默认队友（#944）：平台预设名，`''` = 这一层不单独指定。
+   * 提交时是否带上这个键由那一栏自己按「三选一」口径决定（见 `defaultRolePayload`）。
+   */
+  defaultRole?: string
 }

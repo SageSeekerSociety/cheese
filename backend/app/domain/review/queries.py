@@ -50,10 +50,11 @@ class RailCard:
     decided_by: str | None
     auto_merge_armed_by: str | None
     #: 卡递给谁审阅 —— 「这一条在不在等看的这个人」要读它（`delivery.addressing`）。
-    reviewer_handle: str | None = None
+    #: 一卡多人，所以是**整个集合**：任一人都是被点名的人。
+    reviewer_handles: tuple[str, ...] = ()
 
 
-def _rail_card(card: AcceptCard) -> RailCard:
+def _rail_card(card: AcceptCard, reviewer_handles: list[str]) -> RailCard:
     return RailCard(
         id=card.id,
         # `status` 在线上是一个字符串（`AcceptStatus` 是 StrEnum，`str()` 就是它的
@@ -66,7 +67,9 @@ def _rail_card(card: AcceptCard) -> RailCard:
         merge_state=card.merge_state if isinstance(card.merge_state, dict) else None,
         decided_by=card.decided_by,
         auto_merge_armed_by=card.auto_merge_armed_by,
-        reviewer_handle=card.reviewer_handle,
+        # 评审人是表里查出来的（`accept_card_reviewer`），不是卡这一行的列；
+        # 一卡多人时整份集合都带上，缺了就是「卡上没有卡」。
+        reviewer_handles=tuple(reviewer_handles),
     )
 
 
@@ -83,7 +86,11 @@ async def latest_cards_by_task(
     does not explicitly begin, commit or roll back.
     """
     cards = await AcceptCardRepository(db).latest_by_task(task_ids)
-    return {task_id: _rail_card(card) for task_id, card in cards.items()}
+    handles = await AcceptCardRepository(db).reviewer_handles_for_cards(list(cards))
+    return {
+        task_id: _rail_card(card, handles.get(task_id, []))
+        for task_id, card in cards.items()
+    }
 
 
 @dataclass(frozen=True, slots=True)

@@ -14,7 +14,7 @@ enrichment（作者、管理员、分类、附件数、话题、当前用户的�
 from collections.abc import Sequence
 from datetime import datetime
 
-from app.api.task_teaching import read_task_teaching
+from app.api.task_teaching import read_task_default_role, read_task_teaching
 from app.domain.attachment.models import Attachment
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
@@ -48,7 +48,7 @@ def _ms(moment: datetime | None) -> int | None:
     return int(moment.timestamp() * 1000) if moment is not None else None
 
 
-def _task_to_api_model(task: Task) -> dict:
+def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) -> dict:
     created_at_ms = _ms(task.created_at) or 0
     updated_at_ms = _ms(task.updated_at) or 0
     deadline_ms = _ms(task.deadline)
@@ -89,7 +89,11 @@ def _task_to_api_model(task: Task) -> dict:
         "accessControlEnabled": task.access_control_enabled,
         # 这道题自己的「给 AI 队友的指导」(#944)：报的是**原始覆盖**，不是解析后的
         # 赢家 —— 发题页编的是这道题自己写了什么，空 = 继承，只有对着原始值才讲得通。
-        "teaching": read_task_teaching(task),
+        # `include_private_teaching`：私有指导只给看得见这道题的出题人/管理员，学生
+        # 的那条读不带上它（默认 False，漏改一处也不会泄漏）。
+        "teaching": read_task_teaching(task, include_private=include_private_teaching),
+        # 这道题自己的默认队友类型名 (#944)：同样是**原始覆盖**，空 = 继承项目集那份。
+        "defaultRole": read_task_default_role(task),
         "createdAt": created_at_ms,
         "updatedAt": updated_at_ms,
         "publishedAt": published_at_ms,

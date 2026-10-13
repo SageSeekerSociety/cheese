@@ -68,7 +68,6 @@ async def test_dependency_notice_is_durable_and_deduplicated(
         card = AcceptCard(
             topic_id=child.room_id,
             task_id=child.id,
-            reviewer_handle="reviewer",
             auto_merge_armed_by="reviewer",
             auto_merge_armed_at=datetime.now(UTC),
         )
@@ -121,7 +120,6 @@ async def test_detached_parent_preserves_ancestor_review_for_descendants(
         rejected = AcceptCard(
             topic_id=parent.room_id,
             task_id=parent.id,
-            reviewer_handle="reviewer",
             status=AcceptStatus.rejected,
             note=reason,
         )
@@ -193,7 +191,6 @@ async def test_dependency_notice_preserves_only_current_rejection(
             AcceptCard(
                 topic_id=parent.room_id,
                 task_id=parent.id,
-                reviewer_handle="reviewer",
                 status=AcceptStatus.rejected,
                 note="Superseded review",
                 created_at=datetime.now(UTC) - timedelta(days=1),
@@ -202,7 +199,6 @@ async def test_dependency_notice_preserves_only_current_rejection(
         current = AcceptCard(
             topic_id=parent.room_id,
             task_id=parent.id,
-            reviewer_handle="reviewer",
             status=latest_status,
             note=reason,
             decided_by="reviewer" if latest_status == AcceptStatus.rejected else None,
@@ -244,7 +240,6 @@ async def test_rejected_dependency_can_later_deliver(db_factory, monkeypatch):
             AcceptCard(
                 topic_id=parent.room_id,
                 task_id=parent.id,
-                reviewer_handle="reviewer",
                 status=AcceptStatus.rejected,
                 note="Keep the existing interface",
             )
@@ -252,7 +247,6 @@ async def test_rejected_dependency_can_later_deliver(db_factory, monkeypatch):
         child_card = AcceptCard(
             topic_id=child.room_id,
             task_id=child.id,
-            reviewer_handle="reviewer",
             auto_merge_armed_by="reviewer",
             auto_merge_armed_at=datetime.now(UTC),
         )

@@ -100,8 +100,11 @@ class AcceptCard(UuidPk, Timestamps, Base):
     delivered_task_ids: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list, server_default="[]"
     )
-    # Routed reviewer (spec C5): the specific person asked to accept.
-    reviewer_handle: Mapped[str] = mapped_column(String(64), index=True)
+    # 递给谁验收 (spec C5)：从 2026-10-12 起评审人在 `accept_card_reviewer` 表
+    # （一卡多行），不再是这一张表上的列。这里曾有一列 `reviewer_handle`，它把
+    # 「一卡一人」藏在列的类型里；搬进共用的表之后改成集合语义（`AcceptCardRepository
+    # .set_reviewers`），列退役。
+    #
     # 审阅重点：交付的人请审阅的人确认的那几件事，至多三条，每条一句
     # （`cards.clean_focus` 把关）。验证过程在 `change_body` 里，不在这里。列名是
     # 它从前的名字 routing_reason，那时它说的是「为什么推荐这个审阅人」。
@@ -237,6 +240,32 @@ class AcceptCard(UuidPk, Timestamps, Base):
     nudge_state: Mapped[dict] = mapped_column(
         JSON, nullable=False, default=dict, server_default="{}"
     )
+
+
+class AcceptCardReviewer(UuidPk, Timestamps, Base):
+    """验收卡由谁评审 —— 一卡一行，一卡可以有多行（一卡多人）。
+
+    表本来就装得下多行，这一版把它放开成集合：`AcceptCardRepository.set_reviewers`
+    整体替换这张卡的评审人集合，任一评审人采纳即可推进。`accept_cards.reviewer_handle`
+    那一列已随本刀退役（迁移删列）—— 这张表是唯一的家。
+    """
+
+    __tablename__ = "accept_card_reviewer"
+    __table_args__ = (
+        UniqueConstraint(
+            "card_id", "handle", name="uq_accept_card_reviewer_card_id_handle"
+        ),
+    )
+
+    card_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "accept_cards.id",
+            ondelete="CASCADE",
+            name="fk_accept_card_reviewer_card_id_accept_cards",
+        ),
+        index=True,
+    )
+    handle: Mapped[str] = mapped_column(String(64))
 
 
 class AcceptApproval(UuidPk, Timestamps, Base):

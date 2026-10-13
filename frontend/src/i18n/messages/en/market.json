@@ -3,7 +3,8 @@
   "loadFailed": "Couldn't load the market",
   "tabs": {
     "tasks": "Challenge matching",
-    "pools": "Models and environments"
+    "pools": "Models and environments",
+    "skills": "Skills and plugins"
   },
   "tasksIntro": "Organizations publish {challenges} to the market; teams {apply} with their own projects. Once an application is accepted, the project is linked to the challenge and its resources and terms take effect right away.",
   "tasksIntroChallenges": "challenges",

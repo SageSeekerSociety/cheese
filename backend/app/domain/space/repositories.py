@@ -194,6 +194,7 @@ class SpaceCategoryRepository:
         name: str,
         description: str | None,
         display_order: int,
+        default_role: str | None = None,
     ) -> SpaceCategory:
         now = datetime.now(UTC)
         category = SpaceCategory(
@@ -201,6 +202,7 @@ class SpaceCategoryRepository:
             name=name,
             description=description,
             display_order=display_order,
+            default_role=default_role,
             archived_at=None,
             created_at=now,
             updated_at=now,

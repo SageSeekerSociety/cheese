@@ -108,7 +108,7 @@ def test_the_specialist_files_are_named_from_the_index():
 
 
 def test_the_body_a_room_switches_on_is_the_one_the_executor_holds():
-    """技能广场点亮一颗，正文进的是这一轮的提示词 —— 它必须和装船的那份同源，
+    """技能面板点亮一颗，正文进的是这一轮的提示词 —— 它必须和装船的那份同源，
     否则房里的 agent 照着做的东西和执行机手里的说明书是两份。"""
     body = native_skill_bodies(["wolfram"])
     assert body, "wolfram 的正文进不了提示词"

@@ -843,6 +843,7 @@ class TestTaskSubmissionReviewService:
         svc = self._build_service(review_repo=review_repo, rank_service=None)
         result = await svc.create_review(
             submission_id=200,
+            reviewer_id=7,
             accepted=True,
             score=90,
             comment="Good",
@@ -885,6 +886,7 @@ class TestTaskSubmissionReviewService:
 
         result = await svc.create_review(
             submission_id=200,
+            reviewer_id=7,
             accepted=True,
             score=90,
             comment="Good",

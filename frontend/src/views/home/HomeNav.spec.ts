@@ -66,6 +66,7 @@ async function mount(path: string) {
     history: createMemoryHistory(),
     routes: [
       { path: '/inbox', name: 'inbox', component: blank },
+      { path: '/market', name: 'market', component: blank },
       { path: '/spaces', name: 'HomeSpaces', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
@@ -140,6 +141,14 @@ describe('首页目录', () => {
       )
     )
     expect(hrefs().some((href) => href?.startsWith('/teams/lab'))).toBe(false)
+  })
+
+  // 手机端不占底栏格（底栏固定三格），市场从这份目录进——两端都要到得着。
+  it('目录里有通往「市场」的一行', async () => {
+    await mount('/inbox')
+    await screen.findByText('知是开发组')
+    expect(screen.getByText('市场')).toBeTruthy()
+    expect(hrefs()).toContain('/market')
   })
 
   it('点一个团队在原地展开，再点收起', async () => {

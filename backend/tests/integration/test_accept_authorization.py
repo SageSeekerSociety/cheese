@@ -131,7 +131,7 @@ def test_reject_by_non_reviewer_403(client):
         headers=session_auth_headers("mallory"),
     )
     assert r.status_code == 403
-    assert "只有被指定审阅的人能退回" in r.json()["message"]
+    assert "只有递卡人或武装自动合并的人能退回" in r.json()["message"]
     cards = client.get(f"/topics/{tid}/accept-card").json()["data"]["data"]
     assert cards[0]["status"] == "pending"
 

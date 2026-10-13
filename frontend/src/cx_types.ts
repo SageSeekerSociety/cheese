@@ -1062,6 +1062,12 @@ export interface ProjectAgent {
   // False = 已停用. Still listed and still working in the topics that already
   // have it — just not offered when picking an agent for new work.
   is_active: boolean
+  // Bumped on every configuration write; a save sends it back so a stale one is
+  // refused (409) instead of overwriting whoever wrote first.
+  version: number
+  // The handle editing this teammate right now, or null/undefined. A courtesy
+  // read — the refusal that matters comes from `version`.
+  editing?: string | null
   created_at?: string | null
 }
 

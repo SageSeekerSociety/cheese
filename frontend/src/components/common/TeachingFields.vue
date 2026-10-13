@@ -106,6 +106,18 @@ function useDefaultTemplate() {
         {{ t('spaces.teaching.useDefaultTemplate') }}
       </BaseButton>
     </div>
+    <v-textarea
+      v-model="draft.privatePrompt"
+      rows="3"
+      auto-grow
+      autocomplete="off"
+      variant="outlined"
+      density="compact"
+      data-testid="teaching-private-prompt"
+      :label="t('spaces.teaching.fields.privatePrompt')"
+      :hint="t('spaces.teaching.fields.privatePromptHint')"
+      persistent-hint
+    />
     <TeachingMaterialPicker
       v-model="materialIds"
       :materials="props.materials ?? []"
@@ -148,6 +160,17 @@ function useDefaultTemplate() {
             data-testid="teaching-avoid-in-code"
             :label="t('spaces.teaching.fields.avoidInCode')"
             :hint="t('spaces.teaching.fields.avoidInCodeHint')"
+            persistent-hint
+            class="mb-4"
+          />
+          <v-text-field
+            v-model="draft.learningGoals"
+            autocomplete="off"
+            variant="outlined"
+            density="compact"
+            data-testid="teaching-learning-goals"
+            :label="t('spaces.teaching.fields.learningGoals')"
+            :hint="t('spaces.teaching.fields.learningGoalsHint')"
             persistent-hint
             class="mb-4"
           />

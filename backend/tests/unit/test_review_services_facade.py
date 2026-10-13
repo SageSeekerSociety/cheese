@@ -40,7 +40,7 @@ ACCEPT_SERVICE_METHODS = [
     "_topic_or_404",
     "_stamp_delivery",
     "_card_or_404",
-    "_reviewer_or_project_default",
+    "_reviewers_or_project_default",
     "_require_reviewer_in_room",
     "create_card",
     "_announce_filed",

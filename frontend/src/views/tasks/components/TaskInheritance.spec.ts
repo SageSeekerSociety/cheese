@@ -21,6 +21,8 @@ function payload(overrides: Partial<TaskInheritanceData> = {}): TaskInheritanceD
     taskId: 7,
     spaceId: 3,
     resourcePack: { compute_credits: 500 },
+    agent: null,
+    prompt: null,
     teaching: {
       systemPrompt: '第 {current_week} 周：循环。',
       currentWeek: 5,
@@ -97,6 +99,31 @@ describe('建项目会继承什么', () => {
 
     mount(payload({ materials: [] }))
     expect(document.body.textContent).toContain(i18n.global.t('tasks.inheritance.materialsNone'))
+  })
+
+  it('默认队友：报出名字与它会带的技能', () => {
+    setLocale('zh-CN')
+    mount(
+      payload({
+        agent: { typeName: 'academic-research', displayName: '学术研究', skills: ['documents', 'wolfram'] },
+      })
+    )
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain(i18n.global.t('tasks.inheritance.agent'))
+    expect(text).toContain('学术研究')
+    expect(text).toContain(i18n.global.t('tasks.inheritance.agentSkills'))
+    expect(text).toContain('documents')
+    expect(text).toContain('wolfram')
+  })
+
+  it('没指定默认队友时也说一句，不整行消失', () => {
+    setLocale('zh-CN')
+    mount(payload({ agent: null }))
+
+    const text = document.body.textContent ?? ''
+    expect(text).toContain(i18n.global.t('tasks.inheritance.agentNone'))
+    expect(text).not.toContain(i18n.global.t('tasks.inheritance.agentSkills'))
   })
 
   it('四层都没说时不编一句话：没有指导、没有来源层', () => {

@@ -17,6 +17,29 @@ const listAgentTypes = vi.fn()
 const getProjectDefaultModel = vi.fn()
 const setProjectDefaultAgent = vi.fn()
 const deactivateProjectAgent = vi.fn()
+const updateProjectAgent = vi.fn()
+const setAgentEditing = vi.fn()
+const listMyDevices = vi.fn()
+const listSkillCatalog = vi.fn()
+const listProjectSkills = vi.fn()
+const getSkillHealth = vi.fn()
+const listMachineSkills = vi.fn()
+const fetchSkillMarket = vi.fn()
+
+vi.mock('@/api/projectSkills', () => ({
+  listSkillCatalog: (...a: unknown[]) => listSkillCatalog(...a),
+  listProjectSkills: (...a: unknown[]) => listProjectSkills(...a),
+  getSkillHealth: (...a: unknown[]) => getSkillHealth(...a),
+}))
+
+vi.mock('@/api/machineSkills', () => ({
+  listMachineSkills: (...a: unknown[]) => listMachineSkills(...a),
+  scanMachineSkills: vi.fn(),
+  fetchSkillMarket: (...a: unknown[]) => fetchSkillMarket(...a),
+  fetchMachineSkill: vi.fn(),
+  setMachineSkillAdoption: vi.fn(),
+  setMachineSkillRoots: vi.fn(),
+}))
 
 vi.mock('@/api', async (importOriginal) => {
   // ApiError / isEndpointMissing stay REAL: "the backend is not deployed here"
@@ -30,6 +53,9 @@ vi.mock('@/api', async (importOriginal) => {
     getProjectDefaultModel: (...a: unknown[]) => getProjectDefaultModel(...a),
     setProjectDefaultAgent: (...a: unknown[]) => setProjectDefaultAgent(...a),
     deactivateProjectAgent: (...a: unknown[]) => deactivateProjectAgent(...a),
+    updateProjectAgent: (...a: unknown[]) => updateProjectAgent(...a),
+    setAgentEditing: (...a: unknown[]) => setAgentEditing(...a),
+    listMyDevices: (...a: unknown[]) => listMyDevices(...a),
   }
 })
 
@@ -51,6 +77,7 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
     seat_handle: 'cheese-a1',
     is_default: true,
     is_active: true,
+    version: 1,
     ...overrides,
   }
 }
@@ -250,5 +277,41 @@ describe('停用', () => {
     await waitFor(() => {
       expect(deactivateProjectAgent).toHaveBeenCalledWith(PROJECT, 'a2')
     })
+  })
+})
+
+describe('技能面板的 409', () => {
+  // 别人先写了 → 这次保存被 409 拦下 → 面板重读名册。重读必须顺手把面板目标换到
+  // 新读回来的那一行：名册刷新是整份换新对象，不换的话下一次保存还带着旧 version，
+  // 只会再撞 409 —— toast 说的「请再改一次」就成假话（验收时浏览器里 7 连 409 实证）。
+  it('重读之后，下一次保存带上赢的那个版本', async () => {
+    listProjectAgents
+      .mockResolvedValueOnce({
+        data: [agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 1 })],
+        total: 1,
+      })
+      .mockResolvedValueOnce({
+        data: [agent({ id: 'a1', configuration: { body: '', skills: ['wolfram'] }, version: 2 })],
+        total: 1,
+      })
+    listSkillCatalog.mockResolvedValue({ data: [{ name: 'wolfram', description: '算' }], total: 1 })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [] })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    setAgentEditing.mockResolvedValue({ editing: null })
+    fetchSkillMarket.mockResolvedValue({ skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] })
+    updateProjectAgent.mockRejectedValueOnce(new ApiError(409, 'stale')).mockResolvedValueOnce({})
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    const toggle = await screen.findByRole('button', { name: /算/ })
+    await fireEvent.click(toggle) // 第一次：被 409 拦下，触发重读
+    await waitFor(() => expect(listProjectAgents).toHaveBeenCalledTimes(2))
+    // 名册发出 ≠ 重读落完：重指面板目标是 fetch 回来之后的一串微任务。真实网络里这
+    // 一段是几十毫秒的等待，人点不过它；测试里全是微任务，让出一个宏任务等它落完。
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    await fireEvent.click(await screen.findByRole('button', { name: /算/ })) // 再改一次
+    await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
+    expect(updateProjectAgent.mock.calls[1][2]).toMatchObject({ expected_version: 2 })
   })
 })

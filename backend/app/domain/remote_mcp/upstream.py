@@ -22,7 +22,7 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from app.core.sentences import say
-from app.domain.remote_mcp import http
+from app.domain.remote_mcp import apps, http
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +137,10 @@ class _Streamable:
                 "method": "initialize",
                 "params": {
                     "protocolVersion": PROTOCOL_VERSION,
-                    "capabilities": {},
+                    # We negotiate MCP Apps on every session: a server that
+                    # declared a tool's View only shows its HTML once the
+                    # client says it can render one.
+                    "capabilities": apps.capabilities(),
                     "clientInfo": _CLIENT_INFO,
                 },
             },
@@ -194,7 +197,7 @@ class _Legacy:
             "initialize",
             {
                 "protocolVersion": "2024-11-05",
-                "capabilities": {},
+                "capabilities": apps.capabilities(),
                 "clientInfo": _CLIENT_INFO,
             },
         )

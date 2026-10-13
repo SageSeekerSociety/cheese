@@ -239,15 +239,17 @@ def test_reject_keeps_topic_active(client):
     tid = _make_topic(client, pid)
     cid = _make_card(client, tid, "bob")
 
+    # 撤卡（reject/void）只认递卡人或布防人。这张卡的递卡人是 alice（这条活的
+    # 提需求人），审阅人 bob 撤不了 —— 撤回是「我不交了」，交不交是递卡人的事。
     r = client.post(
         f"/accept-cards/{cid}/reject",
-        json={"decided_by": "bob", "note": "数据不够"},
-        headers=session_auth_headers("bob"),
+        json={"decided_by": "alice", "note": "数据不够"},
+        headers=session_auth_headers("alice"),
     )
     assert r.status_code == 200
     card = r.json()["data"]
     assert card["status"] == "rejected"
-    assert card["decided_by"] == "bob"
+    assert card["decided_by"] == "alice"
     assert card["note"] == "数据不够"
 
     assert client.get(f"/topics/{tid}").json()["data"]["status"] == "active"

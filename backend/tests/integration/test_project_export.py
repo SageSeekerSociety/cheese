@@ -106,7 +106,6 @@ def exported_project(client, monkeypatch, tmp_path):
             await db.flush()
             card = AcceptCard(
                 topic_id=room.id,
-                reviewer_handle="export-owner",
                 artifact_id=artifact.id,
                 status=AcceptStatus.accepted,
                 deliverable_kind=DeliverableKind.file,

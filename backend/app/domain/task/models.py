@@ -13,6 +13,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -320,6 +321,16 @@ class TaskSubmissionReview(Base):
         # 一版提交的评审：完成状态那条轴的相关 EXISTS、提交列表和回填都按
         # submission_id 取。也是这一列的外键索引。
         Index("ix_task_submission_review_submission_id", "submission_id"),
+        # 一版提交可以有多条评审 —— 每位老师各判自己那一份。唯一性是
+        # `(submission_id, reviewer_id)`（同一人在同一版上只有一条），**只看活行**：
+        # 软删一条再重判是允许的，所以约束是带 `deleted_at IS NULL` 的部分唯一索引。
+        Index(
+            "uq_task_submission_review_submission_reviewer",
+            "submission_id",
+            "reviewer_id",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
     )
 
     id: Mapped[int] = mapped_column(
@@ -327,6 +338,11 @@ class TaskSubmissionReview(Base):
     )
     submission_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("task_submission.id"), nullable=False
+    )
+    # 谁判的（`user.id`）。历史行在迁移里回填 `-id`（当年一版只有一条评审，
+    # 判者不明，负数保证每行唯一、也不会撞到真实用户 id）。
+    reviewer_id: Mapped[int] = mapped_column(
+        "reviewer_id", Integer, nullable=False, default=0
     )
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)

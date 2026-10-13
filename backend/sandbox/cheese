@@ -990,6 +990,26 @@ PLATFORM_TOOLS = ToolTable(
             ["skill", "reason"],
         ),
         _tool(
+            "skills_search",
+            "按关键词找**已经装好的技能**：平台随会话发货的、这个项目确认保存的、"
+            "以及你这台机器上已采纳的。命中时只回**名字和说明**，不回正文——"
+            "要正文用 `skills_read`。\n"
+            "**没搜到不等于没有**：这份搜索不保证覆盖每一个技能、也不保证覆盖全文"
+            "（机器上的技能正文只在它在线时才读得到），所以空结果不是「这个技能不"
+            "存在」。换个说法再搜，或者问用户技能叫什么。",
+            {"query": _text("关键词，一两个词或一句话描述你要做的事")},
+            ["query"],
+        ),
+        _tool(
+            "skills_read",
+            "读一个已装技能的**完整 SKILL.md**（名字先用 `skills_search` 拿到，"
+            "大小写和连字符要对得上）。\n"
+            "读只是能读：**它不表示可以安装或运行这个技能**。把技能装到机器上、"
+            "或者让它跑起来，一律由人在连接器里采纳，并按它自己写的步骤来做。",
+            {"name": _text("技能名，从 skills_search 的结果里来")},
+            ["name"],
+        ),
+        _tool(
             "platform_request",
             "平台 API 的其余部分：项目成员在网页上能做、其他平台工具又没有的事"
             "（给消息加表情、拉人进频道或改角色、回答问到你的选项问题、读自己的收件箱……）"
@@ -1585,6 +1605,19 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
             "method": "PATCH",
             "path": f"/skills/{skill}?topic={where}",
             "body": body,
+        }
+    if tool == "skills_search":
+        # 房间是必须的：已装技能按这个项目、这台机器算，不带房间就不知道是谁的。
+        return {
+            "method": "POST",
+            "path": "/agent/skills/search",
+            "body": {"query": args["query"], "topic": topic},
+        }
+    if tool == "skills_read":
+        return {
+            "method": "POST",
+            "path": "/agent/skills/read",
+            "body": {"name": args["name"], "topic": topic},
         }
     if tool == "cheese_members":
         return {"method": "GET", "path": f"/topics/{topic}/members"}
@@ -2715,6 +2748,45 @@ def _say_routine_report(args, data, env) -> str:
     return "\n".join(parts)
 
 
+def _say_skills_search(args, data, env) -> str:
+    data = data or {}
+    skills = data.get("skills") or []
+    if skills:
+        lines = "\n".join(
+            f"- {s.get('name')}（{s.get('source') or '技能'}）："
+            f"{s.get('description') or '（对方没写说明）'}"
+            for s in skills
+        )
+        head = f"找到 {len(skills)} 项已装技能（只给名字和说明）：\n{lines}"
+    else:
+        head = "这一次没有命中任何已装技能。"
+    # 「没搜到」不是「没有」：搜索覆盖面有限，得让 agent 知道这一点再决定下一步。
+    return (
+        head
+        + "\n\n**没搜到不等于没有**：这份搜索只覆盖平台发货、本项目已确认、以及你"
+        "这台机器已采纳的技能，未必穷尽每个名字或全文（机器上的正文只在它在线时读"
+        "得到）。所以空结果不是「这个技能不存在」——换个说法再搜，或者问用户技能"
+        "叫什么。要看正文用 skills_read(name)。"
+    )
+
+
+def _say_skills_read(args, data, env) -> str:
+    data = data or {}
+    if not data.get("found"):
+        return (
+            f"已装技能里没有叫「{args.get('name')}」的。先用 skills_search 拿到准确"
+            "名字（大小写和连字符都要对上）；它也可能在一台此刻读不到的机器上"
+            "（离线时正文读不回来），那不算它不存在。"
+        )
+    # 读 ≠ 装、读 ≠ 跑：正文给出去的同时把这条边界说清楚。
+    return (
+        f"技能 {data.get('name')}（{data.get('source') or '技能'}）的 SKILL.md：\n\n"
+        f"{data.get('markdown') or ''}\n\n"
+        "以上是它的完整说明。**读它只是能读**：不代表可以安装或运行这个技能——"
+        "装到机器上、让它跑起来，要由人在连接器里采纳，并按它自己写的步骤做。"
+    )
+
+
 _SAY = {
     "chat_send": _say_chat_send,
     "chat_edit": lambda a, d, e: f"已改消息 {a['message_id']}。",
@@ -2780,6 +2852,8 @@ _SAY = {
         f"已提议修改「{(d or {}).get('title')}」，等人在卡上确认；确认之前大家"
         "继续用原来那一版。"
     ),
+    "skills_search": _say_skills_search,
+    "skills_read": _say_skills_read,
 }
 
 

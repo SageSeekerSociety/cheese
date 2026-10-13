@@ -1,6 +1,7 @@
 """Accept card data access."""
 
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import Uuid, and_, any_, bindparam, delete, func, or_, select
@@ -10,12 +11,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.review.models import (
     AcceptApproval,
     AcceptCard,
+    AcceptCardReviewer,
     AcceptStatus,
     DeliverableKind,
 )
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import card_waits_on_reviewer
 from app.domain.topic.models import Topic, TopicStatus
+
+
+def _clean_handles(handles: Iterable[str]) -> list[str]:
+    """去空白、去重、保序 —— 一条集合语义的边（空 handle 不是评审人）。"""
+    seen: dict[str, None] = {}
+    for handle in handles:
+        name = (handle or "").strip()
+        if name:
+            seen.setdefault(name, None)
+    return list(seen)
 
 
 class AcceptCardRepository:
@@ -26,7 +38,7 @@ class AcceptCardRepository:
         self,
         *,
         topic_id: uuid.UUID,
-        reviewer_handle: str,
+        reviewer_handles: Iterable[str],
         focus: str = "",
         status: AcceptStatus = AcceptStatus.pending,
         change_subject: str | None = None,
@@ -44,7 +56,6 @@ class AcceptCardRepository:
         card = AcceptCard(
             topic_id=topic_id,
             task_id=task_id,
-            reviewer_handle=reviewer_handle,
             focus=focus,
             status=status,
             change_subject=change_subject,
@@ -59,7 +70,55 @@ class AcceptCardRepository:
         self._session.add(card)
         await self._session.flush()
         await self._session.refresh(card)
+        await self.set_reviewers(card.id, reviewer_handles)
         return card
+
+    async def reviewer_handles(self, card_id: uuid.UUID) -> list[str]:
+        """谁被派来评审这张卡 —— 唯一说法是 `accept_card_reviewer` 这一张表。
+
+        一卡多人：表里一卡多行，按派单先后回来。曾经的「表里没有行就回落读
+        `accept_cards.reviewer_handle` 那一列」过渡兼容已随列退役删掉。
+        """
+        stmt = (
+            select(AcceptCardReviewer.handle)
+            .where(AcceptCardReviewer.card_id == card_id)
+            .order_by(AcceptCardReviewer.created_at)
+        )
+        return list((await self._session.scalars(stmt)).all())
+
+    async def reviewer_handles_for_cards(
+        self, card_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, list[str]]:
+        """一批卡的评审人，一次查完 —— 侧栏/快照一次画很多张卡时用。
+
+        按 created_at 升序回来，所以同一张卡后写的排在后面；一卡可以有多行。
+        """
+        if not card_ids:
+            return {}
+        stmt = (
+            select(AcceptCardReviewer.card_id, AcceptCardReviewer.handle)
+            .where(AcceptCardReviewer.card_id.in_(card_ids))
+            .order_by(AcceptCardReviewer.created_at)
+        )
+        found: dict[uuid.UUID, list[str]] = {}
+        for card_id, handle in (await self._session.execute(stmt)).all():
+            found.setdefault(card_id, []).append(handle)
+        return found
+
+    async def set_reviewers(self, card_id: uuid.UUID, handles: Iterable[str]) -> None:
+        """把这张卡的评审人集合替换成 `handles` —— 删掉这张卡的全部旧行，再按集合
+        插回去（去重、丢空白）。
+
+        一卡多人：集合可以不止一个人；任一评审人采纳即可推进（`accept` 那一侧只
+        问「在不在这个集合里」）。
+        """
+        names = _clean_handles(handles)
+        await self._session.execute(
+            delete(AcceptCardReviewer).where(AcceptCardReviewer.card_id == card_id)
+        )
+        for name in names:
+            self._session.add(AcceptCardReviewer(card_id=card_id, handle=name))
+        await self._session.flush()
 
     async def list_approver_handles(self, card_id: uuid.UUID) -> list[str]:
         stmt = (
@@ -285,9 +344,13 @@ class AcceptCardRepository:
         if not topic_ids:
             return {}
 
-        stmt = select(AcceptCard).where(
-            AcceptCard.topic_id.in_(topic_ids),
-            AcceptCard.reviewer_handle == reviewer_handle,
+        stmt = (
+            select(AcceptCard)
+            .join(AcceptCardReviewer, AcceptCardReviewer.card_id == AcceptCard.id)
+            .where(
+                AcceptCard.topic_id.in_(topic_ids),
+                AcceptCardReviewer.handle == reviewer_handle,
+            )
         )
         named: dict[uuid.UUID, bool] = {}
         for card in (await self._session.scalars(stmt)).all():

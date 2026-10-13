@@ -51,6 +51,7 @@ from app.domain.memory.files import (
 from app.domain.memory.files_store import MemoryFileStore
 from app.domain.project_skill import importer
 from app.domain.project_skill.models import ProjectSkill, ProjectSkillRevision
+from app.domain.project_skill.repo_to_skill import draft_chat, repo_to_skill
 from app.domain.project_skill.service import ProjectSkillService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
@@ -395,8 +396,14 @@ async def preview_import(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    """Read a skill from an uploaded SKILL.md or zip, or a GitHub folder, and
-    lay it out for a manager to look over. Nothing is saved."""
+    """Read a skill from an uploaded SKILL.md or zip, or a GitHub address, and lay
+    it out for a manager to look over. Nothing is saved.
+
+    A GitHub folder that already holds a ``SKILL.md`` is read as it is; any other
+    repository is turned into a draft from its README and entry files
+    (``project_skill/repo_to_skill.py``). Either way the shape is ``ReadSkill``,
+    so 「预览 → 保存」 downstream does not know the difference.
+    """
     actor = await _person_in_project(db, resolver, project_id, say("skillImport"))
     await MemberService(db).require_manager(project_id, actor)
     if body.content:
@@ -408,7 +415,7 @@ async def preview_import(
             raise ValidationError(say("skillImportUnreadable")) from exc
         read = importer.read_upload(body.filename, data)
     elif body.url.strip():
-        read = await importer.read_github(body.url)
+        read = await repo_to_skill(body.url, lambda: draft_chat(db))
     else:
         raise ValidationError(say("skillImportNothing"))
     return ok(read.to_json())
@@ -484,6 +491,11 @@ async def update_skill(
     service = ProjectSkillService(db)
     by_agent = not _is_person(actor)
     pending = row.state == "draft"
+    if not by_agent:
+        # Rewriting a method changes what every later session follows, and the
+        # method may be another member's -- a manager decides that. A teammate's
+        # edit stays a proposal for a person to confirm instead (`by_agent`).
+        await MemberService(db).require_manager(row.project_id, actor)
     row = await service.update(
         row,
         by=await _speaker(db, actor, topic),
@@ -593,6 +605,9 @@ async def delete_skill(
 ) -> dict:
     row, actor = await _load(db, resolver, skill_id, None)
     _person(actor, say("skillDelete"))
+    # Deleting takes the method away from every later session, and it may be
+    # another member's; a manager decides that.
+    await MemberService(db).require_manager(row.project_id, actor)
     project_id = row.project_id
     service = ProjectSkillService(db)
     if row.state == "draft":
@@ -604,12 +619,14 @@ async def delete_skill(
     return ok({"deleted": str(skill_id)})
 
 
-# --- The composer's skill plaza: what a room can switch on ---------------------
+# --- The skill panel: what a teammate carries, and what a room can switch on ---
 #
-# About the ROOM, not the project: the platform's shipped skills
-# (`sandbox/skills`). They already reach every executor, so switching one on only
-# tells this room's agents to follow it — the body rides the turn's prompt
-# (`agent/turn/intake/preparation.py`). Which ones are on lives in `topics.skills`.
+# Two shapes of the same catalog. The shipped skills (`sandbox/skills`) already
+# reach every executor, so a name here is only a promise that the turn's prompt
+# will carry that skill's body (`agent/turn/intake/preparation.py`). A project's
+# settings edit ONE teammate's `agent_instances.configuration.skills`
+# (`/projects/{id}/skill-catalog`, below); the room-level switch (`topics.skills`)
+# is the older fallback a prompt falls back to when the teammate carries nothing.
 
 
 class TopicSkillsIn(BaseModel):
@@ -637,6 +654,18 @@ async def list_topic_skills(
     await _in_project(db, resolver, place.project_id, topic_id)
     enabled = set(place.room.skills or [])
     items = [{**s, "enabled": s["name"] in enabled} for s in _platform_catalog()]
+    return ok(page(items, len(items)))
+
+
+@router.get("/projects/{project_id}/skill-catalog")
+async def project_skill_catalog(
+    project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The shipped skills a teammate in this project can be armed with. Project,
+    not room: which teammate carries what is a project setting (and only a
+    manager may change it — `projects_agents.py`)."""
+    await _in_project(db, resolver, project_id, None)
+    items = _platform_catalog()
     return ok(page(items, len(items)))
 
 
@@ -714,6 +743,19 @@ async def skill_health(
 ) -> dict:
     place = await TopicService(db).place_or_404(topic_id)
     await _in_project(db, resolver, place.project_id, topic_id)
+    return await _skill_health(name)
+
+
+@router.get("/projects/{project_id}/skills/{name}/health")
+async def project_skill_health(
+    project_id: uuid.UUID, name: str, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    """The same probe, asked from a project's settings instead of a room."""
+    await _in_project(db, resolver, project_id, None)
+    return await _skill_health(name)
+
+
+async def _skill_health(name: str) -> dict:
     if name not in {s["name"] for s in _platform_catalog()}:
         raise NotFoundError("Unknown skill")
     now = time.monotonic()

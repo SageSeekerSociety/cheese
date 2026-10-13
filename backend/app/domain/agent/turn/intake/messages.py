@@ -159,9 +159,8 @@ class RunnerIntake:
         #
         # `recipient_handle` 不跟着改：`converse_prepared` / `merge_into_running_turn`
         # 问的是「哪个实例在跑」，那边认的就是实例名。
-        addressed = self._address_agent(
-            recipient_seat(recipient) if mentioned else None
-        )
+        seat = recipient_seat(recipient) if mentioned else None
+        addressed = self._address_agent(seat)
         persisted_at = time.monotonic()
         for payload in payloads:
             await self._broker.publish(
@@ -182,6 +181,11 @@ class RunnerIntake:
         )
         if answer_in != topic_id:
             live_delivery_expected = chat_service.has_running_turn(answer_in)
+            # 支线一开就告诉房间：主线该在它真开工之前就知道有人在答。见
+            # `InProcessBroker._answering_in_thread`。
+            self._broker._answering_in_thread(
+                channel, str(answer_in), str(turn_id), seat
+            )
         self._schedule_message(
             chat_service,
             answer_in,

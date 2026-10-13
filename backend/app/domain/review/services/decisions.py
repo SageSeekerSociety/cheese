@@ -294,14 +294,35 @@ async def push_fix(
     }
 
 
+async def _may_withdraw(
+    self: pkg.AcceptService, card: AcceptCard, decided_by: str
+) -> bool:
+    """谁能把这张卡收回去（reject / void）：**递卡的人**，或**武装了自动合并的人**。
+
+    「递卡人」是这道活是谁提的需求 —— `Task.reporter_handle`，卡上不再另记一份
+    （一个事实一处声明）。为房间本身递的卡（`task_id` 空）没有递卡人，只有布防人
+    能撤。
+
+    这相对旧口径（被指定审阅的人、或管理员）是一条**收紧**：审阅人若不是递卡人，
+    就撤不了这张卡了 —— 撤回是「我不交了」，而交不交是递卡人的事，不是看的人的事。
+    布防人留着，因为布防等于提前采纳，解除自己的提前采纳是他的动作。
+    """
+    if decided_by and card.auto_merge_armed_by == decided_by:
+        return True
+    if card.task_id is None or not decided_by:
+        return False
+    task = await TaskService(self._session).get(card.task_id)
+    return task is not None and task.reporter_handle == decided_by
+
+
 async def reject(
     self: pkg.AcceptService, *, card_id: uuid.UUID, decided_by: str, note: str = ""
 ) -> AcceptCard:
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending:
         raise ValidationError(say("reviewEndedNoReturn"))
-    if decided_by != card.reviewer_handle:
-        raise ForbiddenError(say("returnReviewerOnly"))
+    if not await _may_withdraw(self, card, decided_by):
+        raise ForbiddenError(say("returnFilerOnly"))
 
     await self._cancel_queued_accept(card)
     card.status = AcceptStatus.rejected
@@ -559,8 +580,8 @@ async def void(
     从没被检查过的代码背书；作废 + 重递效果一样而且安全，这条区别是本功能的
     设计前提，不要"优化"掉。
 
-    授权：卡上的验收人、项目所有者、团队的所有者和管理员。它是授权类动作，所以芝士在
-    collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
+    授权：**递卡人**，或**武装了自动合并的人**（`_may_withdraw`）。它是授权类动作，
+    所以芝士在 collaborative 模式下被 `_forbid_ai` 挡住（跟 accept/approve 同一条线）
     —— 路由也**故意不**声明成芝士专用（`app/api/write_access.py`）。
     """
     card = await self._card_or_404(card_id)
@@ -571,10 +592,8 @@ async def void(
     project = await self._projects.get(topic.project_id)
     self._forbid_ai(project, decided_by, say("reviewActionVoid"))
 
-    if decided_by != card.reviewer_handle and not await MemberService(
-        self._session
-    ).manages(topic.project_id, decided_by):
-        raise ForbiddenError(say("voidForbidden"))
+    if not await _may_withdraw(self, card, decided_by):
+        raise ForbiddenError(say("voidFilerOnly"))
 
     await self._cancel_queued_accept(card)
     was = card.status

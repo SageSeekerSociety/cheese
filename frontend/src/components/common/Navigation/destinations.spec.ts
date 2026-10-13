@@ -130,6 +130,17 @@ describe('一级导航的两份清单', () => {
     expect(new Set(counts).size).toBe(1)
   })
 
+  it('市场在桌面 rail 上常驻一格，排在项目之后；手机不加第 4 格', () => {
+    const rail = items(railItems(sources(3, 'p1'), DEFAULT_SHELL))
+    expect(rail.find((i) => i.to === '/market')?.title).toBe('市场')
+    // 排在项目之后 ⇒ 既有项目的 ⌘N 一个都不动（首页 1、p0 2、p1 3、p2 4），市场是第 5 格。
+    expect(shortcutTarget(rail, 1)).toBe('/inbox')
+    expect(shortcutTarget(rail, 2)).toBe('/projects/p0')
+    expect(shortcutTarget(rail, 5)).toBe('/market')
+    // 手机底栏不加第 4 格：市场走「首页」目录（`views/home/HomeNav.vue`），底栏仍是三格。
+    expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL))).toHaveLength(3)
+  })
+
   it('桌面 rail 每个项目一格', () => {
     const withProjects = items(railItems(sources(4, 'p0'), DEFAULT_SHELL))
     expect(withProjects.filter((i) => i.to?.startsWith('/projects/'))).toHaveLength(4)
@@ -244,6 +255,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
       '项目0',
       '项目1',
       '项目2',
+      '市场',
       '新建项目',
     ])
     expect(items(tabItems(sources(3, 'p1'), DEFAULT_SHELL)).map((i) => i.title)).toEqual(['首页', '工作区', '待办'])
@@ -320,7 +332,7 @@ describe('壳决定露出哪几格、什么顺序', () => {
   it('default 壳把所有格子都列了出来', () => {
     // rail 和底栏没有「更多」——一格从清单里去掉就是真的到不了。壳在这里只能
     // 重排，不能删；项目里的页收进项目名菜单（项目侧栏那条路）。
-    expect(DEFAULT_SHELL.nav.rail).toEqual(['home', 'projects', 'add'])
+    expect(DEFAULT_SHELL.nav.rail).toEqual(['home', 'projects', 'market', 'add'])
     expect(DEFAULT_SHELL.nav.tabs).toEqual(['home', 'workspace', 'inbox'])
   })
 })

@@ -284,12 +284,14 @@ async def post_task_submission_review(
     if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
         raise ForbiddenError("Only the author or a board manager can create review")
 
-    existing = await review_service.get_review_dto(submission_id)
+    # 一版可以有多位老师各判一份：冲突只看**这个人**有没有判过。
+    existing = await review_service.get_review_dto(submission_id, auth_user.user_id)
     if existing.get("reviewed"):
         raise ConflictError("Review already exists for this submission")
 
     review_dto = await review_service.create_review(
         submission_id=submission_id,
+        reviewer_id=auth_user.user_id,
         accepted=payload.accepted,
         score=payload.score,
         comment=payload.comment,

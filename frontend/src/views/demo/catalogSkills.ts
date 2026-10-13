@@ -1,11 +1,12 @@
 /**
- * 「技能详情抽屉」那一件在预览站里的条目。
+ * 技能相关的三件在预览站里的条目：「技能详情抽屉」「队友技能面板」和「技能市场」。
  *
- * 一份技能从右边滑出来：上面是芝士提议的依据（只有它提议的才有），下面是全文，另一页签
- * 是历史版本，动作放在底部。数据和动作都在页面那一层，这一件只吃 props、只发事件，
- * 于是能单独摆在预览站里。
+ * 抽屉：一份技能从右边滑出来，上面是芝士提议的依据（只有它提议的才有），下面是全文，
+ * 另一页签是历史版本，动作放在底部。面板：一个队友带哪些技能、还能从哪儿加。市场：
+ * 两家厂商公开的技能 / 插件 / MCP 各一张卡片栅格，卡片上的 + 就是「取一份到这台机器」。
+ * 数据和动作都在页面那一层，这三件只吃 props、只发事件，于是能单独摆在预览站里。
  *
- * 它和别的条目没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
+ * 它们和别的条目没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，规矩见
  * `catalog.ts`），单独一份是因为 `catalog.ts` 已经顶到一千行的上限 —— 和 `catalogRoom.ts`、
  * `catalogFeedback.ts` 同一个理由。
  *
@@ -16,7 +17,9 @@
 import type { ProjectSkill } from '@/lib/projectSkill'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
+import AgentSkillsDialog from '@/components/agents/AgentSkillsDialog.vue'
 import SkillDetailDrawer from '@/components/skills/SkillDetailDrawer.vue'
+import SkillMarket from '@/components/skills/SkillMarket.vue'
 
 /** 抽屉本体（`v-navigation-drawer`）、页签、`v-chip`、`v-spacer`、按钮（`BaseButton` 是
  *  `v-btn`）、等待历史版本那颗转圈，都要 Vuetify。模板里还有 `<i18n-t>`（抬头那行署名
@@ -78,6 +81,64 @@ const LONG_SKILL = skill({
   },
 })
 
+/** 队友技能面板的池子：平台随会话发货的原生技能，加上这台机器上采纳来的。名字就是
+ *  技能的名字（后端按名字点亮、按名字取说明书），说明就是那一格的第二行。 */
+const SKILL_POOL = [
+  { name: 'cheese', description: '芝士自己的用法', source: 'platform' as const },
+  { name: 'wolfram', description: '用 Wolfram 把算式算准', source: 'platform' as const },
+  { name: 'ponytail', description: '懒，但把活干对的写法', source: 'machine' as const },
+]
+
+/** 右上角那一枚圆点说的话：能跑 / 受限 / 不能跑 / 还没探到。 */
+const SKILL_HEALTH = { wolfram: { status: 'ok' as const, detail: 'Wolfram 通道可用' } }
+
+/** 市场的一份目录：技能 / 插件各一条能装的，外加一条只读的 MCP。`plugin_total` 比摆出来
+ *  的多 —— 插件页签那句「列出前 N 条，共 M 条」要用它。名字、说明就是卡片上的两行。 */
+const MARKET = {
+  skills: [
+    {
+      name: 'pdf',
+      description: '把 PDF 里的文字和表格读出来。',
+      url: 'https://github.com/anthropics/skills/tree/main/pdf',
+      source: 'anthropic',
+      kind: 'skill' as const,
+    },
+  ],
+  plugins: [
+    {
+      name: 'example-plugin',
+      description: '一个示例插件，带一条斜杠命令。',
+      url: 'https://github.com/anthropics/claude-plugins/tree/main/example',
+      source: 'anthropic',
+      kind: 'plugin' as const,
+    },
+  ],
+  plugin_total: 12,
+  mcp: [
+    {
+      name: 'filesystem',
+      description: '读写本机文件的一台 MCP server。',
+      url: '',
+      source: 'mcp',
+      kind: 'mcp' as const,
+    },
+  ],
+  notes: [],
+}
+
+/** 取回来、检验过、还没落盘的网上下载：确认框里摆出「会写什么」（含跟着写进去的文件名）。 */
+const MARKET_PENDING = {
+  url: 'https://github.com/anthropics/skills/tree/main/pdf',
+  kind: 'skill' as const,
+  plan: [
+    {
+      name: 'pdf',
+      description: '把 PDF 里的文字和表格读出来。',
+      files: ['SKILL.md', 'scripts/read.py'],
+    },
+  ],
+}
+
 export const SKILL_ENTRIES: CatalogEntry[] = [
   {
     id: 'skill-detail-drawer',
@@ -109,6 +170,105 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
           error: '',
         },
         expect: 'scripts/scaffold.mjs',
+      },
+    ],
+  },
+  {
+    id: 'agent-skills-dialog',
+    title: 'AgentSkillsDialog',
+    about:
+      '一个 AI 队友带哪些技能：黄底一块灯板，一颗一颗「洞」按下去就亮。亮了的技能跟着这位队友进它的每个会话（后端把说明书接进提示词）；右上角那枚小圆点是「现在能不能跑」，和亮不亮是两件事。',
+    file: 'src/components/agents/AgentSkillsDialog.vue',
+    component: AgentSkillsDialog,
+    needs: UI_T,
+    teleport: true,
+    args: { modelValue: true },
+    states: [
+      {
+        name: '一个队友带的',
+        note: '亮着的是这位队友带的（这里带 wolfram）；灭了也可以有绿点，亮了也可以有红点 —— 亮/灭是人的选择，圆点是能不能跑。',
+        props: {
+          agentName: '米洛',
+          carried: [SKILL_POOL[1]],
+          available: [SKILL_POOL[0], SKILL_POOL[2]],
+          health: SKILL_HEALTH,
+          deviceId: null,
+          max: 8,
+        },
+        expect: 'wolfram',
+      },
+      {
+        name: '绑了机器时',
+        note: '这个房间绑了一台工作电脑：灯板照画；额外的取用入口在「添加」展开之后（机器那一段现在只留「互联网直连」，扫描/采纳不在板上摆）。',
+        props: {
+          agentName: '米洛',
+          carried: [SKILL_POOL[2]],
+          available: [SKILL_POOL[0]],
+          health: SKILL_HEALTH,
+          deviceId: 'dev1',
+          max: 8,
+        },
+        expect: 'ponytail',
+      },
+      {
+        name: '还在读技能',
+        note: '池子还没到：底板照画，一句话替掉那一格，而不是一片空白。',
+        props: {
+          agentName: '米洛',
+          carried: [],
+          available: [],
+          health: {},
+          deviceId: null,
+          max: 8,
+          loading: true,
+        },
+        expect: '正在读技能',
+      },
+    ],
+  },
+  {
+    id: 'skill-market',
+    title: 'SkillMarket',
+    about:
+      '技能市场：两家厂商公开的技能 / 插件 / MCP 各一张卡片栅格，卡片上的 + 就是「取一份到这台机器上」。页签停在哪儿、装到哪台机器都由页面给；没机器时 + 按不动。第四个货架「Agent 模板」只在市场里摆（`showAgents`）。',
+    file: 'src/components/skills/SkillMarket.vue',
+    component: SkillMarket,
+    // 页签、`v-icon`、落盘前的确认框（`v-dialog`）是 Vuetify 的；卡片上的字走全局 `t()`。
+    needs: UI_T,
+    // 确认框（`v-dialog`）画在 body 上，所以这一条按 body 找 —— `document.body` 里本来就
+    // 装着挂载容器，前四格照样找得到。
+    teleport: true,
+    args: { market: MARKET, deviceId: 'dev1' },
+    states: [
+      {
+        name: '技能页签，有货品',
+        note: '停在技能：一条能装的技能一张卡，右下角一颗 + 挂「装到这台机器上」；卡片刻着来源。',
+        props: {},
+        expect: '把 PDF 里的文字和表格读出来。',
+      },
+      {
+        name: '插件页签',
+        note: '停在插件：卡片之外多一句「列出前几条、官方目录共几条」——摆出来的不是全部。',
+        props: { tab: 'plugins' },
+        expect: '官方目录共 12 条',
+      },
+      {
+        name: '没机器，+ 按不动',
+        note: '没绑工作电脑：卡片照画，+ 是灰的（落盘总得有个落点）——不是把卡片藏起来。',
+        props: { deviceId: null },
+        expectSelector: '.mcard__add[disabled]',
+      },
+      {
+        name: 'Agent 模板那一格',
+        note: '摆第四个货架时停在「Agent 模板」：后台还没有这类东西，只照实说一句，不摆假卡片。',
+        props: { showAgents: true, tab: 'agents' },
+        expect: '还没有 Agent 模板。',
+      },
+      {
+        name: '落盘前的确认框',
+        note: '取回来、还没落盘：弹确认框，把「会写什么」摆出来 —— 点名的技能和跟着写进去的文件名都在。',
+        props: { pending: MARKET_PENDING },
+        expect: 'scripts/read.py',
       },
     ],
   },

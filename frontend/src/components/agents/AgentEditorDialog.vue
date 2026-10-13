@@ -176,11 +176,16 @@ async function save() {
     }
     // A name left as it was shown stays unset: saving the default teammate's
     // settings must not turn the name it is shown by into one somebody chose.
+    // ``expected_version`` rides along either way: this dialog was opened on the
+    // version it read, and a save built from a stale one is refused (409).
+    const expected_version = props.agent?.version
     if (props.agent?.id)
       await updateProjectAgent(
         props.projectId,
         props.agent.id,
-        payload.display_name === shownName.value ? { configuration: payload.configuration } : payload
+        payload.display_name === shownName.value
+          ? { configuration: payload.configuration, expected_version }
+          : { ...payload, expected_version }
       )
     else
       await createProjectAgent(props.projectId, {
@@ -310,21 +315,6 @@ async function save() {
           />
           <p class="t-meta c-muted mt-1 mb-0">{{ t('work.projectSettings.agents.editor.compactHint') }}</p>
         </div>
-
-        <v-combobox
-          v-model="draft.skills"
-          multiple
-          chips
-          closable-chips
-          :items="[]"
-          :label="t('work.projectSettings.agents.editor.skills')"
-          :hint="t('work.projectSettings.agents.editor.skillsHint')"
-          persistent-hint
-          :disabled="!canManage"
-          variant="outlined"
-          class="mt-4"
-          autocomplete="off"
-        />
 
         <div v-if="!isNew" class="t-meta c-muted mt-4">
           {{ t('work.projectSettings.agents.editor.handleReadonly', { handle: agent?.handle }) }}

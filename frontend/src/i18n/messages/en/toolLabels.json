@@ -104,5 +104,7 @@
   "bashKill": "Stop the background task",
   "bashList": "List background tasks",
   "cheeseSkillDraft": "Draft a skill",
-  "cheeseSkillUpdate": "Propose a change to a skill"
+  "cheeseSkillUpdate": "Propose a change to a skill",
+  "skillsSearch": "Search installed skills",
+  "skillsRead": "Read the full skill"
 }

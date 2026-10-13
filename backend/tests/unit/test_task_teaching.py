@@ -324,3 +324,145 @@ def test_a_new_session_of_a_course_project_is_told_this_weeks_scope() -> None:
     )
 
     assert "## 本周教学范围" in prompt
+
+
+# ── 教育性 (#944)：学习目标 = 这份指导按教学走 ────────────────────────────────
+
+
+def test_goals_alone_get_the_default_teaching_manners() -> None:
+    """写了学习目标而老师没写自己的要求：默认教学要求顶上 —— 「留空」在这里
+    是「用你的教学规矩」，不是「没规矩」。目标单列成靶子。"""
+    section = teaching_section(
+        TeachingContext(
+            course="创研课 2026 秋",
+            teaching=Teaching.from_json({"learning_goals": ["会读栈追踪"]}),
+        )
+    )
+
+    assert section is not None
+    assert "不要直接给出答案" in section
+    assert "别把答案交出去" in section  # 冲突裁决：要得再急也不给（model_spec tutor）
+    assert "亲手写" in section  # 人机分工：关键几行留给学生（learning output style）
+    assert "cheese show" in section  # 形态纪律：能演示就别写长文
+    assert "### 本节学习目标" in section and "- 会读栈追踪" in section
+
+
+def test_the_teacher_own_prompt_wins_and_the_default_never_leaks_in() -> None:
+    section = teaching_section(
+        TeachingContext(
+            course=None,
+            teaching=Teaching.from_json(
+                {"system_prompt": "这次直接讲。", "learning_goals": ["会读栈追踪"]}
+            ),
+        )
+    )
+
+    assert section is not None
+    assert "这次直接讲。" in section
+    assert "不要直接给出答案" not in section
+    # 目标照列 —— 靶子不因为老师换了话术就消失。
+    assert "- 会读栈追踪" in section
+
+
+def test_scope_without_goals_is_not_educational() -> None:
+    """只有范围没有目标（纯课件/周次）：不是教学任务，别把苏格拉底话术塞进
+    人家的项目。"""
+    section = teaching_section(
+        TeachingContext(course=None, teaching=Teaching.from_json({"current_week": 3}))
+    )
+
+    assert section is not None
+    assert "不要直接给出答案" not in section
+
+
+def test_fill_substitutes_the_goals_variable() -> None:
+    teaching = Teaching.from_json(
+        {
+            "system_prompt": "这一节要：{learning_goals}",
+            "learning_goals": ["读栈追踪", "二分定位"],
+        }
+    )
+
+    assert teaching.fill(teaching.system_prompt or "") == "这一节要：读栈追踪、二分定位"
+
+
+def test_a_teaching_change_is_re_told_to_a_running_session() -> None:
+    """教学安排是被跟踪的现状：老师推周次/改指导，正在跑的会话下一轮就听到，
+    不是按上一周的指导跑到结束。"""
+    from app.domain.agent.harness.prompt import TRACKED_SECTIONS
+
+    assert "teaching" in TRACKED_SECTIONS
+
+
+# ── 题目级默认队友 (#944)：同一份 `protocol_override` 里的另一格 ────────────────
+# 这几条只碰「写/读一格」的胶水；`_task` 这个替身已经有 `protocol_override`。
+
+
+def test_default_role_reads_back_blank_as_nothing() -> None:
+    """`default_role` 的读：空串不是角色，读回来是 None（= 继承上层）。"""
+    from app.api.task_teaching import read_task_default_role
+
+    assert read_task_default_role(_task({"default_role": "  "})) is None
+    assert read_task_default_role(_task({"default_role": "academic-research"})) == (
+        "academic-research"
+    )
+    assert read_task_default_role(_task(None)) is None
+
+
+def test_applying_the_default_role_leaves_the_other_keys_alone() -> None:
+    """整键替换：只动 `default_role` 这一格，`teaching` 与别的覆盖键原样留着。"""
+    from app.api.task_teaching import apply_task_default_role
+
+    task = _task({"teaching": {"current_week": 3}, "shell": "course"})
+
+    apply_task_default_role(task, "academic-research")
+    assert task.protocol_override["default_role"] == "academic-research"
+    assert task.protocol_override["teaching"] == {"current_week": 3}
+    assert task.protocol_override["shell"] == "course"
+
+    # 空串是一次写（明说「不要默认队友」），不是「没写」。
+    apply_task_default_role(task, "")
+    assert task.protocol_override["default_role"] == ""
+
+    # None 才是「没写」：不改动已经存下的那一格。
+    apply_task_default_role(task, None)
+    assert task.protocol_override["default_role"] == ""
+
+
+# ── 出题人私有指导 (#944 第二种可见性) ─────────────────────────────────────────
+# 「用 prompt 实现可见性」：私有那段进 agent 的 prompt，但**不进学生可读的响应**
+# （`teaching_to_api` 默认不带它）。不新造权限开关 —— 提不提由接口那一层决定。
+
+
+def test_private_guidance_round_trips_and_counts_toward_emptiness() -> None:
+    teaching = Teaching.from_json(
+        {"system_prompt": "陪着他做", "private_prompt": "参考答案是 42"}
+    )
+
+    assert teaching.private_prompt == "参考答案是 42"
+    # 空配置一个字都不多：但写了私有指导，这份配置就不是空的。
+    assert Teaching.from_json({}).is_empty is True
+    assert Teaching.from_json({"private_prompt": "参考答案"}).is_empty is False
+
+
+def test_private_guidance_reaches_the_agent_prompt_under_its_own_heading() -> None:
+    """私有指导是给 AI 队友的：照它做、但明确不许原样透露给学生。"""
+    section = teaching_section(
+        TeachingContext(course=None, teaching=Teaching(private_prompt="参考答案是 42"))
+    )
+    assert section is not None
+    assert "出题人给你的私有指导" in section
+    assert "参考答案是 42" in section
+
+
+def test_private_guidance_is_omitted_from_the_response_unless_asked() -> None:
+    """`teaching_to_api` 默认不带 `privatePrompt` —— 学生那条读就看不到它；
+    出题人/管理员那条读传 `include_private=True` 才带。"""
+    from app.api.routes.spaces import teaching_to_api
+
+    teaching = Teaching(private_prompt="参考答案是 42")
+
+    assert "privatePrompt" not in teaching_to_api(teaching)
+    assert teaching_to_api(teaching, include_private=True)["privatePrompt"] == (
+        "参考答案是 42"
+    )

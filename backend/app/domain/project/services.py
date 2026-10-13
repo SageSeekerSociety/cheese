@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
@@ -123,6 +124,7 @@ class ProjectService:
         # 就是当初显示给用户的那一份。否则 stored 是空、shown 是读时算出来的
         # `compute_default_name()`，两边会随部署环境漂移（迁移 e2c7a4b97310 给老项目
         # 补的正是这一份）。
+        # deferred-import: agent already reaches back into project; keeps C3 acyclic
         from app.domain.agent.compute_configs import (
             ProjectComputeConfigs,
             standard_choice,
@@ -162,8 +164,6 @@ class ProjectService:
         from app.domain.project.forge import provision_repository
 
         if forge_kind == "forgejo":
-            from app.core.config import settings
-
             # ponytail: 本地没配 Forgejo 时跳过建仓，项目照样建得起来（上限：
             # 该项目没有代码仓库；要用 git 功能的路由仍会如实报
             # forgeHostingNotConfigured。升级路径：配 FORGEJO_URL 后此分支自动恢复）。
@@ -488,9 +488,27 @@ class ProjectService:
         # one keeps it, so accepting the protocol never overwrites a choice.
         agents = AgentInstanceService(self._session)
         instance = await agents.materialize_default(project)
-        if protocol.default_role and instance.type_name is None:
-            await agents.set_type(instance, protocol.default_role)
-            await self._session.flush()
+        # Everything the 题目 pack puts on the default agent lands only while the
+        # project has NOT picked its own teammate (`type_name is None`) — the same
+        # guard `default_role` uses, so accepting the protocol never overwrites a
+        # person's choice on a re-accept.
+        if instance.type_name is None:
+            if protocol.default_role:
+                await agents.set_type(instance, protocol.default_role)
+                await self._session.flush()
+            # 题目包自带的「一块 prompt + 一组 skill 名字」（#944）—— 建项目时进默认
+            # 队友的配置，和 `default_role` 落 preset 走同一条 configure。它是**题目**
+            # 给的，不是某个类型预设给的，所以不新造权限开关，只往既有配置上加。
+            if protocol.prompt or protocol.skills:
+                from app.domain.agent_instance.configuration import AgentConfiguration
+
+                config = AgentConfiguration.model_validate(instance.configuration or {})
+                config.body = "\n\n".join(
+                    part for part in (config.body, protocol.prompt) if part
+                )
+                # 去重、保序：题目列的 skill 与 preset 那份重叠时不重复带。
+                config.skills = list(dict.fromkeys([*config.skills, *protocol.skills]))
+                await agents.configure(instance, config)
         grants = await self._ledger.earmarks(project.id)
         if protocol.compute_credits > 0 and not any(
             grant.source_task_id == task_id for grant in grants

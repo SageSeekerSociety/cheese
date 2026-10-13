@@ -64,7 +64,7 @@ async def create_task(
     # 请求就找不到（同 ``spaces.create_space``，合并队列 run 36296605673 实测）。
     await db.commit()
 
-    task_model = _task_to_api_model(task)
+    task_model = _task_to_api_model(task, include_private_teaching=True)
     task_model = (await _enrich_task_models(db, [task_model], space_id=task.space_id))[
         0
     ]

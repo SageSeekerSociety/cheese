@@ -121,9 +121,11 @@ describe('TeachingFields', () => {
     await waitFor(() =>
       expect(captured).toEqual({
         systemPrompt: '讲完链表了',
+        privatePrompt: null,
         currentWeek: null,
         allowedTopics: [],
         avoidInCode: [],
+        learningGoals: [],
         materialIds: [],
         knowledgeIds: [],
       })

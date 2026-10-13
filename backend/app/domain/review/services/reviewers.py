@@ -30,19 +30,20 @@ from app.domain.review.services._shared import (
 )
 
 
-async def _reviewer_or_project_default(
+async def _reviewers_or_project_default(
     self: pkg.AcceptService,
     project: Project | None,
-    reviewer_handle: str | None,
+    reviewer_handles: list[str] | None,
     *,
     from_work: list[Task] | None = None,
-) -> str:
-    """谁验收：显式指定 > 这批活派出去时定的人 > 项目默认验收人 (#718 设置表).
+) -> list[str]:
+    """谁验收：显式指定的人（可以是一个集合）> 这批活派出去时定的人 > 项目默认验收人。
 
     显式指定优先 —— the person filing knows something neither the work nor
     the setting can: which change THIS is, and who understands that part of
     the code. A default that overrode them would make the setting a ceiling
-    instead of a floor.
+    instead of a floor. 显式给的是一个**集合**（一卡多人），去重去空白后原样采用：
+    递给几个人由递卡的人说了算。
 
     Then the work's own reviewer, because that is who this work was HANDED
     TO when it was dispatched (`Task.reviewer_handle`, resolved from the
@@ -61,19 +62,19 @@ async def _reviewer_or_project_default(
     it, and the card would sit there looking correctly routed.
     """
 
-    explicit = (reviewer_handle or "").strip()
+    explicit = [h.strip() for h in (reviewer_handles or []) if (h or "").strip()]
     if explicit:
-        return explicit
+        return list(dict.fromkeys(explicit))
     handed_to = sorted(
         {t.reviewer_handle for t in (from_work or []) if t.reviewer_handle}
     )
     if len(handed_to) > 1:
         raise ValidationError(say("reviewersDiffer", reviewers=listing(handed_to)))
     if handed_to:
-        return handed_to[0]
+        return [handed_to[0]]
     default = branch_protection_of(project).default_reviewer
     if default:
-        return default
+        return [default]
     raise ValidationError(say("reviewerUnnamed"))
 
 
@@ -117,21 +118,22 @@ async def reassign(
     self: pkg.AcceptService,
     *,
     card_id: uuid.UUID,
-    reviewer_handle: str | None = None,
+    reviewer_handles: list[str] | None = None,
     admits_reviewer: ReviewerAdmission,
 ) -> AcceptCard:
     """改验收人 (spec §4.4): anyone can re-route a pending accept card to a
-    different reviewer — or, naming nobody, back to the project's default
-    one, which is the same ladder 递卡 climbs."""
+    different reviewer — or a different set of them, or, naming nobody, back
+    to the project's default one, which is the same ladder 递卡 climbs."""
     card = await self._card_or_404(card_id)
     if card.status != AcceptStatus.pending:
         raise ValidationError(say("reviewEndedNoReassign"))
     topic = await self._topic_or_404(card.topic_id)
-    reviewer = await self._reviewer_or_project_default(
-        await self._projects.get(topic.project_id), reviewer_handle
+    reviewers = await self._reviewers_or_project_default(
+        await self._projects.get(topic.project_id), reviewer_handles
     )
-    await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
-    card.reviewer_handle = reviewer
+    for reviewer in reviewers:
+        await self._require_reviewer_in_room(topic, reviewer, admits_reviewer)
+    await self._repo.set_reviewers(card.id, reviewers)
     await self._session.flush()
     await self._session.refresh(card)
     return card

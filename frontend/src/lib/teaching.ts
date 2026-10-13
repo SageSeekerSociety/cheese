@@ -8,12 +8,14 @@
 // 空间那层的默认，发题页写的是题目那层的覆盖。放在这里免得两处各写一遍、慢慢走样。
 import type { SpaceTeaching } from '@/types'
 
-/** 表单上那六格：存的是人敲的原文，解析交给 `buildTeaching`。 */
+/** 表单上那八格：存的是人敲的原文，解析交给 `buildTeaching`。 */
 export type TeachingDraft = {
   systemPrompt: string
+  privatePrompt: string
   currentWeek: string
   allowedTopics: string
   avoidInCode: string
+  learningGoals: string
   materialIds: string
   knowledgeIds: string
 }
@@ -21,21 +23,25 @@ export type TeachingDraft = {
 export function emptyTeachingDraft(): TeachingDraft {
   return {
     systemPrompt: '',
+    privatePrompt: '',
     currentWeek: '',
     allowedTopics: '',
     avoidInCode: '',
+    learningGoals: '',
     materialIds: '',
     knowledgeIds: '',
   }
 }
 
-/** 接口那一份 → 表单六格。新会话、换了那道题、保存后读回来，都照它重填一遍。 */
+/** 接口那一份 → 表单八格。新会话、换了那道题、保存后读回来，都照它重填一遍。 */
 export function draftFromConfig(config?: SpaceTeaching | null): TeachingDraft {
   return {
     systemPrompt: config?.systemPrompt ?? '',
+    privatePrompt: config?.privatePrompt ?? '',
     currentWeek: config?.currentWeek == null ? '' : String(config.currentWeek),
     allowedTopics: (config?.allowedTopics ?? []).join(', '),
     avoidInCode: (config?.avoidInCode ?? []).join(', '),
+    learningGoals: (config?.learningGoals ?? []).join(', '),
     materialIds: (config?.materialIds ?? []).join(', '),
     knowledgeIds: (config?.knowledgeIds ?? []).join(', '),
   }
@@ -56,17 +62,35 @@ export function splitIds(value: string): number[] {
     .filter((id) => Number.isInteger(id) && id > 0)
 }
 
-/** 表单六格 → 交给接口的那一份。空的那几格落成 `null` / `[]`，与 `is_empty` 一个意思。 */
+/** 表单八格 → 交给接口的那一份。空的那几格落成 `null` / `[]`，与 `is_empty` 一个意思。 */
 export function buildTeaching(draft: TeachingDraft): SpaceTeaching {
   const week = draft.currentWeek.trim()
   return {
     systemPrompt: draft.systemPrompt.trim() || null,
+    privatePrompt: draft.privatePrompt.trim() || null,
     currentWeek: week === '' ? null : Number(week),
     allowedTopics: splitList(draft.allowedTopics),
     avoidInCode: splitList(draft.avoidInCode),
+    learningGoals: splitList(draft.learningGoals),
     materialIds: splitIds(draft.materialIds),
     knowledgeIds: splitIds(draft.knowledgeIds),
   }
+}
+
+/**
+ * 「默认队友」这一格 → 提交给接口的值（#944）。
+ *
+ * 与指导那一份不同，它没有「整份」的概念，只有「这一格写没写」：
+ * - 选中空串（继承这一层不说）：
+ *   - 原始值本来就 `null`（这一层没写过）→ `undefined`，**不带这个键**，沿用上层。
+ *   - 原始值非 `null`（这一层写过）→ `''`，明确清掉这一层的覆盖。
+ * - 选中预设名 → 带上它。
+ *
+ * `undefined` 就是「不带这个键」，由调用方据此决定放不放进 payload。
+ */
+export function defaultRolePayload(selected: string, raw: string | null | undefined): string | undefined {
+  if (selected === '') return raw == null ? undefined : ''
+  return selected
 }
 
 /**
@@ -79,9 +103,11 @@ export function isTeachingBlank(teaching?: SpaceTeaching | null): boolean {
   if (!teaching) return true
   return (
     !teaching.systemPrompt &&
+    !teaching.privatePrompt &&
     teaching.currentWeek == null &&
     (teaching.allowedTopics?.length ?? 0) === 0 &&
     (teaching.avoidInCode?.length ?? 0) === 0 &&
+    (teaching.learningGoals?.length ?? 0) === 0 &&
     (teaching.materialIds?.length ?? 0) === 0 &&
     (teaching.knowledgeIds?.length ?? 0) === 0
   )

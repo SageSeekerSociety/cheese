@@ -767,11 +767,18 @@ async def _attempt(
         if lease["generation"] != generation:
             raise ConflictError("The previous work lease has not been released")
     ready = bool(lease and lease.get("status", "ready") == "ready")
+    # ponytail: 本地只有一台机器，会话主机与工作电脑必然是同一台；生产护栏
+    # 「项目文件别和执行会话挤在一台机器上」在这里只能挡下整个演示（agent 的
+    # Bash/文件工具全被 403，wolfram 技能脚本跑不起来），所以 development 下放行。
+    # 上限：会话与项目工具共用一个连接器，资源不再隔离。
+    # 升级路径：注册第二台机器当工作电脑后，或部署在非 development，这条不再触发。
+    single_machine = settings.environment == "development"
     if (
         own_host is None
         and ready
         and (lease or {}).get("device_id")
         == (row.runtime_location or {}).get("device_id")
+        and not single_machine
     ):
         raise ForbiddenError("Project tools cannot execute on the session host")
     now = datetime.now(UTC)
@@ -889,7 +896,7 @@ async def _attempt(
     # Placement records the session host before the screen that asks opens.
     assert row.runtime_location is not None
     host = row.runtime_location["device_id"]
-    if device_id == host and own_host is None:
+    if device_id == host and own_host is None and not single_machine:
         raise ForbiddenError("Project tools cannot execute on the session host")
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)

@@ -52,7 +52,11 @@ const load = async () => {
   readError.value = await spaceData.fetchCategories(true)
 }
 
-const submitCategory = async (payload: { id: number | null; values: CategoryFormValues }) => {
+const submitCategory = async (payload: {
+  id: number | null
+  values: CategoryFormValues
+  defaultRole?: string
+}) => {
   saving.value = true
   try {
     if (payload.id !== null) {
@@ -60,9 +64,15 @@ const submitCategory = async (payload: { id: number | null; values: CategoryForm
         name: payload.values.name,
         description: payload.values.description,
         displayOrder: payload.values.displayOrder,
+        ...(payload.defaultRole !== undefined ? { defaultRole: payload.defaultRole } : {}),
       })
     } else {
-      await spaceData.createCategory(payload.values.name, payload.values.description, payload.values.displayOrder)
+      await spaceData.createCategory(
+        payload.values.name,
+        payload.values.description,
+        payload.values.displayOrder,
+        payload.defaultRole
+      )
     }
     dialogOpen.value = false
   } catch (error) {

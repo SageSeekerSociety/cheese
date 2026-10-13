@@ -610,6 +610,18 @@ class Settings(BaseSettings):
     # script, and the deploy overlay mounts the proxy's cert read-only and points
     # this at it.
     subscription_ca_backend_path: str = ""
+    # ponytail: 本地开发的逃生口，默认关。开着时屏幕不经计费代理，直接把
+    # `agent_env()` 的网关地址与凭据交给它（见 `screen_model_env` 的 direct_gateway）
+    # ——本地没有 mitmproxy/CA/隧道时，这是屏幕唯一能活的档位。
+    #
+    # 为什么不拿 `environment == development` 当判据：测试也跑在 development 上，
+    # 一推断，上游那条「CA 未配置就必须大声拒绝、不许悄悄退回网关」的用例
+    # (`test_subscription_without_a_readable_ca_fails_loud_not_into_the_gateway`)
+    # 就变成绿灯假象。显式开关还带来一个好处：它不写进 `.env`，于是测试进程读到的
+    # 永远是默认的 False，只有本地真正起后端时用进程环境变量打开。
+    # 上限：本地屏幕没有用量计费与模型改写。升级路径：配好
+    # SUBSCRIPTION_CA_BACKEND_PATH（以及 meter）后无需再开。
+    agent_direct_gateway: bool = False
     # Token ceiling over a rolling window, enforced at the proxy (0 = no cap).
     # A deployment-wide backstop, not a per-project budget: a /v1/messages turn
     # is refused before it is forwarded once the window's completed turns plus
@@ -900,6 +912,14 @@ class Settings(BaseSettings):
     # deployment can have many connected repos, each with its own
     # installation_id.
     github_app_slug: str = "cheesex-app"
+    # Not a replacement for the App above: that one is per-installation and only
+    # reaches the repositories it is installed on. This is the read-only
+    # credential for the *public* GitHub reads — the skills market and the
+    # 「从网上取一份技能」 imports — which otherwise share the unauthenticated
+    # budget of 60 requests an hour per address. Any classic or fine-grained
+    # token with no scopes works for public repositories; unset, those reads
+    # still work and still cost the 60.
+    github_token: str = ""
 
     forgejo_url: str = ""
     forgejo_api_url: str = ""
@@ -1072,6 +1092,12 @@ class Settings(BaseSettings):
     task_draft_model: str = "deepseek-flash"
     task_draft_max_tokens: int = 4096
     task_draft_timeout_s: float = 300.0
+    # The gateway model that writes a SKILL.md draft for a GitHub repository
+    # that holds none of its own, from its README and entry files; each draft
+    # is one call, charged to the manager's personal credits.
+    skill_draft_model: str = "deepseek-flash"
+    skill_draft_max_tokens: int = 4096
+    skill_draft_timeout_s: float = 120.0
     pdf_import_max_pages: int = Field(default=20, ge=1, alias="PDF_IMPORT_MAX_PAGES")
     pdf_import_max_concurrency: int = Field(
         default=3, ge=1, le=10, alias="PDF_IMPORT_MAX_CONCURRENCY"

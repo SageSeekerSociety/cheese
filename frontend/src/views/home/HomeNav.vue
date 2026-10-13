@@ -283,6 +283,13 @@ const joinOpen = ref(false)
       </template>
     </v-list-item>
 
+    <v-list-item
+      rounded="lg"
+      prepend-icon="mdi-storefront-outline"
+      :to="{ name: 'market' }"
+      :title="t('navigation.market')"
+    />
+
     <!-- 自己名下的项目在「团队」之上单独一行：底下是只有自己的那个团队，界面上不当团队说。 -->
     <template v-for="group in groups" :key="group.key">
       <v-list-subheader v-if="group.heading">{{ t('navigation.teams') }}</v-list-subheader>

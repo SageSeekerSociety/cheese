@@ -42,6 +42,9 @@ auth_entries:
   device.agent.ws: "connector.agent_socket authenticates durable device session token via device.owner_reads.device_for_token from X-Cheese-Session or token query; binds the socket to that device. Source: app/api/routes/connector.py."
   device.viewer.ws: "connector._may_view_screen verifies query access token and actual screen project-member/owner or topic roster membership before the viewer socket. Source: app/api/routes/connector.py."
   local.device.owner: "local_dirs._require_user requires verified user_id, then _require_owned_device checks Device.owner_user_id. All selected-directory and access-log operations stay bound to caller device ownership. Source: app/api/routes/local_dirs.py."
+  machine.skills: "machine_skills._require_actor resolves a verified actor with a numeric user_id, then _require_owned_device binds Device.owner_user_id to that caller — a stranger's machine is 404, so it cannot be enumerated. scan/roots/web additionally call _require_project (ActorResolver.authorize_project), so naming a project cannot become a way to list another project's session homes. Source: app/api/routes/machine_skills.py."
+  skill.market: "machine_skills.read_skill_market calls _require_actor and nothing more: signing in is the whole gate. The market names no machine and no project and touches nothing of the caller's — it is what the two vendors publish publicly, read live (domain/skill_market.py). Source: app/api/routes/machine_skills.py."
+  skill.agent: "agent_skills._room resolves the named room/project and calls authorize_topic (ordinary access setting applies); the installed set is the platform's shipped skills, this project's confirmed skills, and the adopted skills on the ROOM's own machine only (carried_bodies.room_device + MachineSkillService confirmed_by), so no other person's machine and no un-adopted skill is reachable. Source: app/api/routes/agent_skills.py."
   dashboard.team.member: "dashboard._require_team_member resolves an authenticated actor with a current numeric user_id and requires team_service.is_team_member of the project's team; outsiders get NotFound. Source: app/api/routes/dashboard.py."
   dashboard.board: "dashboard._require_board_reader: require_verified_caller and membership in at least one project in the space board via may_read_project; global sandbox development override is explicit. Source: app/api/routes/dashboard.py."
   dashboard.person: "dashboard._signed_in resolves a verified handle; DashboardService filters profile/topics by viewer access. forget_understanding deletes only facts about that same viewer. Source: app/api/routes/dashboard.py,186,198,232."
@@ -262,6 +265,8 @@ owners:
   machine: "The platform's cloud host pool and sessions' execution leases; domain/machine/services.py and session_work.py."
   device: "User/team hosted-device enrollment, session links and screen streams; domain/device/service.py, owner_reads.py and domain/agent/device_hub.py."
   local_fs: "User-selected local-directory grants and access audit; domain/local_fs services/enforcement."
+  machine.skill: "One machine's own skills: what a scan found on it, what its owner adopted, and the workspace/web roots it reads. Domain: domain/machine_skill (models.py the index and its states, scan.py the machine-side reader and lander, spec.py the agentskills.io rules). Source: app/domain/machine_skill/, app/api/routes/machine_skills.py."
+  skill.market: "What Anthropic and OpenAI publish, read live for the skills dialog's market: Anthropic's skill catalogue, both vendors' plugin catalogues, and the official MCP registry — each read as the manifest file its own client reads. Domain: domain/skill_market.py (four catalogues, a process cache). A public catalogue, not this platform's or the caller's state."
   review: "Accept cards, reviewer decisions and PR readiness/merge; domain/review/AcceptService. Route owns request composition."
   review.delivery: "Published accept-card artifact delivery; domain/review card ownership composed with project artifacts/library snapshots in accept route."
   room_task: "Room tasks and their lifecycle/rail presentation; domain/room_task/TaskService and presentation.py. Not legacy external domain/task."
@@ -283,6 +288,7 @@ owners:
   project.environment: "Project/channel execution environment, its failures and their diagnosis; domain/project/environment.py and environment_diagnosis.py, domain/agent/environment_failures.py, composed with machine/device state."
   project.export: "Caller-visible offline project export; domain/project/export.create_archive owns archive construction and delegated auth."
   project.skills: "Project-owned reusable skills/revisions; domain/project_skill/ProjectSkillService."
+  agent.skills: "Installed-skill discovery for a room's AI teammate (skills_search / skills_read): composes the platform's shipped skills (domain/agent/skills.py), the project's confirmed skills (domain/project_skill), and the adopted skills on the room's machine (domain/machine_skill + agent/carried_bodies). An index for search, the SKILL.md body only on read. Source: app/api/routes/agent_skills.py."
   skill.bundle: "Content-addressed delivery of a session's shipped platform skills plus this project's own skills to the launching machine; domain/project_skill/service.session_skill_bundle and the device launcher cache. Derived content, not new business state."
   project.context: "Project context search assembly; project_context route composes filtered room/block/library/task queries using domain/search bm25. No new cross-domain service is invented."
   project.run_config: "Project default model/compute choices and tier policy; project route composes existing agent compute configs, policy and machine/device services."
@@ -383,6 +389,9 @@ routes:
   - {protocol: "http", method: "POST", path: "/topics/{task_id}/review-comments", auth: "review.comment", owner: "review"}
   - {protocol: "http", method: "PATCH", path: "/review-comments/{comment_id}", auth: "review.comment", owner: "review"}
   - {protocol: "http", method: "DELETE", path: "/review-comments/{comment_id}", auth: "review.comment", owner: "review"}
+  # app.api.routes.agent_skills
+  - {protocol: "http", method: "POST", path: "/agent/skills/search", auth: "skill.agent", owner: "agent.skills"}
+  - {protocol: "http", method: "POST", path: "/agent/skills/read", auth: "skill.agent", owner: "agent.skills"}
   # app.api.routes.addresses
   - {protocol: "http", method: "GET", path: "/addresses/projects/{ref}", auth: "address.reader", owner: "project.address"}
   - {protocol: "http", method: "GET", path: "/addresses/projects/{ref}/{kind}/{number}", auth: "address.reader", owner: "project.address"}
@@ -725,6 +734,13 @@ routes:
   - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/directories", auth: "local.device.owner", owner: "local_fs"}
   - {protocol: "http", method: "DELETE", path: "/connector/my/devices/{device_id}/directories/{grant_id}", auth: "local.device.owner", owner: "local_fs"}
   - {protocol: "http", method: "GET", path: "/connector/my/access-log", auth: "local.device.owner", owner: "local_fs"}
+  # app.api.routes.machine_skills
+  - {protocol: "http", method: "GET", path: "/connector/my/devices/{device_id}/skills", auth: "machine.skills", owner: "machine.skill"}
+  - {protocol: "http", method: "GET", path: "/connector/skills/market", auth: "skill.market", owner: "skill.market"}
+  - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/skills/scan", auth: "machine.skills", owner: "machine.skill"}
+  - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/skills/roots", auth: "machine.skills", owner: "machine.skill"}
+  - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/skills/web", auth: "machine.skills", owner: "machine.skill"}
+  - {protocol: "http", method: "POST", path: "/connector/my/devices/{device_id}/skills/{name}/adopt", auth: "machine.skills", owner: "machine.skill"}
   # app.api.routes.market
   - {protocol: "http", method: "GET", path: "/market/pools", auth: "public.catalogue", owner: "compute.availability"}
   - {protocol: "http", method: "GET", path: "/market/nodes", auth: "observed.compute.nodes", owner: "compute.availability"}
@@ -796,6 +812,11 @@ routes:
   - {protocol: "http", method: "POST", path: "/skills/{skill_id}/decline", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "POST", path: "/skills/{skill_id}/revisions/{revision}/restore", auth: "skill.project", owner: "project.skills"}
   - {protocol: "http", method: "DELETE", path: "/skills/{skill_id}", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "PUT", path: "/topics/{topic_id}/skills", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "GET", path: "/topics/{topic_id}/skills/{name}/health", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/skill-catalog", auth: "skill.project", owner: "project.skills"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/skills/{name}/health", auth: "skill.project", owner: "project.skills"}
   # app.api.routes.projects
   - {protocol: "http", method: "GET", path: "/projects/resource-limits", auth: "public.catalogue", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects", auth: "project.create", owner: "project"}
@@ -829,6 +850,7 @@ routes:
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/agents", auth: "actor.project", owner: "agent.instances"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/agents/{agent_id}", auth: "actor.project", owner: "agent.instances"}
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/agents/{agent_id}", auth: "actor.project", owner: "agent.instances"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/agents/{agent_id}/editing", auth: "actor.project", owner: "agent.instances"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-agent", auth: "actor.project", owner: "agent.instances"}
   # app.api.routes.projects_artifacts
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/artifacts", auth: "actor.project", owner: "project.artifacts"}
@@ -897,6 +919,7 @@ routes:
   - {protocol: "http", method: "GET", path: "/mcp/oauth/client.json", auth: "public.mcp.metadata", owner: "remote_mcp"}
   - {protocol: "http", method: "GET", path: "/mcp/oauth/callback", auth: "mcp.oauth.state", owner: "remote_mcp"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/mcp/{name}", auth: "mcp.proxy", owner: "remote_mcp"}
+  - {protocol: "http", method: "POST", path: "/topics/{topic_id}/mcp/{name}/resources", auth: "actor.topic.enforced", owner: "remote_mcp"}
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/mcp/servers", auth: "actor.topic.enforced", owner: "remote_mcp"}
   # app.api.routes.room_files
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/files", auth: "actor.topic", owner: "room.files"}

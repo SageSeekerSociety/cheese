@@ -307,6 +307,7 @@ ignore_imports =
     app.domain.project.forge -> app.domain.review.github_pr
     app.domain.project.room_files -> app.domain.agent.announce
     app.domain.project.room_files -> app.domain.agent.platform_notices
+    app.domain.project.services -> app.domain.agent.compute_configs
     app.domain.project.services -> app.domain.membership.services
     app.domain.project.services -> app.domain.topic.models
     app.domain.project.services -> app.domain.topic.repositories

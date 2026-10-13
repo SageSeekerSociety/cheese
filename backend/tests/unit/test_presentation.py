@@ -519,9 +519,7 @@ def test_a_narrow_rail_card_folds_into_the_same_facts_as_the_orm_row():
             "auto_merge_armed_by": spec.get("auto_merge_armed_by"),
         }
         card_id = uuid.uuid4()
-        row = AcceptCard(
-            id=card_id, topic_id=uuid.uuid4(), reviewer_handle="alice", **shared
-        )
+        row = AcceptCard(id=card_id, topic_id=uuid.uuid4(), **shared)
         return facts_for_card(row), facts_for_card(RailCard(id=card_id, **shared))
 
     specs = [

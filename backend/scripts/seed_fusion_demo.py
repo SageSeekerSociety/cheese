@@ -112,7 +112,11 @@ async def seed() -> None:
             # seeded here: its creator and 芝士. 综合 seats nobody by name —
             # everyone in the project is in it.
             await TopicMemberService(s).seed(work.id, owner_handle=OWNER)
-            await provision_repository(project.id, s)
+            # ponytail: 本地没配 Forgejo 时种子项目不带仓库，别让演示种子整体失败。
+            from app.core.config import settings
+
+            if settings.forgejo_url:
+                await provision_repository(project.id, s)
             print(f"seeded project '{name}' (team {team_id})")
         await s.commit()
 

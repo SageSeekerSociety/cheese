@@ -34,6 +34,7 @@ from app.domain.library import models as library  # noqa: F401
 from app.domain.living_doc import models as living_doc  # noqa: F401
 from app.domain.local_fs import models as local_fs  # noqa: F401
 from app.domain.machine import models as machine  # noqa: F401
+from app.domain.machine_skill import models as machine_skill  # noqa: F401
 from app.domain.materials import models as materials  # noqa: F401
 from app.domain.memory import models as memory  # noqa: F401
 from app.domain.notification import models as notification  # noqa: F401

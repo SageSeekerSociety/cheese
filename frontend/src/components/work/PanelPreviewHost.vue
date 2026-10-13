@@ -52,6 +52,9 @@ const preview = usePanelPreview(props, {
   onLoaded: (artifactId) => emit('loaded', artifactId),
   onEscape: () => panelRef.value?.handleEscape(),
   onPick: (pick) => panelRef.value?.handlePick(pick),
+  // 第三方 View 里的表单点提交：取数那一层已经把它拼成一条普通提问（带当前这一帧的
+  // 地址），这里只负责送进房间——和「圈一处说一句话」走的是同一条出口。
+  onAppMessage: (question) => props.submitQuestion?.(question),
   // 「另存一份」另存出了新的一份：开成自由区的一个页签。
   onOpenFile: (path) => emit('open-file', path),
 })

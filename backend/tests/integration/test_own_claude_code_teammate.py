@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
+from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_instance.own import own_handle
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -270,3 +272,32 @@ def test_it_carries_its_owners_current_name(client):
 
     own = _own_row(_members(client, project_id, "alice"), "alice")
     assert own["name"] == "小艾的 Claude Code"
+
+
+def test_its_owner_arms_its_skills_without_a_manager(client):
+    """What runs on your own machine under your own login is yours to arm: its
+    owner picks the skills it carries and needs no manager to approve that,
+    while another member's agent stays a manager's call."""
+    project_id, _room = _project_with_bob(client)
+    _log_in_claude_code(client, "bob")
+    assert _own_row(_members(client, project_id, "bob"), "bob") is not None
+
+    async def instance_id():
+        async with client.test_factory() as db:
+            user = await db.scalar(select(User).where(User.username == "bob"))
+            return await db.scalar(
+                select(AgentInstance.id).where(
+                    AgentInstance.project_id == uuid.UUID(project_id),
+                    AgentInstance.handle == own_handle(user.id),
+                )
+            )
+
+    agent_id = asyncio.run(instance_id())
+    bob = session_auth_headers("bob")
+    armed = client.put(
+        f"/projects/{project_id}/agents/{agent_id}",
+        json={"configuration": {"bob's": "kept", "skills": ["wolfram"]}},
+        headers=bob,
+    )
+    assert armed.status_code == 200, armed.text
+    assert armed.json()["data"]["configuration"]["skills"] == ["wolfram"]

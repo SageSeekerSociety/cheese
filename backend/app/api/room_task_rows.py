@@ -42,7 +42,11 @@ async def task_rows(
     # 人验收" are indistinguishable on screen — both are quiet — and the room
     # overview would have to ask per thread to tell them apart.
     thread_ids = [t.id for t, _ in threads]
-    cards = await AcceptCardRepository(db).latest_by_task(thread_ids)
+    card_repo = AcceptCardRepository(db)
+    cards = await card_repo.latest_by_task(thread_ids)
+    # 卡递给谁在 `accept_card_reviewer` 表里（一卡多人），不在卡那一行上：整屏卡
+    # 的评审人一次查完（`reviewer_handles_for_cards`）。
+    card_reviewers = await card_repo.reviewer_handles_for_cards(list(cards))
     asked = await BlockRepository(db).awaiting_an_answer(thread_ids)
     # 每件任务被采纳过几次、最近那次是哪个 PR：频道里的任务卡写「已采纳 · PR #45」。
     landed: dict[uuid.UUID, list] = {}
@@ -63,6 +67,7 @@ async def task_rows(
     items = []
     for task, blocks in threads:
         card = cards.get(task.id)
+        reviewers = card_reviewers.get(card.id, []) if card is not None else []
         shown = presentation.task_presentation(
             presentation.facts_for_task(
                 task,
@@ -76,7 +81,7 @@ async def task_rows(
             shown,
             running=task.id in running,
             owner=task.owner_handle,
-            reviewer=card.reviewer_handle if card is not None else None,
+            reviewer=reviewers[0] if reviewers else None,
             asked=asked.get(task.id),
         )
         accepted = landed.get(task.id, [])
@@ -91,7 +96,12 @@ async def task_rows(
                 "presentation": shown.as_dict(),
                 # 在等谁：「待 某某 审阅」；是看的人自己就写「待你审阅」。
                 "waiting_on": waiting,
-                "awaits_me": waiting is not None and waiting == actor.handle,
+                # 一卡多人：集合里的任一个人都算「在等我」。
+                "awaits_me": (
+                    actor.handle is not None and actor.handle in reviewers
+                    if shown.phrase == presentation.NeedsYou.awaiting_review.value
+                    else waiting is not None and waiting == actor.handle
+                ),
                 "accepted_count": len(accepted),
                 "last_accepted_pr": accepted[-1].pr_number if accepted else None,
                 "blocks": [

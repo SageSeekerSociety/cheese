@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.domain.agent.harness.claude_code.remote_execution import bootstrap
 from app.domain.agent.harness.claude_code.remote_execution.launch import payload_for
 from tests.integration.conftest import (
+    add_external_member,
     post_project,
     room_agent_seat,
     session_auth_headers,
@@ -306,10 +307,10 @@ def test_a_proposal_cannot_absorb_someones_private_memory(client):
     assert refused.status_code == 422, "a project method absorbed a personal memory"
 
 
-# --- The composer's skill plaza: what a room switches on ---------------------
+# --- The composer's skill panel: what a room switches on ---------------------
 
 
-def _plaza(client, room: str, headers=PERSON) -> dict[str, bool]:
+def _room_skills(client, room: str, headers=PERSON) -> dict[str, bool]:
     """The room's platform skills, name → switched on."""
     listed = client.get(f"/topics/{room}/skills", headers=headers)
     return {s["name"]: s["enabled"] for s in listed.json()["data"]["data"]}
@@ -318,7 +319,7 @@ def _plaza(client, room: str, headers=PERSON) -> dict[str, bool]:
 def test_a_room_switches_a_platform_skill_on_and_off(client):
     project = _project(client)
     room = _room(client, project)
-    before = _plaza(client, room)
+    before = _room_skills(client, room)
     assert "wolfram" in before, "the platform's own skills are not offered"
     assert not any(before.values()), "a new room started with a skill already on"
 
@@ -327,15 +328,15 @@ def test_a_room_switches_a_platform_skill_on_and_off(client):
     )
     assert turned.status_code == 200, turned.text
     assert turned.json()["data"]["enabled"] == ["wolfram"]
-    assert _plaza(client, room)["wolfram"] is True
+    assert _room_skills(client, room)["wolfram"] is True
 
     # It is the ROOM that switched it on: a sibling room is untouched.
     other = _room(client, project, title="另一间")
-    assert _plaza(client, other)["wolfram"] is False
+    assert _room_skills(client, other)["wolfram"] is False
 
     off = client.put(f"/topics/{room}/skills", json={"enabled": []}, headers=PERSON)
     assert off.status_code == 200, off.text
-    assert _plaza(client, room)["wolfram"] is False
+    assert _room_skills(client, room)["wolfram"] is False
 
 
 def test_a_room_keeps_only_the_names_the_platform_hands_it(client):
@@ -506,3 +507,34 @@ def test_a_proposal_names_the_closest_skill_by_title_not_by_id(client):
     shown = card["proposal"]["related"]
     assert existing["id"] not in shown, shown
     assert "「项目周报」" in shown, shown
+
+
+# --- Who may touch someone else's method -------------------------------------
+
+
+def test_only_a_manager_rewrites_or_deletes_another_members_method(client):
+    """A method reaches every later session and may be another member's: a
+    fellow member reads it, but only a manager rewrites or deletes it."""
+    project = _project(client)
+    room = _room(client, project)
+    skill = client.post(f"/topics/{room}/skills", json=METHOD, headers=PERSON).json()[
+        "data"
+    ]
+    assert skill["state"] == "active"
+
+    add_external_member(client, project, "user-2", by=OWNER)
+    outsider = session_auth_headers("user-2")
+    read = client.get(f"/projects/{project}/skills", headers=outsider)
+    assert read.status_code == 200, read.text
+
+    refused = client.patch(
+        f"/skills/{skill['id']}", json={"body": "改写"}, headers=outsider
+    )
+    assert refused.status_code == 403, refused.text
+    assert "改写" not in _shipped(project)["skills/weekly-report/SKILL.md"]
+
+    refused = client.delete(f"/skills/{skill['id']}", headers=outsider)
+    assert refused.status_code == 403, refused.text
+    assert "skills/weekly-report/SKILL.md" in _shipped(project)
+
+    assert client.delete(f"/skills/{skill['id']}", headers=PERSON).status_code == 200

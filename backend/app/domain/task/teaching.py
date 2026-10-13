@@ -78,9 +78,10 @@ async def for_project(
 
     Read fresh on every turn rather than remembered on the project: the week is
     a fact about now, and a course that moved from 第 3 周 to 第 4 周 must not
-    need every project re-registered to hear about it. What that does and does
-    not reach is the 生效语义 `harness.prompt` documents — a running session
-    keeps the copy it started with, so this is the answer for the NEXT one.
+    need every project re-registered to hear about it. A running session hears
+    the change too — `teaching` is a tracked section (`harness.prompt`
+    TRACKED_SECTIONS), so the next turn of any conversation already in flight is
+    re-told the new scope in `opening_changes`.
     """
     if project is None or project.external_task_id is None:
         return None

@@ -4,14 +4,14 @@ Revision ID: a1c9f4e07b62
 Revises: f175b976a14a
 Create Date: 2026-10-08
 
-The composer's 技能广场 switches a platform skill on for one room: the turn then
+The composer's skill panel switches a platform skill on for one room: the turn then
 prepends that skill's guidance, so every agent in the conversation follows it
 from its first word. Which ones are on is a fact about the room — the names
 live on ``topics``.
 
 Nullable, no default: NULL and `[]` both mean "this room runs on the platform's
 own guidance only", which is what every room already does before anyone opens
-the plaza.
+the panel.
 """
 
 from collections.abc import Sequence
