@@ -176,24 +176,14 @@ function moreLabel(channelId: string): string {
 }
 
 // ---- 这一块收起来了 ----
-// 收起那一块不能把你手里的事一起收掉：正打开的那条留在下面（侧栏对频道已经有同一条
-// 规矩——正待着的频道即便没加入也留在列表上，见 `useTopicRail` 的 hereChannelId）。
-// 留哪一条按「我现在开着哪个任务」问，而不是按它有没有挂在 `roomTasks` 里：收起来只
-// 收画法，不动数据。
+// 收起是整块放下：里面所有行都不画，也不留单独一条（2026-10-13 之前留正打开的那一条，
+// 现在不留）。留一半会让人停在一条已经收进去的任务上——那一行是「这一块」的入口，块
+// 没了，它也就没了。收起来时把正开着的那条一起带走这件事，在 `ProjectSidebar` 的
+// `toggleTasksFold` 里做（这里只负责画，不认识路由）。
 function tasksFoldOf(channelId: string): boolean {
   return props.foldedChannels?.[channelId] === true
 }
-function pinnedTask(channelId: string): RailTask | null {
-  const id = props.selectedTaskId
-  if (!id || !tasksFoldOf(channelId)) return null
-  return (props.roomTasks?.[channelId] ?? []).find((task) => task.id === id) ?? null
-}
-/** 收起来了还留在下面那一条（没有就是空）。 */
-function pinnedRows(channelId: string): RailTask[] {
-  const task = pinnedTask(channelId)
-  return task ? [task] : []
-}
-/** 展开着才挂任务行：收起来时只留正打开的那一条。 */
+/** 展开着才挂任务行：收起来时一条都不画。 */
 function taskRows(channelId: string): RailTask[] {
   return tasksFoldOf(channelId) ? [] : props.roomTasks?.[channelId] ?? []
 }
@@ -202,11 +192,12 @@ function showMoreRow(channelId: string): boolean {
   return !tasksFoldOf(channelId) && hasMoreRow(channelId)
 }
 /** 这块任务此刻该画的灯：里面所有行里最亮的那一盏（`brightest`）——黄压过绿，红压过黄。
- *  开着的时候不画（每行自己的灯就在下面）；收起时才用它替这一块报信。 */
+ *  开着的时候不画（每行自己的灯就在下面）；收起时才用它替这一块报信。
+ *  只说这一块里的任务，不含这个频道自己那盏（频道行已经在左边画过了）——同一行上那个
+ *  管子话题的开关有同一条规矩：「不含这一行自己的灯…不重复画」（`TopicRailRow`）。 */
 function tasksLight(channelId: string): RowLight | null {
   if (!tasksFoldOf(channelId)) return null
   return brightest([
-    lightOf(channelId),
     ...(props.roomTasks?.[channelId] ?? []).map((task) => taskLight(task)),
     ...(props.moreTasks?.[channelId]?.state === 'ready' ? props.moreTasks[channelId].rows : []).map((task) =>
       taskLight(task)
@@ -605,17 +596,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                 @select="emit('select-task', $event)"
                 @press="emit('press-task', $event)"
               />
-              <!-- 收起来以后只留你正打开的那一条：「收起」不能把你手里的事一起收掉。 -->
-              <TopicRailTaskRow
-                v-for="task in rootTopic ? pinnedRows(rootTopic.id) : []"
-                :key="task.id"
-                :task="task"
-                :selected="true"
-                :light="taskLight(task)"
-                :unread="unreadOf(task.id)"
-                @select="emit('select-task', $event)"
-                @press="emit('press-task', $event)"
-              />
               <TopicRailMoreTasksRow
                 v-if="rootTopic && showMoreRow(rootTopic.id)"
                 :channel-id="rootTopic.id"
@@ -726,18 +706,6 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                         :task="task"
                         :depth="item.depth"
                         :selected="task.id === selectedTaskId"
-                        :light="taskLight(task)"
-                        :unread="unreadOf(task.id)"
-                        @select="emit('select-task', $event)"
-                        @press="emit('press-task', $event)"
-                      />
-                      <!-- 收起来以后只留你正打开的那一条。 -->
-                      <TopicRailTaskRow
-                        v-for="task in pinnedRows(item.topic.id)"
-                        :key="task.id"
-                        :task="task"
-                        :depth="item.depth"
-                        :selected="true"
                         :light="taskLight(task)"
                         :unread="unreadOf(task.id)"
                         @select="emit('select-task', $event)"
