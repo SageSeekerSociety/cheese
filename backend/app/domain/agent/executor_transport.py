@@ -248,6 +248,18 @@ def session_path(path):
     return path
 
 
+def to_machine(text, seen, workspace):
+    """``text`` with the project's path as a session sees it from a directory
+    of its own (``seen``: the placeholder a session starts at before its
+    lease, or a member's own Claude Code's directory when its executor is on
+    another machine) spelled where the executor holds the project. A Windows
+    session host's shell spells that directory the Git Bash way, so both
+    spellings are."""
+    for spelled in {seen, session_path(seen)}:
+        text = text.replace(spelled, workspace)
+    return text
+
+
 def read_file_on_the_machine(invoke, path, request_id):
     """One file's bytes, from the machine that holds them, in pieces small
     enough that the build hands each one back whole."""
@@ -927,15 +939,15 @@ class RemoteClient:
                 for field in ("file_path", "path", "notebook_path", "command"):
                     value = params["args"].get(field)
                     if isinstance(value, str):
-                        params["args"][field] = value.replace(
-                            original_workspace, workspace
+                        params["args"][field] = to_machine(
+                            value, original_workspace, workspace
                         )
             if params and method == "control":
                 params = dict(params)
                 for field in ("body", "cwd", "path"):
                     if isinstance(params.get(field), str):
-                        params[field] = params[field].replace(
-                            original_workspace, workspace
+                        params[field] = to_machine(
+                            params[field], original_workspace, workspace
                         )
             target_file = self.config.get("target_file")
             if target_file and changed_lease:

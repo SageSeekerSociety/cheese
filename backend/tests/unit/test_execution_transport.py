@@ -841,6 +841,36 @@ async def test_codex_tool_retry_uses_the_executor_mutation_receipt(
     assert (workspace / "once.txt").read_text() == "x"
 
 
+def test_a_session_prepared_here_does_not_credit_claude_code(
+    central_transport, tmp_path, monkeypatch
+):
+    """A teammate's commits and PRs carry the platform's identities, never the
+    CLI's own "Co-Authored-By: Claude" trailer or "Generated with Claude Code"
+    footer, whichever machine the session runs from."""
+    from app.domain.agent.harness.claude_code.session_launch import session_settings
+
+    monkeypatch.setenv("CHEESE_TOKEN", "fixture")
+    monkeypatch.setattr(central.os.path, "ismount", lambda _path: True)
+    helpers = tmp_path / "helpers"
+    helpers.mkdir()
+    for name, source in release.sources().items():
+        (helpers / name).write_text(source)
+    monkeypatch.setattr(central, "__file__", str(helpers / "client.py"))
+    target = json.loads((tmp_path / "central.json").read_text())
+    version_probe = tmp_path / "claude-version"
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.282\\n'\n")
+    version_probe.chmod(0o700)
+    directory = tmp_path / "prepared"
+
+    central.prepare(
+        directory, target, claude=str(version_probe), base_settings=session_settings()
+    )
+
+    attribution = json.loads((directory / "settings.json").read_text())["attribution"]
+    assert attribution["commit"] == ""
+    assert attribution["pr"] == ""
+
+
 def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     central_transport, tmp_path, monkeypatch
 ):

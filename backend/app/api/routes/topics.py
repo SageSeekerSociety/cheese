@@ -61,17 +61,12 @@ from app.domain.mentions import canonicalize_refs
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.services import AcceptService
 from app.domain.room_task import presentation
-from app.domain.room_task.models import LockKind
-from app.domain.room_task.services import (
-    RoomLockService,
-    TaskService,
-)
+from app.domain.room_task.services import TaskService
 from app.domain.routine import reads as routine_reads
 from app.domain.thread import reads as thread_reads
 from app.domain.thread.services import onto_rooms, thread_opening
 from app.domain.topic.schemas import (
     CheckResultIn,
-    LockIn,
     MemberActivityOut,
     MemberWaitOut,
     TopicCreate,
@@ -1369,65 +1364,6 @@ async def record_check_result(
     await TaskService(db).record_check(task, ok=body.ok, detail=body.detail)
     await db.commit()
     return ok({"recorded": True, "task_id": str(task.id)})
-
-
-@router.post("/{topic_id}/lock", dependencies=[CHEESE_ONLY_IN_ROOM])
-async def take_room_lock(
-    topic_id: uuid.UUID,
-    body: LockIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    """Take one of the room's two locks, or be told who has it.
-
-    Never waits: blocking would spend a whole turn's compute standing still,
-    and the caller has better answers available — write a different file, use
-    `Edit` instead of a whole-file write, come back next turn.
-    """
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    holder = await _lock_holder(db, place, body)
-    acquired, reason = await RoomLockService(db).acquire(
-        room_id=place.room_id,
-        kind=LockKind(body.kind),
-        resource=body.resource or "",
-        holder_task_id=holder,
-    )
-    await db.commit()
-    return ok({"acquired": acquired, "reason": reason})
-
-
-async def _lock_holder(db, place, body: LockIn) -> uuid.UUID:
-    """The task a room lock is taken or given back for: the task asking, or
-    for a room the task it names."""
-    if place.task is not None:
-        if body.task_id not in (None, place.task.id):
-            raise ValidationError(say("taskNotFound"))
-        return place.task.id
-    if body.task_id is None:
-        raise ValidationError(say("taskNotFound"))
-    await TaskService(db).require_in_room(place.room_id, body.task_id)
-    return body.task_id
-
-
-@router.post("/{topic_id}/unlock", dependencies=[CHEESE_ONLY_IN_ROOM])
-async def release_room_lock(
-    topic_id: uuid.UUID,
-    body: LockIn,
-    db: DbSession,
-    resolver: ActorResolverDep,
-) -> dict:
-    place = await TopicService(db).place_or_404(topic_id)
-    await _actor_in_place(resolver, place)
-    holder = await _lock_holder(db, place, body)
-    released = await RoomLockService(db).release(
-        room_id=place.room_id,
-        kind=LockKind(body.kind),
-        resource=body.resource or "",
-        holder_task_id=holder,
-    )
-    await db.commit()
-    return ok({"released": released})
 
 
 @router.post("/{topic_id}/clone-from")

@@ -10197,47 +10197,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/topics/{topic_id}/lock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Take Room Lock
-         * @description Take one of the room's two locks, or be told who has it.
-         *
-         *     Never waits: blocking would spend a whole turn's compute standing still,
-         *     and the caller has better answers available — write a different file, use
-         *     `Edit` instead of a whole-file write, come back next turn.
-         */
-        post: operations["take_room_lock_topics__topic_id__lock_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/topics/{topic_id}/unlock": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Release Room Lock */
-        post: operations["release_room_lock_topics__topic_id__unlock_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/topics/{topic_id}/clone-from": {
         parameters: {
             query?: never;
@@ -15318,21 +15277,6 @@ export interface components {
             id: string;
             /** Title */
             title: string;
-        };
-        /**
-         * LockIn
-         * @description Acquire or release the room's heavy-operation lane.
-         */
-        LockIn: {
-            /** Kind */
-            kind: string;
-            /** Task Id */
-            task_id?: string | null;
-            /**
-             * Resource
-             * @default
-             */
-            resource: string;
         };
         /** LoginRequest */
         LoginRequest: {
@@ -39929,80 +39873,6 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["CheckResultIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    take_room_lock_topics__topic_id__lock_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LockIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    release_room_lock_topics__topic_id__unlock_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                topic_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LockIn"];
             };
         };
         responses: {

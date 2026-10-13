@@ -2,7 +2,7 @@
 
 import enum
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from sqlalchemy import (
     JSON,
@@ -95,40 +95,6 @@ class TaskSnapshot(UuidPk, Timestamps, Base):
     snapshot_sha: Mapped[str] = mapped_column(String(64))
     digest: Mapped[str] = mapped_column(String(64))
     storage_key: Mapped[str] = mapped_column(String(1024))
-
-
-class LockKind(enum.StrEnum):
-    heavy = "heavy"
-
-
-HEAVY_LOCK_TTL = timedelta(minutes=30)
-
-
-class RoomLock(UuidPk, Timestamps, Base):
-    """Serialize operations competing for a room's machine resources."""
-
-    __tablename__ = "room_locks"
-    __table_args__ = (
-        Index("uq_room_locks_resource", "room_id", "kind", "resource", unique=True),
-        Index("ix_room_locks_expires_at", "expires_at"),
-    )
-
-    room_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("topics.id", ondelete="CASCADE")
-    )
-    kind: Mapped[LockKind] = mapped_column(String(16))
-    #: Empty for the room's heavy-operation lock. Empty rather than NULL so
-    #: the unique index constrains it — NULL never equals NULL, so a nullable
-    #: column would let one room hold any number of heavy locks.
-    resource: Mapped[str] = mapped_column(String(1024), default="", server_default="")
-    #: NULL = the room's main executor holds the heavy-operation lock.
-    holder_task_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), nullable=True
-    )
-    acquired_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=text("now()")
-    )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class Task(UuidPk, Timestamps, Base):
