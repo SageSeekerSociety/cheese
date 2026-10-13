@@ -18,6 +18,7 @@ import DocEditButton from './DocEditButton.vue'
 import DocVersionDiff from './DocVersionDiff.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -132,11 +133,19 @@ const names = computed(() => ({
   mentionIdentities: props.mentionIdentities,
 }))
 
-function who(version: DocVersion): string {
-  const name = props.nameOf(version.actor)
-  return version.requested_by
-    ? t('work.room.doc.historyFor', { who: name, requester: props.nameOf(version.requested_by) })
-    : name
+/**
+ * 一条记录上要画的人：改的那位，和让改的那位。名字来自 `nameOf`（自己是「你」、队友
+ * 是它的名字），脸和「是不是队友」来自正文标签那张表（`mentionIdentities`，现成的 URL）。
+ * 表上没有这个人时给 null —— 退回彩色首字母，不按名字长相乱猜。
+ */
+function whoIdentity(handle: string) {
+  const known = props.mentionIdentities?.[handle]
+  return {
+    handle,
+    name: props.nameOf(handle),
+    avatar: known?.avatar ?? null,
+    agent: known?.agent ?? null,
+  }
 }
 
 async function restoreSelected() {
@@ -199,7 +208,16 @@ async function restoreSelected() {
               :aria-current="v.version === selected ? 'true' : undefined"
               @click="selected = v.version"
             >
-              <span class="doc-history__who">{{ who(v) }}</span>
+              <!-- Who changed it, and who asked for the change: both are a face + a name,
+                   not a bare handle in a sentence. -->
+              <span class="doc-history__who">
+                <template v-if="v.requested_by">
+                  <IdentityView v-bind="whoIdentity(v.requested_by)" :size="18" />
+                  <span class="doc-history__verb">{{ t('work.room.doc.historyLet') }}</span>
+                </template>
+                <IdentityView v-bind="whoIdentity(v.actor)" :size="18" />
+                <span v-if="v.requested_by" class="doc-history__verb">{{ t('work.room.doc.historyChange') }}</span>
+              </span>
               <span class="doc-history__when">
                 {{ relTime(v.created_at)
                 }}<template v-if="i === 0"> · {{ t('work.room.doc.historyCurrent') }}</template>
@@ -326,9 +344,17 @@ async function restoreSelected() {
   background: var(--fill);
 }
 .doc-history__who {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  width: 100%;
   color: var(--ink);
   font-size: 13px;
   line-height: var(--lh-13);
+}
+.doc-history__verb {
+  color: var(--faint);
 }
 .doc-history__when {
   color: var(--faint);
