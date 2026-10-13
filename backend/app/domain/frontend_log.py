@@ -114,7 +114,7 @@ async def record(db: AsyncSession, body: FrontendErrorBatchIn) -> dict:
     as received: the reporting client never retries.
 
     The caller has already answered whether the project exists — a batch for a
-    project that does not comes back a 404 before it reaches here.
+    project that does not exist is refused with a 404 before it reaches here.
     """
     conversation = await db.get(Conversation, body.topic_id) if body.topic_id else None
     if conversation is not None and conversation.project_id != body.project_id:
