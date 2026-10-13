@@ -19,9 +19,21 @@ export interface MemberWait {
   pr?: number | null
 }
 
+/** 一位成员的「脸」：自己挑过的头像地址，和是不是 AI 队友。名册在手时由调用方给，
+ *  拿不到时留空交给 `IdentityView` 按 handle 兜底。 */
+export interface MemberFace {
+  /** 这个人**自己挑过的**头像地址；没挑过、或名册上没他（已经退出项目）时是 null，
+   *  画彩色首字母。别在这里退回默认头像 —— 那是所有没挑过的人共用的一张脸。 */
+  avatar: string | null
+  /** 是不是 AI 队友；名册认不出时是 null，由 `IdentityView` 按 handle 命名规则兜底。 */
+  agent: boolean | null
+}
+
 export interface MemberActivityLine {
   handle: string
   name: string
+  /** 这一位的脸（头像地址 + 是不是队友）。只画名字、不给这个，就退回一个光秃秃的名字。 */
+  face: MemberFace
   kind: 'typing' | 'working'
   /** epoch 秒。 */
   since: number
@@ -38,13 +50,15 @@ export function activityLines(
   nameOf: (handle: string) => string,
   detailOf: (handle: string) => string | null = () => null,
   stepOf: (handle: string) => string | null = () => null,
-  lastFrameOf: (handle: string) => number | null = () => null
+  lastFrameOf: (handle: string) => number | null = () => null,
+  faceOf: (handle: string) => MemberFace = () => ({ avatar: null, agent: null })
 ): MemberActivityLine[] {
   return [...entries]
     .sort((a, b) => a.since - b.since)
     .map((e) => ({
       handle: e.member,
       name: nameOf(e.member),
+      face: faceOf(e.member),
       kind: e.kind,
       since: e.since,
       detail: e.kind === 'working' ? detailOf(e.member) : null,

@@ -17,6 +17,7 @@
 // markup, and the decisions that belong to the page a panel is rendered from.
 import type { Block, ChatAttachment, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
+import type { MemberFace } from '../lib/memberActivity'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
 import type { MentionIdentity } from '../lib/refChip'
@@ -254,8 +255,16 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
   })
 
+  // 一位成员的「脸」：头像地址和「是不是队友」。`mentionIdentities` 那份表带着房间
+  // 名册上每个人自己挑过的头像（AI 的座位只在房间名册上），名册还没到时退回项目名册
+  // 的头像；两处都答不上就留空，由 IdentityView 按 handle 画彩色首字母。
+  function faceOf(handle: string): MemberFace {
+    const known = mentionIdentities[handle]
+    return { avatar: known?.avatar ?? avatarSrc(handle), agent: known?.agent ?? isAgentHandle(handle) }
+  }
+
   // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity；
-  // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步、多久没新帧）。
+  // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步、多久没新帧、那张脸）。
   const activity = useRoomActivity({ me: AUTHOR, send: sendOnSocket })
   const liveSteps = useLiveSteps()
   const activityLines = useActivityLines(
@@ -264,12 +273,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
     (handle) =>
       agentNameOf(handle) ??
       (isAgentHandle(handle) ? agentDisplayName(handle) : memberByHandle.value.get(handle)?.name || handle),
-    (handle) => turns.faces.value[handle]?.status
+    (handle) => turns.faces.value[handle]?.status,
+    faceOf
   )
   watch(
     () => {
       const busy = new Set(activityLines.value.map((l) => l.handle))
-      const queued = runRecords.waitingLines((h) => agentNameOf(h) ?? agentDisplayName(h))
+      const queued = runRecords.waitingLines((h) => agentNameOf(h) ?? agentDisplayName(h), faceOf)
       return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
     },
     (v) => emit('activity', v)
