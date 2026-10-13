@@ -258,6 +258,7 @@ function onMenuToggle(open: boolean) {
         :collapsed="tasksCollapsed === true"
         :count="taskCount"
         :light="taskLight ?? null"
+        :page="page"
         @toggle="emit('toggle-tasks', row.topic.id)"
       />
       <!-- hover 浮出的操作入口：一颗 ⋯，绝对定位覆盖行尾，不占布局宽度。
@@ -544,13 +545,13 @@ function onMenuToggle(open: boolean) {
 .topic-row--tasks .row-actions {
   right: 45px;
 }
-/* 收起来的那一档要再让一截：把手这时还多顶着一盏灯和一颗条数，展开态只有一个箭头。
-   45px 那条留的量只够展开态——收起时 ⋯ 正好压在那颗条数上（2026-10-13 真渲染量到
-   的：压住 21px），而条数正是收起这一档要留给人看的唯一东西。所以按宽的那一档让。
-   45 是怎么来的：行右沿到把手的间距 16px + 展开态把手 15px + 14px 空隙。收起态把手
-   50px，同样留 14px 空隙，就是 16 + 50 + 14 = 80。这些数都跟着字号走，字号变了要重量。 */
+/* 收起来的那一档要再让一截：把手这时还多顶着一盏灯和一颗条数，展开态只有一个箭头
+   （16px），收起态实测 51px。45px 那条留的量只够展开态——收起时 ⋯ 正好压在那颗条数
+   上（2026-10-13 真渲染量到的：压住 21px），而条数正是收起这一档要留给人看的唯一东西。
+   所以按宽的那一档让：行右沿到把手 16px + 收起态把手 51px + 14px 空隙 = 81，展开态
+   那颗 ⋯ 离把手也正是 13～14px，两档的空隙看起来一样。这些数跟着字号走，字号变了要重量。 */
 .topic-row--tasks-collapsed .row-actions {
-  right: 80px;
+  right: 81px;
 }
 /* 整页形态：手指点的地方至少 44px 高；改名的输入框 16px，iOS 聚焦时才不会整页放大。 */
 .topic-rail--page .topic-row {
