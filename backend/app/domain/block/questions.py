@@ -1,14 +1,15 @@
 """An agent's question: an ordinary message in the room that carries quick replies.
 
 A question is a `kind=message` block written under the asking agent's seat,
-with `meta.options` (what a person can click), `meta.asked` (who it waits on;
-None when nobody in particular) and `meta.answer_log` (every response it has
-had so far: an option it offered, a note in the person's own words, or a skip
-— the person it waits on saying he will not answer it). Nothing about it holds
-a turn open: the agent posts it and ends its
-turn, and the reply a person sends — a click or a typed message — is an
-ordinary message that starts the agent's next one
-(`agent.announce.answer_questions`).
+with `meta.options` (what a person can click), `meta.asked` (the people it
+asks, chosen by the agent — empty when nobody in particular),
+`meta.asked_all` (asked of everyone in the channel) and `meta.answer_log`
+(every response it has had so far: an option it offered, a note in the
+person's own words, or one person's skip). How those read — whom it still waits
+on, whether it is settled — is `block.asked`. Nothing about it holds a turn
+open: the agent posts it and ends its turn, and the reply a person sends — a
+click or a typed message — is an ordinary message that starts the agent's next
+one (`agent.announce.answer_questions`).
 
 Callers authorize the seat and commit; nothing here publishes or delivers.
 """
@@ -25,16 +26,16 @@ from app.core.errors import (
     ValidationError,
 )
 from app.core.sentences import say
+from app.domain.block.asked import (
+    SKIPPED,
+    answered,
+    asked_of,
+    skipped_by,
+    skipped_by_all,
+)
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.identity.handles import names_a_person
-
-#: The `kind` of the `answer_log` entry a skip leaves: the person it waits on
-#: answered that he will not answer it. It is an entry of the same record as an
-#: answer, not a meta key of its own, because it does what an answer does to
-#: the question — the question stops waiting, one response closes it, and its
-#: author takes it back the way he takes back an answer (`withdraw_answer`).
-SKIPPED = "skipped"
 
 #: Codex's `request_user_input` caps one call at three questions of two or three
 #: options each; a longer list reads as a form, which is what this replaced.
@@ -84,9 +85,20 @@ def parse_questions(body) -> list[Question]:
 
 
 async def post_questions(
-    session, *, project_id, conversation_id, seat, questions, asked, request_id=None
+    session,
+    *,
+    project_id,
+    conversation_id,
+    seat,
+    questions,
+    asked: tuple[str, ...],
+    asked_all: bool = False,
+    request_id=None,
 ) -> list[Block]:
     """Write one message per question in the conversation; flush, never commit.
+
+    ``asked`` is the people each question asks (empty: nobody in particular);
+    ``asked_all`` says they are everyone in the channel.
 
     ``request_id`` makes a retry safe, as it does for `chat_send`: the questions
     a call with the same id already wrote are returned instead of asked twice.
@@ -118,7 +130,8 @@ async def post_questions(
                 kind=BlockKind.message,
                 meta={
                     "options": question.options,
-                    "asked": asked,
+                    "asked": list(asked),
+                    "asked_all": asked_all,
                     "answer_log": [],
                     **({"ask_request": request_id} if request_id else {}),
                 },
@@ -138,35 +151,39 @@ def waits_on(question: Block, handle: str) -> bool:
     """这道题等不等 ``handle`` 的回答 —— 也就是他能不能答它、能不能跳过它。
 
     和 `BlockRepository.questions_a_reply_answers` 认一句打字回复是不是答案的那条
-    判据同一个读法：题上记着问的是谁（`meta.asked`），就只等他；没记着谁（平台发起
-    的那一轮里问的），谁回都算。回答的永远是人：队友不答队友的题（人的消息才走
+    判据同一个读法：题上记着问的是谁（`meta.asked`），就等他们；一个人也没记（平台
+    发起的那一轮里问的），谁回都算。回答的永远是人：队友不答队友的题（人的消息才走
     `announce.answer_questions`）。
     """
-    asked = (question.meta or {}).get("asked")
-    return names_a_person(handle) and (asked is None or asked == handle)
+    asked = asked_of(question.meta)
+    return names_a_person(handle) and (not asked or handle in asked)
 
 
-def skip_question(question: Block, *, by: str) -> Block:
-    """``by`` 跳过这道题：不回答它。
+def skip_question(question: Block, *, by: str) -> bool:
+    """``by`` 跳过这道题：他不回答它。返回这一下是不是让题了结了（它点名的每个人
+    都跳过了，`block.asked.skipped_by_all`）—— 了结了，提问的那位才该知道。
 
     跳过是对这道题的一个回应，所以和回答记在同一份 ``answer_log`` 上，一条
-    ``kind=skipped``、不带选项也不带话的条目 —— 于是凡是读「这道题答过没有」的地
-    方（待回答清单、「一道题只收一个回答」、通知结不结）都不用另学一个标记。撤销跳
-    过就是撤回这一条（`withdraw_answer`），和撤回答案是同一个动作。
+    ``kind=skipped``、不带选项也不带话、记着是谁的条目。它只把题从他手上拿走：题问
+    了几个人，别人照旧等着回答。撤销跳过就是撤回这一条（`withdraw_answer`），和撤回
+    答案是同一个动作。
 
-    只有这道题在等的人跳得过（`waits_on`）；已经有回应的题不收第二个，和回答一样。
-    不 flush：调用方和别的写一起落库。
+    只有这道题在等的人跳得过（`waits_on`）；已经有人回答的题不再收，同一个人也不跳
+    两次。不 flush：调用方和别的写一起落库。
     """
     meta = dict(question.meta or {})
     if not meta.get("options"):
         raise UnprocessableEntityError(say("askNotAQuestion"))
     if not waits_on(question, by):
         raise ForbiddenError(say("askSkipNotYours"))
-    if meta.get("answer_log") or meta.get("answered"):
+    if answered(meta):
         raise ConflictError(say("askAlreadyAnswered"))
+    if by in skipped_by(meta):
+        raise ConflictError(say("askAlreadySkipped"))
     question.meta = {
         **meta,
         "answer_log": [
+            *(meta.get("answer_log") or []),
             {
                 "kind": SKIPPED,
                 "option": None,
@@ -174,15 +191,10 @@ def skip_question(question: Block, *, by: str) -> Block:
                 "by": by,
                 "at": datetime.now(UTC).isoformat(),
                 "reply_id": None,
-            }
+            },
         ],
     }
-    return question
-
-
-def skipped(entry: dict) -> bool:
-    """这一条 ``answer_log`` 是不是一次跳过，而不是一个答案。"""
-    return (entry or {}).get("kind") == SKIPPED
+    return skipped_by_all(question.meta)
 
 
 def answered_by(question: Block, handle: str) -> bool:

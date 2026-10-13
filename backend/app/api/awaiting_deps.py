@@ -127,8 +127,8 @@ async def waiting_items(
     blocks = BlockRepository(db)
     task_cards = await AcceptService(db).latest_cards_by_task([b.id for b in underway])
     room_cards = await _room_cards(db, topic_ids)
-    # {地点: 这道题在等谁}。一个待确认问题只有**发起那一轮的人**能回答，提问那一刻
-    # 就记在题上——不是事后去问轮次：芝士问完就收尾，那一轮早就关了。
+    # {地点: 这道题在等谁}。芝士问谁，提问那一刻就记在题上（`block.asked`）——不是
+    # 事后去问轮次：芝士问完就收尾，那一轮早就关了。跳过了的人不再等。
     # A question asked in a 支线 is its channel's, and opens on that 支线.
     thread_rooms = await threads_of_rooms(db, topic_ids)
     # 一次问完所有可能停着一道题的地方：频道、活、支线。以前这里分两次问，「题问
@@ -206,7 +206,7 @@ async def waiting_items(
     render_rooms.update(
         tid
         for tid in topic_ids
-        if asked.get(tid) == handle
+        if (tid in asked and handle in asked[tid].waiting())
         or (
             room_cards.get(tid) is not None
             and room_cards[tid].reviewer_handle == handle
@@ -240,11 +240,9 @@ async def waiting_items(
             Event(
                 reviewers=() if card is None else (card.reviewer_handle,),
                 reporter=task.reporter_handle,
-                asked=asking,
-                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知
-                # 那边同一个名单（`announce.notify_question`）。题根本不在等，就没
-                # 有这一层。
-                asked_also=(task.people if task.id in asked and asking is None else ()),
+                # 题上没点名（平台发起的轮次）：等它的是这条活的人 —— 和通知那边同
+                # 一个名单（`announce.notify_question`）。题根本不在等，就没有这一层。
+                asked_also=() if asking is None else asking.waiting(task.people),
                 owner=(
                     task.owner_handle
                     if presentation.owner_acts_on(shown, running=task.id in running)
@@ -288,9 +286,10 @@ async def waiting_items(
         # 字段这里都是空的。两者都不沾的，算到哪一格都写不出他的名字，先跳过，省下
         # 一次 `room_presentation`。
         card = room_cards.get(topic.id)
+        asking = asked.get(topic.id)
+        waiting = () if asking is None else asking.waiting()
         if not (
-            asked.get(topic.id) == handle
-            or (card is not None and card.reviewer_handle == handle)
+            handle in waiting or (card is not None and card.reviewer_handle == handle)
         ):
             continue
         shown = presentation.room_presentation(
@@ -308,7 +307,7 @@ async def waiting_items(
             # 房间没有「提需求的人」这一栏 —— 那是一条活上的字段。
             Event(
                 reviewers=() if card is None else (card.reviewer_handle,),
-                asked=asked.get(topic.id),
+                asked_also=waiting,
             ),
             hand_of(shown.column),
         )

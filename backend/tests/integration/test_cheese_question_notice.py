@@ -176,7 +176,9 @@ def test_an_agent_that_speaks_again_takes_its_own_question_off_the_desk(client):
     """
     seed_user(client, "alice")
     pid, room = _room(client)
-    question_row(client, room, question="截图里那个灰底圆角块是哪一处？", asked="alice")
+    question_row(
+        client, room, question="截图里那个灰底圆角块是哪一处？", asked=["alice"]
+    )
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
     _agent_says(client, room, "找到根因了，改完推上去了")
@@ -197,7 +199,7 @@ def test_a_question_a_person_asked_still_waits_while_the_agent_works(client):
         room,
         question="周会挪到周四行吗",
         author="alice",
-        asked="alice",
+        asked=["alice"],
         options=[{"text": "行"}, {"text": "不行"}],
     )
     _agent_says(client, room, "我先把能查的查了")
@@ -243,7 +245,7 @@ def test_a_question_asked_in_a_task_points_back_at_that_task(client):
     pid, room = _room(client)
     task = open_task(client, room)["id"]
 
-    _ask_an_old_question(client, task, asked="alice")
+    _ask_an_old_question(client, task, asked=["alice"])
 
     (row,) = _questions(client, alice)
     assert row["contextMetadata"]["taskId"] == task
@@ -334,7 +336,7 @@ def test_a_question_with_no_turn_at_all_is_asked_and_reaches_nobody(client):
     )
     assert r.status_code == 200, r.text
     (question,) = r.json()["data"]["blocks"]
-    assert question["meta"]["asked"] is None
+    assert question["meta"]["asked"] == []
 
     assert _questions(client, alice) == []
 
@@ -381,7 +383,7 @@ def _say(client, room: str, text: str, handle: str = "alice") -> None:
 
 
 def _ask_an_old_question(
-    client, room: str, *, asked: str, question: str = "预算按哪个口径统计"
+    client, room: str, *, asked: list[str], question: str = "预算按哪个口径统计"
 ) -> dict:
     """一道问 ``asked`` 的题，连它那条通知一起，不经过任何一轮。
 
@@ -415,7 +417,7 @@ def test_typing_a_reply_settles_a_question_row(client):
     """
     alice = seed_user(client, "alice")
     pid, room = _room(client)
-    _ask_an_old_question(client, room, asked="alice")
+    _ask_an_old_question(client, room, asked=["alice"])
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
     (before,) = _questions(client, alice)
     assert before["read"] is False
@@ -436,7 +438,7 @@ def test_the_mention_in_a_typed_reply_is_not_part_of_the_answer(client):
     """回话时点了队友的名，通知里记的回答只有他说的话，不带那个 @。"""
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
-    _ask_an_old_question(client, room, asked="alice")
+    _ask_an_old_question(client, room, asked=["alice"])
 
     _say(client, room, f"<@{room_agent_seat(client, room)}> 按部门")
 
@@ -448,7 +450,7 @@ def test_a_long_typed_answer_is_shortened_in_the_notification(client):
     """通知里的回答是一行说明，不是聊天记录 —— 太长就截到 `ANSWER_EXCERPT_CHARS`。"""
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
-    _ask_an_old_question(client, room, asked="alice")
+    _ask_an_old_question(client, room, asked=["alice"])
     reply = "按项目统计，" + "外包和临时人员的费用都单独列一栏，" * 10
 
     _say(client, room, reply)
@@ -464,7 +466,7 @@ def test_only_the_next_message_is_the_answer(client):
     """答完又接着说了几句：通知里记的还是回答那一句，不被后面的话改写。"""
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
-    _ask_an_old_question(client, room, asked="alice")
+    _ask_an_old_question(client, room, asked=["alice"])
 
     _say(client, room, "按项目")
     _say(client, room, "顺便把上个月的也重算一下")
@@ -478,7 +480,7 @@ def test_someone_else_typing_does_not_answer_for_the_person_asked(client):
     seed_user(client, "alice")
     bob = seed_user(client, "bob")
     pid, room = _room(client)
-    _ask_an_old_question(client, room, asked="bob")
+    _ask_an_old_question(client, room, asked=["bob"])
 
     _say(client, room, "我觉得按部门")
 

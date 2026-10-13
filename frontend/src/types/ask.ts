@@ -3,8 +3,10 @@ export interface AskBlockMeta {
   //
   // 题就是一条普通消息，选项是它的快捷回复（`block/questions.py`）。
   options?: AskOption[]
-  /** 在等谁答：发起那一轮的人。指不到人的时候是 null，谁回都算。 */
-  asked?: string | null
+  /** 问了谁：芝士点名的人（问所有人时是频道里当时的每个人）。空是没点名，谁回都算。 */
+  asked?: string[]
+  /** 问的是频道里所有人。 */
+  asked_all?: boolean
   /** 答过它的每一句话，按先后。 */
   answer_log?: AskAnswerEntry[]
 }

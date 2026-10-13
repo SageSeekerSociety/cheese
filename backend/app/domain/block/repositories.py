@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import with_keys
 from app.core.work_context import current_work_id
+from app.domain.block.asked import Awaited, settled, skipped_by
 from app.domain.block.authorship import is_participant, participant_blocks
 from app.domain.block.indexed_rows import (
     COALESCED_ROWS,
@@ -499,7 +500,7 @@ class BlockRepository:
 
     async def awaiting_an_answer(
         self, conversation_ids: list[uuid.UUID]
-    ) -> dict[uuid.UUID, str | None]:
+    ) -> dict[uuid.UUID, Awaited]:
         """这些对话里，哪几段停在一个未回答的提问上，各自在等谁 —— 一次查完。
 
         判据是 #1084 定的那一条：**最近一条提问消息没有作答记录**。不需要新增
@@ -508,8 +509,9 @@ class BlockRepository:
         对话长期停留在待处理。任务的负责人点了「开始」，在那之前问的题也不再算：
         开始就是他说这件事讨论够了。
 
-        等谁也记在那一块上（`meta.asked`，提问那一刻写下的）。None 是「这道题指不
-        到具体的人」。只关心停没停的调用方照样拿它做 `in`。走 `ix_blocks_questions`。
+        等谁也记在那一块上（`meta.asked`，提问那一刻写下的；跳过了的人不再等，见
+        `block.asked`）。空的是「这道题指不到具体的人」。只关心停没停的调用方照样拿
+        它做 `in`。走 `ix_blocks_questions`。
         """
         return await self._awaiting_an_answer(conversation_ids)
 
@@ -523,14 +525,14 @@ class BlockRepository:
         self,
         place_ids: list[uuid.UUID],
         with_blocks: Literal[False] = False,
-    ) -> dict[uuid.UUID, str | None]: ...
+    ) -> dict[uuid.UUID, Awaited]: ...
 
     @overload
     async def _awaiting_an_answer(
         self,
         place_ids: list[uuid.UUID],
         with_blocks: Literal[True],
-    ) -> dict[uuid.UUID, tuple[str | None, uuid.UUID]]: ...
+    ) -> dict[uuid.UUID, tuple[Awaited, uuid.UUID]]: ...
 
     async def _awaiting_an_answer(self, place_ids: list[uuid.UUID], with_blocks=False):
         if not place_ids:
@@ -561,11 +563,9 @@ class BlockRepository:
             if place_id is None:
                 continue
             meta = meta or {}
-            if meta.get("answer_log") or meta.get("answered"):
-                # Two answered marks live side by side: `answer_log` holds every
-                # reply that answered it, `answered` the two-key shape a
-                # person's historical question still carries (the migration
-                # leaves those rows alone — see `e5a1c7d3b284`).
+            if settled(meta):
+                # Answered by anyone, or skipped by everyone it names
+                # (`block.asked`).
                 continue
             rows.append((place_id, meta, at, asker, block_id))
         if not rows:
@@ -641,12 +641,18 @@ class BlockRepository:
         said_by_agent: dict[uuid.UUID, dict[str, datetime]] = {}
         for place_id, author, at in (await self._session.execute(agent_spoke)).all():
             said_by_agent.setdefault(place_id, {})[author] = at
-        waiting: dict[uuid.UUID, str | None] = {}
+        waiting: dict[uuid.UUID, Awaited] = {}
         for place_id, meta, asked_at, asker, block_id in rows:
-            asked = meta.get("asked")
-            said = last_said.get(place_id, {})
-            if asked:
-                times = [said[asked]] if asked in said else []
+            awaited = Awaited.of(meta)
+            # Someone who skipped it said he will not answer: what he says
+            # afterwards is talk, not his answer.
+            said = {
+                who: at
+                for who, at in last_said.get(place_id, {}).items()
+                if who not in awaited.skipped
+            }
+            if awaited.asked:
+                times = [said[h] for h in awaited.asked if h in said]
             else:
                 times = list(said.values())
             if any(at > asked_at for at in times):
@@ -655,7 +661,7 @@ class BlockRepository:
                 own = said_by_agent.get(place_id, {}).get(asker)
                 if own is not None and own > asked_at:
                     continue
-            waiting[place_id] = asked
+            waiting[place_id] = awaited
             selected[place_id] = block_id
         if with_blocks:
             return {place: (asked, selected[place]) for place, asked in waiting.items()}
@@ -673,9 +679,10 @@ class BlockRepository:
         nothing. A reply to any other message answers nothing.
 
         A message that replies to nothing answers the open questions in its
-        conversation that wait on its author — asked of him, or of nobody in
-        particular — and that nobody has answered yet, but only when it is his
-        first word since they were asked: what he says after that is talk, not
+        conversation that wait on its author — asked of him (among others, or
+        of everyone), or of nobody in particular, and not skipped by him — and
+        that nobody has answered yet, but only when it is his first word since
+        they were asked: what he says after that is talk, not
         his answer. It is the same reading as `_awaiting_an_answer`'s "spoke
         after it was asked". ``first_word_only=False`` drops that last
         condition, for a message the caller knows is addressed to an asker.
@@ -692,11 +699,9 @@ class BlockRepository:
             if parent is None:
                 return []
             # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
-            # 经答过的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
-            # `_awaiting_an_answer` 一致：`answer_log` 非空即已答过；`answered` 是
-            # 旧行上的同义标记。
-            meta = parent.meta or {}
-            if meta.get("answer_log") or meta.get("answered"):
+            # 经了结的题，否则第二个人再点一下就又记一条。判据和下面那条路、和
+            # `_awaiting_an_answer` 一致（`block.asked.settled`）。
+            if settled(parent.meta):
                 return []
             return [parent]
         spoke_before = (
@@ -715,9 +720,10 @@ class BlockRepository:
             .where(
                 *place,
                 QUESTION_ROWS,
+                # `meta` is json, not jsonb: cast to ask "does the list hold him".
                 or_(
-                    Block.meta["asked"].as_string() == reply.author,
-                    Block.meta["asked"].as_string().is_(None),
+                    cast(Block.meta, JSONB)["asked"].contains([reply.author]),
+                    func.json_array_length(Block.meta["asked"]) == 0,
                 ),
                 Block.meta["answered"].as_string().is_(None),
                 Block.id != reply.id,
@@ -730,12 +736,12 @@ class BlockRepository:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        # `answer_log` 为空（还没有人答）没有作答的含义，所以按真值判断，不能按键
-        # 在不在 —— 和 `_awaiting_an_answer` 的判据一致。
+        # 了结了的不收（和 `_awaiting_an_answer` 的判据一致），他自己跳过的也不收：
+        # 跳过之后他说的话是说话，不是回答。
         return [
             block
             for block in (await self._session.scalars(stmt)).all()
-            if not (block.meta or {}).get("answer_log")
+            if not settled(block.meta) and reply.author not in skipped_by(block.meta)
         ]
 
     async def list_for_topic(

@@ -17,6 +17,7 @@
     "skipped": "{name}: skipped",
     "undoSkip": "Undo",
     "undoSkipAria": "Undo the skip and answer this question",
-    "skipFailed": "Couldn't skip the question"
+    "skipFailed": "Couldn't skip the question",
+    "asks": "Asks {people}"
   }
 }

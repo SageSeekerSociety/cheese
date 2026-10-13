@@ -48,6 +48,7 @@ from app.domain.agent.platform_notices import (
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
+from app.domain.block.asked import asked_of, settled, skipped_by
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -251,7 +252,7 @@ async def notify_question(
     block: Block,
     question: str,
     asker: str,
-    asked: str | None,
+    asked: tuple[str, ...],
 ) -> None:
     """芝士问了一个问题、这一轮就此结束 —— 通知等这个回答的人。
 
@@ -263,11 +264,11 @@ async def notify_question(
     共用一个码，前端就无法区分该按哪一种渲染。
 
     这一处没有 `who` 码可读，下一步在谁手上是它自己的事实：这件事**停在这个问题
-    上了**，在他回答之前没有任何一方能往下走。`asked` 是那个人；None 是「这道题没
-    落在某一个人头上」（平台发起的轮次），这时它落在**整条活**上 —— 等回答的是这条
-    活的人：负责人和协作者（`_people_of_the_task`），一道题问给几个人，就是这几个人
-    各自的待办。频道和支线没有「这条活的人」，那里仍旧谁也不通知：一条多数人不需要
-    处理的通知发给整个名册，代价是他们此后关闭这个渠道。
+    上了**，在有人回答之前没有任何一方能往下走。`asked` 是芝士点名问的人（问所有
+    人时就是频道里的每个人），每人一条；空的是「这道题没落在某一个人头上」（平台
+    发起的轮次），这时它落在**整条活**上 —— 等回答的是这条活的人：负责人和协作者
+    （`_people_of_the_task`）。频道和支线没有「这条活的人」，那里仍旧谁也不通知：
+    一条多数人不需要处理的通知发给整个名册，代价是他们此后关闭这个渠道。
     """
     await deliver(
         session,
@@ -295,11 +296,8 @@ async def notify_question(
             occurred_at=block.created_at,
         ),
         address(
-            # 题落在某一个人头上时就只有他：`asked` 有值，别人不等它。
-            Event(
-                asked=asked,
-                asked_also=() if asked else _people_of_the_task(place),
-            ),
+            # 题点了名就只有被点名的人：别人不等它。
+            Event(asked_also=tuple(asked) or _people_of_the_task(place)),
             Hand.participant,
         ),
     )
@@ -373,15 +371,17 @@ def _typed_answers(reply: Block, questions: list[Block]) -> list[Block]:
     """Which open questions a message that replies to nothing answers.
 
     It is said to one asker: the one it @-mentions, or else whoever asked most
-    recently. A question that waits on nobody in particular (asked in a turn the
-    platform started) is answered only by a message that names its asker:
-    people talking to each other in the room is not an answer to it.
+    recently among the questions that ask its author (alone, among others, or
+    as one of everyone in the channel). A question that waits on nobody in
+    particular (asked in a turn the platform started) is answered only by a
+    message that names its asker: people talking to each other in the room is
+    not an answer to it.
     """
     named = set(_MENTION_RE.findall(reply.content or ""))
     if named:
         # Addressed to the one who asked, it answers whatever is open of his.
         return [q for q in questions if named == {q.author}]
-    questions = [q for q in questions if (q.meta or {}).get("asked") == reply.author]
+    questions = [q for q in questions if reply.author in asked_of(q.meta)]
     if not questions:
         return []
     seat = questions[-1].author
@@ -401,12 +401,16 @@ def _offered(meta: dict) -> dict[str, str]:
     return offered
 
 
-async def notices_now_answered(session: AsyncSession, questions: list[Block]):
-    """The question notices every question of which now has an answer (a skip
-    counts: it is a response recorded in the same `answer_log`).
+async def notices_now_answered(
+    session: AsyncSession, questions: list[Block], *, of: str | None = None
+):
+    """The question notices every question of which is now settled
+    (`block.asked.settled`), ``questions`` among them.
 
     One `cheese_ask` call sends one notice for all its questions (keyed by the
     first, `meta.notice_id`); it is settled only once none of them is open.
+    ``of`` asks the same for one person: a question he skipped is no longer
+    open for him, though it still is for the others it asks.
     """
 
     done = []
@@ -422,7 +426,9 @@ async def notices_now_answered(session: AsyncSession, questions: list[Block]):
         pending = [
             q
             for q in siblings
-            if q not in questions and not (q.meta or {}).get("answer_log")
+            if q not in questions
+            and not settled(q.meta)
+            and (of is None or of not in skipped_by(q.meta))
         ]
         if not pending:
             done.append(uuid.UUID(notice))

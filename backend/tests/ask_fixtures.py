@@ -131,7 +131,7 @@ def question_row(client, topic, *, seat=None, author=None, **extra):
     question = extra.pop("question", "分页方案选哪个？")
     meta = {
         "options": [{"text": "cursor"}, {"text": "pageStart"}],
-        "asked": None,
+        "asked": [],
         "answer_log": [],
         **extra,
     }

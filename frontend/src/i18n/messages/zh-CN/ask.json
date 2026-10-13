@@ -17,6 +17,7 @@
     "skipped": "{name}：已跳过",
     "undoSkip": "撤销",
     "undoSkipAria": "撤销跳过，重新回答这道题",
-    "skipFailed": "跳过失败"
+    "skipFailed": "跳过失败",
+    "asks": "问 {people}"
   }
 }
