@@ -5,6 +5,8 @@ from fastapi import APIRouter, Depends
 from app.api.routes.tasks._common import (
     CreateTaskRequest,
     _create_task_entity,
+)
+from app.api.task_deps import (
     _task_attachment_service,
 )
 

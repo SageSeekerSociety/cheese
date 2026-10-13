@@ -10,6 +10,7 @@ mod notices;
 mod platform;
 mod resident;
 mod updates;
+mod update_launch;
 
 use serde::Serialize;
 use tauri::ipc::{CapabilityBuilder, Channel};
@@ -301,7 +302,7 @@ fn main() {
                 capability = capability.permission(*permission);
             }
             app.add_capability(capability)?;
-            if updates::restarted_by_update(app) || std::env::args().any(|a| a == resident::AT_LOGIN) {
+            if updates::start_hidden(app, std::env::args().any(|a| a == resident::AT_LOGIN)) {
                 app.state::<resident::StartHidden>().0.store(true, Ordering::Relaxed);
             }
             #[cfg(not(target_os = "macos"))]

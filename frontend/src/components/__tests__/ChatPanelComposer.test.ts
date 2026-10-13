@@ -29,6 +29,7 @@ const attachments: Plugin = {
   install(app) {
     app.provide(ATTACHMENT_SOURCE, {
       imageUrl: api.attachmentImageUrl,
+      mediaUrl: () => Promise.reject(new Error('This test does not play video')),
       documentPdf: api.previewDocumentPdf,
       fileBytes: api.previewFileBytes,
     })

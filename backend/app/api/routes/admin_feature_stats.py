@@ -1,7 +1,7 @@
 """功能数据: the catalogue, and one report per feature.
 
 The fifth module in `/admin` next to the queue, the dashboard, the model ledger
-and the members. Same gate as the rest (`admin_common.PlatformAdminDep`) — a
+and the members. Same gate as the rest (`admin_deps.PlatformAdminDep`) — a
 feature's numbers say how the platform is used and by how many people, which is
 not something a signed-in stranger is owed.
 
@@ -24,9 +24,9 @@ not glanced at daily.
 
 from fastapi import APIRouter, Query
 
+from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.admin_common import PlatformAdminDep
 from app.core.errors import NotFoundError
 from app.core.sentences import say
 from app.domain.feature_stats import registry

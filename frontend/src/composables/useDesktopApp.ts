@@ -51,16 +51,20 @@ export function useDesktopApp() {
     restarting,
     /** The person's click on 重启以完成更新. On success the app restarts and this page goes with it. */
     async restart() {
+      if (restarting.value) return
       restarting.value = true
       try {
         await restartDesktopToUpdate()
+        // The app has accepted the restart; keep both buttons busy until it exits.
       } catch (e) {
+        const error = String(e)
         toast.error(
-          String(e) === 'connecting'
+          error === 'connecting'
             ? t('navigation.desktopApp.busyConnecting')
-            : t('navigation.desktopApp.restartFailed')
+            : error === 'install-failed' || error === 'failed'
+              ? t('navigation.desktopApp.installFailed')
+              : t('navigation.desktopApp.restartFailed')
         )
-      } finally {
         restarting.value = false
       }
     },

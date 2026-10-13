@@ -31,7 +31,7 @@ from fastapi import APIRouter, Depends, File, Form, Path, Response, UploadFile, 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.routes.spaces import require_reviewed_space
+from app.api.space_deps import require_reviewed_space
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings

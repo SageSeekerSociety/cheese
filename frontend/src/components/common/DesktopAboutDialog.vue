@@ -82,6 +82,8 @@ const line = computed(() => {
       return t('navigation.desktopApp.latest')
     case 'failed':
       return t('navigation.desktopApp.failed')
+    case 'install-failed':
+      return t('navigation.desktopApp.installFailed')
     default:
       return ''
   }

@@ -114,11 +114,26 @@ unmatched_ignore_imports_alerting = warn
 # be two places to keep in step, and one of them would go stale. What is new here
 # is the `models` half (56 edges, previously unguarded) and `app.api.deps`, which
 # is in neither of that guard's scanned trees.
+#
+# The route-shared dependency modules under `app/api/` are sources for the same
+# reason as `app.api.deps`: they belong to no domain, so every model they import
+# is cross-domain by construction. Until the 2026-10 move they sat under
+# `app.api.routes` and C2 covered them by accident; naming them keeps that
+# coverage after the move — 搬出路由不等于掉出管辖. Named one by one rather than
+# sweeping in `app.api`: the rest of that package has direct model imports of its
+# own, and pulling them in would quote a frozen block of unrelated history. Keep
+# this list in step with `test_domain_import_guard.py`'s `_SCANNED_MODULES`, which
+# covers the repositories half of the same set.
 name = C2 routes do not import a domain's models directly
 type = forbidden
 source_modules =
     app.api.routes
     app.api.deps
+    app.api.admin_deps
+    app.api.users_deps
+    app.api.space_deps
+    app.api.space_payloads
+    app.api.task_deps
 forbidden_modules =
     app.domain.*.models
 allow_indirect_imports = true
@@ -471,39 +486,15 @@ unmatched_ignore_imports_alerting = warn
 # Refresh with `--update` (drops entries that no longer match; a recomputed cycle-breaker set is never added).
 ignore_imports =
     app.api.routes.addresses -> app.api.routes.topics
-    app.api.routes.admin_credits -> app.api.routes.admin_common
-    app.api.routes.admin_feature_stats -> app.api.routes.admin_common
-    app.api.routes.admin_integrations -> app.api.routes.admin_common
-    app.api.routes.admin_members -> app.api.routes.admin_common
-    app.api.routes.admin_memory -> app.api.routes.admin_common
-    app.api.routes.admin_models -> app.api.routes.admin_common
-    app.api.routes.admin_ratchet -> app.api.routes.admin_common
-    app.api.routes.admin_run_records -> app.api.routes.admin_common
-    app.api.routes.admin_spaces -> app.api.routes.admin_common
-    app.api.routes.admin_stats -> app.api.routes.admin_common
     app.api.routes.app_sign_in -> app.api.routes.users.auth
-    app.api.routes.app_sign_in -> app.api.routes.users_common
     app.api.routes.chat -> app.api.room_snapshot
-    app.api.routes.dashboard -> app.api.routes.spaces
     app.api.routes.document_agent -> app.api.routes.document_comments
     app.api.routes.forge_token -> app.api.routes.llm_tunnel
-    app.api.routes.health -> app.api.routes.admin_common
     app.api.routes.living_docs -> app.api.routes.topics
     app.api.routes.notifications_live -> app.api.routes.awaiting
     app.api.routes.preview_sessions -> app.api.preview_host
     app.api.routes.recruitment -> app.api.routes.teams
-    app.api.routes.space_announcements -> app.api.routes.spaces
-    app.api.routes.spaces_analytics -> app.api.routes.spaces
-    app.api.routes.spaces_analytics -> app.api.routes.tasks._common
-    app.api.routes.spaces_invite_codes -> app.api.routes.spaces
-    app.api.routes.spaces_materials -> app.api.routes.spaces
-    app.api.routes.spaces_member -> app.api.routes.spaces
-    app.api.routes.spaces_organization -> app.api.routes.spaces
-    app.api.routes.task_inheritance -> app.api.routes.spaces
-    app.api.routes.task_inheritance -> app.api.routes.tasks._common
-    app.api.routes.tasks._common -> app.api.routes.spaces
     app.api.routes.topics -> app.api.routes.projects
-    app.api.routes.topics -> app.api.routes.topics_rows
     app.api.routes.topics_asks -> app.api.routes.topics
     app.api.routes.topics_attachments -> app.api.routes.topics_file_sources
     app.api.routes.topics_compute -> app.api.routes.topics
@@ -519,24 +510,12 @@ ignore_imports =
     app.api.routes.topics_threads -> app.api.routes.topics
     app.api.routes.topics_title -> app.api.routes.topics_tasks
     app.api.routes.topics_transcript -> app.api.routes.topics
-    app.api.routes.users._common -> app.api.routes.users_common
-    app.api.routes.users.auth -> app.api.routes.users_common
-    app.api.routes.users.connections -> app.api.routes.users_common
-    app.api.routes.users.invite_codes -> app.api.routes.admin_common
     app.api.routes.users.oauth -> app.api.routes.legal
-    app.api.routes.users.oauth -> app.api.routes.users_common
     app.api.routes.users.registration -> app.api.routes.legal
-    app.api.routes.users.registration -> app.api.routes.users_common
-    app.api.routes.users_2fa -> app.api.routes.users_common
-    app.api.routes.users_identity -> app.api.routes.users_common
-    app.api.routes.users_passkey -> app.api.routes.users_common
-    app.api.routes.users_password -> app.api.routes.users_common
     app.api.routes.users_team -> app.api.routes.teams
     app.api.task_instructions -> app.api.routes.topics
     app.api.task_origin -> app.api.routes.topics
-    app.api.task_teaching -> app.api.routes.spaces
     app.main -> app.api.preview_host
-    app.main -> app.api.routes.admin_common
     app.main -> app.api.routes.connector
 
 [importlinter:contract:domain-layers]

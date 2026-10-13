@@ -159,6 +159,32 @@ def pr_body(
     return "\n\n".join(parts)
 
 
+def pr_title_matches_subject(
+    card: AcceptCard | None, topic: Topic, pr_title: str | None
+) -> bool:
+    """Whether GitHub's PR title is still the line this card would land.
+
+    One string, three readers: the platform WRITES the PR title from the card's
+    subject, the repository's own checks JUDGE that PR title (an edit re-runs
+    their `pull_request` workflows), and the squash commit LANDS the same
+    subject (`merge_commit_title`). A title edited on GitHub by hand — or a
+    card whose subject moved without the PR following it — makes the commit
+    that would land something the repository never checked. The platform does
+    not get to overrule a repository's checks, so both merge paths call this
+    first and stop when it is False.
+
+    Nothing here interprets the title: whether it is a good title, in the
+    right language, in the repository's own convention, is the repository's
+    business, decided by its own CI on the PR. This only asks whether the two
+    readers are looking at one string.
+
+    An absent or empty `pr_title` (a fake or older payload) is NOT a match:
+    an unreadable title is "cannot confirm", and confirming is the whole point.
+    """
+    title = (pr_title or "").strip()
+    return bool(title) and title == change_subject(card, topic).strip()
+
+
 def merge_commit_title(card: AcceptCard | None, topic: Topic, number: int) -> str:
     """The squash commit's title line — the subject of the ONE commit this
     topic leaves in the project's history. GitHub only auto-appends `(#N)` to
