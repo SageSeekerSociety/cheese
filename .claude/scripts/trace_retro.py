@@ -30,7 +30,9 @@ with an older first push.
 That cohort is the more expensive read: which PRs are in it is only known after
 each candidate's timeline and each of its heads' check-runs are fetched, so a
 cohort run costs several times a merge-window run. `--cache` makes the second
-run over the same window cheap; a first run over a wide window is minutes.
+run over the same window cheap; a first run over a wide window is minutes. It
+also drops the closed-without-merge PRs, and reports them — count and colours —
+so the rate can be read against the one the drop produced (`closed_out_prs`).
 
 Every count is defined in the 口径 section of the report. `gh` does the GitHub
 reads; the platform half (--room) reads OKCHEESE_TOKEN, which trace-sweep.py
@@ -227,21 +229,12 @@ def merged_prs(repo: str, since: datetime, until: datetime) -> list[dict]:
     return sorted(out, key=lambda p: p["mergedAt"])
 
 
-def cohort_prs(repo: str, since: datetime, merged: list[dict]) -> list[dict]:
-    """PRs a first-push window needs that `merged` (the merge-window list) does
-    not have: still open, or merged after the window.
+def updated_prs(repo: str, since: datetime) -> list[dict]:
+    """Every PR with a change at or after `since`, whatever became of it.
 
-    A PR whose first push CI judged inside the window may not have merged yet,
-    and its 首推 verdict is already final, because a later push cannot change
-    what the first one did. So the first-push cohort must see those PRs, not
-    just the merged ones. `updated:>=since` finds the candidates: a push in the
-    window moves `updatedAt` with it, so a PR judged in the window is always in
-    this list, whatever became of it afterwards.
-
-    Dropped: the PRs already in `merged` (same window, avoid double counting)
-    and the closed-without-merge ones. The latter were judged too, but they
-    never became a PR that had to pass CI to land, and counting them would move
-    the rate with how many drafts got abandoned.
+    `updated:>=since` is the search the first-push cohort is built on: a push
+    inside the window moves `updatedAt` with it, so a PR CI judged in the window
+    is always in this list, whether it merged, stayed open or was closed.
     """
     raw = _gh(
         [
@@ -259,25 +252,37 @@ def cohort_prs(repo: str, since: datetime, merged: list[dict]) -> list[dict]:
             "number,title,mergedAt,headRefOid,mergeCommit,updatedAt,state",
         ]
     )
-    # The candidate list is every PR touched in the window — several times the
-    # merged set — so it gets a wider cap than the merge window's 200. A silent
-    # truncation would drop a judged PR out of the denominator and read as a
-    # better rate; say so instead.
+    # This list is every PR touched in the window — several times the merged set
+    # — so it gets a wider cap than the merge window's 200. A silent truncation
+    # would drop a judged PR out of the denominator and read as a better rate;
+    # say so instead.
     if raw and len(raw) >= 1000:
         sys.stderr.write(
-            "cohort_prs: the updated:>= search hit its 1000-row cap; the candidate "
-            "list may be truncated and the rate with it\n"
+            "updated_prs: the updated:>= search hit its 1000-row cap; the "
+            "candidate list may be truncated, and the rate with it\n"
         )
+    return [p for p in (raw or []) if p.get("updatedAt") and _iso(p["updatedAt"]) >= since]
+
+
+def split_updated(rows: list[dict], merged: list[dict]) -> dict[str, list[dict]]:
+    """`updated_prs` split into the ones the cohort counts and the ones it drops.
+
+    `keep`: still open, or merged after the window (so not in `merged`, the
+    merge-window list, which would double count it). A PR whose first push CI
+    judged inside the window may not have merged yet, and its 首推 verdict is
+    final already — a later push cannot change what the first one did.
+
+    `closed`: closed without merging. Judged too, but it never became a PR that
+    had to pass CI to land, and letting it into the rate would move the rate
+    with how many drafts got abandoned. The caller reports them separately, with
+    their colours, so a reader can see what dropping them did to the number.
+    """
     have = {p["number"] for p in merged}
-    out = []
-    for pr in raw or []:
-        at = pr.get("updatedAt")
-        if not at or _iso(at) < since:
-            continue
-        if pr["number"] in have or pr.get("state") == "CLOSED":
-            continue
-        out.append(pr)
-    return sorted(out, key=lambda p: p["number"])
+    fresh = [p for p in rows if p["number"] not in have]
+    return {
+        "keep": sorted((p for p in fresh if p.get("state") != "CLOSED"), key=lambda p: p["number"]),
+        "closed": sorted((p for p in fresh if p.get("state") == "CLOSED"), key=lambda p: p["number"]),
+    }
 
 
 def pr_timeline(repo: str, number: int) -> list[dict]:
@@ -563,19 +568,10 @@ def pr_report(pr: dict, heads: list[dict], exits: list[dict]) -> dict:
     }
 
 
-def pr_reports(
-    repo: str, since: datetime, until: datetime, include_open: bool = False
-) -> list[dict]:
-    """One record per PR in the requested set, every GitHub-side fact the retro
-    needs.
-
-    `include_open` adds the not-yet-merged PRs touched inside the window, for
-    the first-push cohort (`judged_in_window` drops those whose first judged
-    push is not in the window, and nothing else reads them).
-    """
-    prs = merged_prs(repo, since, until)
-    if include_open:
-        prs = prs + cohort_prs(repo, since, prs)
+def reports_of(repo: str, prs: list[dict], since: datetime, until: datetime) -> list[dict]:
+    """One report per PR in `prs`, in the order given, every GitHub-side fact the
+    retro reads: its timeline, the required checks each of its heads ran, and
+    what the merge queue did with it."""
     mg = merge_group_runs(repo, since, until)
     reports = []
     for pr in prs:
@@ -588,6 +584,36 @@ def pr_reports(
             pr_report(pr, heads, merge_queue_exits(timeline, mg.get(number, []), repo, since, until))
         )
     return reports
+
+
+def pr_reports(
+    repo: str, since: datetime, until: datetime, include_open: bool = False
+) -> list[dict]:
+    """One record per PR in the requested set, every GitHub-side fact the retro
+    needs.
+
+    `include_open` adds the not-yet-merged PRs touched inside the window, for
+    the first-push cohort (`judged_in_window` drops those whose first judged
+    push is not in the window, and nothing else reads them).
+    """
+    prs = merged_prs(repo, since, until)
+    if include_open:
+        prs = prs + split_updated(updated_prs(repo, since), prs)["keep"]
+    return reports_of(repo, prs, since, until)
+
+
+def closed_out_prs(repo: str, since: datetime, until: datetime) -> list[dict]:
+    """The reports of the PRs the first-push cohort drops for being closed
+    without merging, limited to those CI first judged inside the window.
+
+    They are not part of the rate — see `split_updated` — but their count and
+    their colours are what says whether dropping them moved the number: a
+    reader who cannot see them cannot tell an honest cohort from one that
+    quietly kept the reds out. `merged=[]` because a merged PR is not CLOSED,
+    so there is nothing of the merge window's list to subtract here.
+    """
+    rows = split_updated(updated_prs(repo, since), [])["closed"]
+    return judged_in_window(reports_of(repo, rows, since, until), since, until)
 
 
 def first_judged_at(report: dict) -> str | None:
@@ -988,11 +1014,14 @@ def summarize(
     since: str = "",
     until: str = "~",
     cohort: str = "merged",
+    dropped_closed: list[dict] | None = None,
 ) -> dict:
     """The numbers on the headline table. `window_cards` is the platform half's
     accepted cards, or None when that half did not run. `cohort` says which set
     of PRs `reports` is: the ones merged in the window, or the ones CI first
-    judged in it."""
+    judged in it. `dropped_closed` is the first-push cohort's exclusion — the
+    in-window closed-without-merge PRs — reported so the reader can see what
+    dropping them did to the rate."""
     n = len(reports)
     strict = sum(1 for r in reports if r["strict_first_pass"])
     lenient = sum(1 for r in reports if r["lenient_first_pass"])
@@ -1011,6 +1040,20 @@ def summarize(
     if cohort != "merged":
         landed = sum(1 for r in reports if r.get("merged_at"))
         out["cohort_prs"] = {"n": n, "landed": landed, "pending": n - landed}
+        if dropped_closed is not None:
+            # The exclusion's own colour, and the rate the window would show if
+            # it had not been made — the two numbers that say whether dropping
+            # these PRs flattered the cohort or cost it.
+            d_n = len(dropped_closed)
+            d_strict = sum(1 for r in dropped_closed if r["strict_first_pass"])
+            d_lenient = sum(1 for r in dropped_closed if r["lenient_first_pass"])
+            out["dropped_closed"] = {
+                "n": d_n,
+                "strict_pass": d_strict,
+                "lenient_pass": d_lenient,
+                "strict_pct_if_included": _pct(strict + d_strict, n + d_n) if n + d_n else None,
+                "lenient_pct_if_included": _pct(lenient + d_lenient, n + d_n) if n + d_n else None,
+            }
     else:
         # Only under this cohort is the count a count of merged PRs; under the
         # other one the key would carry the cohort's size and read as the wrong
@@ -1036,6 +1079,24 @@ def render_markdown(report: dict) -> str:
     s = report["summary"]
     first_push = s.get("cohort", "merged") != "merged"
     if first_push:
+        # What the exclusion cost or bought, said in the same breath as the
+        # exclusion itself: a rate whose dropped PRs nobody can see is a rate
+        # the reader cannot audit.
+        d = s.get("dropped_closed")
+        if not d or not d["n"]:
+            dropped_note = ["  本窗口没有被排除的这一类（关掉没合并、首次被判又在窗口内的 PR）。"]
+        else:
+            dropped_note = [
+                (
+                    f"  被排除的就是这一类：本窗口另有 {d['n']} 个 PR 关掉没合并、但首次被判也在窗口内。"
+                    f"它们首推严格绿 {d['strict_pass']} 个、宽松绿 {d['lenient_pass']} 个。"
+                ),
+                (
+                    f"  把它们一并算进去，严格首推率是 {d['strict_pct_if_included']}、"
+                    f"宽松 {d['lenient_pct_if_included']}——和表里的数对一下，就知道这个排除把首推率"
+                    "抬上去了还是压下来了。"
+                ),
+            ]
         # The cohort changes what every number below counts, so it is stated
         # before them, not in a footnote.
         cohort_note = [
@@ -1048,6 +1109,11 @@ def render_markdown(report: dict) -> str:
             "  首次被判 = 该 PR 第一个跑过必需 CI 的 head 上最早那一轮的 `started_at`。",
             f"  本窗口 {s['cohort_prs']['n']} 个：已合并 {s['cohort_prs']['landed']}、"
             f"截至窗口末端还没合并 {s['cohort_prs']['pending']}。",
+            *dropped_note,
+            (
+                "- **平台那一半仍按合并窗口**：下面「递卡→采纳」「各线表」「开工→首个 PR」用的是"
+                "窗口内合并的 PR 集合，和上面这张表的口径不同，两边的数不能直接对读。"
+            ),
         ]
     else:
         cohort_note = [
@@ -1257,9 +1323,14 @@ def build(repo: str, since: datetime, until: datetime, room: str | None, cohort:
     # that half keeps the merge-window set (plus the extra candidates, which
     # match no card).
     everything = pr_reports(repo, since, until, include_open=include_open)
-    reports = judged_in_window(everything, since, until) if include_open else everything
+    dropped: list[dict] | None = None
     if include_open:
+        reports = judged_in_window(everything, since, until)
         reports.sort(key=lambda r: _iso(first_judged_at(r)))
+        # The ones the cohort drops, measured so the drop can be audited.
+        dropped = closed_out_prs(repo, since, until)
+    else:
+        reports = everything
     platform = None
     if room:
         token = token_from_env()
@@ -1290,6 +1361,7 @@ def build(repo: str, since: datetime, until: datetime, room: str | None, cohort:
             since.strftime("%Y-%m-%dT%H:%M:%S"),
             until.strftime("%Y-%m-%dT%H:%M:%S"),
             cohort=cohort,
+            dropped_closed=dropped,
         ),
     }
 
@@ -1507,6 +1579,39 @@ def self_test() -> int:
         "merged_prs" in summarize(cohort[:2], cohort="first-push"),
         False,
     )
+
+    # split_updated: the cohort's candidate list split into the rows it counts
+    # and the closed-without-merge rows it reports separately. The merge-window
+    # rows are subtracted first, or a merged PR would be counted twice.
+    rows = [
+        {"number": 1, "state": "MERGED"},  # in the merge window: subtracted
+        {"number": 2, "state": "OPEN"},
+        {"number": 3, "state": "CLOSED"},
+        {"number": 4, "state": "MERGED"},  # merged after the window: kept
+        {"number": 5, "state": "CLOSED"},
+    ]
+    split = split_updated(rows, [rows[0]])
+    check("共组计入还开着的和窗口外才合并的", [p["number"] for p in split["keep"]], [2, 4])
+    check("关掉没合并的单独一栏", [p["number"] for p in split["closed"]], [3, 5])
+    check("窗口内合并的不重复计入", 1 in [p["number"] for p in split["keep"]], False)
+
+    # summarize / render: the exclusion reported with its own colours, and the
+    # rate the window would show without it — the audit wangchangxin asked for.
+    dropped = [judged(12, "2026-10-12T11:10:00Z"), pr_report(pr_row(13), [rnd("a", "failure")], [])]
+    d = summarize(cohort[:2], cohort="first-push", dropped_closed=dropped)["dropped_closed"]
+    check("被排除的条数报出来", d["n"], 2)
+    check("被排除的首推红没红报出来", (d["strict_pass"], d["lenient_pass"]), (1, 1))
+    check("一并算进去的严格率（3 绿 / 4 共）", d["strict_pct_if_included"], "3/4 = 75%")
+    md_fp = render_markdown({"summary": summarize(
+        cohort[:2], cohort="first-push", dropped_closed=dropped
+    ), "since": "s", "until": "u", "prs": cohort})
+    check("口径里写出被排除的条数和颜色", "另有 2 个 PR 关掉没合并" in md_fp, True)
+    check("口径里写出排除前后的率", "3/4 = 75%" in md_fp, True)
+    check("口径里写明平台那一半按合并窗口算", "平台那一半仍按合并窗口" in md_fp, True)
+    md_none = render_markdown({"summary": summarize(
+        cohort[:2], cohort="first-push", dropped_closed=[]
+    ), "since": "s", "until": "u", "prs": cohort})
+    check("没有被排除的就直说没有", "本窗口没有被排除的这一类" in md_none, True)
 
     # green_of: the boundary is a full-tier green, not a draft one.
     draft_green = {"outcome": "green", "tier": "draft", "started_at": "2026-10-12T11:00:00"}
