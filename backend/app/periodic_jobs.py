@@ -31,6 +31,7 @@ from app.domain.task.external_roster import student_roster
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.topic_membership.services import addressable_seat
 from app.domain.usage import periodic as usage_periodic
+from app.domain.wake_watch import periodic as wake_watch_periodic
 
 PERIODIC_JOB_NAMES = (
     "forge event subscriptions",
@@ -66,6 +67,7 @@ PERIODIC_JOB_NAMES = (
     "memory dream",
     "ratchet ingest",
     "external problem sync",
+    "wake watch",
 )
 
 
@@ -164,6 +166,7 @@ def periodic_jobs(
         jobs, sessions=sessions, student_roster=student_roster
     )
     ratchet_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    wake_watch_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
 
 

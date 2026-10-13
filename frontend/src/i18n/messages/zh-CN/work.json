@@ -288,7 +288,8 @@
         "retry": "重试",
         "compact": "整理",
         "environment": "环境",
-        "memory": "记忆"
+        "memory": "记忆",
+        "wakeWatch": "补跳"
       }
     },
     "menu": {

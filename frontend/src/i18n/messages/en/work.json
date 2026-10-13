@@ -288,7 +288,8 @@
         "retry": "Retry",
         "compact": "Compaction",
         "environment": "Environment",
-        "memory": "Memory"
+        "memory": "Memory",
+        "wakeWatch": "Wake"
       }
     },
     "menu": {
