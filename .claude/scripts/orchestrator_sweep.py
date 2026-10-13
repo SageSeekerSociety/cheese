@@ -44,6 +44,10 @@ ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
               "review_head", "waited_min", "waiting_on", "stage", "detail")
 #: PR -> its merge-queue timeline, filled once per run (see gh_queue_timeline).
 _TIMELINES = {}
+#: PRs this run could not read a timeline for at all. The day's numbers are short by those,
+#: so _TIMELINE_ERRORS carries why and the metrics line says so rather than leaving a gap.
+_UNREAD = set()
+_TIMELINE_ERRORS = []
 
 
 def login():
@@ -145,10 +149,19 @@ def gh_pr(n, board=False):
 
 
 def gh_queue_timeline(n):
-    """A PR's merge-queue timeline (first 50 events), or None when GitHub has no such PR.
-    Cached per run: one card can say "可以合并" several times and it is the same PR."""
+    """A PR's merge-queue timeline (first 50 events). None when GitHub has no such PR, and
+    also when the read itself failed after its retries: the board is the point of a patrol
+    round, so one unreadable PR costs that PR's samples rather than the whole board. Which
+    ones were unreadable is left in _TIMELINE_ERRORS for the metrics line to own up to.
+
+    What is remembered is per run and answers for every event naming that PR: a day's events
+    can name the same PR a dozen times, and neither a read that worked nor one that failed is
+    worth repeating. A PR GitHub says is not there is remembered by neither, as in
+    orchestrator_metrics.py — that answer is about the number, not about GitHub."""
     if n in _TIMELINES:
         return _TIMELINES[n]
+    if n in _UNREAD:
+        return None
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){'
          'timelineItems(first:50,itemTypes:[ADDED_TO_MERGE_QUEUE_EVENT,REMOVED_FROM_MERGE_QUEUE_EVENT])'
          '{nodes{__typename ... on AddedToMergeQueueEvent{createdAt} '
@@ -163,9 +176,13 @@ def gh_queue_timeline(n):
             err = (r.stderr or r.stdout)[:150]
             continue
         nodes = None if body is None else body["timelineItems"]["nodes"]
-        _TIMELINES[n] = nodes
+        if nodes is not None:
+            _TIMELINES[n] = nodes
         return nodes
-    raise SystemExit(f"GitHub 查 PR #{n} 的队列时间线失败：{err}")
+    _UNREAD.add(n)
+    # 一行一句：gh 的 stderr 常带换行，原样塞进指标那行会把看板拆成两行。
+    _TIMELINE_ERRORS.append(f"#{n}（{' '.join(err.split()) or '查不到原因'}）")
+    return None
 
 
 def stage_of(card, pr, ready_at, last_ready, red_at, last_msg):
@@ -328,15 +345,23 @@ def metrics_line(m):
     med = "—" if q["median_min"] is None else f"{q['median_min']:.0f}"
     late = "、".join(f"#{n} {w}分" for n, w in q["over_10_min_detail"]) or "无"
     lines = "、".join(f"#{c} {k}" for c, k in list(f["by_line"].items())[:8]) or "无"
+    short = m.get("unread_queue") or []
     return (f"指标（{m['date']} UTC）：可合并→进队列 {q['samples']} 次，中位 {med} 分；"
             f"超 10 分钟 {q['over_10_min_cards']} 张卡、{q['over_10_min']} 次（{late}）；"
-            f"失败轮次 {f['total']}（{lines}）")
+            f"失败轮次 {f['total']}（{lines}）"
+            + (f"；队列时间线没读到 {'、'.join(short)}，上面两项少了它" if short else ""))
 
 
 def day_metrics(tok, room, day, idmap):
     """That UTC day's numbers, computed the way orchestrator_metrics.py defines them:
     可合并→进队列 is accept_ready to the first AddedToMergeQueueEvent after it (accept_done
-    is sent after the merge and is never the acceptance time). Read fresh, stored nowhere."""
+    is sent after the merge and is never the acceptance time). Read fresh, stored nowhere.
+
+    A PR whose timeline cannot be read is left out and named under unread_queue; the one-off
+    report in orchestrator_metrics.py stops there instead, which is right for a script whose
+    whole output is those numbers and wrong for a board that is asked for on a schedule."""
+    _UNREAD.clear()
+    _TIMELINE_ERRORS.clear()
     evs = [m for m in events(tok, room, "accept", pages=10) + events(tok, room, "system", pages=10)
            if m["created_at"].startswith(day)]
     evs.sort(key=lambda m: m["created_at"])
@@ -376,6 +401,8 @@ def day_metrics(tok, room, day, idmap):
             "over_10_min_detail": sorted(set(late)),
         },
         "failed_turns": {"total": sum(fails.values()), "by_line": by_line},
+        #: Queue-timeline reads that failed, so the numbers above are short by these.
+        "unread_queue": list(_TIMELINE_ERRORS),
     }
 
 
@@ -473,9 +500,13 @@ def main():
     as_render = "--render" in argv
     document = value_of(argv, "--sync-doc")
     given = [name for name, on in (("--json", as_json), ("--render", as_render),
-                                   ("--sync-doc", bool(document))) if on]
+                                   ("--sync-doc", document is not None)) if on]
     if len(given) > 1:
         raise SystemExit("、".join(given) + " 只能给一个")
+    # `--sync-doc "$VAR"` with an empty VAR arrives as an id of "": counting it as the flag
+    # itself (not as absent) is what makes it say so, instead of quietly never syncing.
+    if document is not None and not document.strip():
+        raise SystemExit("--sync-doc 后面要给一个文档号")
     tok = login()
     now = datetime.now(timezone.utc)
     rows, idmap = sweep(tok, room, silent, skip, as_json or as_render or bool(document))
