@@ -119,6 +119,38 @@ it('加入私密频道交给页面的那一个动作', async () => {
   await vi.waitFor(() => expect(stepIn).toHaveBeenCalledWith('p', 'secret'))
 })
 
+/** 打开「换管理者」那张对话框，交回下拉本身 —— 这一屏的模板里只有这一个 v-select。 */
+async function openManager(view: Awaited<ReturnType<typeof mount>>, name: string): Promise<HTMLElement> {
+  await menuOf(view, name)
+  await fireEvent.click(view.getByText(t('work.projectSettings.channels.changeManager')))
+  await vi.waitFor(() => expect(document.querySelector('.v-select')).not.toBeNull())
+  return document.querySelector('.v-select') as HTMLElement
+}
+
+it('换管理者：选中那一格画的是这位成员的脸和名字', async () => {
+  const view = await mount()
+  const select = await openManager(view, 'design')
+  expect(select.querySelector('.identity-view__name')?.textContent).toBe('Alice')
+})
+
+it('管理者是名册外的人：选中那一格写这串 handle，不画一张认不出是谁的空脸', async () => {
+  const view = await mount()
+  const select = await openManager(view, 'secret')
+  expect(select.querySelector('.identity-view')).toBeNull()
+  expect(select.textContent).toContain('carol')
+})
+
+it('还没定管理者：选中那一格也不画空脸', async () => {
+  channels = [
+    entry('general', { general: true, manager: null, can_administer: true }),
+    entry('design'),
+    entry('secret', { members_only: true, joined: false, visible: false, can_manage: false, manager: 'carol' }),
+  ]
+  const view = await mount()
+  const select = await openManager(view, 'general')
+  expect(select.querySelector('.identity-view')).toBeNull()
+})
+
 it('确认之后才设为私密', async () => {
   store.setMembersOnly.mockResolvedValueOnce(true)
   const view = await mount()

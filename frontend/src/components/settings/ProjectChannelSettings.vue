@@ -93,6 +93,33 @@ const managerItems = computed(() =>
   }))
 )
 
+/** 「选中」那一格也画身份字段，但这一格不一定是上面那几行中的一行：管理者若是名册外的人
+ *  （人已经退出了），或者还没挑（模型是空串），Vuetify 就把那串裸值交给插槽，`item.raw`
+ *  是一串字符串而不是 `{handle, name, avatarId}`。这时交回 null，让调用处把这串 handle
+ *  原样写出来 —— 别拿一个 `undefined` 的 handle 去画 IdentityView，那会画出一张认不出
+ *  是谁的空脸（只剩一个「·」），也把这串本来就该读出来的 handle 丢了。
+ *  姓名/头像/队友身份只从对象那一份取，不从字符串反推（`TaskHeader` 的下拉同一条规则）。 */
+function identityOf(item: { raw?: unknown }): {
+  handle: string
+  name: string
+  avatarId: number | null
+  agent: boolean | null
+} | null {
+  const raw = item.raw
+  if (raw && typeof raw === 'object' && 'handle' in raw) {
+    const row = raw as { handle?: unknown; name?: unknown; avatarId?: unknown; agent?: unknown }
+    if (typeof row.handle === 'string' && row.handle) {
+      return {
+        handle: row.handle,
+        name: typeof row.name === 'string' ? row.name : row.handle,
+        avatarId: typeof row.avatarId === 'number' ? row.avatarId : null,
+        agent: typeof row.agent === 'boolean' ? row.agent : null,
+      }
+    }
+  }
+  return null
+}
+
 // 每个动作跑完都重读一遍：数字和管理者都从服务器那一份来，不在这里猜。
 const failure = ref<string | null>(null)
 async function act(run: () => Promise<unknown>) {
@@ -374,13 +401,8 @@ function actions(c: ChannelEntry): MenuAction[] {
           </v-list-item>
         </template>
         <template #selection="{ item }">
-          <IdentityView
-            :handle="item.raw.handle"
-            :name="item.raw.name"
-            :avatar-id="item.raw.avatarId"
-            :agent="item.raw.agent"
-            :size="18"
-          />
+          <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="18" />
+          <template v-else>{{ item.raw }}</template>
         </template>
       </v-select>
     </AdaptiveDialog>
