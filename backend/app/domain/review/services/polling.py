@@ -636,14 +636,12 @@ async def _poll_pr_card(
             owner=owner, repo=repo, number=number, token=creds.read
         ):
             return
-        # Removal can mean failed checks or a human cancellation. Never re-enqueue.
+        # Removal can mean failed checks or a human cancellation. Never
+        # re-enqueue; but the card still reads 「已采纳」, so note it and wake
+        # the task's 芝士 instead of leaving it for someone to notice.
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
-        notes.record(
-            card,
-            notes.NoteCode.merge_refused,
-            f"PR #{number} 已离开合并队列但尚未确认合并，请检查 GitHub 后重新采纳。",
-        )
+        await self._note_left_merge_queue(card=card, topic=topic)
         await self._session.flush()
         return
 
@@ -729,6 +727,20 @@ async def _poll_pr_card(
         conflict = self._conflict_nudge(card=card, status=status)
         if conflict is not None:
             pending.append(conflict)
+    # GitHub 上那行标题还是不是这张卡要落的那一行。不是就停机叫人，而且**绿了
+    # 也不算绿**：`_notify_ready` 说「可以合了」、自动合布防真的去合，两条都得
+    # 拦住 —— 合下去落进历史的是仓库检查没评判过的字（`pr_text` 的那条注释）。
+    title = self._title_nudge(card=card, topic=topic, status=status)
+    if title is None and card.note_code is notes.NoteCode.pr_title_disagrees:
+        # 两行又对上了（人用 `cheese_describe` 把卡片的 subject 改成了该落的那
+        # 一行、或者干脆把 GitHub 上的标题改回来了）：「标题和卡片不一致，合并
+        # 已暂停」那句说的是过去。改 PR 标题不动 head，上面换 head 时那次清理
+        # 永远轮不到它 —— 不清，卡面一直亮着红灯，而同一次轮询已经在下边报了
+        # 「可以合了」，同屏两句话互相打脸。放在 `_dispatch_nudges` 之前清，
+        # 卡面空下来，它才会按全部待发里最重的那条重写（此刻没有比它更重的）。
+        notes.clear(card)
+    if title is not None:
+        pending.append(title)
     await self._dispatch_nudges(
         card=card,
         topic=topic,
@@ -740,8 +752,9 @@ async def _poll_pr_card(
         await self._session.flush()  # the mirror and dispatched ledger keep
         raise deferred
 
-    if verdict.state == "clean":
-        # CLEAN → 通知验收人（按 head 去重）。
+    if verdict.state == "clean" and title is None:
+        # CLEAN → 通知验收人（按 head 去重）。标题分家时不报「可以合了」：
+        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。
         await self._notify_ready(card, topic)
     elif verdict.state == "blocked" and "required_check_missing" in kinds:
         # BLOCKED 必跑检查没报到 → 等 CI，不发；超过宽限期转人 ——
@@ -781,7 +794,11 @@ async def _poll_pr_card(
         )
         return
 
-    if card.auto_merge_armed_by and verdict.state in ("clean", "unstable"):
+    if (
+        card.auto_merge_armed_by
+        and verdict.state in ("clean", "unstable")
+        and title is None
+    ):
         await self._merge_armed_card(
             card=card,
             topic=topic,

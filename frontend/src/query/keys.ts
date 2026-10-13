@@ -8,7 +8,7 @@
 //   自己那一格，读它们的地方不用知道数据是从哪来的。
 //
 // 同一种资源只有一个 key 和一个读取函数（在 `query/` 下按领域放），别处不再各存一份。
-import type { TaskFilter } from '@/api/tasks'
+import type { TaskDeliveryFilter, TaskFilter } from '@/api/tasks'
 
 export const keys = {
   /** 我能看到的项目。 */
@@ -25,8 +25,10 @@ export const keys = {
   /** 项目里的任务：前缀标过期时所有筛选一起作废。 */
   projectTasks: (projectId: string) => ['project', projectId, 'tasks'] as const,
   projectOpenTasks: (projectId: string) => ['project', projectId, 'tasks', 'open'] as const,
-  projectClosedTasks: (projectId: string, filter: { channel: string | null; whose: TaskFilter }) =>
-    ['project', projectId, 'tasks', 'closed', filter] as const,
+  projectClosedTasks: (
+    projectId: string,
+    filter: { channel: string | null; whose: TaskFilter; delivery: TaskDeliveryFilter }
+  ) => ['project', projectId, 'tasks', 'closed', filter] as const,
   projectOverview: (projectId: string) => ['project', projectId, 'overview'] as const,
   projectProgress: (projectId: string) => ['project', projectId, 'progress'] as const,
   projectDocs: (projectId: string, kind: string) => ['project', projectId, 'docs', kind] as const,

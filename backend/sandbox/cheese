@@ -429,8 +429,9 @@ PLATFORM_TOOLS = ToolTable(
             "cheese_doc_set",
             "把一份文档的全文设为 content：整块覆盖，不是补丁。不用机器，"
             "任务开始前也能写。先 cheese_doc_get；期间别人改过会被拒，拒了就重读、"
-            "把别人的改动合进你的正文再写，别原样重试。文档标题会渲染成大标题，"
-            "正文别再用一级标题重复。",
+            "把别人的改动合进你的正文再写，别原样重试。文档里还有别人留下、还没"
+            "处理的修改建议时也会被拒——先请人处理，或者改用 cheese_doc_edit "
+            "逐处修改。文档标题会渲染成大标题，正文别再用一级标题重复。",
             {
                 "content": _text("文档的全文，Markdown"),
                 "document": _DOCUMENT_ARG,
@@ -445,7 +446,8 @@ PLATFORM_TOOLS = ToolTable(
             "用它，不用 cheese_doc_set 整份覆盖。没人让你改文档时（平台提醒、"
             "做完一件事顺手整理）设 suggest=true，只提建议，等人接受或拒绝；"
             "这样的一轮里改了人写的段落，平台也会把它转成建议。"
-            "别重复提已经在待处理的建议。",
+            "改到一处 AI 队友（包括自己）留下、还没处理的建议时，那条旧建议会被"
+            "撤掉、这处照改；人留下的建议还没处理时这处改不动，先请人接受或退回。",
             {
                 "edits": {
                     "type": "array",
@@ -2131,9 +2133,18 @@ def _doc_set(args: dict, host) -> str:
         if status != 409:
             raise
         try:
-            current = json.loads(exc.body)["error"]["data"]["doc_version"]  # type: ignore[attr-defined]
+            error = json.loads(exc.body)["error"]  # type: ignore[attr-defined]
         except (ValueError, KeyError, TypeError):
-            current = "?"
+            error = {}
+        data = error.get("data") or {}
+        if data.get("reason") == "suggestions":
+            # 有人留的修改建议还挂着：整份覆盖会把它们一起丢掉，服务拒绝。
+            why = str(error.get("message") or "文档里还有别人留下、没处理的修改建议").rstrip("。")
+            raise PlatformToolError(
+                f"没写进去，文档没有变：{why}。先请人接受或退回这些建议，"
+                "或者改用 cheese_doc_edit 逐处修改，别再整份覆盖。"
+            ) from exc
+        current = data.get("doc_version", "?")
         raise PlatformToolError(
             f"没写进去：文档现在是第 {current} 版，你这份是照第 {based_on} 版改的。"
             "先 cheese_doc_get 重新读一遍，把别人的改动合进你的正文，再 "

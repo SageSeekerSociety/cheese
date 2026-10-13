@@ -2,7 +2,7 @@
 
 管理后台的第二块，管的是**平台级**的名单，和反馈没关系：这个模块里出现的每一个字
 在反馈功能删掉之后仍然成立。所以它读写的服务是 `AdminService`
-（`app/domain/admin/`），门是 `admin_common.PlatformAdminDep`，两者都不从反馈那边
+（`app/domain/admin/`），门是 `admin_deps.PlatformAdminDep`，两者都不从反馈那边
 借 —— 反馈只是碰巧也问「这个人是不是管理员」。
 
 单独的模块而不是塞进 `admin_feedback.py`：`main.py` 的自动发现是「一个模块一个
@@ -23,9 +23,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Header, Query, Response
 
+from app.api.admin_deps import AdminServiceDep, PlatformAdminDep
 from app.api.conditional import etag_for_json, if_none_match_hits
 from app.api.response import ok
-from app.api.routes.admin_common import AdminServiceDep, PlatformAdminDep
 from app.domain.admin.schemas import AdminAdd
 
 router = APIRouter(prefix="/admin", tags=["admin"])

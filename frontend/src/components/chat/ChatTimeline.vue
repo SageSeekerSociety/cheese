@@ -68,7 +68,13 @@ const props = defineProps<{
   sentNow: Set<string>
   flashId: string | null
   timeShownId: string | null
-  bar: { id: string | null; shown: boolean; top: number; jump: boolean; menuAt?: { x: number; y: number } | null }
+  bar: {
+    id: string | null
+    shown: boolean
+    top: number
+    jump: boolean
+    menuAt?: { x: number; y: number; selectedText?: string } | null
+  }
   barBlock: Block | null
   barEditable: boolean
   reactionPickerFor: string | null

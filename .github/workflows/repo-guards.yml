@@ -65,6 +65,14 @@ jobs:
           python3 .claude/scripts/frontend_grade.py --self-test
           python3 .claude/scripts/catalog-ratchet.py --self-test
 
+      # Not a guard of this tree: prove-regression.py is what AGENTS.md tells an
+      # author to run on a fix's own test, and nothing in CI runs it against the
+      # tree. Its self-test is here because that is the only thing keeping an
+      # unused helper honest — it builds a throwaway repository and proves the
+      # verdict on a test that is red before the fix and green at it.
+      - name: Regression-proof helper self-test
+        run: python3 .claude/scripts/prove-regression.py --self-test
+
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).
       - name: dev-db.sh tests

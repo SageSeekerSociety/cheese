@@ -20,6 +20,7 @@ import AdaptiveMenu from '../common/AdaptiveMenu.vue'
 
 import { copyMessage, QUICK_EMOJIS } from './messageActions'
 
+import { copyText } from '@/commands/copy'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -41,7 +42,7 @@ const props = defineProps<{
   /** 这条是我自己发的消息：多一颗「编辑」。 */
   editable: boolean
   /** 右键这一条时鼠标的位置：每次右键一个新对象，认到就在那一点打开 ⋯。 */
-  menuAt?: { x: number; y: number } | null
+  menuAt?: { x: number; y: number; selectedText?: string } | null
   /** 这是频道主线、我能在这里说话：⋯ 里能把消息置顶到频道。 */
   pinnable?: boolean
   /** 已经置顶的那几条（block id）：它们的 ⋯ 里是「取消置顶」。 */
@@ -130,11 +131,17 @@ async function copyLink(block: Block | null) {
 }
 
 // 浮层里鼠标已不在消息上：操作仍属于打开菜单时的那一条。
-const menuTarget = shallowRef<{ block: Block; isAgent: boolean; editable: boolean } | null>(null)
+const menuTarget = shallowRef<{ block: Block; isAgent: boolean; editable: boolean; selectedText?: string } | null>(null)
 watch(
-  menuOpen,
-  (open) => {
-    if (open && props.block) menuTarget.value = { block: props.block, isAgent: props.isAgent, editable: props.editable }
+  [menuOpen, () => props.menuAt],
+  ([open]) => {
+    if (open && props.block)
+      menuTarget.value = {
+        block: props.block,
+        isAgent: props.isAgent,
+        editable: props.editable,
+        selectedText: menuPoint.value ? props.menuAt?.selectedText : undefined,
+      }
   },
   { flush: 'sync' }
 )
@@ -166,6 +173,16 @@ const menuActions = computed<MenuAction[]>(() => {
             label: t('work.room.message.process'),
             icon: 'mdi-timeline-text-outline',
             onSelect: () => emit('process', block.turn_id!),
+          },
+        ]
+      : []),
+    ...(target.selectedText
+      ? [
+          {
+            key: 'copy-selection',
+            label: t('work.room.message.copySelection'),
+            icon: 'mdi-content-copy',
+            onSelect: () => void copyText(target.selectedText!, t('work.room.message.copied')),
           },
         ]
       : []),

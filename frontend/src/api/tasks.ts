@@ -38,6 +38,8 @@ export function listProjectTasks(
 export type Whose = 'mine' | 'helping' | 'others'
 /** 「全部任务」那一排筛选：全部，或其中一种谁的。 */
 export type TaskFilter = 'all' | Whose
+/** 「全部任务」里的交付筛选：全部，或只看有已采纳交付的任务。 */
+export type TaskDeliveryFilter = 'all' | 'accepted'
 
 export interface ProjectTaskPage extends ListPayload<RoomTask> {
   has_more: boolean
@@ -57,12 +59,14 @@ export function pageProjectTasks(
     before?: string | null
     channel?: string | null
     whose?: Whose | null
+    accepted?: boolean | null
   }
 ): Promise<ProjectTaskPage> {
   const q = new URLSearchParams({ status: opts.status, limit: String(opts.limit) })
   if (opts.before) q.set('before', opts.before)
   if (opts.channel) q.set('channel', opts.channel)
   if (opts.whose) q.set('whose', opts.whose)
+  if (opts.accepted != null) q.set('accepted', String(opts.accepted))
   return request<ProjectTaskPage>(`/projects/${encodeURIComponent(projectId)}/tasks?${q.toString()}`).then(remembered)
 }
 
