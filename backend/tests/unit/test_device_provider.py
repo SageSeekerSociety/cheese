@@ -1843,6 +1843,52 @@ async def test_a_deferred_relaunch_does_not_release_helpers_into_the_old_session
     )
 
 
+async def test_a_screen_started_for_another_session_is_not_borrowed_while_busy(
+    caplog,
+):
+    """反馈 FB-99：一个任务从芝士派换回芝士，两条会话落在同一个座位上。
+
+    The process kept calling for the session it was started for while each turn
+    rewrote its credential with the other's, and every command and file call it
+    made was refused with 「Execution credential does not own this session」
+    (2026-10-13 00:42). A busy process is still not borrowed: its own work is
+    for a session this turn is not.
+    """
+    hub = FakeHub()
+    room = _executor_room(hub, target={"kind": "deferred", "session_id": "pi"})
+    first = await room.ensure()
+    hub.ping = {"alive": True, "working": True, "tasks": {"bash-1": "local_bash"}}
+
+    with caplog.at_level("INFO"):
+        taken = await room.ensure(
+            env={
+                "CHEESE_EXECUTION_TARGET": json.dumps(
+                    {"kind": "deferred", "session_id": "cheese"}
+                )
+            }
+        )
+
+    assert taken.sid != first.sid
+    assert hub.closed == [first.sid]
+    (line,) = _retired(caplog)
+    assert "reason=another_session" in line
+
+
+async def test_the_same_sessions_busy_screen_is_still_reused(caplog):
+    """The session the process was started for keeps it while it works."""
+    hub = FakeHub()
+    target = {"kind": "deferred", "session_id": "cheese"}
+    room = _executor_room(hub, target=target)
+    first = await room.ensure()
+    hub.ping = {"alive": True, "working": True, "tasks": {}}
+
+    again = await room.ensure(
+        env={"CHEESE_EXECUTION_TARGET": json.dumps({**target, "workspace": "/w"})}
+    )
+
+    assert again is first and hub.closed == []
+
+
 # --- seats: a room's teammates have one session each -------------------------
 
 

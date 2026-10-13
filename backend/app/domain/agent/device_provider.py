@@ -204,6 +204,15 @@ async def environment_status(
     return json.loads(result.get("stdout") or '{"state":"pending"}')
 
 
+def _another_session(running: dict | None, wanted: dict | None) -> bool:
+    """Whether a screen started for the session ``running`` names is asked to
+    serve the different one ``wanted`` names. A target that names no session
+    (a private chat's scratch, a screen from before targets did) is no answer."""
+    was = (running or {}).get("session_id")
+    now = (wanted or {}).get("session_id")
+    return bool(was and now and was != now)
+
+
 def _launcher_command(topic_id: uuid.UUID, seat: str = "") -> list[str]:
     """What a screen runs: the launcher file `_ship_launcher` wrote for this seat."""
     return ["bash", "-lc", f'exec bash "{launcher_path(topic_id, seat)}"']
@@ -877,6 +886,22 @@ class DeviceChannel(Channel):
                 existing,
                 topic_id=topic_id,
                 reason="closing" if existing.closing else "credential_expiring",
+            )
+            existing = None
+        if existing is not None and _another_session(
+            existing.execution_target, execution_target
+        ):
+            # Two sessions of one conversation can come to one seat: a task
+            # given to a teammate not seated in its room acts under the room's
+            # seat, as the teammate it was given before did. The process keeps
+            # the session its target named at birth, while reusing it rewrites
+            # the credential file with this session's, so every call it makes
+            # was refused with 「Execution credential does not own this
+            # session」 (FB-99). Deferring the relaunch for running work, as a
+            # changed launch does below, would keep that up for as long as a
+            # background command runs, so it is not deferred.
+            await self._retire_screen(
+                existing, topic_id=topic_id, reason="another_session"
             )
             existing = None
         # Device-side paths (the launcher mkdir -p's them). Kept under a stable per
