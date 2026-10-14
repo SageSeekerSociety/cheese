@@ -177,11 +177,11 @@ const sim = simulate({
   step: (state, dt, t) => next,          // 由当前状态算出下一步的状态，可以直接修改 state 后返回它
   dt: 1,                                 // 每一步代表的时长，默认 1
   speed: 10,                             // 播放时每秒走几步，默认 10
-  end: 60,                               // 过程一共走几步；过程不会结束时省略
+  end: 60,                               // 过程在哪个时刻结束（与 t 同一单位）；过程不会结束时省略
 })
 ```
 
-返回的 `sim` 可以直接在模板中使用：`sim.state` 是当前状态，`sim.t` 是当前时刻，`sim.running` 表示是否在播放，`sim.done` 表示是否已到终点；`sim.play()`、`sim.pause()`、`sim.reset()` 分别是播放、暂停和回到开头，`sim.advance(n)` 一次前进 `n` 步。打开时停在开头。播放到 `end` 自动停下，再按播放从头开始。播放和暂停用普通的 `<button>`。读者改了参数要从头开始时，写 `watch(参数, () => sim.reset())`。需要按微分方程精确推进时（轨道、摆），用同一模块的 `rk4(f, y, t, dt)`：`f(t, y)` 返回 `y` 各分量的变化率，`rk4` 返回前进一步之后的 `y`。
+返回的 `sim` 可以直接在模板中使用：`sim.state` 是当前状态，`sim.t` 是当前时刻，`sim.running` 表示是否在播放，`sim.done` 表示是否已到终点；`sim.play()`、`sim.pause()`、`sim.reset()` 分别是播放、暂停和回到开头，`sim.advance(n)` 一次前进 `n` 步。打开时停在开头。播放到 `end` 时刻自动停下，再按播放从头开始。播放和暂停用普通的 `<button>`。读者改了参数要从头开始时，写 `watch(参数, () => sim.reset())`。需要按微分方程精确推进时（轨道、摆），用同一模块的 `rk4(f, y, t, dt)`：`f(t, y)` 返回 `y` 各分量的变化率，`rk4` 返回前进一步之后的 `y`。
 
 需要随机数时，用 `@platform/random` 的 `random(种子)`，不用 `Math.random`。同一个种子每次产生同样的随机数，平台检查时拍下的画面就是读者看到的画面，`console.assert` 也能核对模拟的结果。它提供 `next()`（0 到 1 之间的数）、`uniform(a, b)`、`int(a, b)`、`normal(均值, 标准差)`、`exponential(速率)`、`poisson(均值)`、`pick(列表)`、`shuffle(列表)`。要让 `reset()` 后重现同样的过程，在 `init` 中重新创建它。
 
@@ -313,7 +313,7 @@ const sim = simulate({
   },
   dt: 0.02,
   speed: 60,
-  end: 1200, // 约 24 个时间单位，速度取到 1.25 时也能绕完一圈
+  end: 24, // 速度取到 1.25 时也能绕完一圈
 })
 watch(speed, () => sim.reset())
 

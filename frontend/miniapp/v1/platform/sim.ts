@@ -37,12 +37,13 @@ export function simulate<S>(options: {
   dt?: number
   /** Steps per second while playing (default 10). */
   speed?: number
-  /** Steps the process takes in all, for one that finishes: playing stops
-   *  there. Without it the process runs until paused. */
+  /** The model time at which a process that finishes is over: playing
+   *  stops there. Without it the process runs until paused. */
   end?: number
 }): Simulation<S> {
   const dt = options.dt ?? 1
-  const end = options.end ?? Infinity
+  // Counted in steps, so a dt that does not divide the end evenly still stops on it.
+  const end = options.end === undefined ? Infinity : Math.round(options.end / dt)
   const speed = Math.max(0, options.speed ?? 10)
   let frame = 0
   let last = 0

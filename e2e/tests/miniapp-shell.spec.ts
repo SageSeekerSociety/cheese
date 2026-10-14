@@ -316,7 +316,7 @@ test('a simulation opens at its start, stops at its end, and plays again from th
     page,
     `<script setup>
 import { simulate } from '@platform/sim'
-const sim = simulate({ init: () => ({ n: 0 }), step: (s) => { s.n += 1; return s }, dt: 0.5, speed: 5, end: 6 })
+const sim = simulate({ init: () => ({ n: 0 }), step: (s) => { s.n += 1; return s }, dt: 0.5, speed: 5, end: 3 })
 </script>
 <template>
   <p id="out">{{ sim.steps }} {{ sim.t }} {{ sim.state.n }} {{ sim.done ? 'done' : sim.running ? 'running' : 'paused' }}</p>
