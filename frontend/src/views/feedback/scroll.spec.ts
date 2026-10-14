@@ -87,22 +87,15 @@ describe('反馈页面的滚动归自己领', () => {
     // 根节点塌成内容高，下面那个 `1 1 auto` 的格子就没有可分配的高度，格子内部也就
     // 没有溢出可滚，整页又会回到「被外壳裁掉且没人能滚」。
     //
-    // **领这一条的元素换过名字，所以这个用例也换过靶子**：管理端重做之后
-    // `/admin/feedback` 变成一层薄壳（`AdminFeedbackPage.vue` 现在只渲染
-    // `<AdminQueuePage />`），满高和滚动都搬到了 `views/admin/AdminQueuePage.vue`
-    // 的 `.qpage`。钉旧名字的代价是这条不变量会在没人发现的情况下失效 —— 薄壳本身
-    // 没有样式，它「有 `fbadmin` 类」这件事跟「页面能不能滚」已经没有关系了。
-    const rule = cssRule('views/admin/AdminQueuePage.vue', '.qpage')
+    // **领这一条的元素换过名字，所以这个用例也换过靶子**：管理端重做之后队列那两页
+    // 收成了一份（`/admin/feedback` 这条老地址直接指向队列页，不再是一层薄壳），满高
+    // 和滚动都在 `views/admin/AdminQueuePageView.vue` 的 `.qpage` 上 —— 页面那一半
+    // 只剩取数和路由，没有样式，所以这一条看的是**画面**那一半。钉旧名字的代价是这条
+    // 不变量会在没人发现的情况下失效：文件还在、类还在，只是没人再确认它还在。
+    const rule = cssRule('views/admin/AdminQueuePageView.vue', '.qpage')
     expect(rule).toContain('height: 100%')
     expect(rule).toContain('min-height: 0')
     // 而且真的有一个能滚的格子在里面，不是「把滚动挪走了」就完事。
     expect(cssRule('components/base/BaseTable.vue', '.agrid__scroll')).toContain('overflow: auto')
-  })
-
-  it('薄壳那条老地址仍然指向队列', () => {
-    // 这一条钉的是**链接还活着**，不是布局：老书签、老通知、别人贴在聊天里的链接都还
-    // 指着 `/admin/feedback`，它当时指的是「后台里管反馈的那一块」，今天还是那件事。
-    // （薄壳的来龙去脉和它为什么不用重定向见 `AdminFeedbackPage.vue` 顶部那段。）
-    expect(rootTag('AdminFeedbackPage')).toContain('<AdminQueuePage')
   })
 })
