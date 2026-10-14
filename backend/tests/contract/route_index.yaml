@@ -1108,6 +1108,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/teams/{teamId}/requests/{requestId}/reject", auth: "legacy.teams.approve_team_join_request", owner: "team"}
   - {protocol: "http", method: "GET", path: "/team-invites/{token}", auth: "legacy.teams.get_team_by_join_link", owner: "team"}
   - {protocol: "http", method: "POST", path: "/team-invites/{token}/join", auth: "legacy.teams.get_team_by_join_link", owner: "team"}
+  # app.api.routes.throughput
+  - {protocol: "http", method: "GET", path: "/throughput/seats", auth: "actor.topic", owner: "platform_stats"}
   # app.api.routes.topic_members
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/members", auth: "actor.topic", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/members", auth: "topic.members.manage", owner: "topic.membership"}
