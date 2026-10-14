@@ -34,3 +34,11 @@ uploads/
 # VAPID keys, if someone runs `uv run vapid --gen` in place. The private one is
 # the credential for "send push as this site" — it must never be committed.
 *.pem
+
+# The generated API schema (`uv run python -m scripts.export_openapi --schema`,
+# the `be:openapi` task). It was committed for review to see contract changes,
+# but it changes with every route, so any two branches that each touched a route
+# collided in a file neither of them had a decision in. It is generated where it
+# is read — the frontend type check (frontend/scripts/gen-api-types.mjs runs the
+# same command) and `be:openapi` — so it is not in the tree.
+/openapi.json

@@ -148,7 +148,6 @@ REGISTRY_PREFIXES = ("backend/alembic/",)
 REGISTRY_PATH_MARKERS = ("i18n/messages",)
 REGISTRY_BASENAME_MARKERS = ("route_index", "baseline")
 REGISTRY_FILES = (
-    "backend/openapi.json",
     "frontend/src/api/openapi.d.ts",
     "backend/.importlinter",
 )

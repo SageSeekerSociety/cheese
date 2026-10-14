@@ -168,9 +168,16 @@ class RequiredCITest(unittest.TestCase):
                 self.assertTrue(gate.failures(needs, "full"))
 
     def test_backend_change_selects_backend_and_e2e(self):
+        # A change under app/ now selects the frontend as well, and on purpose:
+        # the API types the frontend compiles are generated from the app, so a
+        # route or model is a frontend type-check input. A backend file that is
+        # not part of that generation does not widen it.
         selected = gate.select(["backend/app/api/rooms.py"])
         self.assertTrue(selected["backend"] and selected["e2e"])
-        self.assertFalse(selected["frontend"])
+        self.assertTrue(selected["frontend"])
+        for path in ("backend/scripts/route_index.py", "backend/tests/unit/test_rooms.py"):
+            with self.subTest(path=path):
+                self.assertFalse(gate.select([path])["frontend"])
 
     def test_the_catalogs_the_backend_reads_select_backend(self):
         # The backend reads these three at import time (sentences.py), so a

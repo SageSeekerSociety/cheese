@@ -1021,6 +1021,13 @@ sys.exit(0)
         # means the change's pinpointed consumers ran.
         self.write_hooks()
         no_harness = {"CHEESE_TEST_CLAUDE": "", "CHEESE_TEST_CODEX": "", "CHEESE_TEST_PI": ""}
+        # app/wheel.py is a frontend type-check input now — the API types are
+        # generated from the app — so this change pulls the frontend types check
+        # into a quick run. Put its stubs beside the pytest one, as a real
+        # checkout would have them, so what the assertions below measure is the
+        # harness split and not a missing pnpm.
+        env = self.quick_tools()
+        self.backend_tools(covered="tests/unit/test_spins.py", folder=self.tmp / "tools")
         self.commit_file("backend/tests/pinned_claude.py", "def claude_binary(): raise SystemExit\n")
         self.commit_file("backend/tests/unit/test_needs_pinned.py",
                          "from tests.pinned_claude import claude_binary\nfrom app.wheel import spin\n")
@@ -1029,8 +1036,7 @@ sys.exit(0)
         git(self.repo, "update-ref", "refs/remotes/origin/main", "HEAD")
         self.commit_file("backend/app/wheel.py", "spin = 1\n")
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: skip the harness",
-                                env_extra={**self.backend_tools(covered="tests/unit/test_spins.py"),
-                                           **no_harness})
+                                env_extra={**env, **no_harness})
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         rep = self.report()
         row = next(r for r in rep["ran"] if r["id"] == "backend-pure")
@@ -1043,8 +1049,7 @@ sys.exit(0)
         # change runs that test again.
         with_harness = {v: sys.executable for v in no_harness}
         proc = self.run_ci_fast("--tier", "quick", "--title", "feat: run the harness",
-                                env_extra={**self.backend_tools(covered="tests/unit/test_spins.py"),
-                                           **with_harness})
+                                env_extra={**env, **with_harness})
         row = next(r for r in self.report()["ran"] if r["id"] == "backend-pure")
         self.assertIn("tests/unit/test_needs_pinned.py", row["command"])
 
@@ -1623,30 +1628,57 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_types_only_input_widens_types_not_the_test_run(self):
-        # A backend route change regenerates openapi.json and the types-only
-        # src/api/openapi.d.ts. Nothing in frontend/src reads the document at
-        # runtime, so the suite would be checking nothing new; the type check is
-        # what has to widen.
+        # A backend route change moves the API document the frontend types are
+        # generated from, and with it the types-only src/api/openapi.d.ts.
+        # Nothing in frontend/src reads the document at runtime, so the suite
+        # would be checking nothing new; the type check is what has to widen.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
         self.put("frontend/src/use.ts", "export const x = 1\n")
+        route = "backend/app/api/routes/doctors.py"
         plan, omissions = test_plan(
-            self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts", "frontend/src/use.ts"],
+            self.root, [route, "frontend/src/api/openapi.d.ts", "frontend/src/use.ts"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")
-        # A declaration file cannot seed the graph, so it is not a root.
+        # A declaration file cannot seed the graph, so it is not a root, and the
+        # backend schema source is not frontend content a spec can execute.
         self.assertEqual(unit["evidence"]["roots"], ["src/use.ts"])
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
         self.assertEqual(omissions, [])
-        # Alone, the regenerated declaration runs no test at all — that is a
-        # stated omission, not a suite-wide run and not an unknown.
-        plan, omissions = test_plan(self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts"],
+        # Alone, the regenerated declaration and the schema source it was built
+        # from run no test at all — that is a stated omission, not a suite-wide
+        # run and not an unknown.
+        plan, omissions = test_plan(self.root, [route, "frontend/src/api/openapi.d.ts"],
                                     {"frontend": True}, self.root)
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
         self.assertEqual(omissions[0]["id"], "frontend-unit")
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
+
+    def test_backend_route_change_alone_requests_full_frontend_types(self):
+        # The regression for the generated-schema change: the API document is no
+        # longer committed, so its inputs stand in for it. A route or a model
+        # the frontend's types are built from, the exporter, and the pins that
+        # decide the exporter's FastAPI all have to reach the full type check,
+        # under both readings of the change — the whole diff and the paths the
+        # scope map routed into frontend scope.
+        from ci_fast_checks import test_plan
+        for kind, path in (("route", "backend/app/api/routes/doctors.py"),
+                           ("model", "backend/app/models/doctor.py"),
+                           ("exporter", "backend/scripts/export_openapi.py"),
+                           ("pins", "backend/uv.lock"),
+                           ("pyproject", "backend/pyproject.toml")):
+            plan, omissions = test_plan(self.root, [path], {"frontend": True}, self.root)
+            self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan), kind)
+            # It seeds no frontend root and carries no runtime, so the suite is
+            # stated as not run rather than expanded to.
+            self.assertFalse(any(p["id"] == "frontend-unit" for p in plan), kind)
+            self.assertEqual([o["id"] for o in omissions], ["frontend-unit"], kind)
+            plan, _ = test_plan(self.root, [path], {"frontend": True}, self.root,
+                                frontend_scope=[path])
+            self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan), kind)
+            self.assertFalse(any(p["id"] == "frontend-unit" for p in plan), kind)
 
     def test_frontend_deleted_spec_is_not_a_dangling_import(self):
         # A deleted spec leaves no importer behind, so the narrow project
@@ -1713,21 +1745,24 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_scope_is_the_paths_the_map_routed_there(self):
-        # The path map routes backend/openapi.json into frontend scope, so a
-        # backend change enters this branch through it. Read from the whole
-        # change, its own .py files counted as frontend runtime content and the
-        # suite ran in full for a document no test can load.
+        # The path map routes the backend schema sources into frontend scope, so
+        # a backend change enters this branch through them. Whether the change
+        # carries frontend runtime content is read from the paths the map routed
+        # here, not from the whole change: an unrouted path beside them (a CLI
+        # file the map never sends to frontend) would otherwise be read as
+        # content the suite must execute and run it in full for a document no
+        # test can load.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
-        changed = ["backend/app/api/projects.py", "backend/openapi.json",
-                   "frontend/src/api/openapi.d.ts"]
+        routed = ["backend/app/api/routes/projects.py", "frontend/src/api/openapi.d.ts"]
+        changed = routed + ["cli/cmd/root.go"]
         plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root,
-                                    frontend_scope=["backend/openapi.json",
-                                                    "frontend/src/api/openapi.d.ts"])
+                                    frontend_scope=routed)
         self.assertEqual([o["id"] for o in omissions], ["frontend-unit"])
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
-        # With no scope from the caller the whole change is read, as before.
+        # With no scope from the caller the whole change is read, and the
+        # unrouted path widens the run, as before.
         plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root)
         self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
                          "full")

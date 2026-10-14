@@ -131,16 +131,24 @@ tasks:
     sources:
       - src/**/*.{ts,tsx,vue}
       - tsconfig*.json
-      # The type check reads more than the sources it compiles: the API types
-      # are generated from the backend schema, and the ratchet reads its own
-      # baseline and scripts. Changing any of them changes the verdict.
+      # The type check reads more than the sources it compiles: the ratchet reads
+      # its own baseline and scripts, and the API types are generated (from the
+      # backend schema) just before it runs. Changing any of them changes the
+      # verdict.
       - tsc-baseline.json
       - scripts/typecheck.mjs
       - scripts/gen-api-types.mjs
       - scripts/tsc-ratchet.mjs
       - scripts/tsc-ratchet-core.mjs
       - scripts/ratchet-report.mjs
-      - ../backend/openapi.json
+      # The schema itself is generated too — backend/openapi.json is not
+      # committed — so what invalidates this task is its inputs: the app it is
+      # built from, the exporter, and the pins that decide the exporter's
+      # FastAPI. `be:openapi` declares the same list.
+      - ../backend/app/**/*.py
+      - ../backend/scripts/export_openapi.py
+      - ../backend/pyproject.toml
+      - ../backend/uv.lock
   test:
     desc: Run vitest
     deps: [install]

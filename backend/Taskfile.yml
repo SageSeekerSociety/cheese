@@ -31,6 +31,24 @@ tasks:
     sources:
       - app/**/*.py
       - pyproject.toml
+  # The API schema the frontend's types are generated from. It is not committed
+  # (backend/.gitignore): as a tracked file every route change rewrote it and any
+  # two branches that each touched a route collided in it. Everything that reads
+  # it generates it first — the frontend type check runs this same command in
+  # frontend/scripts/gen-api-types.mjs, and `be:openapi` is the generation for
+  # anything else. `--schema` writes only the schema: the untyped ratchet
+  # (openapi-untyped.json) is tracked and only `export_openapi --check` judges it.
+  openapi:
+    desc: Export the API schema (backend/openapi.json) the frontend types come from
+    cmds:
+      - uv run python -m scripts.export_openapi --schema
+    sources:
+      - app/**/*.py
+      - scripts/export_openapi.py
+      - pyproject.toml
+      - uv.lock
+    generates:
+      - openapi.json
   # The import graph: declared boundaries in .importlinter, with the 373
   # pre-existing violations frozen inside the same file as exact
   # `importer -> imported` pairs. Refreshing the freeze is

@@ -57,7 +57,7 @@ TREE_GUARDS = (
     "test_no_adhoc_auth_helpers.py", "test_local_fs_sharing_guard.py",
 )
 META = {
-    "backend/pyproject.toml", "backend/uv.lock", "backend/openapi.json",
+    "backend/pyproject.toml", "backend/uv.lock",
     "backend/tests/module_durations.json", "backend/tests/quarantine.txt",
     "backend/tests/slow_tests.txt", "backend/.importlinter",
     "backend/deferred-import-baseline.json", ".pre-commit-config.yaml",

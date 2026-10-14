@@ -245,10 +245,10 @@ everything is still allowed to answer unknown.
   deletion with no surviving root, a path outside `frontend/` that the scope map
   still routes here (a site stylesheet, a ratchet script). Whether a change
   carries that content is read from the paths the scope map routed into frontend
-  scope, not from the whole diff: a backend route change rides in through a
-  regenerated `backend/openapi.json`, and its own `.py` files are not frontend
+  scope, not from the whole diff: a backend change reaches that scope by way of
+  the API document it regenerates, and its own schema sources are not frontend
   content — the one reader of that document writes types-only, so the suite has
-  nothing to execute for it. A config outside the watched list does not widen by
+  nothing to execute for them. A config outside the watched list does not widen by
   itself: `frontend/collab/vitest.config.ts` beside a changed source file still
   stays `related`. The full run must be shown to have
   executed both i18n guard specs. Everything else stays narrow: a deletion
@@ -256,7 +256,7 @@ everything is still allowed to answer unknown.
   catalog, stylesheet or prose edit next
   to a changed source file, still seed `related` from those roots. Only a change
   that seeds nothing *and* leaves the suite nothing to judge — prose (`.md`), a
-  declaration file, or a types-only input such as `backend/openapi.json` — leaves
+  declaration file, or a types-only input such as the backend schema sources — leaves
   the tier running the guards alone with `frontend-unit` recorded not-run and a
   reason.
 
@@ -287,8 +287,9 @@ everything is still allowed to answer unknown.
   extends the real `frontend/tsconfig.json`,
   bridges `node_modules`, and checks only the surviving changed files against the
   existing tsc-ratchet baseline, after generating the API types from
-  `backend/openapi.json` (`frontend/scripts/typecheck.mjs` — that generated file
-  is not committed); a deleted non-spec source file forces the full
+  `backend/openapi.json` (`frontend/scripts/typecheck.mjs` — that generated
+  document is not committed, so the generator regenerates it first); a deleted
+  non-spec source file forces the full
   typecheck instead, since only the whole project sees its dangling importers.
   Non-spec is read from the name's ending, not from the text: a helper module
   called `migrationContract.spec.helper.ts` is imported by thirteen surviving

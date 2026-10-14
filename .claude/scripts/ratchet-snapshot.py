@@ -39,7 +39,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -249,11 +249,17 @@ CHECKS: tuple[Check, ...] = (
         cwd="frontend",
         rules=(
             "frontend/scripts/typecheck.mjs",
-            # The generator decides the types being judged, so it is a rule
-            # too. `backend/openapi.json` beside it is the subject being
-            # measured, not a rule: it changes with every route, and a rule
-            # that moves on every route change makes every comparison a new run.
+            # The generator decides the types being judged, so it is a rule too.
+            # The document it reads (backend/openapi.json) is generated, not
+            # committed — the generator builds it from the backend app before it
+            # reads it — so there is no committed subject here to excuse. One
+            # that moved on every route would make every comparison a new run.
             "frontend/scripts/gen-api-types.mjs",
+            # …and the generator runs this by name (`-m
+            # scripts.export_openapi`): it decides the document's shape, so it
+            # is a rule too. `_PY_MODULE` follows the name, which is what keeps
+            # this entry from going missing unnoticed.
+            "backend/scripts/export_openapi.py",
             "frontend/scripts/tsc-ratchet.mjs",
             "frontend/scripts/tsc-ratchet-core.mjs",
             "frontend/scripts/ratchet-report.mjs",
@@ -623,10 +629,6 @@ NOT_A_RULE: dict[str, dict[str, str]] = {
     },
     "vue-tsc": {
         "frontend/tsc-baseline.json": "baseline: the frozen per-file error counts",
-        "backend/openapi.json": (
-            "subject: the schema the generated types are judged against, so every "
-            "edit to it is the measurement and a new comparison run"
-        ),
     },
     "palette": {
         "frontend/palette-baseline.json": "baseline: the frozen colour literals",
@@ -657,6 +659,10 @@ _JS_SPEC = re.compile(r"""(?:from|import)\s*\(?\s*['"](\.[^'"]+)['"]""")
 #: That is neither an import nor a path built for a reader, so without it a
 #: wrapper that runs its halves by name hides both of them from the guard.
 _JS_SCRIPT = re.compile(r"""\b\w+\s*\(\s*['"]([\w][\w./-]*\.(?:mjs|cjs|js))['"]""")
+#: A Python module a script runs by name: `spawnSync('uv', ['run', 'python',
+#: '-m', 'scripts.export_openapi', ...])`. Same hiding as `_JS_SCRIPT` one
+#: runtime over — the module decides the check as much as anything imported.
+_PY_MODULE = re.compile(r"""['"]-m['"]\s*,\s*['"]([\w.]+)['"]""")
 _SH_SOURCE = re.compile(r"^\s*(?:source|\.)\s+['\"]?([^\s'\"]+)", re.M)
 
 
@@ -716,6 +722,17 @@ def _deps_of(path: Path, root: Path, cwd: Path) -> list[Path]:
             target = (path.parent / name).resolve()
             if target.is_file() and target != path.resolve():
                 found.append(target)
+        # `-m scripts.export_openapi` names a module in the backend package,
+        # which is the working directory those runs are given, so the name
+        # resolves under root/backend and nowhere else.
+        for module in _PY_MODULE.findall(text):
+            candidate = root / "backend" / Path(*module.split("."))
+            hit = next(
+                (c for c in (candidate.with_suffix(".py"), candidate / "__init__.py") if c.is_file()),
+                None,
+            )
+            if hit is not None:
+                found.append(hit)
     elif path.suffix == ".sh":
         for target in _SH_SOURCE.findall(text):
             candidate = (path.parent / target).resolve()
@@ -1221,6 +1238,20 @@ def self_test() -> int:
               sorted(f"{cid}/{rel}" for cid, excused in NOT_A_RULE.items()
                      for rel in excused if rel not in reads.get(cid, set())),
               [])
+
+        # …and an entry has to be doing work. The generator runs the exporter by
+        # name and the walker follows that (see `_PY_MODULE`), so dropping the
+        # entry leaves a file the check reads unaccounted for — the guard above
+        # going red for a rule that went missing, not one that never mattered.
+        exporter = "backend/scripts/export_openapi.py"
+        vue = next((c for c in CHECKS if c.id == "vue-tsc"), None)
+        check("vue-tsc: the walker reaches the exporter the generator runs",
+              exporter in reads.get("vue-tsc", set()), True)
+        if vue is not None and exporter in reads.get("vue-tsc", set()):
+            thinned = replace(vue, rules=tuple(r for r in vue.rules if r != exporter))
+            known = _rule_paths(REPO_ROOT, thinned) | set(NOT_A_RULE.get("vue-tsc", {}))
+            check("vue-tsc: dropping the exporter entry leaves it unaccounted for",
+                  exporter in reads["vue-tsc"] - known, True)
 
         # The other half of the same contract: a file ON the list has to move
         # the fingerprint when its bytes change. A rule that can be edited with

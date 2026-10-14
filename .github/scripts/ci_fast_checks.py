@@ -37,14 +37,14 @@ commands and turns each command's report into a verdict nobody can fake:
     6px -> 8px on the padding-left of .doc-status[data-status] left both i18n
     guards green and only docBlocks.spec.ts red. A seedless change that leaves
     the suite nothing to judge — prose, a declaration file, a types-only input
-    like backend/openapi.json — runs the guards alone and reports frontend-unit
-    as not run rather than expanding to it. A full run must show both i18n guard
-    specs actually executed. Whether a change carries frontend runtime content
-    is read from the paths the path map routed into frontend scope, not from
-    every changed path: a backend change that regenerates backend/openapi.json
-    carries frontend scope with it, and reading its own .py files as content
-    this suite must execute would run the whole Vitest suite for a document no
-    test can load — the sole reader of it writes types-only.
+    like the backend schema sources — runs the guards alone and reports
+    frontend-unit as not run rather than expanding to it. A full run must show
+    both i18n guard specs actually executed. Whether a change carries frontend
+    runtime content is read from the paths the path map routed into frontend
+    scope, not from every changed path: a backend change that regenerates the
+    API document carries frontend scope with it, and reading its own .py files
+    as content this suite must execute would run the whole Vitest suite for a
+    document no test can load — the sole reader of it writes types-only.
   * The read-off-disk spec gets the same treatment without widening: a narrowed
     run is seeded with the changed roots *and* every spec that judges a
     frontend file by reading it (OFF_DISK_SPECS), because those are the specs
@@ -60,6 +60,7 @@ commands and turns each command's report into a verdict nobody can fake:
     several forks gets several, and the local default still gets one.
 """
 
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -112,12 +113,27 @@ FRONTEND_META = {
     "frontend/tsconfig.json", "frontend/tsconfig.app.json", "frontend/tsconfig.node.json",
     ".pre-commit-config.yaml",
 }
-# Types-only inputs: nothing under frontend/ reads these at runtime — the sole
-# reader of backend/openapi.json is scripts/gen-api-types.mjs, whose output
-# (src/api/openapi.d.ts) the generator writes types-only. So they widen the type
-# check, never the test run: a backend route change used to run all 700+ specs
-# for a document no test can load.
-FRONTEND_TYPES_META = {"backend/openapi.json"}
+# Types-only inputs: paths whose change moves only the generated API types,
+# never anything a spec under frontend/ reads at runtime. The document the types
+# are generated from (backend/openapi.json) is generated, not committed, so its
+# inputs stand in: the app it is built from, the exporter, and the pins that
+# decide the exporter's FastAPI. A change to one widens the type check — which
+# regenerates the document first (frontend/scripts/gen-api-types.mjs) — and never
+# the test run, whose only reader of that document writes types-only. The path
+# map routes the same inputs into frontend scope, carrying no runtime with them.
+FRONTEND_TYPES_META = (
+    "backend/app/**",
+    "backend/scripts/export_openapi.py",
+    "backend/pyproject.toml",
+    "backend/uv.lock",
+)
+
+
+def _is_types_only(path: str) -> bool:
+    """Whether `path`'s change affects the frontend only through the API types."""
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in FRONTEND_TYPES_META)
+
+
 # What the dangling-import scan reads: every file kind that can hold a module
 # specifier.
 SCAN_SUFFIXES = (".ts", ".tsx", ".vue", ".js", ".jsx", ".mjs", ".cjs",
@@ -327,9 +343,9 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
         # the paths the path map routed into frontend scope. A backend change
         # rides into this branch through a regenerated backend/openapi.json, and
         # its own .py files are not content this suite can execute — the sole
-        # reader of the document writes types-only (FRONTEND_TYPES_META).
+        # reader of the document writes types-only (_is_types_only).
         carries_runtime = any(not p.endswith((".md", ".d.ts"))
-                              and p not in FRONTEND_TYPES_META
+                              and not _is_types_only(p)
                               for p in (changed if frontend_scope is None else frontend_scope))
         # Config, ambient hooks, test-harness sources and unknown scopes cannot
         # be narrowed: nothing tells the related graph what they affect.
@@ -385,7 +401,7 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                            if p.endswith((".ts", ".tsx", ".vue", ".js", ".jsx"))
                            and not re.search(r"\.(spec|test)\.[cm]?[jt]sx?$", p)]
         full_types = (conservative
-                      or any(p in FRONTEND_META or p in FRONTEND_TYPES_META or p.endswith(".d.ts") for p in changed)
+                      or any(p in FRONTEND_META or _is_types_only(p) or p.endswith(".d.ts") for p in changed)
                       or any(p.startswith(".github/") for p in changed)
                       or bool(deleted_sources))
         if full_types:

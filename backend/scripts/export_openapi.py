@@ -1,20 +1,27 @@
-"""The API's OpenAPI document, committed, and the routes that still answer untyped.
+"""The API's OpenAPI document, generated, and the routes that still answer untyped.
 
-    uv run python -m scripts.export_openapi            rewrite both files
-    uv run python -m scripts.export_openapi --check    exit 1 if either is stale
+    uv run python -m scripts.export_openapi           write both files
+    uv run python -m scripts.export_openapi --check   regenerate the document, then
+                                                      exit 1 if the ratchet is stale
+    uv run python -m scripts.export_openapi --schema  write backend/openapi.json only
 
 Two files, both written by this script and nothing else:
 
-* ``backend/openapi.json`` — ``app.openapi()`` as the running app serves it. The
-  frontend compiles against types generated from this file
-  (``frontend/scripts/gen-api-types.mjs``), which its type check regenerates
-  rather than commits — so a route change lands with the contract it changed in
-  one diff, and no frontend file has to be rewritten to carry it.
+* ``backend/openapi.json`` — ``app.openapi()`` as the running app serves it. It is
+  generated, not committed (``backend/.gitignore``): as a tracked file it changed
+  with every route, so two branches that each touched a route collided in it
+  without either having a decision in it. Everything that reads it generates it
+  first — the frontend type check runs ``--schema`` before it compiles
+  (``frontend/scripts/gen-api-types.mjs``), and ``be:openapi`` in
+  ``backend/Taskfile.yml`` is the same generation for anything else.
 * ``backend/openapi-untyped.json`` — every operation whose success response has no
   schema (``ok(...)`` returns ``dict``, which OpenAPI can only call "some object").
-  It is a ratchet: an operation may leave the list, none may join it. A new route
-  declares what it returns (``**typed_response(Model)``, see ``app/api/response.py``)
-  or ``--check`` fails — which the backend lint job runs (.github/workflows/test.yml).
+  It is committed, and it is a ratchet: an operation may leave the list, none may
+  join it. A new route declares what it returns (``**typed_response(Model)``, see
+  ``app/api/response.py``) or ``--check`` fails — which the backend lint job runs
+  (.github/workflows/test.yml). ``--check`` and ``--schema`` are mutually
+  exclusive, and ``--schema`` never touches the ratchet, so a consumer that only
+  needs the document cannot silently rebaseline it.
 
 The document is built without starting the server or touching a database:
 importing the app and asking for the schema is all ``app.openapi()`` does.
@@ -45,8 +52,8 @@ def canonicalize(spec: dict[str, Any]) -> dict[str, Any]:
     A route registered for several methods reaches FastAPI as a *set* of methods —
     ``installer.download_binary`` is GET and HEAD — and a set iterates in an order
     that follows the process hash seed. Left alone, two runs over unchanged code
-    write the same operations in a different order, which ``--check`` reads as a
-    stale document.
+    write the same operations in a different order, so the generated document
+    (and the types the frontend generates from it) would differ run to run.
     """
     paths = spec.get("paths", {})
     for path, item in paths.items():
@@ -123,12 +130,40 @@ def render_untyped(operations: list[str]) -> str:
     )
 
 
+def write_schema(spec: dict[str, Any]) -> None:
+    SPEC_PATH.write_text(render(spec), encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="fail when stale")
+    mode = parser.add_mutually_exclusive_group()
+    # Mutually exclusive: `--schema` wants the document and nothing else, while
+    # `--check` exists to judge the tracked ratchet. A caller that passed both
+    # would be asking to skip the check it asked for, so the pair is refused.
+    mode.add_argument(
+        "--check",
+        action="store_true",
+        help="regenerate the document, then fail when the ratchet is stale",
+    )
+    mode.add_argument(
+        "--schema",
+        action="store_true",
+        help="write only backend/openapi.json (the untyped ratchet is left alone)",
+    )
     args = parser.parse_args(argv)
 
     spec = build_spec()
+    # Every mode writes the document: it is what every reader needs, and --check
+    # is told to leave one behind rather than skip it.
+    write_schema(spec)
+
+    if args.schema:
+        # The consumer path: the frontend type check and the generation task run
+        # this to get the document they read. The untyped baseline is a tracked
+        # ratchet the backend lint job holds, and rewriting it here would let
+        # generation silently rebaseline it — so this mode leaves it alone.
+        return 0
+
     untyped = untyped_operations(spec)
     baseline = read_untyped_baseline() if UNTYPED_PATH.exists() else untyped
     new = sorted(set(untyped) - set(baseline))
@@ -143,25 +178,19 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {op}", file=sys.stderr)
         return 1
     if args.check:
-        stale = []
-        if not SPEC_PATH.exists() or SPEC_PATH.read_text(encoding="utf-8") != render(
-            spec
-        ):
-            stale.append(SPEC_PATH.name)
+        # The document is generated and not committed, so only the ratchet is
+        # judged here: it is what the backend lint job gates on.
         if not UNTYPED_PATH.exists() or UNTYPED_PATH.read_text(
             encoding="utf-8"
         ) != render_untyped(untyped):
-            stale.append(UNTYPED_PATH.name)
-        if stale:
             print(
-                f"stale: {', '.join(stale)} — run `uv run python -m "
+                f"stale: {UNTYPED_PATH.name} — run `uv run python -m "
                 "scripts.export_openapi` in backend/",
                 file=sys.stderr,
             )
             return 1
         return 0
 
-    SPEC_PATH.write_text(render(spec), encoding="utf-8")
     UNTYPED_PATH.write_text(render_untyped(untyped), encoding="utf-8")
     return 0
 

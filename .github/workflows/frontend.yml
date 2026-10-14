@@ -227,14 +227,14 @@ jobs:
       - name: Hardcoded Chinese (i18n)
         run: pnpm run lint:i18n
 
-      # src/api/openapi.d.ts is generated from backend/openapi.json, which the
-      # backend lint job keeps equal to what the app serves
-      # (`export_openapi --check`). It is not committed, and the type check
-      # below generates it before reading it (scripts/typecheck.mjs) — so there
-      # is no separate "types match the document" step to run, and no way for
-      # the two to disagree. It left the repository because a route change
-      # rewrote 1.4 MB of it in every PR that touched a route, which is what two
-      # parallel route changes collided in.
+      # src/api/openapi.d.ts is generated from backend/openapi.json, which is now
+      # itself generated rather than committed: the backend install below lets the
+      # type check build both from the app before judging (scripts/typecheck.mjs
+      # spawns gen-api-types.mjs, which regenerates the document). So there is no
+      # separate "types match the document" step to run, and no way for the two to
+      # disagree. Both left the repository because a route change rewrote one of
+      # them in every PR that touched a route, which is what two parallel route
+      # changes collided in.
 
       # The *paths* this frontend calls are judged in the `request-paths` job
       # below: it needs the backend installed to read the routes off the app.
@@ -250,6 +250,32 @@ jobs:
       # the application's — those are the `unit` job further down.
       - name: Ratchet unit tests
         run: pnpm run test:ratchet
+
+      # The type check below generates src/api/openapi.d.ts, and generation runs
+      # the backend exporter (`uv run python -m scripts.export_openapi --schema`,
+      # spawned by scripts/gen-api-types.mjs) — so the backend has to be installed:
+      # uv, Python 3.13 and the app's runtime deps, not the test extras.
+      - name: Use a fresh virtual environment
+        run: echo "UV_PROJECT_ENVIRONMENT=$RUNNER_TEMP/venv" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.1"
+          python-version: "3.13"
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          # Restore only: warm-caches.yml saves this key on main.
+          save-cache: false
+
+      - name: Set up Python
+        run: uv python install 3.13
+
+      - name: Install backend dependencies
+        run: uv sync --frozen --no-dev
+        working-directory: backend
 
       # Not a plain `vue-tsc --noEmit`: the errors the tree already has are frozen
       # in tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.

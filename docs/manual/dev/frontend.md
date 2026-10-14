@@ -205,7 +205,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 ## 质量闸 {#gates}
 
-机器闸全部**只读**（唯一写出去的是 `src/api/openapi.d.ts` 这份生成物，它不进仓库；能改源码的版本是另一个脚本，见下），跑在 `.github/workflows/frontend.yml`：
+机器闸全部**只读**（写出去的只有两份生成物——`src/api/openapi.d.ts` 和它的来源 `backend/openapi.json`，都不进仓库；能改源码的版本是另一个脚本，见下），跑在 `.github/workflows/frontend.yml`：
 
 | 闸门 | 命令 | 拦什么 |
 |---|---|---|
@@ -214,7 +214,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 | 浏览器存储 | `pnpm run lint:storage` | `src/` 里新增的直接读 `localStorage` / `sessionStorage`（含 `window.localStorage`、`window['localStorage']`、从 `window` 解构出来再用的写法）。它们会抛：Safari 无痕、配额满、根本没有浏览器上下文——一次抛在 `setup()` 里就连带整个渲染。唯一允许碰这两个全局的是 `src/lib/browserStorage.ts`（`storageGet` / `storageSet` / `storageRemove` / `storageGetJson` / `storageSetJson` / `storageGetStrings`，都不抛），规则与报文见 `frontend/scripts/browser-storage-ratchet-core.mjs`；测试文件、`src/test/**` 和该模块本身除外。`@vueuse/core` 的 `useStorage` 不算违规 |
 | 无障碍 | `pnpm run lint:a11y` | `src/**/*.vue` 模板里新增的 `eslint-plugin-vuejs-accessibility`（`flat/recommended`，配置在 `eslint.a11y.config.mjs`）违规：能点却没有键盘路径的元素、没绑名字的表单控件和 label、没有 alt 的图片、写错或缺必需属性的 ARIA。它只读静态模板，焦点顺序、对话框的焦点管理、对比度都看不到 |
 | 设计 token | `pnpm run lint:style` | 新增的写死颜色（hex、颜色名、数值型 `rgb()`/`hsl()`）与不在 6/8/12/999 档位里的 `border-radius` |
-| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错；跑之前先由 `scripts/typecheck.mjs` 从 `backend/openapi.json` 生成 `src/api/openapi.d.ts` |
+| 类型 | `pnpm run typecheck` | `vue-tsc --noEmit` 的新增报错；跑之前先由 `scripts/typecheck.mjs` 让后端导出 `backend/openapi.json`、再从它生成 `src/api/openapi.d.ts`（两份都不进仓库，所以这个 job 里装了后端） |
 | 棘轮自己的单测 | `pnpm run test:ratchet` | `scripts/*.test.mjs`（node:test 地盘，不是 vitest 的） |
 
 棘轮的形状都一样：跑检查、解析报告、和基线比，**只拦新增**，`--update` 把基线降下来（`import-boundary-baseline.json` / `a11y-baseline.json` / `browser-storage-baseline.json` / `tsc-baseline.json` / `stylelint-baseline.json`）。读 eslint 的 JSON 报告这件事由 `frontend/scripts/eslint-ratchet-json.mjs` 一处做（按规则 id 计数、把绝对路径变成相对路径、把解析不了的文件单列为「判不了」），边界、无障碍、存储三道都从这里取。今天的 `tsc-baseline.json` 是**空的**（一个类型错误都不许有），其余四份各冻着多少存量违规，看基线本身（`frontend/stylelint-baseline.json`、`frontend/import-boundary-baseline.json`、`frontend/a11y-baseline.json`、`frontend/browser-storage-baseline.json`）——数字不抄进文档，各账户的计数独立变化（`.claude/rules/metric-snapshots.md`）。`lint:a11y:update` 遇到新增会拒绝写入，冻结新违规要显式加 `--freeze-new`。脚本都显式解析 `node_modules/.bin` 下的二进制而不是信 PATH：**一个只是缺失的 vue-tsc / stylelint 不能长得像一次干净的检查**；一个非零退出但解析不出任何诊断，是崩溃而不是「零违规」。

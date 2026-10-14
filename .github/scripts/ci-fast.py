@@ -385,9 +385,9 @@ def run(args, report, finish, started):
         report["i18n_backend_guard"] = not scope.get("backend")
         scope["backend"] = True
     # Which paths the map itself routed into frontend scope, for the planner:
-    # a backend change reaches that scope through a regenerated
-    # backend/openapi.json, and the planner must not read the same change's
-    # .py files as frontend content the suite has to execute — it would run the
+    # a backend change reaches that scope by regenerating the API document the
+    # types come from, and the planner must not read the same change's schema
+    # sources as frontend content the suite has to execute — it would run the
     # whole Vitest suite for a document no test can load.
     frontend_scope = [p for p in changed
                       if any(fnmatch.fnmatchcase(p, pat) for pat in paths_map["frontend"])]

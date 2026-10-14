@@ -1,3 +1,2 @@
-# Generated, committed so review sees API contract changes; GitHub folds their diffs.
-backend/openapi.json linguist-generated=true
+# Generated and committed: GitHub folds the ratchet baseline's diffs.
 backend/openapi-untyped.json linguist-generated=true
