@@ -169,7 +169,8 @@ export const CATALOG: CatalogEntry[] = [
   {
     id: 'user-ref',
     title: 'UserRef',
-    about: '句子里提到的一个人：画成名字引用，浅色 chip、不带 @（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
+    about:
+      '句子里提到的一个人：画成名字引用，浅色 chip、不带 @（带 @ 的实心 chip 只留给真的通知到人的那一处）。给了去处才可点。',
     file: 'src/components/common/UserRef.vue',
     component: UserRef,
     needs: [],
