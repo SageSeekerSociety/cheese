@@ -71,10 +71,29 @@ const docRef = ref<{
   highlightTurn: (turnId: string) => void
   reviewEdits: (request: DocReviewRequest) => void
 } | null>(null)
+// 「查看改动」是从聊天里递过来的，递的时候文档那一格可能还没长出来：整理中那一屏挡在
+// 它前面，或者它自己这一块还在网络上（按需取）。两头都晚，那一次调用会被 `?.` 静默吞
+// 掉——不报错，高亮也不发生。所以先记着，等它挂上再补一次。
+const waitingReview = ref<DocReviewRequest | null>(null)
+watch(docRef, (host) => {
+  if (!host) {
+    // 那一格没了（换了任务、切去看对比）：没递出去的那一次跟着作废，别留到下一次。
+    waitingReview.value = null
+    return
+  }
+  const review = waitingReview.value
+  if (review) {
+    waitingReview.value = null
+    host.reviewEdits(review)
+  }
+})
 defineExpose({
   pulse: () => docRef.value?.pulse(),
   highlightTurn: (turnId: string) => docRef.value?.highlightTurn(turnId),
-  reviewEdits: (request: DocReviewRequest) => docRef.value?.reviewEdits(request),
+  reviewEdits: (request: DocReviewRequest) => {
+    if (docRef.value) docRef.value.reviewEdits(request)
+    else waitingReview.value = request
+  },
 })
 </script>
 

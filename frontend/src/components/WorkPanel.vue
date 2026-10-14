@@ -621,6 +621,10 @@ function placeFile(path: string, document?: { id: string; title: string }, proje
 
 // 聊天里那张文档卡：资料库里的这份文档在自由区开一格，改过的一处处标出来。
 const docRefs = new Map<string, InstanceType<typeof PanelDocHostComponent>>()
+// 编辑器那一块是按需取的（那一头是 `defineAsyncComponent`，约 1.1 MB）：冷开时点「查看
+// 改动」，面板已经切过去了，那一块还在网络上，ref 也就还没接上。这时候递过去会被 `?.`
+// 静默吞掉——高亮不发生，也不报错。所以递不出去的先记在这儿，`keepDocRef` 接上再补一次。
+const waitingReviews = new Map<string, DocReviewRequest>()
 async function openDocument(document: OpenedDocument, review?: DocReviewRequest) {
   const path = DOC_TAB + document.id
   noteFileOrigin()
@@ -629,11 +633,24 @@ async function openDocument(document: OpenedDocument, review?: DocReviewRequest)
   if (!review) return
   // 编辑器要等文档到了才找得到那几处；面板自己会等，这里只要它已经挂上。
   await nextTick()
-  docRefs.get(document.id)?.reviewEdits(review)
+  const host = docRefs.get(document.id)
+  if (host) host.reviewEdits(review)
+  else waitingReviews.set(document.id, review)
 }
 function keepDocRef(id: string, el: unknown) {
-  if (el) docRefs.set(id, el as InstanceType<typeof PanelDocHostComponent>)
-  else docRefs.delete(id)
+  if (!el) {
+    docRefs.delete(id)
+    // 那一格关掉了：没递出去的「查看改动」跟着作废，不然下一次开同一份时它会突然亮。
+    waitingReviews.delete(id)
+    return
+  }
+  const host = el as InstanceType<typeof PanelDocHostComponent>
+  docRefs.set(id, host)
+  const review = waitingReviews.get(id)
+  if (review) {
+    waitingReviews.delete(id)
+    host.reviewEdits(review)
+  }
 }
 function retitle(id: string, title: string) {
   setFiles(openFiles.value.map((f) => (f.document?.id === id ? { ...f, document: { ...f.document, title } } : f)))
