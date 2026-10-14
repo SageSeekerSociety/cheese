@@ -18,7 +18,6 @@
  * 的 `props`，算法只有 `stateProps` 这一处。
  */
 import type { Component } from 'vue'
-import type { Block } from '@/cx_types'
 
 import { avatarColor } from '@/utils/avatar'
 
@@ -33,6 +32,7 @@ import { CHAT_ENTRIES } from './catalogChat'
 import { CREDITS_ENTRIES } from './catalogCredits'
 import { DASHBOARD_ENTRIES } from './catalogDashboard'
 import { DOC_BLOCK_ENTRIES } from './catalogDoc'
+import { DOC_LINE_ENTRIES, LIBRARY_DOC_EDITED } from './catalogDocLine'
 import { FEEDBACK_ENTRIES } from './catalogFeedback'
 import {
   ACCEPT_CARD,
@@ -103,11 +103,9 @@ import PanelDocView from '@/components/panels/PanelDocView.vue'
 import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
 import { panelTabs } from '@/components/panels/panelTabList'
 import PanelTabs from '@/components/panels/PanelTabs.vue'
-import DocEditLine from '@/components/room/DocEditLine.vue'
 import RoomMessage from '@/components/room/RoomMessage.vue'
 import RoomNotice from '@/components/room/RoomNotice.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
-import { type DocLine, docLineOf } from '@/lib/docEditLine'
 import { platformNotice } from '@/lib/platformNotice'
 import AnalyticsNavigationTabs from '@/views/spaces/detail/analytics/components/AnalyticsNavigationTabs.vue'
 import LearningQuoteItem from '@/views/spaces/detail/analytics/components/LearningQuoteItem.vue'
@@ -159,37 +157,6 @@ export interface CatalogEntry {
   /** 画出来的东西不在容器里（浮层传送到 body）。 */
   teleport?: boolean
   states: CatalogState[]
-}
-
-/** AI 队友在它那一轮里改了资料库里的一份文档：对话里那一行是这一轮里的一步。 */
-const LIBRARY_DOC_EDITED: Block = {
-  id: 'catalog-library-doc-edited',
-  conversation_id: 'demo',
-  kind: 'event',
-  author_type: 'platform',
-  author: 'cheese',
-  content: '<@cheese> 改了文档《第一周课件》',
-  turn_id: 'catalog-turn',
-  created_at: new Date('2026-09-28T14:32:00+08:00').toISOString(),
-  meta: {
-    platform: true,
-    action: 'doc',
-    document: { id: 'doc-week-1', title: '第一周课件' },
-    doc_created: false,
-    doc_edits: [
-      { old: '周三交作业', new: '周五交作业' },
-      { old: '共 3 道题', new: '共 4 道题' },
-      { old: '课程邮箱', new: '课程平台' },
-    ],
-  },
-}
-
-/** 同一行，不属于哪一轮（更早留下的、或者人改的）。 */
-const LIBRARY_DOC_ALONE: Block = { ...LIBRARY_DOC_EDITED, id: 'catalog-library-doc-alone', turn_id: null }
-
-/** 那一行要画的东西，名字按房间里的叫法。 */
-function docLine(block: Block): DocLine {
-  return docLineOf(block, platformNotice(block), (handle) => ROOM_REFS.mentionNames[handle] || handle)!
 }
 
 /** 工作面板那几格（产品那张表，见 `panelTabList`），预览站不重复写一份。 */
@@ -356,28 +323,6 @@ export const CATALOG: CatalogEntry[] = [
         note: '还没落库的那一条淡一档，形状不变；送失败时带「重试」和「编辑」。',
         props: roomMessageProps(WANG_CLOSING, { mine: true, outgoing: { failed: true } }),
         expect: '好了，谢谢',
-      },
-    ],
-  },
-  {
-    id: 'doc-edit-line',
-    title: 'DocEditLine',
-    about: 'AI 队友改了一份文档留下的那一行：在它那一轮里不再写名字，不在哪一轮里时名字是普通文字。',
-    file: 'src/components/room/DocEditLine.vue',
-    component: DocEditLine,
-    needs: ['vuetify'],
-    states: [
-      {
-        name: '在一轮里',
-        note: '前面一枚文档记号；点这一行打开文档，「查看改动」标出改过的几处。',
-        props: { block: LIBRARY_DOC_EDITED, line: docLine(LIBRARY_DOC_EDITED), inTurn: true },
-        expect: '3 处',
-      },
-      {
-        name: '不在哪一轮里',
-        note: '谁做的、谁让做的都写成普通的名字。',
-        props: { block: LIBRARY_DOC_ALONE, line: docLine(LIBRARY_DOC_ALONE), inTurn: false },
-        expect: '改了《第一周课件》',
       },
     ],
   },
@@ -667,6 +612,7 @@ export const CATALOG: CatalogEntry[] = [
   ...REVIEW_ENTRIES,
   // 输入区那一组（从 1039 行的 RoomComposer 拆出来的三件，数据就在那份里）在 `catalogRoom.ts`。
   ...ROOM_ENTRIES,
+  ...DOC_LINE_ENTRIES,
   // 几个路由页拆出来的画面那一组（设备审批、已归档的项目、打开预览 / 网站，以及项目里的
   // 定时与触发和内容搜索两整页）：`catalogScenesWorkspace.ts`，数据在
   // `catalogScenesWorkspaceFixtures.ts`。
