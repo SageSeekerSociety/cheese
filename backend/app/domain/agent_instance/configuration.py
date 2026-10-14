@@ -10,6 +10,7 @@ from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import HARNESSES, Harness, harness_for
 from app.domain.agent.market import (
     TIER_INCLUDED,
+    subscription_model_alias,
     subscription_model_ids,
     subscription_model_listings,
 )
@@ -150,8 +151,25 @@ def catalog(project_settings: dict | None) -> dict[str, dict]:
     目录的每一行都由这里的名单、池和骨架算出来（见上面那几段），按 id 排一次是同一
     件事的收尾。绑定一条活的那个包在第 4 层，够不着第 5 层，它拿在手里的就是这份排
     好的目录。
+
+    每一行还带着 ``wire``：真发到上游、也真记进 `usage` 的那个名字。目录 id 和上游
+    名不是一套词 —— 订阅模型的 id 是 ``sonnet`` 这样的短名，上游收的是
+    ``claude-sonnet-5``；网关模型的 id 就是它自己那个名字。别名表在 `agent.market`，
+    也是第 5 层，而两个要用这一道翻译的地方（`binding.resolve` 挑出来的绑定要发出去，
+    `binding.catalog_id` 要把用量行反查回 id）都在第 4 层 —— 翻译随目录一起递下去，
+    它们就不必各自去够上一层，也不再各自问一次「这是不是订阅」。
     """
-    return {choice["id"]: choice for choice in model_choices(project_settings)}
+    return {
+        choice["id"]: dict(
+            choice,
+            wire=(
+                subscription_model_alias(choice["id"])
+                if choice["supply"] == SUBSCRIPTION
+                else choice["id"]
+            ),
+        )
+        for choice in model_choices(project_settings)
+    }
 
 
 def _drives(harness: Harness, model: dict) -> bool:
