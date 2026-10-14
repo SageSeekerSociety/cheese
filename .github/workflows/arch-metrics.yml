@@ -129,6 +129,17 @@ jobs:
         continue-on-error: true
         run: python3 .claude/scripts/ratchet-snapshot.py --self-test
 
+      # The conflict count replays the commits that brought `main` into a PR
+      # branch, and those commits only exist on `refs/pull/*/head` — a ref
+      # `actions/checkout` does not bring, because a squash-merged branch's
+      # commits never land on `main`. Fetching them here is what lets the board
+      # count anything; when this step fails the section reports itself missing
+      # rather than reporting no conflicts, which is the difference between
+      # "nobody collided" and "we could not look".
+      - name: Fetch the pull-request branch heads
+        continue-on-error: true
+        run: git fetch --no-tags --quiet origin '+refs/pull/*/head:refs/pull/*/head'
+
       # The comparison target is the last commit before the 30-day window, so
       # the delta always reads "this month". A checkout too young to have one
       # gets the board without the delta rather than no board at all.

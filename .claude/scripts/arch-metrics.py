@@ -51,6 +51,31 @@ WHAT IT MEASURES, and how each number is obtained:
                            the 90-day window. One file touched twice in a day is
                            how parallel work collides; one commit touching a file
                            twice is impossible.
+  conflicts                Two-parent commits that bring `main` into a PR branch,
+                           replayed with `git merge-tree --write-tree` to see
+                           whether they conflicted, bucketed into trailing 7-day
+                           weeks. This is the study's second weekly metric:
+                           conflicting merges of `main` per 100 merged PRs, split
+                           into conflicts confined to registration files and
+                           conflicts that touch code.
+
+                           The denominator cannot come from GitHub here — this
+                           script does not go online — so it is the count of
+                           non-merge commits on `main`, which is what a
+                           squash-merge repository leaves in place of the merged
+                           PR. Over the study's two weeks that proxy is 1381
+                           against GitHub's 1385 merged PRs.
+
+                           `refs/pull/*/head` does not exist in a plain clone.
+                           The workflow fetches it before this runs; without it
+                           the section reports null and says why, rather than
+                           reporting zero conflicts. A PR branch whose head was
+                           rebased and force-pushed no longer carries the commit
+                           that once merged `main` into it, so the count can only
+                           ever read low — by how much depends on when the refs
+                           were captured, which is why the study found the same
+                           window reading 20.7/25.5 one way and 23.2/25.3
+                           another.
 
   Scope of the git metrics: `backend/app/**/*.py` and `frontend/src/**/*.{vue,ts,js}`,
   minus `*.spec.ts` and `.../test/...` — the same trees the size caps judge, minus
@@ -95,7 +120,7 @@ import sys
 import tempfile
 from collections import Counter, defaultdict
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -108,6 +133,24 @@ HOT_SKIP_SUFFIXES = (".spec.ts",)
 
 #: The windows the hotspots are read over.
 WINDOWS = (30, 90)
+
+#: How many trailing 7-day buckets the conflict count is reported over. Four, so
+#: a board that runs weekly shows the metric's own trend rather than one point.
+CONFLICT_WEEKS = 4
+
+#: Where a conflict lands, if it lands only here: the registration files the
+#: parallel-development study counted separately. A conflict confined to these
+#: costs a rebase, not a re-read of somebody else's logic, so the two are
+#: reported apart — the study's "registry only" line is meant to fall to zero
+#: while the code conflicts are what actually hurts.
+REGISTRY_PREFIXES = ("backend/alembic/",)
+REGISTRY_PATH_MARKERS = ("i18n/messages",)
+REGISTRY_BASENAME_MARKERS = ("route_index", "baseline")
+REGISTRY_FILES = (
+    "backend/openapi.json",
+    "frontend/src/api/openapi.d.ts",
+    "backend/.importlinter",
+)
 
 #: A commit that is fixing something, by Conventional Commits subject.
 FIX_SUBJECT = re.compile(r"^(?:fix|revert)(?:\(|!|:)", re.I)
@@ -432,11 +475,255 @@ def shared_days(root: Path, days: int) -> dict[str, Any]:
     }
 
 
+# ------------------------------------------------- conflicting merges of main
+
+
+def registry_file(path: str) -> bool:
+    """A registration file: one that records what exists rather than what it does.
+
+    The list is the study's, restated: `backend/alembic/**` (the sentinel `HEAD`
+    included), anything whose basename carries `route_index` or `baseline`,
+    anything under `i18n/messages`, the generated openapi pair, and
+    `backend/.importlinter`.
+    """
+    base = path.rsplit("/", 1)[-1]
+    return (
+        path.startswith(REGISTRY_PREFIXES)
+        or path in REGISTRY_FILES
+        or any(marker in path for marker in REGISTRY_PATH_MARKERS)
+        or any(marker in base for marker in REGISTRY_BASENAME_MARKERS)
+    )
+
+
+def main_ref(root: Path) -> str | None:
+    """What this checkout calls the branch PRs are merged into.
+
+    A CI checkout, a task worktree and a detached one disagree about this, and
+    `--not origin/main` fails outright when the name is wrong, so the name is
+    resolved rather than assumed. None means there is nothing to exclude, which
+    is a reason to report nothing, not a reason to report everything.
+    """
+    for candidate in ("origin/main", "refs/remotes/origin/main", "main", "refs/heads/main"):
+        try:
+            git(root, "rev-parse", "--verify", "--quiet", f"{candidate}^{{commit}}")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+        return candidate
+    return None
+
+
+def merge_commits_of_main(root: Path, main: str, since: str) -> list[dict[str, Any]]:
+    """PR-branch commits that merge `main` in, with both parents, since `since`.
+
+    `git rev-list --merges <head> ^main` one head at a time is thousands of
+    processes; the refs go in through stdin instead, which is one. `--merges`
+    alone is not the filter — a branch that merged another feature branch also
+    has two parents, and only the merge whose second parent is on `main` is the
+    event this metric is about. The caller applies that test, because it needs
+    the set of main's commits to apply it.
+    """
+    refs = git(root, "for-each-ref", "--format=%(refname)", "refs/pull/*/head")
+    if not refs.strip():
+        raise LookupError("no refs/pull/*/head in this checkout")
+    raw = subprocess.run(
+        [
+            "git",
+            "log",
+            "--stdin",
+            "--merges",
+            f"--since={since}",
+            "--not",
+            main,
+            "--format=%H|%cI|%P",
+        ],
+        cwd=root,
+        input=refs,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    commits: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        if not line.strip():
+            continue
+        sha, date, parents = line.split("|", 2)
+        commits.append({"sha": sha, "date": date, "parents": parents.split()})
+    return commits
+
+
+def replay_conflict(root: Path, parents: list[str]) -> list[str] | None:
+    """The files `git merge-tree` cannot merge for these two parents.
+
+    Exit 1 is "conflicted", 0 is "clean"; anything else is a replay this
+    checkout cannot do — a missing blob in a partial clone, say — and None says
+    so instead of counting it as clean.
+
+    `--name-only` prints the conflicted paths first and its informational
+    messages after them, separated by a blank line: keeping every line would
+    file `Auto-merging x.py` and `CONFLICT (content): Merge conflict in x.py` as
+    paths, and every one of those classified as code, which turns the
+    registry-only count into a fiction.
+
+    Exit 1 is also what a ref this checkout does not have produces, with no
+    output before the complaint; a real conflict always starts with the tree it
+    wrote. That first line is the test, and it is the only trustworthy one:
+    `not something we can merge` is a message and messages change.
+    """
+    result = subprocess.run(
+        ["git", "merge-tree", "--write-tree", "--name-only", *parents],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return []
+    lines = result.stdout.splitlines()
+    if result.returncode != 1 or not re.fullmatch(r"[0-9a-f]{40,64}", lines[0] if lines else ""):
+        return None
+    paths: list[str] = []
+    for line in lines[1:]:
+        if not line.strip():
+            break
+        paths.append(line.strip())
+    return paths
+
+
+def conflict_weeks(now: datetime, weeks: int = CONFLICT_WEEKS) -> list[tuple[datetime, datetime]]:
+    """`weeks` half-open 7-day buckets ending at `now`, oldest first."""
+    buckets: list[tuple[datetime, datetime]] = []
+    end = now
+    for _ in range(weeks):
+        start = end - timedelta(days=7)
+        buckets.append((start, end))
+        end = start
+    return list(reversed(buckets))
+
+
+def no_conflicts(why: str) -> dict[str, Any]:
+    """The section with its input missing — every number null or zero, and why.
+
+    A missing input is not a zero: "nobody conflicted" and "we could not look"
+    are the two answers this board exists to keep apart.
+    """
+    return {
+        "why_missing": why,
+        "weeks": 0,
+        "anchored_at": None,
+        "main_commits": None,
+        "merges_of_main": None,
+        "conflicting": None,
+        "per_100_merges": None,
+        "registry_only": None,
+        "code": None,
+        "weeks_detail": [],
+    }
+
+
+def conflicting_merges(
+    root: Path, now: datetime | None = None, weeks: int = CONFLICT_WEEKS
+) -> dict[str, Any]:
+    """Conflicting merges of `main` into PR branches, per trailing week."""
+    now = now or datetime.now(timezone.utc)
+    main = main_ref(root)
+    if main is None:
+        return no_conflicts("no `main` to merge from in this checkout")
+    try:
+        main_commits = set(git(root, "rev-list", main).split())
+    except subprocess.CalledProcessError as exc:
+        return no_conflicts(f"cannot walk {main}: {exc}")
+
+    buckets = conflict_weeks(now, weeks)
+    try:
+        candidates = merge_commits_of_main(root, main, buckets[0][0].isoformat())
+    except LookupError as exc:
+        return no_conflicts(f"{exc} — the workflow fetches them before this runs")
+    except subprocess.CalledProcessError as exc:
+        return no_conflicts(f"cannot walk the PR branches: {exc}")
+
+    # A two-parent commit whose SECOND parent is on main is `main` merged into
+    # the branch. The other order is the branch merged into something else.
+    candidates = [
+        c for c in candidates if len(c["parents"]) == 2 and c["parents"][1] in main_commits
+    ]
+
+    rows: list[dict[str, Any]] = []
+    for start, end in buckets:
+        row: dict[str, Any] = {
+            "week_ending": end.date().isoformat(),
+            "main_commits": 0,
+            "merges_of_main": 0,
+            "conflicting": 0,
+            "per_100_merges": None,
+            "registry_only": 0,
+            "code": 0,
+        }
+        try:
+            row["main_commits"] = int(
+                git(
+                    root,
+                    "rev-list",
+                    "--no-merges",
+                    "--count",
+                    f"--since={start.isoformat()}",
+                    f"--until={end.isoformat()}",
+                    main,
+                ).strip()
+            )
+        except (subprocess.CalledProcessError, ValueError):
+            row["main_commits"] = None
+        for commit in candidates:
+            when = datetime.fromisoformat(commit["date"])
+            if not start <= when < end:
+                continue
+            row["merges_of_main"] += 1
+            paths = replay_conflict(root, commit["parents"])
+            if not paths:
+                continue
+            row["conflicting"] += 1
+            if all(registry_file(path) for path in paths):
+                row["registry_only"] += 1
+            else:
+                row["code"] += 1
+        if row["main_commits"]:
+            row["per_100_merges"] = round(row["conflicting"] / row["main_commits"] * 100, 1)
+        rows.append(row)
+
+    totals = {
+        "weeks": len(rows),
+        # The buckets are trailing 7-day windows ending here, so a board is only
+        # reproducible against the instant it was measured at: the same two
+        # calendar weeks read differently a few hours apart, which is the
+        # sensitivity the study behind this section already reports.
+        "anchored_at": now.isoformat(),
+        "main_commits": sum(r["main_commits"] or 0 for r in rows),
+        "merges_of_main": sum(r["merges_of_main"] for r in rows),
+        "conflicting": sum(r["conflicting"] for r in rows),
+        "registry_only": sum(r["registry_only"] for r in rows),
+        "code": sum(r["code"] for r in rows),
+    }
+    totals["per_100_merges"] = (
+        round(totals["conflicting"] / totals["main_commits"] * 100, 1)
+        if totals["main_commits"]
+        else None
+    )
+    return {**totals, "weeks_detail": rows}
+
+
 # ---------------------------------------------------------------- the board
 
 
-def collect(root: Path, caps: Any, windows: tuple[int, ...] = WINDOWS) -> dict[str, Any]:
-    """Every number, for the tree at `root`."""
+def collect(
+    root: Path,
+    caps: Any,
+    windows: tuple[int, ...] = WINDOWS,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Every number, for the tree at `root`.
+
+    `now` anchors the conflict weeks. Two boards measured in one run — a
+    `--compare` — pass the same one, so a commit landing between them cannot
+    move a bucket boundary and read as a change that nobody made.
+    """
     return {
         "meta": {"root": str(root), **git_meta(root)},
         "frontend": {
@@ -451,6 +738,7 @@ def collect(root: Path, caps: Any, windows: tuple[int, ...] = WINDOWS) -> dict[s
         "size": size_report(root, caps),
         "hotspots": {f"{d}d": hotspots(root, d) for d in windows},
         "shared_days": shared_days(root, max(windows)),
+        "conflicts": conflicting_merges(root, now),
     }
 
 
@@ -576,6 +864,43 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
         out.append(f"| `{row['file']}` | {row['days']} |")
     out.append("")
 
+    conflicts = board["conflicts"]
+    out.append("## Conflicting merges of `main` into PR branches")
+    out.append("")
+    if conflicts["weeks_detail"]:
+        per_100 = conflicts["per_100_merges"]
+        out.append(
+            f"{conflicts['merges_of_main']} merges of `main` into a PR branch over "
+            f"{conflicts['weeks']} weeks, {conflicts['conflicting']} of them conflicted"
+            + (f" — {per_100} per 100 merged PRs." if per_100 is not None else ".")
+        )
+        out.append("")
+        anchor = datetime.fromisoformat(conflicts["anchored_at"]).strftime("%Y-%m-%dT%H:%MZ")
+        out.append(
+            f"Buckets are 7 days ending at {anchor}, the instant this board was "
+            "measured at, and land by the merge commit's own date. The denominator "
+            "is the non-merge commits on `main` in the same week, which is what a "
+            "squash-merge repository leaves in place of the merged PRs. `registry "
+            "only` counts the conflicts that touched nothing but registration files."
+        )
+        out.append("")
+        out.append(
+            "| week ending | merged PRs | merges of `main` | conflicting | per 100 "
+            "| registry only | code |"
+        )
+        out.append("|---|---|---|---|---|---|---|")
+        for row in conflicts["weeks_detail"]:
+            per_100 = "n/a" if row["per_100_merges"] is None else row["per_100_merges"]
+            merged = "n/a" if row["main_commits"] is None else row["main_commits"]
+            out.append(
+                f"| {row['week_ending']} | {merged} | {row['merges_of_main']} "
+                f"| {row['conflicting']} | {per_100} | {row['registry_only']} | {row['code']} |"
+            )
+        out.append("")
+    else:
+        out.append(f"n/a — {conflicts['why_missing']}")
+        out.append("")
+
     if compare:
         out.append(f"## Against {compare['ref']}")
         out.append("")
@@ -629,9 +954,10 @@ def base_worktree(root: Path, ref: str) -> Iterator[Path]:
 
 
 def compare(root: Path, ref: str, caps: Any, windows: tuple[int, ...]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
     with base_worktree(root, ref) as base:
-        before = collect(base, caps, windows)
-    after = collect(root, caps, windows)
+        before = collect(base, caps, windows, now)
+    after = collect(root, caps, windows, now)
     return {
         "ref": ref,
         "before": before,
@@ -732,6 +1058,73 @@ def _now_env(days_ago: int = 5) -> dict[str, str]:
 
     stamp = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - days_ago * 86400))
     return {"GIT_AUTHOR_DATE": stamp, "GIT_COMMITTER_DATE": stamp}
+
+
+_FIXTURE_IDENTITY = {
+    "GIT_AUTHOR_NAME": "fixture",
+    "GIT_AUTHOR_EMAIL": "fixture@example.com",
+    "GIT_COMMITTER_NAME": "fixture",
+    "GIT_COMMITTER_EMAIL": "fixture@example.com",
+}
+
+
+def _conflict_fixture(root: Path) -> None:
+    """A repository whose two PR branches both merged `main` and both conflicted.
+
+    One conflict lands only in `backend/alembic/HEAD`, a registration file, and
+    the other only in `backend/app/deep.py`, code — so the split this section
+    reports is exercised, not assumed. `backend/app/shared.py` is changed on
+    both sides in ways git merges by itself, which is what puts an `Auto-merging`
+    line in `merge-tree`'s output; a parser that keeps it counts a file that
+    never conflicted.
+    """
+    def run(*args: str, days_ago: int = 4) -> None:
+        subprocess.run(
+            ["git", *args], cwd=root, check=True, env={**_FIXTURE_IDENTITY, **_now_env(days_ago)}
+        )
+
+    def write(relative: str, contents: str) -> None:
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(contents, encoding="utf-8")
+
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=root, check=True)
+    write("backend/alembic/HEAD", "a\n")
+    write("backend/app/shared.py", "one\ntwo\nthree\n")
+    run("add", "backend/alembic/HEAD", "backend/app/shared.py")
+    run("commit", "-qm", "chore: base")
+
+    for branch in ("pr1", "pr2"):
+        run("checkout", "-q", "-b", branch, "main")
+        if branch == "pr1":
+            write("backend/alembic/HEAD", "b\n")
+            write("backend/app/shared.py", "ONE\ntwo\nthree\n")
+        else:
+            write("backend/app/deep.py", "theirs\n")
+        run("add", "-A")
+        run("commit", "-qm", f"feat: work on {branch}", days_ago=3)
+
+    run("checkout", "-q", "main")
+    write("backend/alembic/HEAD", "c\n")
+    write("backend/app/shared.py", "one\ntwo\nTHREE\n")
+    write("backend/app/deep.py", "ours\n")
+    run("add", "-A")
+    run("commit", "-qm", "feat: land on main", days_ago=2)
+
+    for branch in ("pr1", "pr2"):
+        run("checkout", "-q", branch)
+        # `git merge` exits 1 on conflict and leaves the tree to resolve; the
+        # commit that follows has the two parents this metric is about.
+        subprocess.run(
+            ["git", "merge", "--no-edit", "main"],
+            cwd=root,
+            capture_output=True,
+            env={**_FIXTURE_IDENTITY, **_now_env(1)},
+        )
+        run("add", "-A")
+        run("commit", "-qm", "chore: merge main", days_ago=1)
+        run("update-ref", f"refs/pull/{branch[-1]}/head", f"refs/heads/{branch}")
+    run("checkout", "-q", "main")
 
 
 def self_test() -> int:
@@ -923,6 +1316,127 @@ def self_test() -> int:
         check("a missing ref exits 2", result.returncode, 2)
         check("... and says so", "cannot judge" in result.stdout + result.stderr, True)
 
+        # -- the conflict count, on a repository built for it -----------------
+        # A separate repository, because this one's branches are the board's
+        # input and planting PR refs in it would change other numbers.
+        # -- where a conflict lands ------------------------------------------
+        check(
+            "the migration sentinel is a registration file",
+            registry_file("backend/alembic/HEAD"),
+            True,
+        )
+        check("a migration is one too", registry_file("backend/alembic/versions/x.py"), True)
+        check("so is a route index", registry_file("backend/scripts/route_index.json"), True)
+        check("a translated message", registry_file("i18n/messages/zh-CN/work.json"), True)
+        check("a generated openapi file", registry_file("frontend/src/api/openapi.d.ts"), True)
+        check("a frozen baseline", registry_file("backend/import-boundary-baseline.json"), True)
+        check("the import linter config", registry_file("backend/.importlinter"), True)
+        check("a test next to the route index is not", registry_file("backend/tests/unit/x.py"), False)
+        check(
+            "nor is the module that reads it",
+            registry_file("backend/app/api/routes/topics.py"),
+            False,
+        )
+        check(
+            "nor is a file that merely says routes",
+            registry_file("backend/app/domain/agent/chat.py"),
+            False,
+        )
+
+        # -- the buckets ------------------------------------------------------
+        anchor = datetime(2026, 10, 14, 2, 30, tzinfo=timezone.utc)
+        weeks = conflict_weeks(anchor, 2)
+        check("two weeks asked for, two returned", len(weeks), 2)
+        check("the first ends where the second begins", weeks[0][1], weeks[1][0])
+        check("the last ends at the anchor", weeks[1][1], anchor)
+        check(
+            "the first starts a fortnight back",
+            weeks[0][0],
+            anchor - timedelta(days=14),
+        )
+
+        with tempfile.TemporaryDirectory(prefix="arch-metrics-conflicts-") as raw2:
+            root2 = Path(raw2)
+            try:
+                _conflict_fixture(root2)
+            except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+                failures.append(f"could not build the conflict fixture: {exc}")
+            else:
+                section = conflicting_merges(root2, anchor)
+                if section.get("why_missing"):
+                    failures.append(f"the conflict fixture has no section: {section['why_missing']}")
+                else:
+                    current = section["weeks_detail"][-1]
+                    check("both PR branches merged main", current["merges_of_main"], 2)
+                    check("both of those conflicted", current["conflicting"], 2)
+                    check(
+                        "one conflicted only on the sentinel",
+                        current["registry_only"],
+                        1,
+                    )
+                    check("one reached code", current["code"], 1)
+                    check("the shares are not swapped", section["registry_only"], 1)
+                    check("nor are the totals", section["conflicting"], 2)
+                    check(
+                        "the denominator is the non-merge commits on main",
+                        current["main_commits"],
+                        2,
+                    )
+                    check(
+                        "the rate is per hundred, not a fraction",
+                        current["per_100_merges"],
+                        100.0,
+                    )
+                    # A board is only reproducible against the instant it was
+                    # measured at, so the section has to carry that instant.
+                    check(
+                        "the section says which instant anchored the buckets",
+                        section["anchored_at"],
+                        anchor.isoformat(),
+                    )
+                    # Only real paths count. `Auto-merging backend/app/shared.py`
+                    # is in the output and merged cleanly; counting it would make
+                    # the code column three times too big.
+                    files = [
+                        p
+                        for commit in merge_commits_of_main(root2, "main", "2026-01-01T00:00:00Z")
+                        if (replayed := replay_conflict(root2, commit["parents"]))
+                        for p in replayed
+                    ]
+                    check("conflicted paths, per merge, are real paths", sorted(files),
+                          ["backend/alembic/HEAD", "backend/app/deep.py"])
+                    check(
+                        "a clean replay is no conflict at all",
+                        replay_conflict(root2, ["HEAD", "HEAD"]),
+                        [],
+                    )
+                    check(
+                        "an unreadable replay is None, never zero",
+                        replay_conflict(root2, ["no-such-thing", "HEAD"]),
+                        None,
+                    )
+                    # And with the refs gone, the section says so instead of
+                    # reporting a quiet zero.
+                    subprocess.run(
+                        ["git", "update-ref", "-d", "refs/pull/1/head"], cwd=root2, check=True
+                    )
+                    subprocess.run(
+                        ["git", "update-ref", "-d", "refs/pull/2/head"], cwd=root2, check=True
+                    )
+                    check(
+                        "no PR refs reports why, not zero",
+                        "why_missing" in conflicting_merges(root2, anchor),
+                        True,
+                    )
+                    check(
+                        "and every number in it is None",
+                        [
+                            conflicting_merges(root2, anchor)[key]
+                            for key in ("main_commits", "merges_of_main", "conflicting", "per_100_merges")
+                        ],
+                        [None, None, None, None],
+                    )
+
     for failure in failures:
         print(f"SELF-TEST FAIL: {failure}", file=sys.stderr)
     if failures:
@@ -930,8 +1444,10 @@ def self_test() -> int:
     print(
         "PASS: arch-metrics self-test (grades A/B/C/D incl. a transitive api reach, "
         "frozen contract entries, imports inside a function, cap offenders and "
-        "excess lines, hotspot churn and fix share, same-day parallel edits, and "
-        "a compare that leaves no worktree behind)"
+        "excess lines, hotspot churn and fix share, same-day parallel edits, "
+        "conflicting merges of main split registry-only vs code, a missing PR ref "
+        "reported as missing rather than zero, and a compare that leaves no "
+        "worktree behind)"
     )
     return 0
 
