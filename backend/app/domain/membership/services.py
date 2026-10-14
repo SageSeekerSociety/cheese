@@ -19,7 +19,8 @@ from app.core.errors import (
 from app.core.sentences import say
 from app.domain.addressing import Event, Hand, address
 from app.domain.authz.policy import can_manage_project_members
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
 from app.domain.membership.repositories import InvitationRepository, MemberRepository
@@ -424,7 +425,8 @@ class InvitationService:
         no longer offers to accept an invitation that has no answer left.
         """
         # deferred-import: tests replace this name on app.domain.delivery.ledger
-        from app.domain.delivery.ledger import event_id_for, settle
+        from app.domain.delivery.ledger import settle
+        from app.domain.delivery_events import event_id_for
 
         await settle(
             self._session,

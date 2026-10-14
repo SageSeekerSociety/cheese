@@ -577,6 +577,13 @@ unmatched_ignore_imports_alerting = warn
 # climbed four layers for a handful of strings. The codes and `notice()` moved
 # down; `agent.platform_notices` keeps the sentences it says to people, which
 # need block's row key and the memory tree's paths and so stay at layer 5.
+#
+# `delivery_events` joined at layer 1 (2026-10-14), the same move once more:
+# the notification codes (`NotificationType`) and the shape of one event
+# (`DeliveryEvent`, `event_id_for`, `dedup_key`) are what every layer needs to
+# say that something happened, but they lived at layer 5 — the codes in
+# `notification.models`, the event in `delivery.ledger`. Writing the ledger
+# itself stays at layer 5; whoever calls it hands the call in.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
@@ -586,7 +593,7 @@ layers =
     block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
-    common : day_windows : conversation : idempotency : addressing : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta
+    common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta
 containers =
     app.domain
 exhaustive = true

@@ -44,7 +44,8 @@ from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import is_task, room_of
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.identity.handles import agent_instance_handle, looks_like_agent_handle
 from app.domain.membership.roster import roster_rows
 from app.domain.mentions import (

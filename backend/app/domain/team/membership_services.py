@@ -13,7 +13,8 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.addressing import Event, Hand, address
-from app.domain.delivery.ledger import DeliveryEvent, deliver, event_id_for
+from app.domain.delivery.ledger import deliver
+from app.domain.delivery_events import DeliveryEvent, event_id_for
 from app.domain.notification.models import NotificationType
 from app.domain.team.models import (
     ApplicationStatus,

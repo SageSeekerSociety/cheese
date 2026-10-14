@@ -50,6 +50,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base_class import Base
+from app.domain.delivery_events import NotificationType
 
 notification_seq = Sequence("notification_seq")
 
@@ -64,56 +65,6 @@ class NotificationLevel(str, Enum):
     silent = "silent"
     light = "light"
     strong = "strong"
-
-
-class NotificationType(str, Enum):
-    MENTION = "MENTION"
-    REPLY = "REPLY"
-    REACTION = "REACTION"
-    PROJECT_INVITE = "PROJECT_INVITE"
-    DEADLINE_REMIND = "DEADLINE_REMIND"
-
-    TEAM_JOIN_REQUEST = "TEAM_JOIN_REQUEST"
-    TEAM_INVITATION = "TEAM_INVITATION"
-    TEAM_REQUEST_APPROVED = "TEAM_REQUEST_APPROVED"
-    TEAM_REQUEST_REJECTED = "TEAM_REQUEST_REJECTED"
-    TEAM_INVITATION_ACCEPTED = "TEAM_INVITATION_ACCEPTED"
-    TEAM_INVITATION_DECLINED = "TEAM_INVITATION_DECLINED"
-    TEAM_INVITATION_CANCELED = "TEAM_INVITATION_CANCELED"
-    TEAM_REQUEST_CANCELED = "TEAM_REQUEST_CANCELED"
-
-    #: 我参与过的支线里有人回复了（`agent.mentions._tell_thread`）。走投递账本，
-    #: `payload` 带频道（``topicId``）、支线（``threadId``）和那条消息（``blockId``）。
-    THREAD_REPLY = "THREAD_REPLY"
-
-    #: 平台在房间里说的、要人动手的那一句（`app.domain.agent.announce`）。所有
-    #: 平台提示共用这一个码：要显示的文字是后端给的 `payload.content`，前端不按
-    #: 类别拼模板，具体是哪件事看 `payload.eventType`。
-    ROOM_NOTICE = "ROOM_NOTICE"
-
-    #: 芝士提出待确认问题，本轮停止等待回答（`announce.notify_question`）。
-    #: 与 `ROOM_NOTICE` 分开是因为它不是平台说的：文字是芝士自己的话，不受那一行
-    #: 40 字的约束，前端也要按「一个问题」渲染，而不是按一条平台提示。
-    CHEESE_QUESTION = "CHEESE_QUESTION"
-
-    #: 一个 agent 会话开始在某人登记的自有设备上干活，告诉设备的主人：哪个项目、
-    #: 哪个房间、哪个 agent，能不能访问整台机器（#1900 第 5 步）。只是告知，不等
-    #: 主人批准；一次会话开工一条，不是每轮一条（`machine.session_work`）。
-    DEVICE_IN_USE = "DEVICE_IN_USE"
-
-    #: 空间里发了一条公告，告诉这个空间里除发布人以外的每个人
-    #: （`space.announcement_service`）。走哪个渠道由收件人的偏好矩阵决定
-    #: （`preferences` 的「空间公告」一行：默认站内 + 邮件，不推送）。改公告不再发；
-    #: 删公告连它发出去的这些一起撤回。
-    SPACE_ANNOUNCEMENT = "SPACE_ANNOUNCEMENT"
-
-    #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify
-    #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。
-    CHANGE_ALERT = "change_alert"  # 变更提醒
-    DECISION_REQUEST = "decision_request"  # 决策请求 (带选项)，拍板之前不离开收件箱
-    ACCEPT_REQUEST = "accept_request"  # 验收卡 (点名)
-    # 房间里被 @ 走 `MENTION` —— 「有人点了你的名」在两个产品里是同一件事，
-    # 原来的 `AlertKind.mention` 没有第二份语义。
 
 
 class Notification(Base):
