@@ -43,7 +43,7 @@ The default output is that text list, unchanged. The same sweep in other shapes:
                once.
 """
 import json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/")
@@ -55,6 +55,14 @@ BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
 #: The first line of the comment pr-review.sh posts on a PR, naming the head it reviewed.
 REVIEW_MARK = re.compile(r"<!--\s*pr-review sha=([0-9a-f]{7,40})")
 CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑", "EXPECTED": "跑"}
+#: The system events that end a turn without the step's block ever being marked: the
+#: backend's run_record.turns.TURN_FAILURE_EVENTS. A tool block left behind by any of
+#: them is not a command still running.
+TURN_ENDED = ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error")
+#: A tool call older than this is not taken for still running, whatever its block says:
+#: a turn can end in a way that posts no event at all (a seat replaced under it), and a
+#: line that then reads 命令在跑 forever is the one failure this class exists to catch.
+IN_FLIGHT_MAX_MIN = 120
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
               "review_head", "waited_min", "waiting_on", "stage", "detail",
               "changed", "verified", "checks", "cases",
@@ -798,13 +806,17 @@ def heartbeat_of(last_msg, last_event, last_output=None):
     return max((x for x in (last_msg, last_event, last_output) if x), key=ts)
 
 
-def in_flight(event, failed_after):
+def in_flight(event, ended_after, now=None):
     """Whether the seat's latest event block is a tool call that has not returned: the
     platform writes the block when the call starts (that is its created_at) and adds
     `output_bytes` when it ends, so a tool block without one is a command still running
-    — unless the turn failed after it, which leaves the block unmarked forever."""
+    — unless the turn ended after it (TURN_ENDED), which leaves the block unmarked
+    forever, or the call is older than IN_FLIGHT_MAX_MIN."""
     m = meta(event)
-    return bool(m.get("tool")) and "output_bytes" not in m and not m.get("failed") and not failed_after
+    if not m.get("tool") or "output_bytes" in m or m.get("failed") or ended_after:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return (now - ts(event["created_at"])).total_seconds() / 60 < IN_FLIGHT_MAX_MIN
 
 
 def stalled_for(now, heartbeat, silent, running=False):
@@ -861,9 +873,9 @@ def sweep(tok, room, silent, skip, want_facts):
         evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event"
                        + (f"&author={seat}" if seat else ""))["data"]
         last_event = evs[-1]["created_at"] if evs else None
-        failed_after = any(meta(m).get("event_type") == "turn_failed" and m["created_at"] > last_event
-                           for m in sysev) if evs else False
-        running = bool(evs) and in_flight(evs[-1], failed_after)
+        ended_after = any(meta(m).get("event_type") in TURN_ENDED and m["created_at"] > last_event
+                          for m in sysev) if evs else False
+        running = bool(evs) and in_flight(evs[-1], ended_after, now)
         heartbeat = heartbeat_of(last_msg, last_event, t.get("last_output_at"))
         pulse = {"last_event_at": last_event, "last_message_at": msg[-1]["created_at"] if msg else None,
                  "last_message": message_brief(msg[-1]) if msg else None,
@@ -1551,8 +1563,8 @@ def _self_test_pulse():
     看板每个任务下面多一行心跳，老的用例没给心跳就没有这一行。"""
     msg = {"author": "cheese-a", "content": "审查在跑，\n  等它出结论。"}
     now = datetime(2026, 10, 13, 2, 0, tzinfo=timezone.utc)
-    call = {"meta": {"tool": "Bash", "arg": "跑测试"}}
-    done = {"meta": {"tool": "Bash", "arg": "跑测试", "output_bytes": 12}}
+    call = {"meta": {"tool": "Bash", "arg": "跑测试"}, "created_at": "2026-10-13T01:30:00Z"}
+    done = {"meta": {"tool": "Bash", "arg": "跑测试", "output_bytes": 12}, "created_at": "2026-10-13T01:30:00Z"}
     return [
         ("心跳取消息和 event 里新的那个",
          heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z"), "2026-10-13T01:40:00Z"),
@@ -1567,10 +1579,15 @@ def _self_test_pulse():
          stalled_for(now, heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z"), 40), None),
         ("停摆判定：命令还在跑，时间戳再旧也不报",
          stalled_for(now, "2026-10-13T00:00:00Z", 40, running=True), None),
-        ("在跑：tool 块没有 output_bytes 就是还没返回", in_flight(call, failed_after=False), True),
-        ("在跑：补了 output_bytes 的是返回了的", in_flight(done, failed_after=False), False),
-        ("在跑：之后有 turn_failed 的块是被扔下的，不算在跑", in_flight(call, failed_after=True), False),
-        ("在跑：progress 这类不是 tool 的 event 不算", in_flight({"meta": {"progress": 1}}, False), False),
+        ("在跑：tool 块没有 output_bytes 就是还没返回", in_flight(call, False, now), True),
+        ("在跑：补了 output_bytes 的是返回了的", in_flight(done, False, now), False),
+        ("在跑：之后有结束一轮的系统事件的块是被扔下的，不算在跑", in_flight(call, True, now), False),
+        ("在跑：progress 这类不是 tool 的 event 不算", in_flight({"meta": {"progress": 1}}, False, now), False),
+        ("在跑：没返回的 tool 块超过 IN_FLIGHT_MAX_MIN 也不算在跑",
+         in_flight(dict(call, created_at="2026-10-12T23:00:00Z"), False, now), False),
+        ("结束一轮的事件：四种都算，memory_changed 不算",
+         [e in TURN_ENDED for e in ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error", "memory_changed")],
+         [True, True, True, True, False]),
         ("消息摘要：作者加正文一行，换行压掉",
          message_brief(msg), "@cheese-a「审查在跑， 等它出结论。」"),
         ("消息摘要：超过上限截断并标省略",
@@ -1603,6 +1620,48 @@ def _self_test_pulse():
          ["心跳：命令在跑｜最后 event 01:40 UTC｜最后消息 没有 （还没有消息）"]),
         ("看板：没给心跳的行（老用例）不多这一行",
          [ln for ln in details([_self_row()]) if ln.startswith("心跳：")], []),
+    ]
+
+
+def _self_test_sweep():
+    """(name, got, want) for `sweep` 本身那一条线：平台读数换成现成的答案，看 长时间无动静
+    这一类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按最后一条
+    消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前。"""
+    now = datetime.now(timezone.utc)
+    at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    task = {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300)}
+    call = {"tool": "Bash", "arg": "跑测试"}
+    done = {"tool": "Bash", "arg": "跑测试", "output_bytes": 9}
+    sysev = lambda kind, mins: [{"created_at": at(mins), "meta": {"event_type": kind}, "content": kind}]
+
+    def kinds(ev_min=None, ev_meta=None, system=(), row=None):
+        answers = {
+            "/tasks?": [dict(task, **(row or {}))],
+            "kind=message": {"data": [{"created_at": at(60), "author": "a", "content": "等"}]},
+            "kind=event": {"data": [{"created_at": at(ev_min), "meta": ev_meta}] if ev_min is not None else []},
+            "author=system": {"data": list(system)},
+            "author=accept": {"data": []},
+        }
+        real = globals()["get"]
+        globals()["get"] = lambda tok, path: next(v for k, v in answers.items() if k in path)
+        try:
+            rows, _ = sweep("tok", "room", 40, set(), False)
+        finally:
+            globals()["get"] = real
+        return [r["kind"] for r in rows]
+
+    return [
+        ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
+        ("sweep：消息 60 分钟前、座位 20 分钟前跑完一条命令，不报（只看消息这里就红）",
+         kinds(20, done), []),
+        ("sweep：消息和 event 都 60 分钟前，报停摆", kinds(60, done), ["长时间无动静"]),
+        ("sweep：60 分钟前发出的命令还没返回，算在跑，不报", kinds(60, call), []),
+        ("sweep：命令没返回但之后一轮 turn_timeout 结束了，报停摆",
+         kinds(60, call, sysev("turn_timeout", 50)), ["长时间无动静"]),
+        ("sweep：命令没返回但之后 platform_error 结束了一轮，报停摆",
+         kinds(60, call, sysev("platform_error", 50)), ["长时间无动静"]),
+        ("sweep：平台给的 last_output_at 10 分钟前，不报",
+         kinds(60, done, row={"last_output_at": at(10)}), []),
     ]
 
 
@@ -1679,7 +1738,7 @@ def self_test():
         got = next((g for g in found.groups() if g), "").strip() if found else ""
         check("读用例：" + line, got, want)
     for name, got, want in (_self_test_board() + _self_test_patterns() + _self_test_jobs()
-                            + _self_test_pulse()):
+                            + _self_test_pulse() + _self_test_sweep()):
         check("看板：" + name, got, want)
     for line in bad:
         print("FAIL " + line)
