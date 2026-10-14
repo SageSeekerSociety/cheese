@@ -72,6 +72,17 @@ tasks:
     deps: [install]
     cmds:
       - pnpm run lint:boundary
+  # Nothing under src/ may reference localStorage or sessionStorage directly:
+  # src/lib/browserStorage.ts is the one place that accepts their failure modes
+  # (private mode, a full quota, no storage at all) and never throws.
+  # Ratcheted: the references already in the tree are frozen per file in
+  # browser-storage-baseline.json, so only NEW ones fail. Writer: `pnpm run
+  # lint:storage:update`, which only lowers counts. Read-only, like `lint:style`.
+  lint:storage:
+    desc: Check for direct Web Storage access (eslint + ratchet, check only)
+    deps: [install]
+    cmds:
+      - pnpm run lint:storage
   # Accessibility rules (eslint-plugin-vuejs-accessibility) over src/**/*.vue.
   # Ratcheted: the violations already in the tree are frozen per file in
   # a11y-baseline.json, so only NEW ones fail. Writer: `pnpm run
@@ -133,6 +144,7 @@ tasks:
     cmds:
       - task: lint:check
       - task: lint:boundary
+      - task: lint:storage
       - task: lint:a11y
       - task: lint:scenes
       - task: lint:scene-debt
