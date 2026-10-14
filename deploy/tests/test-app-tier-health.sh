@@ -1029,23 +1029,84 @@ test_rollout_stops_the_old_backend_after_its_model_streams() {
   echo "PASS: the old backend is stopped only once its model streams have ended"
 }
 
-# A stream that outlives the bound is ended by the stop: a release never waits
-# longer than DEPLOY_MODEL_STREAM_GRACE_SECONDS for it.
+# A stream that outlives the bound is ended by the stop: a release never keeps
+# the old backend longer than the handover pause, the drain and
+# DEPLOY_MODEL_STREAM_GRACE_SECONDS after the switch. (The fakes' drain takes
+# no time, so the wait itself sees most of that window.)
 test_rollout_stops_a_model_stream_at_its_bound() {
-  local run_dir docker_log
+  local run_dir docker_log polls
   run_dir="$(new_rollout_run_dir)"
   docker_log="$run_dir/docker.log"
   rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container \
     APP_TIER_MODEL_STREAMS=1 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
-    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 DEPLOY_MODEL_STREAM_GRACE_SECONDS=14 \
-    >"$run_dir/release.log" 2>&1 \
+    DEPLOY_HANDOVER_AFTER_SECONDS=0 DEPLOY_MODEL_STREAM_POLL_SECONDS=7 \
+    DEPLOY_MODEL_STREAM_GRACE_SECONDS=14 >"$run_dir/release.log" 2>&1 \
     || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
-  [ "$(grep -c '^sleep 7$' "$docker_log")" = 2 ] || fail "the wait ran past its bound"
+  polls="$(grep -c '^sleep 7$' "$docker_log" || true)"
+  # 31 s drain + 14 s bound, polled every 7 s: at most 7 polls.
+  [ "$polls" -ge 1 ] && [ "$polls" -le 7 ] || fail "the wait polled $polls times, past its bound"
   grep -q 'stop --time 60 blue-container' "$docker_log" || fail "the old backend was not stopped at the bound"
-  grep -Fq 'still relays 1 model stream(s) after 14s; stopping it ends them' "$run_dir/release.log" \
+  grep -Eq 'still relays 1 model stream\(s\) after [0-9]+s; stopping it ends them' "$run_dir/release.log" \
     || { cat "$run_dir/release.log"; fail "the release does not say it ended a model stream"; }
   rm -rf "$run_dir"
   echo "PASS: a model stream past its bound is ended by the stop"
+}
+
+# The old backend's model streams are waited for only once this release has
+# passed its health check: a release that then fails it rolls back at once,
+# stopping the old backend without waiting, so the previous release can take
+# that slot back.
+test_rollout_waits_for_model_streams_only_after_the_health_check() {
+  local run_dir docker_log healthy probe
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  rollout_run "$run_dir" env APP_TIER_BACKEND_CONTAINER=blue-container \
+    APP_TIER_MODEL_STREAMS=1,0 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
+    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1 \
+    || { cat "$run_dir/release.log"; fail "rollout deploy did not succeed"; }
+  healthy="$(log_line "$docker_log" 'ps -a --filter label=com.docker.compose.project=cheese')"
+  probe="$(log_line "$docker_log" '/_internal/llm/streams')"
+  [ -n "$healthy" ] && [ -n "$probe" ] && [ "$healthy" -lt "$probe" ] \
+    || fail "the release waited on the old backend's model streams before its own health check"
+  grep -Fq 'finished its model streams after 7s' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "the release did not wait for the streams after a healthy check"; }
+
+  # A release that fails its health check does not wait.
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  if rollout_run "$run_dir" env APP_TIER_SCENARIO=frontend_absent APP_TIER_BACKEND_CONTAINER=blue-container \
+    APP_TIER_MODEL_STREAMS=1 APP_TIER_MODEL_STREAMS_COUNT_FILE="$run_dir/streams" \
+    DEPLOY_MODEL_STREAM_POLL_SECONDS=7 >"$run_dir/release.log" 2>&1; then
+    fail "a release that failed its health check reported success"
+  fi
+  grep -q 'HEALTH CHECK FAILED' "$run_dir/release.log" || { cat "$run_dir/release.log"; fail "the release did not fail its health check"; }
+  ! grep -q '^sleep 7$' "$docker_log" || fail "a failed release waited on the old backend's model streams"
+  grep -Fq 'stopping blue-container without waiting for its model streams: this release failed its health check' "$run_dir/release.log" \
+    || { cat "$run_dir/release.log"; fail "the failed release did not stop the old backend at once"; }
+  grep -q 'stop --time 60 blue-container' "$docker_log" || fail "the old backend was left running"
+  rm -rf "$run_dir"
+  echo "PASS: model streams are waited for after the health check, and not by a failed release"
+}
+
+# One lost probe is not the end of the old backend's streams: the wait asks
+# again, and gives up only after several in a row.
+test_model_stream_wait_survives_a_lost_probe() {
+  local dir out
+  mkdir -p "$ROOT/.tmp"
+  dir="$(mktemp -d "$ROOT/.tmp/stream-wait.XXXXXX")"
+  out="$(PATH="$FAKE_BIN:$PATH" APP_TIER_MODEL_STREAMS=1,x,1,0 \
+    APP_TIER_MODEL_STREAMS_COUNT_FILE="$dir/streams" DEPLOY_MODEL_STREAM_POLL_SECONDS=7 \
+    bash "$ROOT/deploy/wait-model-streams.sh" 18081 old-backend 60 7)"
+  printf '%s\n' "$out" | grep -Fq 'old-backend finished its model streams after 21s' \
+    || { printf '%s\n' "$out"; rm -rf "$dir"; fail "one lost probe ended the wait"; }
+  rm -f "$dir/streams"
+  out="$(PATH="$FAKE_BIN:$PATH" APP_TIER_MODEL_STREAMS=1,x \
+    APP_TIER_MODEL_STREAMS_COUNT_FILE="$dir/streams" DEPLOY_MODEL_STREAM_POLL_SECONDS=7 \
+    bash "$ROOT/deploy/wait-model-streams.sh" 18081 old-backend 60 7)"
+  rm -rf "$dir"
+  printf '%s\n' "$out" | grep -Fq 'has not said how many model streams it relays for 3 probes' \
+    || { printf '%s\n' "$out"; fail "a backend that stopped answering held the wait"; }
+  echo "PASS: the model-stream wait outlasts a lost probe, and not three"
 }
 
 # A backend from before the count answers nothing about its model streams; it
@@ -1959,6 +2020,8 @@ case "$CASE" in
   rollout-handover-old-backend) test_rollout_never_signals_a_backend_without_the_handler ;;
   rollout-model-streams) test_rollout_stops_the_old_backend_after_its_model_streams ;;
   rollout-model-stream-bound) test_rollout_stops_a_model_stream_at_its_bound ;;
+  rollout-model-streams-after-health) test_rollout_waits_for_model_streams_only_after_the_health_check ;;
+  model-stream-lost-probe) test_model_stream_wait_survives_a_lost_probe ;;
   rollout-model-streams-old-backend) test_rollout_does_not_wait_on_a_backend_without_the_count ;;
   app-router-deadline) test_app_router_outlasts_the_model_stream_wait ;;
   preview-owner-ordering) test_deploy_starts_preview_owner_before_routes_and_backends ;;
@@ -2007,6 +2070,8 @@ case "$CASE" in
     test_rollout_never_signals_a_backend_without_the_handler
     test_rollout_stops_the_old_backend_after_its_model_streams
     test_rollout_stops_a_model_stream_at_its_bound
+    test_rollout_waits_for_model_streams_only_after_the_health_check
+    test_model_stream_wait_survives_a_lost_probe
     test_rollout_does_not_wait_on_a_backend_without_the_count
     test_app_router_outlasts_the_model_stream_wait
     test_rollout_recovers_after_forge_stops_backend

@@ -45,7 +45,7 @@ if [ -n "${APP_TIER_SNAPSHOT_ONLINE_SEQUENCE:-}" ] && [[ "$config" == *"/snapsho
   exit 0
 fi
 # The model streams the old backend still relays, one value per probe and the
-# last repeated: APP_TIER_MODEL_STREAMS=2,1,0. Unset, the backend answers
+# last repeated: APP_TIER_MODEL_STREAMS=2,1,0; x loses that probe. Unset, the backend answers
 # nothing, as one built before the count does.
 if [ -n "${APP_TIER_MODEL_STREAMS:-}" ] && [[ "$*" == *"/_internal/llm/streams"* ]]; then
   count_file="${APP_TIER_MODEL_STREAMS_COUNT_FILE:?}"
@@ -56,6 +56,8 @@ if [ -n "${APP_TIER_MODEL_STREAMS:-}" ] && [[ "$*" == *"/_internal/llm/streams"*
   streams=(${APP_TIER_MODEL_STREAMS//,/ })
   index=$((count - 1))
   [ "$index" -lt "${#streams[@]}" ] || index=$((${#streams[@]} - 1))
+  # x: this probe is lost (a busy backend, a timeout).
+  [ "${streams[$index]}" != x ] || exit 28
   printf '{"open":%s}' "${streams[$index]}"
   exit 0
 fi

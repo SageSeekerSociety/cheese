@@ -24,6 +24,7 @@ as-is, so a client-side protocol change needs no change here.
 
 import logging
 import uuid
+from collections.abc import Callable
 from typing import Annotated
 
 import httpx
@@ -450,6 +451,21 @@ async def admission(
     )
 
 
+class _CountedStreamingResponse(StreamingResponse):
+    """Ends the stream's count when the response is over, however it ends: a
+    caller that goes away before the first byte never runs the body at all."""
+
+    def __init__(self, content, end_stream: Callable[[], None], **kwargs) -> None:
+        super().__init__(content, **kwargs)
+        self._end_stream = end_stream
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._end_stream()
+
+
 async def _person_key(claims: PersonalClaims) -> str | None:
     """The key a person's 芝士 calls the model on: their own, never the pool's
     credential or a project's. A call made with a person's credential is that
@@ -516,26 +532,34 @@ async def proxy(
         content=body,
         params=dict(request.query_params),
     )
+    # Counted from before the model is asked: a reasoning model can take more
+    # than a minute to send its first byte, and a rollout that read no stream
+    # in that time would stop this process under it (`app.core.model_streams`).
+    end_stream = model_streams.opened()
     try:
         upstream = await client.send(req, stream=True)
     except httpx.HTTPError as exc:
+        end_stream()
         await client.aclose()
         logger.warning("llm proxy upstream failed for project %s: %s", project_id, exc)
         raise GatewayUnavailableError("The model pool did not answer") from exc
+    except BaseException:
+        end_stream()
+        await client.aclose()
+        raise
 
     async def stream():
-        # Counted from the first byte to the last: a rollout waits for this
-        # count before it stops the process (`app.core.model_streams`).
-        with model_streams.held():
-            try:
-                async for chunk in upstream.aiter_raw():
-                    yield chunk
-            finally:
-                await upstream.aclose()
-                await client.aclose()
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            end_stream()
+            await upstream.aclose()
+            await client.aclose()
 
-    return StreamingResponse(
+    return _CountedStreamingResponse(
         stream(),
+        end_stream,
         status_code=upstream.status_code,
         headers={
             k: v

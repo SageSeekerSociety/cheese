@@ -223,14 +223,21 @@ check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
 `collab` is replaced at once, while the old frontend still runs. After a
 31-second drain (`DEPLOY_DRAIN_SECONDS`) the old frontend's nginx gets up to 120
-seconds to finish its requests. The old backend first finishes the model streams
-it still relays through `/llm/v1`, which cannot move to the next backend and
-run for minutes on a reasoning model: `deploy/wait-model-streams.sh` asks its
-`/_internal/llm/streams` count every 5 seconds and lets it stop once that is
-zero, or after 15 minutes (`DEPLOY_MODEL_STREAM_GRACE_SECONDS`), when the stop
-ends what is left. It then gets 60 seconds to finish its handover. The release
-job waits for all of it, so the next release never finds three backends, and
-its migrations never run under one still streaming. The next release goes back into the
+seconds to finish its requests. The old backend is stopped last, once the
+release has passed its health check, because it may still be relaying model
+streams through `/llm/v1`: those cannot move to the next backend, wait up to
+minutes for a reasoning model's first byte, and run for minutes after it.
+`deploy/wait-model-streams.sh` asks its `/_internal/llm/streams` count every 5
+seconds and lets it stop once that is zero, or 15 minutes after the switch's
+drain (`DEPLOY_MODEL_STREAM_GRACE_SECONDS`), when the stop ends what is left. It
+then gets 60 seconds to finish its handover. A release that fails its health
+check stops it at once, without waiting, so the previous release can go back
+into that slot, and the rollback gives the failed release's streams 30 seconds
+(`DEPLOY_ROLLBACK_MODEL_STREAM_GRACE_SECONDS`); the exit trap stops it without
+waiting on any other way out. The release job waits for all of it, so the next
+release never finds three backends, and its migrations never run under one
+still streaming. The health check leaves the old backend out while it waits.
+The next release goes back into the
 slots this one left. The `-b` services are written at deploy time from
 compose's merged model, after every value the deploy exports, so they carry
 every overlay and differ only in their port and in answering to the service's

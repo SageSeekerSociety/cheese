@@ -16,6 +16,7 @@ from fastapi import FastAPI
 
 from app.api.deps import get_chat_service, get_db
 from app.api.routes import llm_proxy
+from app.core.errors import register_exception_handlers
 
 llm_proxy.settings.anthropic_base_url = os.environ["MODEL_UPSTREAM"]
 
@@ -32,6 +33,7 @@ async def _no_database():
 
 
 app = FastAPI()
+register_exception_handlers(app)
 app.include_router(llm_proxy.router)
 app.include_router(llm_proxy.internal_router)
 app.dependency_overrides[get_db] = _no_database

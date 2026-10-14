@@ -51,12 +51,19 @@ def _free_port() -> int:
 
 class _Model(BaseHTTPRequestHandler):
     """Answers a request that asks for ``slow`` with its first event, then the
-    rest once the test lets it; any other request at once."""
+    rest once the test lets it; one that asks for ``late`` with nothing at all,
+    not even its headers, until the test lets it; one that asks for ``drop`` by
+    hanging up; any other request at once."""
 
     let_go: threading.Event
 
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("content-length") or 0))
+        if b'"drop"' in body:
+            self.close_connection = True
+            return
+        if b'"late"' in body:
+            self.let_go.wait(15)
         self.send_response(200)
         self.send_header("content-type", "text/event-stream")
         self.end_headers()
@@ -212,3 +219,66 @@ def test_a_stream_the_harness_hung_up_on_holds_no_rollout(model, backends):
         while _open_streams(http, old):
             assert time.monotonic() < deadline, "a stream nobody reads is still counted"
             time.sleep(0.05)
+
+
+def _caller() -> dict[str, str]:
+    return {
+        "authorization": "Bearer "
+        + mint_personal_credential(user_id=1, conversation_id=str(uuid.uuid4()))
+    }
+
+
+def test_a_call_still_waiting_for_the_models_first_byte_holds_the_rollout(
+    model, backends
+):
+    """A reasoning model can take over a minute to send even its headers. The
+    call is the old backend's to finish from the moment the model is asked."""
+    _, let_go = model
+    old, _ = backends
+    answered: dict[str, bytes] = {}
+
+    def call() -> None:
+        with httpx.Client(timeout=15, trust_env=False) as caller:
+            answered["body"] = caller.post(
+                f"{old.base}/llm/v1/chat/completions",
+                headers=_caller(),
+                json={"stream": True, "late": True},
+            ).content
+
+    asking = threading.Thread(target=call)
+    asking.start()
+    with httpx.Client(timeout=15, trust_env=False) as http:
+        deadline = time.monotonic() + 5
+        while _open_streams(http, old) != 1:
+            assert time.monotonic() < deadline, (
+                "a call waiting for the model's first byte is not counted"
+            )
+            time.sleep(0.05)
+        wait = subprocess.Popen(
+            ["bash", str(WAIT), str(old.port), "old-backend", "30", "1"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            env=_ENV,
+        )
+        time.sleep(1.5)
+        assert wait.poll() is None, "the rollout stopped waiting on an unanswered call"
+        assert "body" not in answered
+        let_go.set()
+        asking.join(timeout=10)
+        said, _ = wait.communicate(timeout=10)
+        assert "old-backend finished its model streams" in said, said
+    old.stop()
+    assert answered["body"] == FIRST + REST
+
+
+def test_a_model_that_never_answers_holds_no_rollout(model, backends):
+    old, _ = backends
+    with httpx.Client(timeout=15, trust_env=False) as http:
+        refused = http.post(
+            f"{old.base}/llm/v1/chat/completions",
+            headers=_caller(),
+            json={"drop": True},
+        )
+        assert refused.status_code == 503
+        assert _open_streams(http, old) == 0
