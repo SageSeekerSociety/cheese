@@ -12,16 +12,17 @@ It logs in as the dev account, reads the seat the dispatcher task is on, posts
 `<@seat> 【tag】body` there with a request_id, and reads the message back. The exit
 status says which step failed, so a caller can branch on it:
 
-  0 posted and read back · 2 the command line or the environment is wrong ·
-  3 the platform refused a call · 4 posted but the read-back did not show it ·
-  5 no seat to name. Exit 3 on the posting call does not prove the message is absent:
-  an answer lost after the platform stored it looks the same.
+  0 posted and read back (also `--seat`, which prints a seat, and `--dry-run`, which
+  composes the message without sending it) · 2 the command line or the environment is
+  wrong · 3 the platform refused a call · 4 posted but the read-back did not show it ·
+  5 no seat to name. Exit 3 on the posting call does not prove the message is absent: an
+  answer lost after the platform stored it looks the same.
 
-The dispatcher's task row neither names a seat nor leaves it empty for long: `None` there
-means the platform hands the task to the project's default teammate, so a seat is still
-being awoken. The room's roster is read for it then — see `seat_of` for which roster it
-is and when this stands down. Exit 5 only fires when neither the row nor the roster names
-exactly one teammate, i.e. when the platform's own choice cannot be told from here.
+A task row with no seat of its own is not "nothing to wake" — the platform hands such a
+task to the seat its room answers for — so the room's roster is read next, and `seat_of`
+says which row it takes and when it stands down. Exit 5 means this cannot name that seat:
+the platform would still work the task, under a teammate that cannot be picked out from
+here.
 
 The tag is one of the four labels 《总调度工作流 v2》§8 gives a line — 递卡, 交付, 待决,
 队列 — and the body follows that section's format for it, e.g. 递卡's
@@ -36,8 +37,8 @@ a second one, so the retry confirms the same message rather than sending its twi
 prints mean "a message may be on the platform now" — exit 4, and exit 3 on the posting
 call itself, whose answer may have been lost after the platform stored the message — and
 both say which id to reuse, so nothing has to be re-derived. The id has to be a UUID: the
-endpoint types the field that way, and it is written in the canonical form here, so the
-retry matches whatever form the first run was given.
+endpoint types the field that way, and it is held in the canonical form here, so the
+string this run prints is the one a retry can hand straight back.
 
 Credentials come from the environment, never from argv (ps shows it) and never from a
 file: OKCHEESE_PASS is required, OKCHEESE_USER defaults to the dev account's name. That
@@ -93,12 +94,12 @@ def seat_of(topic, token):
     """The handle of the seat to mention on this line, or None when none can be named.
 
     A task row that names a seat is used as it stands. A row with no seat of its own
-    (`agent_handle` is `None`, which the platform reads as "the project's default
-    teammate") still has someone to wake, so the room's roster is read next: exactly one
-    AI teammate in it is the seat the platform hands such a task to. With none, or with
-    several, which one the platform would pick is not something this can tell — the
-    project's default and the room's own answer can differ — so it names no seat rather
-    than guess."""
+    (`agent_handle` is `None`) is not left without one either: the platform works such a
+    task under the seat its room answers for (`AgentInstanceService.for_task` →
+    `for_topic`), so the room's roster is read next and its single AI teammate is that
+    seat. With none, or with several, which teammate the room answers for is not something
+    a roster read can tell, and a wrong name wakes the wrong one — so it names no seat
+    rather than guess."""
     given = unwrap(call("GET", f"/topics/{topic}/task", token)).get("agent_handle")
     if given:
         return given
@@ -158,9 +159,10 @@ def parse_args(argv):
     if request_id:
         try:
             # Canonical form on purpose: pydantic's UUID field refuses strings that
-            # `uuid.UUID` accepts (`{hex-without-dashes}`, `urn:uuid:hex-without-dashes`),
-            # and the platform dedupes on this string, so the posting call and any retry
-            # have to agree on it.
+            # `uuid.UUID` accepts (`{hex-without-dashes}`, `urn:uuid:hex-without-dashes`).
+            # The platform keys the stored message on `str()` of the field either way, so
+            # the one shape is what keeps the id this run prints the string a retry hands
+            # back unchanged.
             request_id = str(uuid.UUID(request_id))
         except ValueError:
             print(f"--request-id must be a uuid; {request_id!r} is not one", file=sys.stderr)
@@ -258,12 +260,12 @@ def self_test():
             {"member_handle": "cheese-abc", "agent": True},
             {"member_handle": "cheese-def", "agent": True},
         ])
-        return rc, "body" in seen, "nothing to wake" in err
+        return rc, "body" in seen, "cannot name a seat" in err
 
     def no_seat_anywhere():
         rc, err, _ = drive(["递卡", "正文"], seat=None,
                            roster=[{"member_handle": "someone", "agent": False}])
-        return rc, "nothing to wake" in err
+        return rc, "cannot name a seat" in err
 
     def no_password():
         rc, err, _ = drive(["递卡", "正文"], password="")
@@ -395,8 +397,9 @@ def main(argv):
         print(f"the platform refused a call: {e!r}", file=sys.stderr)
         return 3
     if not seat:
-        print(f"nothing to wake on {TARGET}: the task names no seat and the room's "
-              f"roster does not name exactly one teammate", file=sys.stderr)
+        print(f"cannot name a seat to wake on {TARGET}: the task names none and the "
+              f"room's roster does not name exactly one teammate — the task is still "
+              f"worked, so wake its teammate by hand", file=sys.stderr)
         return 5
     if "--seat" in flags:
         print(seat)
