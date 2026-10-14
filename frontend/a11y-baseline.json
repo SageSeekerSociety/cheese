@@ -69,7 +69,6 @@
     "src/views/ProjectSkillsView.vue": 4,
     "src/views/spaces/detail/PublishTaskView.vue": 1,
     "src/views/spaces/detail/settings/BasicInfoView.vue": 3,
-    "src/views/spaces/Index.vue": 1,
     "src/views/tasks/components/TaskDialogs.vue": 2,
     "src/views/tasks/detail/RosterView.vue": 1,
     "src/views/user/settings/General.vue": 1,
