@@ -13,7 +13,7 @@ covers:
 
 # 架构指标 {#arch-metrics}
 
-三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的九条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道都拿一个冻结的基线做棘轮，所以它们会一直绿——绿到看不出一棵树是不是在变好。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
+三道检查挡的是「新违规」：模块边界（`backend/.importlinter` 的九条契约）、组件不能自己取数（`frontend/import-boundary-baseline.json` 的棘轮）、文件大小上限（`.claude/scripts/check-file-sizes.py`）。三道各有一个基准，基准不动就会一直绿——绿到看不出一棵树是不是在变好：后端模块边界现在连基准都没写下来，每次运行从与 `origin/main` 的合并基准那棵树现场推。这一页讲的是另一半：`.claude/scripts/arch-metrics.py` 读同样的几份声明，把每个数现在是多少、和一个月前差多少打出来。
 
 > 讲：有哪些数字、每个数怎么算、现在是多少、要往哪个方向走，以及怎么和另一个版本比。不讲：三道闸各自的规则和为什么那样定（见仓库里的 `.claude/rules/architecture.md`），CI 的整体设计（见 [CI 设计](/dev/ci#required)）。
 

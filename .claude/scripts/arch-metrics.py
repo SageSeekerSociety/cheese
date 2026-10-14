@@ -7,9 +7,10 @@
 
 WHY A BOARD AND NOT A GATE. The boundary checks
 (`backend/.importlinter`, `frontend/import-boundary-baseline.json`) block a new
-violation. None of them can say whether the tree is getting better,
-because each is a ratchet against a frozen baseline and a ratchet that holds
-still reports success forever. This script is the other half: it reads the same
+violation. None of them can say whether the tree is getting better, because
+each measures against a baseline — a stored file of pairs, or the tree at the
+merge base — and a baseline that holds still reports success forever. This
+script is the other half: it reads the same
 declarations the checks read and prints where they stand, so "did the last month
 help" is a diff of two runs instead of an argument. It deliberately exits 0 on a
 bad number — a board that goes red is a gate, and every gate here is one

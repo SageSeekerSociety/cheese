@@ -257,6 +257,9 @@ layers =
     store
     state
 exhaustive = true
+# A measured baseline can stop matching a pair this tree paid down; that is a
+# warning, never a red, exactly as for the C contracts below.
+unmatched_ignore_imports_alerting = warn
 
 [importlinter:contract:turn-no-composition-imports]
 # T2 deliberately checks direct imports; intake can assemble cross-domain facts.
@@ -268,6 +271,7 @@ forbidden_modules =
     app.domain.agent.runtime
     app.api
 allow_indirect_imports = true
+unmatched_ignore_imports_alerting = warn
 
 [importlinter:contract:realtime-no-turn]
 # T3 checks the full reachable graph, not just imports in broker.py.
@@ -280,6 +284,7 @@ forbidden_modules =
     app.domain.agent.runtime
     app.api
 allow_indirect_imports = false
+unmatched_ignore_imports_alerting = warn
 
 [importlinter:contract:turn-storage-purity]
 # T4 also checks transitively: a repository cannot smuggle in a publisher.
@@ -296,6 +301,7 @@ forbidden_modules =
     app.domain.agent.runtime
     app.api
 allow_indirect_imports = false
+unmatched_ignore_imports_alerting = warn
 
 [importlinter:contract:routes-independent]
 # C4 — a route module does not import another route module, directly or through
