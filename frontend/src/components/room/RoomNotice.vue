@@ -167,8 +167,8 @@ function reviewDoc() {
 }
 const docSuggestions = computed(() => (props.notice.mode === 'action' ? props.notice.docSuggestions ?? 0 : 0))
 
-// 项目资料库里的一份文档：AI 队友在这里新建了它或改了它。卡片一点，文档在对话旁边打开；
-// 改过的，打开时一处处标出来。
+// 项目资料库里的一份文档：AI 队友在这里新建了它或改了它。卡片一点，打开的是这份文档本身；
+// 改过的，卡上另有「查看改动」，点它打开时一处处标出来。
 const libraryDoc = computed(() => (props.notice.mode === 'action' ? props.notice.libraryDoc ?? null : null))
 // 卡上那一句：新建的、提了建议的、改了几处的，整篇重写的只说「已更新」。
 const libraryDocState = computed(() => {
@@ -179,10 +179,15 @@ const libraryDocState = computed(() => {
   if (doc.edits.length) return t('work.room.notice.docEditCount', { n: doc.edits.length })
   return t('work.room.notice.docCard.updated')
 })
-function openLibraryDoc() {
+// 「查看改动」只在直接改了几处的卡上有：新建的、提建议的、整篇重写的没有可标的那几处。
+const libraryDocEdits = computed(() => {
+  const doc = libraryDoc.value
+  return doc && !doc.created && !doc.suggestions ? doc.edits : []
+})
+function openLibraryDoc(withEdits: boolean) {
   const doc = libraryDoc.value
   if (!doc) return
-  const review = !doc.created && !doc.suggestions && doc.edits.length ? { requester: '', edits: doc.edits } : undefined
+  const review = withEdits && libraryDocEdits.value.length ? { requester: '', edits: libraryDocEdits.value } : undefined
   emit('open-resource', 'doc', props.block.turn_id ?? undefined, review, { id: doc.id, title: doc.title })
 }
 
@@ -320,20 +325,27 @@ const ACTION_META: Record<string, { btn: string }> = {
       <div class="sys-line">
         <span class="sys-text" v-html="renderPlain(notice.text)" />
       </div>
-      <button type="button" class="doc-card" @click="openLibraryDoc">
-        <v-icon icon="mdi-file-document-edit-outline" size="20" class="doc-card__icon" />
-        <span class="doc-card__id">
-          <span class="t-body doc-card__name">{{ libraryDoc.title || t('work.room.doc.untitled') }}</span>
-          <span class="t-meta c-faint">{{ libraryDocState }}</span>
-        </span>
-        <span class="t-meta c-muted doc-card__action">{{
-          libraryDoc.suggestions
-            ? t('work.room.notice.viewSuggestions')
-            : libraryDoc.created || !libraryDoc.edits.length
-              ? t('work.room.notice.docCard.open')
-              : t('work.room.notice.viewChanges')
-        }}</span>
-      </button>
+      <!-- 卡片哪里都能点，打开文档本身；「查看改动」是压在卡上的另一颗按钮。 -->
+      <div class="doc-card">
+        <button type="button" class="doc-card__open" @click="openLibraryDoc(false)">
+          <v-icon icon="mdi-file-document-edit-outline" size="20" class="doc-card__icon" />
+          <span class="doc-card__id">
+            <span class="t-body doc-card__name">{{ libraryDoc.title || t('work.room.doc.untitled') }}</span>
+            <span class="t-meta c-faint">{{ libraryDocState }}</span>
+          </span>
+          <span v-if="!libraryDocEdits.length" class="t-meta c-muted doc-card__action">{{
+            libraryDoc.suggestions ? t('work.room.notice.viewSuggestions') : t('work.room.notice.docCard.open')
+          }}</span>
+        </button>
+        <button
+          v-if="libraryDocEdits.length"
+          type="button"
+          class="t-meta c-muted doc-card__action doc-card__review"
+          @click="openLibraryDoc(true)"
+        >
+          {{ t('work.room.notice.viewChanges') }}
+        </button>
+      </div>
     </div>
     <!-- 芝士这轮改了平台上的什么东西（没能折进本轮摘要的那一条） -->
     <div v-else-if="notice.mode === 'action'" class="sys-row action-card">
@@ -621,6 +633,7 @@ details[open]::details-content {
   margin-top: 4px;
 }
 .doc-card {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -631,12 +644,43 @@ details[open]::details-content {
   border-radius: var(--radius-md);
   background: var(--surface);
   color: var(--text);
-  text-align: left;
-  cursor: pointer;
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 .doc-card:hover {
   background: var(--fill);
+}
+.doc-card__open {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+/* The open button covers the whole card, padding included, so a click anywhere
+   but 「查看改动」 opens the document. */
+.doc-card__open::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-md);
+}
+.doc-card__review {
+  position: relative;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.doc-card__review:hover {
+  color: var(--text);
+  text-decoration: underline;
 }
 .doc-card__icon {
   flex: none;
