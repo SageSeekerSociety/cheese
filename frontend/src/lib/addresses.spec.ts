@@ -43,6 +43,14 @@ function notFound(): Promise<never> {
   return Promise.reject(new Error('not found'))
 }
 
+function deferred<T>() {
+  let settle!: (v: T) => void
+  const promise = new Promise<T>((res) => {
+    settle = res
+  })
+  return { promise, settle }
+}
+
 beforeEach(() => {
   api.resolveProject.mockImplementation((ref: string) =>
     [PROJECT, 'helper', 'old-name'].includes(ref) ? Promise.resolve({ id: PROJECT, slug: 'helper' }) : notFound()
@@ -100,6 +108,26 @@ describe('认得的项目不再问一次', () => {
 
     expect(await landsOn(`/projects/${PROJECT}/tasks/${TASK}`)).toBe('/projects/helper/tasks/318')
     expect(api.resolveProject).not.toHaveBeenCalled()
+  })
+})
+
+describe('地址里那个 UUID 和项目那一问并排走', () => {
+  // 这一趟本来排在项目那一问后面：串着问，冷开一个任务页要多等一个来回。
+  const UNSEEN = '6d5c4b3a-2f1e-4d3c-9b8a-7f6e5d4c3b2a'
+
+  it('项目那边还没回来，就已经去问地址里那个 UUID 是几号了', () => {
+    const project = deferred<{ id: string; slug: string }>()
+    api.resolveProject.mockImplementationOnce(() => project.promise)
+
+    // 不 await：这里要看的正是「两边都已经出发」这一刻。
+    void canonicalAddress(at(`/projects/old-name/tasks/${UNSEEN}`))
+
+    expect(api.resolveProject).toHaveBeenCalledWith('old-name')
+    expect(api.addressOf).toHaveBeenCalledWith('tasks', UNSEEN)
+  })
+
+  it('并排走不影响落到哪个地址', async () => {
+    expect(await landsOn(`/projects/${PROJECT}/tasks/${TASK}`)).toBe('/projects/helper/tasks/318')
   })
 })
 

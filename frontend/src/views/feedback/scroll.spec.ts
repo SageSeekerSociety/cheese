@@ -20,7 +20,7 @@
  * 这个不变量仍然成立，只是领滚动的元素从根节点下移了一层——下面两个用例分别
  * 钉这两件事，谁也别按谁的样子改。
  */
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -55,13 +55,23 @@ function cssRule(rel: string, selector: string): string {
 // 钉着它，改回「什么都滚不了」也不会红。
 const PAGE_SCROLLERS = ['FeedbackCenterPage', 'FeedbackDetailPage', 'FeedbackMinePage']
 
+/** 画面在同目录的 `<页面名>View.vue` 里时，根节点是那个视图的，不是页面的。
+ *  反馈详情页拆成「页面管取数、视图管画面」之后就是这样：壳跟着画面搬进了
+ *  `FeedbackDetailPageView.vue`，页面自己只剩一行 `<FeedbackDetailPageView …>`。
+ *  所以这一条要去看**画面**的根节点 —— 钉页面的那一版会让这次拆分变成一次沉默的
+ *  失效：壳还在，只是没人再确认它还在。 */
+function shellFile(page: string): string {
+  if (existsSync(join(dir, `${page}View.vue`))) return `${page}View`
+  return page
+}
+
 describe('反馈页面的滚动归自己领', () => {
   // 用户侧这三页现在共用一个壳（`FeedbackPageShell`），滚动那一层从页面自己搬到了
-  // 壳里。所以这条不变量拆成两半来钉：**页面要用那个壳**（不然它又会自己写一份、
+  // 壳里。所以这条不变量拆成两半来钉：**画面要用那个壳**（不然它又会自己写一份、
   // 两份迟早分家），**壳的根节点要滚**（不然三页一起变得滚不动）。
   for (const page of PAGE_SCROLLERS) {
     it(`${page} 用共用的壳`, () => {
-      expect(rootTag(page).startsWith('<FeedbackPageShell')).toBe(true)
+      expect(rootTag(shellFile(page)).startsWith('<FeedbackPageShell')).toBe(true)
     })
   }
 

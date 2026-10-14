@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- The same rules the content host sends as a header, here too: the
+         platform's browser runs this page from markup, with no header around it. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'"
+    />
+  </head>
+  <body>
+    <div id="cheese-app"></div>
+    <script type="module" src="./shell.ts"></script>
+  </body>
+</html>

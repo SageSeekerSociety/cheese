@@ -20,7 +20,7 @@ n=$(wc -l < "$NPM_CALLS")
 outcome=$(sed -n "${n}p" "$OUTCOMES")
 mkdir -p "$prefix/node_modules/.bin"
 if [ "$outcome" = ok ]; then
-  printf '#!/usr/bin/env bash\necho 2.1.282\n' > "$prefix/node_modules/.bin/claude"
+  printf '#!/usr/bin/env bash\necho 2.1.299\n' > "$prefix/node_modules/.bin/claude"
 else
   printf '\x7fELF-not-for-here' > "$prefix/node_modules/.bin/claude"
 fi

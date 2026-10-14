@@ -103,7 +103,7 @@ jobs:
           context: .
           file: ./backend/sandbox/Dockerfile.private
           load: true
-          tags: cheese-private-executor:2.1.282
+          tags: cheese-private-executor:2.1.299
           cache-from: type=gha,version=2,scope=private-executor
       - name: Verify real scratch execution
         id: scratch

@@ -49,6 +49,13 @@ tmp_frontend.log
 # 进仓库，改在用到它的地方现场生成（前端 request-paths job、后端契约测试）；留着
 # 这条是因为万一有人把它重定向到这里，也不该被提交。
 /backend/scripts/route_index.json
+# API 文档（`backend/scripts/export_openapi.py --stdout`，打印到 stdout）：它和由它
+# 生成的那份前端类型是一对，1.8MB 和 1.4MB。每改一条路由两个一起重写，任何两个
+# 都动路由的分支就会在这两份文件上撞车——截至 2026-10-14 的六十天里有 44 个 PR
+# 带着它。现在两份都不进仓库：类型在类型检查里现场生成，文档由生成者用同一条
+# `uv run` 向后端要；进仓库的是同一份文档的一行摘要（backend/openapi.sha256，
+# 唯一还随它一起变的东西就是这一行）。这条留着是防有人把它重定向到这里。
+/backend/openapi.json
 
 # ---- Tooling / local agent config ----
 # .claude/ IS tracked (skills/rules/scripts are team-shared specs); only the
@@ -111,6 +118,8 @@ tmp/
 
 # 文档站的构建产物与依赖（docs/site 构建出 frontend/public/docs）
 frontend/public/docs/
+# 小程序的外壳（vite.miniapp.config.mts 构建出 frontend/public/miniapp）
+frontend/public/miniapp/
 frontend/docs-host/
 # 桌面端安装包与更新清单（build.yml 从 desktop-latest 拉进镜像构建上下文）
 frontend/public/downloads/

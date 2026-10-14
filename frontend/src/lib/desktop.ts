@@ -6,6 +6,7 @@ import { reactive } from 'vue'
 
 import { ApiError, connectDevice, deviceProposedName, listMyDevices } from '../api'
 
+import { storageGet, storageSet } from './browserStorage'
 import { desktopCan } from './desktopApp'
 
 // The site serves the desktop build itself: build.yml copies the `desktop-latest`
@@ -279,19 +280,13 @@ export async function cancelConnecting() {
 const askedKey = (userId: number) => `cheese.desktop.askedToConnect.${userId}`
 
 export function markAsked(userId: number) {
-  try {
-    localStorage.setItem(askedKey(userId), '1')
-  } catch {
-    // Storage unavailable: the question may come again at the next launch.
-  }
+  // A write that does not land only means the question may come again at the
+  // next launch — which is what it does when it cannot be asked at all.
+  storageSet(askedKey(userId), '1')
 }
 
 function asked(userId: number) {
-  try {
-    return localStorage.getItem(askedKey(userId)) === '1'
-  } catch {
-    return false
-  }
+  return storageGet(askedKey(userId)) === '1'
 }
 
 /** At sign-in: a computer connected before and now away comes back on its

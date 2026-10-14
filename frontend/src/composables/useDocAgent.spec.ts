@@ -245,6 +245,20 @@ describe('在文档里找 AI 队友', () => {
     expect(ctl.kind.value).toBe('ask')
   })
 
+  it('带着一句话开框（小程序出错时让它修）：开框就把这句发出去，问的还是选中的那段', async () => {
+    const { doc, editor } = room('第一段。\n\n数据量到一千万行时开始评估迁移。')
+    const ask = service(doc)
+    const { ctl } = controller(editor, ask)
+
+    ctl.open(select(editor, '一千万'), '运行出错：rows is undefined')
+    await vi.waitFor(() => expect(ask).toHaveBeenCalled())
+
+    const [request] = ask.mock.calls[0]
+    expect(request.text).toBe('运行出错：rows is undefined')
+    const sel = request.selection!
+    expect(sel.block.slice(sel.start, sel.end)).toBe('一千万')
+  })
+
   it('选中的是代码（流程图的源码也是）：不给润色、改成列表这类说法，只留输入框', () => {
     const { doc, editor } = room('正文一句。\n\n```mermaid\nflowchart TD\n  A --> B\n```')
     const { ctl } = controller(editor, service(doc))

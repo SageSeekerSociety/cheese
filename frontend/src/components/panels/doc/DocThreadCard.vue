@@ -6,6 +6,7 @@ import type { DocThread, DocThreadActivity, ThreadPlace } from '../../../lib/doc
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { isAgentHandle } from '../../../lib/authorship'
+import { storageGet, storageRemove, storageSet } from '../../../lib/browserStorage'
 import { plainRefs } from '../../../lib/refChip'
 import { relTime } from '../../../lib/relTime'
 import CheeseAvatar from '../../CheeseAvatar.vue'
@@ -84,25 +85,15 @@ const step = computed(() => {
 })
 
 // ---- 回复框：在看这张时才有，随字长高；回车发出去，Shift+回车换行 ----
-function stored(key: string): string {
-  try {
-    return localStorage.getItem(key) ?? ''
-  } catch {
-    return ''
-  }
-}
-const text = ref(stored(props.draftKey))
+const text = ref(storageGet(props.draftKey) ?? '')
 watch(
   () => props.draftKey,
-  (key) => (text.value = stored(key))
+  (key) => (text.value = storageGet(key) ?? '')
 )
+// 存不下就只留在这一页上：草稿是随手写的东西，丢了不报错。
 watch(text, (value) => {
-  try {
-    if (value) localStorage.setItem(props.draftKey, value)
-    else localStorage.removeItem(props.draftKey)
-  } catch {
-    // 存不下就只留在这一页上。
-  }
+  if (value) storageSet(props.draftKey, value)
+  else storageRemove(props.draftKey)
 })
 const input = ref<HTMLTextAreaElement | null>(null)
 function grow() {

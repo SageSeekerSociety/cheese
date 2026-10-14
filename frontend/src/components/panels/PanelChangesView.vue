@@ -37,6 +37,7 @@ import ChangesOpenFile from './ChangesOpenFile.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { storageGet, storageSet } from '@/lib/browserStorage'
 
 const props = defineProps<{
   topicId: string | null
@@ -147,21 +148,15 @@ function clampTreeWidth(px: number): number {
   return Math.round(Math.min(TREE_WIDTH.max, Math.max(TREE_WIDTH.min, px)))
 }
 function readTreeWidth(): number {
-  try {
-    const stored = Number(localStorage.getItem(TREE_WIDTH_KEY))
-    return stored ? clampTreeWidth(stored) : TREE_WIDTH.initial
-  } catch {
-    return TREE_WIDTH.initial
-  }
+  // 没存过、读不出来都是 null，Number 出来是 0，就是没记过。
+  const stored = Number(storageGet(TREE_WIDTH_KEY))
+  return stored ? clampTreeWidth(stored) : TREE_WIDTH.initial
 }
 const treeWidth = ref(readTreeWidth())
 function setTreeWidth(px: number) {
   treeWidth.value = clampTreeWidth(px)
-  try {
-    localStorage.setItem(TREE_WIDTH_KEY, String(treeWidth.value))
-  } catch {
-    // 存不下只是下次回到默认宽度。
-  }
+  // 存不下只是下次回到默认宽度。
+  storageSet(TREE_WIDTH_KEY, String(treeWidth.value))
 }
 function startTreeDrag(e: MouseEvent) {
   const body = (e.currentTarget as HTMLElement).parentElement

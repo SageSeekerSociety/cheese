@@ -118,13 +118,39 @@ tasks:
     cmds:
       - pnpm run lint:scene-debt
   typecheck:
-    desc: Run vue-tsc type check
+    desc: Run the ratcheted vue-tsc check (the API types are generated first)
     deps: [install]
+    # Not `vue-tsc --noEmit`: the types it compiles against are generated
+    # rather than committed, so a bare run on a checkout that has not run the
+    # type check yet reports four TS2307 cannot-find-module errors for it.
+    # Same command as the CI job's, which is what makes `task fe:check` and
+    # .github/workflows/frontend.yml agree; CI does not skip the task on an
+    # unchanged tree and this one does, so every input is listed below.
     cmds:
-      - pnpm exec vue-tsc --noEmit
+      - pnpm run typecheck
     sources:
       - src/**/*.{ts,tsx,vue}
+      # Uncounted until now: a spec reads a locale catalog or a fixture with
+      # readFileSync, and the type check compiles the `import ... from '*.json'`
+      # beside it. Changing one changes the verdict, and the task reported
+      # "up to date" on the old hash.
+      - src/**/*.json
       - tsconfig*.json
+      # The type check reads more than the sources it compiles: the ratchet reads
+      # its own baseline and scripts, and the API types are generated from a
+      # document the backend builds out of its own app — so the backend's source
+      # tree is an input, not one committed file standing in for it. Changing any
+      # of them changes the verdict.
+      - tsc-baseline.json
+      - scripts/typecheck.mjs
+      - scripts/gen-api-types.mjs
+      - scripts/tsc-ratchet.mjs
+      - scripts/tsc-ratchet-core.mjs
+      - scripts/ratchet-report.mjs
+      - ../backend/app/**
+      - ../backend/scripts/export_openapi.py
+      - ../backend/pyproject.toml
+      - ../backend/uv.lock
   test:
     desc: Run vitest
     deps: [install]

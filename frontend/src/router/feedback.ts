@@ -174,6 +174,9 @@ export default [
         path: 'feature-stats/:id',
         name: 'AdminFeature',
         component: () => import('@/views/admin/AdminFeaturePage.vue'),
+        // 地址里那段 id 以 prop 送给页面，画面不用自己读地址（拆出来的
+        // `AdminFeaturePageView.vue` 只收 props）。
+        props: true,
         // 顶栏那行字对整块是同一个名字：从目录点进某一页时，它不该闪成另一句话。
         meta: { titleKey: 'navigation.admin.featureStats', isFullPage: true },
       },

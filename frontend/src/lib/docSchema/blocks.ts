@@ -744,6 +744,8 @@ export const FIELD_NODES = new Set([
   'statDelta',
   'detailsSummary',
   'footnoteDef',
+  // A mini-app's one sentence (./app.ts).
+  'app',
 ])
 
 /** An empty item of a timeline or a set of stat cards. */

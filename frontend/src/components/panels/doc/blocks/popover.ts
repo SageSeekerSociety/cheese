@@ -17,6 +17,10 @@ export interface PopoverItem {
   label: string
   hint?: string
   pressed?: boolean
+  /** A line above this item: it starts another group. */
+  divided?: boolean
+  /** The name of the group this item starts, shown above it. */
+  heading?: string
   run: () => void
 }
 
@@ -73,6 +77,18 @@ export function menuAt(anchor: HTMLElement, items: PopoverItem[]): void {
   const el = document.createElement('div')
   el.setAttribute('role', 'menu')
   for (const item of items) {
+    if (item.divided) {
+      const line = document.createElement('div')
+      line.className = 'doc-menu__sep'
+      line.setAttribute('role', 'separator')
+      el.append(line)
+    }
+    if (item.heading) {
+      const heading = document.createElement('div')
+      heading.className = 'doc-menu__heading'
+      heading.textContent = item.heading
+      el.append(heading)
+    }
     const button = document.createElement('button')
     button.type = 'button'
     button.className = item.hint ? 'doc-menu__item doc-menu__item--described' : 'doc-menu__item'

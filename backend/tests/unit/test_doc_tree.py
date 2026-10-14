@@ -146,3 +146,11 @@ def test_a_block_that_encloses_others_is_one_node():
 def test_colons_inside_code_do_not_open_a_block():
     md = "```\n:::timeline\n```\n\n正文。"
     assert _types(md) == [CODE, PARAGRAPH]
+
+
+def test_a_mini_app_is_one_block_between_its_neighbours():
+    """A comment on the paragraph after a mini-app stays on that paragraph:
+    the block counts once, as the editor counts it."""
+    md = "前面。\n\n:::app q7m2kx4t@3 试算\n拖动看结果。\n:::\n\n后面。"
+    contents = [n.content for n in markdown_to_nodes(md)]
+    assert contents == ["前面。", ":::app q7m2kx4t@3 试算\n拖动看结果。\n:::", "后面。"]

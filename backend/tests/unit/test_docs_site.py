@@ -22,7 +22,7 @@ import jwt
 import pytest
 
 from app.core.config import settings
-from app.domain.docs_site import access, assistant, tools
+from app.domain.docs_site import access, assistant, library, site, tools
 from app.domain.docs_site.retrieval import (
     DocsIndex,
     IndexSource,
@@ -277,6 +277,37 @@ async def test_index_source_keeps_the_last_good_copy(monkeypatch):
     monkeypatch.setattr("app.domain.docs_site.retrieval.REFRESH_SECONDS", -1)
     assert await src.get() is first
     assert len(calls) == 2
+
+
+def _frontend_nginx(docs_host: str):
+    """The frontend container as its nginx routes a request: by the name asked
+    for. The docs host's name reaches the docs; any other name, the container's
+    own included, reaches the platform, whose unknown paths fall back to the
+    app's index.html."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.headers["host"] != docs_host:
+            return httpx.Response(200, html="<!doctype html><div id=app></div>")
+        if request.url.path == "/sections.json":
+            rows = [{"title": "t", "heading": "h", "url": "/t#h", "text": "采纳"}]
+            return httpx.Response(200, json=rows)
+        if request.url.path == "/accept.md":
+            return httpx.Response(
+                200, text="# 采纳", headers={"content-type": "text/markdown"}
+            )
+        return httpx.Response(404)
+
+    return httpx.MockTransport(handler)
+
+
+async def test_with_a_docs_host_the_docs_are_read_from_its_site(monkeypatch):
+    monkeypatch.setattr(settings, "docs_origin", "https://docs.example.test")
+    monkeypatch.setattr(settings, "docs_index_url", None)
+    transport = _frontend_nginx("docs.example.test")
+    index = await IndexSource(site.index_url, transport=transport).get()
+    assert index is not None and index.sections[0].url == "/t#h"
+    page = await library.read_page("accept", dev=False, transport=transport)
+    assert page == "# 采纳"
 
 
 # ---------- the tools, and the loop that drives them ----------

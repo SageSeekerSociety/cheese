@@ -82,11 +82,13 @@ jobs:
         run: |
           python3 .claude/scripts/trace-sweep.py --self-test
           python3 .claude/scripts/trace-sweep.py retro --self-test
+          python3 .claude/scripts/orchestrator_actions.py --self-test
           python3 .claude/scripts/orchestrator_metrics.py --self-test
           python3 .claude/scripts/orchestrator_sweep.py --self-test
           python3 .claude/scripts/wake_orchestrator.py --self-test
           python3 .claude/scripts/test_pr_review.py
           python3 .claude/scripts/orchestrator_autoaccept.py --self-test
+          python3 -m unittest discover -s .claude/scripts -p 'test_ci_rounds.py'
 
       # The rest of the review tooling. test_pr_review.py above drives pr-review.sh
       # end to end; these three are run by it and by prepare, and are not guards of

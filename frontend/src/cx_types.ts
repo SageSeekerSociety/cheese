@@ -103,17 +103,19 @@ export interface Topic {
   // 这个话题在等我拍板：有点名给我的待办验收卡、没答的决策请求，或芝士停在
   // 只有我能答的问题上（未读的 @ 不算，未读有自己的数字）。只有 list/get 话题时才带。
   awaits_me?: boolean
-  // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）。多久算太久由侧栏按
-  // 当下的钟判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
+  // 有人回复了我、我还没处理：这间房（含名下的支线）里有别人答我或 @ 我的消息，而我没再
+  // 打开过它；名下的活不在里面。和 `awaits_me` 同画一盏黄灯（`lib/roomLight.ts`），打开就算处理。
+  replied_to_me?: boolean
+  // 这个房间在等哪几位成员、为什么（backend `block/waits.py`）；多久算太久由侧栏按当下的钟
+  // 判（`lib/replyWait.ts`）。只有 list/get 话题时才带。
   waits?: MemberWait[]
   // 上一次有**输出**是什么时候：在跑的那一轮最后一帧（后端取整到分钟）。None =
   // 此刻没有在跑的轮次，或者那个戳没记着——后端不编，前端也不编，「显示在跑、但五
   // 分钟没动静」的红灯就靠它（`lib/roomLight.ts`）。只有 list/get 话题时才带。
   last_output_at?: string | null
-  // 这间房（或它名下的活）「交付完了、而**我**从那以后还没点开看过」。侧栏的长绿
-  // 看它（`lib/roomLight.ts`）：这里做过事、都交付完了，你还没看过。点开会推已读位，
-  // 服务端下一份就不再这么说了；在那之前由本地先灭（`stores/workspace` 的
-  // `forgetUnseenDelivery`）。只对负责人和协作者算，没有登录的人一律 false。
+  // 这间房（或它名下的活）「交付完了、而**我**从那以后还没点开看过」——侧栏的长绿看它
+  // （`lib/roomLight.ts`）。点开会推已读位，服务端下一份就不再这么说，之前由本地先灭
+  // （`stores/workspace` 的 `forgetReadLights`）。只对负责人和协作者算，没登录一律 false。
   unseen_delivery?: boolean
   // 这间房里有没有活在往前走：有一轮在跑，或者走在交付链路上（等闸门、等 CI、修
   // 检查、解冲突、换基）—— 含**它名下的活**那一半（后端 `presentation.work_moving`，
@@ -121,7 +123,6 @@ export interface Topic {
   // 才带，别处一律 false：私聊和项目本体没有「名下的活」这一层。
   moving?: boolean
   // 这个房间在看板那套词里处在哪一列。侧栏房间行的色点读它。
-  //
   // 和上面 `activity` / `awaits_me` / `joined` 一样是「只有 list/get 话题时
   // 才带」的字段——`Topic` 同时也是私聊和项目本体的形状，那些地方没有列可言。所以
   // 拿不到就**不画点**，而不是退回前端自己算一个：一旦有了退路，两个算法会同时活
@@ -544,7 +545,6 @@ export interface SpaceDashboard {
 }
 
 // ---- 成员页 / portfolio、个人主页 (spec §1, §7.2, §8.4) ----
-//
 // 这几件搬去了 `./types/profile`：这个文件顶在行数上限上，只能变短。这里只把它们
 // 转出去，`@/cx_types` 对外的名字一个都没变。
 export type {
@@ -999,7 +999,7 @@ export interface ProjectAgent {
 //
 // 下面这些是后端 OpenAPI 生成类型（`src/api/openapi.d.ts`）的别名：字段、可空和
 // 必有与否都以 `backend/app/domain/feedback/schemas.py` 为准，改字段改那边，再跑
-// 两次导出（见 `frontend/scripts/gen-api-types.mjs`）。读字段时要记住的两件事：
+// 后端导出；这份类型由类型检查现场生成（`frontend/scripts/typecheck.mjs`）。读字段要记住两件事：
 //   * `author_avatar_id` 为 null 的意思是「画彩色首字母」，不要退回
 //     `/avatars/default`，那会让没挑过头像的人共用一张脸。
 //   * 评论的 `reply_count` 是服务端数的整栋楼回复数，不是这一页带回来几条；
