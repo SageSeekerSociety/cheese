@@ -15,6 +15,7 @@ import i18n, {
   storedLocale,
   t,
 } from '@/i18n'
+import { storageGet, storageGetJson, storageRemove, storageSet, storageSetJson } from '@/lib/browserStorage'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { identityChanges } from '@/lib/identity'
@@ -53,13 +54,8 @@ const API_CACHE = 'cheese-api-get'
 
 /** localStorage 里存着的上一个人是谁 —— 内存里那份还没恢复时的退路。 */
 function storedUserId(): number | undefined {
-  try {
-    const raw = localStorage.getItem('user')
-    const id = raw ? JSON.parse(raw)?.id : undefined
-    return typeof id === 'number' ? id : undefined
-  } catch {
-    return undefined
-  }
+  const id = storageGetJson<User>('user')?.id
+  return typeof id === 'number' ? id : undefined
 }
 
 /**
@@ -197,7 +193,7 @@ export class AccountService {
       await UserApi.setLanguage(locale)
       if (this.user) {
         this.user = { ...this.user, language: locale }
-        localStorage.setItem('user', JSON.stringify(this.user))
+        storageSetJson('user', this.user)
       }
     } catch (error) {
       // 界面已经换过去了；没记上，下次登录或打开页面时会再写一次。
@@ -266,7 +262,7 @@ export class AccountService {
       .then(() => {
         if (this.user) {
           this.user = { ...this.user, timezone: zone }
-          localStorage.setItem('user', JSON.stringify(this.user))
+          storageSetJson('user', this.user)
         }
       })
       // 没报上，下次打开页面会再报一次；在那之前安静时段按账号上原来那份算。
@@ -305,9 +301,9 @@ export class AccountService {
   public set accessToken(value) {
     this._accessToken = value
     if (value) {
-      localStorage.setItem('accessToken', value)
+      storageSet('accessToken', value)
     } else {
-      localStorage.removeItem('accessToken')
+      storageRemove('accessToken')
     }
   }
 
@@ -318,7 +314,7 @@ export class AccountService {
       const data = await UserApi.getCurrentUser()
       if (data.user) {
         this.user = data.user
-        localStorage.setItem('user', JSON.stringify(data.user))
+        storageSetJson('user', data.user)
         this.followLanguage(data.user, signingIn)
         this.followTimezone(data.user)
       }
@@ -333,8 +329,8 @@ export class AccountService {
   }
 
   private async restoreSession() {
-    const accessToken = localStorage.getItem('accessToken')
-    const user = localStorage.getItem('user')
+    const accessToken = storageGet('accessToken')
+    const user = storageGetJson<User>('user')
     if (!accessToken || !user) return
 
     // 访问令牌只活 15 分钟（后端 access_token_expires_seconds），刷新令牌活 30 天。
@@ -372,7 +368,7 @@ export class AccountService {
     }
 
     this.accessToken = accessToken
-    this.user = JSON.parse(user)
+    this.user = user
     this.loggedIn = true
     // 初始化完成后更新用户信息
     await this.updateUserInfo()
@@ -425,7 +421,7 @@ export class AccountService {
     this.accessToken = accessToken
     if (user) {
       this.user = user
-      localStorage.setItem('user', JSON.stringify(user))
+      storageSetJson('user', user)
     }
     if (someoneElse) readAsNewPerson()
     this.loggedIn = true
@@ -447,7 +443,7 @@ export class AccountService {
     if (user) {
       // 如果提供了用户信息，直接使用
       this.user = user
-      localStorage.setItem('user', JSON.stringify(user))
+      storageSetJson('user', user)
       this.followLanguage(user, true)
       this.followTimezone(user)
     } else {
@@ -498,10 +494,10 @@ export class AccountService {
     this._accessToken = null
     // 会话已经没了，没有「待恢复」可言。
     this._restorePhase.value = 'idle'
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('user')
+    storageRemove('accessToken')
+    storageRemove('user')
     // Remove the identity cache left by earlier frontend versions.
-    localStorage.removeItem('cheesex.me')
+    storageRemove('cheesex.me')
     // The service-worker API cache is per-browser, not per-user: on a shared
     // machine the next account must not read this one's cached API responses.
     // Drop the data cache on logout (the app-shell precache is not user data,

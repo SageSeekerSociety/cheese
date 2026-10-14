@@ -3,6 +3,7 @@ import type { AcceptedDocuments, ConsentMethod } from '@/types/apiLegal'
 import { defineStore } from 'pinia'
 
 import { UserAuthApi } from '@/api/userAuth'
+import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
 
 interface SignupState {
   username: string
@@ -38,38 +39,26 @@ function readConsent(raw: unknown): Consent | null {
 }
 
 function loadPersisted(): Partial<Persisted> {
-  try {
-    const raw = JSON.parse(sessionStorage.getItem(STORAGE_KEY) ?? 'null')
-    if (!raw || typeof raw !== 'object') return {}
-    const text = (v: unknown) => (typeof v === 'string' ? v : '')
-    return {
-      username: text(raw.username),
-      nickname: text(raw.nickname),
-      email: text(raw.email),
-      inviteCode: text(raw.inviteCode),
-      consent: readConsent(raw.consent),
-      codeSentAt: typeof raw.codeSentAt === 'number' ? raw.codeSentAt : 0,
-    }
-  } catch {
-    return {}
+  const raw = storageGetJson<Record<string, unknown>>(STORAGE_KEY, 'session')
+  if (!raw || typeof raw !== 'object') return {}
+  const text = (v: unknown) => (typeof v === 'string' ? v : '')
+  return {
+    username: text(raw.username),
+    nickname: text(raw.nickname),
+    email: text(raw.email),
+    inviteCode: text(raw.inviteCode),
+    consent: readConsent(raw.consent),
+    codeSentAt: typeof raw.codeSentAt === 'number' ? raw.codeSentAt : 0,
   }
 }
 
 function persist(state: SignupState) {
   const { username, nickname, email, inviteCode, consent, codeSentAt } = state
-  try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify({ username, nickname, email, inviteCode, consent, codeSentAt }))
-  } catch {
-    // Storage unavailable: the flow still works until the page is refreshed.
-  }
+  storageSetJson(STORAGE_KEY, { username, nickname, email, inviteCode, consent, codeSentAt }, 'session')
 }
 
 function forgetPersisted() {
-  try {
-    sessionStorage.removeItem(STORAGE_KEY)
-  } catch {
-    // Storage unavailable: nothing was kept.
-  }
+  storageRemove(STORAGE_KEY, 'session')
 }
 
 const emailVerificationEnabled = () => import.meta.env.VITE_DISABLE_EMAIL_VERIFY !== 'true'

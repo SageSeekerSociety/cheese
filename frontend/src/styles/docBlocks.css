@@ -1379,6 +1379,27 @@ div[data-footnote]::before {
   transition: height var(--dur-quick) var(--ease-standard);
 }
 
+/* Until the app draws, the frame loads out of sight and this holds its room. */
+.doc-app__stage.is-loading iframe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.doc-app__loading {
+  position: relative;
+  min-height: 160px;
+  background: var(--fill);
+}
+
+.doc-app__loading img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
 /* Taller than a screen and a half: it fades out, with a way into full screen,
    instead of a second scroll inside the document. */
 :is(.doc-prose, .doc-reading) .doc-app__all {
@@ -1510,6 +1531,10 @@ div[data-footnote]::before {
 }
 
 .doc-app__note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
   padding: 14px;
   font-size: 13px;
   line-height: var(--lh-13);
@@ -1555,6 +1580,10 @@ html.doc-app-open body {
 
 .doc-app.is-full .doc-app__stage {
   min-height: 0;
+}
+
+.doc-app.is-full .doc-app__loading {
+  height: 100% !important;
 }
 
 .doc-app.is-full .doc-app__stage iframe {

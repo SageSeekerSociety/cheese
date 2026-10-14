@@ -179,7 +179,9 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
 
   // ---- 灯 ----
   // 状态那几盏的判据只写在 `lib/roomLight.ts` 一处；这一层只把后端给的事实凑齐，再带
-  // 上这只钟。频道行和任务行凑的是同样四样，所以两边的灯说的是同一件事。
+  // 上这只钟。频道行和任务行凑的是同一份事实，所以两边的灯说的是同一件事 —— 只有
+  // 「有人回复了我」是频道行单独一样（`replied_to_me`）：活有它自己那一行，那件事
+  // 后端只给频道算。
   //
   // 「点开过就灭」的长绿不在这里判：那由数据决定（服务端按已读位算 `unseen_delivery`，
   // 点开时 `stores/workspace` 先把本地那一份灭掉）。
@@ -197,6 +199,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     return lightFor(
       {
         awaitsMe: topic.awaits_me === true,
+        repliedToMe: topic.replied_to_me === true,
         moving: topic.moving === true,
         unseenDelivery: topic.unseen_delivery === true,
         lastOutputAt: topic.last_output_at,
@@ -206,11 +209,13 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   }
 
   /** 挂在频道下面的一条活。和频道行同一个判据，只是事实来自这条活自己那一份 ——
-   *  我负责的（以及没主的）活，状态那几盏都不亮时才补一盏蓝灯；别人的活不画蓝灯。 */
+   *  我负责的（以及没主的）活，状态那几盏都不亮时才补一盏蓝灯；别人的活不画蓝灯。
+   *  「有人回复了我」也不在这一份里：后端只给频道行算（见上），活这一行照旧读 false。 */
   function taskLight(task: RailTask): RowLight | null {
     const light = lightFor(
       {
         awaitsMe: task.awaits_me === true,
+        repliedToMe: false,
         moving: task.moving === true,
         unseenDelivery: task.unseen_delivery === true,
         lastOutputAt: task.last_output_at,

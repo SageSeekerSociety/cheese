@@ -178,6 +178,7 @@ def _topic_out(
     silent: Mapping[uuid.UUID, float] | None = None,
     unseen: Collection[uuid.UUID] | None = None,
     moving: Collection[uuid.UUID] | None = None,
+    answered: Collection[uuid.UUID] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
@@ -200,6 +201,9 @@ def _topic_out(
     # 这个频道名下有没有「交付完了、而这个人还没点开看过」的活（侧栏的长绿）。
     # `unseen` 一次算一整页，这里只查表；没有登录的人拿到的是空集，也就是不亮。
     out.unseen_delivery = topic.id in (unseen or ())
+    # 有没有人回复了我、而我还没处理（侧栏黄灯的另一半，`TopicOut.replied_to_me`）：
+    # 同一页一次算完，这里只查表；没有登录的人拿到空集，也就是不亮。
+    out.replied_to_me = topic.id in (answered or ())
     # 只在干活的队友，不要打字的人：这份列表的读者是侧栏，而侧栏只画在干活的队友，
     # 打字的人不画（`useTopicRail`）—— 这份列表三十秒才读一次，打字五秒就过去了，
     # 画出来多半已经不是真的。打字条目还带一个每次都变的 `expires_in`（还差几秒过期，
@@ -330,6 +334,11 @@ async def list_topics(
         if viewer
         else set()
     )
+    # 哪几间房里有人回复了我、而我还没处理 —— 侧栏那盏黄灯的另一半。一样一次查一
+    # 整页，`_topic_out` 只查表。
+    answered = (
+        await service.replied_to_me([t.id for t in topics], viewer) if viewer else set()
+    )
     # 哪几间房名下的活在交付链路上（侧栏呼吸绿的另一半）——同一批卡里读，不再查库。
     delivering = topics_signals.delivering_rooms(live)
     # 侧栏呼吸绿要看的那一份：这一行自己、它名下的活、它名下的支线，哪一处有活在
@@ -361,6 +370,7 @@ async def list_topics(
                 silent=silent,
                 unseen=unseen,
                 moving=moving,
+                answered=answered,
             ),
             "my_tasks": rails[t.id],
         }
@@ -469,6 +479,8 @@ async def get_topic(
     unseen = (
         await TaskService(db).unseen_deliveries([topic.id], viewer) if viewer else set()
     )
+    # 同 `list_topics`：这一间房里有没有人回复了我、而我还没处理（侧栏黄灯）。
+    answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
     # 同 `list_topics`：这一间房名下的活有没有走在交付链路上。
     delivering = topics_signals.delivering_rooms(live)
     rails = await rail_tasks(
@@ -496,6 +508,7 @@ async def get_topic(
                 silent=silent,
                 unseen=unseen,
                 moving=moving_ids | delivering,
+                answered=answered,
             ),
             "my_tasks": rails[topic.id],
         }

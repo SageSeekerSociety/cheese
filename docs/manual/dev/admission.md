@@ -68,8 +68,10 @@ covers:
 | 头 | 谁写 | 意思 |
 | --- | --- | --- |
 | `x-cheese-subagent: 1` | 计量代理 | 这是分身请求 |
-| `x-cheese-child-model` | 计量代理从请求体顶层 `model` 解析出来 | 指名（explicit） |
-| `x-cheese-requested-model` | 计量代理 | 请求体里的模型名，作为回退 |
+| `x-cheese-child-model` | 预加载从请求体顶层 `model` 抄来，计量代理随准入转发 | 指名（explicit）；2.1.283 起不再出现 |
+| `x-cheese-requested-model` | 计量代理从请求体顶层 `model` 解析出来 | 指名，2.1.283 起走的那条路；也是回退 |
+
+名字**永远**在请求体顶层那个 `model` 成员里，两条路的差别只在谁去读它。2.1.283 把 harness 自己的模型请求挪出了 JS 层（[harness 的 pin](/dev/harness#pins) 上 2.1.299 实测：整个回合零次 `fetch`），预加载那个 `x-cheese-child-model` 就此不再写上；计量代理于是走推迟那条路——把分身的 `/v1/messages` 整个缓冲下来（上限 `DEFER_BODY_LIMIT`，8 MiB），自己从体里读出名字，随 `x-cheese-requested-model` 带上来。后端把两个头合成同一个 `requested`（`api/routes/llm_proxy.py`），下游是同一段绑定与同一道策略门，所以指名这件事不因头消失而降级；超上限的分身体退回「按未指定绑定」。两条路的真分身请求各录了一份在 `backend/tests/fixtures/provider-recordings/`，两条用例把它们都回放进真实的计量代理。
 
 判定规则：
 
