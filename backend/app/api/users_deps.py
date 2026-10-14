@@ -43,14 +43,21 @@ identity and OAuth-unbind operations, and `challenge_from_credential`, used by p
 verification and sudo's WebAuthn assertion. Neither performs I/O or grants
 authorization; the calling route retains those responsibilities.
 
+A later group is the origin gate: `_require_same_origin` and the `_origin_of`
+it compares against. It guards a refresh and a sign-out against a request
+another site had the browser send, and `app_sign_in.py` asks for the same
+check on its handoff, so it is a name two route modules share rather than one
+route's own helper (a route module does not import another one: C4
+`routes-independent`). It reads the request's own headers and the configured
+origins, nothing else.
+
 What is deliberately not here. `_issue_sudo_ticket` stays in `users.py`: only
 that file mints, so moving it would put the minting side of the pair in a
 module named after what the *four* sides share while its sole caller sits
 somewhere else.
 `_trusted_device` stays: its callers read `trust is None` to pick the login
 method, so they still need the ORM row itself — only the session issue needed
-the id. `_require_same_origin` stays: it guards refresh and logout, not the
-mint.
+the id.
 
 Boundaries. Nothing here imports a domain's `models` or `repositories` module:
 the imports are `app.common.auth` (the ticket format and the access token),
@@ -66,6 +73,7 @@ import json as _json
 import logging
 import uuid
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from fastapi import Request, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -74,7 +82,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.common.auth import SudoPurpose, create_access_token, verify_sudo_ticket
 from app.core.client_address import resolved_client_address
 from app.core.config import GATEWAY_MOUNT, settings
-from app.core.errors import BadRequestError, InternalServerError, SudoRequiredError
+from app.core.errors import (
+    BadRequestError,
+    ForbiddenError,
+    InternalServerError,
+    SudoRequiredError,
+)
 from app.core.sentences import say
 from app.domain.user.sessions import SessionService
 from app.domain.user.trusted_devices import Granted, TrustedDeviceService
@@ -255,3 +268,38 @@ async def issue_session(
         )
     _set_refresh_cookie(response, started.refresh_token, started.expires_at)
     return create_access_token(user_id, handle=handle, sid=started.session_id)
+
+
+# The origin gate. A refresh and a sign-out ride a cookie the browser attaches
+# on its own, so the request has to be one this site sent; `app_sign_in` asks
+# for the same check on its handoff. Two modules, and it needs neither the
+# ticket nor the session above: it reads the request's own headers.
+def _origin_of(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}".lower()
+
+
+def _require_same_origin(request: Request) -> None:
+    """Refuse a refresh or sign-out that another site had the browser send.
+
+    SameSite=Lax keeps the cookie off a cross-site POST, but not off one from
+    a sibling subdomain, and older browsers do not apply it at all. Modern
+    browsers say where a request came from in Sec-Fetch-Site; older ones at
+    least send Origin on a POST. A request with neither did not come from a
+    browser, so it carries no cookie it did not mean to, and passes.
+    """
+    site = request.headers.get("sec-fetch-site")
+    if site is not None:
+        if site != "same-origin":
+            raise ForbiddenError("Cross-site request refused")
+        return
+    origin = request.headers.get("origin")
+    if origin is None:
+        return
+    trusted = {
+        _origin_of(settings.frontend_url),
+        *map(_origin_of, settings.cors_origins),
+    }
+    same_host = urlsplit(origin).netloc == request.headers.get("host")
+    if not same_host and _origin_of(origin) not in trusted:
+        raise ForbiddenError("Cross-site request refused")

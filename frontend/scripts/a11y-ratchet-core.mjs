@@ -10,7 +10,7 @@
 // colour contrast, what a screen reader actually announces. A green run says
 // none of the static patterns were added, not that the page is accessible.
 //
-// WHY A RATCHET. The tree breaks these rules in ~165 places across ~80 files.
+// WHY A RATCHET. The tree breaks these rules in ~159 places across ~79 files.
 // Freezing today's count per file and blocking only NEW violations makes the
 // rules enforceable now and lets the backlog be paid down file by file — the
 // reasoning behind tsc-baseline.json, stylelint-baseline.json and

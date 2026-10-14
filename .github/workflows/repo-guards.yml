@@ -76,12 +76,14 @@ jobs:
 
       # The mining tools judge platform history, not the tree, so they are not
       # guards — but a regression in them prints a wrong report, and nothing
-      # else runs their self-tests. Both are offline: no token, no network.
+      # else runs their self-tests. All are offline: no token, no network.
       # `retro --self-test` is what reaches trace_retro.py's self-test.
       - name: Trace tooling self-test
         run: |
           python3 .claude/scripts/trace-sweep.py --self-test
           python3 .claude/scripts/trace-sweep.py retro --self-test
+          python3 .claude/scripts/orchestrator_metrics.py --self-test
+          python3 .claude/scripts/orchestrator_sweep.py --self-test
 
       # The docker-free test services: how start treats a port already held by
       # a server of ours from older pins, or by someone else (stand-in binaries).

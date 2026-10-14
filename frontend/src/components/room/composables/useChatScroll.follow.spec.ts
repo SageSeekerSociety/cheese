@@ -48,6 +48,8 @@ async function mounted(content: number) {
       },
     })
   )
+  // 和 ChatPanel 里一样，滚动框和输入框那一块是同一层里的兄弟。
+  document.createElement('div').append(box.el, document.createElement('div'))
   scroll.scrollRef.value = box.el
   scroll.contentRef.value = document.createElement('div')
   await nextTick()
@@ -115,5 +117,50 @@ describe('打开话题，底下的行画出来变高了', () => {
     expect(box.el.scrollTop).toBe(300)
     expect(scroll.atBottom.value).toBe(false)
     expect(scroll.restoresToBottom('t-read')).toBe(false)
+  })
+})
+
+// 正文被就地改写（话题标题刷新时每条消息都重画）：新插进来的块先按估计高度排，内容
+// 短了一下，浏览器把 scrollTop 夹到那个更短的底部；真实高度随即回来，ResizeObserver
+// 什么都没看到，scroll 事件里高度也和上次一样。桌面端每当项目里有件任务一动就这样
+// 被甩上去几百像素，「回到最新」冒出来。
+describe('正文被就地改写', () => {
+  async function rewrite(box: ReturnType<typeof pane>, content: HTMLElement, to: number) {
+    content.append(document.createElement('p'))
+    await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
+    box.el.scrollTop = to // 浏览器夹下来的位置，高度已经回到原样
+  }
+
+  it('没人动，位置却往上挪了：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    await rewrite(box, scroll.contentRef.value!, 1600 - 620)
+    scroll.rememberScroll('t-rewrite') // 那个 scroll 事件
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
+    expect(scroll.restoresToBottom('t-rewrite')).toBe(true)
+  })
+
+  it('人正好在这时用滚轮往上翻：算他翻走了，不拽回去', async () => {
+    const { box, scroll } = await mounted(2000)
+    box.el.dispatchEvent(new WheelEvent('wheel', { deltaY: -300 }))
+    await rewrite(box, scroll.contentRef.value!, 1300)
+    scroll.rememberScroll('t-wheel')
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1300)
+  })
+})
+
+// 滚动框底下那一块（输入框、「谁在忙」那一行）在同一个任务里没了又回来：这一下滚动框
+// 变高，停在底部的位置被夹上去；它回来时滚动框高度复原，位置却留在了上面。
+// ResizeObserver 看不到，时间线里也一个节点都没变。
+describe('滚动框底下那一块闪了一下', () => {
+  it('没人动，位置却往上挪了：仍算停在底部，回到最新一条', async () => {
+    const { box, scroll } = await mounted(2000)
+    box.el.parentElement!.lastElementChild!.append(document.createElement('div'))
+    await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
+    box.el.scrollTop = 1600 - 196
+    scroll.rememberScroll('t-composer')
+    expect(scroll.atBottom.value).toBe(true)
+    expect(box.el.scrollTop).toBe(1600)
   })
 })

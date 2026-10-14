@@ -57,7 +57,7 @@ function mountRow(item: FeedbackCard) {
 }
 
 /** meta 行里作者那一张脸。找不到就是没画。 */
-function authorChip(container: HTMLElement) {
+function authorChip(container: Element) {
   return container.querySelector('.qrow__meta .identity-view')
 }
 

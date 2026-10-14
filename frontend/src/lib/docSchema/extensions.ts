@@ -12,7 +12,7 @@ import { Extension, InputRule, Mark, mergeAttributes, Node } from '@tiptap/core'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Image from '@tiptap/extension-image'
 import { ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
-import { TableKit } from '@tiptap/extension-table'
+import { Table, TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
@@ -274,6 +274,20 @@ const DocComment = Node.create({
   },
 })
 
+// GFM splits a table row on every `|` not escaped as `\|` — inside a code
+// span too, and it takes the backslash back off before the cell is read. The
+// upstream renderer writes a cell's text as is, so a cell saying `a|b` (in
+// code or not) came back as two cells. Every `|` a cell renders is written
+// `\|`; text backslashes are already escaped by then, so nothing else reads
+// as an escape.
+const DocTable = Table.extend({
+  renderMarkdown(node, helpers, context) {
+    const renderChildren: typeof helpers.renderChildren = (nodes, separator) =>
+      helpers.renderChildren(nodes, separator).replace(/\|/g, '\\|')
+    return Table.config.renderMarkdown!(node, { ...helpers, renderChildren }, context)
+  },
+})
+
 // An item can open with an empty line and hold only a nested list (an editor
 // makes one by indenting the item below an empty bullet). Written as "- "
 // with its trailing space, marked reads that line as a paragraph saying "- "
@@ -363,7 +377,8 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     // module-only member, and nothing in the package calls it.
     Markdown.configure({ marked: docMarked as unknown as typeof marked }),
     DocComment,
-    TableKit.configure({ table: { resizable: false } }),
+    TableKit.configure({ table: false }),
+    DocTable.configure({ resizable: false }),
     DocListItem,
     DocOrderedList,
     TaskList,

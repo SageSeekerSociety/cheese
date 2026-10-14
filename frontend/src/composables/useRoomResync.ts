@@ -31,7 +31,9 @@ import { setCachedWindow } from '@/query/blocks'
 /**
  * 断线重连：屏幕上正是这间房，什么都不清。读回最新一页就地合进时间线，再开 socket；
  * 现场等连上后的 room_state 核对。输入框、待发的图片、正在编辑的那条、未读线、滚动
- * 位置是读的人自己的，一样不动。
+ * 位置是读的人自己的，一样不动。接不上（断线期间来了不止一页）时，停在最新那条上的人
+ * 整段换成最新一页、落到最新那条；正读着别处的人，屏幕上那段原样留着，最新一页收在
+ * 背后，「回到最新」那颗药丸带他过去（见 mergeResyncedPage）。
  *
  * 补读（`catchUp`）是同一件事去掉断线的那一半：连接好好的，只是读的那一页早于订阅
  * 生效，中间落下的那几条两头都没带来（useRoomTail）。按编号只读那几条，各自按时间
@@ -52,6 +54,10 @@ export function useRoomResync(room: {
     atBottom: Ref<boolean>
     /** 跟到最新：来了新的而读的人停在底部时。 */
     follow: () => void
+    /** 落到最新那条上（整段换成最新一页之后）。 */
+    scrollToBottom: () => void
+    /** 这间房记下的滚动位置作废：再打开时显示的是最新一页，那个偏移指的不是它。 */
+    forgetScroll: (topicId: string) => void
     /** 一屏没画满就往回补（最新一带常常整页不露面）。 */
     fill: () => Promise<unknown>
   }
@@ -78,10 +84,15 @@ export function useRoomResync(room: {
     fresh.blocks = applyLiveChanges(fresh, read.changes, read.reactions)
     // 排队中的那几轮核对不了：断线期间可能已经跑完了。
     if (afterOutage) room.runRecords.forgetWaiting()
-    const grew = mergeResyncedPage(room.timeline, room.runRecords, fresh)
+    const merged = mergeResyncedPage(room.timeline, room.runRecords, fresh, room.scroll.atBottom.value)
     for (const block of fresh.blocks) room.settle(block)
     setCachedWindow(topicId, room.timeline.newest())
-    if (grew && room.scroll.atBottom.value) room.scroll.follow()
+    // 换掉了整段：照旧的 scrollTop 指的是新内容里随便哪个高度，落到最新那条上。
+    // 收在了背后：屏幕上那段没动，滚动也不动；只是下次打开这间房显示的是缓存里的最新
+    // 一页，记下的那个偏移是原来那段里的，作废。
+    if (merged === 'replaced') room.scroll.scrollToBottom()
+    else if (merged === 'held') room.scroll.forgetScroll(topicId)
+    else if (merged === 'grew' && room.scroll.atBottom.value) room.scroll.follow()
     return true
   }
 
@@ -138,25 +149,39 @@ export function useRoomResync(room: {
   return { resync, catchUp }
 }
 
-/** 把重连后读回来的最新一页合进时间线。返回最新的那一块换没换（来了新的）。 */
+/**
+ * 把重连后读回来的最新一页合进时间线。答这一页怎么落的：
+ * - `replaced`：接不上，读的人停在最新那条上（`atBottom` 且显示的是最新一段），整段
+ *   换成了这一页；
+ * - `held`：接不上，读的人正读着别处，屏幕上那段原样留着，这一页收在背后；
+ * - `grew`：接上了，最新的那一块换了（来了新的）；
+ * - `same`：接上了，最新的那一块没换。
+ */
 export function mergeResyncedPage(
   timeline: ReturnType<typeof useTimeline>,
   runRecords: ReturnType<typeof useRunRecords>,
-  fresh: BlockWindow
-): boolean {
+  fresh: BlockWindow,
+  atBottom: boolean
+): 'replaced' | 'held' | 'grew' | 'same' {
   // 断线期间开始又结束的轮次，排队那一行要知道它已经开始过了：它在历史里留下的块
   // 带着轮次 id。
   for (const block of fresh.blocks) if (block.turn_id) runRecords.turnBegan(block.turn_id)
   const newestBefore = timeline.newest().blocks.at(-1)?.id
   const plan = resyncTail(timeline.newest().blocks, fresh, timeline.newestSeenAt())
   if (plan.gap) {
-    // 断线期间来了不止一页：中间那截没读过，接上会留一个看不见的洞。
-    timeline.show(fresh)
-  } else {
-    for (const id of plan.removed) timeline.remove(id)
-    for (const block of plan.upserts) upsert(timeline, block)
+    // 断线期间来了不止一页：中间那截没读过，接上会留一个看不见的洞。停在最新那条上的
+    // 人整段换掉；读着别处的人（往上翻着、停在历史中间）还看着原来那段，换掉就把他从
+    // 读的那条上拽走了——收在背后，往下翻或点「回到最新」再过去。
+    if (atBottom && !timeline.hasNewer.value) {
+      timeline.show(fresh)
+      return 'replaced'
+    }
+    timeline.holdNewest(fresh)
+    return 'held'
   }
-  return timeline.newest().blocks.at(-1)?.id !== newestBefore
+  for (const id of plan.removed) timeline.remove(id)
+  for (const block of plan.upserts) upsert(timeline, block)
+  return timeline.newest().blocks.at(-1)?.id !== newestBefore ? 'grew' : 'same'
 }
 
 function upsert(timeline: ReturnType<typeof useTimeline>, block: Block) {

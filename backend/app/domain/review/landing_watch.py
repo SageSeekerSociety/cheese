@@ -28,7 +28,10 @@ from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.harness.prompt import main_checks_failed_prompt
-from app.domain.agent.platform_notices import (
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.delivery.addressing import Event
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.notice_meta import (
     EVENT_DEPLOY_DONE,
     EVENT_DEPLOY_FAILED,
     EVENT_MAIN_CHECKS_FAILED,
@@ -38,15 +41,13 @@ from app.domain.agent.platform_notices import (
     WHO_PLATFORM,
     notice,
 )
-from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.delivery.addressing import Event
-from app.domain.identity.handles import agent_instance_handle
 from app.domain.project.forge import background_quota, quota_serves_background
 from app.domain.project.models import Project
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import Check, ForgeUnavailable, LandingReads
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
-from app.domain.review.task_landing import tell_agent
+from app.domain.review.room_notices import tell_room_undelivered
+from app.domain.review.task_landing import go_on_while_working, tell_agent
 from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService
@@ -60,11 +61,15 @@ _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
 
 async def watch_landings(chat) -> dict:
-    """One look at every merge still being watched, and the overdue closings."""
+    """One look at every merge still being watched, the tasks being written up
+    whose AI teammate has gone on working, and the overdue closings."""
 
     sessions = chat.session_factory
+    gone_on = await go_on_while_working(sessions)
     async with sessions() as session:
         closed = await close_overdue(session, chat)
+        for overdue in closed:
+            await tell_room_undelivered(session, overdue)
         await session.commit()
         ids = list(
             await session.scalars(
@@ -86,7 +91,12 @@ async def watch_landings(chat) -> dict:
         except Exception as exc:  # noqa: BLE001 — one merge must not stop the rest
             errors.append(f"{landing_id}: {exc}")
             logger.warning("landing watch failed for %s", landing_id, exc_info=True)
-    return {"closed": len(closed), "landings_looked_at": looked, "errors": errors}
+    return {
+        "gone_on": len(gone_on),
+        "closed": len(closed),
+        "landings_looked_at": looked,
+        "errors": errors,
+    }
 
 
 async def _look(chat, landing_id: uuid.UUID) -> int:

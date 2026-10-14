@@ -42,15 +42,22 @@ export function useThreadLines(opts: {
     return live.get(thread.id) ?? thread.replying ?? []
   }
 
-  /** 这条消息下面那一行要写谁正在回复；没有人就是 null。 */
-  function replyingFor(m: Block): string | null {
-    if (!opts.mainLine() || !m.thread) return null
+  /** 此刻在这条消息的支线里回复的队友（handle）；没有人就是空的。那一行的头像里有它们：
+   * 还没有回复时 `participants` 只有发起的人，不补上就是「芝士 正在回复」配着发起人的脸。 */
+  function replyingSeats(m: Block): string[] {
+    if (!opts.mainLine() || !m.thread) return []
     const who = answering(m.thread)
-    if (who.length) return opts.agentNameOf(who[0])
+    if (who.length) return who
     // 还没开始、在排队的那一轮：它的队友也算在回复，只是还在等。
     const queued = waits.get(m.thread.id)
     const seat = queued && isQueued(queued) ? queued.meta?.seat : null
-    return typeof seat === 'string' ? opts.agentNameOf(seat) : null
+    return typeof seat === 'string' ? [seat] : []
+  }
+
+  /** 这条消息下面那一行要写谁正在回复；没有人就是 null。 */
+  function replyingFor(m: Block): string | null {
+    const [seat] = replyingSeats(m)
+    return seat ? opts.agentNameOf(seat) : null
   }
 
   /** 那位队友此刻在等什么（排队、重试、整理上下文、等环境）；说不出就是 null。 */
@@ -145,7 +152,7 @@ export function useThreadLines(opts: {
     return refreshing
   }
 
-  return { replyingFor, statusFor, onActivity, onStatus, refresh }
+  return { replyingFor, replyingSeats, statusFor, onActivity, onStatus, refresh }
 }
 
 /** 支线里我上一句叫过 AI 队友：打开时输入框先带上的那几个字；否则空串。 */

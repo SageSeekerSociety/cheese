@@ -84,17 +84,18 @@ from app.core.errors import (
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.platform_notices import (
-    EVENT_MENTION_FUSED,
-    SEVERITY_WARN,
-    WHO_PLATFORM,
-    notice,
-)
+from app.domain.agent.mentions import mentioned_outside
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn  # noqa: F401
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.note import send_note
+from app.domain.notice_meta import (
+    EVENT_MENTION_FUSED,
+    SEVERITY_WARN,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.room_task.services import TaskService
 from app.domain.thread.services import answered_in
 from app.domain.topic.services import TopicService
@@ -182,7 +183,14 @@ async def send_chat_message(
         client_id=str(body.request_id),
     )
     stored = await BlockRepository(db).get(anchor_id)
-    return ok(BlockOut.model_validate(stored).model_dump(mode="json"))
+    sent = BlockOut.model_validate(stored).model_dump(mode="json")
+    # Told to the sender alone, in this answer, and never stored: whom the
+    # message names that the channel does not seat (Slack's "X isn't in this
+    # channel"). The sender decides whether to add them.
+    outside = await mentioned_outside(db, place.room, sent["content"], actor.handle)
+    if outside is not None:
+        sent["mentioned_outside"] = outside.as_json()
+    return ok(sent)
 
 
 async def _publish_as_agent(

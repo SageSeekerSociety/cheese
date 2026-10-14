@@ -143,8 +143,8 @@ export const ACCEPT_CHECKS = frame(4).checks
  * 画它的是 `RoomMessage.vue` 本身：`meta.options` 躺在那儿，消息下面是一排快捷回复；
  * 有人答过之后 `meta.answer_log` 记下答过的每一句，房间画成「谁说了什么」。
  *
- * 字段形状照后端写（`block/questions.py`）：`meta.asked` 是**在等谁答**那个 handle
- * 或 null，不是布尔。
+ * 字段形状照后端写（`block/questions.py`）：`meta.asked` 是**问了谁**的 handle
+ * 列表（空的是没点名），不是布尔。
  */
 const ASK_TEXT = '这次的作业按哪种方式收？'
 const ASK_OPTIONS = [{ text: '课程平台收文件' }, { text: '发到课程邮箱' }, { text: '课上交纸质' }]
@@ -152,7 +152,7 @@ const ASK_OPTIONS = [{ text: '课程平台收文件' }, { text: '发到课程邮
 const ASK_WAITING_FOR = 'wang'
 
 function askRow(answered: { option: string; by: string } | null): RoomRow {
-  const meta: Block['meta'] = { asked: ASK_WAITING_FOR, options: ASK_OPTIONS }
+  const meta: Block['meta'] = { asked: [ASK_WAITING_FOR], options: ASK_OPTIONS }
   if (answered) {
     meta.answer_log = [
       {
@@ -675,8 +675,11 @@ export const RAIL_ROOT_TOPIC: Topic = {
   created_at: '2026-09-20T08:00:00Z',
 }
 
-/** 项目名下那一行（资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。总览不在这里。 */
-export const RAIL_PAGES = [{ key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' }]
+/** 项目名下那一行（总览、资料库，见 `lib/shell.ts` 的 `projectPageLayout`）。 */
+export const RAIL_PAGES = [
+  { key: 'workspace-overview', label: 'navigation.project.overview', icon: 'mdi-view-dashboard-outline' },
+  { key: 'project-library', label: 'navigation.project.library', icon: 'mdi-folder-outline' },
+]
 
 /** 壳换了词之后的项目词汇表（「{project}文档」靠它渲染）。 */
 export const RAIL_TERMS = { project: '项目', topic: '话题' }
@@ -990,9 +993,3 @@ export function chatTimelineProps(over: Record<string, unknown> = {}): Record<st
     ...over,
   }
 }
-
-/** 环境选择：两台登记的电脑，实验室那台是别人的，家里那台是读者自己的（离线）。 */
-export const COMPUTE_DEVICES = [
-  { device_id: 'lab', name: '实验室工作站', online: true, owned: false },
-  { device_id: 'home', name: '家里那台', online: false, owned: true },
-]

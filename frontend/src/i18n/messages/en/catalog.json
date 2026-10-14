@@ -1069,6 +1069,21 @@
       "note": "The third step: list this set of backup codes, remind that they're shown only this once and each works once, and offer a button to copy the whole set."
     }
   },
+  "modelConnectionsView": {
+    "about": "Model connections in account settings: the accounts or model services your Claude Code is logged in with on each device, where each is stored, when it was last checked and used, with check again and remove, and a custom model service for an online device; and the API keys and model services kept on your account, with the key's last four characters, service host, model and last check, and test, rename and remove.",
+    "s1": {
+      "name": "No connections",
+      "note": "Logged in on no device and nothing kept on the account: the card says there are no model connections, and the buttons to add an API key, add a model service or use one on a device stay at its top right."
+    },
+    "s2": {
+      "name": "Removing on an offline device",
+      "note": "Removed while its device is offline: no longer used, marked as removing, with a line saying it logs out when the device comes online; no check or remove buttons."
+    },
+    "s3": {
+      "name": "A key on the account fails its check",
+      "note": "The service refused the key when it was tested again: marked as failing the check, with what the service said below; it can still be tested again, renamed or removed."
+    }
+  },
   "thisDeviceView": {
     "about": "Account settings 'This device': whether the computer the desktop app runs on is connected, what it's called, which teams it's offered to, the owner's own Claude Code, and disconnecting the device.",
     "s1": {
@@ -1139,7 +1154,7 @@
     },
     "s5": {
       "name": "Show closed",
-      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Completed' group, and the counts come from the server's set."
+      "note": "Switching to 'Closed' stops grouping, everything drops into the 'Closed' group, and the counts come from the server's set."
     },
     "s6": {
       "name": "Folds a few stalled",

@@ -8,6 +8,7 @@ covers:
   - backend/app/api/routes/topics_tasks.py
   - backend/app/api/task_instructions.py
   - backend/app/api/routes/awaiting.py
+  - backend/app/api/awaiting_deps.py
   - backend/app/api/routes/git_http.py
   - backend/app/domain/delivery/addressing.py
   - backend/app/domain/task/attachment_service.py
@@ -48,10 +49,10 @@ covers:
 |---|---|---|
 | `accepted_at` | 每次采纳（那次合并成功），记最近一次 | 交付标记，和 `status` 无关；批准被撤销也不抹掉 |
 | `delivered_head` | 同上，记下最近合进去的那一版 | 下一步的工作目录从这里把没合进去的提交带走 |
-| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写总结的那一轮结束就关闭，最晚 45 分钟（`room_task.closing`）；这期间显示「已采纳」 |
+| `closing_since` | 最后一步采纳时 | 任务还开着，AI 队友写总结的那一轮结束就关闭，最晚 45 分钟（`room_task.closing`），但任务里有总结以外的一轮在跑、或有一条消息在等轮次时不关，最晚再等两小时；这期间显示「已采纳」 |
 | `closed_at` | 负责人或任务的会话关闭（`cheese_close_task`），或最后一步采纳后那一轮总结结束时的关闭 | `status` 变 `closed` 的**时刻**，独立于「是不是 closed」 |
 
-所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」「已完成」「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已采纳」。
+所以有两条容易读错的组合：一条活可以**采纳过前几步却还开着**（分步交付，见[分步交付](#steps)），也可以**关掉却什么都没交付**（显式放弃）。显示状态先看开没开着：关了的才按有没有采纳写「已采纳」或「已关闭」，开着的照常按进度写（`presentation.task_presentation` 的第一条规矩）。唯一的例外是 `closing_since` 那一会儿：任务还开着，已经写「已采纳」。
 
 窗口跟着关闭一起结束：任何一条关闭路径都清掉 `closing_since`（`close_task`）。关了的任务没有在等的总结，而留着它，负责人重开时拿到的会是一条开着却写「已采纳」的任务 —— 左侧栏要 `closing_since` 为空、「未完成」要它不显示「已采纳」、「已关闭」要 `status` 是 closed，三个哪儿都不收它（2026-10-11，任务 #58）。
 
@@ -87,7 +88,7 @@ covers:
 
 **转交**：`PATCH /topics/{task}/task`（`GET` 同一个地址读任务本身），负责人把任务交给房间里的另一个人（`owner_handle`），或换一位 AI 队友（`agent_handle`，项目里一位队友的座位，`null` 交还频道的队友）。转交前，任务里执行环境落在新负责人不能用的电脑上的队友（原负责人自己的电脑，不进沙箱或那人电脑的规格），先照换环境的流程换到新负责人能用的那个（`environments.usable_by_owner`：任务的默认、房间的默认、项目默认，不能用的跳过，最后是标准沙箱），任务指着这样一台电脑的默认清掉；推送不成功就不转交，说明原因。
 
-**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带结论是「已完成」，不带是「已关闭」；房间里落一条平台消息说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
+**关闭**：`POST /topics/{task}/close`，负责人或这条任务自己的会话（`cheese_close_task`）。带不带结论都显示「已关闭」，结论跟在房间里落的那条平台消息后面，说它怎么结束的。任务一关闭——负责人关、写总结的那一轮结束或被放弃、采纳后 45 分钟到点，都走同一个 `room_task/closing.close_task`——AI 队友在这条任务里还没做完的那一轮就被打断，写下的留着。后三种是平台自己关的，任务里有总结以外的一轮在跑、或有发给 AI 队友的消息还在等轮次时（`closing.unfinished`）一律不关，等它们没了之后的那次再关；一轮超过孤儿清扫的静默上限（`turn_silence_timeout_s`）没有新输出就不再算在跑。这样平台自己关任务打断的通常只有写总结的那一轮；唯一的例外是采纳 45 分钟再过两小时（`closing.STOP_WORK_AFTER`）还没停的活，到这时任务照关、那一轮照停，房间里落一条平台消息列出没交付的是什么（`review/room_notices.tell_room_undelivered`）。打断的方式：关闭落到持有会话的后端就当场打断（`ChatService.stop_work`）；落到别的后端（部署交接时接手的那个）时，持有会话的进程按任务已关闭的状态打断（`ChatService.stop_work_in_closed_tasks`，每 `closed_task_stop_interval_s` 看一次）。任务自己的会话关闭时不当场打断，那一轮就是它自己；关闭 30 秒后还在跑，同样打断。交付的改动被采纳时任务自己关。负责人或任务的会话关闭任务时，任务那个还开着的 PR 在提交后被关掉，分支留着（`review/task_pr.close_pr_after_commit`）；已经合并或已经关掉的 PR 不动。随项目归档一起关掉的任务不碰它的 PR，理由见 `review/archive.py`：归档的人未必是这个 PR 的请求人。关 PR 失败不挡关闭，只在日志里留一条 warning，PR 保持开着。
 
 平台对任务说的话（验收退回、检查红了、冲突、依赖通知、消息被编辑）经投递账本直接交给任务自己的会话（`delivery/agent.py` 的 `record_task_instruction`），不经房间的芝士转。任务对话里花的钱记在房间下，也记在任务下（`usage.task_id`）。任务里每位队友的执行环境是自己的；它第一次要手时按 任务的默认（`tasks.default_environment`）→ 房间的默认（`topics.default_environment`）→ 项目默认 取一份，之后默认再变也不跟着动。负责人、项目管理员、任务此刻所占设备的主人，或任务自己的会话，用 `PUT /topics/{task}/sessions/{session}/environment` 换一位、用 `PUT /topics/{task}/environment-default` 改任务的默认；设备页的批量挪走对任务会话走的就是前一条。共享给项目所在团队的设备谁的任务都能用；只放进这个项目、没共享给团队的设备算接入人自己的电脑，只做接入人本人负责的任务（`environment.works_tasks_of`）：选不了，那个人电脑的沙箱也不放在上面。
 
@@ -158,7 +159,7 @@ covers:
 
 一件任务可以交付好几次。每次递卡时芝士说明这是不是最后一步（`cheese_accept_request` 的 `completes_task`，存在 `AcceptCard.completes_task`；这一列之前递的卡都算最后一步）。合并之后怎么走只在一处决定（`review/task_landing.py` 的 `delivery_landed`），采纳、合并队列、轮询器、在托管平台上直接合并的那几条路都经过它：
 
-- 最后一步：任务关闭，`after_close` 收拾机器上的工作目录。
+- 最后一步：AI 队友写完总结后任务关闭（见上面 `closing_since`），`after_close` 收拾机器上的工作目录。例外是合并落地时，或者写总结的窗口里，AI 队友正在做递卡之后才开始的事（任务里有它自己的一轮在跑，起于这张卡递上之后，由人或它自己发起；平台发起的那几种——别的座位被叫进任务、冲突/CI 修复指令——不算），或者任务里有一条发给它的消息在等轮次（窗口里由 `landing_watch` 每一跳看一次，`task_landing.go_on_while_working`，每条任务各自一个事务，一条够不着代码托管不影响别的）：那件事不在这次合并里，关掉任务就把它半路打断、也没处交付，所以这次合并按「不是最后一步」走，平台叫芝士把手上的活作为下一步交付，没东西可交就自己关任务。没送出去的总结指令不再发（`delivery.agent.dispatch_pending`）。
 - 不是最后一步：任务开着，`TaskService.next_step` 把它换到一条从默认分支切出的新分支上（`task/<id>` 之后是 `task/<id>-2`、`-3`……），清掉 `pr_number`，下一步开自己的 PR；平台在任务的会话里留一条指令叫芝士接着做。叠在它旧分支上的任务由 `retarget_completed_dependencies` 改到默认分支。
 
 **一笔合并只落地一次**：`delivery_landed` 按 PR 号认，已经在 `task_landings` 里落过的那一笔直接不做。几条路看到的是同一笔合并，而任务可能早换到下一步的分支上、或者已经被重开了 —— 第二次落地会把已经走过去的任务再关一次。没有 PR 的交付（一份产物、一个网址）不写 `task_landings`，也就不受这条约束。
@@ -179,14 +180,14 @@ covers:
 | `building` 进行中 | 开始了，还没递出交付 | 运行中、已开始、空闲（房间）、草稿（房间） |
 | `delivering` 检查中 | 下一步在平台 / 芝士手上 | 检查运行中、等待检查、修复检查、解决冲突、平台更新分支 |
 | `needs_you` 待处理 | 下一步在人手上 | 检查未通过、待审阅、已退回、待回答 |
-| `done` 已完成 | 已关闭：最后一步已采纳，或没交付就关了 | 已采纳、已完成（留了结论）、已关闭 |
+| `done` 已关闭 | 已关闭：最后一步已采纳，或没交付就关了 | 已采纳、已关闭（留没留结论都是这一句） |
 | `archived` 已归档 | 房间才有；任务不归档 | 已归档 |
 
 同一个客观事实会因为「谁负责下一步」落在不同列：CI 红了但平台已经派芝士去修是 `delivering`（显示「修复检查」）；芝士推不上去、那个红没人能清掉就是 `needs_you`（显示「检查未通过」）。列**从短语推出来**（`_show`：每个短语是它那一列专属枚举的成员，列由成员的类型查表得到），所以「显示了一句不属于本列的话」在结构上写不出来。
 
-「待我处理」那份清单（`api/routes/awaiting.py` + `room_task/awaiting.py`）读的是**同一个** `task_presentation` / `room_presentation`，差别只有范围：「全部任务」是一个项目内全部，清单是跨项目、且点到我的那些。它不能从通知表拼出来——通知是一条条事件记录，卡被驳回、作废或别人先处理掉了，那条记录还躺着，而从它身上读不出已经不作数了；一份「现在还没处理完的有哪些」必须从当下的事实重算。
+「待我处理」那份清单（`api/awaiting_deps.py` 的 `waiting_items` + `room_task/awaiting.py`）读的是**同一个** `task_presentation` / `room_presentation`，差别只有范围：「全部任务」是一个项目内全部，清单是跨项目、且点到我的那些。它不能从通知表拼出来——通知是一条条事件记录，卡被驳回、作废或别人先处理掉了，那条记录还躺着，而从它身上读不出已经不作数了；一份「现在还没处理完的有哪些」必须从当下的事实重算。
 
-收件人判据也只有一份（`delivery/addressing.py` 的 `address()`，通知投递读的也是它），六种关系：验收人（卡是递给他的）、提需求的人（他等的东西有了结果）、被问的那个人（芝士停在待确认问题上，只有他能回答）、任务负责人（下一步只有他能推：任务文档写好了等他开始、检查红了芝士清不掉、被退回之后没人在改，见 `presentation.owner_acts_on`；只是任务开着不算）、设备的主人（有 agent 开始在他登记的机器上干活）、公告的读者（空间发了一条公告，发布那一刻空间里除作者以外的每个人）。一件事从「平台手上」转入「参与者手上」的那一刻通知那一个人，一次；平台手上的事（含「已完成」「已归档」）谁都不通知。
+收件人判据也只有一份（`delivery/addressing.py` 的 `address()`，通知投递读的也是它），六种关系：验收人（卡是递给他的）、提需求的人（他等的东西有了结果）、被问的那个人（芝士停在待确认问题上，只有他能回答）、任务负责人（下一步只有他能推：任务文档写好了等他开始、检查红了芝士清不掉、被退回之后没人在改，见 `presentation.owner_acts_on`；只是任务开着不算）、设备的主人（有 agent 开始在他登记的机器上干活）、公告的读者（空间发了一条公告，发布那一刻空间里除作者以外的每个人）。一件事从「平台手上」转入「参与者手上」的那一刻通知那一个人，一次；平台手上的事（含「已关闭」「已归档」）谁都不通知。
 
 ## 题目附件 {#task-attachments}
 

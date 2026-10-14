@@ -94,12 +94,12 @@ covers:
 
 - **错过了就不补**：计划时刻晚于现在超过 `MISSED_GRACE`（15 分钟）的，执行记成 `skipped`，理由写「平台当时没有运行，这一次不补跑」，频道里不落消息。补跑一条几小时前的定时任务，通常比不跑更糟。
 - **不重复**：唯一约束那一步返回空就说明这个时刻已经响过了，`_fire` 直接返回。
-- **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；「任务完成触发工作、工作又开任务」也绕得起来，靠的是上面那条每小时上限：周期任务跑出来的一轮可以用 `cheese_task` 创建任务。
+- **不会自己绕圈**：事件规则一小时内最多 `EVENT_RUNS_PER_HOUR`（6）次，超出的落 `skipped`；「任务关闭触发工作、工作又开任务」也绕得起来，靠的是上面那条每小时上限：周期任务跑出来的一轮可以用 `cheese_task` 创建任务。
 - **扫描是并发的**：`_fire_schedules` / `_fire_events` / `announce_archived_rooms` / `_settle_open_runs` / `_announce_finished` 都 `with_for_update(skip_locked=True)`，多个后端进程同时在跑也不会互相排队或重复处理。
 
 ## 平台自己的钟：PeriodicRunner {#sweep}
 
-`backend/app/periodic_jobs.py` 集中装配平台全部 32 项常驻巡检：工单 PR 轮询、草稿 PR 扫描、孤儿轮次清扫、定时投递、周期任务（interval 30 秒）、任务截止、记忆整理、邮件与推送队列……各领域登记自己的任务；应用层保留名称和顺序清单，缺项、重复或未列出的任务都会报错。通用运行器仍在 `backend/app/core/background.py`。
+`backend/app/periodic_jobs.py` 集中装配平台全部 34 项常驻巡检：工单 PR 轮询、草稿 PR 扫描、孤儿轮次清扫、定时投递、周期任务（interval 30 秒）、任务截止、记忆整理、邮件与推送队列……各领域登记自己的任务；应用层保留名称和顺序清单，缺项、重复或未列出的任务都会报错。通用运行器仍在 `backend/app/core/background.py`。
 
 `PeriodicRunner` 把每条常驻任务都会踩的四个坑一次收掉：强引用（`spawn`）、**interval ≤ 0 表示这台机器不跑它**（部署和测试共用的那个开关）、一次崩掉只算一次而不是让循环死掉、以及只在**这一轮真的做了点什么**的时候打日志（每分钟「扫了 0 条」的日志没人看，`_worth_reporting` 于是让 `{"failed": 0}` 闭嘴）。
 

@@ -70,7 +70,7 @@ describe('orderedNav: 顺序听壳的，认不认得听前端的', () => {
   it('default 壳下三个面逐格就是今天的样子', () => {
     expect(orderedNav(DEFAULT_SHELL, 'rail', ['home', 'projects', 'add'])).toEqual(['home', 'projects', 'add'])
     expect(orderedNav(DEFAULT_SHELL, 'tabs', ['home', 'workspace', 'inbox'])).toEqual(['home', 'workspace', 'inbox'])
-    // 项目页的顺序：资料库摆在项目名下，成员排在菜单第一个（「退出项目」在那一页）。
+    // 项目页的顺序：总览和资料库摆在项目名下，成员排在菜单第一个（「退出项目」在那一页）。
     expect(orderedNav(DEFAULT_SHELL, 'project', KNOWN)).toEqual([
       'project-library',
       'project-members',
@@ -103,27 +103,38 @@ describe('termParams: 词表切文案，壳没说就回落 catalog', () => {
   })
 })
 
-describe('projectPageLayout: 项目名下那一行只有资料库，其余（含总览）都在项目名菜单里', () => {
-  it('项目名下那一行只有资料库', () => {
-    // 这一行加一格，频道就往下挪一行；用户整理过不止一次，几个版本后又是一摞入口。
+describe('projectPageLayout: 项目名下那一行是总览和资料库，其余都在项目名菜单里', () => {
+  it('壳点名了更多页，项目名下也只有总览和资料库', () => {
+    // 这一行长一格，频道就往下挪一行；用户整理过不止一次，几个版本后又是一摞入口。
     // 新页面进项目名菜单。改这一条之前先读 .claude/rules/project-sidebar.md。
     const everything = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: [...KNOWN, 'project-skills'] } })
     const { bar } = projectPageLayout(everything, [...KNOWN, 'project-skills'])
-    expect(bar).toEqual(['project-library'])
+    expect(bar).toEqual(['workspace-overview', 'project-library'])
   })
 
-  it('default 壳：那一行是资料库，菜单里是总览和其余几页', () => {
+  it('default 壳：那一行是总览和资料库，菜单里是其余几页', () => {
     const { bar, menu } = projectPageLayout(DEFAULT_SHELL, KNOWN)
-    expect(bar).toEqual(['project-library'])
-    // 总览落在最后，不是因为它不重要，是因为座次由壳的 `nav.project` 说（下一条），
-    // 而 default 壳的那一行里没有它 —— 没被点名的接在后面。要它排第一，把壳改了。
-    expect(menu).toEqual(['project-members', 'project-routines', 'workspace-overview'])
+    // 首页打头，不看壳的 `nav.project` 里有没有它 —— 每个壳都有首页，它就在这一行第一格。
+    expect(bar).toEqual(['workspace-overview', 'project-library'])
+    expect(menu).toEqual(['project-members', 'project-routines'])
   })
 
-  it('壳不摆资料库，资料库就在菜单里', () => {
+  it('壳的首页换成别的页，那一行第一格跟着换', () => {
+    // 壳只声明它把哪一页当门，摆在哪一行由布局决定；这条钉的就是「门在第一位」。
+    const shell = shellLike({ home: 'project-routines' })
+    const { bar } = projectPageLayout(shell, KNOWN)
+    expect(bar).toEqual(['project-routines', 'project-library'])
+  })
+
+  it('壳的首页这一版前端不认得，那一格不画，资料库照旧', () => {
+    const shell = shellLike({ home: 'workspace-running' })
+    expect(projectPageLayout(shell, KNOWN).bar).toEqual(['project-library'])
+  })
+
+  it('壳不摆资料库，资料库就在菜单里，首页照旧占着那一行', () => {
     const shell = shellLike({ nav: { ...DEFAULT_SHELL.nav, project: ['project-members', 'project-routines'] } })
     const { bar, menu } = projectPageLayout(shell, KNOWN)
-    expect(bar).toEqual([])
+    expect(bar).toEqual(['workspace-overview'])
     expect(menu).toContain('project-library')
   })
 

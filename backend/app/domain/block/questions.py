@@ -1,23 +1,38 @@
 """An agent's question: an ordinary message in the room that carries quick replies.
 
 A question is a `kind=message` block written under the asking agent's seat,
-with `meta.options` (what a person can click), `meta.asked` (who it waits on;
-None when nobody in particular) and `meta.answer_log` (every reply that has
-answered it so far: an option it offered, or a note in the person's own
-words). Nothing about it holds a turn open: the agent posts it and ends its
-turn, and the reply a person sends — a click or a typed message — is an
-ordinary message that starts the agent's next one
-(`agent.announce.answer_questions`).
+with `meta.options` (what a person can click), `meta.asked` (the people it
+asks, chosen by the agent — empty when nobody in particular),
+`meta.asked_all` (asked of everyone in the channel) and `meta.answer_log`
+(every response it has had so far: an option it offered, a note in the
+person's own words, or one person's skip). How those read — whom it still waits
+on, whether it is settled — is `block.asked`. Nothing about it holds a turn
+open: the agent posts it and ends its turn, and the reply a person sends — a
+click or a typed message — is an ordinary message that starts the agent's next
+one (`agent.announce.answer_questions`).
 
 Callers authorize the seat and commit; nothing here publishes or delivers.
 """
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.core.errors import ForbiddenError, ValidationError
+from app.core.errors import (
+    ConflictError,
+    ForbiddenError,
+    UnprocessableEntityError,
+    ValidationError,
+)
 from app.core.sentences import say
+from app.domain.block.asked import (
+    SKIPPED,
+    answered,
+    may_answer,
+    skipped_by,
+    skipped_by_all,
+)
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 
@@ -69,9 +84,20 @@ def parse_questions(body) -> list[Question]:
 
 
 async def post_questions(
-    session, *, project_id, conversation_id, seat, questions, asked, request_id=None
+    session,
+    *,
+    project_id,
+    conversation_id,
+    seat,
+    questions,
+    asked: tuple[str, ...],
+    asked_all: bool = False,
+    request_id=None,
 ) -> list[Block]:
     """Write one message per question in the conversation; flush, never commit.
+
+    ``asked`` is the people each question asks (empty: nobody in particular);
+    ``asked_all`` says they are everyone in the channel.
 
     ``request_id`` makes a retry safe, as it does for `chat_send`: the questions
     a call with the same id already wrote are returned instead of asked twice.
@@ -103,7 +129,8 @@ async def post_questions(
                 kind=BlockKind.message,
                 meta={
                     "options": question.options,
-                    "asked": asked,
+                    "asked": list(asked),
+                    "asked_all": asked_all,
                     "answer_log": [],
                     **({"ask_request": request_id} if request_id else {}),
                 },
@@ -119,6 +146,45 @@ async def post_questions(
     return rows
 
 
+def skip_question(question: Block, *, by: str) -> bool:
+    """``by`` 跳过这道题：他不回答它。返回这一下是不是让题了结了（它点名的每个人
+    都跳过了，`block.asked.skipped_by_all`）—— 了结了，提问的那位才该知道。
+
+    跳过是对这道题的一个回应，所以和回答记在同一份 ``answer_log`` 上，一条
+    ``kind=skipped``、不带选项也不带话、记着是谁的条目。它只把题从他手上拿走：题问
+    了几个人，别人照旧等着回答。撤销跳过就是撤回这一条（`withdraw_answer`），和撤回
+    答案是同一个动作。
+
+    只有能回答这道题的人跳得过（`block.asked.may_answer`，点选项、打字回答也是这
+    一条）；已经有人回答的题不再收，同一个人也不跳
+    两次。不 flush：调用方和别的写一起落库。
+    """
+    meta = dict(question.meta or {})
+    if not meta.get("options"):
+        raise UnprocessableEntityError(say("askNotAQuestion"))
+    if not may_answer(meta, by):
+        raise ForbiddenError(say("askSkipNotYours"))
+    if answered(meta):
+        raise ConflictError(say("askAlreadyAnswered"))
+    if by in skipped_by(meta):
+        raise ConflictError(say("askAlreadySkipped"))
+    question.meta = {
+        **meta,
+        "answer_log": [
+            *(meta.get("answer_log") or []),
+            {
+                "kind": SKIPPED,
+                "option": None,
+                "note": None,
+                "by": by,
+                "at": datetime.now(UTC).isoformat(),
+                "reply_id": None,
+            },
+        ],
+    }
+    return skipped_by_all(question.meta)
+
+
 def answered_by(question: Block, handle: str) -> bool:
     """``handle`` 在这道题上答过话没有。"""
     return any(
@@ -128,7 +194,8 @@ def answered_by(question: Block, handle: str) -> bool:
 
 
 async def withdraw_answer(session, *, question: Block, by: str) -> Block:
-    """把 ``by`` 自己那条答复从题上撤掉，让这道题回到「还没人答」。
+    """把 ``by`` 自己那条答复从题上撤掉，让这道题回到「还没人答」。撤销一次跳过也是
+    这一步：跳过记在同一份 ``answer_log`` 上（`skip_question`）。
 
     「只有回答的人可以撤回」落在这一行：撤掉的是 ``answer_log`` 里 ``by`` 等于他的
     条目，别人的一条不动。没答过的人来撤什么也撤不掉，直接拒掉 —— 否则这里就是任何

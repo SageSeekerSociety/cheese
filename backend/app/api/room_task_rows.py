@@ -7,33 +7,76 @@ its messages (`GET /topics/{id}/blocks`, `tasks`). The same rows from both, so a
 card under a message and the same task in the channel overview cannot disagree.
 Batched: each extra is one query for all the rows, never one per task.
 
-`project_task_rows` and `rail_tasks` moved here from `routes/projects.py` for the
-same reason the room's own rows already lived here — they are a page's view of a
-task, not a route's, and the topics list asks for the rail's rows too.
+`task_out` is the one-task half of that: what a route returns when it hands a
+single task back to its page (`GET|PATCH /topics/{task}/task`, and the title
+routes), so a deep link and the board cannot disagree either.
+
+`project_task_rows` and `rail_tasks` moved here from `routes/projects.py`, and
+`task_out` from `routes/topics_tasks.py`, for the same reason the room's own
+rows already lived here — they are a page's view of a task, not a route's, and
+more than one route module asks for them. `room_task_items` (the room's list of
+tasks), `task_page_row` (one task's page) and `_opening` (where its first turn
+is) followed them out of `routes/topics_tasks.py` later, when the room snapshot
+started reading them: it is not a route, so a route module holding them made it
+reach one (C4 `routes-independent`).
 """
 
 import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
+from typing import Literal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.chat import ChatService
 from app.domain.agent.liveness import last_output_at, running_tasks
+from app.domain.agent.opening import opening_state
 from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
+from app.domain.living_doc.services import Documents
 from app.domain.project.repositories import ProjectRepository
 from app.domain.review.queries import latest_cards_by_task
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.review.services import AcceptService
 from app.domain.room_task import binding, presentation
 from app.domain.room_task.models import Task
 from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.usage.repositories import UsageRepository
+
+
+async def task_out(db, chat: ChatService, task, card=None) -> dict:
+    """The task with its board cell — what every route that hands a task back
+    to its page returns, so the page never holds one without it. The same
+    function the list uses, so a deep link and the board cannot disagree."""
+    if card is None:
+        card = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
+    running = await running_tasks(chat, db, [task])
+    asked = await BlockRepository(db).awaiting_an_answer([task.id])
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    shown = presentation.task_presentation(
+        presentation.facts_for_task(
+            task,
+            card,
+            running=task.id in running,
+            awaiting_answer=task.id in asked,
+        ),
+        now=datetime.now(UTC),
+    )
+    out["presentation"] = shown.as_dict()
+    # 在等谁，和频道里那张卡读的是同一个：等的是看的人，页头和卡一样写「待你开始」。
+    out["waiting_on"] = presentation.waiting_on(
+        shown,
+        running=task.id in running,
+        owner=task.owner_handle,
+        reviewer=card.reviewer_handle if card is not None else None,
+        asked=asked[task.id].only() if task.id in asked else None,
+    )
+    return out
 
 
 async def task_rows(
@@ -84,7 +127,7 @@ async def task_rows(
             running=task.id in running,
             owner=task.owner_handle,
             reviewer=card.reviewer_handle if card is not None else None,
-            asked=asked.get(task.id),
+            asked=asked[task.id].only() if task.id in asked else None,
         )
         accepted = landed.get(task.id, [])
         items.append(
@@ -237,11 +280,10 @@ async def project_task_rows(
                     else (card.reviewer_handle,)
                 ),
                 reporter=task.reporter_handle,
-                asked=asking,
-                # 题上没记着谁（平台发起的轮次）：等它的是这条活的人 —— 和通知、
-                # 待办同一个名单（`announce.notify_question`）。题根本不在等，就
-                # 没有这一层。
-                asked_also=(task.people if task.id in asked and asking is None else ()),
+                # 题上没点名（平台发起的轮次）：等它的是这条活的人 —— 和通知、待办
+                # 同一个名单（`announce.notify_question`）。题根本不在等，就没有这
+                # 一层。
+                asked_also=() if asking is None else asking.waiting(task.people),
                 owner=(
                     task.owner_handle
                     if presentation.owner_acts_on(shown, running=is_running)
@@ -352,3 +394,76 @@ async def rail_tasks(
                     {**row, "filling_in": True}
                 )
     return out
+
+
+async def room_task_items(
+    db: AsyncSession,
+    chat: ChatService,
+    actor: Actor,
+    topic,
+    *,
+    limit: int | None = None,
+    status: Literal["open", "closed"] | None = None,
+    ids: list[uuid.UUID] | None = None,
+    blocks: list[uuid.UUID] | None = None,
+    branch: bool = False,
+    latest: int | None = None,
+) -> list[dict]:
+    """A room's tasks as `GET /topics/{id}/tasks` lists them (see there for what
+    each option keeps); also the `tasks` of the room snapshot a subscription
+    opens with (`room_snapshot`). The caller has authorised the reader."""
+    named: set[uuid.UUID] | None = set(ids) if ids is not None else None
+    if blocks is not None:
+        lines = await BlockRepository(db).many(blocks)
+        named = (named or set()) | {
+            task_id for line in lines if (task_id := named_task(line)) is not None
+        }
+    threads = await TaskService(db).threads_for_room(
+        topic.id,
+        limit=limit,
+        status=status,
+        ids=named,
+        origins=blocks,
+        with_branch=branch,
+        latest=latest,
+    )
+    return await task_rows(db, chat, actor, topic.project_id, threads)
+
+
+async def task_page_row(db: AsyncSession, chat: ChatService, place, task) -> dict:
+    """A task as `GET /topics/{task}/task` reads it, and the `task` of the room
+    snapshot a subscription to it opens with. The caller has authorised the
+    reader."""
+    cards = await AcceptService(db).latest_by_task([task.id])
+    out = await task_out(db, chat, task, cards.get(task.id))
+    # 用哪个模型：花过就是它真花的那个（`usage` 里这条活最后一行），一分钱没花过
+    # 就是它绑的那个。和列表里显示的是同一个函数算的。
+    project = await ProjectRepository(db).get(place.project_id)
+    out["model"] = presentation.card_model(
+        task,
+        spent=(await UsageRepository(db).last_model_by_task([task.id])).get(task.id),
+        choices=binding.catalog(project.settings if project else None),
+    )
+    card = cards.get(task.id)
+    out["card"] = (
+        None
+        if card is None
+        else {
+            "id": str(card.id),
+            "status": str(card.status),
+            "pr_number": card.pr_number,
+            "pr_url": card.pr_url,
+        }
+    )
+    out["opening"] = await _opening(db, task)
+    return out
+
+
+async def _opening(db, task) -> str | None:
+    """Where the task's first turn is, while its document is still empty
+    (`agent/opening.py`); None once the document says something."""
+    if task.document_id is not None:
+        doc = await Documents(db).get(task.document_id)
+        if doc is not None and doc.content.strip():
+            return None
+    return await opening_state(db, task.id)

@@ -28,7 +28,9 @@ import SplitListColumn from '@/views/workspace/SplitListColumn.vue'
 // Its one rule: every row that opens something is a route change in the content
 // area. Nothing here swaps the panel, because a click's outcome has to be
 // predictable — what changes only the sidebar itself (folding a channel's
-// subtree, expanding the rest of its tasks) leaves the content area alone.
+// subtree, expanding the rest of its tasks) leaves the content area alone. The
+// task-block fold is the one sidebar-only control that also navigates: it puts
+// the block away, so the task it was showing goes with it (`toggleTasksFold`).
 //
 // The one thing that opens in place is 新建频道 (`NewChannelDialog`) — that makes a
 // new channel rather than showing a different view of the one you are on, and it is
@@ -118,16 +120,24 @@ function toggleTasks(channelId: string) {
     : [...expandedChannels.value, channelId]
 }
 
-// 频道行右边那个把手：把挂在它下面的一整块任务收起来。收起的是画法，不是数据——正打开
-// 的那条任务照样留着（`TopicSidebar` 的 `pinnedRows`），这个频道里进行中的条数和那盏灯
-// 挪到频道行上。哪几个频道收着只是这一处的界面状态（没落盘），换项目就都展开。
+// 频道行右边那个把手：把挂在它下面的一整块任务收起来。收起的是画法，不是数据——这个
+// 频道里进行中的条数和那盏灯挪到频道行上。哪几个频道收着只是这一处的界面状态（没落盘），
+// 换项目就都展开。
+//
+// 收起也是把这一块放下：正开着的那条任务就在这一块里，跟着一起放下——回到这个频道的
+// 页面，它不再单独留在下面。收起只收一半、人还留在一条已经看不见的任务里，比不收还难
+// 懂；2026-10-13 用户定的，原型里「留住你正打开的那一条」那条作废。
 const foldedChannels = ref<Record<string, boolean>>({})
 watch(
   () => props.projectId,
   () => (foldedChannels.value = {})
 )
 function toggleTasksFold(channelId: string) {
-  foldedChannels.value = { ...foldedChannels.value, [channelId]: !foldedChannels.value[channelId] }
+  const folded = !foldedChannels.value[channelId]
+  foldedChannels.value = { ...foldedChannels.value, [channelId]: folded }
+  // 正开着的那条任务属于这个频道，就跟着这一块一起放下。收起（folded）才带走人：展开
+  // 是在这一行里往回走，不动正文。
+  if (folded && activeTaskId.value && ids.value.topicId === channelId) openTopic(channelId)
 }
 function openOverview() {
   void router.push({ name: 'workspace-overview', params: { projectId: props.projectId } })
@@ -157,13 +167,6 @@ async function createChannel(channel: { title: string; description: string; memb
   }
 }
 const browsingChannels = computed(() => route.name === 'project-channels')
-// 「进行中的任务」那一行：在「全部任务」这一页上就亮。按频道筛开（频道 ⋯ 里那一项）
-// 的时候亮的是那个频道那一行，这一行不亮。
-const tasksOpen = computed(() => route.name === 'project-tasks' && !route.query.channel)
-// 「进行中的任务」那一行：去看这个项目的全部任务（那一页里也有已经结束的）。
-function goToProjectTasks() {
-  void router.push({ name: 'project-tasks', params: { projectId: props.projectId } })
-}
 function openTask(task: { roomId: string; taskId: string }) {
   void router.push({
     name: 'workspace-task',
@@ -263,7 +266,6 @@ useCommands(() => [
       :here-channel-id="hereChannelId"
       :browsing-channels="browsingChannels"
       :can-create="canCreate"
-      :tasks-open="tasksOpen"
       :loading-topics="store.loadingTopics"
       :error="store.topicsError"
       :active-docs="activeDocs"
@@ -276,7 +278,6 @@ useCommands(() => [
       @toggle-tasks-fold="toggleTasksFold"
       @browse-channels="browseChannels"
       @new-channel="creatingOpen = true"
-      @open-tasks="goToProjectTasks"
       @hover-topic="onHoverTopic"
       @press-topic="onPressTopic"
       @press-page="onPressPage"
@@ -286,8 +287,9 @@ useCommands(() => [
       @retry="store.reloadTopics()"
       @rename-topic="(p) => store.renameTopic(p.id, p.title)"
     >
-      <!-- 手机上进项目落在频道列表上，项目名下那一行和总览都收进了项目名菜单，所以去项目
-           总览的那一行放在列表最顶上。桌面上这一行不画（清单第 9 条：总览从项目名菜单进）。 -->
+      <!-- 手机上进项目落在频道列表上，项目名下那一行不画（总览收进项目名面板），所以去
+           项目总览的那一行放在列表最顶上。桌面上总览在项目名下那一行，这一行不画
+           （.claude/rules/project-sidebar.md）。 -->
       <template v-if="page || column" #top>
         <button type="button" class="overview-entry t-body" data-testid="overview-entry" @click="openOverview">
           <v-icon size="18" class="overview-entry__icon">mdi-view-dashboard-outline</v-icon>

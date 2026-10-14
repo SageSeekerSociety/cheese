@@ -288,7 +288,8 @@
         "retry": "重试",
         "compact": "整理",
         "environment": "环境",
-        "memory": "记忆"
+        "memory": "记忆",
+        "wakeWatch": "补跳"
       }
     },
     "menu": {
@@ -471,7 +472,7 @@
       "pasteHint": "可直接粘贴图片",
       "placeholderDm": "给{name}发消息",
       "placeholder": "输入消息，{'@'}{name} 交给它处理",
-      "attachFiles": "上传文件（每个最大 10MB）",
+      "attachFiles": "上传文件（每个最大 10MB，视频 200MB）",
       "sendPhotos": "发送照片或视频",
       "more": "更多操作",
       "send": "发送",
@@ -545,6 +546,7 @@
       "noTextDiff": "暂无文本差异",
       "openFile": "打开",
       "openOther": "打开其他文件",
+      "fileOfTotal": "第 {current} / {total} 个文件",
       "backToAll": "返回全部改动",
       "summary": "{count} 个文件 · +{added} −{removed}",
       "searchFiles": "搜索文件",
@@ -1103,7 +1105,7 @@
       "imageSnippet": "[图片]",
       "fileSnippet": "[文件]",
       "tooMany": "每条消息最多添加 9 个附件",
-      "tooLarge": "{name} 超过 10MB，无法上传",
+      "tooLarge": "{name} 超过 {mb}MB，无法上传",
       "retry": "重试上传 {name}",
       "sendBlocked": "有附件上传失败，重试或移除后再发送",
       "addFailed": "添加文件失败",
@@ -1323,6 +1325,16 @@
       "documentHint": "选中一段文字或点一个单元格写批注",
       "comments": "批注 {n}",
       "noComments": "暂无批注"
+    },
+    "mentionOutside": {
+      "notInPrivate": "{names} 不在这个频道，看不到这条消息",
+      "notInPublic": "{names} 未加入这个频道",
+      "add": "添加到频道",
+      "dismiss": "不添加",
+      "close": "关闭",
+      "added": "已将 {names} 添加到频道",
+      "addFailed": "添加失败",
+      "addFailedBecause": "添加失败：{reason}"
     }
   },
   "board": {
@@ -1331,7 +1343,7 @@
       "building": "进行中",
       "delivering": "检查中",
       "needs_you": "待处理",
-      "done": "已完成",
+      "done": "已关闭",
       "archived": "已归档"
     },
     "phrase": {
@@ -1352,7 +1364,7 @@
       "accepted": "已采纳",
       "closed": "已关闭",
       "archived": "已归档",
-      "completed": "已完成"
+      "completed": "已关闭"
     },
     "noAssignee": "暂无负责人",
     "made": "做出了什么",
@@ -1399,7 +1411,7 @@
   },
   "topicState": {
     "draft": "草稿",
-    "done": "已完成",
+    "done": "已关闭",
     "open": "进行中",
     "archived": "已归档"
   },
@@ -1438,7 +1450,8 @@
       "red": "显示在跑，但五分钟没动静",
       "yellow": "有事等你",
       "moving": "有活在往前走",
-      "delivered": "做完了，你还没看过"
+      "delivered": "做完了，你还没看过",
+      "others": "别人的活"
     },
     "hiddenCount": "收起了 {count} 项",
     "hiddenUnread": "含收起的子频道 {count} 条新消息",
@@ -1452,14 +1465,12 @@
     "workingTip": "{name}正在这里工作",
     "moreMembers": "+{count}",
     "allTasks": "全部任务",
-    "underway": "进行中的任务",
     "underwayHint": "在项目里还开着、也还没在收尾的任务",
     "moreTasks": "展开其余 {count} 个",
     "fewerTasks": "收起",
     "tasksLoading": "正在读取…",
     "tasksFailed": "没读出来，点一下重试",
-    "fillIn": "补足",
-    "fillInTip": "这个频道里和你有关的不到三条，这一条是补上来的",
+    "fillInTip": "这个频道里和你有关的不到三条，这一条是别人负责的，凑够三条才排在这儿",
     "collapseTasks": "收起这个频道下面的任务",
     "expandTasks": "展开这个频道下面的任务",
     "collapsedTasks": "{count} 个进行中的任务"
@@ -1726,15 +1737,35 @@
     },
     "ownAgentsTitle": "成员自己的 Claude Code",
     "ownAgents": {
-      "allow": "允许成员接入自己电脑上的 Claude Code",
-      "allowDetail": "项目内容将发送至成员自己配置的模型服务，费用由成员承担",
+      "allow": "允许成员接入自己的 Claude Code",
+      "allowDetail": "项目内容将经由成员自己的模型连接发给模型，费用由成员承担",
       "online": "在线",
       "offline": "离线",
-      "empty": "暂无已接入的 Claude Code",
+      "onAccount": "保存在账号里",
+      "runsOnPlatform": "在平台上运行",
+      "kindsLabel": "允许的连接类型",
+      "kindSubscription": "Claude 订阅",
+      "kindSubscriptionPlan": "Claude 订阅（{plan}）",
+      "kindApiKey": "Anthropic API key",
+      "kindModelService": "自定义模型服务",
+      "kindModelServiceModel": "自定义模型服务（{model}）",
+      "kindNotAllowed": "项目不允许",
+      "hostNotAllowed": "项目不允许这家服务商",
+      "hostsLabel": "允许的服务商",
+      "hostsDetail": "只限定自定义模型服务，按服务地址的主机名填写。不填表示不限",
+      "hostLabel": "主机名",
+      "hostAdd": "添加",
+      "hostRemove": "移除",
+      "hostInvalid": "填写主机名，例如 api.moonshot.cn，不带 https:// 和路径",
+      "empty": "暂无已加入的 Claude Code",
+      "connectionGone": "模型连接已解除",
+      "remove": "移出",
+      "addLabel": "加入我的 Claude Code",
+      "add": "加入",
       "callersLabel": "谁可以叫它",
       "callersOwner": "只有我",
       "callersProject": "项目成员",
-      "callersDetail": "项目成员叫它时，用的是你在自己电脑上配置的模型账号，费用和账号条款由你自己负责。",
+      "callersDetail": "项目成员叫它时，用的是你自己的模型连接，费用和账号条款由你自己负责。",
       "callersOwnerTag": "只有主人能叫",
       "callersProjectTag": "项目成员都能叫",
       "readOnly": "仅项目管理员可修改",
@@ -2269,7 +2300,7 @@
       "quietRunning": "最近 7 天都没有动静，{count} 个在全部任务里看",
       "latest": "{name}：{text}",
       "owner": "{name} 负责 · {when}",
-      "recentDone": "最近完成",
+      "recentDone": "最近关闭",
       "allTasks": "全部任务"
     },
     "pins": {
@@ -2364,7 +2395,7 @@
       "created": "新建",
       "started": "开始",
       "accepted": "采纳",
-      "completed": "完成",
+      "completed": "关闭",
       "closed": "关闭",
       "returned": "退回",
       "stalled": "停滞",

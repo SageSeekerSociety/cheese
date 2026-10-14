@@ -46,7 +46,8 @@ AGENT = ROOT / "backend" / "app" / "domain" / "agent"
 MEMORY_PKG = ROOT / "backend" / "app" / "domain" / "memory"
 PROMPT_PY = AGENT / "harness" / "prompt.py"
 SKILLS_PY = AGENT / "skills.py"
-SKILL_DIR = AGENT / "skill_library"
+#: The guides, and what a session is shipped of them (`app.domain.skill_library`).
+SKILL_LIBRARY = AGENT.parent / "skill_library"
 INSTRUCTIONS_PY = MEMORY_PKG / "instructions.py"
 
 #: ``build_system_prompt``'s first two arguments are positional; the samples
@@ -131,15 +132,16 @@ def load_module(path: Path, name: str):
 def load_prompt_module():
     finder = _StubFinder()
     sys.meta_path.insert(0, finder)
-    # ``skills.py`` is stdlib-only and ``prompt.py`` reads its text at import
-    # (the living-document section), so the real one is put where that import
-    # looks before the stub would answer it.
+    # ``skills.py`` and the library it reads are stdlib-only, and ``prompt.py``
+    # reads their text at import (the living-document section), so the real ones
+    # are put where those imports look before the stub would answer them.
     sys.modules["app.domain.agent.skills"] = load_skills_module()
     try:
         module = load_module(PROMPT_PY, "cheese_prompt_reference")
     finally:
         sys.meta_path.remove(finder)
         sys.modules.pop("app.domain.agent.skills", None)
+        sys.modules.pop("app.domain.skill_library", None)
     # ``instructions.py`` is stdlib-only like ``skills.py``, so it loads for real
     # and its two names are put back on ``prompt.py``: that import goes through
     # the stub, and the memory block is the *text* of this module — left as a
@@ -150,9 +152,17 @@ def load_prompt_module():
     return module
 
 
+def load_skill_library():
+    """The library is stdlib-only, so it loads for real — the guides the page
+    prints are then the very files a room's session receives."""
+    return load_module(SKILL_LIBRARY / "__init__.py", "app.domain.skill_library")
+
+
 def load_skills_module():
-    """``skills.py`` is stdlib-only, so it loads for real — the chat guide the
-    samples pass is then the very text a room's session receives."""
+    """``skills.py`` is stdlib-only apart from the library above, so this loads
+    for real too — the chat guide the samples pass is then the very text a
+    room's session receives."""
+    sys.modules["app.domain.skill_library"] = load_skill_library()
     return load_module(SKILLS_PY, "cheese_skill_reference")
 
 
@@ -267,7 +277,8 @@ DOC = "目标：本周内跑通推荐流程。当前：数据已就位，模型�
 OVERVIEW_DOC_ID = uuid.UUID("00000000-0000-4000-8000-000000000001")
 OVERVIEW_DOC = "要做成：把推荐算法做成一个能演示的原型。时间：11 月 15 日中期答辩前。这阶段不做：线上部署。"
 THREAD = (
-    "你在频道「#前端」的一条支线里。这里的人 @ 你，你才回答。"
+    "你在频道「#前端」的一条支线里。这里的人 @ 你，"
+    "或者不 @ 任何人接着和你说，都是对你说的；@ 了别人的话是说给那个人的。"
     "你在这里的改动留不下：用 `cheese checkout` 取一份主干代码，可以读、"
     "跑命令和测试、临时改，也能查资料、PR 和 issue；但不推送、不交付、"
     "不摆预览；"
@@ -931,18 +942,18 @@ def run_ast(reason: str) -> dict:
 # --------------------------------------------------------------------------
 def read_library() -> dict:
     """Every file in the library: frontmatter and body, parsed the way
-    `skills.py` parses them, so the library and the loader cannot disagree."""
+    `skill_library` parses them, so the library and the reader cannot disagree."""
     try:
-        parse = load_skills_module()._parse
+        parse = load_skill_library().parse_frontmatter
     except Exception:
         parse = _fallback_parse
 
     files = []
-    for path in sorted(SKILL_DIR.glob("*.md")):
+    for path in sorted(SKILL_LIBRARY.glob("*.md")):
         meta, body = parse(path)
         files.append(
             {
-                "file": f"backend/app/domain/agent/skill_library/{path.name}",
+                "file": f"backend/app/domain/skill_library/{path.name}",
                 "name": meta.get("name", path.stem),
                 "title": meta.get("title", path.stem),
                 "description": meta.get("description", ""),
@@ -950,7 +961,7 @@ def read_library() -> dict:
                 "chars": len(body),
             }
         )
-    return {"dir": "backend/app/domain/agent/skill_library", "files": files}
+    return {"dir": "backend/app/domain/skill_library", "files": files}
 
 
 def chat_guide(library: dict) -> str:

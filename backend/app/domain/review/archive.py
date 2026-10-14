@@ -35,15 +35,15 @@ from datetime import UTC, datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
-from app.domain.agent.platform_notices import (
+from app.domain.block.about import EventAbout, landing
+from app.domain.block.models import AuthorType, BlockKind
+from app.domain.block.repositories import BlockRepository
+from app.domain.notice_meta import (
     EVENT_ACCEPT_STOPPED,
     SEVERITY_WARN,
     WHO_HUMAN,
     notice,
 )
-from app.domain.block.about import EventAbout, landing
-from app.domain.block.models import AuthorType, BlockKind
-from app.domain.block.repositories import BlockRepository
 from app.domain.review import notes, room_notices
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository

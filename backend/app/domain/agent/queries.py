@@ -23,15 +23,11 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
-    EVENT_MEMORY_CHANGED,
-    SEVERITY_INFO,
-    WHO_PLATFORM,
     memory_changed_notice,
-    notice,
 )
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_instance.services import AgentInstanceService, ResolvedAgent
@@ -43,6 +39,12 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.memory import dream
 from app.domain.memory.files import MemoryFileScope
 from app.domain.memory.session import MemoryChange, prefix_of_scope
+from app.domain.notice_meta import (
+    EVENT_MEMORY_CHANGED,
+    SEVERITY_INFO,
+    WHO_PLATFORM,
+    notice,
+)
 from app.domain.policy import gate
 from app.domain.policy.proposals import propose
 from app.domain.project.models import Project
@@ -158,19 +160,22 @@ async def conversation_seat(
     In a room it is the agent the message named (or the room's), seated on the
     room's roster. In a task it is the teammate the message named — every
     message in a task is addressed, so the one it @-ed takes the turn there too
-    — and otherwise the task's own agent, which need not sit on the room's
-    roster: only the owner talks to it. None for a conversation that no longer
-    exists."""
+    — and otherwise the task's own agent, seated in the room when the task was
+    given to it. None for a conversation that no longer exists, and for an
+    agent that may not act there (`_seat_of`)."""
     place = await PlaceResolver(session).conversation(conversation_id)
     if place is None:
         return None
     if place.task is not None:
         agent = await _agent_at(session, place, handle)
+        if await _seat_of(session, place.room_id, agent) is None:
+            return None
         return agent, agent_instance_handle(agent.instance_id)
     agent = await session_agent_in_room(session, place.room_id, handle)
     if agent is None:
         return None
-    return agent, await _acting_handle(session, place.room_id, agent)
+    seat = await _seat_of(session, place.room_id, agent)
+    return None if seat is None else (agent, seat)
 
 
 async def _agent_at(
@@ -215,21 +220,47 @@ async def _agent_handle(session: AsyncSession, topic_id: uuid.UUID) -> str:
     return await members.resolve_agent_handle(topic_id)
 
 
+async def _seat_of(
+    session: AsyncSession, room_id: uuid.UUID, agent: ResolvedAgent
+) -> str | None:
+    """The seat *agent* authors under in this room, or None when it may not act
+    here at all.
+
+    Its own seat when it sits on the room's roster: a room seats any number of
+    agents, so the one that answers is the one the message named or the task
+    was given, and its blocks carry that one's seat. A teammate a task is given
+    is seated in the task's room then (`TopicService.give_task_teammate`).
+
+    Only the room's own agent acts without a seat of its own, under the room's:
+    a room seated before agents had seats of their own carries a room-derived
+    seat (or the shared ``cheese`` one, which `_agent_handle` swaps), and a
+    private 1:1 from then the same, and that seat is the room's agent's. Any
+    other agent off the roster gets None, not that seat: lent it, a teammate
+    given a task in a room it did not sit in wrote as the room's agent and
+    shared that agent's machine and credential (FB-99).
+    """
+    seat = agent_instance_handle(agent.instance_id)
+    if seat in await TopicMemberService(session).agent_handles(room_id):
+        return seat
+    room = await TopicService(session).get(room_id)
+    project = await ProjectRepository(session).get(room.project_id) if room else None
+    if room is None or project is None:
+        return None
+    own = await AgentInstanceService(session).for_topic(room, project)
+    if own.instance_id != agent.instance_id:
+        return None
+    return await _agent_handle(session, room_id)
+
+
 async def _acting_handle(
     session: AsyncSession, topic_id: uuid.UUID, agent: ResolvedAgent
 ) -> str:
-    """The handle this turn authors under: the seat of the agent that was
-    addressed, when it sits on this room's roster.
-
-    A room seats any number of agents, so the one that answers is the one
-    the message named, and its blocks carry that one's seat. A room from
-    before agents had seats of their own (only its room-derived seat on the
-    roster) and a private 1:1 fall through to the room's seat as before.
-    """
-    seat = agent_instance_handle(agent.instance_id)
-    if seat in await TopicMemberService(session).agent_handles(topic_id):
-        return seat
-    return await _agent_handle(session, topic_id)
+    """The handle this turn authors under (`_seat_of`); an agent that may not
+    act in this room is refused, saying so."""
+    seat = await _seat_of(session, topic_id, agent)
+    if seat is None:
+        raise UnprocessableEntityError(say("teammateNotSeatedHere"))
+    return seat
 
 
 async def require_pinned_seat(

@@ -26,16 +26,18 @@ export function useAgentNaming(opts: {
   names: Record<string, string>
   /** handle → 头像与「是不是队友」，和 `names` 一起对齐；`@` chip 前面那张脸用它。 */
   identities?: Record<string, MentionIdentity>
-  /** 读的是一个任务、而这件事单独指定了队友时，那位的 handle；空＝跟着房间那位。 */
-  taskAgentHandle?: () => string | null
+  /** 这段对话说给谁听，当它不是房间那位时的 handle：任务单独指定的队友，或支线正在
+   *  和它说话的那位；空＝跟着房间那位。 */
+  agentHandle?: () => string | null
   alwaysSummon: () => boolean
 }) {
-  // 房间里是房间那位，任务里是**这件事**那位——换过之后 @ 就得写它：正文里 @ 的是谁，
-  // 读的人就以为叫的是谁，而任务选的那位和房间那位常常不是同一个。挑的那位一定在这间
+  // 房间里是房间那位，任务里是**这件事**那位，支线里是它正在和谁说话的那位——换过之后
+  // @ 就得写它：正文里 @ 的是谁，读的人就以为叫的是谁，而任务选的、支线叫来的那位和
+  // 房间那位常常不是同一个。挑的那位一定在这间
   // 房的名册上（后端换的时候只认名册上那个座位），名字从名册上取；名册还没到、或者它
   // 已经不在名册上了，就不猜，退回房间那位——写一个点不动的 @ 比不写更糟。
   const agentSeat = computed<Seat | null>(() => {
-    const handle = opts.taskAgentHandle?.() ?? null
+    const handle = opts.agentHandle?.() ?? null
     const label = handle ? opts.nameOf(handle) : null
     return handle && label ? { handle, label } : opts.roomSeat.value ?? null
   })
@@ -52,21 +54,29 @@ export function useAgentNaming(opts: {
   )
 
   // Keep the handle→name map in sync with the roster, so <@handle> tokens render
-  // with the member's display name.
+  // with the member's display name. Only what changed is written: every message body
+  // watches this map, and refilling it redraws the whole timeline on each roster read.
   watch(
     opts.pool,
     (pool) => {
-      for (const k of Object.keys(opts.names)) delete opts.names[k]
-      for (const row of pool) opts.names[row.handle] = row.label
+      const next = new Map(pool.map((row) => [row.handle, row.label]))
       // 群播 tokens (fusion-design §3): <@all>/<@here> render as friendly chips,
       // not the raw literal — they are reserved handles, not roster members.
-      opts.names.all = t('work.room.mention.all')
-      opts.names.here = t('work.room.mention.here')
+      next.set('all', t('work.room.mention.all'))
+      next.set('here', t('work.room.mention.here'))
+      for (const k of Object.keys(opts.names)) if (!next.has(k)) delete opts.names[k]
+      for (const [k, label] of next) if (opts.names[k] !== label) opts.names[k] = label
       // 头像那张小脸跟着名字对齐，一份名册两个表：正文里的 @ 和名册上那位长得一样。
-      // all/here 是群播、不是人，不给脸。
+      // all/here 是群播、不是人，不给脸。和上面 `names` 同一个道理：只写变了的，名册原地
+      // 重读一遍不该把整条时间线重画一次。
       if (opts.identities) {
-        for (const k of Object.keys(opts.identities)) delete opts.identities[k]
-        for (const row of pool) opts.identities[row.handle] = { avatar: row.avatar ?? null, agent: !!row.agent }
+        const known = new Set(pool.map((row) => row.handle))
+        for (const k of Object.keys(opts.identities)) if (!known.has(k)) delete opts.identities[k]
+        for (const row of pool) {
+          const face = { avatar: row.avatar ?? null, agent: !!row.agent }
+          const prev = opts.identities[row.handle]
+          if (!prev || prev.avatar !== face.avatar || prev.agent !== face.agent) opts.identities[row.handle] = face
+        }
       }
     },
     { immediate: true, deep: true }

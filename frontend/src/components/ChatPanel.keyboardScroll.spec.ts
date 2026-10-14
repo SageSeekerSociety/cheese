@@ -164,6 +164,7 @@ describe('键盘挤矮聊天容器', () => {
 
     // 从底部上滚过，`atBottom` 因此是假的。
     pane.dispatchEvent(new Event('scroll'))
+    pane.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 })) // the reader scrolls (useChatScroll tells that from layout)
     m.scrollTop = 100
     pane.dispatchEvent(new Event('scroll'))
     await flush()

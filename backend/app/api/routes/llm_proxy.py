@@ -57,6 +57,7 @@ from app.domain.agent.supply import GATEWAY
 from app.domain.agent_instance import configuration
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.memory import dream
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
@@ -103,6 +104,17 @@ def _caller_token(request: Request) -> str:
     if auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return request.headers.get("x-api-key", "").strip()
+
+
+async def _dreams(db: AsyncSession, project, claims: dict) -> bool:
+    """Whether this call is the project's memory consolidation: made in the
+    overview room (the place its scoped token names) while a dream runs.
+    The dream holds the overview's turn lock for as long as it runs, so no
+    room turn there makes calls meanwhile (`memory.dream.dreaming`)."""
+    place = claims.get("t")
+    if project is None or not place or place != str(project.root_topic_id):
+        return False
+    return await dream.dreaming(db, project.id)
 
 
 def _upstream_url(path: str) -> str:
@@ -362,6 +374,11 @@ async def admission(
             }
         )
     pool = bound.supply
+    # A call made in the overview room while the project's memory is being
+    # consolidated is the dream's: it runs on the project's dream key, and the
+    # metering proxy writes the dream's kind on its usage line. Read before the
+    # read session is handed back below.
+    dreaming = await _dreams(db, project, claims)
     # The name that goes into the REQUEST BODY. The proxy writes it there on the
     # way out, which is the only place either pool reads a model from, and the
     # only reason the launch environment can now name none. A subscription model
@@ -369,6 +386,8 @@ async def admission(
     # the catalogue is the only thing that knows, so the translation lives on
     # the binding (`WorkBinding.wire_model`) rather than here.
     supply: dict = {"pool": pool, "model": bound.wire_model}
+    if dreaming:
+        supply["kind"] = dream.DREAM_KIND
 
     # The calls below may wait on the gateway lock and open another database
     # session. Returning this read connection first prevents concurrent
@@ -399,7 +418,7 @@ async def admission(
     ):
         # Minted lazily and cached on the project; never keep the admission
         # read connection checked out while waiting for the gateway.
-        supply["key"] = await chat.project_gateway_key(project_uuid)
+        supply["key"] = await chat.project_gateway_key(project_uuid, dream=dreaming)
 
     return ok(
         {
@@ -454,9 +473,12 @@ async def proxy(
         except ValueError as exc:
             raise NotFoundError("Unknown project") from exc
         await _require_model_caller(db, token, project_uuid)
+        dreaming = await _dreams(
+            db, await ProjectRepository(db).get(project_uuid), claims
+        )
         # The stream below can hold this request for minutes.
         await release_read_session(db)
-        key = await chat.project_gateway_key(project_uuid)
+        key = await chat.project_gateway_key(project_uuid, dream=dreaming)
     if not key:
         # Same rule as a local turn: refuse rather than fall back to the pool's
         # own credential, which would bill every project to one bucket.

@@ -17,7 +17,7 @@ from app.api.auth import ActorResolverDep
 from app.api.deps import get_chat_service
 from app.api.request_deps import DbSession
 from app.api.response import ok
-from app.api.routes.topics_tasks import _task_out
+from app.api.room_task_rows import task_out
 from app.core.errors import (
     AuthenticationRequiredError,
     ForbiddenError,
@@ -88,7 +88,7 @@ async def set_title(
         # The task as its page holds it, board line included: the page writes
         # this answer over what it has, and a task without its line drew no
         # header until the next reload.
-        out = await _task_out(db, chat, task)
+        out = await task_out(db, chat, task)
         await db.commit()
         return ok(out)
     # Renaming a channel takes no more than being able to be in it — the rest of

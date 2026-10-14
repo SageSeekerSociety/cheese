@@ -148,12 +148,13 @@ function docAuthorName(doc: ListedDocument): string {
   return docFaces.value[doc.author]?.name ?? doc.author
 }
 
-const { selectedDocId, openDocument, openRoom, openDoc, closeDoc, titled } = useOpenLibraryDocument(
-  () => props.projectId,
-  () => props.docId,
-  { about: docs.about, renamed: pages.renameDoc },
-  (message) => (actionError.value = message)
-)
+const { selectedDocId, openDocument, documentReview, fromThread, openRoom, openDoc, closeDoc, titled } =
+  useOpenLibraryDocument(
+    () => props.projectId,
+    () => props.docId,
+    { about: docs.about, renamed: pages.renameDoc },
+    (message) => (actionError.value = message)
+  )
 
 // 新建一份空的（`copyOf` 不给），或者另存对话里那一份；建好就打开。
 async function make(copyOf?: string) {
@@ -234,7 +235,7 @@ function close() {
 
 useTopBarBack(() =>
   !mdAndUp.value && selectedDocId.value
-    ? { label: t('work.library.backToList'), onBack: closeDoc }
+    ? { label: t(fromThread.value ? 'work.room.thread.backToThread' : 'work.library.backToList'), onBack: closeDoc }
     : !mdAndUp.value && selectedPath.value
       ? { label: t('work.library.backToList'), onBack: close }
       : null
@@ -519,6 +520,7 @@ function read(file: LibraryFile) {
     v-if="selectedDocId"
     :project-id="projectId"
     :document="openDocument"
+    :review="documentReview"
     :error="actionError"
     :agent-name="workspace.agentName"
     :agent-handle="workspace.agentHandle"

@@ -14,7 +14,8 @@ note、以及要不要把某个人叫起来。它们原先都是 `services.py` �
 级的那个单例，和这一片其余函数拿 session 的方式是同一条规矩：谁调用谁给。
 
 说什么、说到什么程度、以及「同一件事不重复说」不在这一层：note 的码在
-`notes.py`，提示统一契约（meta / detail / severity）在 `agent/platform_notices.py`，
+`notes.py`，提示统一契约（meta / detail / severity）在 `notice_meta`，几句人话在
+`agent/platform_notices.py`，
 内容签名在 `pr_signals.py`。这里只把已经定好的事实说出去。
 
 ## 卡的结局写在最后一句里，等的话在决定时一起结掉
@@ -46,16 +47,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent.platform_notices import (
-    EVENT_ACCEPT_READY,
-    EVENT_ARTIFACT_DECLARED,
-    EVENT_CARD_FILED,
-    EVENT_MERGE_WITHHELD,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.delivery.addressing import Event
 from app.domain.delivery.agent import (
     instance_for_seat,
@@ -63,6 +54,17 @@ from app.domain.delivery.agent import (
     record_task_instruction,
 )
 from app.domain.delivery.ledger import DeliveryEvent, settle_card
+from app.domain.notice_meta import (
+    EVENT_ACCEPT_READY,
+    EVENT_ARTIFACT_DECLARED,
+    EVENT_CARD_FILED,
+    EVENT_MERGE_WITHHELD,
+    EVENT_TURN_TIMEOUT,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.notification.models import NotificationType
 from app.domain.project import artifacts
 from app.domain.project.models import Project
@@ -70,7 +72,9 @@ from app.domain.project.protection import branch_protection_of
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
 from app.domain.review.repositories import AcceptCardRepository
+from app.domain.room_task.closing import Overdue
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.room_task.services import said_title
 from app.domain.topic.models import Topic
 from app.domain.webhook import service as webhook_service
 
@@ -94,7 +98,7 @@ def _notify_merge_result(
 
     `content` is the one line the room shows; everything else — why, what
     to do about it, the service's own words — goes in `meta`'s detail and
-    is opened only by whoever wants it (platform_notices.notice).
+    is opened only by whoever wants it (notice_meta.notice).
 
     Fire-and-forget, but through `spawn`, which holds a strong reference:
     asyncio keeps only a weak one, and this coroutine sleeps up to 35s across
@@ -490,3 +494,38 @@ async def _note_outside_accept_txn(
             await session.commit()
     except Exception:  # noqa: BLE001
         logger.exception("could not record the PR-open failure on card %s", card_id)
+
+
+async def tell_room_undelivered(session: AsyncSession, closed: Overdue) -> None:
+    """``closed`` was closed past its deadline with work still going on or
+    asked for in it (`room_task.closing.STOP_WORK_AFTER`): its room hears that
+    the task closed, that work was stopped, and what it was. Best effort,
+    like `task_landing.tell_origin`."""
+    if not closed.undelivered:
+        return
+    try:
+        async with session.begin_nested():
+            await announce(
+                session,
+                place_id=closed.task.room_id,
+                content=say("taskClosedUndelivered", title=said_title(closed.task)),
+                meta=notice(
+                    EVENT_TURN_TIMEOUT,
+                    severity=SEVERITY_WARN,
+                    who=WHO_HUMAN,
+                    detail=say(
+                        "taskClosedUndeliveredDetail",
+                        items=[_gist(said) for said in closed.undelivered],
+                    ),
+                    detail_label=say("labelDetails"),
+                ),
+            )
+    except Exception:  # noqa: BLE001 — a courtesy line never undoes a close
+        logger.warning(
+            "could not tell task %s's room what it left", closed.task.id, exc_info=True
+        )
+
+
+def _gist(said: str) -> str:
+    line = " ".join(said.split())
+    return line if len(line) <= 120 else line[:119] + "…"

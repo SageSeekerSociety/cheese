@@ -53,10 +53,14 @@ const props = defineProps<{
   threadable?: boolean
   /** 这条消息的支线里谁正在回复（还没有回复时）；没有人时为 null。 */
   replyingFor?: (m: Block) => string | null
+  /** 那几位队友的 handle：支线那一行的头像里要有它们。 */
+  replyingSeatsFor?: (m: Block) => string[]
   /** 那位队友此刻在等什么（排队、重试……）；没有就是 null。 */
   threadStatusFor?: (m: Block) => string | null
   /** 支线里：AI 队友的回复可以看它那一轮的过程。 */
   processable?: boolean
+  /** 支线和任务里的对话：人发的长消息也收起（RoomMessage 的 `foldPlain`）。 */
+  foldPlain?: boolean
   /** 一个 handle 叫什么（支线那一行写最后一句是谁说的）。 */
   nameOf?: (handle: string) => string
   rows: NoticeRow[]
@@ -151,6 +155,7 @@ const emit = defineEmits<{
   (e: 'open-resource', resource: string, turnId?: string, review?: DocReviewRequest, document?: OpenedDocument): void
   (e: 'ask-reply', block: Block, text: string): void
   (e: 'ask-withdraw', block: Block): void
+  (e: 'ask-skip', block: Block): void
   (e: 'checklist', block: Block, items: TodoItem[]): void
   (e: 'download', block: Block): void
   (e: 'jump', blockId: string): void
@@ -553,6 +558,7 @@ const rowLabels = computed(() =>
               :topic-list="topicList"
               :pinnable="pinnable"
               :pinned="!!pinnedIds?.has(m.id)"
+              :fold-plain="foldPlain"
               :data-row-id="m.id"
               :data-feed-item="m.id"
               @animationend="settleRow"
@@ -561,6 +567,7 @@ const rowLabels = computed(() =>
               @react="emitReact"
               @ask-reply="emitAskReply"
               @ask-withdraw="emitAskWithdraw"
+              @ask-skip="emit('ask-skip', $event)"
               @checklist="emitChecklist"
               @download="emit('download', $event)"
               @jump="emit('jump', $event)"
@@ -594,6 +601,7 @@ const rowLabels = computed(() =>
                 v-guide-anchor="replyingFor?.(m) ? 'reply-coming' : m.thread?.failed ? 'reply-failed' : 'reply-thread'"
                 :summary="m.thread ?? null"
                 :replying="replyingFor?.(m) ?? null"
+                :replying-seats="replyingSeatsFor?.(m) ?? []"
                 :status="threadStatusFor?.(m) ?? null"
                 :refs="refs"
                 :name-of="nameOf ?? String"

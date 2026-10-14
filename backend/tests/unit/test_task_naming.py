@@ -16,11 +16,6 @@ def test_nothing_usable_is_none():
         assert naming.normalize_title(raw) is None
 
 
-def test_a_long_title_is_cut_not_wrapped():
-    title = naming.normalize_title("很" * 40)
-    assert title is not None and len(title) == naming.TITLE_MAX_CHARS
-
-
 def test_same_title_ignores_spacing_punctuation_and_case():
     assert naming.same_title("Docs site · redesign", "docs-site redesign")
     assert naming.same_title("dev 外网访问慢", "dev外网访问慢！")

@@ -255,3 +255,43 @@ describe('待办上的一件事', () => {
     expect(screen.getByText('要不要灰度')).toBeTruthy()
   })
 })
+
+/** 没带选项的决策请求：库里还留着以前写进来的。它得能就地答复掉，不然永远挂在清单和角标上。 */
+describe('没带选项的决策请求', () => {
+  const decision = {
+    projectId: 'p1',
+    projectName: '课程项目',
+    topicId: 'c1',
+    topicTitle: '前端',
+    taskId: null,
+    taskTitle: null,
+    taskTitleSource: null,
+    phrase: 'decision',
+    reason: 'decide',
+    at: '2026-10-07T10:00:00Z',
+    alertId: 11,
+    headline: '报名表单要不要加验证码',
+    options: [],
+  }
+
+  it('写一句答复交上去，这一件随之离开清单', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [decision], total: 1 })
+    resolveAlert.mockResolvedValue({})
+    await mount()
+    const reply = await screen.findByRole('button', { name: t('home.inbox.answer') })
+    await fireEvent.update(screen.getByRole('textbox', { name: t('home.inbox.answerLabel') }), '先不强制')
+    await fireEvent.click(reply)
+    expect(resolveAlert).toHaveBeenCalledWith(11, '先不强制')
+    await waitFor(() => expect(screen.queryByText('报名表单要不要加验证码')).toBeNull())
+  })
+
+  it('什么都没写时不交空答复', async () => {
+    store.projects = [{ id: 'p1' }]
+    listAwaitingMe.mockResolvedValue({ data: [decision], total: 1 })
+    resolveAlert.mockReset()
+    await mount()
+    await fireEvent.click(await screen.findByRole('button', { name: t('home.inbox.answer') }))
+    expect(resolveAlert).not.toHaveBeenCalled()
+  })
+})

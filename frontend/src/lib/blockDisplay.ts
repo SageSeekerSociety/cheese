@@ -7,7 +7,7 @@
  * 在消息行里。各留一份就会有一天只改了其中一处。
  */
 
-import type { Block, TodoItem } from '@/cx_types'
+import type { Block, ChecklistMeta, TodoItem } from '@/cx_types'
 import type { ThreadReply } from '@/types/threads'
 import type { RefNames } from './refChip'
 
@@ -60,20 +60,54 @@ const STEP_MARK: Record<TodoItem['status'], string> = {
   in_progress: '✱',
   pending: '○',
 }
+const MARK_STATUS = Object.fromEntries(Object.entries(STEP_MARK).map(([status, mark]) => [mark, status])) as Record<
+  string,
+  TodoItem['status']
+>
+/** 正文里结果那一行的记号（后端 `checklist_text` 写的 `✅ 结果`）。 */
+const RESULT_MARK = '✅'
 
 /**
- * 清单消息在引用条、消息行里说的那一句：只念一步，连它的记号（`✱ 取一份主干代码`）。
- * 不是清单就返回 null，走平常那句摘要。
+ * 清单消息在引用条、消息行、支线摘要里说的那一句：只念一步，连它的记号。念哪一步：
+ * 正在做的那一步（`✱`）；都做完了、写了结果，念结果；否则念还没做的第一步；连这也没有
+ * （全做完、没写结果），念最后做完的那一步。做完的第一步往往早就过去了，念它等于什么
+ * 都没说。不是清单就返回 null，走平常那句摘要。
  *
  * 结构来自块自己的 `meta.checklist`；支线摘要里那条回复只拿到文本，它那份结构是
- * 后端随着回复一起带上的（`replyBlock`）。
+ * 后端随着回复一起带上的（`replyBlock`）。迁移前的清单只有一个 `true`，结构得从正文
+ * 一行一步里读回来（`legacySnippet`）。
  */
 function checklistSnippet(block: Block): string | null {
   const checklist = block.meta?.checklist
+  if (checklist === true) return legacySnippet(block.content)
   if (!checklist || typeof checklist !== 'object') return null
-  const first = checklist.items[0]
-  if (!first) return null
-  return `${STEP_MARK[first.status] ?? ''} ${first.subject}`.trim()
+  return stepSnippet(checklist)
+}
+
+function stepSnippet({ items, result }: ChecklistMeta): string | null {
+  const doing = items.find((item) => item.status === 'in_progress')
+  if (doing) return markedStep(doing)
+  if (result && items.every((item) => item.status === 'completed')) return `${RESULT_MARK} ${result}`
+  const next = items.find((item) => item.status === 'pending') ?? items.at(-1)
+  return next ? markedStep(next) : null
+}
+
+function markedStep(step: TodoItem): string {
+  return `${STEP_MARK[step.status] ?? ''} ${step.subject}`.trim()
+}
+
+/** 迁移前的清单：正文一行一步（`✱ 取一份主干代码`），做完时再有一行 `✅ 结果`。一步都
+ *  读不出的话念第一行——不念折成一行的整段。 */
+function legacySnippet(content: string): string {
+  const items: TodoItem[] = []
+  let result: string | null = null
+  for (const line of content.split('\n')) {
+    const text = line.trim()
+    const status = MARK_STATUS[text.charAt(0)]
+    if (status) items.push({ id: String(items.length + 1), subject: text.slice(1).trim(), status })
+    else if (text.startsWith(RESULT_MARK)) result = text.slice(RESULT_MARK.length).trim()
+  }
+  return stepSnippet({ items, result }) ?? (content.split('\n').find((line) => line.trim()) ?? '').trim()
 }
 
 /**
@@ -108,7 +142,8 @@ export function artifactKind(block: Block): string {
 export type AskOption = { text: string; explain?: string }
 
 /** 答过这道题的一句话：谁说的、说的是什么。 */
-export type AskAnswer = { by: string; text: string }
+/** `skipped`：被问的人跳过了这道题、没有回答（`answer_log` 里 `kind: 'skipped'` 那一条）。 */
+export type AskAnswer = { by: string; text: string; skipped: boolean }
 
 /** 这一条是不是带选项的提问（`cheese_ask`）。不是就返回 null。 */
 export function askOptions(block: Block): AskOption[] | null {
@@ -124,7 +159,8 @@ export function askOptions(block: Block): AskOption[] | null {
 }
 
 /**
- * 答过这道题的每一句，按先后：点了选项的是那个选项，打字回的是他那句话。
+ * 答过这道题的每一句，按先后：点了选项的是那个选项，打字回的是他那句话；跳过的那一条
+ * 没有话，`skipped` 为真。
  * 房间里所有人看到的是同一份。
  */
 export function askAnswers(block: Block): AskAnswer[] {
@@ -137,5 +173,6 @@ export function askAnswers(block: Block): AskAnswer[] {
       entry.kind === 'reject'
         ? t('ask.replies.noneOfThese')
         : String((entry.kind === 'note' ? entry.note : entry.option) ?? ''),
+    skipped: entry.kind === 'skipped',
   }))
 }

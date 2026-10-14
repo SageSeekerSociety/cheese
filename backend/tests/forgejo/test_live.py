@@ -19,7 +19,7 @@ import uvicorn
 from sqlalchemy import select
 
 from app.api.routes.git_http import open_task_workspace, task_workspace
-from app.api.routes.topics_file_sources import source_bytes
+from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.forgejo_tokens import ForgejoTokens, purge_expired_tokens

@@ -2135,68 +2135,6 @@
         }
       }
     },
-    "/admin/integrations/external-problem": {
-      "get": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Read External Problem Account",
-        "description": "配没配、配的是谁、谁配的。**没有密码。**\n\n``configured: false`` 是那个页面要问的第一件事：没人配过时同步一律失败\n（``service.py`` 里 ``no_account``），而那是「还没到那一步」，不是错误。",
-        "operationId": "read_external_problem_account_admin_integrations_external_problem_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExternalProblemAccountOutEnvelope"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "admin"
-        ],
-        "summary": "Save External Problem Account",
-        "description": "存下账号。密码留空 = 只改账号名，密码用原来那个。\n\n换账号名**不动**已经存下的密码：页面看不到它，管理员也无从重打，要求重打就等于\n逼他把口令找回来。要换密码就连密码一起填。",
-        "operationId": "save_external_problem_account_admin_integrations_external_problem_put",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExternalProblemAccountIn"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExternalProblemAccountOutEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/admin/admins": {
       "get": {
         "tags": [
@@ -7350,13 +7288,57 @@
         }
       }
     },
+    "/blocks/{block_id}/skip": {
+      "post": {
+        "tags": [
+          "blocks"
+        ],
+        "summary": "Skip Question",
+        "description": "Skip a question asked with quick replies: you will not answer it.\n\nOnly someone who may answer it can (`block.asked.may_answer`, the rule an\nanswer by option or in words is held to); anyone else is refused, and so\nis a question that already has its answer. Nothing is said in the room.\nThe question stops waiting, as an answer would make it: it leaves that\nperson's 待你回答 list, and its notice is settled. The agent that asked\nruns another turn told that the question was skipped, so it stops waiting\nfor an answer that is not coming. ``DELETE /blocks/{block_id}/answer`` undoes it.",
+        "operationId": "skip_question_blocks__block_id__skip_post",
+        "parameters": [
+          {
+            "name": "block_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Block Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WithdrawnAnswerEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/blocks/{block_id}/answer": {
       "delete": {
         "tags": [
           "blocks"
         ],
         "summary": "Withdraw Answer",
-        "description": "Take back your own answer to a question asked with quick replies, so the\nquestion is unanswered again and its options come back for everyone.\n\n``block_id`` is the question, not the answer: an answer is an ordinary\nmessage, and what is withdrawn is the line it left on the question\n(`domain/block/questions`). Only whoever answered it can — anyone else gets\na refusal, not a way to erase somebody's answer. The message the answerer\nsent stays in the room; its words are not what this changes.\n\nWhoever was watching gets the question as a `block_updated` frame, and the\nagent that asked it runs another turn, because the turn it had been going\non was decided on an answer that no longer counts.",
+        "description": "Take back your own answer to a question asked with quick replies, or\nyour skip of it, so the question is unanswered again and its options come\nback for everyone.\n\n``block_id`` is the question, not the answer: an answer is an ordinary\nmessage, and what is withdrawn is the line it left on the question\n(`domain/block/questions`). Only whoever answered it can — anyone else gets\na refusal, not a way to erase somebody's answer. The message the answerer\nsent stays in the room; its words are not what this changes.\n\nWhoever was watching gets the question as a `block_updated` frame, and the\nagent that asked it runs another turn, because the turn it had been going\non was decided on an answer that no longer counts.",
         "operationId": "withdraw_answer_blocks__block_id__answer_delete",
         "parameters": [
           {
@@ -8537,13 +8519,215 @@
         }
       }
     },
+    "/connector/my/model-connections": {
+      "get": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "My Model Connections",
+        "description": "The caller's model connections (#2991): the logins on the machines they\nenrolled — what each logs in with, where it is kept, its last check — and\nthe API keys and model services their account holds. Never a key.",
+        "operationId": "my_model_connections_connector_my_model_connections_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConnectionsOut"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Add Account Connection",
+        "description": "Keep an Anthropic API key or a model service on the caller's account,\nwith no machine (#2991). The service is called once first; a connection\nit refuses is not kept, and the refusal says why. The key is sealed and\nnever returned.",
+        "operationId": "add_account_connection_connector_my_model_connections_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountConnectionIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/model-connections/{connection_id}/check": {
+      "post": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Check Account Connection",
+        "description": "Call the service again with the connection, and record what it said.",
+        "operationId": "check_account_connection_connector_my_model_connections__connection_id__check_post",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/model-connections/{connection_id}": {
+      "delete": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Remove Account Connection",
+        "description": "Remove a connection the caller's account holds: its key is deleted at\nonce, and nothing starts with it again. The own agents on it stay in their\nprojects with no connection, as one on a removed machine login does.\nAnswers with what was removed.",
+        "operationId": "remove_account_connection_connector_my_model_connections__connection_id__delete",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Rename Account Connection",
+        "description": "Name a connection; the own agents on it are named after it.",
+        "operationId": "rename_account_connection_connector_my_model_connections__connection_id__patch",
+        "parameters": [
+          {
+            "name": "connection_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Connection Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionRename"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountConnectionOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/connector/my/devices/{device_id}/claude-code": {
       "post": {
         "tags": [
           "connector"
         ],
         "summary": "Check My Claude Code",
-        "description": "Ask one of the caller's machines again whether their own Claude Code is\nlogged in there (#2991). They log in on the machine itself, which tells the\nserver nothing; the page showing that machine asks, rather than leaving the\nanswer from its last connection standing.",
+        "description": "Ask one of the caller's machines again whether their own Claude Code is\nlogged in there (#2991). They log in on the machine itself, which tells the\nserver nothing; the page showing that machine asks, rather than leaving the\nanswer from its last connection standing. A logout its owner asked for\nwhile it was away is carried out first.",
         "operationId": "check_my_claude_code_connector_my_devices__device_id__claude_code_post",
         "parameters": [
           {
@@ -8572,6 +8756,167 @@
                     }
                   ],
                   "title": "Response Check My Claude Code Connector My Devices  Device Id  Claude Code Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Revoke My Claude Code",
+        "description": "Log the caller's own Claude Code out on one of their machines, from any\nbrowser (#2991). Out of use at once; the machine logs out now when online,\nelse as it next connects.",
+        "operationId": "revoke_my_claude_code_connector_my_devices__device_id__claude_code_delete",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ClaudeCodeLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Revoke My Claude Code Connector My Devices  Device Id  Claude Code Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Rename My Claude Code",
+        "description": "Name the login the caller's own Claude Code has on one of their machines\n(#2991); the own agents on it are named after it, whatever the machine\nreports later. The machine need not be online.",
+        "operationId": "rename_my_claude_code_connector_my_devices__device_id__claude_code_patch",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionRename"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudeCodeLoginOut"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connector/my/devices/{device_id}/claude-code/model-service": {
+      "put": {
+        "tags": [
+          "connector"
+        ],
+        "summary": "Use My Model Service",
+        "description": "Point the caller's own Claude Code on one of their machines at another\nmodel service, from any browser (#2991). The key is handed to the machine,\nwhich keeps it; it is not stored here. The machine has to be online.",
+        "operationId": "use_my_model_service_connector_my_devices__device_id__claude_code_model_service_put",
+        "parameters": [
+          {
+            "name": "device_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Device Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelServiceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/ClaudeCodeLoginOut"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "title": "Response Use My Model Service Connector My Devices  Device Id  Claude Code Model Service Put"
                 }
               }
             }
@@ -23909,9 +24254,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Own Agents Projects  Project Id  Own Agents Get"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -23933,7 +24276,7 @@
           "projects"
         ],
         "summary": "Set Own Agents",
-        "description": "Let members bring their own Claude Code into the project, or not. Turned\noff, no member's own agent is called in it; turned on again, they are.",
+        "description": "Let members bring their own Claude Code into the project, or not, and\nwhich kinds of model connection it may use, and which model services.\nTurned off, members' own agents leave the project: off its roster and out\nof its channels. Turned on again, the ones their owners had added are back\non the roster, and sit in a channel again once someone they answer to names\nthem there.",
         "operationId": "set_own_agents_projects__project_id__own_agents_put",
         "parameters": [
           {
@@ -23963,9 +24306,112 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Set Own Agents Projects  Project Id  Own Agents Put"
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Add Own Agent",
+        "description": "Bring the caller's own Claude Code, with one of their model connections,\ninto the project. Only a person adds their own, and only one of their own\nconnections, of a kind the project allows; adding one already here\nchanges nothing.",
+        "operationId": "add_own_agent_projects__project_id__own_agents_post",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OwnAgentAdd"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}/own-agents/{handle}": {
+      "delete": {
+        "tags": [
+          "projects"
+        ],
+        "summary": "Remove Own Agent",
+        "description": "Take one of the caller's own agents out of the project: off its roster,\nout of its channels and out of reach of ``@``. Only its owner removes it.",
+        "operationId": "remove_own_agent_projects__project_id__own_agents__handle__delete",
+        "parameters": [
+          {
+            "name": "project_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Project Id"
+            }
+          },
+          {
+            "name": "handle",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Handle"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OwnAgentsOutEnvelope"
                 }
               }
             }
@@ -29138,6 +29584,77 @@
                   "type": "object",
                   "additionalProperties": true,
                   "title": "Response Run Records Overview Run Records Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/run-records/turns": {
+      "get": {
+        "tags": [
+          "run-records"
+        ],
+        "summary": "Run Records Turns",
+        "description": "一轮一行，按窗口。运行记录答不了「分母」，这一条答的就是分母 —— 口径写在\n`app.domain.run_record.turns` 的模块 docstring 上。",
+        "operationId": "run_records_turns_run_records_turns_get",
+        "parameters": [
+          {
+            "name": "topic",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Topic"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "type": "string",
+              "default": "24h",
+              "title": "Window"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 200,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TurnListOutEnvelope"
                 }
               }
             }
@@ -38740,316 +39257,6 @@
         }
       }
     },
-    "/tasks/{taskId}/external-problem": {
-      "get": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Get External Problem Sync",
-        "description": "题号、上次同不成功、以及每个领取者的结论。\n\n没挂题号时也回 200，回的是一块空的（``problemNo: \"\"``）—— 「这道题还没接外站」\n是一个答案，和名单那条路上的「这道题还没有人报名」一样，不是错误。",
-        "operationId": "get_external_problem_tasks__taskId__external_problem_get",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Set External Problem Number",
-        "description": "挂上、或者换掉这道题在 YOJ 上的题号。返回换完之后的那一块。\n\n换成一个**另一个**题号会把上一次的结果删掉（``set_problem``）：那些数说的是另一\n道题，留着比空着更糟。同一个题号再挂一次是幂等的，结果原样留着。",
-        "operationId": "set_external_problem_tasks__taskId__external_problem_put",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ExternalProblemIn"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Clear External Problem",
-        "description": "撤掉挂载：题号和结果一起没。\n\n只撤题号、把结果留成孤儿是更小的动作，但那种状态没人能修回来（没有题号就没法再\n同步一次），留着只是让一段读不懂的旧数据活着。",
-        "operationId": "clear_external_problem_tasks__taskId__external_problem_delete",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DeletedEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tasks/{taskId}/external-problem/sync": {
-      "post": {
-        "tags": [
-          "Tasks"
-        ],
-        "summary": "Sync External Problem Now",
-        "description": "现在去外站看一眼，返回看完之后的那一块。\n\n同步失败也是 200，回的那一块上 ``status: \"failed\"`` 带着原因 —— 失败的是「外站\n这一趟没去成」，不是「你这个请求不对」。上一次成功的结论**留着**（见\n``service.py`` 的取舍），所以界面要照着 ``status`` 说清这是几点的数。",
-        "operationId": "sync_external_problem_tasks__taskId__external_problem_sync_post",
-        "parameters": [
-          {
-            "name": "taskId",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "integer",
-              "minimum": 1,
-              "title": "Taskid"
-            }
-          },
-          {
-            "name": "X-User-Id",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-User-Id"
-            }
-          },
-          {
-            "name": "Authorization",
-            "in": "header",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Authorization"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TaskExternalProblemOutEnvelope"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/teams": {
       "get": {
         "tags": [
@@ -42851,7 +43058,7 @@
           "topics"
         ],
         "summary": "Attachment Raw",
-        "description": "Authorized raster images and video bytes, never executable HTML/SVG.",
+        "description": "Authorized raster images and video bytes, never executable HTML/SVG.\n\nA room's own file is served from disk with byte ranges, so a player seeking\nthrough a long recording reads only the part it shows. A video read with the\n``Authorization`` header leaves a cookie for this path behind\n(``remember_for_media``): the ``<video>`` element's own range requests\ncannot carry the header, and the cookie is how they prove the same viewer.",
         "operationId": "attachment_raw_topics__topic_id__attachments_raw_get",
         "parameters": [
           {
@@ -45644,7 +45851,7 @@
           "topics"
         ],
         "summary": "Get Thread",
-        "description": "One 支线, and the message it hangs under.",
+        "description": "One 支线, the message it hangs under, and the seat of the AI teammate\nit is talking with (`thread_teammate`; null before anyone called one): the\none its composer offers to hand a message to.",
         "operationId": "get_thread_topics__topic_id__thread_get",
         "parameters": [
           {
@@ -52143,6 +52350,157 @@
         ],
         "title": "AcceptRequest"
       },
+      "AccountConnectionIn": {
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "api_key",
+              "model_service"
+            ],
+            "title": "Kind"
+          },
+          "key": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Key"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^https://[^\\s/]+\\S*$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "pattern": "^\\S+$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "key"
+        ],
+        "title": "AccountConnectionIn",
+        "description": "An API key or a model service to keep on the caller's account."
+      },
+      "AccountConnectionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "key_last4": {
+            "type": "string",
+            "title": "Key Last4"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "checked_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Checked At"
+          },
+          "check_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "name",
+          "key_last4",
+          "service_host",
+          "model",
+          "checked_at",
+          "check_error",
+          "created_at"
+        ],
+        "title": "AccountConnectionOut",
+        "description": "A model connection the caller's account holds: an Anthropic API key or\na model service, kept sealed by the platform. Never the key."
+      },
       "AddCard": {
         "properties": {
           "op": {
@@ -54001,6 +54359,95 @@
         "title": "CheckResultIn",
         "description": "What the quick check said (`cheese check`).\n\n`ok=False` covers a red check AND one that ran out of its time budget: the\nbudget is the point, so exceeding it is a result, not an absence of one."
       },
+      "ClaudeCodeLoginOut": {
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "logged_in": {
+            "type": "boolean",
+            "title": "Logged In"
+          },
+          "auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Method"
+          },
+          "subscription_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Type"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "revoking": {
+            "type": "boolean",
+            "title": "Revoking"
+          }
+        },
+        "type": "object",
+        "required": [
+          "installed",
+          "logged_in",
+          "auth_method",
+          "subscription_type",
+          "model",
+          "service_host",
+          "name",
+          "checked_at",
+          "revoking"
+        ],
+        "title": "ClaudeCodeLoginOut",
+        "description": "What a machine last said about its owner's Claude Code login."
+      },
       "CommentCreate": {
         "properties": {
           "body": {
@@ -54686,6 +55133,30 @@
           "device_code"
         ],
         "title": "ConnectRequest"
+      },
+      "ConnectionKind": {
+        "type": "string",
+        "enum": [
+          "subscription",
+          "api_key",
+          "model_service"
+        ],
+        "title": "ConnectionKind"
+      },
+      "ConnectionRename": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "ConnectionRename",
+        "description": "What its owner calls a model connection; empty takes the name away."
       },
       "ControlIn": {
         "properties": {
@@ -55979,155 +56450,6 @@
         },
         "type": "object",
         "title": "EventChoiceIn"
-      },
-      "ExternalProblemAccountIn": {
-        "properties": {
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "password": {
-            "type": "string",
-            "title": "Password",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "username"
-        ],
-        "title": "ExternalProblemAccountIn",
-        "description": "账号名（对 YOJ 来说是学号或教师工号）。"
-      },
-      "ExternalProblemAccountOut": {
-        "properties": {
-          "configured": {
-            "type": "boolean",
-            "title": "Configured"
-          },
-          "source": {
-            "type": "string",
-            "title": "Source"
-          },
-          "username": {
-            "type": "string",
-            "title": "Username"
-          },
-          "updated_by": {
-            "type": "string",
-            "title": "Updated By"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "configured",
-          "source",
-          "username",
-          "updated_by",
-          "updated_at"
-        ],
-        "title": "ExternalProblemAccountOut",
-        "description": "管理员看的那一行凭据。**没有密码** —— 存进去就再也读不出来。"
-      },
-      "ExternalProblemAccountOutEnvelope": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "default": 200
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "$ref": "#/components/schemas/ExternalProblemAccountOut"
-          },
-          "warnings": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Warnings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "title": "ExternalProblemAccountOutEnvelope"
-      },
-      "ExternalProblemIn": {
-        "properties": {
-          "problemNo": {
-            "type": "string",
-            "maxLength": 32,
-            "title": "Problemno"
-          }
-        },
-        "type": "object",
-        "required": [
-          "problemNo"
-        ],
-        "title": "ExternalProblemIn",
-        "description": "挂题号的请求体。**形状由服务判**（``service.PROBLEM_NO`` 只收数字），这里只封\n一个长度上界，免得把一兆的字符串送进去。"
-      },
-      "ExternalProblemResultOut": {
-        "properties": {
-          "participantId": {
-            "type": "integer",
-            "title": "Participantid"
-          },
-          "studentNo": {
-            "type": "string",
-            "title": "Studentno"
-          },
-          "solved": {
-            "type": "boolean",
-            "title": "Solved"
-          },
-          "acceptedAt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Acceptedat"
-          }
-        },
-        "type": "object",
-        "required": [
-          "participantId",
-          "studentNo",
-          "solved",
-          "acceptedAt"
-        ],
-        "title": "ExternalProblemResultOut",
-        "description": "一个领取者在这道题上的结论。``participantId`` 是 ``task_membership.id`` ——\n名单接口发出去的 ``participants[].id`` 就是它，前端按它把这一列贴回名单上。"
       },
       "FeedbackAdminCounts": {
         "properties": {
@@ -59505,6 +59827,145 @@
         "title": "ModelCapabilities",
         "description": "能勾的能力。页面认这几项；网关那套 `supports_*` 字段名不出这个包。\n\n`adaptive_thinking` 必须**声明在这里**，不能指望 pydantic 把它顺手留下：网关侧\n的 `supports_adaptive_thinking` 读写都认它（`gateway_admin` 的读路径会把它读回来\n显示），但一个没声明的键会被 pydantic 默认丢弃 —— 前端勾上、保存后请求体里根本\n没有它，写网关时什么都不会发生，而读回来却显示得出来。那是一个静默的空操作。"
       },
+      "ModelConnectionOut": {
+        "properties": {
+          "installed": {
+            "type": "boolean",
+            "title": "Installed"
+          },
+          "logged_in": {
+            "type": "boolean",
+            "title": "Logged In"
+          },
+          "auth_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Auth Method"
+          },
+          "subscription_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Subscription Type"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "checked_at": {
+            "type": "string",
+            "title": "Checked At"
+          },
+          "revoking": {
+            "type": "boolean",
+            "title": "Revoking"
+          },
+          "device_id": {
+            "type": "string",
+            "title": "Device Id"
+          },
+          "device_name": {
+            "type": "string",
+            "title": "Device Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "installed",
+          "logged_in",
+          "auth_method",
+          "subscription_type",
+          "model",
+          "service_host",
+          "name",
+          "checked_at",
+          "revoking",
+          "device_id",
+          "device_name",
+          "online",
+          "last_used_at"
+        ],
+        "title": "ModelConnectionOut"
+      },
+      "ModelConnectionsOut": {
+        "properties": {
+          "connections": {
+            "items": {
+              "$ref": "#/components/schemas/ModelConnectionOut"
+            },
+            "type": "array",
+            "title": "Connections"
+          },
+          "account_connections": {
+            "items": {
+              "$ref": "#/components/schemas/AccountConnectionOut"
+            },
+            "type": "array",
+            "title": "Account Connections"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connections",
+          "account_connections"
+        ],
+        "title": "ModelConnectionsOut"
+      },
       "ModelCreate": {
         "properties": {
           "api_base": {
@@ -59658,6 +60119,32 @@
         "type": "object",
         "title": "ModelPrices",
         "description": "一条模型的四个单价。\n\n用 `None` 表示「没定」，不是 0：0 是「定成免费」，`None` 是「这一栏空着」，网关的写\n接口也按这个区分（`GatewayAdmin._price_params` 只传真数字，`None` 一个都不发）。\ncache_read / cache_creation 允许缺，是因为不少上游根本没给缓存计价。"
+      },
+      "ModelServiceRequest": {
+        "properties": {
+          "base_url": {
+            "type": "string",
+            "pattern": "^https?://[^\\s/]+",
+            "title": "Base Url"
+          },
+          "token": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Token"
+          },
+          "model": {
+            "type": "string",
+            "pattern": "^\\S+$",
+            "title": "Model"
+          }
+        },
+        "type": "object",
+        "required": [
+          "base_url",
+          "token",
+          "model"
+        ],
+        "title": "ModelServiceRequest"
       },
       "ModelUpdate": {
         "properties": {
@@ -59844,6 +60331,104 @@
           "y"
         ],
         "title": "MoveCard"
+      },
+      "MyConnectionOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "service_host": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Host"
+          },
+          "on_account": {
+            "type": "boolean",
+            "title": "On Account"
+          },
+          "machine_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Machine Name"
+          },
+          "online": {
+            "type": "boolean",
+            "title": "Online"
+          },
+          "added": {
+            "type": "boolean",
+            "title": "Added"
+          },
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "plan",
+          "model",
+          "name",
+          "service_host",
+          "on_account",
+          "machine_name",
+          "online",
+          "added",
+          "allowed"
+        ],
+        "title": "MyConnectionOut",
+        "description": "One of the reader's own connections, to add to this project."
       },
       "NoteCreate": {
         "properties": {
@@ -60366,6 +60951,21 @@
         ],
         "title": "OnboardingOutEnvelope"
       },
+      "OwnAgentAdd": {
+        "properties": {
+          "connection_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Connection Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "connection_id"
+        ],
+        "title": "OwnAgentAdd"
+      },
       "OwnAgentCallersUpdate": {
         "properties": {
           "callers": {
@@ -60377,6 +60977,52 @@
           "callers"
         ],
         "title": "OwnAgentCallersUpdate"
+      },
+      "OwnAgentConnectionOut": {
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ConnectionKind"
+          },
+          "plan": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Plan"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Model"
+          },
+          "on_account": {
+            "type": "boolean",
+            "title": "On Account"
+          },
+          "allowed": {
+            "type": "boolean",
+            "title": "Allowed"
+          }
+        },
+        "type": "object",
+        "required": [
+          "kind",
+          "plan",
+          "model",
+          "on_account",
+          "allowed"
+        ],
+        "title": "OwnAgentConnectionOut"
       },
       "OwnAgentMachineOut": {
         "properties": {
@@ -60438,12 +61084,25 @@
             ],
             "title": "Owner Name"
           },
-          "machines": {
-            "items": {
-              "$ref": "#/components/schemas/OwnAgentMachineOut"
-            },
-            "type": "array",
-            "title": "Machines"
+          "connection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnAgentConnectionOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "machine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OwnAgentMachineOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "type": "object",
@@ -60453,7 +61112,8 @@
           "callers",
           "owner_handle",
           "owner_name",
-          "machines"
+          "connection",
+          "machine"
         ],
         "title": "OwnAgentOut"
       },
@@ -60462,6 +61122,20 @@
           "allowed": {
             "type": "boolean",
             "title": "Allowed"
+          },
+          "kinds": {
+            "items": {
+              "$ref": "#/components/schemas/ConnectionKind"
+            },
+            "type": "array",
+            "title": "Kinds"
+          },
+          "service_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Service Hosts"
           },
           "can_manage": {
             "type": "boolean",
@@ -60473,13 +61147,23 @@
             },
             "type": "array",
             "title": "Agents"
+          },
+          "my_connections": {
+            "items": {
+              "$ref": "#/components/schemas/MyConnectionOut"
+            },
+            "type": "array",
+            "title": "My Connections"
           }
         },
         "type": "object",
         "required": [
           "allowed",
+          "kinds",
+          "service_hosts",
           "can_manage",
-          "agents"
+          "agents",
+          "my_connections"
         ],
         "title": "OwnAgentsOut"
       },
@@ -60522,15 +61206,51 @@
       "OwnAgentsUpdate": {
         "properties": {
           "allowed": {
-            "type": "boolean",
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
             "title": "Allowed"
+          },
+          "kinds": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionKind"
+                },
+                "type": "array",
+                "minItems": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kinds"
+          },
+          "service_hosts": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 253
+                },
+                "type": "array",
+                "maxItems": 50
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Hosts"
           }
         },
         "type": "object",
-        "required": [
-          "allowed"
-        ],
-        "title": "OwnAgentsUpdate"
+        "title": "OwnAgentsUpdate",
+        "description": "What a manager changes; a field left out stays as it is."
       },
       "OwnCallers": {
         "type": "string",
@@ -64531,92 +65251,6 @@
         "type": "object",
         "title": "TaskCreateIn"
       },
-      "TaskExternalProblemOut": {
-        "properties": {
-          "problemNo": {
-            "type": "string",
-            "title": "Problemno"
-          },
-          "source": {
-            "type": "string",
-            "title": "Source"
-          },
-          "lastSyncedAt": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Lastsyncedat"
-          },
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "error": {
-            "type": "string",
-            "title": "Error"
-          },
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/ExternalProblemResultOut"
-            },
-            "type": "array",
-            "title": "Results"
-          }
-        },
-        "type": "object",
-        "required": [
-          "problemNo",
-          "source",
-          "lastSyncedAt",
-          "status",
-          "error",
-          "results"
-        ],
-        "title": "TaskExternalProblemOut",
-        "description": "一道题的外站那一块：题号、上次同步、以及每个领取者的结论。\n\n``status`` 是 ``\"\"``（还没同步过）/ ``ok`` / ``failed``，取值在\n``service.STATUS_OK`` 与 ``STATUS_FAILED``。``error`` 是排查用的原文（``no_account``\n这种），**不是**给人看的句子 —— 界面按 ``status`` 自己说。"
-      },
-      "TaskExternalProblemOutEnvelope": {
-        "properties": {
-          "code": {
-            "type": "integer",
-            "title": "Code",
-            "default": 200
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "default": "ok"
-          },
-          "data": {
-            "$ref": "#/components/schemas/TaskExternalProblemOut"
-          },
-          "warnings": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Warnings"
-          }
-        },
-        "type": "object",
-        "required": [
-          "data"
-        ],
-        "title": "TaskExternalProblemOutEnvelope"
-      },
       "TaskParticipantRequest": {
         "properties": {
           "deadline": {
@@ -65381,6 +66015,142 @@
         ],
         "title": "Turn"
       },
+      "TurnListOut": {
+        "properties": {
+          "window": {
+            "type": "string",
+            "title": "Window"
+          },
+          "since": {
+            "type": "string",
+            "title": "Since"
+          },
+          "now": {
+            "type": "string",
+            "title": "Now"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/TurnOut"
+            },
+            "type": "array",
+            "title": "Turns"
+          }
+        },
+        "type": "object",
+        "required": [
+          "window",
+          "since",
+          "now",
+          "limit",
+          "total",
+          "turns"
+        ],
+        "title": "TurnListOut"
+      },
+      "TurnListOutEnvelope": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/TurnListOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "TurnListOutEnvelope"
+      },
+      "TurnOut": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "title": "Turn Id"
+          },
+          "conversation_id": {
+            "type": "string",
+            "title": "Conversation Id"
+          },
+          "started_at": {
+            "type": "string",
+            "title": "Started At"
+          },
+          "stopped_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stopped At"
+          },
+          "failure_event": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Event"
+          },
+          "prompt_attempts": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Attempts"
+          }
+        },
+        "type": "object",
+        "required": [
+          "turn_id",
+          "conversation_id",
+          "started_at",
+          "stopped_at",
+          "failure_event"
+        ],
+        "title": "TurnOut",
+        "description": "一轮一行。"
+      },
       "UpdateCard": {
         "properties": {
           "op": {
@@ -65866,7 +66636,7 @@
           "id"
         ],
         "title": "WithdrawnAnswer",
-        "description": "撤回一道题的回答，回的是这道题撤回之后的样子。\n\n和 `block_updated` 那条实时帧带的是同一份东西，发起撤回的页面拿它直接替换这道题，\n不必再取一次。"
+        "description": "跳过一道题、或撤回对它的回答（跳过），回的是这道题改完之后的样子。\n\n和 `block_updated` 那条实时帧带的是同一份东西，发起的页面拿它直接替换这道题，\n不必再取一次。"
       },
       "WithdrawnAnswerEnvelope": {
         "properties": {

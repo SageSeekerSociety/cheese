@@ -230,7 +230,10 @@ RUN_RECORDS_DESCRIPTION = (
     "读平台的运行记录：各个项目里出过的报错（后端、前端、没跑完的轮次）和平台自己"
     "处理掉的事（排队、重试、环境启停），和管理后台「运行记录」是同一份。一种事一行："
     "次数、涉及几个项目、首次和最近一次的时间。给 `key` 和 `kind`（列表每行末尾那一对）"
-    "就读那一种的详情：最近一次的全文、调用栈、出现在哪些项目和对话里。只读。"
+    "就读那一种的详情：最近一次的全文、调用栈、出现在哪些项目和对话里。"
+    "给 `turns` 读另一个问题：这一窗口里一共起了多少轮、其中多少轮留下了终态失败事件"
+    "——一种事一行的读法答不出「一共跑了多少轮」。没有失败事件的轮次读成空，那是平台"
+    "没为它记过，不是记了成功。只读。"
     "只有做这个平台本身的项目读得到，别的项目会被拒。"
 )
 
@@ -690,7 +693,7 @@ PLATFORM_TOOLS = ToolTable(
                 "options": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "决策选项，配 decision_request",
+                    "description": "决策选项，decision_request 必带，至少两项",
                 },
             },
             ["title"],
@@ -736,8 +739,12 @@ PLATFORM_TOOLS = ToolTable(
         _tool(
             "cheese_ask",
             "在房间里问人：每个问题是一条带快捷回复按钮的普通消息。问完就结束这一轮，"
-            "不要等、不要轮询：人点一个选项或直接打字回复，那句回复会作为新消息开启你的"
-            "下一轮。选项只是快捷回复，人也可以说别的。",
+            "不要等、不要轮询：被问的人里有一个点了选项或直接打字回复，那句回复会作为新消息"
+            "开启你的下一轮。问谁用 to 选，和 @ 人一样：一个人、几个人，或 all 表示频道里"
+            "所有人；不填就问让你开始这一轮的那个人。被问的人也可以跳过不答：你点名的人都"
+            "跳过了，你的下一轮会被告知；问 all 的题不会因为有人跳过而告知你。界面总会在你给"
+            "的选项后面加一个「其他」，点开能自己写答案，所以选项里不要"
+            "再放「其他」「都不是」「我自己说」这类兜底项，只写真正的候选。",
             {
                 "questions": {
                     "type": "array",
@@ -764,6 +771,13 @@ PLATFORM_TOOLS = ToolTable(
                         },
                         "required": ["question", "options"],
                     },
+                },
+                "to": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string"},
+                    "description": "问谁：频道里的人的 handle；写 all 就是频道里所有人。"
+                    "不填就问让你开始这一轮的那个人",
                 },
                 "request_id": _text(
                     "上一次结果不确定时带上它返回的 request_id 重试，同一组问题不会发两遍"
@@ -861,6 +875,15 @@ PLATFORM_TOOLS = ToolTable(
                 "query": _text("搜正文和详情里的文字，比如接口路径、异常名"),
                 "key": _text("要读详情的那一种：列表里那一行的 key"),
                 "kind": _text("要读详情的那一种：列表里那一行的 kind"),
+                "turns": {
+                    "type": "boolean",
+                    "description": "一轮一行：这一窗口里跑过的轮次、各自留下什么终态"
+                    "失败事件（空 = 平台没记过，不是成功）、这一轮的提示被投了几次",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "只跟 turns 一起用：最多回几行，默认 200，最多 500",
+                },
             },
         ),
         _tool(
@@ -1160,9 +1183,15 @@ def _ask_body(args: dict) -> dict:
                 raise ValueError("each option requires nonempty text")
             if "explain" in option and not isinstance(option["explain"], str):
                 raise ValueError("option explain must be a string")
+    to = args.get("to")
+    if to is not None and (
+        not isinstance(to, list) or not to or not all(isinstance(h, str) for h in to)
+    ):
+        raise ValueError("to must be a nonempty list of handles, or [\"all\"]")
     # Identity is supplied by the host credential, never an author in args.
     return {
         "questions": questions,
+        **({"to": to} if to is not None else {}),
         "request_id": str(uuid.UUID(args["request_id"]))
         if args.get("request_id")
         else str(uuid.uuid4()),
@@ -1544,6 +1573,12 @@ def request_plan(tool: str, args: dict, environ: dict | None = None) -> dict:
         return {"method": "GET", "path": "/feedback?" + urllib.parse.urlencode(params)}
     if tool == "cheese_run_records":
         params = {"topic": topic, **_given(args, "window")}
+        if args.get("turns"):
+            params.update(_given(args, "limit"))
+            return {
+                "method": "GET",
+                "path": "/run-records/turns?" + urllib.parse.urlencode(params),
+            }
         if args.get("key") and args.get("kind"):
             params.update(key=args["key"], kind=args["kind"])
             return {
@@ -1942,9 +1977,8 @@ def _document(host, args: dict | None = None) -> dict:
 
 
 def _doc_edit(args: dict, host) -> str:
-    plan = request_plan(
-        "cheese_doc_edit", args, {**host.environ, **_document(host, args)}
-    )
+    document = _document(host, args)
+    plan = request_plan("cheese_doc_edit", args, {**host.environ, **document})
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -1957,7 +1991,8 @@ def _doc_edit(args: dict, host) -> str:
             raise exc from None
         raise PlatformToolError(
             f"一处都没改，文档没有变：{why.rstrip('。')}。"
-            "先 cheese_doc_get 重读，照读到的原文改好再试。"
+            + _searched(args, host, document["CHEESE_DOCUMENT"])
+            + "先 cheese_doc_get 重读，照读到的原文改好再试。"
         ) from exc
     data = answer.get("data") or {}
     edits = data.get("edits") or []
@@ -1973,6 +2008,26 @@ def _doc_edit(args: dict, host) -> str:
     # 和 cheese_doc_set 一样：格式警告跟着这次写入回来，改的机会就是现在。
     lines += [f"⚠️ {warning}" for warning in answer.get("warnings") or []]
     return "\n".join(lines)
+
+
+def _searched(args: dict, host, document: str) -> str:
+    """A refused edit that named no document: which one it looked in. Without
+    `document` the edit goes to this conversation's own document, and an agent
+    that meant a library document cannot tell from 「原文找不到」 alone that it
+    searched another one."""
+    if str(args.get("document") or "").strip():
+        return ""
+    found = host.request({"method": "GET", "path": f"/documents/{document}"})
+    title = str((found.get("data") or {}).get("title") or "").strip()
+    named = f"《{title}》" if title else ""
+    if host.environ.get("CHEESE_DOCUMENT"):
+        where = f"这次会话对着的文档{named}"
+    else:
+        where = f"这里的实况文档{named}"
+    return (
+        f"这次没给 document，找的是{where}；要改项目资料库里的文档，"
+        "带上它的 document 编号（见 cheese_doc_list）。"
+    )
 
 
 def _made_canvases(answer: dict) -> list[str]:
@@ -2381,6 +2436,8 @@ def _run_records(args: dict, host) -> str:
             raise PlatformToolError(f"没读到：{why.rstrip('。')}。") from exc
         raise
     body = data.get("data") or {}
+    if args.get("turns"):
+        return _turns_lines(body)
     if args.get("key") and args.get("kind"):
         meta = body.get("meta") or {}
         lines = [f"[{body.get('kind')}] {body.get('content')}", f"最近一次：{body.get('at')}"]
@@ -2410,6 +2467,37 @@ def _run_records(args: dict, host) -> str:
             f"（key={g.get('key')!r}）"
         )
     lines.append("读某一种的详情：给 cheese_run_records 传那一行的 key 和 kind。")
+    return "\n".join(lines)
+
+
+def _turns_lines(body: dict) -> str:
+    """One line per turn: when it started, how it ended, what it was fed.
+
+    「没记过失败」不写成「成功」：成功不写事件，这个读法只能证明平台没为这一轮落过
+    终态事件（`domain/run_record/turns.py` 的模块 docstring）。
+    """
+    turns = body.get("turns") or []
+    if not turns:
+        return f"{body.get('window')} 内没有跑过轮次。"
+    lines = [
+        f"{body.get('window')} 内一共 {body.get('total', len(turns))} 轮，"
+        f"这是最近的 {len(turns)} 轮（新的在前）："
+    ]
+    for turn in turns:
+        if turn.get("failure_event"):
+            became = f"失败 {turn['failure_event']}"
+        elif turn.get("stopped_at"):
+            became = "没记过失败"
+        else:
+            became = "还在跑"
+        line = (
+            f"{turn.get('turn_id')}  起 {turn.get('started_at')}  "
+            f"止 {turn.get('stopped_at') or '—'}  {became}"
+        )
+        if turn.get("prompt_attempts") is not None:
+            line += f"  投喂 {turn['prompt_attempts']} 次"
+        lines.append(line)
+    lines.append("没有失败事件的轮次是平台没为它记过，不是记了成功。")
     return "\n".join(lines)
 
 
@@ -3100,12 +3188,21 @@ def _task_id(explicit: str | None = None) -> str:
     return task_id
 
 
+# `git` calls here run a hook only on a delivery push, and that one runs the
+# checkout's `.cheese/pre-push` inside the same process: a script allowed 240 s
+# of its own (`CI_FAST_PRE_PUSH_TIMEOUT`) needs a budget with room left for the
+# transfer after it. The rest run no hook and keep the shorter one.
+_PUSH_TIMEOUT = 300
+_HOOKED_PUSH_TIMEOUT = 600
+
+
 def _git_task(
     cwd: Path,
     *args: str,
     extra_env: dict | None = None,
     input_text: str | None = None,
     raw: bool = False,
+    pre_push_report: Path | None = None,
 ) -> str:
     env = {
         key: value for key, value in os.environ.items() if not key.startswith("GIT_")
@@ -3113,18 +3210,147 @@ def _git_task(
     env["GIT_TERMINAL_PROMPT"] = "0"
     if extra_env:
         env.update(extra_env)
-    result = subprocess.run(
-        ["git", "-C", str(cwd), *args],
-        env=env,
-        input=input_text,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
+    if pre_push_report is not None:
+        # A push is the one git call here that runs the project's own pre-push
+        # entry point (the hook `cheese worktree` installs), and that script's
+        # whole output is a report. It writes to a pipe on this path, and a
+        # pipe on a delivery push has no reader: the commit that triggered it
+        # was made by an agent, whose terminal is gone by the time the
+        # post-commit hook pushes. So the report is asked for by name here and
+        # read back below, for `_flush_pre_push_reports` to hand to the room.
+        env["CI_FAST_PRE_PUSH_REPORT"] = str(pre_push_report)
+        try:
+            pre_push_report.unlink()
+        except OSError:
+            pass
+    # One wall clock covers the hook and the transfer both: a delivery push runs
+    # the checkout's `.cheese/pre-push` inside this same process, and that
+    # script may spend `CI_FAST_PRE_PUSH_TIMEOUT` (240 s by default) before git
+    # starts sending anything. The calls that run no hook keep the shorter one.
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            env=env,
+            input=input_text,
+            capture_output=True,
+            text=True,
+            timeout=_PUSH_TIMEOUT if pre_push_report is None else _HOOKED_PUSH_TIMEOUT,
+        )
+    finally:
+        if pre_push_report is not None:
+            # Read whichever way the push went, and read before the exit status
+            # is judged. Git runs the hook, and the entry point writes its
+            # report, before the push reaches the remote, so a push that then
+            # fails — a refusal, a cut connection, or this very call being
+            # killed for outrunning the budget above — has produced the same
+            # report as one that lands. On this path the file is the only copy,
+            # since the next attempt unlinks it before it runs. Kept for
+            # `_sync_task` to hand over either way.
+            #
+            # A missing file is an answer too, and it is not "no answer": this
+            # attempt unlinked whatever the last one left, so nothing there
+            # means this attempt's own hook ran and passed. `_keep_pre_push_report`
+            # drops the attempt before it, so a retry that passed is not
+            # reported with the text of the attempt it replaced.
+            #
+            # `errors="replace"` because this is a message, not data: a
+            # project's entry point could echo a path its filesystem holds in
+            # some other encoding, and one undecodable byte must not turn a
+            # push that landed into a reported delivery failure.
+            try:
+                report_text = pre_push_report.read_text(errors="replace").strip()
+            except OSError:
+                report_text = ""
+            _keep_pre_push_report(pre_push_report, report_text)
     if result.returncode:
         raise RuntimeError(result.stderr.strip())
     # Raw for NUL-separated paths: a file name may begin with a space.
     return result.stdout if raw else result.stdout.strip()
+
+
+def _pre_push_report_path(worktree: Path) -> Path:
+    """Where this checkout's delivery push leaves the pre-push report.
+
+    The worktree's own git dir, so two tasks on one machine never read each
+    other's report; the file is written by `.cheese/pre-push` and only when
+    that run did not pass, so its presence means there is something to say.
+    """
+    git_dir = _git_task(worktree, "rev-parse", "--absolute-git-dir")
+    return Path(git_dir) / "cheese-pre-push-report"
+
+
+# Reports read back from a delivery push, keyed by the checkout they came
+# from and waiting for `_sync_task` to hand them over. Keyed and not a list
+# because one sync can push the same checkout twice: `_once_more_if_transient`
+# retries a delivery, and each attempt reads the file that attempt wrote.
+_pending_pre_push_reports: dict[str, str] = {}
+
+
+def _keep_pre_push_report(path: Path, text: str) -> None:
+    """Record this attempt's report, or forget the last attempt's.
+
+    Called once per delivery push, so silence has to be able to overwrite
+    text: a retry whose hook passes writes no file, and the reader of the
+    room message is owed the outcome of the push that landed, not of the one
+    that was thrown away.
+    """
+    key = str(path)
+    if text:
+        _pending_pre_push_reports[key] = text
+    else:
+        _pending_pre_push_reports.pop(key, None)
+
+
+class _RoomMessage:
+    """One thing to say, and the second reader to say it to.
+
+    The room is the reader that lasts, and stderr is the one that is still
+    there when the room cannot be reached: `cheese sync` runs from the
+    commit's own post-commit hook, whose stderr the committing command
+    shows. Both are handed the same text — a message composed for the room
+    and then composed again, slightly differently, for the fallback is how
+    two reports of one event start to disagree.
+    """
+
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+    def tell_room(self) -> None:
+        if not _tell_room(self.content):
+            self.tell_stderr()
+
+    def tell_stderr(self) -> None:
+        print(self.content, file=sys.stderr)
+
+
+def _flush_pre_push_reports() -> None:
+    """Send the delivery push's pre-push reports to the room.
+
+    `git commit` reaches the push through the post-commit hook (`exec cheese
+    sync`), so on this path the report is produced, paid for, and captured
+    with nobody to read it — the author of the commit is the reader it was
+    written for, and this is how it reaches them.
+
+    Total on purpose: it runs in a `finally`, where raising would replace the
+    push's own failure with a failure to report it.
+    """
+    if not _pending_pre_push_reports:
+        return
+    pending = list(_pending_pre_push_reports.values())
+    _pending_pre_push_reports.clear()
+    content = (
+        "⚠️ 这次提交的推前自检没过（它只是报告，不挡推送）：\n\n"
+        + "\n\n".join(pending)
+    )
+    try:
+        message = _RoomMessage(content)
+        if API and TOPIC and TOKEN:
+            message.tell_room()
+        else:
+            # Nobody to tell: a checkout with no room has no author to reach.
+            message.tell_stderr()
+    except Exception:  # noqa: BLE001 — the sync's own outcome is what matters
+        pass
 
 
 def _git_credential(operation: str) -> None:
@@ -3481,6 +3707,29 @@ def _task_worktree(task_id: str) -> Path:
             "exec cheese sync\n"
         )
         hook.chmod(0o755)
+        # The project's own pre-push check, if it keeps one. What the check
+        # IS belongs to the project and not here: `cheese worktree` serves
+        # every project, and a project whose tree has no `.cheese/pre-push`
+        # must not pay for a rule it never wrote — it does one `[ -x ]` and
+        # nothing else.
+        #
+        # The hook runs the script and then exits 0 regardless of what it
+        # said. That is not politeness: a push refused here is a commit the
+        # platform has not delivered, and the checkout it lives in does not
+        # survive to be retried, so the report must not be able to lose the
+        # work it is reporting on. The script still owns its own exit code for
+        # whoever runs it directly; this just stops a project's mistake from
+        # turning a report into a gate. What must block a merge is CI, and
+        # that is where the decision belongs.
+        prepush = hooks / "pre-push"
+        prepush.write_text(
+            "#!/bin/sh\n"
+            'script="$(git rev-parse --show-toplevel)/.cheese/pre-push"\n'
+            '[ -x "$script" ] || exit 0\n'
+            '"$script"\n'
+            "exit 0\n"
+        )
+        prepush.chmod(0o755)
         _follow_task_branch(task_dir, data)
         # Before the environment is prepared: what comes back may change what
         # it installs.
@@ -3857,11 +4106,20 @@ def _sync_task(task_id: str) -> list[str]:
                 found = _git_task(worktree, "symbolic-ref", "--short", "HEAD")
             if found != branch:
                 raise RuntimeError(f"Expected task branch {branch}, found {found}")
-            _once_more_if_transient(
-                lambda: _deliver_task_branch(
-                    worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+            try:
+                _once_more_if_transient(
+                    lambda: _deliver_task_branch(
+                        worktree, branch, head, queued_pr=data.get("merge_queued_pr")
+                    )
                 )
-            )
+            finally:
+                # The report of the push that just ran, to the author of the
+                # commit that triggered it. Only a push produces one, so a
+                # sync that had nothing to deliver is silent here. In a
+                # `finally` because a push that failed still ran the entry
+                # point: its report is the reason to look, and the sync that
+                # would carry it forward is the one being abandoned here.
+                _flush_pre_push_reports()
             record.write(
                 f"{datetime.now(UTC).isoformat()} success head={head} "
                 f"snapshot={snapshot}\n"
@@ -3961,8 +4219,12 @@ def _deliver_task_branch(
     remote = f"refs/remotes/origin/{branch}"
     if _is_ancestor(worktree, head, remote):
         return
+    # The pushes below run the project's pre-push entry point, whose report is
+    # read back and handed to the room (`_flush_pre_push_reports`).
+    pre_push_report = _pre_push_report_path(worktree)
     if not _git_task(worktree, "ls-remote", "origin", f"refs/heads/{branch}"):
-        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}",
+                  pre_push_report=pre_push_report)
         return
     _git_task(
         worktree,
@@ -3977,7 +4239,8 @@ def _deliver_task_branch(
     if queued_pr:
         raise _BranchQueued(branch, queued_pr)
     if _is_ancestor(worktree, tip, head):
-        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}")
+        _git_task(worktree, "push", "origin", f"{head}:refs/heads/{branch}",
+                  pre_push_report=pre_push_report)
         return
     own = _git_task(
         worktree, "reflog", "show", "--format=%H", f"refs/heads/{branch}"
@@ -3993,6 +4256,7 @@ def _deliver_task_branch(
         f"--force-with-lease=refs/heads/{branch}:{tip}",
         "origin",
         f"{head}:refs/heads/{branch}",
+        pre_push_report=pre_push_report,
     )
 
 
@@ -5306,6 +5570,9 @@ def main() -> None:
             )
             sys.exit(1)
         _remember_pulled(topic, rel, hashlib.sha256(raw).hexdigest()[:16])
+        if (res.get("data") or {}).get("already_shown"):
+            print(f"{rel} 和刚摆出来的那一份一样，对话里已经有这张卡，没有再摆一张。")
+            return
         brought = f"，连同它加载的 {len(assets)} 个文件" if assets else ""
         print(f"已把 {rel} 摆出来给对话里的人看（{kind}）{brought}。")
     elif a.cmd == "template":

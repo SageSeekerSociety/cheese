@@ -12,6 +12,12 @@
     "withdrawAria": "撤回你对「{text}」的回答",
     "withdrawTitle": "撤回这条回答？",
     "withdrawBody": "撤回后这道题重新等回答，谁都能再选一次。你发的那句话还留在房间里。",
-    "withdrawFailed": "撤回没成功，再试一次"
+    "withdrawFailed": "撤回没成功，再试一次",
+    "skip": "跳过这道题",
+    "skipped": "{name}：已跳过",
+    "undoSkip": "撤销",
+    "undoSkipAria": "撤销跳过，重新回答这道题",
+    "skipFailed": "跳过失败",
+    "asks": "问 {people}"
   }
 }

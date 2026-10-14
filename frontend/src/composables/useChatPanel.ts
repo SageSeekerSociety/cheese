@@ -21,7 +21,7 @@ import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
 import type { ChatPanelOptions } from './chatPanelContract'
 
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -47,7 +47,7 @@ import { useTypingPreview } from '../components/room/composables/useTypingPrevie
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { applyLiveChanges } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
-import { faceLookup, type MentionFaceMap } from '../lib/memberActivity'
+import { faceLookup } from '../lib/memberActivity'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
@@ -61,6 +61,7 @@ import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
+import { useMentionMaps } from './useMentionMaps'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 import { applyRoomState, useRoomResync } from './useRoomResync'
@@ -89,13 +90,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     return room && id && id !== room.id ? { ...room, id } : room
   }
 
-  // Message rendering (markdown / plain / reference chips) lives in
-  // ../lib/renderMessage and happens in the row components; here we only fill the
-  // handle→name and id→title maps they render with, from the roster / topics props.
-  const mentionNames = reactive<Record<string, string>>({})
-  const mentionIdentities = reactive<MentionFaceMap>({})
-  const topicTitles = reactive<Record<string, string>>({})
-  const refMaps = { mentionNames, topicTitles, mentionIdentities }
+  // 正文渲染在 ../lib/renderMessage（行组件里做）；它读的那几张表建在 useMentionMaps，这里填上。
+  const { mentionNames, mentionIdentities, topicTitles, refMaps } = useMentionMaps()
 
   const AUTHOR = myHandle()
 
@@ -131,7 +127,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     nameOf: agentNameOf,
     names: mentionNames,
     identities: mentionIdentities,
-    taskAgentHandle: opts.taskAgentHandle,
+    agentHandle: opts.agentHandle,
     alwaysSummon,
   })
 
@@ -195,7 +191,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rememberScroll,
     restoreScroll,
     restoresToBottom,
-  } = useChatScroll({ showingNewest: () => !hasNewer.value })
+    forgetScroll,
+  } = useChatScroll({ showingNewest: () => !hasNewer.value, topicId: () => place()?.id })
 
   // 打开话题时分批挂行 —— 见 room/composables/useRowBatch（`rows`、`paging` 在下面，晚读）。
   const rowBatch = useRowBatch({
@@ -254,7 +251,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
   })
 
-  // 每个人自己挑过的头像在 `mentionIdentities` 上，没有的退回项目名册那一份（怎么算见 lib/memberActivity 的 `faceLookup`）。
+  // 每个人自己挑过的头像在 `mentionIdentities` 上，没有的退回项目名册那一份（见 faceLookup）。
   const faceOf = faceLookup(mentionIdentities, avatarSrc)
   const activity = useRoomActivity({ me: AUTHOR, send: sendOnSocket })
   const liveSteps = useLiveSteps()
@@ -614,6 +611,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     onDelivered: (block) => {
       // 切走之后才回来的那一条属于上一个房间：它在那边的历史里，不画在这里。
       if (block.conversation_id !== place()?.id) return
+      opts.onPosted?.(block)
       delivered.add(block.id)
       pushBlock(block)
       autoScroll()
@@ -690,7 +688,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     settle: (b: Block) => settleOutbox(b),
     noteRead: (blocks: Block[]) => blocks.forEach((b) => tail.hold(b)),
     readEnded: () => tail.check(),
-    scroll: { atBottom, follow: autoScroll, fill: () => paging.fillViewportIfNeeded() },
+    scroll: { atBottom, follow: autoScroll, scrollToBottom, forgetScroll, fill: () => paging.fillViewportIfNeeded() },
     socket: { connect: (id: string) => connectRefused.value || connectSocket(id), close: closeSocket },
     failed: historyReadFailed,
   })
@@ -777,12 +775,15 @@ export function useChatPanel(opts: ChatPanelOptions) {
 
   // <#id> 可以指一个话题，也可以指这个房间里的一件活：两边的标题都得认得，否则活的
   // chip 只会写「#话题」。
+  // 只改变了的那几个：每条消息正文都盯着这张表，整张重填会让整条时间线重画（见 useChatScroll）。
   watch(
     [() => topicList(), roomTasks.known],
     ([ts, tasks]) => {
-      for (const k of Object.keys(topicTitles)) delete topicTitles[k]
-      for (const t of ts) topicTitles[t.id] = topicTitle(t)
-      for (const t of tasks.values()) topicTitles[t.id] = taskTitle(t)
+      const next = new Map<string, string>()
+      for (const t of ts) next.set(t.id, topicTitle(t))
+      for (const t of tasks.values()) next.set(t.id, taskTitle(t))
+      for (const k of Object.keys(topicTitles)) if (!next.has(k)) delete topicTitles[k]
+      for (const [k, title] of next) if (topicTitles[k] !== title) topicTitles[k] = title
     },
     { immediate: true, deep: true }
   )

@@ -111,7 +111,7 @@ steps:
   - label: 没点名的消息归谁
     desc: 每个在跑的轮次都看得见，但只有被点名唤起的轮次或房间默认队友的轮次认领它。
     link: /dev/turn#seats-claim
-  - label: 几位队友在同一台机器上时怎么不打架
+  - label: 几位队友同时干活时怎么不打架
     desc: 每位队友一份工作目录，改动落在各自任务卡的分支上。
     link: /dev/turn#seats-share
   - label: 在界面上分开看
@@ -133,7 +133,7 @@ steps:
 
 一位队友在房间里和在房间的某个任务里是两个座位：任务的会话是一段独立的对话，座位名是「队友名@任务 id」（`place.seat_key`），房间里的座位名就是队友名。启动脚本（`$HOME/.cheese/launch/`）、runner 的状态目录和下面这些文件都按座位名分。
 
-机器上的文件也照这个分。**属于一个座位的，写进这个座位的目录**（`place.seat_dir`，`$HOME/.cheese/seats/<sha256(座位名) 前 12 位>`）：执行目标 `remote-target.json`、每轮配置 `remote-session/`、系统提示 `cheese-system-prompt.md`、执行凭据 `remote-session/execution.token`、Claude 设置与技能（座位下的 `.claude/`），以及 `remote-execution/` 辅助程序。第二位队友开屏不会改写第一位的 hook 或辅助程序。
+机器上的文件也照这个分。**属于一个座位的，写进这个座位的目录**（`place.seat_dir`，`$HOME/.cheese/seats/<sha256(座位名) 前 12 位>`）：执行目标 `remote-target.json`、每轮配置 `remote-session/`、系统提示 `cheese-system-prompt.md`、执行凭据 `remote-session/execution.token`、模型隧道 helper 的凭据、端口、pid 和日志（`cheese-tunnel.token`/`.port`/`.pid`/`.log`）、Claude 设置与技能（座位下的 `.claude/`），以及 `remote-execution/` 辅助程序。第二位队友开屏不会改写第一位的 hook 或辅助程序。
 
 留在房间层的是工作目录、环境运行器的状态（`$HOME/.cheese-environment/status.json`）、store 和会话记录（`$HOME/.claude/projects/`）。每个座位的 `.claude/projects` 指向这份记录，续跑、迁机和发布前的忙闲扫描仍能找到原会话。辅助程序按座位更新；一个座位的更新不会覆盖另一位正在使用的文件。
 
@@ -158,7 +158,7 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 
 芝士在一轮里 `chat_send` 发的话，归到发言者自己在跑的那一轮上（`publish-chat-message` 按作者归因），沉默提醒也按这一轮算。
 
-### 几位队友在同一台机器上时怎么不打架 {#seats-share}
+### 几位队友同时干活时怎么不打架 {#seats-share}
 
 几位队友的工作目录是分开的，同一份文件不会被两位同时改。共用的是同一个远端仓库，所以**改动落在任务的分支上**：每个任务有自己的会话、工作树和分支（`cheese worktree <任务 id>`），只由任务自己的会话打开；两个任务并行推的是两个分支，不会互相覆盖。
 
@@ -187,6 +187,7 @@ AI 发起的点名有熔断：同一话题一小时最多叫起 `AGENT_MENTIONS_
 | 跟进 | 任务文档改动、递验收卡这类信号，或上次判断后又多了 30 条消息 | 先判断要不要改；同一任务 30 分钟最多一次、每天最多 3 次 |
 
 - 每次都把当前标题交给模型，默认保留；只改了措辞和标点按不改处理。
+- 新名字宽度超过侧栏一行（`title_width.py` 的 `TITLE_WIDTH`，12 个汉字宽）时，带着量出来的宽度让模型重起，最多再问 2 次，几次加起来不超过 `topic_naming_timeout_seconds`；重问时模型答 keep 算没给出更好的，直接截。还是太宽就按宽度截到能放下。校准和跟进时模型要保留的当前标题本身太宽，也按同样办法重问、截断，不原样留下。写进去的自动标题一定放得下。
 - 标题由谁定记在 `tasks.title_source`：`placeholder`、`auto`、`human`。人起的名（建任务时填的、之后改的）记为 `human`，此后平台不再自动改。芝士用 `cheese_task` 创建任务时写的标题、任务自己的会话用 `cheese_title` 起的名记为 `auto`，并算作已校准：只在跟进时可能再改。
 - 自动改名按 `title_version` 比较后写入：生成期间有人改了名，这次结果作废。
 - 每次改名记进 `task_titles`，不在任务里发消息，只推送 `state: topics` 让侧栏刷新。

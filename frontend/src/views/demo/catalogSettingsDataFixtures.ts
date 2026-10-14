@@ -23,7 +23,7 @@ import type { AgentFieldChoice } from '@/lib/modelChoices'
 import type { ProjectComputeConfigs } from '@/types/compute'
 import type { EnvironmentDiagnosis } from '@/types/environment'
 
-import { COMPUTE_DEVICES } from './catalogFixtures'
+import { COMPUTE_DEVICES } from './catalogComputeFixtures'
 
 /** 工作电脑现状：默认云端，两台自有设备，分布里各有几段对话在跑。 */
 export function computeState(over: Partial<ProjectComputeConfigs> = {}): ProjectComputeConfigs {

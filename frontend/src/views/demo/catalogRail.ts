@@ -84,7 +84,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
     id: 'topic-rail-light',
     title: 'TopicRailLight',
     about:
-      '行尾那盏灯：一个 8px 的点，说这一行自己的状态。画哪一盏由 `lib/roomLight.ts` 的四条判据算好递进来，这一件只管画。',
+      '行尾那盏灯：一个 8px 的点。四盏说这一行自己的状态，判据在 `lib/roomLight.ts`；第五盏是蓝的，说的是「这条不归我」，由父级按归谁盖上（`useTopicRail.taskLight`），压过那四盏。这一件只管画。',
     file: 'src/components/topic-sidebar/TopicRailLight.vue',
     component: TopicRailLight,
     // `lightTitle` 要读词表（无障碍名字和 hover 那句话），所以得多装一个 i18n。
@@ -113,6 +113,12 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
         note: '不闪。点开看过就灭，之后再有新活它回到呼吸绿。',
         props: { light: { kind: 'green', breathe: false } },
         expectSelector: '.row-light--green:not(.row-light--breathe)',
+      },
+      {
+        name: '蓝：这条不归我',
+        note: '别人负责的任务行用它，压过上面那四盏——这条活是别人的，先看清这个，再看它在跑还是卡住。它自己一个色相：红黄绿说的是状态，蓝说的是归谁。频道行没有蓝灯（频道不归谁）。',
+        props: { light: { kind: 'blue', breathe: false } },
+        expectSelector: '.row-light--blue',
       },
     ],
   },
@@ -153,7 +159,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '显示在跑、但没动静了（红灯）',
-        note: '五分钟没有输出。这一盏压过其余三盏——同时成立时只画它。',
+        note: '五分钟没有输出。这一盏压过黄和绿——同时成立时只画它。',
         props: rowProps({ row: RAIL_ROWS.working, light: { kind: 'red', breathe: false } }),
         expectSelector: '.row-light--red',
       },
@@ -203,15 +209,26 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
   {
     id: 'topic-rail-pinned',
     title: 'TopicRailPinnedRows',
-    about: '项目名下面那一行：资料库，和频道行同一种行。总览和别的页都进项目名菜单，这里不再加。',
+    about: '项目名下面那一行：总览和资料库，和频道行同一种行。别的页都进项目名菜单，这里不长。',
     file: 'src/components/topic-sidebar/TopicRailPinnedRows.vue',
     component: TopicRailPinnedRows,
     // 只读词表和 props：哪几页露出来了、当前在哪一页，都是父级算好递进来的。
     needs: ['vuetify', 'i18n'],
     states: [
       {
-        name: '站在资料库上',
+        name: '站在总览上',
         note: '选中态和频道行同一套。',
+        props: {
+          pages: RAIL_PAGES,
+          routeName: 'workspace-overview',
+          terms: RAIL_TERMS,
+          page: false,
+        },
+        expect: '总览',
+      },
+      {
+        name: '站在资料库上',
+        note: '同一个组件，换一个当前页。',
         props: {
           pages: RAIL_PAGES,
           routeName: 'project-library',
@@ -222,7 +239,7 @@ export const RAIL_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '手机上：这一行收进项目菜单',
-        note: '整页形态里这一页在点项目名弹出的面板里，这里不画。',
+        note: '整页形态里这几页在点项目名弹出的面板里，这里不画。',
         props: {
           pages: RAIL_PAGES,
           routeName: 'workspace-overview',

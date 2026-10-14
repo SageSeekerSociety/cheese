@@ -14,12 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.agent.event_lines import _Changeset
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.platform_notices import (
-    EVENT_TURN_FAILED,
-    SEVERITY_INFO,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.agent.service import AgentResult, AgentUsage
 from app.domain.agent.turn.state.live import HookWorkState
 from app.domain.agent.turn.steps.send import SystemEvent
@@ -27,6 +21,12 @@ from app.domain.agent.turn.store.completion import (
     CompletionEffects,
     forget_room_claims,
     settle_work,
+)
+from app.domain.notice_meta import (
+    EVENT_TURN_FAILED,
+    SEVERITY_INFO,
+    WHO_HUMAN,
+    notice,
 )
 
 logger = logging.getLogger(__name__)

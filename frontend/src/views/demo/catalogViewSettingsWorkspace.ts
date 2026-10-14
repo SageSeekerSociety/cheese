@@ -19,6 +19,9 @@ import {
   CHANNEL_ENTRIES,
   CLOSED_TASK,
   DEVICE_TEAMS,
+  MODEL_CONNECTIONS,
+  MODEL_HELD,
+  MODEL_SERVICE_DEVICES,
   NOTIF_PREFS,
   OVERVIEW_TEXT,
   PROJECT_PROGRESS,
@@ -36,6 +39,7 @@ import {
 
 import { t } from '@/i18n'
 import General from '@/views/user/settings/General.vue'
+import ModelConnectionsView from '@/views/user/settings/ModelConnectionsView.vue'
 import NotificationsView from '@/views/user/settings/NotificationsView.vue'
 import ProfileView from '@/views/user/settings/ProfileView.vue'
 import RealNameView from '@/views/user/settings/RealNameView.vue'
@@ -383,7 +387,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.securityView.s4.note')
         },
-        props: { connections: [] },
+        props: { connections: [], held: [] },
         expect: '暂无关联账号',
         // 第二张卡片（已关联账号）里的空态那一行。
         expectSelector: 'section.settings-card:nth-of-type(2) .srow--empty',
@@ -442,6 +446,65 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         props: { showTotp: true, setupStep: 'backup', backupCodes: ['3f2a-11cd-90b8', '77bb-20ef-3311'] },
         expect: '3f2a-11cd-90b8',
         expectSelector: '.setup__codes',
+      },
+    ],
+  },
+  {
+    id: 'model-connections-view',
+    title: 'ModelConnectionsView',
+    get about() {
+      return t('catalog.modelConnectionsView.about')
+    },
+    file: 'src/views/user/settings/ModelConnectionsView.vue',
+    component: ModelConnectionsView,
+    needs: UI_T,
+    // 「解除」的确认框和「使用自定义模型服务」的表单都画在 body 上。
+    teleport: true,
+    args: {
+      loading: false,
+      error: null,
+      connections: MODEL_CONNECTIONS,
+      held: MODEL_HELD,
+      devices: MODEL_SERVICE_DEVICES,
+      busy: '',
+      saved: 0,
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s1.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s1.note')
+        },
+        props: { connections: [], held: [] },
+        expect: '暂无模型连接',
+        expectSelector: '.settings-empty',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s2.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s2.note')
+        },
+        props: { connections: [{ ...MODEL_CONNECTIONS[2], logged_in: false, revoking: true }] },
+        expect: '解除中',
+        expectSelector: '.mc-state--pending',
+      },
+      {
+        get name() {
+          return t('catalog.modelConnectionsView.s3.name')
+        },
+        get note() {
+          return t('catalog.modelConnectionsView.s3.note')
+        },
+        props: {
+          connections: [],
+          held: [{ ...MODEL_HELD[0], check_error: 'HTTP 401 invalid x-api-key' }],
+        },
+        expect: '检查未通过',
+        expectSelector: '.mc-state--failed',
       },
     ],
   },

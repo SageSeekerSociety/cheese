@@ -199,6 +199,51 @@ describe('支线', () => {
     expect(await findByText('李安')).toBeTruthy()
   })
 
+  it('窗口里没有那条消息、支线列表里那一行带着完整的开局消息时，页头也不等', async () => {
+    // 从频道概览的支线列表点开一条老支线：它挂着的那条消息早已翻出最新那一段。列表那一行
+    // 带着那条消息（没截过），先拿它画上。
+    queryClient.clear()
+    queryClient.setQueryData(keys.roomThreads('r1'), [
+      {
+        ...summary(),
+        root: {
+          author: 'alice',
+          author_type: 'participant',
+          kind: 'message',
+          content: '首页要改哪些地方？',
+          truncated: false,
+          created_at: '2026-10-06T00:00:00Z',
+        },
+        unread: false,
+      },
+    ])
+    getThread.mockReturnValue(new Promise(() => {}))
+    const { findByText } = mount()
+    expect(await findByText('李安')).toBeTruthy()
+  })
+
+  it('列表那一行里的开局消息被截过，就不拿它当整条消息画', async () => {
+    queryClient.clear()
+    queryClient.setQueryData(keys.roomThreads('r1'), [
+      {
+        ...summary(),
+        root: {
+          author: 'alice',
+          author_type: 'participant',
+          kind: 'message',
+          content: '长'.repeat(200),
+          truncated: true,
+          created_at: '2026-10-06T00:00:00Z',
+        },
+        unread: false,
+      },
+    ])
+    getThread.mockReturnValue(new Promise(() => {}))
+    const { container } = mount()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(container.querySelector('.thread-root')).toBeNull()
+  })
+
   it('反馈卡接在支线的对话后面', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { container } = render(ThreadPane as Component, {
@@ -213,5 +258,28 @@ describe('支线', () => {
       },
     })
     await waitFor(() => expect(container.querySelector('.feedback-probe')?.textContent).toBe('th1'))
+  })
+
+  it('输入框说给这条支线正在和它说话的那位队友，不是频道默认那位', async () => {
+    getThread.mockResolvedValue({
+      id: 'th-mate',
+      room_id: 'r1',
+      root_block_id: 'b1',
+      reply_count: 2,
+      root: root(),
+      teammate: 'cheese-opus',
+    })
+    const { container } = render(ThreadPane as Component, {
+      props: { room: ROOM, threadId: 'th-mate', members: [], topicList: [], memberNames: { alice: '李安' } },
+      global: {
+        plugins: [vuetify],
+        stubs: {
+          MarkdownView: true,
+          AgentFeedbackCard: true,
+          ChatPanel: { props: ['agentHandle'], template: '<i class="composer-probe">{{ agentHandle }}</i>' },
+        },
+      },
+    })
+    await waitFor(() => expect(container.querySelector('.composer-probe')?.textContent).toBe('cheese-opus'))
   })
 })

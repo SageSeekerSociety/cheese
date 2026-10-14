@@ -19,12 +19,6 @@ from app.domain.agent.event_lines import _is_platform_tool, _short_tool_name
 from app.domain.agent.platform_failures import (
     TURN_TIMEOUT_MESSAGE,
 )
-from app.domain.agent.platform_notices import (
-    EVENT_TURN_TIMEOUT,
-    SEVERITY_WARN,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.agent.prompt import _compaction_notice
 from app.domain.agent.room_events import post_system_event
 from app.domain.agent.service import (
@@ -64,6 +58,12 @@ from app.domain.agent.turn.store.events import _mark_step_failed, _record_step_o
 from app.domain.agent.turn.store.intervals import turn_credits_refused
 from app.domain.agent.turn_inputs import mark_session_for_turn
 from app.domain.delivery.receipts import inputs_answered_inside
+from app.domain.notice_meta import (
+    EVENT_TURN_TIMEOUT,
+    SEVERITY_WARN,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.usage.credits import (
     CREDITS_EXHAUSTED_META,
     credits_event,

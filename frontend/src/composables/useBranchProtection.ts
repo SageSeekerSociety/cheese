@@ -82,15 +82,20 @@ export function useBranchProtection(projectId: () => string) {
     ...bpMemberItems.value,
   ])
   // 存的是席位 handle（`seat_handle`），所以可选项的 value 就是它 —— 名字只给人看。
+  // 停用的（`is_active: false`）不列：这一项是「给以后的活挑一个队友」，而停用的席位
+  // 在别处也一样不被挑（见 `cx_types.ProjectAgent` 那句注释）。它已经在这个项目的房间
+  // 里干的活不受影响 —— 只是不再被派新活。
   const bpDispatchItems = computed(() => [
     { title: t('work.projectSettings.merge.unassigned'), value: '' },
-    ...bpAgents.value.map((a) => ({
-      title: t('work.projectSettings.merge.memberOption', {
-        name: a.display_name,
-        handle: a.seat_handle,
-      }),
-      value: a.seat_handle,
-    })),
+    ...bpAgents.value
+      .filter((a) => a.is_active)
+      .map((a) => ({
+        title: t('work.projectSettings.merge.memberOption', {
+          name: a.display_name,
+          handle: a.seat_handle,
+        }),
+        value: a.seat_handle,
+      })),
   ])
 
   async function loadBranchProtection() {

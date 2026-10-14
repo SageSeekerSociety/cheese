@@ -146,7 +146,8 @@
   "CHEESE_QUESTION": {
     "body": "In \"{topicTitle}\" — paused, waiting for your answer",
     "answered": "In \"{topicTitle}\" — answered: {answer}",
-    "untitled": "Cheese has a question for you"
+    "untitled": "Cheese has a question for you",
+    "skipped": "In \"{topicTitle}\" — skipped"
   },
   "DEVICE_IN_USE": {
     "title": "{agent} started working on {device}",

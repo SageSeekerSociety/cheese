@@ -10,7 +10,7 @@
  */
 import type { MarketNodes, MarketPools } from '@/cx_types'
 
-import { COMPUTE_DEVICES } from './catalogFixtures'
+import { COMPUTE_DEVICES } from './catalogComputeFixtures'
 
 const [LAB, HOME] = COMPUTE_DEVICES
 

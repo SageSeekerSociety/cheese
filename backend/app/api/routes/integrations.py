@@ -27,15 +27,6 @@ from app.core.errors import (
     message_key,
 )
 from app.core.sentences import exception_text, listing, say, with_keys
-from app.domain.agent.platform_notices import (
-    EVENT_MAIL_DRAFTED,
-    EVENT_MAIL_RESULT,
-    SEVERITY_INFO,
-    SEVERITY_WARN,
-    WHO_CHEESE,
-    WHO_HUMAN,
-    notice,
-)
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.identity.actor import Actor
@@ -50,12 +41,33 @@ from app.domain.integration.service import (
     keep_feishu_tokens,
     public,
 )
+from app.domain.library import service as library
+from app.domain.notice_meta import (
+    EVENT_MAIL_DRAFTED,
+    EVENT_MAIL_RESULT,
+    SEVERITY_INFO,
+    SEVERITY_WARN,
+    WHO_CHEESE,
+    WHO_HUMAN,
+    notice,
+)
 from app.domain.notification.models import NotificationLevel, NotificationType
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.services import TopicMemberService
 
 router = APIRouter(prefix="", tags=["integrations"])
+
+
+def _service(db: AsyncSession) -> IntegrationService:
+    """The service, with the room-file reader wired in.
+
+    Reading a draft's attachments off a room's file tree belongs to
+    `app.domain.library`, one layer above `integration`, so the module that
+    assembles the route's dependencies hands it in — the shape
+    `app.domain.user.ports` uses for the same reason.
+    """
+    return IntegrationService(db, library)
 
 
 class MailIn(BaseModel):
@@ -144,7 +156,7 @@ async def _usable(
     topic: uuid.UUID,
 ) -> tuple[Integration, uuid.UUID, uuid.UUID, str]:
     project, room, speaker = await _in_room(db, resolver, topic)
-    row = await IntegrationService(db).for_project(integration_id, project)
+    row = await _service(db).for_project(integration_id, project)
     return row, project, room, speaker
 
 
@@ -155,7 +167,7 @@ async def _usable(
 async def my_integrations(db: DbSession, resolver: ActorResolverDep) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
-    rows = await IntegrationService(db).owned(actor.user_id)
+    rows = await _service(db).owned(actor.user_id)
     items = [public(r) for r in rows]
     return ok(page(items, len(items)))
 
@@ -167,7 +179,7 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
     if body.security not in ("ssl", "starttls", "plain"):
         raise ValidationError(say("mailSecurityInvalid"))
     address = body.address or body.username
-    row = await IntegrationService(db).connect(
+    row = await _service(db).connect(
         owner_user_id=actor.user_id,
         owner_handle=actor.handle,
         provider="mail",
@@ -215,7 +227,7 @@ async def connect_feishu(db: DbSession, resolver: ActorResolverDep) -> dict:
     """
     actor = await _person(resolver)
     assert actor.user_id is not None
-    row = await IntegrationService(db).connect_under_platform_app(
+    row = await _service(db).connect_under_platform_app(
         owner_user_id=actor.user_id, owner_handle=actor.handle
     )
     await db.commit()
@@ -231,7 +243,7 @@ async def update_integration(
 ) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
-    service = IntegrationService(db)
+    service = _service(db)
     row = await service.get_owned(integration_id, actor.user_id)
     secret = {
         k: v
@@ -255,7 +267,7 @@ async def check_integration(
 ) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
-    service = IntegrationService(db)
+    service = _service(db)
     row = await service.recheck(await service.get_owned(integration_id, actor.user_id))
     await db.commit()
     return ok(public(row))
@@ -267,7 +279,7 @@ async def delete_integration(
 ) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
-    row = await IntegrationService(db).get_owned(integration_id, actor.user_id)
+    row = await _service(db).get_owned(integration_id, actor.user_id)
     await db.delete(row)
     await db.commit()
     return ok({"deleted": str(integration_id)})
@@ -296,7 +308,7 @@ async def feishu_authorize(
 ) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
-    row = await IntegrationService(db).get_owned(integration_id, actor.user_id)
+    row = await _service(db).get_owned(integration_id, actor.user_id)
     settings = await feishu_settings_for(db, row)
     url = FeishuClient(settings).authorize_url(
         _redirect_uri(), _state(row.id, in_app=started_in_app(request))
@@ -371,7 +383,7 @@ async def my_drafts(
 ) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
-    rows = await IntegrationService(db).drafts_of(actor.user_id, status or None)
+    rows = await _service(db).drafts_of(actor.user_id, status or None)
     items = [draft_view(r) for r in rows]
     return ok(page(items, len(items)))
 
@@ -425,7 +437,7 @@ async def send_draft(
     """The owner read this exact draft (recipients, subject, body, files); send it."""
     actor = await _person(resolver)
     assert actor.user_id is not None
-    service = IntegrationService(db)
+    service = _service(db)
     draft = await service.get_draft(draft_id)
     try:
         result = await service.send(draft, owner_user_id=actor.user_id, by=actor.handle)
@@ -443,7 +455,7 @@ async def discard_draft(
 ) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
-    service = IntegrationService(db)
+    service = _service(db)
     draft = await service.discard(
         await service.get_draft(draft_id), owner_user_id=actor.user_id
     )
@@ -464,7 +476,7 @@ async def project_integrations(
     project, _room, _speaker = await _in_room(db, resolver, topic)
     if project != project_id:
         raise ForbiddenError(say("roomNotInProject"))
-    rows = await IntegrationService(db).granted(project_id)
+    rows = await _service(db).granted(project_id)
     items = [
         {
             "id": str(r.id),
@@ -488,7 +500,7 @@ async def mail_search(
     resolver: ActorResolverDep,
 ) -> dict:
     row, *_ = await _usable(db, resolver, integration_id, topic)
-    service = IntegrationService(db)
+    service = _service(db)
     try:
         hits = await service.search(row, **body.model_dump())
     finally:
@@ -507,7 +519,7 @@ async def mail_read(
 ) -> dict:
     row, *_ = await _usable(db, resolver, integration_id, topic)
     try:
-        message = await IntegrationService(db).read(row, uid, folder)
+        message = await _service(db).read(row, uid, folder)
     finally:
         await db.commit()
     return ok(message)
@@ -525,7 +537,7 @@ async def mail_attachment(
 ) -> Response:
     row, *_ = await _usable(db, resolver, integration_id, topic)
     try:
-        name, content_type, data = await IntegrationService(db).attachment(
+        name, content_type, data = await _service(db).attachment(
             row, uid, index, folder
         )
     finally:
@@ -546,7 +558,7 @@ async def mail_draft(
     resolver: ActorResolverDep,
 ) -> dict:
     row, project, room, speaker = await _usable(db, resolver, integration_id, topic)
-    draft = await IntegrationService(db).draft(
+    draft = await _service(db).draft(
         row,
         project_id=project,
         room_id=room,
@@ -643,7 +655,7 @@ async def feishu_search(
     resolver: ActorResolverDep,
 ) -> dict:
     row, *_ = await _usable(db, resolver, integration_id, topic)
-    hits = await IntegrationService(db).feishu(row, lambda c: c.search(body.query))
+    hits = await _service(db).feishu(row, lambda c: c.search(body.query))
     await db.commit()
     return ok({"source": row.label, "documents": hits})
 
@@ -657,7 +669,7 @@ async def feishu_read(
     resolver: ActorResolverDep,
 ) -> dict:
     row, *_ = await _usable(db, resolver, integration_id, topic)
-    doc = await IntegrationService(db).feishu(row, lambda c: c.read(document_id))
+    doc = await _service(db).feishu(row, lambda c: c.read(document_id))
     await db.commit()
     return ok(doc)
 
@@ -671,7 +683,7 @@ async def feishu_create(
     resolver: ActorResolverDep,
 ) -> dict:
     row, *_ = await _usable(db, resolver, integration_id, topic)
-    created = await IntegrationService(db).feishu(
+    created = await _service(db).feishu(
         row, lambda c: c.create(body.title, body.content, body.folder)
     )
     await db.commit()
@@ -698,6 +710,6 @@ async def feishu_edit(
             await client.replace_text(document_id, body.block_id, body.text)
         return await client.read(document_id)
 
-    doc = await IntegrationService(db).feishu(row, edit)
+    doc = await _service(db).feishu(row, edit)
     await db.commit()
     return ok(doc)

@@ -41,6 +41,7 @@ from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.turn.intake.rewrite import text_as_sent
+from app.domain.block.asked import Awaited
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
     CHECKLIST_META_KEY,
@@ -131,7 +132,7 @@ def _viewer(actor: Actor) -> str | None:
 
 async def _awaiting_an_answer(
     db: AsyncSession, room_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, str | None]:
+) -> dict[uuid.UUID, Awaited]:
     """Which channels wait on an answer, and from whom: their own line's
     question, or one 芝士 asked in one of their tasks or 支线.
 
@@ -150,17 +151,15 @@ async def _awaiting_an_answer(
     }
 
 
-def _asks_me(
-    asked: Mapping[uuid.UUID, str | None], viewer: str | None
-) -> set[uuid.UUID]:
+def _asks_me(asked: Mapping[uuid.UUID, Awaited], viewer: str | None) -> set[uuid.UUID]:
     """这些停在提问上的房间里，哪几个在等 `viewer` 回答。
 
-    一道待确认问题只有**发起那一轮的人**能回答，提问那一刻就记在题上
-    （`meta.asked`）：旁观的人不该被一道不归他答的题点亮。
+    芝士问谁，提问那一刻就记在题上（`meta.asked`），跳过了的人不再等
+    （`block.asked`）：旁观的人不该被一道不归他答的题点亮。
     """
     if viewer is None:
         return set()
-    return {tid for tid, who in asked.items() if who == viewer}
+    return {tid for tid, who in asked.items() if viewer in who.waiting()}
 
 
 def _topic_out(
@@ -171,7 +170,7 @@ def _topic_out(
     cards: Mapping[uuid.UUID, CardRow] | None = None,
     now: datetime | None = None,
     managed_ids: set[uuid.UUID] | None = None,
-    asked: Mapping[uuid.UUID, str | None] | None = None,
+    asked: Mapping[uuid.UUID, Awaited] | None = None,
     asks_me: set[uuid.UUID] | None = None,
     activity: list[dict] | None = None,
     waits: list[MemberWait] | None = None,

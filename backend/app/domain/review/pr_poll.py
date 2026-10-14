@@ -17,13 +17,13 @@ from sqlalchemy import or_, select
 
 from app.core.sentences import say
 from app.domain.agent.chat import ChatService
-from app.domain.agent.platform_notices import (
+from app.domain.delivery.agent import dispatch_pending
+from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
     SEVERITY_INFO,
     WHO_PLATFORM,
     notice,
 )
-from app.domain.delivery.agent import dispatch_pending
 from app.domain.project.models import ProjectForge
 from app.domain.review import landing_watch, pr_publish
 from app.domain.review.models import AcceptCard
@@ -197,6 +197,7 @@ async def poll_uncarded_task_prs(
                     head=status.head_sha,
                     pr_number=number,
                     completes=True,
+                    handed_over=None,
                 )
                 await announce(
                     session,
