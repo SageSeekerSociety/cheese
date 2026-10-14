@@ -36,11 +36,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say
-from app.domain.agent.harness.prompt import (
-    task_next_step_prompt,
-    task_step_landed_while_working_prompt,
-    task_summary_prompt,
-)
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.schemas import BlockOut
@@ -351,4 +346,55 @@ async def tell_agent(
         ),
         task=task,
         content=content,
+    )
+
+
+# 下面这三段是「这次交付落地之后，任务本身怎么走」说给那个 AI 队友听的话。原先
+# 和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，可那个包里没有一处
+# 用它们 —— 说它们的只有这里，`delivery_landed` 和 `_go_on`。第 9 步把 review 够
+# 不着 `agent` 的那几条调用收进端口时，纯字符串没有理由走端口，就搬回说它的地方。
+
+
+def task_next_step_prompt(*, title: str, task_id) -> str:
+    """What a task's agent is told when one of its deliveries lands and the
+    task goes on."""
+    return (
+        f"任务「{title}」的这次交付已经采纳并合并，任务还没完成。"
+        f'下一步从项目最新的代码开始：先执行 cd "$(cheese worktree {task_id})"，'
+        "工作目录会换到一条新分支上，没合并的提交和改动会一起带过去。"
+        "对照实况文档接着做下一步，做完再用 cheese_accept_request 递一次交付；"
+        "这一步做完任务目标就全部达成时 completes_task 填 true，"
+        "还有没做完的就填 false，并在交付说明里写下一步做什么。"
+    )
+
+
+def task_step_landed_while_working_prompt(*, title: str, task_id) -> str:
+    """What a task's agent is told when the delivery it called the last lands
+    while it is working on something begun after that delivery went up: the
+    delivery counts as a step, and the work goes on as the next one."""
+    return (
+        f"任务「{title}」你标成最后一步的那次交付已经采纳并合并，"
+        "但交付之后你又开始了新的工作，它不在这次合并里，所以任务没有关闭，接着开着。"
+        f'手上这件做完后，先执行 cd "$(cheese worktree {task_id})"，'
+        "工作目录会换到一条从最新代码切出的新分支上，没合并的提交和改动会一起带过去；"
+        "再用 cheese_accept_request 把它作为下一步递交，"
+        "做完任务目标就全部达成时 completes_task 填 true。"
+        "新做的东西如果不需要交付，就用 cheese_close_task 关闭任务，结论里写明。"
+    )
+
+
+def task_summary_prompt(*, title: str) -> str:
+    """What a task's agent is told when its last delivery lands: one turn to
+    write the task up, after which the task closes."""
+    return (
+        f"任务「{title}」的最后一次交付已经采纳并合并，这一轮结束后任务关闭。"
+        "这一轮只做两件事：\n"
+        "1. 用 cheese_doc_get 读实况文档，用 cheese_doc_edit 改成任务完成时的样子："
+        "最上面写最终做成了什么；和任务目标无关、这次没有处理的发现，有就在下面交代，"
+        "没有就不写；过程中被推翻的计划删掉。\n"
+        "2. 用 chat_send 在任务里发一条总结：结果一两句，文档改了什么，"
+        "没有处理的发现逐条列出；工作目录里还有这次交付之外的提交或改动的，"
+        "写明是什么、没有交付。"
+        "没什么可补的，只写一句结果。\n"
+        "不要改动文件，不要提交审阅，不要关闭任务。"
     )

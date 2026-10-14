@@ -636,7 +636,6 @@ ignore_imports =
     app.domain.repository.service -> app.domain.agent.platform_failures
     app.domain.repository.service -> app.domain.project_skill.service
     app.domain.review.landing_watch -> app.domain.agent.announce
-    app.domain.review.landing_watch -> app.domain.agent.harness.prompt
     app.domain.review.landing_watch -> app.domain.agent_instance.services
     app.domain.review.live -> app.domain.agent.realtime.broker
     app.domain.review.periodic -> app.domain.agent.chat
@@ -648,7 +647,6 @@ ignore_imports =
     app.domain.review.room_notices -> app.domain.agent.announce
     app.domain.review.room_notices -> app.domain.delivery.agent
     app.domain.review.room_notices -> app.domain.delivery.ledger
-    app.domain.review.task_landing -> app.domain.agent.harness.prompt
     app.domain.review.task_landing -> app.domain.agent_instance.services
     app.domain.review.task_landing -> app.domain.delivery.agent
     app.domain.room_task.binding -> app.domain.agent.market

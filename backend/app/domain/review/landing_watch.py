@@ -28,7 +28,6 @@ from app.core.errors import UpstreamUnavailableError
 from app.core.sentences import listing, say
 from app.domain.addressing import Event
 from app.domain.agent.announce import announce
-from app.domain.agent.harness.prompt import main_checks_failed_prompt
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notice_meta import (
@@ -286,3 +285,32 @@ async def _seat(session, task) -> str:
         project, room, task.agent_handle
     )
     return agent_instance_handle(agent.instance_id)
+
+
+# 这一段原先和 `agent` 的其它提示词一起放在 `agent/harness/prompt.py`，但那个包里
+# 没有一处用得到它 —— 说它的只有上面的 `_checks_failed`。第 9 步把 review 够不着
+# `agent` 的调用收进端口时，纯字符串不走端口，搬回说它的地方。
+
+
+def main_checks_failed_prompt(
+    *, title: str, task_id, sha: str, failed: list[tuple[str, str]], reopened: bool
+) -> str:
+    """What a task's agent is told when a check its merge broke fails on the
+    default branch."""
+    checks = "\n".join(f"- {name} {url}".rstrip() for name, url in failed)
+    told = (
+        f"任务「{title}」合并到默认分支的提交 {sha[:12]} 上，下面的检查未通过，"
+        f"而它们在合并前的那个提交上是通过的：\n{checks}\n"
+    )
+    if not reopened:
+        return told + (
+            "看失败日志找到原因，把修复放进这一步一起交付。"
+            "确认是偶发失败、和这次改动无关的，在任务里说明理由。"
+        )
+    return told + (
+        "任务已重新打开。从项目最新的代码修复："
+        f'先执行 cd "$(cheese worktree {task_id})"，'
+        "看失败日志找到原因再改，修好后用 cheese_accept_request 递交付，"
+        "completes_task 填 true。确认是偶发失败、和这次改动无关的，"
+        "在任务里说明理由，然后用 cheese_close_task 关闭任务，不提交改动。"
+    )
