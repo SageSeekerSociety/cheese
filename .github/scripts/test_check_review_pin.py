@@ -26,7 +26,7 @@ def review(sha, *severities, marker=True):
     return "\n".join(lines)
 
 
-def rendered(sha, *severities):
+def rendered(sha, *severities, title=None, failure="x -> y"):
     """The pin comment body from the real renderer, so a change to its format turns this red."""
     spec = importlib.util.spec_from_file_location("pr_review_render", RENDER)
     module = importlib.util.module_from_spec(spec)
@@ -34,12 +34,12 @@ def rendered(sha, *severities):
     findings = [
         {
             "severity": severity,
-            "title": f"something is wrong {i}",
+            "title": title or f"something is wrong {i}",
             "file": "a.py",
             "line": i,
             "kind": "runtime",
             "rung": 4,
-            "failure": "x -> y",
+            "failure": failure,
             "evidence": "ran it",
             "confirm_with": "",
         }
@@ -123,6 +123,35 @@ class ReviewPinTest(unittest.TestCase):
     def test_prose_that_quotes_a_heading_is_not_a_finding(self):
         body = review(HEAD) + "\nThe earlier round had:\n### 1. [major] quoted\nnot a finding\n"
         self.assertEqual(run([comment(body)]).returncode, 0)
+
+    def test_a_title_that_spans_lines_still_counts(self):
+        result = run([comment(rendered(HEAD, "major", title="first line\nsecond line"))])
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("[major] first line", result.stdout)
+
+    def test_a_finding_quoted_whole_inside_another_is_not_counted_again(self):
+        failure = "the old round said:\n### 1. [major] old\n`a.py:1` · runtime · evidence rung 4 (verified)"
+        self.assertEqual(run([comment(rendered(HEAD, "minor", failure=failure))]).returncode, 0)
+
+    def test_the_newest_pin_is_the_latest_in_time_then_the_highest_id(self):
+        old_pin = review(OLD)
+        good = review(HEAD)
+        later_with_lower_id = [
+            comment(old_pin, at="2026-10-13T09:00:00Z", id=9),
+            comment(good, at="2026-10-13T10:00:00Z", id=2),
+        ]
+        self.assertEqual(run(later_with_lower_id).returncode, 0)
+        same_second = [
+            comment(good, at="2026-10-13T10:00:00Z", id=2),
+            comment(old_pin, at="2026-10-13T10:00:00Z", id=1),
+        ]
+        self.assertEqual(run(same_second).returncode, 0)
+
+    def test_a_pin_must_match_the_whole_head_not_a_prefix(self):
+        near = HEAD[:12] + "b" * 28
+        result = run([comment(review(near))])
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("the PR head is now", result.stdout)
 
     def test_only_the_newest_pin_counts(self):
         stale_then_good = [

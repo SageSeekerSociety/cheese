@@ -31,18 +31,18 @@ import re
 import sys
 
 MARKER = "<!-- pr-review sha="
-#: Associations that make a comment a pin. Matches who can push to this repo.
+#: Associations that make a comment a pin: people the repo has invited, with any permission level.
 TRUSTED = ("OWNER", "MEMBER", "COLLABORATOR")
 #: The GitHub App agents post as (`gh` in a seat mints its installation token). The
 #: `[bot]` login is reserved for the App, so a user cannot take the name.
 APP_LOGIN = "cheesex-app[bot]"
 _PIN = re.compile(r"\A<!-- pr-review sha=(?P<sha>[0-9a-f]{40}) -->")
-#: A finding as `.claude/pr-review/render.py` writes it: its heading, then the line naming
-#: where it is. Prose that merely quotes a heading does not have the second line.
-_FINDING = re.compile(
-    r"^### \d+\. \[(?P<severity>blocker|major|minor)\] (?P<title>.*)\n`[^\n]*` · .* · evidence rung \d",
-    re.M,
-)
+#: A finding as `.claude/pr-review/render.py` writes it: a numbered heading (numbers run 1, 2, 3...),
+#: then, somewhere before the next heading, the line naming where it is. Prose that merely quotes a
+#: heading has the wrong number or no such line; a title that spans lines still counts.
+_HEADING = re.compile(r"^### (?P<n>\d+)\. \[(?P<severity>blocker|major|minor)\] (?P<title>.*)$", re.M)
+_ANY_HEADING = re.compile(r"^### \d+\. \[", re.M)
+_LOCATION = re.compile(r"^`[^\n]*` · .* · evidence rung \d", re.M)
 BLOCKING = ("blocker", "major")
 HOW = "Pin again with .claude/scripts/pr-review.sh prepare <PR>, then post, after the last push."
 
@@ -76,6 +76,20 @@ def trusted(comment: dict) -> bool:
     return isinstance(user, dict) and user.get("login") == APP_LOGIN and user.get("type") == "Bot"
 
 
+def findings(body: str) -> list[tuple[str, str]]:
+    """The (severity, title) of each finding in a review comment, in order."""
+    found = []
+    for heading in _HEADING.finditer(body):
+        if int(heading["n"]) != len(found) + 1:
+            continue
+        rest = body[heading.end() :]
+        following = _ANY_HEADING.search(rest)
+        chunk = rest[: following.start()] if following else rest
+        if _LOCATION.search(chunk):
+            found.append((heading["severity"], heading["title"]))
+    return found
+
+
 def newest_pin(comments: list[dict]) -> dict | None:
     """The newest trusted comment that opens with the pin marker, oldest-first order kept on ties."""
     pins = [
@@ -102,11 +116,7 @@ def problems(head: str, comments: list[dict]) -> list[str]:
         return [
             f"the review is pinned at {match['sha'][:12]}, the PR head is now {head[:12]}. {HOW}"
         ]
-    blocking = [
-        f"[{f['severity']}] {f['title'].strip()}"
-        for f in _FINDING.finditer(body)
-        if f["severity"] in BLOCKING
-    ]
+    blocking = [f"[{severity}] {title.strip()}" for severity, title in findings(body) if severity in BLOCKING]
     if blocking:
         return [
             f"the review of {head[:12]} has {len(blocking)} blocking finding(s): "
