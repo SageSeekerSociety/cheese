@@ -322,10 +322,29 @@ jobs:
         with:
           node-version: 22
 
-      # corepack is not run in this job: the checker is plain node with no
-      # dependency of its own (it imports `typescript`, which resolves out of
-      # the gitignored frontend/node_modules installed on the box), and pulling
-      # in pnpm here would mean an install this job does not need.
+      # The checker parses the api modules with the TypeScript compiler, which
+      # is a frontend dependency: on the runner `frontend/node_modules` does
+      # not exist until something installs it, so `import 'typescript'` there
+      # dies with ERR_MODULE_NOT_FOUND and the job judges no path at all. So
+      # this job carries the same install `check` does — the pnpm pinned in
+      # frontend/package.json's `packageManager`, the same restored store, the
+      # same `--frozen-lockfile`.
+      - name: Enable corepack
+        run: corepack enable
+
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ github.workspace }}/.pnpm-store
+          key: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('frontend/pnpm-lock.yaml') }}
+          restore-keys: pnpm-hosted-v2-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --store-dir "$GITHUB_WORKSPACE/.pnpm-store"
+
+      # A parser that never installed must not read as a passing check.
+      - name: Verify the parser is actually installed
+        run: test -d node_modules/typescript || { echo "::error::typescript not installed"; exit 1; }
+
       - name: Read the routes off the app
         run: |
           uv run python -m scripts.route_index --emit > "$RUNNER_TEMP/route_index.jsonl"
@@ -335,7 +354,7 @@ jobs:
         run: node scripts/check-request-paths.mjs --routes "$RUNNER_TEMP/route_index.jsonl"
         working-directory: frontend
 
-# The application's own vitest suite, the gap the header describes. It is
+  # The application's own vitest suite, the gap the header describes. It is
   # its own job, split by file across runners, because the suite takes about
   # 7.5 minutes on one runner, and queued behind lint and the type check in
   # `check` it made that job the longest one on any frontend change. The
