@@ -66,11 +66,13 @@ TURN_ENDED = ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_err
 #: Building.running): the frontend's 还在动 rule is the same judgement, scoped to the
 #: running turn's blocks.
 RUNNING_PHRASE = "running"
-#: The phrases the board shows *instead of* `running` although a turn may still be
-#: running, so they answer nothing: task_presentation ranks 待回答 (「进程可能还在，但它不会
-#: 自己往下走了」) and 结算中 (被采纳的那一条还要跑一轮写总结) ahead of it. 第四轮审查
-#: 2026-10-14：把这两个短语读成「没在跑」，正在写总结、或刚被回答打断的线会被报成停摆。
-RUNNING_OVERRIDES = ("awaiting_answer", "accepted")
+#: The phrases the board answers *instead of* `running` although a turn may still be
+#: running, so they answer nothing: task_presentation decides 结算中 (被采纳的那一条还要跑
+#: 一轮写总结), 待回答 (「进程可能还在，但它不会自己往下走了」) and 讨论中 (还没点开始，芝士
+#: 也可能已经在回话) before it ever looks at `running`. 第四轮审查 2026-10-14：把前两个读成
+#: 「没在跑」，正在写总结、或刚被回答打断的线会被报成停摆。sweep 读到这一行之前就跳过了没
+#: 开始的行，讨论中那一格只对别的调用方有意义。
+RUNNING_OVERRIDES = ("accepted", "awaiting_answer", "discussing")
 #: A tool call older than this is not taken for still running, whatever its block says:
 #: a turn can end in a way that posts no event at all (a seat replaced under it), and a
 #: line that then reads 命令在跑 forever is the one failure this class exists to catch.
@@ -841,11 +843,10 @@ def heartbeat_of(last_msg, last_event, last_output=None):
 def turn_running(task):
     """Whether the platform says a turn is running in this task right now: the row's
     presentation phrase is `running` while one is, and False for a phrase that means no
-    turn is running (Building.started, a task still being discussed, the card's own
-    states — `running` outranks all of those). None when the row carries no phrase (an
-    older platform), or when the phrase is one the board shows *instead of* `running`
-    though a turn may be running (RUNNING_OVERRIDES): those leave the caller its own
-    fallback."""
+    turn is running (Building.started, the card's own states — `running` outranks all of
+    those). None when the row carries no phrase (an older platform), or when the phrase
+    is one the board decides *instead of* `running` though a turn may be running
+    (RUNNING_OVERRIDES): those leave the caller its own fallback."""
     pres = task.get("presentation")
     if isinstance(pres, dict) and isinstance(pres.get("phrase"), str):
         if pres["phrase"] in RUNNING_OVERRIDES:
@@ -1662,13 +1663,14 @@ def _self_test_pulse():
          in_flight(call, False, now, turn=True), True),
         ("在跑：平台给不出判断（行上没有这个字段）时退回按块的年龄算",
          in_flight(call, False, now, turn=None), True),
-        ("平台说在不在跑：running 是、started 不是、压过 running 的两个短语和空字段都不回答",
+        ("平台说在不在跑：running 是、started 不是、压过 running 的三个短语和空字段都不回答",
          [turn_running(t) for t in ({"presentation": {"phrase": "running"}},
                                     {"presentation": {"phrase": "started"}},
                                     {"presentation": {"phrase": "awaiting_answer"}},
                                     {"presentation": {"phrase": "accepted"}},
+                                    {"presentation": {"phrase": "discussing"}},
                                     {}, {"presentation": None})],
-         [True, False, None, None, None, None]),
+         [True, False, None, None, None, None, None]),
         ("结束一轮的事件：四种都算，memory_changed 不算",
          [e in TURN_ENDED for e in ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error", "memory_changed")],
          [True, True, True, True, False]),
@@ -1752,6 +1754,8 @@ def _self_test_sweep():
          kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), []),
         ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
          kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
+        ("sweep：还没点「开始」的行整行跳过（它连座位都没有，不在这一类的范围里）",
+         kinds(60, done, row={"started_at": None}), []),
         ("sweep：平台给的 last_output_at 10 分钟前，不报",
          kinds(60, done, row={"last_output_at": at(10)}), []),
     ]
