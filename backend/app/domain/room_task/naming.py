@@ -48,6 +48,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.live_frames import show_once_committed
 from app.core.redis import get_redis_client
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.gateway_chat import Usage, response_cost
@@ -706,6 +707,7 @@ async def _write(
             by=None,
         )
     )
+    _tell_pages(session, task.id, task.room_id)
     await session.commit()
     return Renamed(
         task_id=task.id,
@@ -716,16 +718,18 @@ async def _write(
     )
 
 
-async def _publish(renamed: Renamed) -> None:
-    """The channel's pages and the task's own page each listen on their own
-    conversation, so both are told."""
-    # deferred-import: tests replace this name on app.domain.agent.staleness
-    from app.domain.agent.staleness import announce_stale
+def _tell_pages(session: AsyncSession, task_id: uuid.UUID, room_id: uuid.UUID) -> None:
+    """Queue a frame for the channel's pages and for the task's own, which each
+    listen on their own conversation, so both are told once this commits.
 
-    await announce_stale(renamed.room_id, "topics", id=renamed.room_id)
-    # The task's page listens on the task's conversation; the row that changed
-    # is the room's in the sidebar, so both frames name the ROOM.
-    await announce_stale(renamed.task_id, "topics", id=renamed.room_id)
+    Renaming writes the row with a bulk `update(Task)`, which the flush hook
+    cannot see, so it is on this side to tell the pages (`room_task/live.py`).
+    Nothing here needs the broker: whichever module stages it, `core/live_frames`
+    hands the frame to the listener that does have one — telling the project's
+    channel list along the way, since the frame names a ROOM."""
+    frame = {"type": "state", "resource": "topics", "id": str(room_id)}
+    for channel in (room_id, task_id):
+        show_once_committed(session, channel, frame)
 
 
 # ---------- entry points ----------
@@ -858,8 +862,6 @@ async def run(
     finally:
         if redis is not None:
             await _redis_call(redis.delete, lock)
-    if renamed is not None:
-        await _publish(renamed)
     return renamed
 
 

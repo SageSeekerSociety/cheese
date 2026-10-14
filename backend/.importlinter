@@ -362,7 +362,6 @@ ignore_imports =
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
     app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
     app.domain.room_task.checkouts -> app.domain.topic.models
-    app.domain.room_task.naming -> app.domain.agent.staleness
     app.domain.room_task.naming -> app.domain.project.models
     app.domain.room_task.place -> app.domain.topic.models
     app.domain.room_task.presentation -> app.domain.review.notes
@@ -618,7 +617,6 @@ ignore_imports =
     app.domain.repository.service -> app.domain.project_skill.service
     app.domain.room_task.checkouts -> app.domain.agent.device_hub
     app.domain.room_task.checkouts -> app.domain.agent.resource_cleanup
-    app.domain.room_task.naming -> app.domain.agent.staleness
     app.domain.team.services -> app.domain.task.repositories
     app.domain.topic.directory -> app.domain.room_task.services
     app.domain.topic.repositories -> app.domain.block.models
