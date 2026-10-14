@@ -26,6 +26,7 @@ import { t } from '@/i18n'
 import { type ProjectRefusal, projectRefusal } from '@/lib/addresses'
 import { firstPaintDone } from '@/lib/afterFirstPaint'
 import { memberName } from '@/lib/agentNames'
+import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 import { externalHandles } from '@/lib/externalMembers'
 import { identityChanges } from '@/lib/identity'
 import { myHandle } from '@/me'
@@ -77,12 +78,8 @@ interface StoredLayout {
 }
 
 function loadLayout(): StoredLayout {
-  try {
-    const saved: unknown = JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}')
-    return typeof saved === 'object' && saved !== null ? (saved as StoredLayout) : {}
-  } catch {
-    return {} // malformed stored layout
-  }
+  const saved = storageGetJson<unknown>(LAYOUT_KEY)
+  return typeof saved === 'object' && saved !== null ? (saved as StoredLayout) : {}
 }
 
 // 存进来的这份是整个浏览器一份，可能是老版本写的、也可能被人手改过：只留下三项
@@ -209,15 +206,12 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   //（每天都走的主路径不该多加一跳）。
   const lastPlaceByProject = ref<Record<string, RememberedPlace>>(validPlaceMap(stored.lastPlaceByProject))
   function persistLayout() {
-    localStorage.setItem(
-      LAYOUT_KEY,
-      JSON.stringify({
-        chatPct: chatPct.value,
-        panelOpen: panelPref.value ?? undefined,
-        lastProjectId: projectId.value ?? undefined,
-        lastPlaceByProject: lastPlaceByProject.value,
-      })
-    )
+    storageSetJson(LAYOUT_KEY, {
+      chatPct: chatPct.value,
+      panelOpen: panelPref.value ?? undefined,
+      lastProjectId: projectId.value ?? undefined,
+      lastPlaceByProject: lastPlaceByProject.value,
+    })
   }
   function setChatPct(pct: number) {
     chatPct.value = clampNum(pct, 25, 80)
