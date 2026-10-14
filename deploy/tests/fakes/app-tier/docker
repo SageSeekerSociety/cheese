@@ -40,6 +40,16 @@ if [[ " $* " == *" python - "* ]]; then
     printf 'migration-touches ok\n'
     exit 0
   fi
+  # deploy/code-digest.py: the code a running relay runs (`exec`) and the code
+  # the release's image would run (`compose … run`).
+  if [[ "$script" == *code-digest* ]]; then
+    if [ "${1:-}" = exec ]; then
+      printf 'code-digest %s\n' "${APP_TIER_RUNNING_CODE:-running-code}"
+    else
+      printf 'code-digest %s\n' "${APP_TIER_RELEASE_CODE:-release-code}"
+    fi
+    exit 0
+  fi
   schema="${APP_TIER_RELEASE_SCHEMA-topics topics.id}"
   [ "${1:-}" != exec ] || schema="${APP_TIER_OWNER_SCHEMA-$schema}"
   for object in $schema; do printf 'schema-map %s\n' "$object"; done
@@ -63,6 +73,16 @@ if [ -n "${APP_TIER_DOCKER_LOG:-}" ]; then
       "${!#}" "${BACKEND_IMAGE:-}" "${FRONTEND_IMAGE:-}" "${IMAGE_TAG:-}" "${APP_RELEASE:-}" \
       >> "$APP_TIER_DOCKER_LOG"
   fi
+  case "$*" in
+    *" up -d --no-deps collab"|*" up -d backend frontend collab")
+      printf 'collab-up-env COLLAB_IMAGE=%s\n' "${COLLAB_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG" ;;
+    *" up -d --no-deps forge-events")
+      printf 'forge-events-up-env FORGE_EVENTS_IMAGE=%s\n' "${FORGE_EVENTS_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG" ;;
+    *" up -d browser-render")
+      printf 'browser-render-up-env BROWSER_RENDER_IMAGE=%s\n' "${BROWSER_RENDER_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG" ;;
+    *" up -d office-render")
+      printf 'office-render-up-env OFFICE_RENDER_IMAGE=%s\n' "${OFFICE_RENDER_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG" ;;
+  esac
   if [ "${1:-}" = compose ] && [[ "$*" == *" up -d --no-deps device-connection"* ]]; then
     printf 'owner-up-env DEVICE_CONNECTION_IMAGE=%s\n' \
       "${DEVICE_CONNECTION_IMAGE:-}" >> "$APP_TIER_DOCKER_LOG"
@@ -189,7 +209,7 @@ emit_named_rows() {
 
 emit_contract_rows() {
   if [ "${FORGE_EVENTS_LOCAL:-false}" = true ]; then
-    printf 'forge-events\trepo/backend:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+    printf 'forge-events\t%s\trunning\tUp 1 minute (healthy)\n' "${FORGE_EVENTS_IMAGE:-repo/backend:$tag}"
   fi
   if [ "$scenario" != forgejo_absent ]; then
     printf 'forgejo\tcodeberg.org/forgejo/forgejo:15.0.9-rootless\trunning\tUp 1 minute (healthy)\n'
@@ -216,7 +236,7 @@ emit_contract_rows() {
       "$frontend_tag"
   fi
   if [ "$scenario" != "collab_absent" ] && [ "$scenario" != "collab_unreleased" ]; then
-    printf 'collab\trepo/collab:%s\trunning\tUp 1 minute (healthy)\n' "$tag"
+    printf 'collab\t%s\trunning\tUp 1 minute (healthy)\n' "${COLLAB_IMAGE:-repo/collab:$tag}"
   fi
 }
 
@@ -245,6 +265,10 @@ if [ "${1:-}" = "compose" ]; then
       printf '{"services": {"backend": {"image": "repo/backend:x", "ports": ["127.0.0.1:18081:8081"]}, "frontend": {"image": "repo/frontend:x", "depends_on": {"backend": {"condition": "service_healthy"}}}}}\n'
       ;;
     ps)
+      # APP_TIER_RUNNING_SERVICES: services a previous release left running.
+      if [ "${2:-}" = -q ] && [[ " ${APP_TIER_RUNNING_SERVICES:-} " == *" ${3:-} "* ]]; then
+        printf '%s-container\n' "$3"
+      fi
       if [ "${2:-}" = -q ] && [ "${3:-}" = forgejo ]; then
         printf 'forgejo-container\n'
       fi
@@ -317,6 +341,30 @@ if [ "${1:-}" = image ] && [ "${2:-}" = inspect ] && \
   exit 0
 fi
 
+# The image a running service was created from is APP_TIER_RUNNING_IMAGE; a
+# pulled tag has the registry digest APP_TIER_PULLED_DIGEST. What each contains
+# (deploy-docker.sh's image_content) is APP_TIER_RUNNING_CONTENT and
+# APP_TIER_PULLED_CONTENT: different unless a test makes them the same.
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ] && [[ "$*" == *RepoDigests* ]]; then
+  if [ "${!#}" = "${APP_TIER_RUNNING_IMAGE:-sha256:running}" ]; then
+    for repository in collab browser-render office-render backend; do
+      printf 'ghcr.io/sageseekersociety/cheese/%s@%s\n' "$repository" "${!#}"
+    done
+  else
+    image="${!#}"
+    printf '%s@%s\n' "${image%:*}" "${APP_TIER_PULLED_DIGEST:-sha256:pulled}"
+  fi
+  exit 0
+fi
+if [ "${1:-}" = image ] && [ "${2:-}" = inspect ] && [[ "$*" == *RootFS.Layers* ]]; then
+  if [ "${!#}" = "${APP_TIER_RUNNING_IMAGE:-sha256:running}" ]; then
+    printf '%s\n' "${APP_TIER_RUNNING_CONTENT:-old-layers}"
+  else
+    printf '%s\n' "${APP_TIER_PULLED_CONTENT:-new-layers}"
+  fi
+  exit 0
+fi
+
 if [ -n "${APP_TIER_IMAGE_STORE:-}" ] && [ "${1:-}" = image ] && \
   [ "${2:-}" = inspect ]; then
   grep -Fqx -- "${!#}" "$APP_TIER_IMAGE_STORE/names"
@@ -342,6 +390,7 @@ if [ "${1:-}" = inspect ] && [ "${2:-}" = --format ]; then
       case "${4:-}" in
         backend-container|backend-b-container) printf 'repo/backend:oldsha\n' ;;
         frontend-container) printf 'repo/frontend:oldsha\n' ;;
+        collab-container) printf 'ghcr.io/sageseekersociety/cheese/collab@sha256:previous\n' ;;
       esac
       ;;
     # The running backend's environment; APP_TIER_PREVIOUS_RELEASE is the

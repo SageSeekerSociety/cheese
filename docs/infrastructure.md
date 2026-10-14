@@ -247,7 +247,11 @@ with `ACTIVE_FRONTEND_DIR` the frontend has two as well, `frontend` and
 The deploy starts the idle slot of each on the new image, waits for its health
 check, rewrites `backend.conf` and `frontend.conf` and reloads app-router once.
 The old backend is told to hand its work over 5 seconds after that switch, and
-`collab` is replaced at once, while the old frontend still runs. After a
+`collab` is replaced at once, while the old frontend still runs, if its image
+content changed: collab, browser-render and office-render are named by digest,
+and keep the running one's when the pulled image has the same layers and
+runtime config (`pin_by_content` in `deploy/deploy-docker.sh`), so compose
+leaves an unchanged container alone. After a
 31-second drain (`DEPLOY_DRAIN_SECONDS`) the old frontend's nginx gets up to 120
 seconds to finish its requests. The old backend is stopped last, once the
 release has passed its health check, because it may still be relaying model

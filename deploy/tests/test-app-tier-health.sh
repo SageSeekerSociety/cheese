@@ -1048,6 +1048,83 @@ test_unready_backend_without_slots_still_rolls_back() {
   echo "PASS: an unready backend on a box without slots still rolls back"
 }
 
+# Every commit's images carry that commit's tag, so naming collab, the two
+# renderers and the forge event relay by tag recreated them on every release,
+# even when build.yml had only promoted an unchanged image or rebuilt identical
+# inputs. Each recreate closes every open document, every page a renderer
+# holds and every deployment's event socket. A release whose images carry the
+# content already running must leave compose nothing to recreate: the model
+# compose builds for those services is the same as the last release's.
+test_unchanged_services_keep_their_containers() {
+  local run_dir real_docker sha content code hashes=() service chosen=()
+  real_docker="${APP_TIER_REAL_DOCKER_BIN:-}"
+  if [ -z "$real_docker" ] || ! "$real_docker" compose version >/dev/null 2>&1; then
+    fail "this case needs a real docker CLI with compose (none found on PATH)"
+  fi
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/unchanged-services.XXXXXX")"
+  # Two releases of the same content, then one whose images and relay code differ.
+  for release in same:aaaaaaa same:bbbbbbb changed:ccccccc; do
+    sha="${release#*:}"
+    content=old-layers code=running-code
+    [ "${release%%:*}" = same ] || content=new-layers code=release-code
+    : > "$run_dir/docker.log"
+    PATH="$FAKE_BIN:$PATH" APP_TIER_SCENARIO=healthy APP_TIER_MAIN_SHA="$sha" \
+      APP_TIER_DOCKER_LOG="$run_dir/docker.log" \
+      APP_TIER_RUNNING_SERVICES="collab browser-render office-render forge-events" \
+      APP_TIER_PULLED_CONTENT="$content" APP_TIER_RELEASE_CODE="$code" \
+      DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+      "$ROOT/deploy/deploy-docker.sh" "$sha" "$ROOT/deploy/compose/docker-compose.base.yml" \
+      > "$run_dir/release.log" 2>&1 \
+      || { cat "$run_dir/release.log"; rm -rf "$run_dir"; fail "release $sha failed"; }
+    # What compose would build each service from, given the references the
+    # release chose: compose recreates a container exactly when this changes.
+    mapfile -t chosen < <(sed -n 's/^[a-z-]*-up-env //p' "$run_dir/docker.log")
+    hashes+=("$(env -i PATH="$PATH" HOME="$run_dir" IMAGE_TAG="$sha" \
+      FORGE_EVENTS_ENV_FILE="$FORGE_EVENTS_ENV_FILE" BACKEND_ENV_FILE="$BACKEND_ENV_FILE" \
+      "${chosen[@]}" \
+      "$real_docker" compose -f "$ROOT/deploy/compose/docker-compose.base.yml" \
+        -f "$ROOT/deploy/forge-events/compose.yml" -p cheese \
+        config --hash 'collab,browser-render,office-render,forge-events' 2>&1 | sort)")
+  done
+  [ "${hashes[0]}" = "${hashes[1]}" ] || {
+    printf 'first:\n%s\nsecond:\n%s\n' "${hashes[0]}" "${hashes[1]}" >&2
+    rm -rf "$run_dir"
+    fail "a release of unchanged content gave compose a different model, which recreates the containers"
+  }
+  for service in collab browser-render office-render forge-events; do
+    [ "$(printf '%s\n' "${hashes[1]}" | grep "^$service ")" != "$(printf '%s\n' "${hashes[2]}" | grep "^$service ")" ] || {
+      rm -rf "$run_dir"
+      fail "$service kept its container although its image changed"
+    }
+  done
+  rm -rf "$run_dir"
+  echo "PASS: unchanged collab, renderers and event relay keep their containers across releases"
+}
+
+# A release that fails its health check returns collab to the image that ran
+# before it, not the one it pinned for itself.
+test_rollback_returns_collab_to_the_previous_image() {
+  local run_dir
+  mkdir -p "$ROOT/.tmp"
+  run_dir="$(mktemp -d "$ROOT/.tmp/collab-rollback.XXXXXX")"
+  if PATH="$FAKE_BIN:$PATH" APP_TIER_SCENARIO=rollback APP_TIER_MAIN_SHA=testsha \
+    APP_TIER_DOCKER_LOG="$run_dir/docker.log" APP_TIER_RUNNING_SERVICES=collab \
+    DEPLOY_HEALTH_ATTEMPTS=1 DEPLOY_HEALTH_INTERVAL_SECONDS=0 HOME="$run_dir" \
+    "$ROOT/deploy/deploy-docker.sh" testsha "$ROOT/deploy/compose/docker-compose.base.yml" \
+    > "$run_dir/release.log" 2>&1; then
+    rm -rf "$run_dir"
+    fail "rollback scenario unexpectedly passed health checks"
+  fi
+  grep -Fqx 'collab-up-env COLLAB_IMAGE=ghcr.io/sageseekersociety/cheese/collab@sha256:pulled' "$run_dir/docker.log" \
+    || { cat "$run_dir/release.log"; rm -rf "$run_dir"; fail "the release did not start collab on the image it pulled"; }
+  [ "$(grep '^collab-up-env ' "$run_dir/docker.log" | tail -n 1)" \
+    = 'collab-up-env COLLAB_IMAGE=ghcr.io/sageseekersociety/cheese/collab@sha256:previous' ] \
+    || { rm -rf "$run_dir"; fail "the rollback left collab on the failed release's image"; }
+  rm -rf "$run_dir"
+  echo "PASS: a rollback returns collab to the image that ran before the release"
+}
+
 # A box with an app-router (ACTIVE_BACKEND_DIR) releases by rollout: the idle
 # slot comes up beside the serving one, app-router is switched once, the old
 # slot drains and is stopped. These tests pin that order and the failures that
@@ -2243,6 +2320,8 @@ case "$CASE" in
   owners-behind-schema) test_deploy_releases_owners_behind_the_schema ;;
   api-front-reload) test_api_front_reloads_only_for_a_new_config ;;
   tls-renew-owner) test_certificate_renewal_keeps_the_preview_owner_route ;;
+  unchanged-services) test_unchanged_services_keep_their_containers ;;
+  collab-rollback) test_rollback_returns_collab_to_the_previous_image ;;
   owners-behind-schema-failed-migration) test_failed_migration_resumes_the_drained_owner ;;
   owners-spared) test_deploy_leaves_owners_the_migrations_spare ;;
   owners-behind-database) test_deploy_releases_owners_the_database_left_behind ;;
@@ -2269,6 +2348,8 @@ case "$CASE" in
     test_local_app_images_skip_registry_pull
     test_local_app_images_must_exist
     test_rollback_restores_exact_previous_images
+    test_unchanged_services_keep_their_containers
+    test_rollback_returns_collab_to_the_previous_image
     test_unready_backend_without_slots_still_rolls_back
     test_ownership_handover_is_the_last_step_before_up
     test_rollback_hands_the_mounts_back

@@ -243,6 +243,9 @@ class EventConfigTest(unittest.TestCase):
 
 class EventHealthTest(unittest.TestCase):
     def test_local_relay_must_be_present_healthy_and_on_this_release(self):
+        # "This release" is its tag, or the digest the deploy chose for it
+        # (FORGE_EVENTS_IMAGE): a relay whose code did not change keeps the
+        # image it runs. A check that does not know the choice accepts a digest.
         script = SCRIPT.parent / "check-app-tier.sh"
         base = (
             "backend\trepo/backend:release\trunning\tUp (healthy)\n"
@@ -250,17 +253,26 @@ class EventHealthTest(unittest.TestCase):
             "forgejo\tforgejo:15\trunning\tUp (healthy)\n"
             "collab\trepo/collab:release\trunning\tUp (healthy)\n"
         )
-        for row, expected in (
-            ("", 1),
-            ("forge-events\trepo/backend:old\trunning\tUp (healthy)\n", 1),
-            ("forge-events\trepo/backend:release\trunning\tUp (unhealthy)\n", 1),
-            ("forge-events\trepo/backend:release\trunning\tUp (healthy)\n", 0),
+        pinned = "repo/backend@sha256:" + "a" * 64
+        for row, chosen, expected in (
+            ("", "", 1),
+            ("forge-events\trepo/backend:old\trunning\tUp (healthy)\n", "", 1),
+            ("forge-events\trepo/backend:release\trunning\tUp (unhealthy)\n", "", 1),
+            ("forge-events\trepo/backend:release\trunning\tUp (healthy)\n", "", 0),
+            (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", pinned, 0),
+            (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", "", 0),
+            (f"forge-events\t{pinned}\trunning\tUp (healthy)\n", "repo/backend@sha256:" + "b" * 64, 1),
+            ("forge-events\trepo/backend:release\trunning\tUp (healthy)\n", pinned, 1),
         ):
-            with self.subTest(row=row):
+            with self.subTest(row=row, chosen=chosen):
+                environment = {**os.environ, "FORGE_EVENTS_LOCAL": "true"}
+                environment.pop("FORGE_EVENTS_IMAGE", None)
+                if chosen:
+                    environment["FORGE_EVENTS_IMAGE"] = chosen
                 result = subprocess.run(
                     ["bash", str(script), "release"],
                     input=base + row,
-                    env={**os.environ, "FORGE_EVENTS_LOCAL": "true"},
+                    env=environment,
                     text=True,
                     capture_output=True,
                 )

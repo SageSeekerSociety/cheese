@@ -58,15 +58,15 @@ covers:
 | 阶段 | 依据 | 做什么 |
 |---|---|---|
 | 记下现状 | `service_container`/`service_image`（`:529-542`） | 存 `PREV_BACKEND_IMAGE`、`PREV_FRONTEND_IMAGE`、`PREV_SHA`；回滚只靠这三样 |
-| 拉镜像 | `retry_pull`（`:496`）、`pull_backoff_delay`（`:478`） | 带退避重试；可选服务（浏览器渲染、office 渲染等）拉不到只警告 |
-| 准备常驻件 | `ensure_forgejo`、`ensure_forge_events`、`ensure_application_router`（`:124-209`） | Forgejo、事件中继、app-router 不在就先起 |
+| 拉镜像 | `retry_pull`（`:496`）、`pull_backoff_delay`（`:478`） | 带退避重试；可选服务（浏览器渲染、office 渲染等）拉不到只警告。collab 和两个渲染服务拉下来后由 `pin_by_content` 按摘要引用：内容和正在跑的一样就沿用正在跑的摘要，容器不重建 |
+| 准备常驻件 | `ensure_forgejo`、`ensure_forge_events`、`ensure_application_router`（`:124-209`） | Forgejo、事件中继、app-router 不在就先起；事件中继只在它跑的代码变了时才换镜像（`pin_relay_by_code`） |
 | 迁移 | `:649-651` | `dc run --rm backend sh -c "alembic upgrade head"`，失败直接停 |
 | 归属 | `OWNERSHIP_MIGRATED`（`:685`） | 跑 `fix-workspace-ownership.sh`，报告留给回滚用 |
 | 起新槽位 | `rollout_app`、`read_slots` | 主 API 和前端各有两个槽位（`backend`/`backend-b`、`frontend`/`frontend-b`，前端在回环端口 18088/18084 上）。按 app-router 的 `backend.conf`/`frontend.conf` 认出正在服务的那个，把另一个用新镜像 `up -d --no-deps --force-recreate` 起来，等它应答健康检查；起不来就删掉新起的，**正在跑的那个一直没被动过** |
 | 切流量 | `switch_app_router` | 两个上游文件一起写（先写临时文件再 `mv`，半写的文件会带塌整个 nginx 配置），**只 reload 一次**；`nginx -t` 或 reload 失败就把两个文件改回去 |
 | 交接、排空 | `hand_over_running_work`、`DRAIN_SECONDS=${DEPLOY_DRAIN_SECONDS:-31}` | 切完马上换 collab；5 秒后给旧主 API 发 SIGUSR1 交出正在跑的工作；旧槽位继续答完手上的请求 31 秒 |
 | 收尾 | `take_frontend_ports` | 旧前端（最多 120 秒）和旧主 API（`docker stop --time 60`）同时优雅停下再删掉；盒子的 :8080、:80 写在 app-router 的 `frontend.conf` 里，转给正在服务的前端（每个版本的 `app-router.conf` 都 include 这个文件，旧提交的发版也留得住）。最后一个自己占着这两个端口的 compose 前端只给 5 秒停下，之后才把端口加进去，那一次发版多 reload 一次；加不进去就把那个前端重新拉起来服务端口，下一次发版在切流量时接过去；下次发版回到这次空出来的槽位 |
-| 判定 | `check-app-tier.sh`（`:955`） | 把 `docker ps` 的输出喂给它，断言 app 层的镜像 tag 就是本次 sha |
+| 判定 | `check-app-tier.sh`（`:955`） | 把 `docker ps` 的输出喂给它，断言 app 层的镜像 tag 就是本次 sha；collab 和事件中继按摘要引用时，断言的是本次发版选定的那个摘要 |
 | 回收 | `reclaim_docker_disk`（`:434`）、`retain_ci_service_images`（`:409`）、`promote_image_retainer`（`:1016`） | 每次发版拉 6-7GB 新镜像，成功后立刻回收被顶掉的；`on_exit`（`:460`）保证失败、`set -e` 中止、runner 取消也回收 |
 | 定时器 | `:1009-1013` | 装 `cheese-room-cleanup.timer`；主机没有 systemd 时只在日志里提示安排外部触发 |
 
