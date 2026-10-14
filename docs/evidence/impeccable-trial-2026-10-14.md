@@ -1,16 +1,17 @@
 # impeccable frontend check trial, 2026-10-14
 
 The trial ran impeccable's 59 deterministic frontend checks over `frontend/`, picked out
-the rules that report real problems, and wired those into CI. Its file-scanning mode is not adopted; what it found
-is now two rendered-contrast ratchets. Every number below is from the trial run against
-`frontend/` on 2026-10-14; the count of open sites is a snapshot of that date.
+the rules that report real problems, and wired those into CI. Its file-scanning mode is
+not adopted; what it found is now a rendered-contrast ratchet. Every number below is
+from the trial run against `frontend/` on 2026-10-14; the count of open sites is a
+snapshot of that date.
 
 | | |
 | --- | ---: |
 | Rules in the tool | 59 |
 | Rules the file-scanning path can reach | about a dozen |
 | Hits across `frontend/` | 46 |
-| Real problems in product source | 0 |
+| Real problems in product source, by the file scan | 0 |
 
 ## Three channels reach three different sets
 
@@ -49,20 +50,23 @@ shimmer on `ChecklistMessage.vue`.
 
 ## What the rendered walk found
 
-Both real findings are contrast, and both sit where a source scan cannot see: an
-inherited value, an alpha composite, or a glyph painted by `::before`.
+Both real findings are contrast, and each sits where impeccable's source scan cannot
+see: it reads CSS text, not the ground a colour is actually painted on.
 
 | Site | Read | Floor | Token | Paid off by |
 | --- | ---: | ---: | --- | --- |
 | white label on the amber solid button | 2.65:1 | 3:1 (glyph) | `--accent` `#f57f17` | #3762 |
 | `--faint` carrying text | 3.37–4.33:1 | 4.5:1 | `--faint` `#747a82` | #3691 |
 
-axe-core's `color-contrast` rule never looks at `::before`/`::after` content and skips
-nodes moved out of the accessibility tree. The amber button's chevron and the numbered
-list markers on the landing page are painted by `::before`, and the landing page's demo
-room is `inert` — both findings sit in those blind spots, so axe passes while the
-defects stay. That is why the checks below measure the painted result themselves
-instead of vendoring an engine.
+The check that now guards these reads the painted result out of a live browser, because
+axe-core misses part of both. Its `color-contrast` rule never looks at
+`::before`/`::after` content and skips nodes outside the accessibility tree, so the
+amber button's chevron — an `::before` glyph — does not appear in its report at all,
+and neither do the `--faint` runs inside the demo room (`inert`). That is not a
+complete blind spot on the `--faint` side: axe did report the landing page's story
+index at 4.07:1 when #3691 measured it. The ratchet measures every painted run instead
+of vendoring an engine, which is also why the numbered markers `/solutions` paints with
+`::before` counters are covered.
 
 ## What was adopted
 
@@ -76,7 +80,7 @@ instead of vendoring an engine.
   the seven amber runs leave the frozen debt: `frontend/contrast-baseline.json` 28 → 21,
   nothing added, nothing loosened.
 
-The two ratchets follow the shape the other frontend gates already have: a rule module,
+The ratchet follows the shape the other frontend gates already have: a rule module,
 a baseline that may only shrink, and an update mode that only lowers
 (`docs/design-system.md` §7).
 
