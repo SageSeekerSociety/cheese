@@ -309,11 +309,10 @@ class QuotedContextTest(unittest.TestCase):
             content="解释这一页",
             meta={"quoted_context": QUOTE},
         )
-        lines, images = live_input_lines("alice", "解释这一页", None, stored=block)
+        lines = live_input_lines("alice", "解释这一页", None, stored=block)
         self.assertIn("{", lines[0], "live input must carry the saved source")
         quote, _ = json.JSONDecoder().raw_decode(lines[0][lines[0].index("{") :])
         self.assertEqual(quote, QUOTE)
-        self.assertEqual(images, [])
 
     def test_a_web_pick_carries_its_selector_text_and_place(self):
         """网页圈选：网页没有页码，能指认的是选择器、文字和位置。

@@ -55,6 +55,7 @@ from app.api.topics_file_sources import source_bytes
 from app.core import raster_images, video_files
 from app.core.config import settings
 from app.core.errors import SystemBusyError, ValidationError
+from app.core.model_images import model_media_type
 from app.core.sentences import exception_text, say
 from app.domain.library import records as library_records
 from app.domain.library import service as library
@@ -201,6 +202,15 @@ async def upload_attachment(
         ext = _IMAGE_MIME_EXT.get(mime)
         if mime.startswith("image/") and ext is None:
             mime = "application/octet-stream"
+        if ext is not None:
+            # The browser's word for it is a claim; the bytes decide. One that
+            # does not decode is kept as a plain file, and never handed to a
+            # model as a picture.
+            mime = (
+                await asyncio.to_thread(model_media_type, file.file)
+                or "application/octet-stream"
+            )
+            ext = _IMAGE_MIME_EXT.get(mime)
         name = library.clean_upload_name(file.filename)
         suffix = "." + name.rsplit(".", 1)[-1].lower() if "." in name else ""
         video_mime = video_files.SUFFIX_MEDIA_TYPE.get(suffix)

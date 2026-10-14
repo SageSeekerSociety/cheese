@@ -39,10 +39,10 @@ covers:
 
 | 场景 | 一共 | A 今天就能单独跑 | 容器（画面在同目录的 `<页面名>View.vue` 里） | C 卡在取数 | D 卡在路由 / `$parent` / `inject` |
 |---|---|---|---|---|---|
-| 路由页（`src/views/`，router 表里挂上去的每一页） | 126 | 4 | 86 | 11 | 25 |
+| 路由页（`src/views/`，router 表里挂上去的每一页） | 126 | 4 | 88 | 9 | 25 |
 | 工作面板（`src/components/panels/` 下的 SFC） | 62 | 62 | — | 0 | 0 |
 
-4 + 86 + 62 = 152 个今天就能单独跑；11 + 25 = 36 个还跑不起来。一个场景可以同时踩中好几条（44 页直接 import 了取数模块，111 页经中间模块绕到取数，75 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。容器页不算场景，算场景的是它的视图。
+4 + 88 + 62 = 154 个今天就能单独跑；9 + 25 = 34 个还跑不起来。一个场景可以同时踩中好几条（44 页直接 import 了取数模块，111 页经中间模块绕到取数，75 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。容器页不算场景，算场景的是它的视图。
 
 （2026-09-30 首次数这套数时是 111 个路由页 + 27 个面板，其中 10 个能单独跑——那之前 #2152 / #2154 刚删掉 24 个旧场景（旧 `courses`、`board/pages/*`、`discussions` 等，功能下线，不是改名）。之后的每次变动记在下面那段日志里。）
 
@@ -59,9 +59,9 @@ covers:
 | `views/feedback/` | 5 | 0 | 1 | 2 | 2 |
 | `views/home/` | 5 | 2 | 0 | 2 | 1 |
 | `views/legal/` | 1 | 0 | 1 | 0 | 0 |
-| `views/question/` | 4 | 0 | 1 | 1 | 2 |
+| `views/question/` | 4 | 0 | 2 | 0 | 2 |
 | `views/spaces/` | 2 | 0 | 1 | 0 | 1 |
-| `views/spaces/detail/` | 23 | 0 | 22 | 1 | 0 |
+| `views/spaces/detail/` | 23 | 0 | 23 | 0 | 0 |
 | `views/tasks/` | 2 | 0 | 0 | 0 | 2 |
 | `views/tasks/detail/` | 5 | 0 | 3 | 1 | 1 |
 | `views/teams/` | 5 | 0 | 3 | 0 | 2 |
@@ -70,9 +70,9 @@ covers:
 | `views/welcome/` | 1 | 0 | 1 | 0 | 0 |
 | `views/workspace/` | 10 | 0 | 4 | 0 | 6 |
 
-今天就能单独跑的 4 页：`views/404.vue`、`views/home/Landing.vue`、`views/home/Solutions.vue`、`views/user/settings/General.vue`。另外 86 页的画面在同目录的 `<页面名>View.vue` 里，那 86 个视图冻结在 `ready`。
+今天就能单独跑的 4 页：`views/404.vue`、`views/home/Landing.vue`、`views/home/Solutions.vue`、`views/user/settings/General.vue`。另外 88 页的画面在同目录的 `<页面名>View.vue` 里，那 88 个视图冻结在 `ready`。
 
-2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。（当时那两张汇总表还是 2026-09-30 的口径——它们到 2026-10-13 才重算，见下面那天；「页面」一表里对应的行已改成「容器」并写出画面在哪。）2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**。2026-10-08 判据改了两处，基线从 **110 个 ready、74 个 debt** 变成 **109 个 ready、74 个 debt**：注释里提到 `vue-router` 不再算依赖（#3066）；模板里画 `<router-view>` / `<router-link>` 现在算 D，`export { … } from` / `export * from` 也算一条边（`export type` 不算）。前一条让仓库里 12 个已冻结在 `ready` 的场景改用 `components/common/NavLink.vue`（改完仍是 A）：`views/account/` 那 8 页、`views/user/settings/ProfileView.vue`、`views/user/settings/RealNameView.vue`、`views/home/Landing.vue`、`views/home/Solutions.vue`。后一条让 `views/tasks/detail/Brief.vue` 经 `views/tasks/composables/index.ts` 的 barrel 够到 `@/api`，落进 container、冻结转到同目录的 `BriefView.vue`（110 → 109，见[这份清单怎么来的](#how)）。2026-10-12，团队、空间分析和管理页的 C 档拆页（含 `teams/Pending.vue`、`spaces/detail/analytics/Learning.vue`）做完后，基线是 **137 个 ready、48 个 debt**。2026-10-13，`views/spaces/detail/analytics/` 里四个 C 档页（总览 / 参与者 / 出题人 / 题目）拆成「页面当容器 + 同目录 `<页面名>View.vue`」，导出按钮拉文件那一段挪到页面层的新 composable：这一拆自己多了四个 A 档场景（四个 `<X>View.vue`）。同一次 `--update` 还把另外四个**本来就是 A 档、只是没进过名单**的场景一起冻上 —— `components/panels/doc/blocks/CanvasBlockView.vue`、`views/admin/AdminExternalProblemPageView.vue`、`views/admin/AdminMachinesPageView.vue`、`views/user/settings/ModelConnectionsView.vue`（拆之前树上共有 141 个 A 档，名单里只写着 137 个），基线 → **145 个 ready、44 个 debt**。表里这一段六行一并改成容器：`Alerts.vue`、`Learning.vue` 是更早两批拆的、表当时没跟上。同一天把这一页按棘轮整个重算了一遍。此前几版漏改的远不止那六行——还有 23 行是更早拆的页、「档」列仍写着 C/D（`views/` 顶层七页、`views/admin/` 三页、`views/spaces/detail/` 八页、`views/teams/` 五页），这次不逐行补，直接照 `--list` 把「页面」一表重新生成（当时打出来 127 行、含 79 行容器，其中一行是已删的页，见本段末尾），并把「一共多少」「按目录看」「两份名单」「工作面板」「卡在哪一步」几处的数字一并算到 2026-10-13（它们此前停在 2026-09-30 / 10-07 的口径）。重算下来另有两条事实：面板从 27 个涨到 62 个、且全部是 A；`components/panels/PanelCard.vue` 已经删了。同一天再往后的一批把 `question/Ask`、`TeamInviteView`、`teams/detail/TeamProjects`、`spaces/Index` 四页拆成容器 + 同目录 `<页面名>View.vue`，四个视图进 `ready`：基线 **148 个 ready、40 个 debt**，路由欠账 20 → 18；这一批也照当天的树把这一页又重算了一遍，并改掉上一版的一处硬错——上一版表里的 `views/admin/AdminExternalProblemPage.vue` 是已经被删的页（#3658 的 `3d2a19e40` 把 YOJ 接线摘掉时删的），总数因此从 127 落到 126，`views/admin/` 是 13 页而不是 14 页。2026-10-14，再一批四页（顶层 `MyConnectionsView`、`ProjectSkillsView`，`admin/AdminFeaturePage`，`feedback/FeedbackDetailPage`）拆成容器 + 同目录 `<页面名>View.vue`，四个视图进 `ready`；`AdminFeaturePage` 顺带不再读地址——路由记录上的 `props: true` 把 id 当 prop 交给组件，所以它这一页从 D 落到 C。基线 **152 个 ready、36 个 debt**，路由欠账 18 → 14；这一页的数字也照当天的树又算了一遍。
+2026-10-05，account 线（登录、注册、找回密码、OAuth 回调、实名/安全/资料）21 页拆完：每页当容器，画面进同目录的 `<页面名>View.vue`，视图只吃 props 和事件。`--update` 之后基线是 **82 个 ready、97 个 debt**（此前 debt 118），这 21 页全部离开欠债表。（当时那两张汇总表还是 2026-09-30 的口径——它们到 2026-10-13 才重算，见下面那天；「页面」一表里对应的行已改成「容器」并写出画面在哪。）2026-10-07 的 `frontend/scene-baseline.json` 是 **102 个 ready、77 个 debt**。2026-10-08 判据改了两处，基线从 **110 个 ready、74 个 debt** 变成 **109 个 ready、74 个 debt**：注释里提到 `vue-router` 不再算依赖（#3066）；模板里画 `<router-view>` / `<router-link>` 现在算 D，`export { … } from` / `export * from` 也算一条边（`export type` 不算）。前一条让仓库里 12 个已冻结在 `ready` 的场景改用 `components/common/NavLink.vue`（改完仍是 A）：`views/account/` 那 8 页、`views/user/settings/ProfileView.vue`、`views/user/settings/RealNameView.vue`、`views/home/Landing.vue`、`views/home/Solutions.vue`。后一条让 `views/tasks/detail/Brief.vue` 经 `views/tasks/composables/index.ts` 的 barrel 够到 `@/api`，落进 container、冻结转到同目录的 `BriefView.vue`（110 → 109，见[这份清单怎么来的](#how)）。2026-10-12，团队、空间分析和管理页的 C 档拆页（含 `teams/Pending.vue`、`spaces/detail/analytics/Learning.vue`）做完后，基线是 **137 个 ready、48 个 debt**。2026-10-13，`views/spaces/detail/analytics/` 里四个 C 档页（总览 / 参与者 / 出题人 / 题目）拆成「页面当容器 + 同目录 `<页面名>View.vue`」，导出按钮拉文件那一段挪到页面层的新 composable：这一拆自己多了四个 A 档场景（四个 `<X>View.vue`）。同一次 `--update` 还把另外四个**本来就是 A 档、只是没进过名单**的场景一起冻上 —— `components/panels/doc/blocks/CanvasBlockView.vue`、`views/admin/AdminExternalProblemPageView.vue`、`views/admin/AdminMachinesPageView.vue`、`views/user/settings/ModelConnectionsView.vue`（拆之前树上共有 141 个 A 档，名单里只写着 137 个），基线 → **145 个 ready、44 个 debt**。表里这一段六行一并改成容器：`Alerts.vue`、`Learning.vue` 是更早两批拆的、表当时没跟上。同一天把这一页按棘轮整个重算了一遍。此前几版漏改的远不止那六行——还有 23 行是更早拆的页、「档」列仍写着 C/D（`views/` 顶层七页、`views/admin/` 三页、`views/spaces/detail/` 八页、`views/teams/` 五页），这次不逐行补，直接照 `--list` 把「页面」一表重新生成（当时打出来 127 行、含 79 行容器，其中一行是已删的页，见本段末尾），并把「一共多少」「按目录看」「两份名单」「工作面板」「卡在哪一步」几处的数字一并算到 2026-10-13（它们此前停在 2026-09-30 / 10-07 的口径）。重算下来另有两条事实：面板从 27 个涨到 62 个、且全部是 A；`components/panels/PanelCard.vue` 已经删了。同一天再往后的一批把 `question/Ask`、`TeamInviteView`、`teams/detail/TeamProjects`、`spaces/Index` 四页拆成容器 + 同目录 `<页面名>View.vue`，四个视图进 `ready`：基线 **148 个 ready、40 个 debt**，路由欠账 20 → 18；这一批也照当天的树把这一页又重算了一遍，并改掉上一版的一处硬错——上一版表里的 `views/admin/AdminExternalProblemPage.vue` 是已经被删的页（#3658 的 `3d2a19e40` 把 YOJ 接线摘掉时删的），总数因此从 127 落到 126，`views/admin/` 是 13 页而不是 14 页。2026-10-14，再一批四页（顶层 `MyConnectionsView`、`ProjectSkillsView`，`admin/AdminFeaturePage`，`feedback/FeedbackDetailPage`）拆成容器 + 同目录 `<页面名>View.vue`，四个视图进 `ready`；`AdminFeaturePage` 顺带不再读地址——路由记录上的 `props: true` 把 id 当 prop 交给组件，所以它这一页从 D 落到 C。基线 **152 个 ready、36 个 debt**，路由欠账 18 → 14；这一页的数字也照当天的树又算了一遍。还是 2026-10-14，再一批两页（`question/DetailAnswerList`、`spaces/detail/analytics/Index`）拆成容器 + 同目录 `<页面名>View.vue`，两个视图进 `ready`；`DetailAnswerList` 顺带把采纳/投票/收藏挪进新 composable `useAnswerActions.ts`，`AnswerCard.vue` 只收 props 和事件，也从 C 落到 A。这一批删掉了两个只被自家页面渲染的中间件：`components/questions/AnswerList.vue`（画面进了 `DetailAnswerListView.vue`）和 `views/spaces/detail/analytics/AnalyticsLayout.vue`（画面进了 `IndexView.vue`）。基线 **154 个 ready、34 个 debt**，路由欠账 14 保持 14；这一页的数字也照当天的树又算了一遍。
 
 ## 从今天起它是一条闸门 {#ratchet}
 
@@ -82,8 +82,8 @@ covers:
 
 | 那一棵树上的场景 | 在这个分支上只能 |
 |---|---|
-| 已经能单独跑（2026-10-14 有 152 个：62 个面板、86 个容器视图、4 个本来就 A 的路由页） | 不能掉档，掉档就红 |
-| 跑不起来（同期 36 个：11 个 C、25 个 D） | 随便躺着；变 A 了会列为「比冻结集好」，不必做什么 |
+| 已经能单独跑（2026-10-14 有 154 个：62 个面板、88 个容器视图、4 个本来就 A 的路由页） | 不能掉档，掉档就红 |
+| 跑不起来（同期 34 个：9 个 C、25 个 D） | 随便躺着；变 A 了会列为「比冻结集好」，不必做什么 |
 | 树上还没有的（这个分支新加的） | 第一天就得能单独跑，不然红 |
 
 「新」和「旧」由**树本身**分，不再由一张表分——这也是为什么 2026-10-14 起仓库里没有 `frontend/scene-baseline.json` 了。那张表是同一份冻结集的缓存，九十天里四十来个提交碰过它，两条在飞的分支拆同一页就会在它上面撞车；改成读合并基准以后，分支改不动冻结集，能改的只有场景本身。六种结果：
@@ -216,8 +216,8 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/legal/LegalDocument.vue` | 容器 | 画面在 `LegalDocumentView.vue`（A 级）；本页留着：经 `api/legal.ts` 取数；读路由 |
 | `views/question/Ask.vue` | 容器 | 画面在 `AskView.vue`（A 级）；本页留着：经 `composables/useTopicSearch.ts` 取数；经 `api/questions.ts` 取数；读路由 |
 | `views/question/Detail.vue` | D | 经 `composables/useChosenAvatar.ts` 取数；经 `api/answers.ts` 取数；经 `api/questions.ts` 取数；经 `components/questions/InvitationList.vue` 取数；读路由；模板里画 `<router-view>` |
-| `views/question/DetailAnswer.vue` | D | 经 `api/answers.ts` 取数；经 `components/answer/AnswerCard.vue` 取数；读路由 |
-| `views/question/DetailAnswerList.vue` | C | 经 `components/questions/AnswerList.vue` 取数 |
+| `views/question/DetailAnswer.vue` | D | 经 `composables/useAnswerActions.ts` 取数；经 `composables/useChosenAvatar.ts` 取数；经 `api/answers.ts` 取数；读路由 |
+| `views/question/DetailAnswerList.vue` | 容器 | 画面在 `DetailAnswerListView.vue`（A 级）；本页留着：经 `composables/useAnswerActions.ts` 取数；经 `composables/useAnswerPaging.ts` 取数；经 `composables/useChosenAvatar.ts` 取数；`provide()` / `inject()` |
 | `views/spaces/Detail.vue` | D | 经 `composables/useSpaceData.ts` 取数；经 `components/common/ErrorBoundary.vue` 取数；读路由；模板里画 `<router-view>`；读 store（space） |
 | `views/spaces/Index.vue` | 容器 | 画面在 `IndexView.vue`（A 级）；本页留着：直接取数（`api.ts`）；经 `api/avatars.ts` 取数；经 `api/spaces.ts` 取数；经 `commands/copy.ts` 取数；直接取数（`services/account.ts`）；读路由 |
 | `views/spaces/detail/Announcements.vue` | 容器 | 画面在 `AnnouncementsView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；经 `views/spaces/detail/useSpaceAnnouncements.ts` 取数；经 `api/spaces.ts` 取数；读路由；读 store（space） |
@@ -233,7 +233,7 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/spaces/detail/Tasks.vue` | 容器 | 画面在 `TasksView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；经 `views/spaces/detail/useSpaceAnnouncements.ts` 取数；经 `api/spaces.ts` 取数；经 `api/taskBoard.ts` 取数；读路由；读 store（space） |
 | `views/spaces/detail/TemplateForm.vue` | 容器 | 画面在 `TemplateFormView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；读路由；读 store（space） |
 | `views/spaces/detail/analytics/Alerts.vue` | 容器 | 画面在 `AlertsView.vue`（A 级）；本页留着：经 `api/spaces.ts` 取数 |
-| `views/spaces/detail/analytics/Index.vue` | C | 经 `views/spaces/detail/analytics/AnalyticsLayout.vue` 取数 |
+| `views/spaces/detail/analytics/Index.vue` | 容器 | 画面在 `IndexView.vue`（A 级）；本页留着：经 `composables/useSpaceData.ts` 取数；模板里画 `<router-view>`；读 store（space） |
 | `views/spaces/detail/analytics/Learning.vue` | 容器 | 画面在 `LearningView.vue`（A 级）；本页留着：经 `api/spaces.ts` 取数 |
 | `views/spaces/detail/analytics/Overview.vue` | 容器 | 画面在 `OverviewView.vue`（A 级）；本页留着：经 `composables/useAnalyticsPublishers.ts` 取数；经 `api/spaces.ts` 取数 |
 | `views/spaces/detail/analytics/Participants.vue` | 容器 | 画面在 `ParticipantsView.vue`（A 级）；本页留着：经 `composables/useAnalyticsPublishers.ts` 取数；经 `views/spaces/detail/analytics/composables/useAnalyticsExport.ts` 取数；经 `api/spaces.ts` 取数 |
@@ -297,16 +297,16 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 |---|---|---|
 | 直接 import 取数模块（`@/api`、`@/network/*`、`@/services/*`） | 44 | |
 | 读路由（`useRoute` / `$route`） | 75 | |
-| 读 store | 38 | `workspace` 16、`space` 15、`feedback` 5、`signup` 2 |
-| 经中间模块绕到取数 | 111 | `api/spaces.ts` 17、`composables/useSpaceData.ts` 14、`api/userAuth.ts` 13、`api/axiosHttp.ts` 11、`query/project.ts` 8、`api/taskBoard.ts` 8、`api/teams.ts` 7、`api/users.ts` 5、`lib/desktop.ts` / `composables/useChosenAvatar.ts` / `views/account/passkeyEnrollment.ts` / `api/avatars.ts` / `lib/routePrefetch.ts` 各 4、其余 125 个各 ≤3 |
-| 模板里画 `<router-view>` / `<router-link>` | 12 | |
-| `provide()` / `inject()`、`$parent` / `$root`、事件总线 | 0 | 这一版一页都没有 |
+| 读 store | 39 | `workspace` 16、`space` 16、`feedback` 5、`signup` 2 |
+| 经中间模块绕到取数 | 111 | `api/spaces.ts` 17、`composables/useSpaceData.ts` 15、`api/userAuth.ts` 13、`api/axiosHttp.ts` 11、`query/project.ts` 8、`api/taskBoard.ts` 8、`api/teams.ts` 7、`composables/useChosenAvatar.ts` 6、`api/users.ts` 5、`lib/desktop.ts` / `views/account/passkeyEnrollment.ts` / `api/avatars.ts` / `lib/routePrefetch.ts` 各 4、其余 124 个各 ≤3 |
+| 模板里画 `<router-view>` / `<router-link>` | 13 | |
+| `provide()` / `inject()`、`$parent` / `$root`、事件总线 | 1 | `views/question/DetailAnswerList.vue` 一页，这次拆页时从 `components/questions/AnswerList.vue` 收上来的 |
 
 修法按前两条分：
 
 - **直接取数 / 经中间模块绕到取数（44 / 111 页）** 是「把这一段挪出去」的问题，机械，但要一页一页做。页面走容器配方——画面交给同目录 `<页面名>View.vue`，取数留在页面；面板走「取数进 composable、由挂它的 Host 调」。中间模块那 111 页里，最大的一条链是空间数据层（`api/spaces.ts`、`composables/useSpaceData.ts`）。
 - **读路由（75 页）** 是「这个页面怎么知道自己是谁」的问题。`views/account/` 那 17 页 2026-10-05 已经按「参数当 props 进视图」拆完。剩下最集中的一处是 `views/workspace/`：10 页里 6 页 D，`TopicView.vue` 一页就有 21 条理由；再往后是顶层 5 页、`views/feedback/` 2 页、`views/question/` 2 页。
-- **12 页的 D 是因为模板里画了 `<router-view>` / `<router-link>`**（这一条 2026-10-08 起算 D），它们多半自己就是承重点：`views/workspace/ProjectShell.vue`、`views/spaces/Detail.vue`、`views/teams/Index.vue`、`views/admin/AdminLayout.vue`。动它们等于动那棵路由树。
+- **13 页的 D 是因为模板里画了 `<router-view>` / `<router-link>`**（这一条 2026-10-08 起算 D），它们多半自己就是承重点：`views/workspace/ProjectShell.vue`、`views/spaces/Detail.vue`、`views/teams/Index.vue`、`views/admin/AdminLayout.vue`。动它们等于动那棵路由树。
 
 ## 这份清单怎么来的 {#how}
 
@@ -324,4 +324,4 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 2. **A 档的先补目录**，成本几乎为零：还没挂的 A 级组件（不止场景，所有组件）列在 `frontend/catalog-baseline.json` 的 `pending` 里，`python3 .claude/scripts/catalog-ratchet.py --list` 逐个标出来（见[上面](#catalog-ratchet)）。挂一个就跑 `pnpm run lint:catalog:update` 划掉一个；挂上去之后，改外观和改排版就有地方看效果。
 3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；拆出来跑一遍 `pnpm run lint:scenes` 就行，不必登记。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/` 已按「参数当 props 进视图」拆完（2026-10-05），`views/workspace/`、`views/spaces/` 两块各还要一个方案，动哪块由产品定。
-5. **剩下的就是搬欠债。** 能单独跑的那 152 个只增不减，36 个跑不起来的只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：36 → 0。
+5. **剩下的就是搬欠债。** 能单独跑的那 154 个只增不减，34 个跑不起来的只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：34 → 0。

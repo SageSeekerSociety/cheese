@@ -1,4 +1,5 @@
 import type { RouteLocationNamedRaw } from 'vue-router'
+import type { SpaceAnalyticsQueryState } from '../utils'
 
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -12,7 +13,7 @@ export const useSpaceAnalyticsFilters = () => {
   const filters = computed(() => normalizeAnalyticsQuery(route.query as Record<string, unknown>))
   const spaceId = computed(() => Number(route.params.spaceId))
 
-  const replaceFilters = async (partial: Record<string, unknown>) => {
+  const replaceFilters = async (partial: Partial<SpaceAnalyticsQueryState>) => {
     const nextFilters = normalizeAnalyticsQuery(
       {
         ...serializeAnalyticsQuery(filters.value),
@@ -26,7 +27,7 @@ export const useSpaceAnalyticsFilters = () => {
     })
   }
 
-  const pushToSection = async (name: string, partial: Record<string, unknown> = {}) => {
+  const pushToSection = async (name: string, partial: Partial<SpaceAnalyticsQueryState> = {}) => {
     const nextFilters = normalizeAnalyticsQuery(
       {
         ...serializeAnalyticsQuery(filters.value),

@@ -2,6 +2,7 @@ import type { ShaderMountUniforms, ShaderSizingParams } from '@paper-design/shad
 
 import colorLogoUrl from '@/assets/brand-scene/logo-color.png?url'
 import heatLogoUrl from '@/assets/brand-scene/logo-heat.png?url'
+import { storageGet, storageSet } from '@/lib/browserStorage'
 
 // The brand scenes on the sign-in pages (design-system §9.9), built on Paper
 // Shaders. One is drawn at random each time the page is opened.
@@ -263,18 +264,10 @@ let chosen: SceneId | null = null
  */
 export function sceneForThisPage(random: () => number = Math.random): SceneId {
   if (chosen) return chosen
-  let last: string | null = null
-  try {
-    last = localStorage.getItem(LAST_KEY)
-  } catch {
-    // storage unavailable — any scene will do
-  }
+  // storage unavailable reads back null — any scene will do
+  const last = storageGet(LAST_KEY)
   const pool = SCENE_IDS.filter((id) => id !== last)
   chosen = pool[Math.floor(random() * pool.length)]
-  try {
-    localStorage.setItem(LAST_KEY, chosen)
-  } catch {
-    // as above
-  }
+  storageSet(LAST_KEY, chosen)
   return chosen
 }
