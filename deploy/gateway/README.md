@@ -37,7 +37,7 @@ changes. Otherwise, it reuses the previous gateway image and publishes it under
 the current commit tag. The Docker build runs
 the adapter and timing tests without provider requests.
 
-For the existing dev gateway, use the **Release gateway** workflow on `main`.
+For the existing dev gateway, use the Release gateway workflow on `main`.
 Supply the full SHA of a commit on `main` whose Build and Required CI succeeded.
 A release does not interrupt model streams and does not restart the application
 or gateway database. This workflow does not target production.

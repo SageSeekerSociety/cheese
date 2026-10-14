@@ -40,14 +40,14 @@ covers:
 
 Claude Code 的一条流常常要几分钟，流到一半断掉的不会重放，所以发布不能重启正在服务的实例。
 
-- **拓扑**：`gateway-proxy` 后面有两个颜色，平时只有一个在跑。两个颜色同一份 compose 定义，共用 `litellm-db` 和 `litellm-redis`。
-- **一次发布**：在空闲的颜色上起新镜像，等它通过 docker 健康检查、`/health/readiness` 和 HAProxy 自己的检查，再通过 HAProxy 的运行时 API 一条命令把它设成 ready、把旧颜色设成 drain。HAProxy 不重载，调用方的连接一条都不断；HAProxy 按请求选后端，所以计量代理复用的旧连接，下一个请求就落到新颜色。旧颜色继续把手上的流放完，脚本每 5 秒读一次它在 HAProxy 里的 `scur`，到 0 才停它，最多等 30 分钟（`GATEWAY_DRAIN_SECONDS`）。
-- **停的时候**：LiteLLM 收到 SIGTERM 会先把在途的流放完，再把内存里的花销计数和花销日志写进库；`stop_grace_period: 60s` 就是留给这一步的，docker 默认的 10 秒到点会 SIGKILL。
+- **拓扑**：`gateway-proxy` 后面有两个颜色，平时只有一个在运行。两个颜色同一份 compose 定义，共用 `litellm-db` 和 `litellm-redis`。
+- **一次发布**：在空闲的颜色上起新镜像，等它通过 docker 健康检查、`/health/readiness` 和 HAProxy 自己的检查，再通过 HAProxy 的运行时 API 一条命令把它设成 ready、把旧颜色设成 drain。HAProxy 不重载，调用方的连接一条都不断；HAProxy 按请求选后端，所以计量代理复用的旧连接，下一个请求就落到新颜色。旧颜色继续把手上的流传完，脚本每 5 秒读一次它在 HAProxy 里的 `scur`，到 0 才停它，最多等 30 分钟（`GATEWAY_DRAIN_SECONDS`）。
+- **停的时候**：LiteLLM 收到 SIGTERM 会先把在途的流传完，再把内存里的花销计数和花销日志写进数据库；`stop_grace_period: 60s` 就是留给这一步的，docker 默认的 10 秒到点会 SIGKILL。
 - **失败与回滚**：新颜色不健康、不 ready，或者 HAProxy 迟迟看不到它起来，就删掉它，流量一直留在旧颜色上，发布报失败。上线后要回退，就用同一个工作流发上一个 SHA，走的也是不断流的路。
-- **颜色用固定地址**（内部网络 `10.213.47.0/28`），不用容器名：docker 内置 DNS 不认识的名字会转给宿主机的解析器，dev 机器的解析器对任何名字都回一个 `198.18.x` 的地址，于是没在跑的颜色照样“解析得到”，请求会被送到那个地址背后不知道什么地方。
-- **会断流的只有换代理本身**：`gateway-proxy` 的镜像或 compose 定义一变，就得重建它，它身上的每条流都会断，所以工作流要勾上 `interrupt` 才肯做。只改 `deploy/compose/gateway-proxy.cfg` 时用 HAProxy 的平滑重载，什么都不断：旧进程留着手上的每条连接，空闲连接上的下一个请求照常处理、回 `Connection: close` 再关；脚本等旧进程退出后才停旧颜色。
-- **从单容器迁过来那一次**：旧的 `cheese-gateway-litellm-1` 占着 `172.17.0.1:4000` 和别名 `litellm`，docker 不会把它们从一个还在跑的容器上挪走，所以第一次发布要勾 `interrupt`。脚本先把 `litellm-blue` 起好、确认 ready，再给旧容器 SIGTERM，给在途请求 30 秒（`GATEWAY_MIGRATION_GRACE`），然后启动 `gateway-proxy`。这段时间里新请求被拒，30 秒内放完的流不受影响，更长的流会被切断。代理起不来就把旧容器重新拉起。
-- **两个颜色同时在跑的那几分钟**：LiteLLM 启动时自己跑数据库迁移，新颜色会在旧颜色还在服务的时候改共享的库；LiteLLM 的迁移一般只加不删，但升级上游镜像的那次发布要看一眼迁移里有没有删列或改列。路由器的冷却状态和 `deepseek-flash` 的会话亲和都在进程内存里（`router_settings` 没配 Redis），新颜色从空开始，所以每次发布后每个会话第一次请求会重新选一次 RUC 节点、丢一次前缀缓存。预算刹车的花销计数在 `coordination_redis` 里，两个颜色共用，不受影响。
+- **颜色用固定地址**（内部网络 `10.213.47.0/28`），不用容器名：docker 内置 DNS 不认识的名字会转给宿主机的解析器，dev 机器的解析器对任何名字都回一个 `198.18.x` 的地址，于是没在运行的颜色照样解析得到一个地址，请求会被送到那个地址背后不知道什么地方。
+- **换代理本身会断流**：`gateway-proxy` 的镜像或 compose 定义一变，就得重建它，它身上的每条流都会断，所以工作流要勾上 `interrupt` 才肯做。只改 `deploy/compose/gateway-proxy.cfg` 时用 HAProxy 的平滑重载，什么都不断：旧进程留着手上的每条连接，空闲连接上的下一个请求照常处理、回 `Connection: close` 再关；脚本等旧进程退出后才停旧颜色。
+- **从单容器迁过来那一次**：旧的 `cheese-gateway-litellm-1` 占着 `172.17.0.1:4000` 和别名 `litellm`，docker 不会把它们从一个还在运行的容器上挪走，所以第一次发布要勾 `interrupt`。脚本先把 `litellm-blue` 起好、确认 ready，再给旧容器 SIGTERM，给在途请求 30 秒（`GATEWAY_MIGRATION_GRACE`），然后启动 `gateway-proxy`。这段时间里新请求被拒，30 秒内传完的流不受影响，更长的流会被切断。代理起不来就把旧容器重新拉起。
+- **两个颜色同时运行的那几分钟**：LiteLLM 启动时自己跑数据库迁移，新颜色会在旧颜色还在服务的时候改共享的数据库；LiteLLM 的迁移一般只加不删，但升级上游镜像的那次发布要看一眼迁移里有没有删列或改列。路由器的冷却状态和 `deepseek-flash` 的会话亲和都在进程内存里（`router_settings` 没配 Redis），新颜色从空开始，所以每次发布后每个会话第一次请求会重新选一次 RUC 节点、丢一次前缀缓存。预算刹车的花销计数在 `coordination_redis` 里，两个颜色共用，不受影响。
 
 ## 一个项目一把虚拟 key {#keys}
 
