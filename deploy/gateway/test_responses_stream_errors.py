@@ -37,6 +37,21 @@ ANSWER = [
         "item": {**MESSAGE, "status": "completed", "content": [TEXT]},
     },
 ]
+# A text delta whose `output_item.done` never arrived: the block is still open
+# when the stream ends.
+DELTA = ANSWER[:-1]
+# A function call the upstream never finished.
+TOOL_CALL = {"id": "fc_1", "type": "function_call", "call_id": "call_1", "name": "canary", "arguments": ""}
+TOOL_STARTED = {"type": "response.output_item.added", "sequence_number": 1, "output_index": 0, "item": TOOL_CALL}
+
+
+def tool_arguments(partial):
+    return {
+        "type": "response.function_call_arguments.delta", "sequence_number": 2,
+        "item_id": "fc_1", "output_index": 0, "delta": partial,
+    }
+
+
 COMPLETED = {
     "type": "response.completed",
     "sequence_number": 5,
@@ -81,6 +96,12 @@ UPSTREAMS = {
     "empty": ([], True),
     "clean-eof": ([CREATED], True),
     "partial-eof": ([CREATED, *ANSWER], True),
+    # The stream ends while a text block is open (a clean EOF, and a drop).
+    "mid-delta-eof": ([CREATED, *DELTA], True),
+    "mid-delta-drop": ([CREATED, *DELTA], False),
+    # The stream ends while a tool_use block is open (full and partial JSON).
+    "tool-full-eof": ([CREATED, TOOL_STARTED, tool_arguments('{"x":"hi"}')], True),
+    "tool-partial-eof": ([CREATED, TOOL_STARTED, tool_arguments('{"x":"hi"')], True),
     "complete": ([CREATED, *ANSWER, COMPLETED], True),
     "incomplete": ([CREATED, *ANSWER, INCOMPLETE], True),
 }
@@ -129,6 +150,54 @@ def events(frames):
     return [line.split(": ", 1)[1] for f in frames for line in f.splitlines() if line.startswith("event: ")]
 
 
+def named(frames):
+    """Every (event name, data) the caller was sent, in order."""
+    out = []
+    for block in frames:
+        fields = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        if "event" in fields:
+            out.append((fields["event"], json.loads(fields["data"])))
+    return out
+
+
+def text_of(frames):
+    return "".join(
+        data["delta"]["text"] for name, data in named(frames)
+        if name == "content_block_delta" and "text" in data.get("delta", {})
+    )
+
+
+class FailingUpstream:
+    """A real, consumed-once async iterator that fails mid-answer, like a dropped upstream."""
+
+    def __init__(self):
+        self._events = self._stream()
+
+    async def _stream(self):
+        yield CREATED
+        yield ANSWER[0]
+        yield ANSWER[2]
+        raise RuntimeError("connection reset by peer")
+
+    def __aiter__(self):
+        return self._events
+
+
+async def check_adapter_ends_with_one_error():
+    """A mid-answer failure reaches the adapter's own consumer as one error, then ends."""
+    from litellm.llms.anthropic.experimental_pass_through.responses_adapters.streaming_iterator import (
+        AnthropicResponsesStreamWrapper,
+    )
+
+    names = []
+    async for chunk in AnthropicResponsesStreamWrapper(FailingUpstream(), "gpt-test"):
+        names.append(chunk["type"])
+        assert len(names) < 20, names  # the iteration must end, not loop on the failure
+    assert names.count("error") == 1, names
+    assert names[0] == "message_start" and names[-1] == "error", names
+    assert "content_block_stop" in names, names
+
+
 async def main():
     server = await asyncio.start_server(serve, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
@@ -141,6 +210,8 @@ async def main():
             "use_in_pass_through": False,
         },
     }], num_retries=0)
+    await check_adapter_ends_with_one_error()
+    print("PASS: the adapter ends a mid-answer failure with exactly one error", flush=True)
     async with server:
         frames, error = await call(router, "complete")
         assert error is None, error
@@ -158,7 +229,30 @@ async def main():
             assert error is not None or "error" in events(frames), (
                 f"{upstream}: the caller got a stream that ended cleanly with no content: {frames}"
             )
+            assert events(frames).count("error") <= 1, (upstream, frames)
             print(f"PASS: a {upstream} upstream stream reaches the caller as a failure", flush=True)
+        for upstream in ("mid-delta-eof", "mid-delta-drop"):
+            frames, error = await call(router, upstream)
+            names = events(frames)
+            assert names.count("error") == 1, (upstream, frames)
+            assert names.count("content_block_stop") == 1, (upstream, frames)
+            assert names.index("content_block_stop") < names.index("error"), (upstream, names)
+            assert "message_stop" not in names, (upstream, frames)
+            assert text_of(frames) == "OK", (upstream, frames)
+            print(f"PASS: a {upstream} closes the open text block before its one error", flush=True)
+        frames, error = await call(router, "partial-eof")
+        assert events(frames).count("content_block_stop") == 1, frames
+        print("PASS: a block the upstream already closed is not stopped a second time", flush=True)
+        for upstream in ("tool-full-eof", "tool-partial-eof"):
+            frames, error = await call(router, upstream)
+            names = events(frames)
+            assert "content_block_stop" not in names, (
+                f"{upstream}: an unfinished tool block was closed and would run: {frames}"
+            )
+            assert names.count("error") == 1 and "message_stop" not in names, (upstream, frames)
+            assert any(name == "content_block_delta" and data["delta"].get("partial_json")
+                       for name, data in named(frames)), (upstream, frames)
+            print(f"PASS: an unfinished {upstream} tool block is left open and fails", flush=True)
 
 
 asyncio.run(main())

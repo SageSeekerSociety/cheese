@@ -49,6 +49,9 @@ ANSWER = [
         "item": {**MESSAGE, "status": "completed", "content": [TEXT]},
     },
 ]
+# A text delta whose `output_item.done` never arrived: the block is still open
+# when the stream ends.
+PARTIAL = ANSWER[:-1]
 COMPLETED = {
     "type": "response.completed",
     "sequence_number": 5,
@@ -91,6 +94,8 @@ UPSTREAMS = {
     # sends a terminal event. A clean EOF is still an incomplete answer.
     "clean-eof": ([CREATED, PING_S * 4], True),
     "partial-eof": ([CREATED, *ANSWER], True),
+    # The stream ends with the text block still open.
+    "mid-delta-eof": ([CREATED, *PARTIAL], True),
     # The upstream overloads before the gateway has sent the caller anything.
     "early-overload": ([CREATED, FAILED], True),
     "complete": ([CREATED, *ANSWER, COMPLETED], True),
@@ -169,12 +174,31 @@ async def main():
             assert [name for name, _ in events].count("error") == 1, events
             assert events[-1][1]["error"]["type"] == "overloaded_error", events
             assert "message_stop" not in [name for name, _ in events], events
+            assert [name for name, _ in events].count("content_block_stop") == 1, events
             text = "".join(
                 data["delta"].get("text", "")
                 for name, data in events if name == "content_block_delta"
             )
             assert text == "OK", events
             print("PASS: a partial answer ends in one error, without replay or a false completion", flush=True)
+
+            # The upstream stopped with the text block still open. The gateway
+            # closes it before the error so a client reading a closed block
+            # retries the turn instead of ending it.
+            status, events = await call(client, "mid-delta-eof")
+            assert status == 200, (status, events)
+            names = [name for name, _ in events]
+            assert names.count("error") == 1, events
+            assert events[-1][1]["error"]["type"] == "overloaded_error", events
+            assert names.count("content_block_stop") == 1, events
+            assert names.index("content_block_stop") < names.index("error"), names
+            assert "message_stop" not in names, events
+            text = "".join(
+                data["delta"].get("text", "")
+                for name, data in events if name == "content_block_delta"
+            )
+            assert text == "OK", events
+            print("PASS: an unfinished text block is closed before the one retryable error", flush=True)
 
             status, events = await call(client, "early-overload")
             assert status >= 500, (status, events)
