@@ -999,7 +999,7 @@ export interface ProjectAgent {
 //
 // 下面这些是后端 OpenAPI 生成类型（`src/api/openapi.d.ts`）的别名：字段、可空和
 // 必有与否都以 `backend/app/domain/feedback/schemas.py` 为准，改字段改那边，再跑
-// 两次导出（见 `frontend/scripts/gen-api-types.mjs`）。读字段时要记住的两件事：
+// 后端导出；这份类型由类型检查现场生成（`frontend/scripts/typecheck.mjs`）。读字段要记住两件事：
 //   * `author_avatar_id` 为 null 的意思是「画彩色首字母」，不要退回
 //     `/avatars/default`，那会让没挑过头像的人共用一张脸。
 //   * 评论的 `reply_count` 是服务端数的整栋楼回复数，不是这一页带回来几条；
