@@ -401,8 +401,10 @@ def facts_for_task(
     收两种形状是因为活有两处来源：领域内的人手上是 `Task` 那一行，HTTP 路由手上是
     `room_task` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查
     一行。这一层只读 `status` / `accepted_at` / `started_at` / `conclusion` /
-    `closing_since` 五个属性（`TaskSignals` / `TaskRow`），两种形状都长得出来，所以
-    折出来的 `TaskFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了）。
+    `closing_since` 五个属性 —— `TaskSignals` 和 `TaskRow` 各声明一次这五位，两个调用
+    点上都由 pyright 比对，所以两种形状折出来的 `TaskFacts` 一模一样。卡和房间那两对
+    另有单元测试逐位对过（`tests/unit/test_presentation.py`），这一对没有；窄读那几列
+    真的带得回来，押在 `room_task.repositories.listed_by_ids` 的列清单上。
     """
     return TaskFacts(
         status=str(task.status),
