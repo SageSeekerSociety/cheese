@@ -23,7 +23,7 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError, ValidationError
+from app.core.errors import NotFoundError, UnprocessableEntityError, ValidationError
 from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.platform_notices import (
@@ -257,7 +257,7 @@ async def _acting_handle(
     act in this room is refused, saying so."""
     seat = await _seat_of(session, topic_id, agent)
     if seat is None:
-        raise ValidationError(say("teammateNotSeatedHere"))
+        raise UnprocessableEntityError(say("teammateNotSeatedHere"))
     return seat
 
 

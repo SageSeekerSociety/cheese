@@ -22,7 +22,7 @@ import pytest
 from sqlalchemy import text
 
 from app.api import deps as session_turn_deps
-from app.core.errors import ValidationError
+from app.core.errors import UnprocessableEntityError
 from app.domain.agent.chat import ChatService
 from tests.conftest import StubChannel, settle_turn, stub_compute
 from tests.integration.conftest import (
@@ -179,7 +179,7 @@ def test_a_teammate_not_in_the_room_does_not_work_the_task_as_the_rooms(
 
     client.portal.call(given_unseated)
 
-    with pytest.raises(ValidationError) as refused:
+    with pytest.raises(UnprocessableEntityError) as refused:
         _turn(client, tmp_path, task, "派接着做")
 
     assert refused.value.args[0].key == "teammateNotSeatedHere"
