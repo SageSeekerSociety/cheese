@@ -379,6 +379,8 @@ litellm_settings:
   # Upstreams that are not Anthropic get requests without Claude Code's
   # billing line, whose per-request hash otherwise defeats their prefix cache
   # (`system_billing_line.py`).
-  callbacks: ["cheese_chatgpt_session.handler", "cheese_billing_line.handler"]
+  # An image no model can decode is replaced by a line saying so, since one
+  # such image fails every later request of its conversation (`image_guard.py`).
+  callbacks: ["cheese_chatgpt_session.handler", "cheese_billing_line.handler", "cheese_image_guard.handler"]
   # Keep a failed upstream from looking like a gateway bug in the logs.
   drop_params: true
