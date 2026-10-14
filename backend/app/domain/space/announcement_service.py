@@ -38,13 +38,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.addressing import Event, Hand, address
 from app.domain.avatars.models import Avatar
-from app.domain.delivery.ledger import (
-    amend,
-    deliver,
-    retract,
+from app.domain.delivery_events import (
+    Amend,
+    Deliver,
+    DeliveryEvent,
+    NotificationType,
+    Retract,
+    event_id_for,
 )
-from app.domain.delivery_events import DeliveryEvent, event_id_for
-from app.domain.notification.models import NotificationType
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
@@ -123,8 +124,20 @@ def _clean_title(title: str) -> str:
 
 
 class SpaceAnnouncementService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        deliver: Deliver,
+        amend: Amend,
+        retract: Retract,
+    ) -> None:
         self._session = session
+        # 公告的三下写（发、改、撤）都落在投递账本上，账本在第 5 层，由路由那一侧
+        # 递进来（`delivery_events` 的三个 `Protocol`）。
+        self._deliver = deliver
+        self._amend = amend
+        self._retract = retract
 
     # -- reads ---------------------------------------------------------------
 
@@ -217,7 +230,7 @@ class SpaceAnnouncementService:
         view = (await self._with_authors([row]))[0]
         if said_changed:
             space = await self._space_or_404(space_id)
-            await amend(
+            await self._amend(
                 self._session,
                 self._event_id(row),
                 self._payload(space, view),
@@ -226,7 +239,7 @@ class SpaceAnnouncementService:
 
     async def delete(self, *, space_id: int, announcement_id: int) -> None:
         row = await self._row_or_404(space_id, announcement_id)
-        await retract(self._session, self._event_id(row))
+        await self._retract(self._session, self._event_id(row))
         await self._session.execute(
             delete(SpaceAnnouncement).where(SpaceAnnouncement.id == row.id)
         )
@@ -261,7 +274,7 @@ class SpaceAnnouncementService:
                 select(User.username).where(User.id.in_(audience))
             )
         ).all()
-        await deliver(
+        await self._deliver(
             self._session,
             DeliveryEvent(
                 id=self._event_id(row),

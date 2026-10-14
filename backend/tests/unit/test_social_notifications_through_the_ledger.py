@@ -21,6 +21,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import select
 
+from app.domain.delivery.ledger import deliver
 from app.domain.delivery.models import Delivery
 from app.domain.notification.models import Notification, NotificationType
 from app.domain.team.membership_services import TeamMembershipService
@@ -106,6 +107,7 @@ def _service(session) -> TeamMembershipService:
         session,
         TeamRepository(session),
         TeamMembershipApplicationRepository(session),
+        deliver,
     )
 
 

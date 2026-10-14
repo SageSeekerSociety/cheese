@@ -328,22 +328,23 @@ class ProjectService:
     async def archive(self, project_id: uuid.UUID, *, by: str) -> Project:
         """Archive the project (idempotent): it leaves its members' lists,
         writes to it are refused, and its rooms are archived with it — which is
-        what stops its sessions, machines, PR polling and routines. Its pending
-        invitations are withdrawn: an invitation to a project nobody can enter
-        would sit in the invitee's inbox with no answer that means anything.
-        Nothing is deleted."""
+        what stops its sessions, machines, PR polling and routines. Nothing is
+        deleted.
+
+        The project's pending invitations are withdrawn by whoever archives it,
+        right after this returns: settling the invitee's notification lands on
+        the delivery ledger, one layer above this package. The door does it
+        (``api/routes/projects.archive_project``); ``archive`` cannot, and
+        neither can ``membership``, without reaching upward.
+        """
         project = await self.get_or_404(project_id)
         if project.archived_at is not None:
             return project
-        # deferred-import: breaks the cycle membership.services -> project.services
-        from app.domain.membership.services import InvitationService
-
         # deferred-import: tests replace this name on app.domain.topic.services
         from app.domain.topic.services import TopicService
 
         project.archived_at = datetime.now(UTC)
         await TopicService(self._session).archive_with_project(project_id, by=by)
-        await InvitationService(self._session).revoke_all_pending(project_id)
         await self._session.flush()
         return project
 

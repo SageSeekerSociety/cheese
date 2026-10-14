@@ -5,15 +5,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.domain.addressing import Addressed, Event, Hand, address
-from app.domain.delivery.ledger import deliver
-from app.domain.delivery_events import DeliveryEvent, event_id_for
+from app.domain.delivery_events import (
+    Deliver,
+    DeliveryEvent,
+    NotificationType,
+    event_id_for,
+)
 from app.domain.discussion.models import DiscussableModelType
 from app.domain.discussion.reaction_services import DiscussionReactionService
 from app.domain.discussion.repositories import (
     DiscussionRepository,
     _content_str_to_json,
 )
-from app.domain.notification.models import NotificationType
 from app.domain.user.services import handles_by_ids, user_service
 
 
@@ -23,11 +26,14 @@ class DiscussionService:
         repo: DiscussionRepository,
         reaction_service: DiscussionReactionService,
         session: AsyncSession,
+        deliver: Deliver,
     ) -> None:
         self._repo = repo
         self._reaction_service = reaction_service
         self._user_service = user_service(session)
         self._session = session
+        # 回复里 @ 到人要走投递账本，账本在第 5 层，由组合根递进来（`Deliver`）。
+        self._deliver = deliver
 
     async def create_discussion(
         self,
@@ -63,7 +69,7 @@ class DiscussionService:
                 self._session,
                 entity.mentioned_user_ids,  # type: ignore[attr-defined]
             )
-            await deliver(
+            await self._deliver(
                 self._session,
                 DeliveryEvent(
                     # 这条事件的身份就是刚落下的那条回复 —— 去重键跟着它走，所以

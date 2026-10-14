@@ -15,6 +15,17 @@
 搬的是**数据**，不是行为。`NotificationType` 的取值是前后端共用的契约（前端的
 `NOTIF_KIND` 标签表、`cheese_notify --kind`、存量行里存的字面量），改它要回到产品
 那边，不能单方面动。`notification.models` 把它再导一次，读它的地方不用改。
+
+## 写它的那几个调用
+
+下面那几个 `Protocol` 是账本的**写入口**：把事件交出去、事情变了改一条、事情撤了
+收回一条、卡有了结果结掉等它的那些话。它们的形状就是 `delivery/ledger.py` 里同名
+函数的形状，实现留在第 5 层（要落行、要发站内信和邮件），低层要用就在构造时把它
+递进来 —— 和 `webhook/ports.py` 的 `Poster`、`integration/ports.py` 的 `RoomFiles`
+同一条规矩：谁调用谁给。
+
+声明摆在这里而不是每个消费方各写一份，是因为要的东西完全一样；名字跟着被递进来的
+那个函数（`Deliver` 收的就是 `ledger.deliver`），读的时候两边对得上。
 """
 
 from __future__ import annotations
@@ -23,7 +34,11 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Final
+from typing import Final, Protocol
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.domain.addressing import Addressed
 
 #: 社交事件 id 的命名空间。固定值：换掉它等于把在途的去重键全部作废，同一件事会
 #: 再通知一遍。
@@ -113,3 +128,41 @@ def event_id_for(type_: NotificationType, record_id: int | str) -> uuid.UUID:
     身份，那就等于没有去重。
     """
     return uuid.uuid5(_EVENT_NAMESPACE, f"{type_.value}:{record_id}")
+
+
+class Deliver(Protocol):
+    """把一条事件交给账本：算出收件人，落投递行，发出去。"""
+
+    async def __call__(
+        self, session: AsyncSession, event: DeliveryEvent, addressed: Addressed
+    ) -> None: ...
+
+
+class Retract(Protocol):
+    """这件事不作数了：它发出去的每一笔连同收件箱里那一行一起删掉。"""
+
+    async def __call__(self, session: AsyncSession, event_id: uuid.UUID) -> None: ...
+
+
+class Amend(Protocol):
+    """这件事说的话改了：已经发出去的那些改成新的说法，不再发一遍。"""
+
+    async def __call__(
+        self, session: AsyncSession, event_id: uuid.UUID, payload: dict
+    ) -> None: ...
+
+
+class Settle(Protocol):
+    """这件事办完了：它发出去的每一行记下结果、结掉、标成已读。"""
+
+    async def __call__(
+        self, session: AsyncSession, event_id: uuid.UUID, outcome: dict
+    ) -> None: ...
+
+
+class SettleCard(Protocol):
+    """这张验收卡办完了：关于它的每一条提示一并结掉。"""
+
+    async def __call__(
+        self, session: AsyncSession, card_id: uuid.UUID, outcome: dict
+    ) -> None: ...

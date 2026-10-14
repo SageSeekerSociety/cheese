@@ -44,8 +44,9 @@ from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
+from app.domain.delivery.ledger import deliver, settle
 from app.domain.identity.actor import Actor
-from app.domain.membership.services import MemberService
+from app.domain.membership.services import InvitationService, MemberService
 from app.domain.onboarding.start import start_steps
 from app.domain.project.forge import follow_github_rename
 from app.domain.project.protection import (
@@ -765,9 +766,19 @@ async def archive_project(
     project_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """归档项目: hide it from everyone's lists and stop everything it runs.
-    Nothing is deleted; ``/unarchive`` puts it back."""
+    Nothing is deleted; ``/unarchive`` puts it back.
+
+    The project's pending invitations are withdrawn here, not inside
+    ``ProjectService.archive``: settling the invitee's notification lands on the
+    delivery ledger, which sits above both ``project`` and ``membership``. An
+    invitation to a project nobody can enter would sit in the invitee's inbox
+    with no answer that means anything.
+    """
     owner = await _project_owner(project_id, db, resolver)
     project = await ProjectService(db).archive(project_id, by=owner.handle)
+    await InvitationService(db, deliver=deliver, settle=settle).revoke_all_pending(
+        project_id
+    )
     await db.commit()
     return ok(await _project_payload(db, project))
 

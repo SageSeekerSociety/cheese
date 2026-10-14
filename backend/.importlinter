@@ -317,13 +317,10 @@ ignore_imports =
     app.domain.device.owner_reads -> app.domain.project.models
     app.domain.device.owner_reads -> app.domain.topic.models
     app.domain.device.sql_repository -> app.domain.project.models
-    app.domain.discussion.services -> app.domain.delivery.ledger
-    app.domain.discussion.services -> app.domain.notification.models
     app.domain.docs_site.library -> app.domain.project.models
     app.domain.feedback.repositories -> app.domain.topic.models
     app.domain.identity.services -> app.domain.topic_membership.services
     app.domain.knowledge.services -> app.domain.team.repositories
-    app.domain.membership.services -> app.domain.delivery.ledger
     app.domain.memory.migration_service -> app.domain.agent.announce
     app.domain.memory.migration_service -> app.domain.identity.handles
     app.domain.memory.migration_service -> app.domain.membership.roster
@@ -361,7 +358,6 @@ ignore_imports =
     app.domain.project.forge -> app.domain.review.forgejo_pr
     app.domain.project.forge -> app.domain.review.github_pr
     app.domain.project.room_files -> app.domain.agent.announce
-    app.domain.project.services -> app.domain.membership.services
     app.domain.project.services -> app.domain.topic.models
     app.domain.project.services -> app.domain.topic.repositories
     app.domain.project.services -> app.domain.topic.services
@@ -406,8 +402,6 @@ ignore_imports =
     app.domain.task.teaching -> app.domain.space.material_service
     app.domain.task.teaching -> app.domain.space.models
     app.domain.task.visibility_service -> app.domain.space.repositories
-    app.domain.team.membership_services -> app.domain.delivery.ledger
-    app.domain.team.membership_services -> app.domain.notification.models
     app.domain.team.services -> app.domain.task.repositories
     app.domain.topic.services -> app.domain.agent.clone
     app.domain.topic.services -> app.domain.agent.harness
@@ -604,11 +598,8 @@ ignore_imports =
     app.domain.block.editing -> app.domain.agent.chat
     app.domain.block.editing -> app.domain.agent.runtime
     app.domain.block.editing -> app.domain.delivery.agent
-    app.domain.discussion.services -> app.domain.delivery.ledger
     app.domain.membership.roster -> app.domain.agent_instance.own
     app.domain.membership.roster -> app.domain.agent_instance.services
-    app.domain.membership.services -> app.domain.delivery.ledger
-    app.domain.membership.services -> app.domain.notification.models
     app.domain.memory.migration_service -> app.domain.agent.announce
     app.domain.memory.redundant -> app.domain.agent.execution
     app.domain.memory.redundant -> app.domain.agent_session.services
@@ -679,9 +670,6 @@ ignore_imports =
     app.domain.room_task.checkouts -> app.domain.agent_session.models
     app.domain.room_task.naming -> app.domain.agent.staleness
     app.domain.room_task.place -> app.domain.agent_session.models
-    app.domain.space.announcement_service -> app.domain.delivery.ledger
-    app.domain.team.membership_services -> app.domain.delivery.ledger
-    app.domain.team.membership_services -> app.domain.notification.models
     app.domain.team.services -> app.domain.task.repositories
     app.domain.topic.directory -> app.domain.room_task.services
     app.domain.topic.repositories -> app.domain.agent_instance.models
