@@ -63,9 +63,14 @@ CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑",
 #: them is not a command still running.
 TURN_ENDED = ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error")
 #: The task row's presentation phrase while a turn is running (the backend's
-#: Building.running). It is the platform's own answer to "is this line acting right now":
-#: the frontend's 还在动 rule is the same judgement, scoped to the running turn's blocks.
+#: Building.running): the frontend's 还在动 rule is the same judgement, scoped to the
+#: running turn's blocks.
 RUNNING_PHRASE = "running"
+#: The phrases the board shows *instead of* `running` although a turn may still be
+#: running, so they answer nothing: task_presentation ranks 待回答 (「进程可能还在，但它不会
+#: 自己往下走了」) and 结算中 (被采纳的那一条还要跑一轮写总结) ahead of it. 第四轮审查
+#: 2026-10-14：把这两个短语读成「没在跑」，正在写总结、或刚被回答打断的线会被报成停摆。
+RUNNING_OVERRIDES = ("awaiting_answer", "accepted")
 #: A tool call older than this is not taken for still running, whatever its block says:
 #: a turn can end in a way that posts no event at all (a seat replaced under it), and a
 #: line that then reads 命令在跑 forever is the one failure this class exists to catch.
@@ -835,10 +840,16 @@ def heartbeat_of(last_msg, last_event, last_output=None):
 
 def turn_running(task):
     """Whether the platform says a turn is running in this task right now: the row's
-    presentation phrase is `running` while one is. None when the row carries no phrase
-    (an older platform), which leaves the caller its own fallback."""
+    presentation phrase is `running` while one is, and False for a phrase that means no
+    turn is running (Building.started, a task still being discussed, the card's own
+    states — `running` outranks all of those). None when the row carries no phrase (an
+    older platform), or when the phrase is one the board shows *instead of* `running`
+    though a turn may be running (RUNNING_OVERRIDES): those leave the caller its own
+    fallback."""
     pres = task.get("presentation")
     if isinstance(pres, dict) and isinstance(pres.get("phrase"), str):
+        if pres["phrase"] in RUNNING_OVERRIDES:
+            return None
         return pres["phrase"] == RUNNING_PHRASE
     return None
 
@@ -854,7 +865,8 @@ def in_flight(event, ended_after, now=None, turn=None):
     returned with empty output leaves the block byte-identical to this one, so the block
     alone cannot tell the two apart (第三轮审查 2026-10-14): when the platform says no turn
     is running, the block has returned and is not in flight. When the platform does not say
-    (None), only the age limit above keeps 命令在跑 from lasting forever."""
+    (None — an older platform, or a phrase that overrides `running`, see RUNNING_OVERRIDES),
+    only the age limit above keeps 命令在跑 from lasting forever."""
     m = meta(event)
     if not m.get("tool") or "output_bytes" in m or m.get("failed") or ended_after:
         return False
@@ -1649,10 +1661,13 @@ def _self_test_pulse():
          in_flight(call, False, now, turn=True), True),
         ("在跑：平台给不出判断（行上没有这个字段）时退回按块的年龄算",
          in_flight(call, False, now, turn=None), True),
-        ("平台说在不在跑：running 是、started 不是、行上没有这个字段就不知道",
+        ("平台说在不在跑：running 是、started 不是、压过 running 的两个短语和空字段都不回答",
          [turn_running(t) for t in ({"presentation": {"phrase": "running"}},
-                                    {"presentation": {"phrase": "started"}}, {}, {"presentation": None})],
-         [True, False, None, None]),
+                                    {"presentation": {"phrase": "started"}},
+                                    {"presentation": {"phrase": "awaiting_answer"}},
+                                    {"presentation": {"phrase": "accepted"}},
+                                    {}, {"presentation": None})],
+         [True, False, None, None, None, None]),
         ("结束一轮的事件：四种都算，memory_changed 不算",
          [e in TURN_ENDED for e in ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error", "memory_changed")],
          [True, True, True, True, False]),
@@ -1730,8 +1745,10 @@ def _self_test_sweep():
          kinds(60, call, sysev("platform_error", 50)), ["长时间无动静"]),
         ("sweep：命令没返回、任务行说这一轮没在跑，块已经返回了，报停摆",
          kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
-        ("sweep：任务行说 running，同样没返回的块算在跑，不报",
-         kinds(60, call, row={"presentation": {"phrase": "running"}}), []),
+        ("sweep：任务行说结算中（被采纳的那一条还要跑一轮写总结），同样没返回的块算在跑，不报",
+         kinds(60, call, row={"presentation": {"phrase": "accepted"}}), []),
+        ("sweep：任务行说待回答（这一轮可能还在跑），同样没返回的块不报",
+         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), []),
         ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
          kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
         ("sweep：平台给的 last_output_at 10 分钟前，不报",
