@@ -520,6 +520,43 @@ test_rollout_installs_connection_route_without_recreating_api_front() {
   echo "PASS: rollout installs the owner route with a graceful api-front reload"
 }
 
+# Every api-front reload retires the workers carrying the box's device links,
+# terminals and tunnels, so a deploy reloads it only when what api-front would
+# load differs from what it loaded last: not for a comment, and always for a
+# config an earlier deploy wrote to disk but never got to load.
+test_api_front_reloads_only_for_a_new_config() {
+  local run_dir docker_log reloads
+  run_dir="$(new_rollout_run_dir)"
+  docker_log="$run_dir/docker.log"
+  # The running config differs from the release's in a comment only.
+  { printf '# a note that changes nothing\n'; cat "$ROOT/deploy/llm-tunnel/nginx.conf"; } > "$run_dir/nginx.conf"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded for a comment"; }
+  cmp -s "$ROOT/deploy/llm-tunnel/nginx.conf" "$run_dir/nginx.conf" \
+    || { rm -rf "$run_dir"; fail "the release's api-front config was not installed"; }
+
+  # A deploy stopped after writing the files and before the reload: what is on
+  # disk is current, what api-front runs is not.
+  printf 'what an interrupted deploy left loaded\n' > "$run_dir/active/.api-front-loaded"
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  reloads="$(grep -cFx 'exec cheese-api-front nginx -s reload' "$docker_log" || true)"
+  [ "$reloads" = 1 ] \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded $reloads times for a config it had not loaded, not once"; }
+
+  # Loaded now: the next release with the same config leaves it alone.
+  : > "$docker_log"
+  rollout_run "$run_dir" env >"$run_dir/deploy.log" 2>&1 \
+    || { cat "$run_dir/deploy.log"; rm -rf "$run_dir"; fail "deploy failed"; }
+  ! grep -Fx 'exec cheese-api-front nginx -s reload' "$docker_log" >/dev/null \
+    || { rm -rf "$run_dir"; fail "api-front was reloaded again for the config it had just loaded"; }
+  rm -rf "$run_dir"
+  echo "PASS: api-front is reloaded only for a config it has not loaded"
+}
+
 test_deploy_retains_ci_service_images() {
   mkdir -p "$ROOT/.tmp"
   run_dir="$(mktemp -d "$ROOT/.tmp/ci-service-images.XXXXXX")"
@@ -1870,6 +1907,7 @@ case "$CASE" in
   preview-kill-switch-owner) test_kill_switch_stops_the_running_owner ;;
   preview-owner-release) test_release_preview_connection_requires_interrupt ;;
   owners-behind-schema) test_deploy_releases_owners_behind_the_schema ;;
+  api-front-reload) test_api_front_reloads_only_for_a_new_config ;;
   owners-behind-schema-failed-migration) test_failed_migration_resumes_the_drained_owner ;;
   all)
     test_missing_forge_fails_health_check
@@ -1883,6 +1921,7 @@ case "$CASE" in
     test_owner_release_reuses_box_config_and_stops_when_busy
     test_cloud_control_has_an_independent_drained_release
     test_rollout_installs_connection_route_without_recreating_api_front
+    test_api_front_reloads_only_for_a_new_config
     test_deploy_warns_when_the_session_base_will_not_survive
     test_deploy_retains_ci_service_images
     test_deploy_delivers_private_executor
