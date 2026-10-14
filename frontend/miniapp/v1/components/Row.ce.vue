@@ -25,4 +25,12 @@ const style = computed(() => ({ gap: `${props.gap}px`, alignItems: ALIGN[props.a
   flex-wrap: wrap;
   text-align: start;
 }
+/* A row is always across, so here controls start from an even width, not
+   from their labels: two sliders side by side are one width. */
+::slotted(c-slider) {
+  flex-basis: 220px;
+}
+::slotted(c-stat) {
+  flex-basis: 140px;
+}
 </style>

@@ -145,8 +145,10 @@ function key(e: KeyboardEvent) {
 }
 :host {
   display: block;
-  flex: 1 1 220px;
-  min-width: 0;
+  /* In a row it takes at least 220px and shares what is left; the basis is
+     its content, not 220px, so stacked in a column it is not 220px tall. */
+  flex: 1 1 auto;
+  min-width: min(220px, 100%);
   margin: 8px 0;
   -webkit-user-select: none;
   user-select: none;

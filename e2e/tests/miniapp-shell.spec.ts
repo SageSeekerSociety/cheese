@@ -93,6 +93,31 @@ const t = ref(0.1 + 0.2)
   expect(errors).toEqual([]);
 });
 
+test('a control stacked in a column is as tall as itself, and in a row still shares the width', async ({ page }) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const a = ref(3)
+const b = ref(4)
+</script>
+<template>
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <c-slider id="stacked" label="甲" :min="0" :max="10" v-model="a" />
+    <c-stat id="card" label="合计" :value="a + b" />
+  </div>
+  <c-row><c-slider id="left" label="甲" :min="0" :max="10" v-model="a" /><c-slider id="right" label="乙方每轮投入的资源数量" :min="0" :max="10" v-model="b" /></c-row>
+</template>`
+  );
+  const box = async (id: string) => (await page.locator(`#cheese-app [id=${id}]`).first().boundingBox())!;
+  expect((await box('stacked')).height).toBeLessThan(90);
+  expect((await box('card')).height).toBeLessThan(120);
+  const [left, right] = [await box('left'), await box('right')];
+  expect(Math.abs(left.width - right.width)).toBeLessThan(2);
+  expect(left.width + right.width).toBeGreaterThan(500);
+  expect(errors).toEqual([]);
+});
+
 test('a formula wider than a phone stays inside the column and can be scrolled to its end', async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 800 });
   const errors = await runApp(

@@ -47,8 +47,9 @@ const shown = computed(() => {
 }
 :host {
   display: block;
-  flex: 1 1 140px;
-  min-width: 0;
+  /* As the slider: a width in a row, never a height in a column. */
+  flex: 1 1 auto;
+  min-width: min(140px, 100%);
   /* Cards side by side are one height, whatever the row aligns its controls to. */
   align-self: stretch;
 }
