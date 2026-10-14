@@ -13,10 +13,10 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.membership.ports import ProjectTeam
 from app.domain.membership.services import MemberService
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import TopicKind, TopicStatus
+from app.domain.topic.ports import ProjectTeam
 from app.domain.topic.repositories import TopicRepository
 from app.domain.topic_membership.services import TopicMemberService
 

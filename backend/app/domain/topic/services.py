@@ -43,7 +43,6 @@ from app.domain.identity.handles import (
 )
 from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.living_doc.services import Documents
-from app.domain.membership.ports import ProjectTeam
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.repository import service as ws
 from app.domain.review.archive import close_cards_for_archived_topic
@@ -72,6 +71,7 @@ from app.domain.topic.ports import (
     ForkTranscript,
     NamedTeammate,
     ProjectHarness,
+    ProjectTeam,
     RoomTeammate,
     SeatHandles,
     SeatProject,

@@ -5,9 +5,10 @@
 —— 和 `review/ports.py`、`block/ports.py` 同一条规矩：口子按消费者分开写，实现按
 提供者放。
 
-前四个问的是「这个项目的 AI 队友是谁」，实现在
+前五个问的是「这个项目的 AI 队友是谁」，实现在
 `app/domain/agent_instance/adapters.py`；后两个是克隆一次会话时用的，实现就在
 `agent.clone` 和 `agent.harness` 自己身上，那两个模块够得着，所以没有另起一份。
+`ProjectTeam` 是前五个里唯一本包不读的：拿到手就原样递出去。
 
 递回来的都是内置类型，没有一个是那个包里的类：本包认不出它的类型，也不该认得。
 """
@@ -15,7 +16,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -87,6 +88,25 @@ class SeatProject(Protocol):
     async def __call__(
         self, session: AsyncSession, handle: str
     ) -> uuid.UUID | None: ...
+
+
+class ProjectTeam(Protocol):
+    """这个项目里坐着谁，本包拿到手原样递给 `topic_membership`。
+
+    本包从不看席位那一行长什么样：本包那五个 ``team`` 参数全部转给
+    `TopicMemberService`，读那一列人的是 `membership.roster`。所以这里只写「一列
+    东西」—— 和 `topic_membership/ports.py` 的同名口子一样，本包不该认得别人家的
+    类，实现是同一位（`agent_instance/adapters.py` 的 ``project_team``）。
+
+    没有去 import `membership.ports` 里那份同名口子：那会在 `topic` 与 `membership`
+    之间添一条边，而 `membership` 反过来经 `topic_membership` 依赖本包，两条合起来
+    就是一个环（C3 的 `domains-acyclic` 查的正是这个）。形状一样、各写一份，那条边
+    就不必存在。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, project_id: uuid.UUID
+    ) -> Sequence[object]: ...
 
 
 class ForkTranscript(Protocol):
