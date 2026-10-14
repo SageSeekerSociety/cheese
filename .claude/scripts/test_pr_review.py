@@ -17,13 +17,17 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PR = "7"
+#: A second PR whose only change is a lock file: 档位 G, so nobody reviews it and the
+#: card still carries a conclusion line saying so.
+PR_MECHANICAL = "8"
 
 GH = r"""#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$*" in
-  *.head.sha*) echo "$PR_HEAD" ;;
+  *.head.sha*) case "$*" in *pulls/8*) echo "$PR8_HEAD" ;; *) echo "$PR_HEAD" ;; esac ;;
   *.base.ref*) echo main ;;
-  *--paginate*/commits*) printf '%s\n' $PR_COMMITS ;;
+  *--paginate*/commits*)
+    case "$*" in *pulls/8*) printf '%s\n' $PR8_COMMITS ;; *) printf '%s\n' $PR_COMMITS ;; esac ;;
   *'"# "'*) printf '# A title\n\nThe body.\n' ;;
   *) echo "unexpected gh call: $*" >&2; exit 1 ;;
 esac
@@ -77,6 +81,10 @@ class PrReview(unittest.TestCase):
         git(work, "commit", "-qm", "base")
         git(work, "remote", "add", "origin", str(origin))
         git(work, "push", "-q", "origin", "main")
+        # The PR's commits live on their own branch: main is the base and stays there, the
+        # way it does for a PR that has not been merged. A test that advanced main along
+        # with the PR would leave the tier scripts no base to measure the change against.
+        git(work, "checkout", "-q", "-b", "pr")
         cls.shas = []
         for n in (1, 2, 3):
             (work / "f.txt").write_text(f"change {n}\n")
@@ -89,6 +97,16 @@ class PrReview(unittest.TestCase):
         git(work, "commit", "-qam", "side")
         cls.side = git(work, "rev-parse", "HEAD")
         git(work, "push", "-q", "origin", f"HEAD:refs/heads/side")
+        # A PR whose only change is to a lock file, off the same base: 档位 G. It branches
+        # from main, not from the other PR's head, or the other PR's change would come with
+        # it and the tier would be the other PR's tier.
+        git(work, "checkout", "-q", "-b", "mechanical", "main")
+        (work / "frontend/pnpm-lock.yaml").parent.mkdir(parents=True, exist_ok=True)
+        (work / "frontend/pnpm-lock.yaml").write_text("lockfileVersion: 2\n")
+        git(work, "add", "frontend/pnpm-lock.yaml")
+        git(work, "commit", "-qm", "bump lock")
+        cls.mech = git(work, "rev-parse", "HEAD")
+        git(work, "push", "-q", "origin", f"HEAD:refs/pull/{PR_MECHANICAL}/head")
         git(work, "checkout", "-q", "main")
         git(work, "fetch", "-q", "origin")
         cls.work = work
@@ -110,6 +128,8 @@ class PrReview(unittest.TestCase):
             "GH_LOG": str(self.log),
             "PR_HEAD": self.shas[-1],
             "PR_COMMITS": " ".join([*self.shas, self.side]),
+            "PR8_HEAD": self.mech,
+            "PR8_COMMITS": self.mech,
             "PR_REVIEW_DIR": str(self.tmp / "reviews"),
         }
         (self.tmp / "reviews").mkdir(exist_ok=True)
@@ -149,12 +169,61 @@ class PrReview(unittest.TestCase):
         saved = (d / "REVIEW-RESULT.md").read_text()
         self.assertEqual(saved, out)
         self.assertEqual(
-            saved.splitlines()[0], f"独立 review：head {self.shas[-1][:8]} 结论 无 blocker/major"
+            saved.splitlines()[0],
+            f"独立 review：head {self.shas[-1][:8]} 结论 无 blocker/major｜档位 B",
         )
         shown = self.run_script("show", str(d), "--line")
         self.assertEqual(shown.stdout, saved.splitlines()[0] + "\n")
         self.assertEqual(self.run_script("show", str(d)).stdout, saved)
         self.assertFalse(any("comment" in c for c in self.gh_calls()))
+
+    def test_prepare_decides_the_tier_and_prints_its_criteria(self):
+        _, text = self.prepare()
+        self.assertIn("## Review tier", text)
+        self.assertIn("**档位 B 实现代码**", text)
+        self.assertIn("两路全新上下文找茬", text)
+        self.assertIn("f.txt（实现代码）", text)
+
+    def test_a_mechanical_change_is_tier_g_and_gets_a_result_without_a_review(self):
+        # post runs straight on prepare's own result.json, without the seat writing one:
+        # that is the point of the tier, so nothing writes over it here.
+        review_md, _ = self.prepare_tier_g()
+        before = self.gh_calls()
+        out = self.run_script("post", str(review_md.parent))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.assertEqual(self.gh_calls(), before, "post must not call gh")
+        self.assertEqual(
+            out.stdout.splitlines()[0],
+            f"独立 review：head {self.mech[:8]} 结论 无 blocker/major｜档位 G",
+        )
+        # The line must not read as a judgement somebody made: the body says so.
+        self.assertIn("没有审查者读过", out.stdout)
+
+    def prepare_tier_g(self):
+        out = self.run_script("prepare", PR_MECHANICAL)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        review_md = Path(out.stdout.strip())
+        self.assertIn("档位 G", out.stderr)
+        self.assertIn("**档位 G 机械改动**", review_md.read_text())
+        # prepare wrote the result a reviewer would otherwise write: post runs straight away.
+        result = json.loads((review_md.parent / "result.json").read_text())
+        self.assertEqual(result["reviewed_sha"], self.mech)
+        self.assertEqual(result["findings"], [])
+        self.assertIn("免审", result["summary"])
+        self.assertTrue(all("免审" in item for item in result["not_covered"]))
+        return review_md, out
+
+    def test_post_recomputes_the_tier_instead_of_trusting_meta(self):
+        # A seat cannot promote its own change to a lighter tier by editing meta: post
+        # recomputes from the tree, and the conclusion line follows that, not the file.
+        review_md, _ = self.prepare()
+        d = review_md.parent
+        meta = (d / "meta").read_text().replace("tier=B", "tier=G")
+        self.assertIn("tier=G", meta)
+        (d / "meta").write_text(meta)
+        _, out = self.post(review_md, "minor")
+        self.assertIn("档位 B", out.splitlines()[0])
+        self.assertNotIn("档位 G", out.splitlines()[0])
 
     def test_dry_run_prints_without_writing(self):
         review_md, _ = self.prepare()
@@ -172,7 +241,7 @@ class PrReview(unittest.TestCase):
         d, out = self.post(review_md, "blocker", "major", "minor")
         self.assertEqual(
             out.splitlines()[0],
-            f"独立 review：head {self.shas[-1][:8]}（增量自 {since[:8]}）结论 有 2 条",
+            f"独立 review：head {self.shas[-1][:8]}（增量自 {since[:8]}）结论 有 2 条｜档位 B",
         )
 
     def test_incremental_review_picks_up_the_last_rounds_result(self):

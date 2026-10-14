@@ -11,6 +11,10 @@
 #       paths and post command. Prints the path of REVIEW.md; follow it.
 #       --since reviews only REVIEWED_SHA..SHA, to check that the last
 #       round's blocker/major findings are fixed.
+#       Also decides the change's review tier (A-G) with tiers.py, over the
+#       whole PR, and writes it into REVIEW.md and meta. A tier G change is
+#       mechanical: no reviewer runs, prepare writes a result.json that says
+#       so, and post can be run straight away.
 #   .claude/scripts/pr-review.sh post DIR [--dry-run]
 #       Check DIR/result.json against the schema and the pinned commit, write
 #       the rendered result to DIR/REVIEW-RESULT.md, print it, and remove the
@@ -42,7 +46,7 @@ resolve_sha() {
 }
 
 prepare() {
-  local pr=$1 want=${2:-} since_want=${3:-} sha since="" base tree dir method_rev from prev
+  local pr=$1 want=${2:-} since_want=${3:-} sha since="" base tree dir method_rev prev merge_base tier tier_txt
   sha=$(resolve_sha "$pr" "$want") || exit 1
   [ -z "$since_want" ] || since=$(resolve_sha "$pr" "$since_want") || exit 1
   base=$(gh api "repos/$REPO/pulls/$pr" -q .base.ref) || exit 1
@@ -69,6 +73,7 @@ prepare() {
     git -C "$ROOT" show "origin/main:$METHOD/prompt.md" > "$dir/REVIEW.md"
     git -C "$ROOT" show "origin/main:$METHOD/schema.json" > "$dir/schema.json"
     git -C "$ROOT" show "origin/main:$METHOD/render.py" > "$dir/render.py"
+    git -C "$ROOT" show "origin/main:$METHOD/tiers.py" > "$dir/tiers.py" 2>/dev/null || :
   else
     echo "pr-review: $METHOD is not on origin/main yet; using this checkout's copy" >&2
     method_rev=$(git -C "$ROOT" rev-parse HEAD)
@@ -77,10 +82,45 @@ prepare() {
     git -C "$ROOT" diff --quiet HEAD -- "$METHOD" || method_rev="$method_rev+uncommitted"
     cp "$ROOT/$METHOD/prompt.md" "$dir/REVIEW.md"
     cp "$ROOT/$METHOD/schema.json" "$ROOT/$METHOD/render.py" "$dir/"
+    [ -f "$ROOT/$METHOD/tiers.py" ] && cp "$ROOT/$METHOD/tiers.py" "$dir/"
   fi
 
+  # The tier is a property of the change, not of the review: always over the PR's
+  # whole range, so a delta review still reports the tier of what is being merged.
+  merge_base=$(git -C "$ROOT" merge-base "origin/$base" "$sha") || exit 1
+  tier=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha" --letter) \
+    || die "could not decide the review tier"
+  tier_txt=$(python3 "${TIERS:-$dir/tiers.py}" --repo "$ROOT" --base "$merge_base" --head "$sha") \
+    || exit 1
+  [ "$tier" != G ] || echo "pr-review: 档位 G（纯机械改动），不用跑审查；post 会照常出结论行" >&2
+
   gh api "repos/$REPO/pulls/$pr" -q '"# " + .title + "\n\n" + (.body // "")' > "$dir/pr.md" || exit 1
-  printf 'pr=%q\nsha=%q\nmethod_rev=%q\ntree=%q\nsince=%q\n' "$pr" "$sha" "$method_rev" "$tree" "$since" > "$dir/meta"
+  printf 'pr=%q\nsha=%q\nbase=%q\nmethod_rev=%q\ntree=%q\nsince=%q\ntier=%q\n' \
+    "$pr" "$sha" "$base" "$method_rev" "$tree" "$since" "$tier" > "$dir/meta"
+  if [ "$tier" = G ]; then
+    # Nothing for a reviewer to do, and the card still needs the conclusion line.
+    # The seat runs post as usual. The line says the change was not reviewed, in the
+    # summary and again under Not covered, so nobody reads 无 blocker/major as a
+    # judgement somebody made by reading.
+    python3 - "$sha" "$tier_txt" "$dir/result.json" <<'PY' \
+      || die "could not write the tier G result"
+import json, sys
+sha, tier_txt, out = sys.argv[1:4]
+why = next((l.split("：", 1)[1] for l in tier_txt.splitlines()
+            if l.startswith("- 为什么会是这一档：")), "")
+json.dump({
+    "reviewed_sha": sha,
+    "summary": f"档位 G：改动全部是{why}，按 §4 免审，CI 过即可。没有审查者读过这些改动，"
+               f"这行结论说的是不用审，不是审过之后没发现问题。",
+    "candidates_found": 0,
+    "candidates_refuted": 0,
+    "findings": [],
+    "not_covered": [f"整份改动（{why}）都按机械改动免审，没有人读过。"],
+}, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+PY
+    python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" --tier "$tier" >/dev/null \
+      || die "the tier G result I wrote does not pass render.py; this is a bug in pr-review.sh"
+  fi
   if [ -n "$since" ]; then
     # The last round's own result, when this machine still has it; otherwise
     # its findings are in the PR body (pr.md), where the card body is mirrored.
@@ -111,13 +151,22 @@ EOF
   fi
   cat >> "$dir/REVIEW.md" <<EOF
 
+## Review tier
+
+$tier_txt
+
+档位按改动到的文件定，决定的是该审多深；它不改下面 method 里的步骤，只改你花多少
+力气。档位 A 时把两路找茬都用在最危险的那几处上，不要平摊。
+EOF
+  cat >> "$dir/REVIEW.md" <<EOF
+
 ## This review
 
 - PR: #$pr, https://github.com/$REPO/pull/$pr
 - Pinned SHA: $sha${since:+ (delta since $since)}
-- Base: origin/$base; merge base: $(git -C "$ROOT" merge-base "origin/$base" "$sha")
+- Base: origin/$base; merge base: $merge_base
 - Review tree: $tree
-- Changed files: \`git -C $tree diff --name-only ${since:-<merge base>} HEAD\`
+- Changed files: \`git -C $tree diff --name-only ${since:-$merge_base} HEAD\`
 - PR title and body (step 5 only): $dir/pr.md
 - Schema: $dir/schema.json
 - Result: $dir/result.json
@@ -127,11 +176,25 @@ EOF
 }
 
 post() {
-  local dir=$1 dry=${2:-} pr sha method_rev tree since="" result
+  local dir=$1 dry=${2:-} pr sha base="" method_rev tree since="" tier="" result
   [ -f "$dir/meta" ] || die "$dir has no meta; run prepare first"
   # shellcheck disable=SC1091
   . "$dir/meta"
-  result=$(python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" ${since:+--since "$since"}) \
+  # The tier is recomputed here, not read from meta: a seat cannot promote its own
+  # change to a lighter tier (or be stuck with a heavier one) by editing the file.
+  # A tree that is already gone falls back to what prepare recorded, so post is not
+  # broken by posting after a reboot cleared /tmp.
+  local range
+  if [ -f "$dir/tiers.py" ] \
+    && range=$(git -C "$ROOT" merge-base "origin/$base" "$sha" 2>/dev/null) \
+    && tier=$(python3 "$dir/tiers.py" --repo "$ROOT" --base "$range" --head "$sha" --letter 2>/dev/null); then
+    :
+  elif [ -f "$dir/tiers.py" ]; then
+    tier=$(python3 "$dir/tiers.py" --repo "$ROOT" --base "$sha^" --head "$sha" --letter 2>/dev/null) || tier=""
+  fi
+  [ -n "$tier" ] || echo "pr-review: 算不出档位，结论行不带档位" >&2
+  result=$(python3 "$dir/render.py" "$dir/result.json" "$sha" "$method_rev" \
+    ${since:+--since "$since"} ${tier:+--tier "$tier"}) \
     || die "$dir/result.json was not accepted; fix it and run post again"
   printf '%s\n' "$result"
   [ "$dry" = --dry-run ] && return

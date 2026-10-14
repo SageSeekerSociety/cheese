@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """Check a review result against schema.json beside this file and render it for the acceptance card.
 
-    render.py <result.json> <pinned sha> <method rev> [--since <reviewed sha>]
+    render.py <result.json> <pinned sha> <method rev> [--since <reviewed sha>] [--tier A..G]
 
 prepare copies this file and schema.json from origin/main next to the
 result, and post runs that copy, so the branch a seat sits on cannot loosen
 the check. The first line of the output is the one line the card carries,
 which orchestrator_sweep.py reads back:
 
-    独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>
+    独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>｜档位 A..G
 
-(the 增量自 part only for a review of `--since` .. head; N counts blockers and majors). Exits 1, printing
-why, when the result does not match the schema or names a different commit
-than the one pinned: a review of the wrong tree is never rendered as if it
-were the right one.
+(the 增量自 part only for a review of `--since` .. head; N counts blockers and majors;
+the 档位 part only when --tier is given). The tier is decided by tiers.py from the files the
+PR touches, not by the reviewer, so it says what kind of change this is rather than how hard
+someone looked at it. Exits 1, printing why, when the result does not match the schema or
+names a different commit than the one pinned: a review of the wrong tree is never rendered as
+if it were the right one.
 """
 
 import json
@@ -24,6 +26,17 @@ from pathlib import Path
 SCHEMA = json.loads((Path(__file__).parent / "schema.json").read_text())
 SEVERITY_ORDER = {"blocker": 0, "major": 1, "minor": 2}
 SHA = re.compile(r"[0-9a-f]{40}")
+TIER = re.compile(r"[A-G]")
+#: The first line of a rendered review, as orchestrator_sweep.py and
+#: orchestrator_autoaccept.py read it back. One place owns the grammar: a new field
+#: goes here and both readers follow, rather than each growing its own pattern. The
+#: tier is deliberately last, so a reader that does not know the field still matches.
+CARD_LINE = re.compile(
+    r"独立 review：\s*head (?P<head>[0-9a-f]{7,40})"
+    r"\s*(?:（增量自 (?P<since>[0-9a-f]{7,40})）)?\s*"
+    r"结论 (?P<verdict>无 blocker/major|有 (?P<serious>\d+) 条)"
+    r"(?:\s*｜\s*档位 (?P<tier>[A-G]))?"
+)
 
 
 def problems(value, schema, at="result"):
@@ -67,19 +80,22 @@ def problems(value, schema, at="result"):
     return []
 
 
-def card_line(result: dict, sha: str, since: str = "") -> str:
-    """The one line of the review the card shows. Blockers and majors are what it counts."""
+def card_line(result: dict, sha: str, since: str = "", tier: str = "") -> str:
+    """The one line of the review the card shows. Blockers and majors are what it counts;
+    the tier says what kind of change it is, in the same breath as the verdict, so the
+    board shows both without a second place to look."""
     serious = sum(f["severity"] != "minor" for f in result["findings"])
     scope = f"（增量自 {since[:8]}）" if since else " "
     verdict = f"有 {serious} 条" if serious else "无 blocker/major"
-    return f"独立 review：head {sha[:8]}{scope}结论 {verdict}"
+    suffix = f"｜档位 {tier}" if tier else ""
+    return f"独立 review：head {sha[:8]}{scope}结论 {verdict}{suffix}"
 
 
-def render(result: dict, sha: str, method_rev: str, since: str = "") -> str:
+def render(result: dict, sha: str, method_rev: str, since: str = "", tier: str = "") -> str:
     findings = sorted(result["findings"], key=lambda f: SEVERITY_ORDER[f["severity"]])
     span = f"`{since[:12]}..{sha[:12]}`" if since else f"`{sha[:12]}`"
     lines = [
-        card_line(result, sha, since),
+        card_line(result, sha, since, tier),
         "",
         f"**Independent review** of {span}, method `.claude/pr-review/prompt.md` at `{method_rev[:12] + method_rev[40:]}`",
         "",
@@ -119,11 +135,15 @@ def render(result: dict, sha: str, method_rev: str, since: str = "") -> str:
 
 def main() -> int:
     args = sys.argv[1:]
-    since = ""
-    if len(args) == 5 and args[3] == "--since":
-        since = args[4]
-        args = args[:3]
-    if len(args) != 3 or (since and not SHA.fullmatch(since)):
+    since = tier = ""
+    while args and args[-2:] and args[-2] in ("--since", "--tier"):
+        flag, value = args[-2], args[-1]
+        args = args[:-2]
+        if flag == "--since":
+            since = value
+        else:
+            tier = value
+    if len(args) != 3 or (since and not SHA.fullmatch(since)) or (tier and not TIER.fullmatch(tier)):
         print(__doc__, file=sys.stderr)
         return 2
     path, sha, method_rev = args
@@ -144,7 +164,7 @@ def main() -> int:
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1
-    sys.stdout.write(render(result, sha, method_rev, since))
+    sys.stdout.write(render(result, sha, method_rev, since, tier))
     return 0
 
 
