@@ -117,7 +117,8 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
     owner = await UserRepository(session=db).get_by_id(owner_id)
     if owner is None:
         raise NotFoundError("Participant user not found")
-    project = await ProjectService(db).for_participation(
+    service = ProjectService(db, default_teammate=default_teammate)
+    project = await service.for_participation(
         task=task, membership=membership, owner_handle=owner.username
     )
     return ok(
