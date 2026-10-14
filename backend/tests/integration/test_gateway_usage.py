@@ -4,10 +4,12 @@ Claude Code session reports none) gets its REAL usage drained from the gateway
 spend log into the usage table."""
 
 import asyncio
+import json
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from app.api import deps as session_turn_deps
@@ -118,6 +120,21 @@ class FailingMintGateway(FakeGateway):
         return None
 
 
+class WaitingMintGateway(FakeGateway):
+    """A mint that parks until the test lets it finish, so a second caller can
+    be brought up while the first is still inside its write."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.minting = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def mint_project_key(self, project_id, *, purpose=None):
+        self.minting.set()
+        await self.release.wait()
+        return await FakeGateway.mint_project_key(self, project_id, purpose=purpose)
+
+
 async def _mk_service(factory, tmp_path, fake, profiles=None, screen=None):
     svc = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
@@ -184,6 +201,7 @@ async def test_gateway_disabled_does_not_require_a_virtual_key(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
 
 
@@ -401,32 +419,28 @@ async def test_failed_usage_insert_does_not_advance_gateway_checkpoint(
 
 
 @pytest.mark.anyio
-async def test_key_lookup_does_not_queue_behind_the_gateway_lock(
-    business_db_factory, tmp_path
-):
-    """A project whose key is already minted and in step is answered WITHOUT
-    taking `_gateway_lock`.
+async def test_a_key_in_step_is_answered_without_writing(business_db_factory, tmp_path):
+    """Two callers after one project's key, both answered the same one, with
+    nothing written back.
 
-    That lock is process-wide (`get_chat_service` is `@lru_cache`d, so there is
-    one ChatService per process) and the metering proxy asks for a key per
-    request. A lookup that takes it queues every admission on the box behind
+    This is the hot path: the metering proxy asks for a key per request. Any
+    serialisation put in front of it queues every admission on the box behind
     whichever holder is slow, and that wait is what `/llm/admission`'s p95 is
     made of — measured on dev 2026-09-23 at 8.9 s, and reproduced with 20
     concurrent admissions for a single project fanning out into a 5.8 s tail.
+    There is no in-process `_gateway_lock` any more; the read path takes no
+    lock at all (design §2.3).
     """
     fake = FakeGateway()
     svc, _factory, pid, _tid = await _mk_service(business_db_factory, tmp_path, fake)
     key = await svc.project_gateway_key(pid)
     budgets = list(fake.budgets)
 
-    # Some other caller is inside the lock: a mint, a re-price, or a drain.
-    await svc._gateway_lock.acquire()
-    try:
-        assert (
-            await asyncio.wait_for(svc.project_gateway_key(pid), timeout=HANG_S) == key
-        )
-    finally:
-        svc._gateway_lock.release()
+    one, two = await asyncio.wait_for(
+        asyncio.gather(svc.project_gateway_key(pid), svc.project_gateway_key(pid)),
+        timeout=HANG_S,
+    )
+    assert one == two == key
 
     # And answering from the persisted row wrote nothing back.
     assert fake.minted == [pid]
@@ -434,12 +448,44 @@ async def test_key_lookup_does_not_queue_behind_the_gateway_lock(
 
 
 @pytest.mark.anyio
+async def test_two_writers_mint_one_key_between_them(business_db_factory, tmp_path):
+    """Two callers that both find no key mint one between them, and both use
+    that one.
+
+    This is what the settings row lock holds up now that `_gateway_lock` is
+    gone: the write is read-modify-write on `project.settings`, and without
+    `repo.lock_settings` both callers would mint and the project would be left
+    with two keys in play. Both callers are brought up while the first is
+    still inside its mint, so the second is reading before the first has
+    committed anything.
+    """
+    fake = WaitingMintGateway()
+    svc, factory, pid, _tid = await _mk_service(business_db_factory, tmp_path, fake)
+
+    first = asyncio.create_task(svc._gateway_project_env(pid))
+    await asyncio.wait_for(fake.minting.wait(), timeout=HANG_S)
+    second = asyncio.create_task(svc._gateway_project_env(pid))
+    await asyncio.sleep(0)  # let it read and start waiting on the row lock
+    fake.release.set()
+    one, two = await asyncio.wait_for(asyncio.gather(first, second), timeout=HANG_S)
+
+    assert one is not None and two is not None
+    assert one["ANTHROPIC_AUTH_TOKEN"] == two["ANTHROPIC_AUTH_TOKEN"]
+    assert fake.minted == [pid]
+    async with factory() as session:
+        project = await ProjectRepository(session).get(pid)
+    assert project is not None
+    minted = one["ANTHROPIC_AUTH_TOKEN"]
+    assert (project.settings or {}).get("llm_gateway_key") == minted
+
+
+@pytest.mark.anyio
 async def test_a_slow_spend_read_does_not_stall_key_lookup(
     business_db_factory, tmp_path
 ):
     """The spend read is an HTTP round trip to LiteLLM. A drain must not hold
-    `_gateway_lock` across it, or one slow `/spend/logs` stalls every admission
-    for as long as the gateway takes to answer."""
+    anything across it, or one slow `/spend/logs` stalls every admission for
+    as long as the gateway takes to answer."""
     fake = FakeGateway()
     fake.days[gw.utc_today()] = {"claude-sonnet-5": (120, 30, 0.02)}
     svc, factory, pid, tid = await _mk_service(business_db_factory, tmp_path, fake)
@@ -587,6 +633,7 @@ async def test_a_project_on_the_gateway_stays_there_when_the_subscription_arrive
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
     assert kwargs["model"] == app_settings.agent_model
     assert fake.minted == []  # the key is swapped in per request by /llm
@@ -616,6 +663,7 @@ async def test_subscription_route_follows_the_capability_not_the_backend_name(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
     assert kwargs["model"] == "claude-sonnet-5"
 
@@ -651,6 +699,7 @@ async def test_a_turn_on_a_machine_is_metered_by_the_subscription_proxy(
         "CLAUDE_CODE_GATEWAY_HINT_HEADERS",
         "ANTHROPIC_MODEL",
         "CLAUDE_CODE_SUBAGENT_MODEL",
+        "CHEESE_MODEL_AGENTS",
     }
     assert fake.minted == []  # no gateway key is minted for it
 
@@ -1034,3 +1083,59 @@ async def test_the_dashboard_counts_every_call_the_gateway_answered(
     answered.update(calls=40, prompt_tokens=9_900, spend=0.55)
     await svc.charge_turn_spend(pid, tid, uuid.uuid4())
     assert await dashboard_calls() == 40
+
+
+@pytest.mark.anyio
+async def test_a_model_the_gateway_adds_is_a_subagent_type_from_the_next_launch(
+    business_db_factory, tmp_path, monkeypatch
+):
+    """A model an operator adds to the gateway while sessions run can be named
+    for a subagent once the session is next opened: its launch carries the
+    model as a subagent type, and the session's configuration moves, which is
+    what reopens a running session at its next task boundary."""
+    from app.core.config import settings as app_settings
+    from app.domain.agent import gateway_catalog
+
+    def routed(*names):
+        rows = [
+            {
+                "model_name": name,
+                "litellm_params": {"model": f"openai/{name}"},
+                "model_info": {
+                    "cheese_selectable": True,
+                    "input_cost_per_token": 0.000001,
+                    "output_cost_per_token": 0.000001,
+                },
+            }
+            for name in names
+        ]
+        answering = gw.LlmGateway(
+            "http://gw",
+            "mk",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(200, json={"data": rows})
+            ),
+        )
+        return gateway_catalog.refresh(answering)
+
+    monkeypatch.setattr(app_settings, "agent_model", "glm-5.2")
+    gateway_catalog.reset()
+    try:
+        svc, _factory, pid, _tid = await _mk_service(
+            business_db_factory, tmp_path, FakeGateway()
+        )
+        await routed("glm-5.2")
+        before, _ = await svc._model_kwargs(pid, _on_a_machine())
+        assert "model-kimi-k3.md" not in json.loads(
+            before["env"]["CHEESE_MODEL_AGENTS"]
+        )
+
+        await routed("glm-5.2", "kimi-k3")
+        after, _ = await svc._model_kwargs(pid, _on_a_machine())
+    finally:
+        gateway_catalog.reset()
+
+    agents = json.loads(after["env"]["CHEESE_MODEL_AGENTS"])
+    assert "name: kimi-k3\n" in agents["model-kimi-k3.md"]
+    assert "model: kimi-k3\n" in agents["model-kimi-k3.md"]
+    assert after["env"]["CHEESE_AGENT_CONFIG"] != before["env"]["CHEESE_AGENT_CONFIG"]

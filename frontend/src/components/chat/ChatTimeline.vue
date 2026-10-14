@@ -24,6 +24,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import { replySnippet } from '../../lib/blockDisplay'
 import { dayKey, REGROUP_GAP_MS } from '../../lib/chatGrouping'
+import { docLineInTurn, isDocLine } from '../../lib/docEditLine'
 import { noticeLine } from '../../lib/noticeLine'
 import { editableText } from '../../lib/renderMessage'
 import { formatSpan } from '../../lib/siteLog'
@@ -185,11 +186,14 @@ const liveChecklists = computed(() => {
   return ids
 })
 
-// 合成一行的那一串署谁的名，看它最后那一条。
+// 合成一行的那一串署谁的名，看它最后那一条。改文档的那一行不在哪一轮里时不署名
+// （lib/docEditLine）：它是一行记录，不是哪位队友说的话，后面接着的事件行也不能当它
+// 是那位队友的续行。
 function agentOf(block: Block, notice: PlatformNotice): NoticeAgent | null {
-  if (notice.mode !== 'repeats') return props.noticeAgent(block, notice)
-  const last = notice.rows[notice.rows.length - 1]
-  return last.notice ? props.noticeAgent(last.block, last.notice) : null
+  const own = notice.mode === 'repeats' ? notice.rows[notice.rows.length - 1] : { block, notice }
+  if (!own.notice) return null
+  if (isDocLine(own.block) && !docLineInTurn(own.block)) return null
+  return props.noticeAgent(own.block, own.notice)
 }
 
 // 「新建了任务」那一行：认得出那件任务时，画成新建它的人发出的一张任务卡。
@@ -225,6 +229,8 @@ function under(blockId: string): TaskLine[] {
 const noticeCont = computed(() =>
   props.rows.map((row, i) => {
     const prev = props.rows[i - 1]
+    // 一轮里改文档的那一行接在这一轮的话后面（chatGrouping 的 runEdgeBetween）。
+    if (row.notice && props.runEdges[i] === 'cont') return true
     if (!row.notice || !prev?.notice) return false
     const agent = agentOf(row.block, row.notice)
     const before = agentOf(prev.block, prev.notice)

@@ -749,6 +749,40 @@ def test_the_launch_starts_the_runner_and_the_runner_starts_claude(tmp_path):
     assert (state / "records.sqlite").is_file()
 
 
+def test_the_session_starts_with_the_projects_models_as_its_subagent_types(tmp_path):
+    """Claude Code reads its subagent definitions once, as it starts, so the
+    launch writes the ones this session is offered before starting it, and
+    a model no longer offered is not left behind for it to start."""
+    _owner, session, _work, claude, env = _machine(tmp_path)
+    agents = seat_of(session) / ".claude/agents"
+    agents.mkdir(parents=True)
+    (agents / "model-retired.md").write_text(
+        "---\nname: retired\nmodel: retired\n---\n"
+    )
+    offered = {"model-kimi-k3.md": "---\nname: kimi-k3\nmodel: kimi-k3\n---\n"}
+    env["CHEESE_MODEL_AGENTS"] = json.dumps(offered)
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert {path.name: path.read_text() for path in agents.iterdir()} == offered
+    assert (claude.parent / "ran.config").read_text() == f"{seat_of(session)}/.claude"
+
+
+def test_a_session_offered_no_models_starts_with_no_model_subagents(tmp_path):
+    _owner, session, _work, _claude, env = _machine(tmp_path)
+    agents = seat_of(session) / ".claude/agents"
+    agents.mkdir(parents=True)
+    (agents / "model-retired.md").write_text(
+        "---\nname: retired\nmodel: retired\n---\n"
+    )
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode == 0, result.stderr
+    assert not list(agents.glob("model-*.md"))
+
+
 def test_full_launcher_installs_platform_cli_without_network(tmp_path):
     _owner, session, _work, claude, env = _machine(tmp_path)
     network = tmp_path / "network.calls"
@@ -1691,12 +1725,7 @@ def test_nothing_in_the_settings_observes_the_session():
     hooks = session_settings()["hooks"]
     # SubagentStart's hook hands each new agent the step-title rule
     # (test_every_agent_reads_the_step_title_rule); it reports nothing.
-    assert set(hooks) == {"SessionStart", "UserPromptSubmit", "SubagentStart"}
-    for event in ("SessionStart", "UserPromptSubmit"):
-        (entry,) = hooks[event]
-        assert [hook["command"] for hook in entry["hooks"]] == [
-            "cheese sync-agents || true"
-        ]
+    assert set(hooks) == {"SubagentStart"}
 
 
 def test_the_settings_refuse_what_the_argv_refuses():

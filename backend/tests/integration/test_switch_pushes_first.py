@@ -5,7 +5,7 @@ switch happens whether or not it went through: a machine that is away, a push
 that fails or outlasts its wait, an executor that cannot start — none of them
 holds the room, for a person or for its agent. What such a lost checkpoint
 loses is held by the snapshot of the session's last turn. A cloud sandbox left
-behind gives its home back to the pool either way.
+behind is left to the idle sweep either way.
 """
 
 import ast
@@ -278,7 +278,7 @@ async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
 
 
 @pytest.mark.parametrize("reachable", [True, False])
-async def test_a_cloud_sandbox_left_gives_its_home_back_either_way(
+async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
     client, monkeypatch, reachable
 ):
     room = await _room(client, on_cloud=True)
@@ -322,9 +322,10 @@ async def test_a_cloud_sandbox_left_gives_its_home_back_either_way(
         )
         host = await db.get(CloudHost, host_id)
         session = await AgentSessionService(db).by_id(room.session_id)
-    # The host is the pool's: a switch never deletes it, and frees its slot.
+    # The host is the pool's: a switch never deletes it. The sandbox left there
+    # is no session's, and the idle sweep destroys it (``lifecycle``).
     assert host.released_at is None
-    assert homes == []
+    assert [home.session_id for home in homes] == [None]
     assert session.execution_request["retained_leases"] == []
 
 

@@ -118,7 +118,6 @@ class MemoryLedger:
         sessions: async_sessionmaker,
         compute: ComputePool,
         gateway: LlmGateway | None,
-        gateway_lock: asyncio.Lock,
         base_prompt: str,
         host: _MemoryHost,
         live: LiveWork,
@@ -126,7 +125,6 @@ class MemoryLedger:
         self._sessions = sessions
         self._compute = compute
         self._gateway = gateway
-        self._gateway_lock = gateway_lock
         self._base_prompt = base_prompt
         self._host = host
         self._live = live
@@ -429,7 +427,6 @@ class MemoryLedger:
         drained = await drain_dream_spend(
             self._sessions,
             self._gateway,
-            self._gateway_lock,
             project_id,
             root_topic_id,
             run_id,

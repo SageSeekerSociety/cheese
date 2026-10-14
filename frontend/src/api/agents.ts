@@ -19,7 +19,6 @@ export interface ProjectDefaultModel {
   deployment_default: string | null
   /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
   choices: AgentFieldChoice[]
-  can_manage: boolean
 }
 
 export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaultModel> {

@@ -94,6 +94,8 @@ export function usePageTitle() {
   })
 
   const fullTitle = computed((): string => {
+    const own = route.meta.documentTitleKey
+    if (own) return t(own)
     const hierarchy = getRouteHierarchy.value
     const titles = hierarchy.map((item) => item.title).filter(Boolean)
 

@@ -3,8 +3,9 @@
 import uuid
 from collections.abc import Collection
 from datetime import UTC, datetime
+from functools import lru_cache
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import Select, Uuid, and_, bindparam, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -282,38 +283,13 @@ class TaskService:
         """
         if not room_ids:
             return set()
-        task_read = aliased(TopicReadState)
-        room_read = aliased(TopicReadState)
-        stmt = (
-            select(
-                Task.id,
-                Task.room_id,
-                Task.accepted_at,
-                func.greatest(task_read.updated_at, room_read.updated_at),
-            )
-            .outerjoin(
-                task_read,
-                and_(
-                    task_read.topic_id == Task.id,
-                    task_read.user_handle == person,
-                ),
-            )
-            .outerjoin(
-                room_read,
-                and_(
-                    room_read.topic_id == Task.room_id,
-                    room_read.user_handle == person,
-                ),
-            )
-            .where(
-                Task.room_id.in_(room_ids),
-                Task.accepted_at.is_not(None),
-                TaskRepository.takes_part(person),
-            )
-        )
+        # 语句按看的人建一次留着，房间每次当参数给（`_unseen_deliveries_statement`）。
         unseen: set[uuid.UUID] = set()
         for task_id, room_id, accepted_at, looked_at in (
-            await self._session.execute(stmt)
+            await self._session.execute(
+                _unseen_deliveries_statement(person),
+                {"unseen_rooms": list(room_ids)},
+            )
         ).all():
             if looked_at is None or accepted_at > looked_at:
                 unseen.add(task_id)
@@ -658,3 +634,49 @@ def said_title(task: Task) -> str:
     if task.title_source == TaskTitleSource.placeholder:
         return say("taskUntitled")
     return task.title
+
+
+#: `TaskService.unseen_deliveries` 那条查询的房间参数。房间按百计，走数组参数；
+#: `expanding` 让它在 SQL 里照样摊成 `IN ($1, …)` —— 和原先 `in_(room_ids)` 生成的
+#: 文本逐字节相同，执行计划不变。
+_unseen_rooms = bindparam("unseen_rooms", type_=Uuid, expanding=True)
+
+
+@lru_cache(maxsize=64)
+def _unseen_deliveries_statement(person: str) -> Select:
+    """`TaskService.unseen_deliveries` 的那条查询，按看的人建一次留着。
+
+    每个请求都来拼一遍这个双 `outerjoin` 的语句，量出来光构造本身就约 2ms
+    （2026-10-14，48 万区块的库，一次频道详情）。房间每次当参数给；**谁在看**
+    烧进了连接条件和 `takes_part` 里，所以缓存的键是人。语句是只读的，一份拿给
+    并发用安全（`block/repositories.py` 的 `_awaiting_statements` 是同一个写法）。
+    """
+    task_read = aliased(TopicReadState)
+    room_read = aliased(TopicReadState)
+    return (
+        select(
+            Task.id,
+            Task.room_id,
+            Task.accepted_at,
+            func.greatest(task_read.updated_at, room_read.updated_at),
+        )
+        .outerjoin(
+            task_read,
+            and_(
+                task_read.topic_id == Task.id,
+                task_read.user_handle == person,
+            ),
+        )
+        .outerjoin(
+            room_read,
+            and_(
+                room_read.topic_id == Task.room_id,
+                room_read.user_handle == person,
+            ),
+        )
+        .where(
+            Task.room_id.in_(_unseen_rooms),
+            Task.accepted_at.is_not(None),
+            TaskRepository.takes_part(person),
+        )
+    )

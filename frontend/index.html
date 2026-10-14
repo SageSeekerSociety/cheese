@@ -20,7 +20,34 @@
     <!-- Updated at runtime by src/theme.ts when the theme changes; this value
          is the light one, matching META_THEME_COLOR in that file. -->
     <meta name="theme-color" content="#F57F17" />
-    <title>Cheese</title>
+    <!-- What a search engine and a link preview read before any script runs (Baidu's
+         spider runs none). The title is the landing page's own one too
+         (publicSite.documentTitle); the app retitles every other page at runtime. -->
+    <title>知是 Cheese · 和队友、AI 一起做真项目</title>
+    <meta
+      name="description"
+      content="知是（Cheese）：和队友、AI 一起做真项目，学真本事。面向高校、企业与科研团队，科研、课程、竞赛、创业项目都能在这里协作完成。"
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="知是 Cheese" />
+    <meta property="og:title" content="知是 Cheese · 和队友、AI 一起做真项目" />
+    <meta
+      property="og:description"
+      content="知是（Cheese）：和队友、AI 一起做真项目，学真本事。面向高校、企业与科研团队，科研、课程、竞赛、创业项目都能在这里协作完成。"
+    />
+    <meta property="og:image" content="https://okcheese.com/pwa-512x512.png" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "name": "知是",
+        "alternateName": ["Cheese", "知是 Cheese", "okcheese", "知是科创"],
+        "legalName": "知是科创（北京）信息技术有限公司",
+        "url": "https://okcheese.com/",
+        "logo": "https://okcheese.com/pwa-512x512.png",
+        "sameAs": ["https://okcheese.cn/", "https://docs.okcheese.com/", "https://github.com/SageSeekerSociety/cheese"]
+      }
+    </script>
     <link rel="stylesheet" href="/src/styles/common.scss" />
 
     <!--

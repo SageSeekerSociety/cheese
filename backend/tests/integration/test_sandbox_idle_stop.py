@@ -617,6 +617,57 @@ def test_a_destroyed_sandbox_frees_its_slot_for_another_session(cloud):
     assert tool_call(cloud, three)["target"]["device_id"] == "host-a"
 
 
+def test_a_sandbox_its_agent_left_is_destroyed_and_holds_its_slot_until_then(
+    cloud, monkeypatch
+):
+    """An agent that moves to another environment leaves a sandbox still
+    running on its host. That sandbox is destroyed there once idle, as any
+    other is, and the host counts it until then: placing another session in
+    its slot meanwhile packed hosts past what they can run (dev, 2026-10: a
+    host running 16 sandboxes where the pool counted 4, all of them short of
+    memory)."""
+    monkeypatch.setattr(settings, "microcloud_vm_offering_id", 1)
+    one, two, three = cloud.seats
+    home = working_on(cloud, one, "host-a")
+    server = subprocess.Popen(["sleep", "600"], cwd=home / "room")
+    try:
+        moved = cloud.client.put(
+            f"/topics/{one.room}/sessions/{one.session}/environment",
+            headers=session_auth_headers("alice"),
+            json={"environment": {"kind": "sandbox", "spec": "vm"}},
+        )
+        assert moved.status_code == 200, moved.text
+
+        # Host A runs one sandbox at a time, and the one left still runs there.
+        assert tool_call(cloud, two).get("preparing")
+        assert host_of(cloud, two).id != host_of_machine_row(cloud, "host-a")
+        assert home.exists()
+
+        left_idle(cloud, home.name, timedelta(minutes=11))
+        assert sweep(cloud)["destroyed"] == 1
+        assert server.wait(timeout=30) is not None
+    finally:
+        server.kill()
+    assert not home.exists()
+    assert tool_call(cloud, three)["target"]["device_id"] == "host-a"
+
+
+def left_idle(case, resource: str, idle: timedelta):
+    """The sandbox in ``resource``, which its session left, was last used
+    ``idle`` ago."""
+
+    async def age():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                update(SandboxHome)
+                .where(SandboxHome.resource_id == resource)
+                .values(active_at=datetime.now(UTC) - idle)
+            )
+            await db.commit()
+
+    run(case, age)
+
+
 def host_of_machine_row(case, device_id):
     async def read():
         async with case.client.test_request_factory() as db:

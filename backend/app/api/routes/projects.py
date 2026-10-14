@@ -16,6 +16,7 @@ from app.api.deps import (
     get_chat_service,
     get_profile_registry,
 )
+from app.api.member_settings import change_project_settings, member_setting_actor
 from app.api.place import (
     channels_unseen,
     live_rooms_seen,
@@ -663,16 +664,18 @@ async def save_forge_attribution(
     db: DbSession,
     resolver: ActorResolverDep,
 ) -> dict:
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
-    service = ProjectService(db)
-    project = await service.get_or_404(project_id)
+    actor = await member_setting_actor(resolver, project_id)
+    project = await ProjectService(db).get_or_404(project_id)
     if body.requester_coauthor is None:
-        await service.merge_settings(project, {}, remove=("forge_requester_coauthor",))
+        await change_project_settings(
+            db, project, {}, remove=("forge_requester_coauthor",), by=actor.handle
+        )
     else:
-        await service.merge_settings(
-            project, {"forge_requester_coauthor": body.requester_coauthor}
+        await change_project_settings(
+            db,
+            project,
+            {"forge_requester_coauthor": body.requester_coauthor},
+            by=actor.handle,
         )
     return await get_forge_attribution(project_id, db, resolver)
 
@@ -687,16 +690,10 @@ async def get_task_naming(
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
     project = await ProjectService(db).get_or_404(project_id)
-    can_manage = True
-    try:
-        await MemberService(db).require_manager(project_id, actor)
-    except ForbiddenError:
-        can_manage = False
     return ok(
         {
             "mode": naming.naming_mode(project.settings),
             "available": naming.available(),
-            "can_manage": can_manage,
         }
     )
 
@@ -706,16 +703,16 @@ async def set_task_naming(
     project_id: uuid.UUID, body: dict, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """Switch the project's tasks between automatic and manual naming. Tasks a
-    person named keep their names either way."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(actor, project_id=project_id)
-    await MemberService(db).require_manager(project_id, actor)
+    person named keep their names either way. Anyone in the project may
+    (``member_settings``)."""
+    actor = await member_setting_actor(resolver, project_id)
     mode = body.get("mode")
     if mode not in naming.MODES:
         raise ValidationError(say("modeInvalid", modes=str(list(naming.MODES))))
-    service = ProjectService(db)
-    project = await service.get_or_404(project_id)
-    await service.merge_settings(project, {naming.SETTINGS_KEY: mode})
+    project = await ProjectService(db).get_or_404(project_id)
+    await change_project_settings(
+        db, project, {naming.SETTINGS_KEY: mode}, by=actor.handle
+    )
     return await get_task_naming(project_id, db, resolver)
 
 

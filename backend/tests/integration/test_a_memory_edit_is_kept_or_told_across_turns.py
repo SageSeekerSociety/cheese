@@ -12,7 +12,6 @@ agent 在某一间房里改 `team/MEMORY.md`，回合结束时对一次账，下
 览里那位 agent 什么都没写过。
 """
 
-import asyncio
 import os
 import uuid
 from pathlib import Path
@@ -101,7 +100,6 @@ def _ledger(factory, sessions: _Session) -> MemoryLedger:
         sessions=factory,
         compute=sessions,  # type: ignore[arg-type]
         gateway=None,
-        gateway_lock=asyncio.Lock(),
         base_prompt="",
         host=None,  # type: ignore[arg-type]
         live=LiveWork(),

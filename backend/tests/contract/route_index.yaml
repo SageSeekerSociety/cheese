@@ -123,6 +123,7 @@ auth_entries:
   github.state: "GitHub provider callback verifies signed install/account-link state and scopes the resulting binding; no ordinary login dependency at callback. Source: app/api/routes/github_install.py; github_account_link.py."
   app.sign_in.code: "app_sign_in.finish_app_sign_in requires same origin, signed code, PKCE verifier challenge and single-use claim before issuing session. Source: app/api/routes/app_sign_in.py."
   notice.ws: "notifications_live.live verifies dedicated notice token from Authorization then _signed_in confirms active user session, periodically rechecking. Source: app/api/routes/notifications_live.py."
+  notice.ws.first-message: "notifications_live.inbox accepts, then verifies the same notice token from the first message within SIGN_IN_SECONDS and _signed_in confirms active user session, periodically rechecking; otherwise closes with 4401. Source: app/api/routes/notifications_live.py."
   topic.members.manage: "topic_members resolves authenticated actor; TopicMemberService.require_manager admits the channel's creator and whoever manages the project. Source: app/api/routes/topic_members.py onward; domain/topic_membership/services.py."
   topic.archive: "topics archive/unarchive/delete resolves/authorize_topic and TopicMemberService.require_manager (creator or project manager); archive also checks cleanup policy in the handler, and delete refuses the project's own overview in the service. Source: app/api/routes/topics_lifecycle.py onward."
   topic.channel.self: "topics_channel resolves the authenticated person in the channel and authorize_topic; joining needs the person on the project's roster, a private room or a task is not a channel. Source: app/api/routes/topics_channel.py; domain/topic_membership/services.py."
@@ -139,7 +140,8 @@ auth_entries:
   public.mcp.metadata: "public(remote MCP OAuth client metadata): publishes only the OAuth client declaration; management and callbacks use separate gates. Source: app/api/routes/remote_mcp.py."
   observed.frontend.errors: "当前路由无认证或授权校验；公开访问意图尚未确认。仅校 project/topic 存在；frontend_log.intake 限流/去重不构成授权。Source: app/api/routes/frontend_log.py."
   observed.compute.nodes: "当前路由无认证或授权校验；公开访问意图尚未确认。GET /market/nodes returns compute availability and deployment active-turn count. Source: app/api/routes/market.py."
-  project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects.get_task_naming and projects_run_config.get_default_model/get_compute_configs."
+  project.can_manage.read: "ActorResolver.resolve + authorize_project gates the read; MemberService.require_manager is caught to return can_manage true/false, not to reject a nonmanager. Source: projects_run_config.get_compute_configs."
+  project.member_setting: "member_settings.member_setting_actor: ActorResolver.resolve then authorize_project(member_setting=True) - a project member, or an agent per-turn credential from a conversation of the project under the conditions of its reads (seated in that room, nobody it shows things to outside the project). member_settings.change_project_settings writes the setting and says the change in the project's root room. Source: app/api/member_settings.py and app/api/auth.py."
   own_agent.owner: "ActorResolver.resolve + authorize_project, then only the user who owns that member's own agent (OwnAgent.owner_user_id); anyone else is refused. Source: projects_own_agents.set_own_agent_callers and remove_own_agent."
   own_agent.add: "ActorResolver.resolve + authorize_project, then a person (a user id) adding one of their own model connections: a self-hosted machine they own, logged in and not removed, of a kind the project allows, in a project that allows members' own agents; anyone else's connection is NotFound. Source: projects_own_agents.add_own_agent; domain/agent_instance/own.add."
   project.private.chat: "projects.get_private_chat calls require_verified_caller; authenticated actors must pass authorize_project and be one of the named DM participants. Explicit global sandbox development override remains in resolver. Source: app/api/routes/projects.py."
@@ -811,6 +813,7 @@ routes:
   # app.api.routes.notifications_live
   - {protocol: "http", method: "POST", path: "/notifications/live-token", auth: "user.session", owner: "notification"}
   - {protocol: "ws", method: "WS", path: "/notifications/live", auth: "notice.ws", owner: "notification"}
+  - {protocol: "ws", method: "WS", path: "/notifications/inbox", auth: "notice.ws.first-message", owner: "notification"}
   # app.api.routes.preview_sessions
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/preview-session", auth: "preview.access", owner: "preview"}
   # app.api.routes.project_context
@@ -853,9 +856,9 @@ routes:
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/private-chat", auth: "project.private.chat", owner: "topic"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge", auth: "actor.project", owner: "project"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/forge-attribution", auth: "actor.project", owner: "project"}
-  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/forge-attribution", auth: "project.manager", owner: "project"}
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/task-naming", auth: "project.can_manage.read", owner: "project"}
-  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/task-naming", auth: "project.manager", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/forge-attribution", auth: "project.member_setting", owner: "project"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/task-naming", auth: "actor.project", owner: "project"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/task-naming", auth: "project.member_setting", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/archive", auth: "project.owner", owner: "project"}
   - {protocol: "http", method: "POST", path: "/projects/{project_id}/unarchive", auth: "project.owner", owner: "project"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/owner", auth: "project.steward", owner: "project"}
@@ -887,11 +890,11 @@ routes:
   - {protocol: "http", method: "DELETE", path: "/projects/{project_id}/own-agents/{handle}", auth: "own_agent.owner", owner: "project"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/own-agents/{handle}/callers", auth: "own_agent.owner", owner: "project"}
   # app.api.routes.projects_run_config
-  - {protocol: "http", method: "GET", path: "/projects/{project_id}/default-model", auth: "project.can_manage.read", owner: "project.run_config"}
-  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-model", auth: "project.manager", owner: "project.run_config"}
+  - {protocol: "http", method: "GET", path: "/projects/{project_id}/default-model", auth: "actor.project", owner: "project.run_config"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/default-model", auth: "project.member_setting", owner: "project.run_config"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/compute-configs", auth: "project.can_manage.read", owner: "project.run_config"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/devices/{device_id}/sessions", auth: "project.manager", owner: "project.run_config"}
-  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/compute-configs", auth: "project.manager", owner: "project.run_config"}
+  - {protocol: "http", method: "PUT", path: "/projects/{project_id}/compute-configs", auth: "project.member_setting", owner: "project.run_config"}
   - {protocol: "http", method: "GET", path: "/projects/{project_id}/tier-policy", auth: "actor.project", owner: "project.run_config"}
   - {protocol: "http", method: "PUT", path: "/projects/{project_id}/tier-policy", auth: "project.manager", owner: "project.run_config"}
   # app.api.routes.push
@@ -1110,6 +1113,8 @@ routes:
   - {protocol: "http", method: "POST", path: "/teams/{teamId}/requests/{requestId}/reject", auth: "legacy.teams.approve_team_join_request", owner: "team"}
   - {protocol: "http", method: "GET", path: "/team-invites/{token}", auth: "legacy.teams.get_team_by_join_link", owner: "team"}
   - {protocol: "http", method: "POST", path: "/team-invites/{token}/join", auth: "legacy.teams.get_team_by_join_link", owner: "team"}
+  # app.api.routes.throughput
+  - {protocol: "http", method: "GET", path: "/throughput/seats", auth: "actor.topic", owner: "platform_stats"}
   # app.api.routes.topic_members
   - {protocol: "http", method: "GET", path: "/topics/{topic_id}/members", auth: "actor.topic", owner: "topic.membership"}
   - {protocol: "http", method: "POST", path: "/topics/{topic_id}/members", auth: "topic.members.manage", owner: "topic.membership"}

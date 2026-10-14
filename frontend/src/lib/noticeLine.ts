@@ -9,6 +9,7 @@ import type { Block } from '../cx_types'
 import type { PlatformNotice } from './platformNotice'
 import type { RefNames } from './refChip'
 
+import { docLineCount, docLineInTurn, docLineOf, docLineSentence } from './docEditLine'
 import { repeatsLine } from './noticeRepeats'
 import { noticeText } from './noticeText'
 import { plainRefs } from './refChip'
@@ -38,9 +39,13 @@ export function noticeLine(
         )
       parts.push(...notice.actions.map((act) => act.text))
       break
-    case 'action':
-      parts.push(notice.text, notice.libraryDoc?.title)
+    case 'action': {
+      // 改文档那一行读到的和屏幕上一样：在一轮里的不再报名字（行名里已经有了）。
+      const doc = docLineOf(block, notice, (handle) => refs.mentionNames[handle] || handle)
+      if (doc) parts.push(docLineSentence(doc, actor !== null && docLineInTurn(block)), docLineCount(doc))
+      else parts.push(notice.text, notice.libraryDoc?.title)
       break
+    }
     case 'fold':
       parts.push(notice.line, notice.quote ? t('work.room.notice.quote', { text: notice.quote }) : undefined)
       break

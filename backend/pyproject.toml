@@ -51,6 +51,9 @@ dependencies = [
     # anyone could install it — so it is a runtime dependency, not a dev one.
     "py-spy>=0.4.2",
     "tenacity>=9.2.1",
+    # app/core/model_images.py decodes an uploaded picture before a model is
+    # sent it; the image the app runs must have it.
+    "pillow>=12.3.0",
 ]
 
 [dependency-groups]
@@ -62,8 +65,6 @@ dev = [
     # Checks the import graph in backend/.importlinter: declaration + a frozen
     # baseline, run by scripts/check_boundaries.py.
     "import-linter>=2.15",
-    # test_codex_runner_process builds a PNG to feed the runner.
-    "pillow>=12.3.0",
     "pyright>=1.1.410",
     "pytest>=9.1.0",
     "pytest-anyio>=0.0.0",

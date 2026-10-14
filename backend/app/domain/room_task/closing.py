@@ -4,8 +4,9 @@ Accepting the last step does not close the task on the spot. The task stays
 open, with `closing_since` set, while its AI teammate takes one more turn to
 bring the task document up to date and say what came of the task; to everyone
 looking it already reads 已采纳 (`presentation`). It closes when that turn ends
-(`delivery.agent.run_attempt`), or when the instruction for it gives up, or,
-whatever happened to it, `CLOSE_AT_THE_LATEST` after it landed.
+(`turns_ended`), or when the instruction for it ends without a turn running
+(`delivery.agent.run_attempt`, `delivery.timer.give_up_stale`), or, whatever
+happened to it, `CLOSE_AT_THE_LATEST` after it landed.
 
 None of those closes a task while something besides the write-up is being
 done or asked for in it (`unfinished`): a turn running there, or a message
@@ -27,7 +28,10 @@ nothing here needs an exception to either.
 Every way a task closes goes through `close_task` — its owner, its own
 session, the summary turn ending, the instruction for it given up on, the
 deadline above — and so every one of them stops the work still running in the
-task once the close commits.
+task once the close commits. The summary turn ending leaves nothing running
+that `unfinished` counts; a turn it did not count, gone silent, is stopped by
+the session's holder once the task has been closed for `CLOSING_TAIL`
+(`agent.turn_inputs.stop_work_in_closed_tasks`).
 """
 
 import uuid
@@ -223,7 +227,8 @@ async def close_task(
     is stopped through ``work``: a closed task is work that is over, and a turn
     left running in it goes on paying for the model while every write it
     makes is refused. ``work`` is None only when the turn that would be
-    stopped is the one closing the task.
+    stopped is the one closing the task, or when nothing is left running
+    (`turns_ended`).
 
     ``machines`` goes to `after_close` unchanged: the call that reaches a
     machine to remove this room's closed checkouts (`ports.SweepCheckouts`).
@@ -275,23 +280,71 @@ def _stop_after_commit(session: AsyncSession, task_id: uuid.UUID, work: StopsWor
     pending[task_id] = work
 
 
+async def _being_written_up(session: AsyncSession, task_id: uuid.UUID) -> bool:
+    """Whether the turn writing ``task_id`` up has started and not yet stopped:
+    the turn an instruction marked `CLOSES_TASK` started, or one resuming it
+    (`unfinished` says how it is told apart)."""
+    write_ups = select(_instructions.c.attempt_id).where(
+        _instructions.c.conversation_id == task_id,
+        _instructions.c.payload[CLOSES_TASK].as_boolean().is_(True),
+    )
+    running = await session.scalar(
+        select(_turns.c.id)
+        .where(
+            _turns.c.conversation_id == task_id,
+            _turns.c.stopped_at.is_(None),
+            or_(_turns.c.id.in_(write_ups), _turns.c.continuation_id.in_(write_ups)),
+        )
+        .limit(1)
+    )
+    return running is not None
+
+
 async def close_after_summary(
     session: AsyncSession,
     task_id: uuid.UUID,
-    work: StopsWork,
+    work: StopsWork | None,
     *,
     machines: SweepCheckouts | None = None,
 ) -> Task | None:
-    """Close ``task_id`` if it is waiting for its summary turn and nothing else
-    is being done or asked for in it (`unfinished`, module docstring).
-    Returns the task it closed; the pages showing it hear from
-    `room_task.live`. ``machines`` is `close_task`'s."""
+    """Close ``task_id`` if it is waiting for its summary turn, that turn is
+    not still running, and nothing else is being done or asked for in it
+    (`unfinished`, module docstring). Returns the task it closed; the pages
+    showing it hear from `room_task.live`.
+
+    An instruction's attempt is over once the session has taken the turn,
+    which is long before the turn ends: closing then interrupted the write-up
+    it was waiting for. The turn's own end closes the task (`turns_ended`).
+    ``work`` is None only there, where what `unfinished` counts is nothing.
+    ``machines`` is `close_task`'s."""
     task = await session.get(Task, task_id, with_for_update=True)
     if task is None or task.closing_since is None:
+        return None
+    if await _being_written_up(session, task.id):
         return None
     if await unfinished(session, task.id):
         return None
     return await close_task(session, task, work, machines=machines)
+
+
+async def turns_ended(session: AsyncSession, conversations: list[uuid.UUID]) -> None:
+    """Turns stopped in these conversations, in ``session``: each of them that
+    is a task waiting for its summary turn closes if that was the write-up, or
+    the last thing besides it (`close_after_summary`). Every way a turn ends
+    records it through `agent.repositories.AgentTurnRepository`, which calls
+    this, so a write-up that ends, fails, times out or dies with its session
+    closes its task when its interval does."""
+    if not conversations:
+        return
+    waiting = list(
+        await session.scalars(
+            select(Task.id).where(
+                Task.id.in_(set(conversations)), Task.closing_since.is_not(None)
+            )
+        )
+    )
+    for task_id in waiting:
+        await close_after_summary(session, task_id, None)
 
 
 @dataclass(frozen=True)
