@@ -54,7 +54,11 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWait, MemberWaits
 from app.domain.conversation.services import room_of, threads_of_rooms
-from app.domain.delivery.agent import redispatch_undelivered
+from app.domain.delivery.agent import (
+    dispatch_pending,
+    record_task_instruction,
+    redispatch_undelivered,
+)
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -1074,8 +1078,11 @@ async def write_topic_progress(
             notify_mentions=announce_edited_message,
             editor=actor.handle,
             content=text,
-            chat=chat,
-            runner=runner,
+            notify=chat,
+            dispatch=partial(
+                dispatch_pending, chat.session_factory, chat=chat, runner=runner
+            ),
+            record_instruction=record_task_instruction,
             checklist=checklist,
         )
         return ok({"items": items, "message_id": message["id"], "posted": False})
