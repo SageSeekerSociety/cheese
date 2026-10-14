@@ -78,8 +78,7 @@ const emit = defineEmits<{
 }>()
 
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
-const availableNow = (skill: SkillItem) =>
-  skill.source === 'platform' ? status(skill.name) === 'ok' : true
+const availableNow = (skill: SkillItem) => (skill.source === 'platform' ? status(skill.name) === 'ok' : true)
 
 const boardSkills = computed(() => {
   const seen = new Set<string>()
@@ -110,7 +109,6 @@ function importSkill() {
 // 改队友的 userskill 要 manager（后端 `projects_agents.py`）；别人正占着「编辑中」
 // 的租约时也改不动 —— 那是同一件事的另一半：现在改会撞上他。
 const locked = () => !props.canManage || props.editingBlocked
-
 </script>
 
 <template>

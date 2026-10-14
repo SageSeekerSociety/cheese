@@ -314,7 +314,14 @@ describe('队友技能面板', () => {
   })
 
   it('装一枚插件：kind 跟着地址发上去并自动安装', async () => {
-    vi.mocked(fetchMachineSkill).mockResolvedValue({ landed: true, plan: [], skills: [], problems: [], roots: [], workspaces: [] } as never)
+    vi.mocked(fetchMachineSkill).mockResolvedValue({
+      landed: true,
+      plan: [],
+      skills: [],
+      problems: [],
+      roots: [],
+      workspaces: [],
+    } as never)
     const s = skills()
     await s.openSkills()
 

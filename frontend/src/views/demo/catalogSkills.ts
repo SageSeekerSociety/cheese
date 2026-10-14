@@ -96,7 +96,10 @@ const SKILL_POOL = [
 
 /** 平台技能的探测结果：只有可用时对应灯板点亮。 */
 const SKILL_HEALTH = Object.fromEntries(
-  SKILL_POOL.filter((skill) => skill.source === 'platform').map((skill) => [skill.name, { status: 'ok' as const, detail: '可用' }])
+  SKILL_POOL.filter((skill) => skill.source === 'platform').map((skill) => [
+    skill.name,
+    { status: 'ok' as const, detail: '可用' },
+  ])
 )
 
 /** 市场的一份目录：技能 / 插件各一条能装的，外加一条只读的 MCP。`plugin_total` 比摆出来
@@ -170,8 +173,7 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
   {
     id: 'agent-skills-dialog',
     title: 'AgentSkillsDialog',
-    about:
-      '一个 AI 队友带哪些技能：黄底一块灯板，展示队友装备的技能；灯亮表示当前可用，灯灭表示不可用或状态未知。',
+    about: '一个 AI 队友带哪些技能：黄底一块灯板，展示队友装备的技能；灯亮表示当前可用，灯灭表示不可用或状态未知。',
     file: 'src/components/agents/AgentSkillsDialog.vue',
     component: AgentSkillsDialog,
     needs: UI_T,

@@ -89,7 +89,6 @@ async function install({ url, kind }: { url: string; kind: 'skill' | 'plugin' })
     scanning.value = false
   }
 }
-
 </script>
 
 <template>
