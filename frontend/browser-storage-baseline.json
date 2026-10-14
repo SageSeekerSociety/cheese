@@ -8,19 +8,10 @@
     "src/i18n/index.ts": 2,
     "src/lib/composerDrafts.ts": 2,
     "src/lib/feedbackDraft.ts": 2,
-    "src/lib/session.ts": 4,
     "src/me.ts": 1,
     "src/query/persist.ts": 2,
-    "src/router/loginRedirect.ts": 4,
-    "src/services/account.ts": 13,
     "src/services/staleBuild.ts": 3,
-    "src/stores/signup.ts": 3,
     "src/theme.ts": 2,
-    "src/views/account/AddEmail.vue": 1,
-    "src/views/account/appSignIn.ts": 3,
-    "src/views/account/emailCode/pendingCode.ts": 3,
-    "src/views/account/lastSignIn.ts": 2,
-    "src/views/account/SignIn.vue": 3,
     "src/views/MyDevicesView.vue": 1
   }
 }
