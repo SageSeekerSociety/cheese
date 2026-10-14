@@ -35,6 +35,7 @@ from app.domain.block.models import Block
 from app.domain.block.queries import awaiting_an_answer
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
+from app.domain.block.waits import MemberWaits
 from app.domain.delivery.addressing import Event, address, hand_of
 from app.domain.identity.actor import Actor
 from app.domain.living_doc.services import Documents
@@ -219,6 +220,26 @@ async def tasks_under_blocks(
     return carried
 
 
+def _iso(at: datetime | None) -> str | None:
+    """一个时刻的 ISO 写法，`None` 照旧 `None`（和 `last_output_at` 同一个形状）。"""
+    return None if at is None else at.isoformat()
+
+
+async def incomplete_tasks(
+    db: AsyncSession, task_ids: Sequence[uuid.UUID]
+) -> dict[uuid.UUID, datetime]:
+    """{活: 这条活上还没恢复的失败从什么时候开始} —— 一行一件活。
+
+    `project_task_rows` 收的是直接喂给它的活（`/projects/{id}/tasks` 那条路），一条
+    活就是一行，没有频道那一层要汇总，所以这里一件一件地问 `unresolved_failures`，
+    每件活一条行（`units` 里它自己就是那一段对话）。侧栏那条路（`routes/topics.py`）
+    要多算频道自己那条线和它名下的活怎么合，所以它自己拼 `units`。
+    """
+    if not task_ids:
+        return {}
+    return await MemberWaits(db).unresolved_failures({t: [t] for t in task_ids})
+
+
 async def project_task_rows(
     db: AsyncSession,
     chat: ChatService,
@@ -227,13 +248,16 @@ async def project_task_rows(
     *,
     silent_of: Callable[[uuid.UUID], float | None] | None = None,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
+    incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
 ) -> list[dict]:
     """The project rail's rows for ``tasks``: each with its board cell, its
     card, whether it waits on ``me``, whether it stalled, when it last moved,
     and — when the caller can say it — when its running turn last produced
-    output (`silent_of`; the sidebar's red light, `TopicRailTaskRow`) and
-    whether it holds a delivery ``me`` has not opened since (`delivered_of`;
-    the sidebar's 长绿, same row component)."""
+    output (`silent_of`; the sidebar's red light, `TopicRailTaskRow`), whether
+    it holds a delivery ``me`` has not opened since (`delivered_of`; the
+    sidebar's 长绿, same row component), and when the earliest failure it has
+    not recovered from began (`incomplete_of`; the same red light for a row that
+    is not running — see `block/waits.MemberWaits.unresolved_failures`)."""
     task_ids = [t.id for t in tasks]
     cards = await latest_cards_by_task(db, task_ids)
     # 哪几条停在一个未回答的提问上 —— 第三次批查询，走只收提问那几行的部分索引
@@ -303,6 +327,13 @@ async def project_task_rows(
                 "moving": presentation.work_moving(shown),
                 # 在跑、但上一次有输出是什么时候（`quiet_at`，取整到分钟）。
                 "last_output_at": None if quiet_at is None else quiet_at.isoformat(),
+                # 这条活上还没恢复的失败从什么时候开始（`incomplete_of`；`None` = 没有
+                # 未恢复的失败，或调用方没算）。判据在
+                # `block/waits.MemberWaits.unresolved_failures`，和「在跑但没动静」
+                # 同画一盏红灯：一条活停下来报错、五分钟没人接手，也是在跑却没动静。
+                "incomplete_since": (
+                    None if incomplete_of is None else _iso(incomplete_of(task.id))
+                ),
                 # 这件活交付完了、而这个人从那以后没点开看过（侧栏的长绿）。和频道
                 # 那一头同一个来源（`room_task/repositories.unseen_deliveries`）。
                 # 说不了（调用方没算）就是 false——不亮，不是「亮着但说不清」。
@@ -340,6 +371,7 @@ async def rail_tasks(
     *,
     silent_of: Callable[[uuid.UUID], float | None] | None = None,
     delivered_of: Callable[[uuid.UUID], bool] | None = None,
+    incomplete_of: Callable[[uuid.UUID], datetime | None] | None = None,
 ) -> dict[uuid.UUID, dict]:
     """What the sidebar hangs under each channel, keyed by channel: how many
     tasks are underway there (`open`, the count after 「全部任务」), and the ones
@@ -363,7 +395,13 @@ async def rail_tasks(
     counts = await service.underway_counts(room_ids)
     mine = await service.underway_with(room_ids, me) if actor.authenticated else []
     rows = await project_task_rows(
-        db, chat, me, mine, silent_of=silent_of, delivered_of=delivered_of
+        db,
+        chat,
+        me,
+        mine,
+        silent_of=silent_of,
+        delivered_of=delivered_of,
+        incomplete_of=incomplete_of,
     )
     shown: dict[str, list[dict]] = {}
     for row in sorted(rows, key=lambda row: row["last_activity_at"], reverse=True):
@@ -387,7 +425,13 @@ async def rail_tasks(
                 short[task.room_id] -= 1
                 picked.append(task)
         for row in await project_task_rows(
-            db, chat, me, picked, silent_of=silent_of, delivered_of=delivered_of
+            db,
+            chat,
+            me,
+            picked,
+            silent_of=silent_of,
+            delivered_of=delivered_of,
+            incomplete_of=incomplete_of,
         ):
             if not row["stalled"]:
                 out[uuid.UUID(row["room_id"])]["shown"].append(

@@ -5,10 +5,12 @@
 所以这个文件里每条都从两个人的眼里看同一份数据 —— 只有一个人看得见的说法，光看
 一个人的响应是钉不住的。
 
-五条事实：这里在不在往前走（`moving`，频道那一行还含它名下的活）、在跑的那一轮
+六条事实：这里在不在往前走（`moving`，频道那一行还含它名下的活）、在跑的那一轮
 上一次有输出是什么时候（`last_output_at`）、有没有事在等我（`awaits_me`，这里只
-当对照）、做完了交付完了而我还没点开看过（`unseen_delivery`），以及有人回复了我、
-我还没处理（`replied_to_me`）。
+当对照）、做完了交付完了而我还没点开看过（`unseen_delivery`）、有人回复了我、
+我还没处理（`replied_to_me`），以及这间房里有没有一轮停在报错上、从什么时候起还没
+恢复（`incomplete_since`，红灯的另一半：不止「在跑却没动静」，也包括「停下报错、
+没人接手」）。
 
 活的行由 `_planted` 直接种进库，不走「建任务 → 递卡 → 采纳」那一圈：每一圈自己的
 规矩在别处钉着（`test_accept.py`），而这里要对下来的是「哪几列推出哪盏灯」。判据
@@ -24,9 +26,10 @@ from datetime import UTC, datetime, timedelta
 from app.api.deps import get_work_runner
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.models import AgentTurn
+from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
-from app.domain.room_task.models import Task
+from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import Building
 from app.main import app
 from tests.integration.conftest import (
@@ -561,3 +564,465 @@ def test_the_process_holding_the_turn_says_when_it_last_output(client):
     assert (at.second, at.microsecond) == (0, 0)
     quiet_for = datetime.now(UTC) - at
     assert timedelta(minutes=13) <= quiet_for < timedelta(minutes=14)
+
+
+# —— 红灯的另一半：一轮停在报错上、还没恢复 ————————————————————————————————
+#
+# 判据在 `block/waits.MemberWaits.unresolved_failures`：一条平台事件说这一轮坏了，
+# 直到「那一轮的队友又说话」或者「这里又开了一轮」，它就算还没恢复。接口把**最早那条
+# 没恢复的**从什么时候起交给前端，前端按自己的钟判五分钟（`roomLight.ts`）—— 后端不
+# 判阈值，只给时刻。
+
+#: 这两个名字的形状就是侧栏认的「芝士说的话」（`indexed_rows.LAST_SAID_ROWS`：署名
+#: `cheese` 或 `cheese-…` 的 participant 消息）。一个当「坏了的那一轮是谁的」，另一个
+#: 当「别人」。
+AGENT = "cheese-0123456789ab"
+OTHER_AGENT = "cheese-ba9876543210"
+
+
+def _platform_event(
+    client,
+    project_id: str,
+    conversation_id: str,
+    *,
+    ago,
+    event_type="turn_failed",
+    severity="error",
+    turn_id=None,
+):
+    """平台在某个对话里记下一条事件，返回那一刻。"""
+    at = datetime.now(UTC) - ago
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                Block(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(conversation_id),
+                    turn_id=turn_id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.platform,
+                    author="cheese",
+                    content="…",
+                    created_at=at,
+                    meta={"event_type": event_type, "severity": severity},
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+    return at
+
+
+def _agent_wrote(
+    client,
+    project_id: str,
+    conversation_id: str,
+    *,
+    ago,
+    handle=AGENT,
+    turn_id=None,
+):
+    """芝士在某个对话里留下一条自己的话 —— 恢复的那一下，也是「哪一轮是谁的」的依据。"""
+    at = datetime.now(UTC) - ago
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                Block(
+                    project_id=uuid.UUID(project_id),
+                    conversation_id=uuid.UUID(conversation_id),
+                    turn_id=turn_id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author=handle,
+                    content="…",
+                    created_at=at,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+    return at
+
+
+def _turn_started(client, conversation_id: str, *, ago, author="alice"):
+    """这里又开过一轮 —— 一行 `agent_turns`，不写话也算。"""
+    at = datetime.now(UTC) - ago
+
+    async def _add() -> None:
+        async with client.test_factory() as s:
+            s.add(
+                AgentTurn(
+                    id=uuid.uuid4(),
+                    conversation_id=uuid.UUID(conversation_id),
+                    continuation_id=uuid.uuid4(),
+                    author=author,
+                    content="开始吧",
+                    started_at=at,
+                    delivered_at=at,
+                )
+            )
+            await s.commit()
+
+    asyncio.run(_add())
+    return at
+
+
+def _broke(
+    client,
+    project_id: str,
+    conversation_id: str,
+    *,
+    ago,
+    agent=AGENT,
+    turn=None,
+):
+    """一轮停在报错上：芝士在那一轮里写过话（把这一轮认到它头上），平台随即记下坏了。
+
+    返回失败的那一刻。`agent` 换成 `OTHER_AGENT` 或 `None` 就换了这一轮是谁的。
+    """
+    turn = turn or uuid.uuid4()
+    if agent is not None:
+        _agent_wrote(
+            client,
+            project_id,
+            conversation_id,
+            ago=ago + timedelta(seconds=5),
+            handle=agent,
+            turn_id=turn,
+        )
+    return _platform_event(client, project_id, conversation_id, ago=ago, turn_id=turn)
+
+
+def _incomplete(row: dict) -> datetime | None:
+    at = row["incomplete_since"]
+    return None if at is None else datetime.fromisoformat(at)
+
+
+def test_a_failed_turn_lights_the_task_row_and_the_room_above_it(client):
+    """一件活停下来报错：它自己那一行亮，上面那间房也跟着亮。
+
+    频道那一格认的是它名下的活（`_unresolved_failures` 把频道自己那条线、支线和名下
+    的活合起来取最早的一条）—— 名下一件活报错停下，人得在侧栏上看得见。
+    """
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "broken",
+                "title": "停下来报错的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            },
+            {
+                "name": "fine",
+                "title": "没事的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            },
+        ],
+    )
+    at = _broke(client, project, ids["broken"], ago=timedelta(minutes=9))
+
+    row = _room_row(client, project, room, "alice")
+    assert _incomplete(row) is not None
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+    assert abs(_incomplete(_task_row(row, ids["broken"])) - at) < timedelta(seconds=1)
+    # 同一间房下的另一件活没坏：它的行不亮。
+    assert _task_row(row, ids["fine"])["incomplete_since"] is None
+
+
+def test_the_room_own_line_breaking_lights_the_room_row_alone(client):
+    """频道自己那条线报错 —— 亮的是频道那一行；它名下没有活，不为谁点灯。"""
+    project = _project(client)
+    room = _room(client, project)
+    at = _broke(client, project, room, ago=timedelta(minutes=9))
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+
+
+def test_a_failure_in_a_thread_belongs_to_the_room(client):
+    """答在支线里的一条坏掉的轮次，亮的还是那间频道 —— 支线是房间自己在说话。"""
+    project = _project(client)
+    room = _room(client, project)
+    thread = in_thread(client, room, "alice")
+    at = _broke(client, project, thread, ago=timedelta(minutes=9))
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+
+
+def test_a_failure_in_another_room_lights_that_room_only(client):
+    """别处的失败不落到这间房头上。"""
+    project = _project(client)
+    broken = _room(client, project, "坏了的房")
+    quiet = _room(client, project, "没事的房")
+    _broke(client, project, broken, ago=timedelta(minutes=9))
+
+    assert _room_row(client, project, broken, "alice")["incomplete_since"] is not None
+    assert _room_row(client, project, quiet, "alice")["incomplete_since"] is None
+
+
+def test_the_member_speaking_again_clears_it(client):
+    """那一轮的队友又说话了：一次成功的重试，或下一轮照常答上 —— 红灯灭。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "坏过又好了的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            }
+        ],
+    )
+    _broke(client, project, ids["task"], ago=timedelta(minutes=9))
+    assert _incomplete(_room_row(client, project, room, "alice")) is not None
+
+    _agent_wrote(client, project, ids["task"], ago=timedelta(minutes=1))
+
+    row = _room_row(client, project, room, "alice")
+    assert row["incomplete_since"] is None
+    assert _task_row(row, ids["task"])["incomplete_since"] is None
+
+
+def test_a_newer_turn_starting_clears_it_even_without_a_word(client):
+    """这里又开了一轮 —— 就算它还没说话，坏掉的那一轮也不再是当下的事。
+
+    开了新的一轮就是「被接手了」；新的一轮自己再坏，是**另一条**失败、另一个钟。
+    """
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "重来过的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            }
+        ],
+    )
+    _broke(client, project, ids["task"], ago=timedelta(minutes=9))
+    assert _room_row(client, project, room, "alice")["incomplete_since"] is not None
+
+    _turn_started(client, ids["task"], ago=timedelta(minutes=1))
+
+    row = _room_row(client, project, room, "alice")
+    assert row["incomplete_since"] is None
+    assert _task_row(row, ids["task"])["incomplete_since"] is None
+
+
+def test_another_members_output_does_not_clear_it(client):
+    """坏了的那一轮是谁的，就等谁：别的队友说话不算接手。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "还坏着的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            }
+        ],
+    )
+    at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
+    _agent_wrote(
+        client, project, ids["task"], ago=timedelta(minutes=1), handle=OTHER_AGENT
+    )
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+    assert abs(_incomplete(_task_row(row, ids["task"])) - at) < timedelta(seconds=1)
+
+
+def test_one_task_recovering_does_not_clear_the_room_while_another_stands(client):
+    """两件活都坏过：一件好了，另一件没有 —— 房间那一行还亮着，取还在坏的那条的钟。
+
+    合并只发生在画那盏灯的时候，不在「哪几件活还没恢复」上：一件活的恢复只清它自己
+    那一行，不能顺手把整间房的线擦掉。
+    """
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "healed",
+                "title": "修好的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            },
+            {
+                "name": "broken",
+                "title": "还坏着的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            },
+        ],
+    )
+    _broke(client, project, ids["healed"], ago=timedelta(minutes=12))
+    standing = _broke(client, project, ids["broken"], ago=timedelta(minutes=6))
+
+    _agent_wrote(client, project, ids["healed"], ago=timedelta(minutes=1))
+
+    row = _room_row(client, project, room, "alice")
+    assert _task_row(row, ids["healed"])["incomplete_since"] is None
+    assert abs(_incomplete(_task_row(row, ids["broken"])) - standing) < timedelta(
+        seconds=1
+    )
+    # 频道那一行取的是还在坏的那条（最早的没恢复的那条就是它）。
+    assert abs(_incomplete(row) - standing) < timedelta(seconds=1)
+
+
+def test_the_room_row_counts_from_the_earliest_of_its_own_line_and_its_tasks(client):
+    """频道那一行取它自己那条线和名下各件活里最早的一条 —— 名下的活更晚坏，那算它的；
+    自己那条线更早坏，频道就从自己那条线算起。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "更晚坏掉的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            }
+        ],
+    )
+    own_line = _broke(client, project, room, ago=timedelta(minutes=8))
+    task_broke = _broke(client, project, ids["task"], ago=timedelta(minutes=3))
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - own_line) < timedelta(seconds=1)
+    assert abs(_incomplete(_task_row(row, ids["task"])) - task_broke) < timedelta(
+        seconds=1
+    )
+
+
+def test_the_earliest_unrecovered_failure_is_the_one_the_row_counts_from(client):
+    """坏过两次、只恢复了前一次：钟从后一次起，不是从第一次。
+
+    「最早一条**还没恢复**的」—— 前一次被队友的话盖过之后就不算了，接着往后看。
+    """
+    project = _project(client)
+    room = _room(client, project)
+    _broke(client, project, room, ago=timedelta(minutes=12))
+    _agent_wrote(client, project, room, ago=timedelta(minutes=8))
+    second = _broke(client, project, room, ago=timedelta(minutes=4))
+
+    row = _room_row(client, project, room, "alice")
+    assert abs(_incomplete(row) - second) < timedelta(seconds=1)
+
+
+def test_a_warning_is_not_an_unfinished_row(client):
+    """超时、部署打断是 warn：平台会自己接着跑，不算这一轮还没完成。"""
+    project = _project(client)
+    room = _room(client, project)
+    _platform_event(
+        client,
+        project,
+        room,
+        ago=timedelta(minutes=9),
+        event_type="turn_timeout",
+        severity="warn",
+    )
+    _platform_event(
+        client,
+        project,
+        room,
+        ago=timedelta(minutes=6),
+        event_type="platform_error",
+        severity="warn",
+    )
+
+    assert _room_row(client, project, room, "alice")["incomplete_since"] is None
+
+
+def test_a_closed_tasks_failure_lights_nothing(client):
+    """关了的活不是「没完成的活」：它自己那个错误不该再点亮任何一行。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "closed",
+                "title": "已经关掉的活",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=3),
+                "status": TaskStatus.closed,
+                "closed_at": datetime.now(UTC) - timedelta(hours=1),
+            }
+        ],
+    )
+    _broke(client, project, ids["closed"], ago=timedelta(minutes=9))
+
+    row = _room_row(client, project, room, "alice")
+    assert row["incomplete_since"] is None
+    # 关掉的活也不在「我的活」那一栏里，所以它那一行根本不存在。
+    assert _task_row(row, ids["closed"]) is None
+
+
+def test_the_project_task_list_carries_the_same_clock(client):
+    """`/projects/{id}/tasks`（「展开剩余任务」那条路）带的是同一份事实。"""
+    project = _project(client)
+    room = _room(client, project)
+    ids = _planted(
+        client,
+        project,
+        room,
+        [
+            {
+                "name": "task",
+                "title": "丢掉全部任务时也看得到",
+                "owner_handle": "alice",
+                "started_at": datetime.now(UTC) - timedelta(hours=2),
+            }
+        ],
+    )
+    at = _broke(client, project, ids["task"], ago=timedelta(minutes=9))
+
+    headers = session_auth_headers("alice")
+    whole = client.get(f"/projects/{project}/tasks", headers=headers)
+    assert whole.status_code == 200, whole.text
+    row = _project_task_row(whole, ids["task"])
+    assert abs(_incomplete(row) - at) < timedelta(seconds=1)
+
+    paged = client.get(
+        f"/projects/{project}/tasks",
+        params={"status": "open", "limit": 5},
+        headers=headers,
+    )
+    assert paged.status_code == 200, paged.text
+    assert abs(_incomplete(_project_task_row(paged, ids["task"])) - at) < timedelta(
+        seconds=1
+    )
+
+
+def _project_task_row(response, task_id: str) -> dict:
+    return next(t for t in response.json()["data"]["data"] if t["id"] == task_id)

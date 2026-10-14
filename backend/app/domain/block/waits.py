@@ -15,11 +15,23 @@ broker and not in the database.
 """
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 
-from sqlalchemy import String, Uuid, any_, bindparam, or_, select, true
+from sqlalchemy import (
+    DateTime,
+    String,
+    Uuid,
+    any_,
+    bindparam,
+    column,
+    func,
+    or_,
+    select,
+    table,
+    true,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -56,6 +68,16 @@ FAILED = "failed"
 
 #: Run records on the machine side: a turn waiting for the machine it runs on.
 MACHINE_RECORDS = ("device_waiting",)
+
+# 「这个对话里有没有新一轮开始了」：只取 conversation_id 和 started_at 两列，一张
+# 裸表。整张 `AgentTurn` 属于 agent 域，这里要的只是它的那个瞬间 —— 用裸表是为了
+# 不去 import 那个模型（`agent/liveness.py` 读 `threads` 也是这个形状），block
+# 域不必因此多一条跨域依赖。
+_TURNS = table(
+    "agent_turns",
+    column("conversation_id", Uuid),
+    column("started_at", DateTime(timezone=True)),
+)
 
 
 def _among(column, values, item_type):
@@ -148,6 +170,107 @@ class MemberWaits:
         for (room, _), wait in sorted(waits.items(), key=lambda kv: kv[1].since):
             out.setdefault(room, []).append(wait)
         return out
+
+    async def unresolved_failures(
+        self, units: Mapping[uuid.UUID, Sequence[uuid.UUID]]
+    ) -> dict[uuid.UUID, datetime]:
+        """{row: when the earliest failure still unresolved in it began}.
+
+        一行 = 频道自己那条线，或一件活。`units` 把每一行映射到它由哪几段对话组成：
+        频道是它自己那条线加上它的支线（`threads_of_rooms` 同一份判据——支线说的
+        就是这个房间的事），一件活就是它自己那条线。
+
+        A failure is a platform event saying a turn ended in an error
+        (`indexed_rows.FAILED_TURN_ROWS`, the same predicate the room-waits scan
+        uses). It is unresolved until, after it, one of two things happens in the
+        row:
+
+        - the member whose turn it was speaks there again — a retry that worked,
+          or the next turn answering normally; or
+        - a newer turn starts there — the row is being worked on again, and it is
+          behind the failure whether or not that next turn itself succeeds (a
+          retry that goes quiet, or one that fails in turn, is a *new* failure
+          with its own clock, not the old one still counting).
+
+        Taking the earliest unresolved failure is what lets the sidebar count
+        from the moment the row broke and stay red across a retry that failed
+        again — while a recovery, silent or not, clears it. There is deliberately
+        no time window here: recovery, not elapsed time, is what ends it, so a
+        row that nobody has picked up stays red however long ago it broke.
+
+        Row-level, not conversation-level: a channel is one row even though its
+        line and its 支线 are separate conversations, so both are queried and
+        the answer folded under the row id the caller named. The caller decides
+        which rows to ask for — a channel that wants its tasks' failures too
+        passes each task as its own row and takes the earliest.
+        """
+        conversations = [c for ids in units.values() for c in ids]
+        if not conversations:
+            return {}
+        unit_of = {c: unit for unit, ids in units.items() for c in ids}
+        failures = (
+            await self._session.execute(
+                select(Block.conversation_id, Block.turn_id, Block.created_at)
+                .where(
+                    _among(Block.conversation_id, conversations, Uuid),
+                    ~participant_blocks(),
+                    FAILED_TURN_ROWS,
+                )
+                .order_by(Block.created_at)
+            )
+        ).all()
+        if not failures:
+            return {}
+        since = failures[0][2]
+        owners = await self._turn_owners(
+            conversations, since, {turn for _, turn, _ in failures if turn}
+        )
+        spoke = await self._last_said(conversations, since)
+        started = await self._turn_starts(conversations, unit_of, since)
+        # 按 created_at 排好，所以每一行遇到的第一条失败就是它最早的那条；那一条没
+        # 恢复就是答案，恢复了就继续往后看（它之后的下一条才是现在的这一条）。
+        found: dict[uuid.UUID, datetime] = {}
+        for conversation, turn, at in failures:
+            unit = unit_of[conversation]
+            if unit in found:
+                continue
+            member = owners.get(turn) if turn else None
+            if self._answered(spoke, unit, member, at):
+                continue
+            newest_turn = started.get(unit)
+            if newest_turn is not None and newest_turn > at:
+                continue
+            found[unit] = at
+        return found
+
+    async def _turn_starts(
+        self,
+        conversation_ids: list[uuid.UUID],
+        unit_of: Mapping[uuid.UUID, uuid.UUID],
+        since: datetime,
+    ) -> dict[uuid.UUID, datetime]:
+        """{row: the newest turn start in it} since the earliest failure.
+
+        只读 `agent_turns` 的 conversation_id 与 started_at：一轮开没开始过记在这
+        一行里，失败事件不记它。取每行最新的一次开始 —— 只要有一次晚于某条失败，
+        那条失败就已经被这行「重新开始」盖过。"""
+        stmt = (
+            select(
+                _TURNS.c.conversation_id,
+                func.max(_TURNS.c.started_at),
+            )
+            .where(
+                _among(_TURNS.c.conversation_id, conversation_ids, Uuid),
+                _TURNS.c.started_at >= since,
+            )
+            .group_by(_TURNS.c.conversation_id)
+        )
+        newest: dict[uuid.UUID, datetime] = {}
+        for conversation, at in (await self._session.execute(stmt)).all():
+            unit = unit_of[conversation]
+            if unit not in newest or at > newest[unit]:
+                newest[unit] = at
+        return newest
 
     async def _last_said(
         self, topic_ids: list[uuid.UUID], since: datetime

@@ -162,6 +162,60 @@ def _asks_me(asked: Mapping[uuid.UUID, Awaited], viewer: str | None) -> set[uuid
     return {tid for tid, who in asked.items() if viewer in who.waiting()}
 
 
+async def _unresolved_failures(
+    db: AsyncSession,
+    room_ids: list[uuid.UUID],
+    tasks_of_room: Mapping[uuid.UUID, list[uuid.UUID]],
+) -> tuple[dict[uuid.UUID, datetime], dict[uuid.UUID, datetime]]:
+    """尚未恢复的失败从什么时候开始：频道那一行，和它名下各件活。
+
+    返回 `(频道 → 时刻, 活 → 时刻)`。频道那一行问的是它**自己名下、此刻还没关**的
+    东西：房间自己那条线、它的支线（`threads_of_rooms`），以及它名下的每一件活
+    （`tasks_of_room`，和频道那一格的计数同一个判据「开着、还没进收尾窗口」）。频道
+    行取这当中最早的一条 —— 名下一件活报错停下来，上面那间房就是在出问题，人得看
+    得见。一件活的恢复只清它自己，不清整间房：多件活各算各的，谁都没恢复就谁都在。
+
+    `tasks_of_room` 只收要算的频道，只列**还没关**的活（`tasks_of_rooms` 同一份判据）
+    ——关了的活不是「没完成的活」，它自己那个错误不该再点亮任何一行。
+    """
+    if not room_ids:
+        return {}, {}
+    threads = await threads_of_rooms(db, room_ids)
+    units: dict[uuid.UUID, list[uuid.UUID]] = {}
+    # 频道那一条 = 它自己那条线 + 它的支线。支线说的就是这个房间的事，`_last_said`
+    # 本来也把支线折回房间，所以两段一起问、答案落在频道这个键上。
+    for room in room_ids:
+        units.setdefault(room, [room])
+    for thread, room in threads.items():
+        if room in units:
+            units[room].append(thread)
+    # 每一件活自己一条：活的失败只点亮它自己那一行，直到它自己恢复 —— 别的活恢复
+    # 了不会把它清掉，它也不会被并进频道那一条里（那样一件活恢复就会误清整间房的线）。
+    for task_id in (t for ids in tasks_of_room.values() for t in ids):
+        units.setdefault(task_id, [task_id])
+    found = await MemberWaits(db).unresolved_failures(units)
+    tasks = {
+        task_id: found[task_id]
+        for task_ids in tasks_of_room.values()
+        for task_id in task_ids
+        if task_id in found
+    }
+    # 频道那一行取最早的一条：它自己/支线的，和名下各件活的。合在这里而不是在
+    # `units` 里，正是为了让「一件活的恢复只清它自己」——上面每一件活是分开问的。
+    rooms: dict[uuid.UUID, datetime] = {}
+    for room in room_ids:
+        if room in found:
+            rooms[room] = found[room]
+    for room, task_ids in tasks_of_room.items():
+        for task_id in task_ids:
+            at = found.get(task_id)
+            if at is None:
+                continue
+            if room not in rooms or at < rooms[room]:
+                rooms[room] = at
+    return rooms, tasks
+
+
 def _topic_out(
     topic: TopicRow,
     running_ids: set[uuid.UUID],
@@ -179,6 +233,7 @@ def _topic_out(
     unseen: Collection[uuid.UUID] | None = None,
     moving: Collection[uuid.UUID] | None = None,
     answered: Collection[uuid.UUID] | None = None,
+    incomplete: Mapping[uuid.UUID, datetime] | None = None,
 ) -> dict:
     """TopicOut plus the signals the ORM row cannot carry: 最后活动时间, which is
     derived from the topic's blocks; who is busy in it right now and whom it is
@@ -201,6 +256,10 @@ def _topic_out(
     # 这个频道名下有没有「交付完了、而这个人还没点开看过」的活（侧栏的长绿）。
     # `unseen` 一次算一整页，这里只查表；没有登录的人拿到的是空集，也就是不亮。
     out.unseen_delivery = topic.id in (unseen or ())
+    # 这间房里还没恢复的失败从什么时候开始（侧栏红灯的另一半，`TopicOut.
+    # incomplete_since`）：这间房自己那条线、它的支线，或者它名下一件**还没关**的活
+    # （`_unresolved_failures` 那一份）。算不出来就是 `None`，不亮。
+    out.incomplete_since = (incomplete or {}).get(topic.id)
     # 有没有人回复了我、而我还没处理（侧栏黄灯的另一半，`TopicOut.replied_to_me`）：
     # 同一页一次算完，这里只查表；没有登录的人拿到空集，也就是不亮。
     out.replied_to_me = topic.id in (answered or ())
@@ -344,6 +403,16 @@ async def list_topics(
     # 侧栏呼吸绿要看的那一份：这一行自己、它名下的活、它名下的支线，哪一处有活在
     # 往前走。
     moving = moving_ids | delivering
+    # 这间房名下的活（开着、还没进收尾窗口）—— 侧栏红灯要汇总它们各自的未恢复失败
+    # （`_unresolved_failures`）。判据和「我的活」那一栏同一份（`tasks_of_rooms`），
+    # 但不是同一次查询：那边要的是这个人的活（带整行），这边要的是每一件活的 id。
+    underway = await TaskService(db).tasks_of_rooms([t.id for t in topics])
+    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for task_id, room_id in underway.items():
+        tasks_of_room.setdefault(room_id, []).append(task_id)
+    incomplete, incomplete_tasks = await _unresolved_failures(
+        db, [t.id for t in topics], tasks_of_room
+    )
     rails = await rail_tasks(
         db,
         chat,
@@ -351,6 +420,7 @@ async def list_topics(
         [t.id for t in topics],
         silent_of=partial(silent_of, runner),
         delivered_of=unseen.__contains__,
+        incomplete_of=incomplete_tasks.get,
     )
     items = [
         {
@@ -371,6 +441,7 @@ async def list_topics(
                 unseen=unseen,
                 moving=moving,
                 answered=answered,
+                incomplete=incomplete,
             ),
             "my_tasks": rails[t.id],
         }
@@ -483,6 +554,13 @@ async def get_topic(
     answered = await service.replied_to_me([topic.id], viewer) if viewer else set()
     # 同 `list_topics`：这一间房名下的活有没有走在交付链路上。
     delivering = topics_signals.delivering_rooms(live)
+    underway = await TaskService(db).tasks_of_rooms([topic.id])
+    tasks_of_room: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for task_id, room_id in underway.items():
+        tasks_of_room.setdefault(room_id, []).append(task_id)
+    incomplete, incomplete_tasks = await _unresolved_failures(
+        db, [topic.id], tasks_of_room
+    )
     rails = await rail_tasks(
         db,
         chat,
@@ -490,6 +568,7 @@ async def get_topic(
         [topic.id],
         silent_of=partial(silent_of, runner),
         delivered_of=unseen.__contains__,
+        incomplete_of=incomplete_tasks.get,
     )
     return ok(
         {
@@ -509,6 +588,7 @@ async def get_topic(
                 unseen=unseen,
                 moving=moving_ids | delivering,
                 answered=answered,
+                incomplete=incomplete,
             ),
             "my_tasks": rails[topic.id],
         }
