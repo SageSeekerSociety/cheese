@@ -90,13 +90,7 @@ async def upload_task_attachment(
         filename=file.filename or "unnamed",
         content_type=file.content_type,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
-            "attachment": _task_attachment_to_api(attachment=attachment, link=link)
-        },
-    }
+    return ok({"attachment": _task_attachment_to_api(attachment=attachment, link=link)})
 
 
 @router.get(

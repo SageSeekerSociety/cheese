@@ -76,4 +76,4 @@ async def create_tag(
     if not isinstance(name, str) or not name.strip():
         raise BadRequestError("name is required")
     result = await service.create_tag(name=name, created_by_id=auth_user.user_id)
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)

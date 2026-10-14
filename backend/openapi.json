@@ -9801,6 +9801,281 @@
         }
       }
     },
+    "/apps/{key}": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Get App",
+        "description": "The app's document and every version it has, oldest first.",
+        "operationId": "get_app_apps__key__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/apps/{key}/versions/{version}": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Get App Version",
+        "description": "One version's code, the shell it runs in and where that shell is\nserved, and the room it took when the platform ran it.",
+        "operationId": "get_app_version_apps__key__versions__version__get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppVersionCodeOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/apps/{key}/versions/{version}/shot": {
+      "get": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Get App Shot",
+        "description": "What the version looked like when the platform ran it, at ``width``.",
+        "operationId": "get_app_shot_apps__key__versions__version__shot_get",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          },
+          {
+            "name": "version",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Version"
+            }
+          },
+          {
+            "name": "width",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "maximum": 2000,
+              "minimum": 200,
+              "title": "Width"
+            }
+          },
+          {
+            "name": "theme",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "light",
+                "dark"
+              ],
+              "type": "string",
+              "default": "light",
+              "title": "Theme"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The picture.",
+            "content": {
+              "image/png": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/documents/{document_id}/apps": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Create App",
+        "description": "A new app of the document, at version 1. The document does not show it\nuntil a block names it: where it goes is the writer's to decide.",
+        "operationId": "create_app_documents__document_id__apps_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppCodeIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppVersionOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/apps/{key}/versions": {
+      "post": {
+        "tags": [
+          "documents"
+        ],
+        "summary": "Add App Version",
+        "description": "The app's next version. The documents that show it keep the version\nthey name until their `@<version>` is changed.",
+        "operationId": "add_app_version_apps__key__versions_post",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppCodeIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Envelope_AppVersionOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/docs/grant": {
       "post": {
         "tags": [
@@ -52986,6 +53261,64 @@
         ],
         "title": "AiMode"
       },
+      "AppCodeIn": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "title": "Code"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "code"
+        ],
+        "title": "AppCodeIn"
+      },
+      "AppOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "document_id": {
+            "type": "string",
+            "title": "Document Id"
+          },
+          "document_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Document Title"
+          },
+          "versions": {
+            "items": {
+              "$ref": "#/components/schemas/AppVersionOut"
+            },
+            "type": "array",
+            "title": "Versions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "document_id",
+          "document_title",
+          "versions"
+        ],
+        "title": "AppOut"
+      },
       "AppSignInFinish": {
         "properties": {
           "code": {
@@ -53023,6 +53356,145 @@
           "challenge"
         ],
         "title": "AppSignInStart"
+      },
+      "AppVersionCodeOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "checked": {
+            "type": "boolean",
+            "title": "Checked"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "shell": {
+            "type": "integer",
+            "title": "Shell"
+          },
+          "shell_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Shell Url"
+          },
+          "heights": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Heights"
+          },
+          "shots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Shots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "version",
+          "note",
+          "author",
+          "requested_by",
+          "checked",
+          "created_at",
+          "code",
+          "shell",
+          "shell_url",
+          "heights",
+          "shots"
+        ],
+        "title": "AppVersionCodeOut"
+      },
+      "AppVersionOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "note": {
+            "type": "string",
+            "title": "Note"
+          },
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "requested_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By"
+          },
+          "checked": {
+            "type": "boolean",
+            "title": "Checked"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "version",
+          "note",
+          "author",
+          "requested_by",
+          "checked",
+          "created_at"
+        ],
+        "title": "AppVersionOut",
+        "description": "A version as the version menu and the tools show it."
       },
       "ApplyEnvironment": {
         "properties": {
@@ -56238,6 +56710,114 @@
           "off"
         ],
         "title": "EmailMode"
+      },
+      "Envelope_AppOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AppOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[AppOut]"
+      },
+      "Envelope_AppVersionCodeOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AppVersionCodeOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[AppVersionCodeOut]"
+      },
+      "Envelope_AppVersionOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "default": 200
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "ok"
+          },
+          "data": {
+            "$ref": "#/components/schemas/AppVersionOut"
+          },
+          "warnings": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warnings"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data"
+        ],
+        "title": "Envelope[AppVersionOut]"
       },
       "Envelope_Page_AgentTypeOut__": {
         "properties": {

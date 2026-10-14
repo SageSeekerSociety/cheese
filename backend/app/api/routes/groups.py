@@ -84,7 +84,7 @@ async def create_group(
         intro=intro,
         avatar_id=avatar_id,
     )
-    return {"code": 201, "message": "Created", "data": {"group": result}}
+    return ok({"group": result})
 
 
 @router.get(
@@ -168,7 +168,7 @@ async def join_group(
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     result = await service.join_group(group_id=group_id, user_id=auth_user.user_id)
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)
 
 
 @router.delete(
@@ -261,7 +261,7 @@ async def create_group_target(
         ended_at=ended_at_dt,
         attendance_frequency=attendance_frequency,
     )
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)
 
 
 @router.get(
@@ -369,7 +369,7 @@ async def add_group_question(
         question_id=question_id,
         user_id=auth_user.user_id,
     )
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)
 
 
 @router.delete(

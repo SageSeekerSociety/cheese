@@ -32,6 +32,12 @@
    `perfviewer`，一屏摆 66 行。`conversations` 那几行不用自己写——`topics`、
    `tasks`、`threads` 上的 BEFORE INSERT 触发器会登记。
 
+   主项目里另有 18 个**边界房间**：6 个空房间、6 个归档房（各带一道指着
+   `perfviewer` 的题）、6 个「芝士问完自己又接了一句」的房间（#2046）。三类都看得
+   见、都不该摆上清单，所以 66 这个数不变 —— 反过来把归档房改成 `active`、或者删掉
+   那 6 句接话，行数各多 6 行（2026-10-14 实测 66 → 72）。改取数的改动要能和它们
+   对上账，见下面第 6 步。
+
 4. 出分段表：
 
        uv run --project backend python scripts/perf-awaiting-me/measure_awaiting_me.py

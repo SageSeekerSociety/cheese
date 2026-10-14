@@ -117,9 +117,11 @@ async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, pla
     assert events[-1] == Answer("读过了。")
     assert Tool("cheese_doc_get") in events
     first = fake.requests[0]
-    # The document's own tools and the project lookups; no machine is lent
-    # here, so none of pi's own.
+    # The document's own tools (its text and its mini-apps) and the project
+    # lookups; no machine is lent here, so none of pi's own.
     assert sorted(t["function"]["name"] for t in first["tools"]) == [
+        "cheese_app_get",
+        "cheese_app_save",
         "cheese_attachment_read",
         "cheese_doc_edit",
         "cheese_doc_get",

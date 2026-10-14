@@ -112,10 +112,7 @@ async def send_register_email_code(
     finally:
         await redis.aclose()
 
-    return {
-        "code": 201,
-        "message": "Send email successfully.",
-    }
+    return ok(None, "Send email successfully.")
 
 
 @router.get(
@@ -261,11 +258,10 @@ async def register_user(
     # its pending consents the moment it holds the token: uncommitted, the
     # consent given here reads as missing and the rules are put to it again.
     await session.commit()
-    return {
-        "code": 201,
-        "message": "Register successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
             "accessToken": access_token,
         },
-    }
+        "Register successfully.",
+    )

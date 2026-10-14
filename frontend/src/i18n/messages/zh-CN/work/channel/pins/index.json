@@ -1,0 +1,9 @@
+{
+  "jump": "跳到原消息",
+  "menu": "置顶的操作",
+  "pinnedBy": "{name} 置顶 · {when}",
+  "said": "{name} · {when}",
+  "title": "置顶 · {count}",
+  "unpin": "取消置顶",
+  "unpinFailed": "取消置顶失败"
+}

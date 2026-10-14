@@ -99,15 +99,14 @@ async def create_invite_code(
         note=payload.note,
     )
     await session.commit()
-    return {
-        "code": 201,
-        "message": "Invite code created.",
-        "data": {
+    return ok(
+        {
             "code": invite.code,
             "id": invite.id,
             "maxUses": invite.max_uses,
         },
-    }
+        "Invite code created.",
+    )
 
 
 @router.delete(

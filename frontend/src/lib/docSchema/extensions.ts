@@ -17,6 +17,7 @@ import { Markdown } from '@tiptap/markdown'
 import StarterKit from '@tiptap/starter-kit'
 import { common, createLowlight } from 'lowlight'
 
+import { App } from './app'
 import { docBlocks } from './blocks'
 import { Canvas } from './canvas'
 import { CommentAnchor } from './commentAnchors'
@@ -388,6 +389,7 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
     MarkdownLinkInput,
     DocHighlight,
     ...docBlocks,
+    App,
     // A form field holds text alone: a board belongs to a document.
     ...(opts.standalone ? [] : [Canvas]),
     // Suggested changes belong to the shared document; a form field is written

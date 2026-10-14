@@ -1,0 +1,12 @@
+{
+  "cancel": "Cancel",
+  "close": "Close link actions",
+  "edit": "Edit",
+  "invalid": "Unsupported link format",
+  "readonly": "Document is read-only",
+  "remove": "Remove link",
+  "save": "Save link",
+  "stale": "Source or link changed; open it again",
+  "title": "Link actions",
+  "url": "Link URL"
+}

@@ -87,11 +87,7 @@ async def create_answer(
         user_id=auth_user.user_id,
         content=content,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"id": answer["id"], "answer": answer},
-    }
+    return ok({"id": answer["id"], "answer": answer})
 
 
 @router.post(
@@ -213,7 +209,7 @@ async def create_answer_comment(
         parent_id=parent_id,
         mentioned_user_ids=mentioned_user_ids,
     )
-    return {"code": 201, "message": "Created", "data": {"comment": comment}}
+    return ok({"comment": comment})
 
 
 @router.delete(

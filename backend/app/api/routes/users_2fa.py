@@ -126,16 +126,15 @@ async def enable_user_2fa(
         # A browser trusted for an earlier factor has not proved this one.
         await TrustedDeviceService(session).revoke_all(auth_user.user_id)
         otpauth_url = totp_service.get_provisioning_uri(secret, account_name)
-        return {
-            "code": 201,
-            "message": "2FA enabled successfully",
-            "data": {
+        return ok(
+            {
                 "secret": secret,
                 "otpauth_url": otpauth_url,
                 "qrcode": _qr_data_uri(otpauth_url),
                 "backup_codes": backup_codes,
             },
-        }
+            "2FA enabled successfully",
+        )
 
     await _spend_sudo_ticket(
         payload.get("sudoTicket"),
@@ -302,8 +301,7 @@ async def regenerate_backup_codes(
         purpose=SudoPurpose.TWO_FA_BACKUP_CODES,
     )
     backup_codes = await totp_service.generate_backup_codes(user_id)
-    return {
-        "code": 201,
-        "message": "New backup codes generated successfully",
-        "data": {"backup_codes": backup_codes},
-    }
+    return ok(
+        {"backup_codes": backup_codes},
+        "New backup codes generated successfully",
+    )

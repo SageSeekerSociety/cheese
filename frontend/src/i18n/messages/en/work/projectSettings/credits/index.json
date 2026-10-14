@@ -1,0 +1,9 @@
+{
+  "exhausted": "Credits are used up. Ask a team admin or whoever issues credits for more",
+  "none": "No credit information",
+  "remaining": "pts left",
+  "source": "Includes the team's shared credits and credits issued to this project; project credits are used first",
+  "title": "Credits",
+  "unlimited": "No credit limit set",
+  "usedOfTotal": "Used / issued"
+}

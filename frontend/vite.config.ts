@@ -478,7 +478,10 @@ export default defineConfig({
         // `screenshots/**` 是 manifest 里那几张安装截图（见上面的 manifest.screenshots）：
         // 只有浏览器的安装弹窗会去取它，跟 App 能不能离线跑毫无关系，别让每次安装
         // 都白下 100 KB。
-        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**', 'screenshots/**'],
+        // `miniapp/**` is the mini-app shell (vite.miniapp.config.mts): the backend
+        // serves it on the content domain, this app never loads it, and it is
+        // one file of almost 2 MB.
+        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**', 'screenshots/**', 'miniapp/**'],
         cleanupOutdatedCaches: true,
         // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
         // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'

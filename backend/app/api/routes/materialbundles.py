@@ -96,7 +96,7 @@ async def create_material_bundle(
         creator_id=auth_user.user_id,
         material_ids=material_ids,
     )
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)
 
 
 @router.patch(

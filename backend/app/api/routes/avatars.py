@@ -128,7 +128,7 @@ async def create_avatar(
     async with aiofiles.open(file_path, "wb") as f:
         await f.write(file_content)
 
-    return {"code": 201, "message": "Upload avatar successfully", "data": result}
+    return ok(result, "Upload avatar successfully")
 
 
 @router.get(

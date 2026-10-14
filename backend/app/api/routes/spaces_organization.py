@@ -140,11 +140,7 @@ async def create_space_category(
         display_order=payload.display_order,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"category": _category_to_api_model(category)},
-    }
+    return ok({"category": _category_to_api_model(category)})
 
 
 @router.patch(
@@ -291,11 +287,7 @@ async def create_space_domain_group(
         domains=payload.domains,
         actor_user_id=auth_user.user_id,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"group": _domain_group_to_api_model(group, domains)},
-    }
+    return ok({"group": _domain_group_to_api_model(group, domains)})
 
 
 @router.patch(
@@ -380,9 +372,9 @@ async def add_space_admin(
     )
     space = await service.get_space(space_id)
     if space is None:
-        return {"code": 201, "message": "Created", "data": None}
+        return ok(None)
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 201, "message": "Created", "data": {"space": space_data}}
+    return ok({"space": space_data})
 
 
 @router.delete(

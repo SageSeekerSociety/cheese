@@ -38,9 +38,11 @@ import { registerPwa } from './pwa'
 import router from './router'
 
 import { resolveRefs } from '@/api/addresses'
+import { docAppShotUrl, getDocApp, getDocAppVersion } from '@/api/docApps'
 import i18n, { localeReady } from '@/i18n'
 import { armAfterFirstPaint } from '@/lib/afterFirstPaint'
 import { behaveAsDesktopApp } from '@/lib/desktopNative'
+import { answerDocAppsWith } from '@/lib/docApps'
 import { watchInstallPrompt } from '@/lib/pwaInstall'
 import { installRefChipKeys } from '@/lib/refChip'
 import { answerRefsWith } from '@/lib/refDirectory'
@@ -72,6 +74,8 @@ installErrorReporter(app)
 // 消息和文档里的 @人、#话题、文件 chip：Enter / 空格按下去和点一下一样（lib/refChip.ts）。
 installRefChipKeys()
 answerRefsWith(resolveRefs)
+// 文档里的小程序：代码、版本和截图从哪里取（lib/docApps.ts）。
+answerDocAppsWith({ app: getDocApp, version: getDocAppVersion, shot: docAppShotUrl })
 
 watch(
   i18n.global.locale,
