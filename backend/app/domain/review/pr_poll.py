@@ -16,7 +16,6 @@ import httpx
 from sqlalchemy import or_, select
 
 from app.core.sentences import say
-from app.domain.agent.chat import ChatService
 from app.domain.delivery_events import SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
@@ -29,6 +28,7 @@ from app.domain.review import landing_watch, pr_publish
 from app.domain.review.models import AcceptCard
 from app.domain.review.ports import (
     Announce,
+    Chat,
     DispatchPending,
     RecordAgent,
     RecordInstruction,
@@ -61,7 +61,7 @@ _uncarded_task_cursor: uuid.UUID | None = None
 
 
 async def poll_open_prs(
-    chat: ChatService,
+    chat: Chat,
     announce: Announce,
     project_id: uuid.UUID | None = None,
     *,
@@ -123,7 +123,7 @@ async def poll_open_prs(
 
 
 async def poll_uncarded_task_prs(
-    chat: ChatService,
+    chat: Chat,
     announce: Announce,
     project_id: uuid.UUID | None = None,
     *,
@@ -255,7 +255,7 @@ async def poll_uncarded_task_prs(
 
 
 async def watch_landings(
-    chat: ChatService, announce: Announce, *, record_instruction: RecordInstruction
+    chat: Chat, announce: Announce, *, record_instruction: RecordInstruction
 ) -> dict:
     """Merged task PRs, watched on the default branch for a while: the checks
     there and a deployment that includes them (`landing_watch`)."""
@@ -292,7 +292,7 @@ def _report_card_failure(card_id: uuid.UUID, exc: BaseException) -> None:
 
 
 async def _note_card_poll_crashed(
-    chat: ChatService,
+    chat: Chat,
     announce: Announce,
     card_id: uuid.UUID,
     exc: BaseException,
@@ -333,7 +333,7 @@ async def _note_card_poll_crashed(
 
 
 async def open_draft_prs(
-    chat: ChatService,
+    chat: Chat,
     announce: Announce,
     *,
     dispatch_pending: DispatchPending,
@@ -358,7 +358,7 @@ async def open_draft_prs(
 
 
 async def deliver_dependency_notices(
-    chat: ChatService, *, dispatch_pending: DispatchPending
+    chat: Chat, *, dispatch_pending: DispatchPending
 ) -> None:
     """Dispatch committed task-parent intent through the delivery ledger.
 
@@ -369,7 +369,7 @@ async def deliver_dependency_notices(
 
 
 async def forge_repository_changed(
-    chat: ChatService,
+    chat: Chat,
     kind: str,
     repo: str,
     project_id: str | None = None,

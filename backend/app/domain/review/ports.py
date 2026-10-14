@@ -15,11 +15,31 @@ from __future__ import annotations
 import uuid
 from typing import Protocol
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.addressing import NAMES_NOBODY, Event
 from app.domain.block.models import Block
 from app.domain.delivery_events import DeliveryEvent
+
+
+class Chat(Protocol):
+    """跑这个房间的那个服务，本包只认得它身上两样。
+
+    形状是 `app.domain.agent.chat.ChatService` 的形状。`session_factory` 是本包自己
+    开事务要的那一样；`work_runner` 本包不碰，只跟着 `chat` 一起往下递给合并路径上
+    那几层。
+
+    两个都写成只读属性，而不是可写的字段：`ChatService` 上这两个本来就是
+    ``@property``，而只读成员比的是返回类型（可以更窄），于是 `work_runner` 真实的
+    那个类型（`agent.session_turn_events` 里的 `SessionTurnEvents`）落在 `object`
+    里，本包不必为了写它再往 `agent` 伸一条边。
+    """
+
+    @property
+    def session_factory(self) -> async_sessionmaker: ...
+
+    @property
+    def work_runner(self) -> object: ...
 
 
 class Announce(Protocol):

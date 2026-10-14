@@ -6,11 +6,11 @@ from collections.abc import Awaitable, Callable
 from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.agent.chat import ChatService
 from app.domain.delivery_events import SettleCard
 from app.domain.review import gate_sweep, pr_poll
 from app.domain.review.ports import (
     Announce,
+    Chat,
     DispatchPending,
     RecordAgent,
     RecordInstruction,
@@ -36,7 +36,7 @@ async def sweep_abandoned_gates(
 def register_periodic_jobs(
     jobs: PeriodicJobs,
     *,
-    chat: ChatService,
+    chat: Chat,
     announce: Announce,
     gate_sessions: SessionFactory,
     gate_nudge_factory: GateNudgeFactory,
