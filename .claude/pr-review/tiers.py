@@ -437,10 +437,23 @@ def self_test():
         # off, and a quoted path matches no prefix — it reads as B, the 判不了 answer. For a
         # doc that is heavier than the E it is, but for an auth or migration path it is
         # lighter than the A it must be, and that direction is the one that matters.
-        case("非 ASCII 路径的文档，仍按 E 档",
-             {"docs/中文说明.md": "装法见 README\n"}, "E")
+        # Two mechanisms answer that — the `-c` in _git and the `-z` in paths_of — and the
+        # two checks below pin one each, so dropping either turns a case red.
+        non_ascii = case("非 ASCII 路径的文档，仍按 E 档",
+                         {"docs/中文说明.md": "装法见 README\n"}, "E")
+        check("_git 自己列非 ASCII 路径时也不加引号",
+              _git(repo, "diff", "--name-only", base, non_ascii).strip(), "docs/中文说明.md")
         case("非 ASCII 路径的鉴权代码，仍按 A 档",
              {"backend/app/auth/调用者.py": "ok = False\n"}, "A")
+        # What only `-z` can carry: a path holding a quote. git C-quotes that one whatever
+        # `core.quotePath` says, so without `-z` it arrives as a string matching no prefix and
+        # a doc reads as B. Not every system can hold the name (Windows forbids the quote),
+        # so the case is written where the name can be made, and said to be skipped where it
+        # cannot rather than passing quietly.
+        try:
+            case('带引号的文档路径，仍按 E 档', {'docs/引"号".md': "装法见 README\n"}, "E")
+        except OSError:
+            print("skip 带引号的文档路径：这个系统建不了含引号的文件名")
         # Deleting is not adding: a removed line has no twin on the other side, so a
         # removed guard or a dropped file still gets read. Each case needs a parent of its
         # own, because a deletion that reverts the file to a version it already had is a
