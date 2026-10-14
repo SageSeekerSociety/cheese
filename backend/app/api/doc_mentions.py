@@ -16,9 +16,10 @@ the store:
   nobody: an agent's ``<@handle>`` in a document is a reference, not a call.
 - **Only someone who can open it.** A task's document is read by whoever may
   enter the task's channel; a private channel's, only by the people seated in
-  it. A person of the project mentioned in a document they cannot open is not
-  told; the writer is, with an offer to add them (the same offer a message
-  gets, ``agent.mentions.MentionedOutside``).
+  it (``TopicMemberService.reached``, as for a message). A person of the
+  project mentioned in a document they cannot open is not told; the writer
+  is, with an offer to add them (the same offer a message gets,
+  ``agent.mentions.MentionedOutside``).
 """
 
 import re
@@ -67,9 +68,8 @@ async def _by_a_person(session: AsyncSession, actors: list[str]) -> str | None:
     changes. None when an AI teammate or the platform had a hand in it."""
     if not actors or "system" in actors:
         return None
-    identity = IdentityService(session)
     for actor in actors:
-        if await identity.is_agent(actor):
+        if await IdentityService(session).is_agent(actor):
             return None
     return actors[0]
 
@@ -104,12 +104,10 @@ async def tell_new_mentions(
     room_id, task_id = await whose_document(session, doc)
     room = await TopicRepository(session).get(room_id) if room_id else None
     members = TopicMemberService(session)
-    if room is not None and (room.members_only or room.is_private):
-        seated = set(await members.people_handles(room.id))
-        reach = [h for h in named if h in seated]
-        outside = [h for h in named if h not in seated]
-    else:
-        reach, outside = named, []
+    # Whom a notice from this channel may reach (a private channel's own
+    # people), the same rule a message's mention goes by.
+    reach = await members.reached(room, named) if room is not None else named
+    outside = [h for h in named if h not in reach]
     told = await _record(session, doc.id, reach, author)
     if told:
         await _tell(session, doc, told, author, after, rows, room, task_id)
