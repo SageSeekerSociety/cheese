@@ -568,18 +568,22 @@ class HostPool:
         return customer_id, account_id
 
     async def leave(self, session_id: uuid.UUID) -> None:
-        """The session moves off its machine. A host's home goes, and with it
-        the slot; a home on a person's computer stays there, no session's, for
-        the idle sweep to destroy like any sandbox (``lifecycle``)."""
+        """The session moves off its machine. Its home stays where it is, no
+        session's, for the idle sweep to destroy like any sandbox
+        (``lifecycle``); on a host it holds its slot until then, since the
+        sandbox runs there until then. A home with nothing on the machine yet
+        (its host not enrolled) goes at once, and so does a whole VM's, which
+        the pool releases once no home is on it."""
         await self._repo.lock_pool()
         home = await self._repo.current_home(session_id)
         if home is None:
             return
-        if home.host_id is None:
+        host = None if home.host_id is None else await self._repo.get(home.host_id)
+        if host is not None and (host.device_id is None or host.whole_machine):
+            await self._repo.delete_home(home)
+        else:
             home.session_id = None
             await self._session.flush()
-        else:
-            await self._repo.delete_home(home)
 
     async def keep_on_device(
         self,

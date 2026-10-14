@@ -59,8 +59,9 @@ the hour, from the same packs as model calls (`docs/manual/dev/billing.md`, äº‘ç
   turn, and the conversation is told so.
 
 A host is released once it has had no sandbox on it for `CLOUD_HOST_IDLE_HOLD_S`. A session
-that switches away gives its home back after one best-effort checkpoint (`cheese sync --all`),
-whether or not the checkpoint went through. A host the provider fails before it is enrolled
+that switches away leaves its sandbox after one best-effort checkpoint (`cheese sync --all`),
+whether or not the checkpoint went through; the sandbox it left is destroyed by the idle sweep
+like any other, and holds its slot until then. A host the provider fails before it is enrolled
 holds nothing of anyone's: the pool gives it up, deletes it, and places its sessions again;
 after three such failures within an hour it stops creating hosts for the rest of the hour.
 
