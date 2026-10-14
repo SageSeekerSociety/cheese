@@ -393,6 +393,18 @@ describe('改团队资料', () => {
     expect(screen.queryByText('保存失败，请稍后重试')).toBeNull()
   })
 
+  // 弹窗自己那条用例只验「往外发了 clearErrors」，接线断掉照样绿：这里验屏幕上的效果。
+  it('撞名报错之后，人在名字那格一打字，那句报错就消失', async () => {
+    update.mockRejectedValue(new ApiError(409, 'taken', 'Conflict', undefined, undefined, { field: 'name' }))
+    const name = await openEditor()
+    await fireEvent.update(name, '芝士社')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await screen.findByText('这个名称已被占用，换一个试试')
+
+    await fireEvent.update(name, '芝士社二号')
+    await waitFor(() => expect(screen.queryByText('这个名称已被占用，换一个试试')).toBeNull())
+  })
+
   it('没权限和没网都留在整张表单上', async () => {
     update.mockRejectedValue(new ApiError(403, 'forbidden', 'Forbidden'))
     await openEditor()
