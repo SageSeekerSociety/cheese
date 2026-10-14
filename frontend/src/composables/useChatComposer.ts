@@ -226,25 +226,30 @@ export function useChatComposer(deps: ChatComposerDeps) {
 
   // 失败提示上的「重试」。只给最新的那一条：更早的失败已经被后面发生的事盖过去了，
   // 在它上面重试说不清是在重试什么。房间在跑、归档了，重试都没有意义。
+  const retiredRetries = ref(new Set<string>())
   function canRetryAt(i: number): boolean {
     if (i !== rows.value.length - 1) return false
     if (!showComposer() || topic()?.status === 'archived') return false
+    const block = rows.value[i]?.block
+    if (!block || retiredRetries.value.has(block.id)) return false
     return !awaitingReply.value && !outbox.value.length
   }
-  // 重试走的是「交给它」同一个入口：失败的那一轮没有把消息标成已读，所以它们还在
-  // 等人处理，平台重新开一轮去接。什么都没有可接的时候要说出来，不能按了没反应。
-  // 请求还没回来时再按一次就是再开一轮，所以按着的时候按钮是忙的。
+  // Receipt is not completion: identify the failed card, rather than assuming
+  // its original input is unread. A stale response must not change another room.
   const retryBusy = ref(false)
   async function retryNow() {
     const id = topic()?.id
-    if (!id || retryBusy.value) return
+    const block = rows.value.at(-1)?.block
+    if (!id || !block || retryBusy.value || !canRetryAt(rows.value.length - 1)) return
     retryBusy.value = true
     try {
-      const res = await summonAgent(id)
+      const res = await summonAgent(id, block.id)
+      if (res.started || res.reason === 'nothing_pending') retiredRetries.value.add(block.id)
+      if (topic()?.id !== id) return
       if (res.started) awaitingReply.value = true
       else if (res.reason === 'nothing_pending') errorMsg.value = t('work.room.retry.nothingPending')
     } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.retry.failed')
+      if (topic()?.id === id) errorMsg.value = e instanceof Error ? e.message : t('work.room.retry.failed')
     } finally {
       retryBusy.value = false
     }

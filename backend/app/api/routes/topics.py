@@ -25,6 +25,7 @@ from app.api.response import ok, page
 from app.api.room_task_rows import rail_tasks, tasks_under_blocks
 from app.api.topics_deps import _actor_in_place, _parse_moment
 from app.api.topics_rows import CardRow, TopicRow
+from app.api.topic_retry import summon_in_place
 from app.api.write_access import CHEESE_ONLY_IN_ROOM
 from app.core.config import settings
 from app.core.errors import ForbiddenError, NotFoundError, ValidationError
@@ -39,7 +40,7 @@ from app.domain.agent.liveness import (
 from app.domain.agent.project_feed import TOPICS, tell_project
 from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
-from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
+from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.agent.turn.intake.rewrite import text_as_sent
 from app.domain.block.asked import Awaited
 from app.domain.block.editing import edit_message
@@ -54,7 +55,6 @@ from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
 from app.domain.block.waits import MemberWait, MemberWaits
 from app.domain.conversation.services import room_of, threads_of_rooms
-from app.domain.delivery.agent import redispatch_undelivered
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.identity.actor import Actor
@@ -1144,50 +1144,9 @@ async def summon_agent(
     await resolver.authorize_topic(
         actor, project_id=place.project_id, topic_id=place.room_id
     )
-    # The conversation the button is in: a 支线's or a task's retry runs there.
-    if chat.has_running_turn(place.conversation_id):
-        return ok({"started": False, "reason": "working"})
-    if not await chat.has_unread_input(place.conversation_id):
-        # 房间里没有待读的消息，不等于这一下没事可做：平台自己欠这个频道的输入
-        # （任务的开始指令那类）也在账本上等着，等的是退避时间。点「重试」的意思
-        # 就是「现在」—— 不然那句话只能等这个项目里碰巧发生的下一件事把它捎上。
-        if await redispatch_undelivered(
-            chat.session_factory,
-            conversation_id=place.conversation_id,
-            chat=chat,
-            runner=runner,
-        ):
-            return ok({"started": True})
-        return ok({"started": False, "reason": "nothing_pending"})
-    # content 在有待读消息时会被待读窗口取代（_converse_impl 的 backlog 分支），
-    # 这里正是要那个结果：芝士收到的东西和「当时就 @ 了它」一模一样。这句只在
-    # 待读窗口刚好被别人清空的缝隙里当兜底。
-    #
-    # 交给谁：**这批消息点名交给谁，就交给谁**。房间里坐着不止一位 AI 队友时，
-    # 「房间的默认席位」是另一个答案 —— 取它的话，另一位队友的轮次失败之后一点
-    # 重试就换成默认芝士来接，而默认芝士那一轮的待读窗口里根本没有点名给那位队友
-    # 的消息（`_addressed_to` 按收件人过滤），于是它接了一轮却读不到真正找它的那
-    # 句话。没人被点名（没 @ 不等于没说），或者被点名的那位已经不在名册上（被请出
-    # 房间），才回落到默认席位。
-    members = TopicMemberService(db)
-    seat = await chat.pending_seat(place.conversation_id)
-    if seat is None or seat not in await members.agent_handles(place.room_id):
-        seat = await members.addressable_agent_handle(place.room_id)
-    runner.submit(
-        chat,
-        place.conversation_id,
-        author="system",
-        content="有人请你看一下这里还没读到的消息，照常处理。",
-        # 点名的是按下这个按钮的人，不是平台：他指名这个房间的芝士，寻址结果里
-        # 因此恰好有它一个，这一轮才跑得起来。
-        addressed=addressed_to_agent(seat),
-        nudge_event=(
-            say("pendingHandedTo", actor=f"<@{actor.handle}>", seat=f"<@{seat}>")
-            if seat
-            else say("pendingHandedOver", actor=f"<@{actor.handle}>")
-        ),
+    return await summon_in_place(
+        place=place, actor=actor, body=body, db=db, chat=chat, runner=runner
     )
-    return ok({"started": True})
 
 
 @router.post("/{topic_id}/webhook-token", dependencies=[CHEESE_ONLY_IN_ROOM])

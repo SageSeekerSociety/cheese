@@ -272,7 +272,12 @@ _NEVER_SENT = ("pending", "claimed")
 
 
 async def redispatch_undelivered(
-    sessions, *, conversation_id: uuid.UUID, chat, runner
+    sessions,
+    *,
+    conversation_id: uuid.UUID,
+    chat,
+    runner,
+    attempt_id: uuid.UUID | None = None,
 ) -> int:
     """Send this conversation, now, the inputs the platform still owes it.
 
@@ -294,23 +299,17 @@ async def redispatch_undelivered(
     """
     stamp = now()
     async with sessions() as session:
-        owed = list(
-            (
-                await session.scalars(
-                    select(Delivery.id).where(
-                        Delivery.conversation_id == conversation_id,
-                        Delivery.agent_instance_id.is_not(None),
-                        Delivery.state.in_(_NEVER_SENT),
-                        Delivery.sent_at.is_(None),
-                        Delivery.attempts > 0,
-                        or_(
-                            Delivery.lease_until.is_(None),
-                            Delivery.lease_until <= stamp,
-                        ),
-                    )
-                )
-            ).all()
+        owed_statement = select(Delivery.id).where(
+            Delivery.conversation_id == conversation_id,
+            Delivery.agent_instance_id.is_not(None),
+            Delivery.state.in_(_NEVER_SENT),
+            Delivery.sent_at.is_(None),
+            Delivery.attempts > 0,
+            or_(Delivery.lease_until.is_(None), Delivery.lease_until <= stamp),
         )
+        if attempt_id is not None:
+            owed_statement = owed_statement.where(Delivery.attempt_id == attempt_id)
+        owed = list((await session.scalars(owed_statement)).all())
         if not owed:
             return 0
         # The backoff is the only thing holding these back, and it is a wait no

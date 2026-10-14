@@ -565,7 +565,7 @@ class ChatService(SessionRecovery):
             if not summon:
                 yield {"type": "done"}
                 return
-            user_block_id = None
+            user_block_id = uuid.UUID(reply_to) if is_resume and reply_to else None
         else:
             (
                 user_payloads,
