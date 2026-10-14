@@ -20,7 +20,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import { parseDiffLines } from '../../lib/diff'
 import { docLineInTurn, docLineOf, isDocLine } from '../../lib/docEditLine'
 import { repeatsLine } from '../../lib/noticeRepeats'
-import { noticeText } from '../../lib/noticeText'
+import { noticeNotified, noticeText } from '../../lib/noticeText'
 import { confirmTarget, environmentTarget } from '../../lib/platformNotice'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AgentNoticeFrame from '../AgentNoticeFrame.vue'
@@ -150,8 +150,12 @@ const showRetry = computed(
 const confirmAt = computed(() => confirmTarget(props.block, props.projectId))
 const environmentAt = computed(() => environmentTarget(props.block, props.projectId))
 
+// 提示里的人只是被提到（浅色 chip、不带 @）；这件事同时叫醒的那一位（交给它的 AI 队友、
+// 被派去修合并后检查的那一位）才是带 @ 的实心 chip（lib/noticeText 的 noticeNotified）。
+const refs = computed(() => ({ ...props.refs, notified: noticeNotified(props.block) }))
+
 function renderPlain(text: string): string {
-  return renderPlainWith(text, props.refs)
+  return renderPlainWith(text, refs.value)
 }
 
 // 文档 diff 里的空行不画出来：一行只有空白时留一个空格子比留一条假的「改动」好。
@@ -713,12 +717,15 @@ details[open]::details-content {
 .cv-measure .room-happening {
   content-visibility: visible;
 }
-.room-happening :deep(.mention) {
+/* 居中的淡行（置顶、归档、加入、改设置……）里的频道、文件：淡字、不垫底，悬停加下划线。
+   提到的人照常是浅色 chip（.name-ref），叫醒了谁的那一颗照常是实心 @chip——这一行和
+   别处同一条规则。 */
+.room-happening :deep(.mention:is(.file-ref, .topic-ref)) {
   color: var(--muted);
   background: none;
   cursor: pointer;
 }
-.room-happening :deep(.mention:hover) {
+.room-happening :deep(.mention:is(.file-ref, .topic-ref):hover) {
   text-decoration: underline;
 }
 .room-happening__go {

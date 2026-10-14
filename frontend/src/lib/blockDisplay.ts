@@ -14,7 +14,7 @@ import type { RefNames } from './refChip'
 import { isAgentBlock } from './authorship'
 import { docReadNow } from './docReadLoad'
 import { fileLabel, videoMimeOf } from './fileKind'
-import { plainRefs } from './refChip'
+import { plainRefs, toldByMessage } from './refChip'
 
 import { t } from '@/i18n'
 
@@ -48,7 +48,7 @@ export function replySnippet(block: Block, maps: RefNames, max = 24): string {
   const read = isAgentBlock(block) ? docReadNow() : null
   const source = read ? read.plainText(block.content, 'chat') : block.content
   // A message's @ told its person, so its quote keeps the "@" its chip shows.
-  const names = block.kind === 'message' ? { ...maps, notified: true } : maps
+  const names = block.kind === 'message' ? toldByMessage(maps) : maps
   return clip(plainRefs(source, names).replace(/\s+/g, ' ').trim(), max)
 }
 

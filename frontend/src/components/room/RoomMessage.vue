@@ -10,6 +10,7 @@
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
 
@@ -23,6 +24,7 @@ import {
   replySnippet,
 } from '../../lib/blockDisplay'
 import { fileIcon } from '../../lib/fileKind'
+import { toldByMessage } from '../../lib/refChip'
 import { renderPlain as renderPlainWith } from '../../lib/renderMessage'
 import AskQuickReplies from '../ask/AskQuickReplies.vue'
 import AttachmentImage from '../AttachmentImage.vue'
@@ -63,7 +65,7 @@ const props = defineProps<{
   external?: boolean
   time: string
   /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
-  refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  refs: RefNames
   /** 自己的 handle，用来标出哪些表情是自己点的。 */
   viewer: string
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */
@@ -180,8 +182,9 @@ const {
 )
 
 // A message's `<@handle>` went through the mention path when it was sent or
-// edited, so each one told its person: drawn as the @chip.
-const told = computed(() => ({ ...props.refs, notified: true }))
+// edited, so each one told its person (drawn as the @chip), unless a
+// members-only channel could not reach them.
+const told = computed(() => toldByMessage(props.refs))
 
 function renderPlain(text: string): string {
   return renderPlainWith(text, told.value)

@@ -28,6 +28,22 @@ export interface RefNames {
    * Absent: none did.
    */
   notified?: boolean | ((handle: string) => boolean)
+  /**
+   * In a members-only channel, the people a message's @ can notify there (its
+   * members); anyone else named in it was not told. Absent: anyone can be.
+   */
+  reachable?: ReadonlySet<string>
+}
+
+/** What a message's `<@handle>` told, with `names` as the room hands them over:
+ *  each one notified its person, except someone a members-only channel cannot
+ *  reach. `<@all>` / `<@here>` are the room itself. */
+export function toldByMessage(names: RefNames): RefNames {
+  const reachable = names.reachable
+  return {
+    ...names,
+    notified: reachable ? (handle) => handle === 'all' || handle === 'here' || reachable.has(handle) : true,
+  }
 }
 
 /** Whether the `<@handle>` in text drawn with `names` notified its person. */

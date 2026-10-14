@@ -148,6 +148,7 @@ defineExpose({
     </div>
     <div v-if="task.conclusion" class="task-overview__conclusion">
       <div class="t-meta c-faint">{{ t('work.task.conclusion') }}</div>
+      <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the paragraph only delegates: each name in it is its own button (role, tabindex, Enter/Space via installRefChipKeys) -->
       <p class="t-body task-overview__conclusion-text" @click="onConclusionClick" v-html="conclusionHtml" />
     </div>
 

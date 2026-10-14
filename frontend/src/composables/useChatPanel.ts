@@ -19,6 +19,7 @@ import type { Block, ChatAttachment, Topic, WsServerFrame } from '../cx_types'
 import type { Outgoing } from '../lib/composerDrafts'
 import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
+import type { RefNames } from '../lib/refChip'
 import type { ChatPanelOptions } from './chatPanelContract'
 
 import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
@@ -93,7 +94,9 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // handle→name and id→title maps they render with, from the roster / topics props.
   const mentionNames = reactive<Record<string, string>>({})
   const topicTitles = reactive<Record<string, string>>({})
-  const refMaps = { mentionNames, topicTitles }
+  // `reachable`: in a members-only channel, whom a message's @ can notify (its
+  // members); filled once the room's roster is here (below).
+  const refMaps = reactive<RefNames>({ mentionNames, topicTitles })
 
   const AUTHOR = myHandle()
 
@@ -103,6 +106,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
   // 名册、座位、显示名、头像 —— 见 room/composables/useRoomRoster。
   // 房间名册和项目名册是两份，因为 AI 队友的座位只在前者上。
   const {
+    roomMembers,
+    rosterLoaded,
     agentSeat: rosterSeat,
     mentionPool,
     memberByHandle,
@@ -121,6 +126,16 @@ export function useChatPanel(opts: ChatPanelOptions) {
       errorMsg.value = message
     },
   })
+
+  // 私密频道里 @ 一个不在频道里的人，他收不到通知（后端 TopicMemberService.reached），
+  // 那一处画成提到而不是 @chip。名册没到之前不下结论，照常当作通知到了。
+  watch(
+    () => [topic()?.members_only, rosterLoaded.value, roomMembers.value] as const,
+    ([membersOnly, loaded, rows]) => {
+      refMaps.reachable = membersOnly && loaded ? new Set(rows.map((row) => row.member_handle)) : undefined
+    },
+    { immediate: true }
+  )
 
   // 谁在这间房说话、界面上怎么称呼它、@ 渲染成谁的名字 —— 见 useAgentNaming。
   const { agentSeat, agentName, composerHint } = useAgentNaming({
