@@ -131,5 +131,6 @@ export function useFakeDocCollab(room: () => string | null) {
     stores: ref(0),
     renames: ref(0),
     deleted: ref(false),
+    mentionedOutside: shallowRef(null),
   }
 }

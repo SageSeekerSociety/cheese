@@ -185,6 +185,8 @@ defineExpose({ pulse, highlightTurn, reviewEdits })
     :agent-handle="props.agentHandle"
     :mention-names="people.names.value"
     :mention-people="people.people.value"
+    :notified-mentions="doc.notifiedMentions.value"
+    :fetch-notified-mentions="doc.fetchNotifiedMentions"
     :bare="props.bare"
     :untitled="!!props.taskId"
     :bar-to="props.barTo"

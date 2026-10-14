@@ -20,7 +20,7 @@ import { addComment, getDocNodes } from '../api'
 import { changeCanvas, copyCanvas, createCanvas, getCanvas, setCanvasHeight } from '../api/canvases'
 import { askDocAgent, replyWithAnswer, stopDocAgent } from '../api/docAgent'
 import { getRoomDocument } from '../api/docCollab'
-import { applyDocEdits, getPendingSuggestions } from '../api/docEdits'
+import { applyDocEdits, getNotifiedMentions, getPendingSuggestions } from '../api/docEdits'
 import { getDocVersions, restoreDocVersion } from '../api/docHistory'
 import { StreamRefused } from '../api/eventStream'
 import { documentImageUrl, getDocumentAbout, renameDocument } from '../api/projectDocuments'
@@ -104,6 +104,25 @@ export function usePanelDoc(props: PanelDocProps) {
   // 最近一次编辑（谁、什么时候）：顶栏左边那一句，跟着每一次存回重读。
   const lastEdit = ref<{ actor: string; at: string } | null>(null)
   let lastEditSequence = 0
+  // 正文 @ 到并通知过谁：只有他们的名字画成 @chip。刚存的那一版可能刚通知了一个人，
+  // 所以跟着每一次存回重读。
+  // 正文里有了 @ 才去读（画的那一半说一声），之后每次存回跟着重读。
+  const notifiedMentions = ref<string[]>([])
+  let notifiedSequence = 0
+  let notifiedWanted = false
+  async function loadNotifiedMentions(did: string) {
+    const sequence = ++notifiedSequence
+    const told = await getNotifiedMentions(did)
+    if (disposed || documentId.value !== did || sequence !== notifiedSequence) return
+    notifiedMentions.value = told
+  }
+
+  /** 正文里出现了 @：读这份文档通知过谁。 */
+  function fetchNotifiedMentions() {
+    const did = documentId.value
+    notifiedWanted = true
+    if (did) void loadNotifiedMentions(did).catch(() => {})
+  }
 
   // ---- 读 ----
   async function loadSuggestionReasons(did: string) {
@@ -246,6 +265,9 @@ export function usePanelDoc(props: PanelDocProps) {
     reasonsWanted = false
     lastEdit.value = null
     lastEditSequence++
+    notifiedMentions.value = []
+    notifiedSequence++
+    notifiedWanted = false
     if (id) void loadLastEdit(id).catch(() => {})
   })
 
@@ -292,6 +314,7 @@ export function usePanelDoc(props: PanelDocProps) {
   watch([() => props.activityTick, collab.stores], () => {
     const id = documentId.value
     if (id) void loadLastEdit(id).catch(() => {})
+    if (id && notifiedWanted) void loadNotifiedMentions(id).catch(() => {})
     if (id && reasonsWanted) void loadSuggestionReasons(id).catch(() => {})
   })
 
@@ -318,6 +341,8 @@ export function usePanelDoc(props: PanelDocProps) {
     mentionOutside,
     suggestionReasons,
     fetchSuggestionReasons,
+    notifiedMentions,
+    fetchNotifiedMentions,
     // 动作
     commentAuthor: AUTHOR,
     sendComment: (content: string, quote: string) => {
