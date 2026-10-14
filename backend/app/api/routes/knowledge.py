@@ -4,6 +4,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -150,7 +151,7 @@ async def list_knowledge(
         "total": total,
     }
     data = {"knowledges": items, "page": page}
-    return {"code": 200, "message": "success", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -163,11 +164,7 @@ async def get_knowledge_by_id(
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     knowledge = await service.get(knowledge_id=knowledge_id, user_id=auth_user.user_id)
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {"knowledge": knowledge},
-    }
+    return ok({"knowledge": knowledge})
 
 
 @router.patch(
@@ -188,11 +185,7 @@ async def patch_knowledge(
         content=payload.content,
         labels=payload.labels,
     )
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {"knowledge": knowledge},
-    }
+    return ok({"knowledge": knowledge})
 
 
 @router.delete(
@@ -205,10 +198,7 @@ async def delete_knowledge(
     service: KnowledgeService = Depends(get_knowledge_service),
 ) -> dict:
     await service.delete(knowledge_id=knowledge_id, user_id=auth_user.user_id)
-    return {
-        "code": 200,
-        "message": "OK",
-    }
+    return ok(None)
 
 
 @router.post(
@@ -226,11 +216,7 @@ async def upvote_knowledge(
         )
     except ValueError as exc:
         raise BadRequestError(str(exc)) from exc
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {"knowledge": knowledge},
-    }
+    return ok({"knowledge": knowledge})
 
 
 @router.delete(
@@ -245,8 +231,4 @@ async def remove_upvote_knowledge(
     knowledge = await service.remove_upvote(
         knowledge_id=knowledge_id, user_id=auth_user.user_id
     )
-    return {
-        "code": 200,
-        "message": "success",
-        "data": {"knowledge": knowledge},
-    }
+    return ok({"knowledge": knowledge})

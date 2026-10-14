@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
@@ -44,8 +45,4 @@ async def set_my_language(
         raise BadRequestError(f"Unsupported language: {payload.language}")
     if not await set_language(session, auth_user.user_id, payload.language):
         raise NotFoundError("User not found")
-    return {
-        "code": 200,
-        "message": "Language saved.",
-        "data": {"language": payload.language},
-    }
+    return ok({"language": payload.language}, "Language saved.")
