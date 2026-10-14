@@ -395,8 +395,12 @@ def test_plan(root, changed, scope, tmp, conservative=False, memory_mib=3072, fr
                          "cwd": root / "frontend", "evidence": {"kind": "types", "mode": "full-config-fallback"}})
         elif ts_files:
             config = _narrow_config(root, tmp, ts_files)
+            # Both branches go through scripts/typecheck.mjs, which generates
+            # src/api/openapi.d.ts from backend/openapi.json before judging: that
+            # file is not committed, and the narrow project reaches it through
+            # src/cx_types.ts like the full one does.
             plan.append({"id": "frontend-typecheck-changed", "cwd": root / "frontend",
-                         "command": ["node", "scripts/tsc-ratchet.mjs", "--project", str(config), "--json"],
+                         "command": ["node", "scripts/typecheck.mjs", "--project", str(config), "--json"],
                          "evidence": {"kind": "types", "files": ts_files,
                                       "limitation": "changed roots and imports, not all downstream consumers"}})
         else:

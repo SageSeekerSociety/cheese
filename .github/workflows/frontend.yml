@@ -229,10 +229,12 @@ jobs:
 
       # src/api/openapi.d.ts is generated from backend/openapi.json, which the
       # backend lint job keeps equal to what the app serves
-      # (`export_openapi --check`). This is the other half: the committed types
-      # are exactly what that document says. Pure node, ~4s.
-      - name: API types match backend/openapi.json
-        run: pnpm run check:api-types
+      # (`export_openapi --check`). It is not committed, and the type check
+      # below generates it before reading it (scripts/typecheck.mjs) — so there
+      # is no separate "types match the document" step to run, and no way for
+      # the two to disagree. It left the repository because a route change
+      # rewrote 1.4 MB of it in every PR that touched a route, which is what two
+      # parallel route changes collided in.
 
       # The *paths* this frontend calls are judged in the `request-paths` job
       # below: it needs the backend installed to read the routes off the app.
@@ -249,8 +251,11 @@ jobs:
       - name: Ratchet unit tests
         run: pnpm run test:ratchet
 
-      # Not a plain `vue-tsc --noEmit`: 31 pre-existing errors are frozen in
-      # tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
+      # Not a plain `vue-tsc --noEmit`: the errors the tree already has are frozen
+      # in tsc-baseline.json and any NEW one fails. See scripts/tsc-ratchet-core.mjs.
+      # Runs through scripts/typecheck.mjs, which generates src/api/openapi.d.ts
+      # first: the judging project imports it — src/cx_types.ts, and
+      # src/types/{canvas,ownAgents,modelConnections}.ts directly.
       - name: Type check (ratchet)
         env:
           # Node's default heap lands around 2GB and vue-tsc on this tree peaks
