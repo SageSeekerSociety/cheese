@@ -21,6 +21,12 @@ import pytest
 
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
+from app.domain.delivery.agent import (
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+)
+from app.domain.delivery.ledger import settle_card
 from app.domain.review import github_pr
 from app.domain.review.github_pr import OpenedPR
 from app.domain.review.github_pr_status import PullRequestStatus
@@ -188,7 +194,16 @@ def _poll(client) -> dict:
     """
     from app.domain.review import pr_poll
 
-    return client.portal.call(pr_poll.poll_open_prs, _chat_service(), announce)
+    return client.portal.call(
+        lambda: pr_poll.poll_open_prs(
+            _chat_service(),
+            announce,
+            settle_card=settle_card,
+            record_instruction=record_task_instruction,
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
+        )
+    )
 
 
 def _room(client, topic_id: str) -> str:
@@ -3097,7 +3112,9 @@ def _sweep(client) -> dict:
 
     return client.portal.call(
         lambda: pr_publish.sweep_draft_prs(
-            client.test_request_factory, announce=announce
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
         )
     )
 
@@ -3351,7 +3368,9 @@ def test_a_batch_that_merged_after_the_list_was_taken_gets_no_pr(
 
     counts = client.portal.call(
         lambda: pr_publish.sweep_draft_prs(
-            client.test_request_factory, announce=announce
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
         )
     )
 

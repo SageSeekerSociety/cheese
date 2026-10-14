@@ -29,7 +29,9 @@ from app.domain.review.nudges import (
 from app.domain.review.nudges import (
     _title_nudge as _title_nudge_from_nudges,
 )
-from app.domain.review.ports import Announce
+from app.domain.review.ports import (
+    Announce,
+)
 from app.domain.review.room_notices import (
     _announce_filed as _announce_filed_from_room,
 )
@@ -85,6 +87,7 @@ def _announce_of(self: pkg.AcceptService) -> Announce:
     当场炸掉，比静默不发好。
     """
     if self._announce is None:
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
         raise RuntimeError(
             "AcceptService was built without an `announce`, and this path speaks: "
             "the door that built it must hand one in "
@@ -153,20 +156,29 @@ async def _tell_the_reviewer(
         meta=meta,
         also=also,
         announce=_announce_of(self),
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
     )
 
 
 async def _settle_the_card(
     self: pkg.AcceptService, card: AcceptCard, outcome: str
 ) -> None:
-    return await _settle_the_card_from_room(self._session, card, outcome)
+    return await _settle_the_card_from_room(
+        self._session, card, outcome, settle_card=self._settle_card
+    )
 
 
 async def _notify_ready(
     self: pkg.AcceptService, card: AcceptCard, topic: Topic
 ) -> None:
     return await _notify_ready_from_room(
-        self._session, card, topic, announce=_announce_of(self)
+        self._session,
+        card,
+        topic,
+        announce=_announce_of(self),
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
     )
 
 
@@ -182,6 +194,8 @@ async def _note_needs_human(
         self._session,
         card=card,
         topic=topic,
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
         reason=reason,
         explain=explain,
         announce=_announce_of(self),
@@ -200,6 +214,9 @@ async def _record_task_nudge(
         meta=meta,
         dispatch=dispatch,
         announce=_announce_of(self),
+        record_instruction=self._record_instruction,
+        seat_instance_id=self._seat_instance_id,
+        record_agent=self._record_agent,
     )
 
 

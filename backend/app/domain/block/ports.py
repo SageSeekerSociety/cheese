@@ -22,7 +22,6 @@ from typing import Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.delivery_events import DeliveryEvent
-from app.domain.task.models import Task
 
 
 class Notifier(Protocol):
@@ -52,13 +51,17 @@ class Dispatcher(Protocol):
 
 
 class RecordInstruction(Protocol):
-    """给任务自己的席位留一句话，等它下一轮读到。"""
+    """给任务自己的席位留一句话，等它下一轮读到。
+
+    收的是任务的 id，不是那一行：写下 `Task` 这个类型就从本包往 `room_task`
+    伸一条边，而 `block -> room_task` 正是 C3 在拆的那个环（`editing` 那条还
+    冻在 `ignore_imports` 里）。谁调用谁给，所以本包只说自己知道的那一个值。"""
 
     async def __call__(
         self,
         session: AsyncSession,
         event: DeliveryEvent,
         *,
-        task: Task,
+        task_id: uuid.UUID,
         content: str,
     ) -> uuid.UUID | None: ...

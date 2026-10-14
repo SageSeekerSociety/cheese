@@ -30,6 +30,7 @@ from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.remote_execution import launch
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
@@ -550,7 +551,9 @@ async def test_an_archived_rooms_cleanup_checkpoints_once_and_goes_on(
     remote = _machines(monkeypatch, push=push)
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as db:
-        await TopicService(db).archive(room.topic_id, by="alice")
+        await TopicService(db).archive(
+            room.topic_id, by="alice", settle_card=settle_card
+        )
         await db.commit()
     entry = {
         "kind": "device",

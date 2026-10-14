@@ -222,7 +222,7 @@ async def _tell_the_card(
             payload={"projectId": str(block.project_id), "topicId": str(task.room_id)},
             occurred_at=block.updated_at,
         ),
-        task=task,
+        task_id=task.id,
         content=(
             f"{editor} 改了之前说的一句（消息 id {block.id}），改后是：\n"
             f"{block.content}"

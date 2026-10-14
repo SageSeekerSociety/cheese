@@ -41,6 +41,7 @@ from app.domain.block.models import (
 )
 from app.domain.block.repositories import BlockRepository
 from app.domain.conversation.services import room_of
+from app.domain.delivery_events import SettleCard
 from app.domain.identity.handles import (
     CHEESE_NAME,
     agent_instance_handle,
@@ -616,7 +617,9 @@ class TopicService:
 
     # ---- 手动归档 / 取消归档 (归档去向, spec §6.3 extension) -------------
 
-    async def archive(self, topic_id: uuid.UUID, *, by: str) -> Topic:
+    async def archive(
+        self, topic_id: uuid.UUID, *, by: str, settle_card: SettleCard
+    ) -> Topic:
         """A person archives a channel (idempotent): it leaves everyone's
         sidebar and is read, not spoken in, until someone unarchives it. A
         channel still holding open tasks is refused: archiving it would close
@@ -634,12 +637,14 @@ class TopicService:
             for task in await TaskService(self._session).list_in_room(topic.id)
         ):
             raise ValidationError(say("channelArchiveOpenTasks"))
-        await self._archive_one(topic, by=by)
-        await self._archive_children(topic, by=by)
+        await self._archive_one(topic, by=by, settle_card=settle_card)
+        await self._archive_children(topic, by=by, settle_card=settle_card)
         await self._session.flush()
         return topic
 
-    async def _archive_children(self, topic: Topic, *, by: str) -> None:
+    async def _archive_children(
+        self, topic: Topic, *, by: str, settle_card: SettleCard
+    ) -> None:
         """Closing a place closes what is inside it.
 
         Two kinds of inside, and they are not the same thing. Rooms nest one
@@ -679,8 +684,10 @@ class TopicService:
         for child in children:
             if child.status == TopicStatus.archived:
                 continue
-            await self._archive_one(child, by=by, cascaded_from=topic.title)
-            await self._archive_children(child, by=by)
+            await self._archive_one(
+                child, by=by, cascaded_from=topic.title, settle_card=settle_card
+            )
+            await self._archive_children(child, by=by, settle_card=settle_card)
 
     async def _overview_room(self, project_id: uuid.UUID) -> uuid.UUID:
         """项目总览那个房间（`TopicKind.root`）——项目的事落在这里。
@@ -702,7 +709,12 @@ class TopicService:
         return await self._overview_room(topic.project_id)
 
     async def _archive_one(
-        self, topic: Topic, *, by: str, cascaded_from: str | None = None
+        self,
+        topic: Topic,
+        *,
+        by: str,
+        settle_card: SettleCard,
+        cascaded_from: str | None = None,
     ) -> None:
         topic.status = TopicStatus.archived
         archived_at = datetime.now(UTC)
@@ -731,6 +743,7 @@ class TopicService:
             topic_title=topic.title,
             overview_room_id=overview_room,
             by=by,
+            settle_card=settle_card,
         )
         note = (
             say("roomArchivedWithParent", room=topic.title, parent=cascaded_from)
@@ -801,7 +814,9 @@ class TopicService:
 
     # ---- 删除 (归档的去向，清单第 2 条) ---------------------------------
 
-    async def delete(self, topic_id: uuid.UUID, *, by: str) -> None:
+    async def delete(
+        self, topic_id: uuid.UUID, *, by: str, settle_card: SettleCard
+    ) -> None:
         """A person deletes a channel: it leaves every list for good, and what
         was said in it, the tasks in it and its documents go with it.
 
@@ -827,8 +842,8 @@ class TopicService:
                 for task in await TaskService(self._session).list_in_room(topic.id)
             ):
                 raise UnprocessableEntityError(say("channelArchiveOpenTasks"))
-            await self._archive_one(topic, by=by)
-            await self._archive_children(topic, by=by)
+            await self._archive_one(topic, by=by, settle_card=settle_card)
+            await self._archive_children(topic, by=by, settle_card=settle_card)
         deleted_at = datetime.now(UTC)
         topic.deleted_at = deleted_at
         # 归档把清理排在宽限之后；删除就排在现在 —— 删掉就是删掉，不必等一天。
@@ -846,7 +861,9 @@ class TopicService:
             operation.due_at = deleted_at
         await self._session.flush()
 
-    async def archive_with_project(self, project_id: uuid.UUID, *, by: str) -> None:
+    async def archive_with_project(
+        self, project_id: uuid.UUID, *, by: str, settle_card: SettleCard
+    ) -> None:
         """Archive every room of a project being archived — the overview and the
         private chats too, which nobody can archive one at a time.
 
@@ -865,8 +882,8 @@ class TopicService:
         for topic in rooms:
             # The overview's children were already taken along with it.
             if topic.status != TopicStatus.archived:
-                await self._archive_one(topic, by=by)
-                await self._archive_children(topic, by=by)
+                await self._archive_one(topic, by=by, settle_card=settle_card)
+                await self._archive_children(topic, by=by, settle_card=settle_card)
             topic.archived_with_project = True
         await self._session.flush()
 

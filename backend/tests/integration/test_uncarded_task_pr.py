@@ -3,6 +3,7 @@
 import pytest
 
 from app.domain.agent.announce import announce
+from app.domain.delivery.agent import record_task_instruction
 from app.domain.review import pr_poll
 from app.domain.room_task.models import Task, TaskStatus
 from tests.delivery import delivery_task
@@ -40,10 +41,16 @@ def test_direct_merge_settles_uncarded_task_once(client, app_world, manually_clo
     app_world["fake"].merge_externally(number)
 
     first = client.portal.call(
-        pr_poll.poll_uncarded_task_prs, _chat_service(), announce
+        pr_poll.poll_uncarded_task_prs,
+        _chat_service(),
+        announce,
+        record_instruction=record_task_instruction,
     )
     second = client.portal.call(
-        pr_poll.poll_uncarded_task_prs, _chat_service(), announce
+        pr_poll.poll_uncarded_task_prs,
+        _chat_service(),
+        announce,
+        record_instruction=record_task_instruction,
     )
     assert first["tasks_merged"] == 1 and first["errors"] == []
     assert second["tasks_merged"] == 0

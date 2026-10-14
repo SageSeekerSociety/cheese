@@ -44,7 +44,7 @@ from app.domain.project.models import Project
 from app.domain.review import landing_forge
 from app.domain.review.landing_forge import Check, ForgeUnavailable, LandingReads
 from app.domain.review.landing_models import ChecksOutcome, DeployOutcome, TaskLanding
-from app.domain.review.ports import Announce
+from app.domain.review.ports import Announce, RecordInstruction
 from app.domain.review.room_notices import tell_room_undelivered
 from app.domain.review.task_landing import go_on_while_working, tell_agent
 from app.domain.room_task.closing import close_overdue
@@ -59,12 +59,14 @@ logger = logging.getLogger("cheesex.review.landing_watch")
 _FAILED = frozenset({"failure", "timed_out", "startup_failure"})
 
 
-async def watch_landings(chat, announce: Announce) -> dict:
+async def watch_landings(
+    chat, announce: Announce, *, record_instruction: RecordInstruction | None
+) -> dict:
     """One look at every merge still being watched, the tasks being written up
     whose AI teammate has gone on working, and the overdue closings."""
 
     sessions = chat.session_factory
-    gone_on = await go_on_while_working(sessions)
+    gone_on = await go_on_while_working(sessions, record_instruction=record_instruction)
     async with sessions() as session:
         closed = await close_overdue(session, chat)
         for overdue in closed:
@@ -86,7 +88,12 @@ async def watch_landings(chat, announce: Announce) -> dict:
     errors: list[str] = []
     for landing_id in ids:
         try:
-            looked += await _look(chat, landing_id, announce=announce)
+            looked += await _look(
+                chat,
+                landing_id,
+                announce=announce,
+                record_instruction=record_instruction,
+            )
         except Exception as exc:  # noqa: BLE001 — one merge must not stop the rest
             errors.append(f"{landing_id}: {exc}")
             logger.warning("landing watch failed for %s", landing_id, exc_info=True)
@@ -98,7 +105,13 @@ async def watch_landings(chat, announce: Announce) -> dict:
     }
 
 
-async def _look(chat, landing_id: uuid.UUID, *, announce: Announce) -> int:
+async def _look(
+    chat,
+    landing_id: uuid.UUID,
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction | None,
+) -> int:
 
     sessions = chat.session_factory
     async with sessions() as session:
@@ -152,7 +165,14 @@ async def _look(chat, landing_id: uuid.UUID, *, announce: Announce) -> int:
             outcome, failed = checks
             landing.checks = outcome
             if outcome == ChecksOutcome.failed:
-                await _checks_failed(session, task, sha, failed, announce=announce)
+                await _checks_failed(
+                    session,
+                    task,
+                    sha,
+                    failed,
+                    announce=announce,
+                    record_instruction=record_instruction,
+                )
         if deployed is not None and landing.deploy == DeployOutcome.watching:
             if deployed == DeployOutcome.unavailable:
                 landing.deploy = DeployOutcome.unavailable
@@ -204,7 +224,13 @@ async def _judge_checks(
 
 
 async def _checks_failed(
-    session, task, sha: str, failed: list[Check], *, announce: Announce
+    session,
+    task,
+    sha: str,
+    failed: list[Check],
+    *,
+    announce: Announce,
+    record_instruction: RecordInstruction | None,
 ) -> None:
     """The merge broke a check on the default branch: the task's AI teammate
     fixes it, in the task, reopened if it had closed."""
@@ -229,6 +255,7 @@ async def _checks_failed(
             failed=[(run.name, run.url) for run in failed],
             reopened=reopened,
         ),
+        record_instruction=record_instruction,
     )
     agent = f"<@{await _seat(session, task)}>"
     names = listing([run.name for run in failed])

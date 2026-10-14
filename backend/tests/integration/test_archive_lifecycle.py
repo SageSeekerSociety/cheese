@@ -16,6 +16,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.errors import ConflictError
 from app.domain.agent.models import AgentTurn
+from app.domain.delivery.ledger import settle_card
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.services import ProjectService
@@ -47,7 +48,7 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
         room = await service.create(
             project_id=project.id, title="Room", created_by="owner"
         )
-        await service.archive(room.id, by="owner")
+        await service.archive(room.id, by="owner", settle_card=settle_card)
         assert room.archived_at is not None
         deadline = room.archived_at + timedelta(seconds=37)
         assert room.cleanup_due_at == deadline
@@ -56,11 +57,11 @@ async def test_archive_deadline_is_stable_across_retries_and_configuration_chang
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 900)
     async with business_db_factory() as session:
         service = TopicService(session)
-        room = await service.archive(room_id, by="owner")
+        room = await service.archive(room_id, by="owner", settle_card=settle_card)
         assert room.cleanup_due_at == deadline
         await service.unarchive(room_id, by="owner")
         assert room.cleanup_due_at is None
-        await service.archive(room_id, by="owner")
+        await service.archive(room_id, by="owner", settle_card=settle_card)
         assert room.cleanup_due_at == room.archived_at + timedelta(seconds=900)
 
 
@@ -79,7 +80,9 @@ async def archived_room(client, monkeypatch):
         room = await TopicService(session).create(
             project_id=project.id, title="Room", created_by="owner"
         )
-        await TopicService(session).archive(room.id, by="owner")
+        await TopicService(session).archive(
+            room.id, by="owner", settle_card=settle_card
+        )
         await session.commit()
         return room.id, room.cleanup_id
 

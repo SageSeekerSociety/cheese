@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.addressing import NAMES_NOBODY, Event
 from app.domain.block.models import Block
+from app.domain.delivery_events import DeliveryEvent
 
 
 class Announce(Protocol):
@@ -46,3 +47,61 @@ class Announce(Protocol):
         `Poster` 那样写成 `object`。
         """
         ...
+
+
+class RecordInstruction(Protocol):
+    """给任务自己的席位留一句话，等它下一轮读到。
+
+    形状是 `app.domain.delivery.agent.record_task_instruction` 的形状；返回的是
+    记下的那一行投递的 id（一个任务同时只有一个席位，所以这一行也认得出是谁），
+    没记下就是 ``None`` —— 同一次事件里要投给别的席位时按它去重。
+
+    收任务的 id 而不是那一行：那一行是第 4 层 `room_task` 的模型，被递进来的
+    那几个函数要的是它里面的四个字段，读表的事留在投递包自己做。"""
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        event: DeliveryEvent,
+        *,
+        task_id: uuid.UUID,
+        content: str,
+    ) -> uuid.UUID | None: ...
+
+
+class RecordAgent(Protocol):
+    """把一条事件记进某个 agent 席位那本报账，不开工，只投递。
+
+    形状是 `app.domain.delivery.agent.record_agent` 的形状。返回值不透明：那个实现
+    落下的行本包不看，记完就完。"""
+
+    async def __call__(
+        self,
+        session: AsyncSession,
+        event: DeliveryEvent,
+        *,
+        conversation_id: uuid.UUID,
+        instance_id: uuid.UUID,
+        content: str,
+    ) -> object: ...
+
+
+class SeatInstanceId(Protocol):
+    """这个项目里某个席位的实例 id；没有这个席位就是 ``None``。
+
+    形状是 `app.domain.delivery.agent.seat_instance_id` 的形状。递回来的是 id 而
+    不是席位那一行：`AgentInstance` 是第 3 层的模型，本包认不出它。"""
+
+    async def __call__(
+        self, session: AsyncSession, project_id: uuid.UUID, seat: str
+    ) -> uuid.UUID | None: ...
+
+
+class DispatchPending(Protocol):
+    """把投递账本上等着的那些放出去。
+
+    不带参数：递进来的那一个已经把房间服务、跑机器和会话工厂包在里面了
+    （`app.domain.delivery.agent.dispatch_pending` 要的三样），本包只决定「现在放」。
+    返回值不透明：那个实现答的是放出多少份。"""
+
+    async def __call__(self) -> object: ...

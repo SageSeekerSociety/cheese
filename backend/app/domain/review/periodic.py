@@ -7,8 +7,15 @@ from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent.chat import ChatService
+from app.domain.delivery_events import SettleCard
 from app.domain.review import gate_sweep, pr_poll
-from app.domain.review.ports import Announce
+from app.domain.review.ports import (
+    Announce,
+    DispatchPending,
+    RecordAgent,
+    RecordInstruction,
+    SeatInstanceId,
+)
 
 GateNudge = Callable[[uuid.UUID, str, str, dict], Awaitable[None]]
 GateNudgeFactory = Callable[[], GateNudge]
@@ -33,27 +40,48 @@ def register_periodic_jobs(
     announce: Announce,
     gate_sessions: SessionFactory,
     gate_nudge_factory: GateNudgeFactory,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    seat_instance_id: SeatInstanceId,
+    record_agent: RecordAgent,
+    dispatch_pending: DispatchPending,
 ) -> None:
     jobs.register(
         "pr poll",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.poll_open_prs(chat, announce),
+        lambda: pr_poll.poll_open_prs(
+            chat,
+            announce,
+            settle_card=settle_card,
+            record_instruction=record_instruction,
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
+        ),
     )
     jobs.register(
         "task pr poll",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.poll_uncarded_task_prs(chat, announce),
+        lambda: pr_poll.poll_uncarded_task_prs(
+            chat, announce, record_instruction=record_instruction
+        ),
     )
     jobs.register(
         "landing watch",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.watch_landings(chat, announce),
+        lambda: pr_poll.watch_landings(
+            chat, announce, record_instruction=record_instruction
+        ),
     )
     # Drafts and cards watch the same repository state on the same clock.
     jobs.register(
         "draft pr sweep",
         settings.accept_pr_poll_interval_s,
-        lambda: pr_poll.open_draft_prs(chat, announce),
+        lambda: pr_poll.open_draft_prs(
+            chat,
+            announce,
+            dispatch_pending=dispatch_pending,
+            record_instruction=record_instruction,
+        ),
     )
     jobs.register(
         "gate sweep",

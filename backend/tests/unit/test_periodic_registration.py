@@ -3,16 +3,48 @@
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import ANY, AsyncMock, Mock
 
 import pytest
 
 from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.domain.agent.announce import announce
+from app.domain.delivery.agent import (
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+)
+from app.domain.delivery.ledger import settle_card
 from app.periodic_jobs import periodic_jobs
 
 pytestmark = pytest.mark.anyio
+
+# 投递包的那几件事 review 够不着，由 `periodic_jobs` 在接线时递进去
+# （`app.domain.review.periodic.register_periodic_jobs`）。哪几个钟拿到哪几个口子
+# 写在这里，下面按名字比 —— 名字写错就是接错线。
+#
+# 前四个是模块级的函数对象，`periodic_jobs` 递的就是同一个，比的是它本身。
+# `dispatch_pending` 是接线时现包的闭包，外面做不出一个相等的，只认名字；它到底
+# 包住了什么，由 `test_the_draft_sweep_pump_runs_on_this_chats_factory` 盯。
+_EXPECTED_PORTS = {
+    "settle_card": settle_card,
+    "record_instruction": record_task_instruction,
+    "seat_instance_id": seat_instance_id,
+    "record_agent": record_agent,
+    "dispatch_pending": ANY,
+}
+_KEYWORD_PORTS = {
+    "pr poll": (
+        "settle_card",
+        "record_instruction",
+        "seat_instance_id",
+        "record_agent",
+    ),
+    "task pr poll": ("record_instruction",),
+    "landing watch": ("record_instruction",),
+    "draft pr sweep": ("dispatch_pending", "record_instruction"),
+}
 
 
 def _world():
@@ -20,6 +52,7 @@ def _world():
     chat_sessions = Mock(name="chat sessions")
     chat = SimpleNamespace(
         session_factory=chat_sessions,
+        work_runner=Mock(name="the chat's work runner"),
         stop_work_in_closed_tasks=AsyncMock(),
         remind_silent_turns=AsyncMock(),
         remind_stale_checklists=AsyncMock(),
@@ -123,7 +156,25 @@ async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
     assert world.get_runner.call_count == 0, "registration ran work before a tick"
     assert await world.jobs[name]._job() == {"did": 1}
     handed = argument if isinstance(argument, tuple) else (argument,)
-    work.assert_awaited_once_with(*(getattr(world, name) for name in handed))
+    ports = {port: _EXPECTED_PORTS[port] for port in _KEYWORD_PORTS.get(name, ())}
+    work.assert_awaited_once_with(*(getattr(world, one) for one in handed), **ports)
+
+
+async def test_the_draft_sweep_hands_a_pump_bound_to_this_chat(monkeypatch):
+    """`dispatch_pending` 不带参数，是因为会话工厂、房间服务和跑机器在接线时就定好
+    了（`app.periodic_jobs.periodic_jobs`）。上面那条只认名字，这一条认它包住的
+    就是这一个 chat。"""
+    pump = AsyncMock(return_value={"dispatched": 1})
+    monkeypatch.setattr("app.periodic_jobs.dispatch_pending_work", pump)
+    sweep = AsyncMock(return_value={})
+    monkeypatch.setattr("app.domain.review.pr_poll.open_draft_prs", sweep)
+    world = _world()
+    await world.jobs["draft pr sweep"]._job()
+    handed = sweep.await_args.kwargs["dispatch_pending"]
+    assert await handed() == {"dispatched": 1}
+    pump.assert_awaited_once_with(
+        world.chat_sessions, chat=world.chat, runner=world.chat.work_runner
+    )
 
 
 @pytest.mark.parametrize(

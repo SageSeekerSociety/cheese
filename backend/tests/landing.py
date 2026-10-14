@@ -18,6 +18,7 @@ from app.domain.delivery.agent import (
     begin_send,
     dispatch_pending,
     receive_attempt,
+    record_task_instruction,
     run_attempt,
 )
 from app.domain.review import landing_watch
@@ -84,4 +85,8 @@ def time_passes(client, task_id: str, *, minutes: int) -> None:
 def watch(client) -> dict:
     """One tick of the platform's watch on merges."""
     chat = _chat(client)
-    return client.portal.call(lambda: landing_watch.watch_landings(chat, announce))
+    return client.portal.call(
+        lambda: landing_watch.watch_landings(
+            chat, announce, record_instruction=record_task_instruction
+        )
+    )

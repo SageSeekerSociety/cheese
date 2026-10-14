@@ -12,6 +12,7 @@ from app.core.errors import ConflictError, NotFoundError, ValidationError
 from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.documents import seed
+from app.domain.delivery_events import SettleCard
 from app.domain.living_doc.services import DocumentJournal, Documents
 from app.domain.project.models import AiMode, Project, ProjectGitInstallation
 from app.domain.project.repositories import (
@@ -67,13 +68,19 @@ async def refuse_writes_if_archived(
 
 
 class ProjectService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, settle_card: SettleCard | None = None):
+        """``settle_card``：归档项目要把房间里等验收人的那几句话一起收掉，
+        而结一张卡是 `review` 和 `delivery` 做的事，本包够不着
+        （`app.domain.review.ports.SettleCard`）。不给也能构造 —— 只有归档这条
+        路要它，而那条路会把 ``None`` 交给 `topic.archive_with_project` 再交给
+        `review.archive`，由那里当场说清是哪个门漏了。"""
         self._session = session
         self._repo = ProjectRepository(session)
         self._installations = ProjectGitInstallationRepository(session)
         self._topics = TopicRepository(session)
         self._ledger = Ledger(session)
         self._members = TopicMemberService(session)
+        self._settle_card = settle_card
 
     async def create(
         self,
@@ -344,7 +351,9 @@ class ProjectService:
         from app.domain.topic.services import TopicService
 
         project.archived_at = datetime.now(UTC)
-        await TopicService(self._session).archive_with_project(project_id, by=by)
+        await TopicService(self._session).archive_with_project(
+            project_id, by=by, settle_card=self._settle_card
+        )
         await self._session.flush()
         return project
 

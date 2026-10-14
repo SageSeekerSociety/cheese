@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 from app.domain.agent.announce import announce
+from app.domain.delivery.agent import record_task_instruction
 from app.domain.project import forge
 from app.domain.project.models import Project
 from app.domain.repository.forge_files import ProjectFiles
@@ -220,7 +221,9 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
     original = git_store.head(project, child.branch_name)
     client.portal.call(
         lambda: retarget_completed_dependencies(
-            client.test_request_factory, announce=announce
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
         )
     )
     github.update_pr.assert_awaited_once_with(123, base=parent.base_branch)
@@ -238,7 +241,9 @@ def test_accepting_parent_retargets_child_pr_and_keeps_its_work(client, monkeypa
     assert git_store.head(project, child.branch_name) == original
     client.portal.call(
         lambda: retarget_completed_dependencies(
-            client.test_request_factory, announce=announce
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
         )
     )
     assert github.update_pr.await_count == 1
@@ -278,7 +283,9 @@ def test_retargeting_holds_no_task_lock_while_github_is_called(client, monkeypat
     async def race():
         sweep = asyncio.create_task(
             retarget_completed_dependencies(
-                client.test_request_factory, announce=announce
+                client.test_request_factory,
+                announce=announce,
+                record_instruction=record_task_instruction,
             )
         )
         await asyncio.wait_for(in_flight.wait(), timeout=5)

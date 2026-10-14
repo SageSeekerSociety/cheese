@@ -40,6 +40,13 @@ from app.domain.review.services import AcceptService
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
+from tests.support.review_ports import (
+    pumping,
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+    settle_card,
+)
 
 pytestmark = [
     pytest.mark.anyio,
@@ -394,7 +401,18 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         async with asyncio.timeout(10):
             while not server.started:
                 await asyncio.sleep(0.01)
-        consumer = asyncio.create_task(events.listen(chat, db_factory, announce))
+        consumer = asyncio.create_task(
+            events.listen(
+                chat,
+                db_factory,
+                announce,
+                settle_card=settle_card,
+                record_instruction=record_task_instruction,
+                seat_instance_id=seat_instance_id,
+                record_agent=record_agent,
+                dispatch_pending=pumping(chat),
+            )
+        )
         async with asyncio.timeout(10):
             while "test" not in relay.connections:
                 await asyncio.sleep(0.01)

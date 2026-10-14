@@ -10,6 +10,7 @@ import uuid
 import pytest
 
 from app.domain.agent.announce import announce
+from app.domain.delivery.agent import record_task_instruction
 from app.domain.project.forge import ForgeRateLimitedError
 from tests.delivery import delivery_task, delivery_task_id
 from tests.integration.test_accept_pr import (
@@ -74,7 +75,9 @@ def test_a_sweep_that_meets_a_spent_quota_leaves_the_rest_of_that_project_alone(
 
     counts = client.portal.call(
         lambda: pr_publish.sweep_draft_prs(
-            client.test_request_factory, announce=announce
+            client.test_request_factory,
+            announce=announce,
+            record_instruction=record_task_instruction,
         )
     )
 

@@ -20,7 +20,13 @@ from app.core.sentences import say
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.delivery.agent import dispatch_pending
+from app.domain.delivery.agent import (
+    dispatch_pending,
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+)
+from app.domain.delivery.ledger import settle_card
 from app.domain.identity.actor import Actor
 from app.domain.library import service as library
 from app.domain.notice_meta import (
@@ -59,6 +65,23 @@ logger = logging.getLogger("cheesex.accept")
 router = APIRouter(prefix="", tags=["accept"])
 
 
+def _accept_service(db: AsyncSession) -> AcceptService:
+    """验收服务，连同它够不着的那几样一起给齐。
+
+    `review` 在第 4 层、`delivery` 在第 3 层，那些函数只能在 API 这一层递进去
+    （`app.domain.review.ports`）。这里少给一样，走那条路的话就少说一句
+    —— 所以这一层只留这一个构造点，别再自己写一个。
+    """
+    return AcceptService(
+        db,
+        announce=announce,
+        settle_card=settle_card,
+        record_instruction=record_task_instruction,
+        seat_instance_id=seat_instance_id,
+        record_agent=record_agent,
+    )
+
+
 async def _card_actor(
     card_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> Actor:
@@ -73,7 +96,7 @@ async def _card_actor(
     stranger the room's merge. Fixed 2026-09-26; ``_task_actor`` drew this line
     from the start, this is the same line, spelled once.
     """
-    service = AcceptService(db, announce=announce)
+    service = _accept_service(db)
     card = await service._card_or_404(card_id)
     topic = await service._topic_or_404(card.topic_id)
     actor = await resolver.resolve(project_id=topic.project_id, topic_id=topic.id)
@@ -132,7 +155,7 @@ async def create_accept_card(
     """Hand a task's change in for review; ``topic_id`` is the task's."""
     actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
     topic_id = room_id
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.create_card(
         # 一张卡只递给这道门会放进来的人：判据是采纳时那道门自己（同一份规则、同一
         # 个读点），问的是卡上那个人而不是调用者。见 `_require_reviewer_in_room`。
@@ -182,7 +205,7 @@ async def push_fix(
     drop_dependency: bool = False,
 ) -> dict:
     _actor, _room, task_id = await _task_actor(topic_id, db, resolver)
-    result = await AcceptService(db, announce=announce).push_fix(
+    result = await _accept_service(db).push_fix(
         task_id, drop_dependency=drop_dependency
     )
     await db.commit()
@@ -194,7 +217,7 @@ async def mark_ready(
     topic_id: uuid.UUID, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     _actor, room_id, task_id = await _task_actor(topic_id, db, resolver)
-    result = await AcceptService(db, announce=announce).mark_ready(room_id, task_id)
+    result = await _accept_service(db).mark_ready(room_id, task_id)
     await db.commit()
     return ok(result)
 
@@ -217,14 +240,14 @@ async def describe_card(
     `AcceptService.redescribe` 的 docstring。
     """
     actor, _room, task_id = await _task_actor(topic_id, db, resolver)
-    card = await AcceptService(db, announce=announce).redescribe(
+    card = await _accept_service(db).redescribe(
         task_id,
         actor=actor.handle,
         change_subject=body.change_subject,
         change_body=body.change_body,
     )
     await db.commit()
-    return ok(await AcceptService(db, announce=announce).describe(card))
+    return ok(await _accept_service(db).describe(card))
 
 
 @router.get("/accept-cards/{card_id}/deliverable")
@@ -236,7 +259,7 @@ async def download_card_deliverable(
     在人点采纳之前就取得到，因为他要审的正是这一份。给的是递卡那一刻落下的快照，
     不是现在从源重建一次的结果：构建产物只活在那一轮的工作目录里，那个目录到采纳
     的时候可能已经不在了。"""
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc._card_or_404(card_id)
     topic = await svc._topic_or_404(card.topic_id)
     # 按项目成员判，不按房间参与者判：这一份采纳之后就是《报告》第 N 版，而清单
@@ -273,7 +296,7 @@ async def list_accept_cards(
     """A task's review cards, or for a room every card of its tasks."""
     place = await TopicService(db).place_or_404(topic_id)
     await _reader(place, db, resolver)
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     cards, total = await svc.list_for_topic(place.room_id)
     if place.task is not None:
         cards = [card for card in cards if card.task_id == place.task.id]
@@ -316,7 +339,7 @@ async def topic_pr_checks(
 async def _pr_checks_payload(
     topic_id: uuid.UUID, db: AsyncSession, *, task_id: uuid.UUID | None = None
 ) -> dict:
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     cards, _ = await svc.list_for_topic(topic_id)
     card = next(
         (
@@ -363,7 +386,7 @@ async def approve_card(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("approveSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.approve(card_id=card_id, approver_handle=actor.handle)
     return ok(await svc.describe(card))
 
@@ -378,7 +401,7 @@ async def accept_card(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("acceptSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.accept(
         card_id=card_id, decided_by=actor.handle, head_sha=body.head_sha
     )
@@ -396,7 +419,7 @@ async def reassign_card(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("reassignSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.reassign(
         admits_reviewer=_reviewer_admission(actor, resolver),
         card_id=card_id,
@@ -418,7 +441,7 @@ async def reject_card(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("returnSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.reject(card_id=card_id, decided_by=actor.handle, note=body.note)
     sent = await ReviewCommentService(db).send(card, actor.handle, body.comment_ids)
     described = await svc.describe(card)
@@ -488,7 +511,7 @@ async def void_card(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("voidSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.void(card_id=card_id, decided_by=actor.handle, note=body.note)
     return ok(await svc.describe(card))
 
@@ -516,7 +539,7 @@ async def merge_card_anyway(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("overrideSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.merge_despite_checks(
         card_id=card_id,
         decided_by=actor.handle,
@@ -543,7 +566,7 @@ async def set_auto_merge(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("autoMergeSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.arm_auto_merge(
         card_id=card_id,
         decided_by=actor.handle,
@@ -560,6 +583,6 @@ async def revoke_card(
     actor = await _card_actor(card_id, db, resolver)
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("revokeAcceptSignIn"))
-    svc = AcceptService(db, announce=announce)
+    svc = _accept_service(db)
     card = await svc.revoke(card_id=card_id, decided_by=actor.handle)
     return ok(await svc.describe(card))

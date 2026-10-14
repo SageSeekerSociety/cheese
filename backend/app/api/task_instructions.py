@@ -91,7 +91,7 @@ async def tell_task(db, task, content: str, *, opening: bool = False) -> None:
             payload=payload,
             occurred_at=datetime.now(UTC),
         ),
-        task=task,
+        task_id=task.id,
         content=content,
     )
 

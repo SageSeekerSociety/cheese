@@ -20,6 +20,30 @@ from app import forge_events_app as relay
 from app.core.forge_events import subscription_assertion
 from app.domain.agent.announce import announce
 from tests.integration.conftest import a_team
+from tests.support.review_ports import (
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+    settle_card,
+)
+
+# `listen` 和 `forge_repository_changed` 够不着第 3 层的几个包，这五个口子由
+# `app/main.py` 在接线时递进来。下面这几条盯的是 socket 断开重连、事件去重和
+# 「按仓库刷新」—— 口子只要形状对、能被递下去就够，不需要换成假的。
+_PORTS = {
+    "settle_card": settle_card,
+    "record_instruction": record_task_instruction,
+    "seat_instance_id": seat_instance_id,
+    "record_agent": record_agent,
+}
+
+
+async def _pending() -> None:
+    """放行投递那一下。这几条盯的是重连和事件去重，`open_draft_prs` 全被换成了
+    替身，所以它到不了这里。"""
+
+
+_PENDING = {"dispatch_pending": _pending}
 
 
 @pytest.fixture
@@ -237,7 +261,10 @@ async def test_clean_disconnect_cancels_subscription_renewal(monkeypatch):
     monkeypatch.setattr(events, "register_subscriptions", register)
     monkeypatch.setattr(events.asyncio, "sleep", retry)
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(object(), None, announce), 2)
+        await asyncio.wait_for(
+            events.listen(object(), None, announce, **_PORTS, **_PENDING),
+            2,
+        )
 
 
 @pytest.mark.anyio
@@ -490,15 +517,27 @@ async def test_listener_reconciles_on_connect_and_retries_disconnect(monkeypatch
     )
     monkeypatch.setattr(events.settings, "forge_event_secret", "deployment-secret")
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(chat, None, announce), 2)
+        await asyncio.wait_for(
+            events.listen(chat, None, announce, **_PORTS, **_PENDING), 2
+        )
     assert len(attempts) == 2
     assert attempts[1][1]["additional_headers"] == {
         "Authorization": "Bearer deployment-secret"
     }
-    poll.open_draft_prs.assert_awaited_once_with(chat, announce)
-    poll.poll_open_prs.assert_awaited_once_with(chat, announce)
+    poll.open_draft_prs.assert_awaited_once_with(
+        chat,
+        announce,
+        dispatch_pending=_pending,
+        record_instruction=record_task_instruction,
+    )
+    poll.poll_open_prs.assert_awaited_once_with(chat, announce, **_PORTS)
     poll.forge_repository_changed.assert_awaited_once_with(
-        chat, kind="forgejo", repo="owner/project", announce=announce
+        chat,
+        kind="forgejo",
+        repo="owner/project",
+        announce=announce,
+        **_PORTS,
+        dispatch_pending=_pending,
     )
 
 
@@ -512,7 +551,19 @@ async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatc
     release = asyncio.Event()
     refreshes: list[str] = []
 
-    async def refresh(chat, kind, repo, project_id=None, *, announce):  # noqa: ARG001
+    async def refresh(  # noqa: ARG001
+        chat,
+        kind,
+        repo,
+        project_id=None,
+        *,
+        announce,
+        settle_card,
+        record_instruction,
+        seat_instance_id,
+        record_agent,
+        dispatch_pending,
+    ):
         refreshes.append(repo)
         await release.wait()
 
@@ -556,7 +607,9 @@ async def test_events_arriving_during_a_refresh_cost_one_more_refresh(monkeypatc
 
     monkeypatch.setattr(events, "connect", lambda *a, **k: Connect())
     monkeypatch.setattr(events, "register_subscriptions", no_subscriptions)
-    listener = asyncio.create_task(events.listen(object(), None, announce))
+    listener = asyncio.create_task(
+        events.listen(object(), None, announce, **_PORTS, **_PENDING)
+    )
     await asyncio.wait_for(drained.wait(), 2)
     release.set()
     for _ in range(50):
@@ -602,16 +655,27 @@ async def test_event_refresh_is_limited_to_bound_repository(db_factory, monkeypa
     sweep = AsyncMock()
     monkeypatch.setattr(pr_publish, "sweep_draft_prs", sweep)
     await pr_poll.forge_repository_changed(
-        chat, "forgejo", "owner/first", announce=announce
+        chat, "forgejo", "owner/first", announce=announce, **_PORTS, **_PENDING
     )
-    sweep.assert_awaited_once_with(db_factory, first.id, announce=announce)
-    poll.assert_awaited_once_with(chat, announce, first.id)
+    sweep.assert_awaited_once_with(
+        db_factory,
+        first.id,
+        announce=announce,
+        record_instruction=record_task_instruction,
+    )
+    poll.assert_awaited_once_with(chat, announce, first.id, **_PORTS)
     await pr_poll.forge_repository_changed(
-        chat, "github_app", "owner/first", announce=announce
+        chat, "github_app", "owner/first", announce=announce, **_PORTS, **_PENDING
     )
     assert sweep.await_count == 1
     await pr_poll.forge_repository_changed(
-        chat, "forgejo", "owner/first", str(second.id), announce=announce
+        chat,
+        "forgejo",
+        "owner/first",
+        str(second.id),
+        announce=announce,
+        **_PORTS,
+        **_PENDING,
     )
     assert sweep.await_count == 1
 
@@ -799,7 +863,10 @@ async def test_a_relay_restart_reconnects_without_a_warning(
     )
     caplog.set_level("INFO", logger=events.logger.name)
     with pytest.raises(asyncio.CancelledError):
-        await asyncio.wait_for(events.listen(object(), None, announce), 2)
+        await asyncio.wait_for(
+            events.listen(object(), None, announce, **_PORTS, **_PENDING),
+            2,
+        )
     assert len(attempts) == 2
     closes = [
         r

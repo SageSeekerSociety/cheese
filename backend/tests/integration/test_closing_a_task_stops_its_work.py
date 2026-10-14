@@ -26,6 +26,7 @@ from app.api.deps import get_chat_service
 from app.domain.agent.announce import announce
 from app.domain.agent.chat import ChatService
 from app.domain.agent.models import AgentTurn
+from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery.models import Delivery
 from app.domain.review import landing_watch
 from app.domain.room_task.closing import CLOSES_TASK
@@ -278,7 +279,11 @@ def test_a_task_closed_for_a_write_up_that_never_ended_stops_the_turn(client):
         _accepted_long_ago(client, task_id)
         assert _interrupts(channel, task_id) == []
 
-        client.portal.call(lambda: landing_watch.watch_landings(service, announce))
+        client.portal.call(
+            lambda: landing_watch.watch_landings(
+                service, announce, record_instruction=record_task_instruction
+            )
+        )
 
         assert _status(client, task) == "closed"
         _until(
@@ -299,7 +304,11 @@ def test_the_write_up_deadline_does_not_stop_other_work_in_the_task(client):
     try:
         _accepted_long_ago(client, task_id)
 
-        client.portal.call(lambda: landing_watch.watch_landings(service, announce))
+        client.portal.call(
+            lambda: landing_watch.watch_landings(
+                service, announce, record_instruction=record_task_instruction
+            )
+        )
 
         assert _status(client, task) == "open"
         client.portal.call(service.stop_work_in_closed_tasks)

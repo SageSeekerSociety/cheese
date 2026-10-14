@@ -14,6 +14,7 @@ from app.api.deps import get_chat_service, get_work_runner
 from app.domain.agent.announce import announce
 from app.domain.agent.runtime import addressed_to_agent
 from app.domain.agent.turn.intake.completion import TurnCompletion
+from app.domain.delivery.agent import record_task_instruction
 from app.domain.review.landing_watch import watch_landings
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.presentation import Building, NeedsYou
@@ -96,7 +97,11 @@ def test_the_task_page_hears_the_task_close_once_its_summary_is_done(client):
     ):
         _drain(task_page)
         _drain(channel)
-        client.portal.call(lambda: watch_landings(chat, announce))
+        client.portal.call(
+            lambda: watch_landings(
+                chat, announce, record_instruction=record_task_instruction
+            )
+        )
 
         assert _told(task_page, room)
         assert _told(channel, room)

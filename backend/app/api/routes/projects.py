@@ -41,7 +41,7 @@ from app.domain.agent.profiles import ProfileRegistry
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
-from app.domain.delivery.ledger import deliver, settle
+from app.domain.delivery.ledger import deliver, settle, settle_card
 from app.domain.identity.actor import Actor
 from app.domain.membership.services import InvitationService, MemberService
 from app.domain.onboarding.start import start_steps
@@ -775,7 +775,9 @@ async def archive_project(
     with no answer that means anything.
     """
     owner = await _project_owner(project_id, db, resolver)
-    project = await ProjectService(db).archive(project_id, by=owner.handle)
+    project = await ProjectService(db, settle_card=settle_card).archive(
+        project_id, by=owner.handle
+    )
     await InvitationService(db, deliver=deliver, settle=settle).revoke_all_pending(
         project_id
     )

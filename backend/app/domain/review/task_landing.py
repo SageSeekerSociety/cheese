@@ -39,13 +39,13 @@ from app.core.sentences import say
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import AuthorType, Block, BlockKind
 from app.domain.block.schemas import BlockOut
-from app.domain.delivery.agent import record_task_instruction
 from app.domain.delivery_events import DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.review.landing_models import TaskLanding
 from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.ports import RecordInstruction
 from app.domain.room_task.closing import CLOSES_TASK, unfinished
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import TaskService, said_title
@@ -69,6 +69,7 @@ async def delivery_landed(
     pr_number: int | None,
     completes: bool,
     handed_over: datetime | None,
+    record_instruction: RecordInstruction | None,
 ) -> bool:
     """``task``'s delivery merged. ``completes``: it was the task's last step.
     ``handed_over``: when its card went up; None for a merge no card asked
@@ -92,16 +93,23 @@ async def delivery_landed(
     )
     goes_on = task.status == TaskStatus.open and (not completes or still_working)
     if still_working:
-        await _go_on(session, task)
+        await _go_on(session, task, record_instruction=record_instruction)
     elif goes_on:
         await TaskService(session).next_step(task)
         await tell_agent(
-            session, task, task_next_step_prompt(title=task.title, task_id=task.id)
+            session,
+            task,
+            task_next_step_prompt(title=task.title, task_id=task.id),
+            record_instruction=record_instruction,
         )
     elif task.status == TaskStatus.open and task.closing_since is None:
         task.closing_since = now
         await tell_agent(
-            session, task, task_summary_prompt(title=task.title), closes=True
+            session,
+            task,
+            task_summary_prompt(title=task.title),
+            record_instruction=record_instruction,
+            closes=True,
         )
     await session.flush()
     await tell_origin(
@@ -118,7 +126,9 @@ async def delivery_landed(
     return True
 
 
-async def go_on_while_working(sessions) -> list[uuid.UUID]:
+async def go_on_while_working(
+    sessions, *, record_instruction: RecordInstruction | None
+) -> list[uuid.UUID]:
     """Every task being written up whose AI teammate has started work in it
     since its last delivery went up, or has a message waiting there, stops
     being written up and goes on, like a last step that landed while that
@@ -138,14 +148,18 @@ async def go_on_while_working(sessions) -> list[uuid.UUID]:
     gone_on = []
     for task_id in being_written_up:
         try:
-            if await _go_on_if_asked(sessions, task_id):
+            if await _go_on_if_asked(
+                sessions, task_id, record_instruction=record_instruction
+            ):
                 gone_on.append(task_id)
         except Exception:  # noqa: BLE001 — one task must not stop the rest
             logger.warning("could not take task %s on", task_id, exc_info=True)
     return gone_on
 
 
-async def _go_on_if_asked(sessions, task_id: uuid.UUID) -> bool:
+async def _go_on_if_asked(
+    sessions, task_id: uuid.UUID, *, record_instruction: RecordInstruction | None
+) -> bool:
     # deferred-import: tests replace this name on app.domain.project.forge
     from app.domain.project.forge import default_branch
 
@@ -168,7 +182,9 @@ async def _go_on_if_asked(sessions, task_id: uuid.UUID) -> bool:
         if task is None:
             return False
         task.closing_since = None
-        await _go_on(session, task, base_branch=base)
+        await _go_on(
+            session, task, base_branch=base, record_instruction=record_instruction
+        )
         await session.commit()
     return True
 
@@ -203,7 +219,11 @@ async def _handed_over(session: AsyncSession, task: Task) -> datetime | None:
 
 
 async def _go_on(
-    session: AsyncSession, task: Task, *, base_branch: str | None = None
+    session: AsyncSession,
+    task: Task,
+    *,
+    record_instruction: RecordInstruction | None,
+    base_branch: str | None = None,
 ) -> None:
     """``task``'s last step landed while its AI teammate was at work on more:
     it goes on to the next step, and its AI teammate hears so once that work's
@@ -214,6 +234,7 @@ async def _go_on(
         session,
         task,
         task_step_landed_while_working_prompt(title=task.title, task_id=task.id),
+        record_instruction=record_instruction,
     )
 
 
@@ -325,10 +346,23 @@ def _out(block) -> dict:
 
 
 async def tell_agent(
-    session: AsyncSession, task: Task, content: str, *, closes: bool = False
+    session: AsyncSession,
+    task: Task,
+    content: str,
+    *,
+    record_instruction: RecordInstruction | None,
+    closes: bool = False,
 ) -> None:
     """The task's AI teammate hears ``content`` on its next turn. ``closes``:
-    the task closes when that turn ends."""
+    the task closes when that turn ends.
+
+    ``record_instruction`` 是第 3 层那个 `delivery.agent.record_task_instruction`，
+    由调用链上的门递下来（`app.domain.review.ports.RecordInstruction`）：这句话
+    落在投递账本上，而本包够不着它。没递进来是接线漏了一处：当场炸掉，不静默
+    让这个 AI 队友永远收不到这一句。"""
+    if record_instruction is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("record_instruction was not handed in")
 
     payload: dict[str, object] = {
         "projectId": str(task.project_id),
@@ -336,7 +370,7 @@ async def tell_agent(
     }
     if closes:
         payload[CLOSES_TASK] = True
-    await record_task_instruction(
+    await record_instruction(
         session,
         DeliveryEvent(
             id=uuid.uuid4(),
@@ -344,7 +378,7 @@ async def tell_agent(
             payload=payload,
             occurred_at=datetime.now(UTC),
         ),
-        task=task,
+        task_id=task.id,
         content=content,
     )
 

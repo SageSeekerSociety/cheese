@@ -25,8 +25,24 @@ import pytest
 from app.domain.agent.announce import announce
 from app.domain.review import pr_poll
 from app.domain.review.pr_poll import TRANSIENT_MISSES_BEFORE_ERROR
+from tests.support.review_ports import (
+    record_agent,
+    record_task_instruction,
+    seat_instance_id,
+    settle_card,
+)
 
 pytestmark = pytest.mark.anyio
+
+# 生产里这四个口子由 `app/api/routes/accept.py` 的接线递进来（`review` 够不着
+# `delivery`）。这里 AcceptService 是假的、口子用不到，递真实现即可 —— 跑的还是
+# poll 自己那条路。
+_PORTS = {
+    "settle_card": settle_card,
+    "record_instruction": record_task_instruction,
+    "seat_instance_id": seat_instance_id,
+    "record_agent": record_agent,
+}
 
 
 @pytest.fixture(autouse=True)
@@ -53,7 +69,7 @@ def _poller(monkeypatch, failure: Exception) -> tuple[SimpleNamespace, dict]:
         yield _Session()
 
     class _AcceptService:
-        def __init__(self, _session, *, announce=None) -> None: ...  # noqa: ARG002
+        def __init__(self, _session, *, announce=None, **_ports) -> None: ...  # noqa: ARG002
 
         async def open_pr_card_ids(self, project_id=None) -> list[uuid.UUID]:
             assert project_id is None
@@ -85,7 +101,7 @@ async def test_one_missed_tick_is_not_worth_waking_anyone(monkeypatch, caplog):
     chat, _outcome = _poller(monkeypatch, httpx.ConnectError("no route to host"))
 
     with caplog.at_level(logging.DEBUG):
-        result = await pr_poll.poll_open_prs(chat, announce)
+        result = await pr_poll.poll_open_prs(chat, announce, **_PORTS)
 
     assert _errors(caplog) == []
     assert any(r.levelno == logging.WARNING for r in caplog.records)
@@ -99,7 +115,7 @@ async def test_retries_that_keep_failing_are_reported(monkeypatch, caplog):
 
     with caplog.at_level(logging.DEBUG):
         for _ in range(TRANSIENT_MISSES_BEFORE_ERROR):
-            await pr_poll.poll_open_prs(chat, announce)
+            await pr_poll.poll_open_prs(chat, announce, **_PORTS)
 
     assert len(_errors(caplog)) == 1
 
@@ -110,7 +126,7 @@ async def test_a_failure_that_is_not_the_network_is_reported_at_once(
     chat, _outcome = _poller(monkeypatch, KeyError("pr_number"))
 
     with caplog.at_level(logging.DEBUG):
-        await pr_poll.poll_open_prs(chat, announce)
+        await pr_poll.poll_open_prs(chat, announce, **_PORTS)
 
     assert len(_errors(caplog)) == 1
 
@@ -120,11 +136,11 @@ async def test_a_tick_that_works_forgives_the_misses_before_it(monkeypatch, capl
     chat, outcome = _poller(monkeypatch, httpx.ConnectError("blip"))
 
     with caplog.at_level(logging.DEBUG):
-        await pr_poll.poll_open_prs(chat, announce)
+        await pr_poll.poll_open_prs(chat, announce, **_PORTS)
         outcome["failure"] = None
-        await pr_poll.poll_open_prs(chat, announce)
+        await pr_poll.poll_open_prs(chat, announce, **_PORTS)
         outcome["failure"] = httpx.ConnectError("blip")
         for _ in range(TRANSIENT_MISSES_BEFORE_ERROR - 1):
-            await pr_poll.poll_open_prs(chat, announce)
+            await pr_poll.poll_open_prs(chat, announce, **_PORTS)
 
     assert _errors(caplog) == []

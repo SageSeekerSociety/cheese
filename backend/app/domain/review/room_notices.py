@@ -47,13 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.background import spawn
 from app.core.sentences import say
 from app.domain.addressing import Event
-from app.domain.delivery.agent import (
-    instance_for_seat,
-    record_agent,
-    record_task_instruction,
-)
-from app.domain.delivery.ledger import settle_card
-from app.domain.delivery_events import DeliveryEvent
+from app.domain.delivery_events import DeliveryEvent, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_READY,
     EVENT_ARTIFACT_DECLARED,
@@ -71,7 +65,12 @@ from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of
 from app.domain.review import notes, pr_signals
 from app.domain.review.models import AcceptCard
-from app.domain.review.ports import Announce
+from app.domain.review.ports import (
+    Announce,
+    RecordAgent,
+    RecordInstruction,
+    SeatInstanceId,
+)
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.room_task.closing import Overdue
 from app.domain.room_task.models import Task, TaskStatus
@@ -140,6 +139,8 @@ async def _tell_the_reviewer(
     *,
     meta: dict,
     announce: Announce,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
     also: Sequence[str] = (),
     about_card: uuid.UUID | None = None,
     dispatch: bool = False,
@@ -181,11 +182,21 @@ async def _tell_the_reviewer(
             block=block,
             headline=content,
             detail=str(meta.get("detail") or ""),
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
         )
 
 
 async def _tell_the_dispatch_seat(
-    session, *, topic, block, headline, detail, skip_instance_id=None
+    session,
+    *,
+    topic,
+    block,
+    headline,
+    detail,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
+    skip_instance_id=None,
 ) -> None:
     """项目设了「调度座位」时，这条事件也在它那里开工一轮。
 
@@ -205,12 +216,17 @@ async def _tell_the_dispatch_seat(
     """
     if block is None:
         return
+    # 没接线不当成错误：这个函数的 docstring 说了，解析不到队友的设置「不做」；
+    # 没递进端口是门没接线，同样只是这一次没叫醒谁 —— 端口类型写成可空，走到
+    # 底也说得通（`review/ports.py`、`AcceptService` 的构造参数）。
+    if seat_instance_id is None or record_agent is None:
+        return
     project = await session.get(Project, topic.project_id)
     seat = branch_protection_of(project).dispatch_seat
     if not seat:
         return
-    instance = await instance_for_seat(session, topic.project_id, seat)
-    if instance is None or instance.id == skip_instance_id:
+    instance_id = await seat_instance_id(session, topic.project_id, seat)
+    if instance_id is None or instance_id == skip_instance_id:
         return
     meta = block.meta or {}
     await record_agent(
@@ -227,13 +243,17 @@ async def _tell_the_dispatch_seat(
             occurred_at=block.created_at,
         ),
         conversation_id=block.conversation_id,
-        instance_id=instance.id,
+        instance_id=instance_id,
         content=say("dispatchSeatWoken", headline=headline, detail=detail),
     )
 
 
 async def _settle_the_card(
-    session: AsyncSession, card: AcceptCard, outcome: str
+    session: AsyncSession,
+    card: AcceptCard,
+    outcome: str,
+    *,
+    settle_card: SettleCard | None,
 ) -> None:
     """卡有了决定：等它的那几句话一起结掉，结局记在它们身上。
 
@@ -245,7 +265,13 @@ async def _settle_the_card(
 
     由让卡离开验收人手上的那几处调用：采纳、驳回、作废、归档。别的地方改
     `card.status` 不代表卡不再等人 —— 改验收人就不是，卡只是换到别人手上。
+
+    ``settle_card`` 没递进来是接线漏了一处（第 4 层的 review 够不着第 3 层的
+    投递账本，得由门递）：当场炸掉，不比静默留下一条说着「等你」的提醒好。
     """
+    if settle_card is None:  # pragma: no cover - 接线漏了才会走到
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise RuntimeError("settle_card was not handed in")
     await settle_card(session, card.id, {"outcome": outcome})
 
 
@@ -351,7 +377,13 @@ async def _announce_new_artifact(
 
 
 async def _notify_ready(
-    session: AsyncSession, card: AcceptCard, topic: Topic, *, announce: Announce
+    session: AsyncSession,
+    card: AcceptCard,
+    topic: Topic,
+    *,
+    announce: Announce,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
 ) -> None:
     """CLEAN → 通知验收人，按 (head, clean) 经账本去重 —— 一个 head 只说
     一次「可以采纳了」，重跑的检查、反复的轮询都不重复。"""
@@ -372,6 +404,8 @@ async def _notify_ready(
             detail_label=say("labelNextStep"),
         ),
         announce=announce,
+        seat_instance_id=seat_instance_id,
+        record_agent=record_agent,
         about_card=card.id,
         dispatch=True,
     )
@@ -386,6 +420,8 @@ async def _note_needs_human(
     topic: Topic,
     reason: str,
     announce: Announce,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
     explain: str | None = None,
 ) -> None:
     """The machine ran out of moves on this card: say so on the card and
@@ -421,6 +457,8 @@ async def _note_needs_human(
             detail_label=say("labelReason"),
         ),
         announce=announce,
+        seat_instance_id=seat_instance_id,
+        record_agent=record_agent,
         about_card=card.id,
     )
 
@@ -457,8 +495,11 @@ async def _record_task_nudge(
     content,
     headline,
     meta,
-    dispatch=None,
     announce: Announce,
+    record_instruction: RecordInstruction | None,
+    seat_instance_id: SeatInstanceId | None,
+    record_agent: RecordAgent | None,
+    dispatch=None,
 ):
     """Commit the task event and parent delivery with the source state.
 
@@ -476,8 +517,13 @@ async def _record_task_nudge(
         content=headline,
         meta=meta,
     )
-    if block is not None and task is not None and task.status == TaskStatus.open:
-        told = await record_task_instruction(
+    if (
+        block is not None
+        and task is not None
+        and task.status == TaskStatus.open
+        and record_instruction is not None
+    ):
+        told = await record_instruction(
             session,
             DeliveryEvent(
                 id=block.id,
@@ -488,7 +534,7 @@ async def _record_task_nudge(
                 },
                 occurred_at=block.created_at,
             ),
-            task=task,
+            task_id=task.id,
             content=content,
         )
     if block is not None and dispatch:
@@ -498,6 +544,8 @@ async def _record_task_nudge(
             block=block,
             headline=headline,
             detail=dispatch,
+            seat_instance_id=seat_instance_id,
+            record_agent=record_agent,
             skip_instance_id=told,
         )
 

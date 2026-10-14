@@ -36,6 +36,7 @@ from app.domain.agent import device_storage
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.models import Block, BlockKind
+from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine.session_work import checkpoint_room
@@ -297,7 +298,9 @@ async def test_a_home_with_nothing_off_the_forge_is_recorded_and_says_nothing(
 async def _archive(client, monkeypatch, room_id, device_id, machine):
     monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
     async with client.test_factory() as session:
-        await TopicService(session).archive(room_id, by="owner")
+        await TopicService(session).archive(
+            room_id, by="owner", settle_card=settle_card
+        )
         await session.commit()
         cleanup_id = (await TopicService(session).get_or_404(room_id)).cleanup_id
     entry = {"kind": "device", "device_id": device_id, "resource_id": str(room_id)}
