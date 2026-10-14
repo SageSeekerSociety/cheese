@@ -2,6 +2,10 @@
 
 The rules, as a person would state them before any of this was built:
 
+- a machine's free space is checked every minute, and what its sandboxes'
+  homes hold (a walk of every file) only every few minutes, except that a
+  check finding the disk below a floor walks at once, so the sandbox stopped is
+  the one holding the most now;
 - a host whose disk is nearly full — of bytes, or of inodes, which can run out
   with space still free — takes no new sandbox until it has room again;
 - the sandbox holding the most of a nearly full disk is stopped, and its room
@@ -28,6 +32,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.block.models import Block, BlockKind
+from app.domain.machine import disk_guard
 from app.domain.machine.disk_guard import DiskGuard
 from app.domain.machine.models import CloudHost
 from app.domain.machine.repositories import CloudHostRepository
@@ -44,23 +49,23 @@ from tests.integration.test_sandbox_idle_stop import (  # noqa: F401 — fixture
 )
 
 
-def disk_of(case, filesystem: dict) -> None:
-    """The filesystem the hosts' homes are on is this one, from now on."""
+def disk_of(case, filesystem: dict) -> list[bool]:
+    """The filesystem the hosts' homes are on is this one, from now on.
+    Returns, as readings come, whether each one walked the homes."""
     real = case.hosts.exec
+    walks: list[bool] = []
 
     async def exec_(device_id, argv, *, stdin=None, **kwargs):
         result = await real(device_id, argv, stdin=stdin, **kwargs)
-        if (
-            stdin
-            and '"action": "disk"' in stdin.replace("\\", "")
-            and not result["exit"]
-        ):
+        if stdin and '"action": "disk"' in stdin and not result["exit"]:
+            walks.append('"walk": true' in stdin)
             answer = json.loads(result["stdout"].strip().splitlines()[-1])
             answer["filesystem"] = filesystem
             result = {**result, "stdout": json.dumps(answer)}
         return result
 
     case.hosts.exec = exec_
+    return walks
 
 
 def guard(case) -> dict:
@@ -104,6 +109,22 @@ def full_since(case, seat_host_id):
             return (await db.get(CloudHost, seat_host_id)).disk_full_since
 
     return run(case, read)
+
+
+ROOM = {
+    "bytes": 10**12,
+    "bytes_free": 9 * 10**11,
+    "inodes": 10**9,
+    "inodes_free": 9 * 10**8,
+}
+
+
+@pytest.fixture(autouse=True)
+def no_walk_yet():
+    """Every test starts with no machine walked in this process."""
+    disk_guard._walked.clear()
+    yield
+    disk_guard._walked.clear()
 
 
 @pytest.fixture
@@ -263,3 +284,40 @@ def test_a_full_host_is_still_read_after_its_last_sandbox_goes(cloud):  # noqa: 
     guard(cloud)
 
     assert full_since(cloud, host) is None
+
+
+def test_the_homes_are_walked_only_every_few_minutes(cloud, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "sandbox_disk_walk_s", 300)
+    working_on(cloud, cloud.seats[0], "host-1")
+    walks = disk_of(cloud, ROOM)
+
+    guard(cloud)
+    guard(cloud)
+    guard(cloud)
+    assert walks == [True, False, False]
+
+    monkeypatch.setattr(settings, "sandbox_disk_walk_s", 0)  # the interval has passed
+    guard(cloud)
+    assert walks[-1] is True
+
+
+def test_a_check_finding_the_disk_short_walks_at_once_and_stops_the_heaviest(
+    cloud,  # noqa: F811
+    two_a_host,
+    monkeypatch,
+):
+    monkeypatch.setattr(settings, "sandbox_disk_walk_s", 300)
+    light, heavy, _ = cloud.seats
+    working_on(cloud, light, "host-1")
+    on_the_same_host(cloud, heavy, "host-1")
+    disk_of(cloud, ROOM)
+    guard(cloud)  # walked, with nothing to act on
+    # Between walks, the heavy one fills the disk.
+    files(sandbox_dir(cloud, heavy, "host-1") / ".cheese" / "tmp" / "brute", 300)
+    walks = disk_of(cloud, {**ROOM, "inodes": 2000, "inodes_free": 20})
+
+    result = guard(cloud)
+
+    assert walks == [False, True]
+    assert result["evicted"] == 1
+    assert home_of(cloud, heavy) is None and home_of(cloud, light) is not None

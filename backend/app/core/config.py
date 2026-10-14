@@ -698,14 +698,21 @@ class Settings(BaseSettings):
     # Disk. A sandbox's home — its checkout, its dependencies, its /tmp — is on
     # the disk of the machine it runs on, shared with every other sandbox there
     # and, on a person's computer, with everything of theirs. Every machine
-    # holding a sandbox is read this often (`machine/disk_guard.py`); below
-    # these shares free, of bytes or of inodes, it takes no new sandbox and its
-    # heaviest sandbox is stopped. The shares are the defaults of Kubernetes'
-    # `nodefs.available` and `nodefs.inodesFree`. Inodes are their own floor:
-    # on 2026-10-14 a dev host ran out of them with 15 GB still free.
+    # holding a sandbox has its free bytes and inodes read this often
+    # (`machine/disk_guard.py`); below these shares free, of either, it takes
+    # no new sandbox and its heaviest sandbox is stopped. The shares are the
+    # defaults of Kubernetes' `nodefs.available` and `nodefs.inodesFree`.
+    # Inodes are their own floor: on 2026-10-14 a dev host ran out of them
+    # with 15 GB still free.
     sandbox_disk_check_s: int = Field(default=60, ge=10, le=3600)
     sandbox_disk_free_floor: float = Field(default=0.10, ge=0, le=0.9)
     sandbox_inodes_free_floor: float = Field(default=0.05, ge=0, le=0.9)
+    # What each home holds is read by walking every file in it: about 13 s on a
+    # dev host holding 880 thousand inodes (2026-10-14), so a walk every check
+    # would keep the disk busy a fifth of the time. It is walked this often, and
+    # at once whenever a check finds the disk below a floor, so an eviction
+    # still picks the sandbox holding the most.
+    sandbox_disk_walk_s: int = Field(default=300, ge=10, le=86400)
     # What one sandbox is expected to take of a host's disk, for how many a
     # host runs at once (`models.capacity`), after `cloud_host_disk_reserve_gb`
     # for the host itself and its projects' package stores. Measured on dev,

@@ -46,7 +46,9 @@ loop device for a filesystem per sandbox and no project quotas. So the disk is h
 Kubernetes holds a node's ephemeral storage, by reading it and evicting. Every
 `SANDBOX_DISK_CHECK_S` (60 s), every online machine holding a sandbox — the platform's hosts
 and people's computers alike — reports the free bytes and inodes of the filesystem its homes
-are on and what each home holds.
+are on, one `statvfs`. What each home holds takes a walk of every file (13 s on a dev host
+holding 880 thousand inodes), so it is read every `SANDBOX_DISK_WALK_S` (300 s), and at once
+on any check that finds the disk below a floor.
 
 - Below `SANDBOX_DISK_FREE_FLOOR` (10%) of its bytes free or `SANDBOX_INODES_FREE_FLOOR` (5%)
   of its inodes, a host takes no new sandbox (`cloud_hosts.disk_full_since`) until a reading

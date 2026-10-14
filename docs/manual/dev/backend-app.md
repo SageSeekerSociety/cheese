@@ -152,7 +152,7 @@ covers:
 | chat progress reminder | `chat_progress_check_interval_s` | 提醒沉默的轮 |
 | gate sweep | `gate_sweep_interval_s` | 收超龄的闸门孤儿卡 |
 | cloud host pool sweep / cloud warm pool | `machine_enroll_interval_seconds` | 云主机池：同步宿主机状态、入网、按需扩容和释放空闲宿主机；维护预热池 |
-| sandbox disk guard | `sandbox_disk_check_s` | 读每台跑着沙箱的机器（平台云机和用户电脑）的磁盘：可用空间或 inode 低于下限时，云机不再接新沙箱、停掉占用最多的那个沙箱并告诉它的房间；删掉沙箱已经不在的残留 home |
+| sandbox disk guard | `sandbox_disk_check_s` | 读每台跑着沙箱的机器（平台云机和用户电脑）的磁盘余量，每个 home 占多少要走一遍文件，只在 `sandbox_disk_walk_s` 到了或余量低于下限时读：可用空间或 inode 低于下限时，云机不再接新沙箱、停掉占用最多的那个沙箱并告诉它的房间；删掉沙箱已经不在的残留 home |
 | subscription usage ingest | `subscription_ingest_interval_s`，未设 `SUBSCRIPTION_USAGE_LOG` 时为 0 | 把计量代理的账本吃进 `resource_usage` |
 | backend error flush | `backend_error_flush_interval_s` | 把后端报错按窗口收口后记成运行记录 |
 | run record expiry | `run_record_expiry_interval_s` | 删掉超过 30 天的运行记录 |

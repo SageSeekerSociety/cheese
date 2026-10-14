@@ -10,10 +10,11 @@ runs there with nothing of ours importable, like that one.
   the sandbox's temporary directory are removed. A home already gone is not
   an error.
 - ``disk``: how full the filesystem the homes are on is, in bytes and in
-  inodes, and what each sandbox's home holds (its /tmp is inside it), with the
-  directory that holds most of it; and which sandbox homes on this machine are
-  not among ``live`` and were last written before ``grace_s`` — homes whose
-  sandbox no longer exists (``disk_guard``).
+  inodes, and which sandbox homes on this machine are not among ``live`` and
+  were last written before ``grace_s`` — homes whose sandbox no longer exists
+  (``disk_guard``). With ``walk``, also what each home holds (its /tmp is
+  inside it) and the directory that holds most of it: a walk of every file,
+  which is why the guard asks for it far less often than for the rest.
 
 Answers one line of JSON.
 """
@@ -122,7 +123,7 @@ def usage(root: Path, deadline: float) -> dict:
     }
 
 
-def disk(cleanup, live, grace_s) -> dict:
+def disk(cleanup, live, grace_s, walk=True) -> dict:
     """What the homes on this machine hold, and the sandbox homes left behind.
 
     ``live`` is every (project, resource) of a sandbox the platform has on
@@ -141,10 +142,11 @@ def disk(cleanup, live, grace_s) -> dict:
             key = (project.name, home.name)
             marker = cleanup["sandbox_marker"](home)
             sandbox = marker.exists()
-            used = usage(home, deadline)
-            homes.append(
-                {"project": key[0], "resource": key[1], "sandbox": sandbox, **used}
-            )
+            if walk:
+                used = usage(home, deadline)
+                homes.append(
+                    {"project": key[0], "resource": key[1], "sandbox": sandbox, **used}
+                )
             written = max(
                 (path.stat().st_mtime for path in (home, marker) if path.exists()),
                 default=0,

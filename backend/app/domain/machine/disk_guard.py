@@ -8,9 +8,12 @@ device to give each sandbox a filesystem of its own and no project quotas. So
 this is held the way Kubernetes holds a node's ephemeral storage: by reading
 what is used and stopping sandboxes, not by a limit in the filesystem.
 
-Every ``sandbox_disk_check_s``, each online machine holding a sandbox is read
-(``sandbox_home.disk``): the free bytes and inodes of the filesystem its homes
-are on, and what each home holds.
+Every ``sandbox_disk_check_s`` (a minute), each online machine holding a
+sandbox is read (``sandbox_home.disk``): the free bytes and inodes of the
+filesystem its homes are on, which costs one ``statvfs``. What each home holds
+takes a walk of every file in it — about 13 s on a dev host holding 880
+thousand inodes — so that is read only every ``sandbox_disk_walk_s`` (five
+minutes), and at once on any check that finds the disk below a floor.
 
 - Below ``sandbox_disk_free_floor`` of its bytes or ``sandbox_inodes_free_floor``
   of its inodes, a platform host takes no new sandbox
@@ -55,6 +58,11 @@ EVICT_MIN_SHARE = 0.01
 READ_TIMEOUT_S = sandbox_home.WALK_S + 60
 #: Where a sandbox sees its temporary directory, inside its home.
 SANDBOX_TMP = ".cheese/tmp"
+
+# When each machine's homes were last walked. In this process: the jobs run in
+# the one that holds the work, and one that takes it over walks each machine on
+# its first check.
+_walked: dict[str, datetime] = {}
 
 
 async def sweep(sessions: SessionFactory) -> dict[str, int]:
@@ -102,7 +110,7 @@ class DiskGuard:
         self._lifecycle = SandboxLifecycle(session, hub=self._hub)
 
     async def sweep(self) -> dict[str, int]:
-        counts = {"read": 0, "evicted": 0, "removed": 0}
+        counts = {"read": 0, "walked": 0, "evicted": 0, "removed": 0}
         for device_id in await self._machines():
             if not self._hub.is_online(device_id):
                 continue
@@ -167,18 +175,26 @@ class DiskGuard:
         return live
 
     async def check(self, device_id: str) -> dict[str, int]:
-        """Read one machine and act on what it shows."""
+        """Read one machine and act on what it shows: its free space every
+        time, what its homes hold when a walk is due or the disk is short."""
         live = await self._live(device_id)
-        reading = await lifecycle.run_on_host(
-            self._hub,
-            device_id,
-            "disk",
-            timeout=READ_TIMEOUT_S,
-            live=[[str(row.project_id), row.resource_id] for row in live],
-            grace_s=LEFT_BEHIND_AFTER.total_seconds(),
+        now = datetime.now(UTC)
+        last = _walked.get(device_id)
+        walk = last is None or now - last >= timedelta(
+            seconds=settings.sandbox_disk_walk_s
         )
+        reading = await self._read(device_id, live, walk=walk)
         filesystem = reading["filesystem"]
         full = below_floor(filesystem)
+        if full and not walk:
+            # Short of disk: which sandbox to stop is decided on what the homes
+            # hold now, not five minutes ago.
+            walk = True
+            reading = await self._read(device_id, live, walk=True)
+            filesystem = reading["filesystem"]
+            full = below_floor(filesystem)
+        if walk:
+            _walked[device_id] = now
         await self._mark(device_id, full, filesystem)
         evicted = 0
         if full and await self._evict_heaviest(
@@ -191,7 +207,18 @@ class DiskGuard:
                 device_id, home["project"], home["resource"]
             ):
                 removed += 1
-        return {"read": 1, "evicted": evicted, "removed": removed}
+        return {"read": 1, "walked": int(walk), "evicted": evicted, "removed": removed}
+
+    async def _read(self, device_id: str, live: list, *, walk: bool) -> dict:
+        return await lifecycle.run_on_host(
+            self._hub,
+            device_id,
+            "disk",
+            timeout=READ_TIMEOUT_S,
+            live=[[str(row.project_id), row.resource_id] for row in live],
+            grace_s=LEFT_BEHIND_AFTER.total_seconds(),
+            walk=walk,
+        )
 
     async def _mark(self, device_id: str, full: bool, filesystem: dict) -> None:
         host = await self._repo.by_device(device_id)
