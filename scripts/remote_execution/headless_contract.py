@@ -1570,7 +1570,16 @@ def partial(binary, root):
         session.stop()
 
 
-def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook=None):
+def remote(
+    binary,
+    root,
+    name,
+    args,
+    env=None,
+    trusted_hook=None,
+    untrusted_hook=None,
+    empty_module=False,
+):
     """A -p session launched the way a room's central session is, against a local executor.
 
     The executor is the acceptance fixture's (`acceptance.setup`): runtime.py
@@ -1632,6 +1641,14 @@ def remote(binary, root, name, args, env=None, trusted_hook=None, untrusted_hook
             {"hooks": [{"type": "command", "command": untrusted_hook}]}
         )
         (home / "session" / "settings.json").write_text(json.dumps(written))
+    if empty_module:
+        # Nothing takes the call: the plugin's module is loaded, and registers
+        # no handler, so a native call reaches the harness and the PreToolUse
+        # guard refuses it. The function-hook switch cannot make this state any
+        # more — on the pinned build it no longer keeps a module from loading.
+        (home / "session" / "plugin" / "hooks" / "proxy.js").write_text(
+            "export function register(on) {}\n"
+        )
     session = Session(binary, root, name, args, launch=launch, env=env)
     session.executor = executor
     session.remote_workspace = Path(
@@ -1711,14 +1728,14 @@ def functionhooks(binary, root):
         )
     finally:
         stop_remote(session)
-    # Without the function hook the native tool reaches the harness, and the
+    # With nothing taking the call the native tool reaches the harness, and the
     # PreToolUse guard prepare installs is what stops it running centrally.
     session = remote(
         binary,
         root,
-        "functionhooks-off",
+        "functionhooks-empty",
         DRIVER,
-        env={"CLAUDE_CODE_ENABLE_FUNCTION_HOOKS": "0"},
+        empty_module=True,
     )
     try:
         target = session.workspace / "new.txt"
