@@ -169,7 +169,7 @@ async def add_question(
         bounty=bounty,
         topic_ids=topic_ints,
     )
-    return {"code": 201, "message": "Created", "data": {"id": question["id"]}}
+    return ok({"id": question["id"]})
 
 
 @router.get(
@@ -220,7 +220,7 @@ async def follow_question(
     if not changed:
         raise BadRequestError("Already followed")
     follow_count = await service._repo.count_followers(question_id)
-    return {"code": 201, "message": "Created", "data": {"follow_count": follow_count}}
+    return ok({"follow_count": follow_count})
 
 
 @router.delete(
@@ -370,7 +370,7 @@ async def create_question_comment(
         parent_id=parent_id,
         mentioned_user_ids=mentioned_user_ids,
     )
-    return {"code": 201, "message": "Created", "data": {"comment": comment}}
+    return ok({"comment": comment})
 
 
 @router.delete(
@@ -600,14 +600,12 @@ async def invite_user_to_answer(
         inviter_id=auth_user.user_id,
         invitee_id=invitee_id,
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
+    return ok(
+        {
             "invitationId": result["invitation_id"],
             "invitation": result["invitation"],
-        },
-    }
+        }
+    )
 
 
 @router.get(

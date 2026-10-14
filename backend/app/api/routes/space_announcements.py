@@ -155,11 +155,7 @@ async def publish_announcement(
         expires_at=_from_ms(payload.expires_at),
     )
     chosen = await _chosen_avatar_ids(db, [view])
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {"announcement": _to_api(view, chosen_avatar_ids=chosen)},
-    }
+    return ok({"announcement": _to_api(view, chosen_avatar_ids=chosen)})
 
 
 @router.patch(

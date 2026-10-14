@@ -46,7 +46,7 @@ class TestMaterialsUploadIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_upload_video_material(self):
@@ -59,7 +59,7 @@ class TestMaterialsUploadIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_upload_audio_material(self):
@@ -72,7 +72,7 @@ class TestMaterialsUploadIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_upload_file_material(self):
@@ -85,7 +85,7 @@ class TestMaterialsUploadIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_get_material(self):
@@ -231,7 +231,7 @@ class TestMaterialBundlesCreateIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_create_bundle_without_materials(self):
@@ -245,7 +245,7 @@ class TestMaterialBundlesCreateIntegration:
         )
         assert response.status_code == 201
         data = response.json()
-        assert data["code"] == 201
+        assert data["code"] == 200
         assert "id" in data["data"]
 
     def test_create_bundle_material_not_found(self):

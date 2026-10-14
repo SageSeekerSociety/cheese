@@ -181,4 +181,4 @@ async def create_comment(
         content=content,
         created_by_id=auth_user.user_id,
     )
-    return {"code": 201, "message": "Comment created successfully", "data": result}
+    return ok(result, "Comment created successfully")

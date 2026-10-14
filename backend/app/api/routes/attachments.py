@@ -121,11 +121,10 @@ async def upload_attachment(
     # client's next request, which must find the row. ``get_db`` commits in its
     # teardown, which FastAPI runs after the response has gone out.
     await db.commit()
-    return {
-        "code": 201,
-        "message": "Attachment uploaded successfully",
-        "data": {"id": attachment.id, "url": attachment.url, "type": attachment.type},
-    }
+    return ok(
+        {"id": attachment.id, "url": attachment.url, "type": attachment.type},
+        "Attachment uploaded successfully",
+    )
 
 
 @router.get(
