@@ -32,6 +32,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok
 from app.core.config import settings
 from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import project_team
 from app.domain.memory.migration_service import MemoryMigrationService
 from app.domain.memory.models import MemoryMigrationPlan
 from app.domain.memory.reads import body_reads
@@ -86,7 +87,7 @@ async def dry_run_migration(
     db: DbSession,
 ):
     """读旧表、问模型、出一份报告。**这一步一个字都不写进新树。**"""
-    service = MemoryMigrationService(db, announce=announce)
+    service = MemoryMigrationService(db, announce=announce, team=project_team)
     row = await service.dry_run(project_id, by=admin)
     await db.commit()
     return ok(_plan_out(row, with_report=True), "报告好了，等复核")
@@ -131,7 +132,9 @@ async def apply_migration(
     db: DbSession,
 ):
     """按复核过的那份计划写进记忆树。一条冲突就整次不写。"""
-    row = await MemoryMigrationService(db, announce=announce).apply(plan_id, by=admin)
+    row = await MemoryMigrationService(db, announce=announce, team=project_team).apply(
+        plan_id, by=admin
+    )
     await db.commit()
     return ok(_plan_out(row), "搬完了")
 

@@ -18,6 +18,7 @@ from fastapi import APIRouter
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, page
+from app.domain.agent_instance.adapters import project_team
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import (
@@ -39,7 +40,7 @@ def _invitations(db: DbSession) -> InvitationService:
     both land on the delivery ledger, one layer above ``membership``, so this
     door hands them in (``integration/ports.py`` wires its reader the same way).
     """
-    return InvitationService(db, deliver=deliver, settle=settle)
+    return InvitationService(db, deliver=deliver, settle=settle, team=project_team)
 
 
 @router.post("/projects/{project_id}/members")
@@ -74,7 +75,7 @@ async def list_members(
     # written (an external member's acceptance, a teammate's seat).
     row_of = {m.user_handle: m for m in members}
     items = []
-    for member in await roster(db, project_id):
+    for member in await roster(db, project_id, team=project_team):
         row = row_of.get(member.handle)
         d = {
             **member.as_dict(),

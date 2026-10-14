@@ -43,6 +43,7 @@ from app.domain.identity.handles import (
 )
 from app.domain.living_doc.models import Document, DocumentNode
 from app.domain.living_doc.services import Documents
+from app.domain.membership.ports import ProjectTeam
 from app.domain.notification.services import ProjectNotificationService
 from app.domain.repository import service as ws
 from app.domain.review.archive import close_cards_for_archived_topic
@@ -430,7 +431,11 @@ class TopicService:
         return await self._repo.last_activity_for_topics(topic_ids)
 
     async def relevance_for_topics(
-        self, topics: list[Topic], viewer_handle: str | None
+        self,
+        topics: list[Topic],
+        viewer_handle: str | None,
+        *,
+        team: ProjectTeam,
     ) -> dict[uuid.UUID, TopicRelevance]:
         """{topic_id: what it is to me} for a batch of channels, in a fixed
         number of queries whatever the batch size: the list endpoint returns a
@@ -444,7 +449,7 @@ class TopicService:
         if viewer_handle is None or not topics:
             return {}
         topic_ids = [t.id for t in topics]
-        joined = await self._members.joined_topic_ids(topics, viewer_handle)
+        joined = await self._members.joined_topic_ids(topics, viewer_handle, team=team)
         cards = await self._cards.reviewer_topic_ids(topic_ids, viewer_handle)
         decisions = await self._notifications.decision_topic_ids(
             topic_ids, viewer_handle
@@ -880,6 +885,7 @@ class TopicService:
         block_id: uuid.UUID,
         created_by: str | None = None,
         seat_project: SeatProject,
+        team: ProjectTeam,
     ) -> tuple[Topic, Task]:
         """转为任务: a message in a channel becomes a task in that channel,
         owned by whoever turned it. A message, or the 支线 under it, can become
@@ -906,6 +912,7 @@ class TopicService:
             origin_block_id=await self._main_line_message(block),
             source_block_id=block.id,
             seat_project=seat_project,
+            team=team,
         )
         return parent, task
 
@@ -1011,6 +1018,7 @@ class TopicService:
         origin_block_id: uuid.UUID | None = None,
         source_block_id: uuid.UUID | None = None,
         seat_project: SeatProject,
+        team: ProjectTeam,
     ) -> Task:
         """Open a task in a room: a conversation of its own, owned by one person,
         with an empty living document for its agent to draft.
@@ -1086,7 +1094,7 @@ class TopicService:
             and await seat_project(self._session, teammate) == project.id
         ):
             await self._seat_teammate(
-                room.id, teammate, by=created_by, seat_project=seat_project
+                room.id, teammate, by=created_by, seat_project=seat_project, team=team
             )
             await tasks.give_agent(task, agent_handle=teammate)
         await tasks.ensure_document(task)
@@ -1099,7 +1107,13 @@ class TopicService:
         return task
 
     async def give_task_teammate(
-        self, task: Task, seat: str | None, *, by: str, seat_project: SeatProject
+        self,
+        task: Task,
+        seat: str | None,
+        *,
+        by: str,
+        seat_project: SeatProject,
+        team: ProjectTeam,
     ) -> None:
         """Another AI teammate works ``task`` from its next turn: one saved in
         the task's project, named by its seat; None gives it back to its
@@ -1111,7 +1125,7 @@ class TopicService:
             if project is None or await seat_project(self._session, seat) != project.id:
                 raise ValidationError(say("teammateHandleNotFound", handle=repr(seat)))
             await self._seat_teammate(
-                task.room_id, seat, by=by, seat_project=seat_project
+                task.room_id, seat, by=by, seat_project=seat_project, team=team
             )
         await TaskService(self._session).give_agent(task, agent_handle=seat)
 
@@ -1122,6 +1136,7 @@ class TopicService:
         *,
         by: str | None,
         seat_project: SeatProject,
+        team: ProjectTeam,
     ) -> None:
         """Seat the teammate a task is given in the task's room, so that it
         works and speaks there as itself (`queries._seat_of`).
@@ -1134,7 +1149,11 @@ class TopicService:
             return
         try:
             await self._members.add(
-                topic_id=room_id, handle=seat, actor=by or "", seat_project=seat_project
+                topic_id=room_id,
+                handle=seat,
+                actor=by or "",
+                seat_project=seat_project,
+                team=team,
             )
         except ForbiddenError:
             raise ForbiddenError(say("taskTeammateNeedsSeat")) from None

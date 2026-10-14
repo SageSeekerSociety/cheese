@@ -43,6 +43,7 @@ from tests.integration.conftest import (
 from tests.landing import summary_turn_ends
 from tests.machine_work import machine_commits
 from tests.support import git_store
+from tests.support.review_ports import task_teammate
 
 REPO = "acme/widgets"
 
@@ -202,6 +203,7 @@ def _poll(client) -> dict:
             record_instruction=record_task_instruction,
             seat_instance_id=seat_instance_id,
             record_agent=record_agent,
+            task_teammate=task_teammate,
         )
     )
 

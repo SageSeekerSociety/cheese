@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_instance.own import allows_own_agents, owned_in_project
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.identity.handles import CHEESE_NAME, agent_instance_handle
+from app.domain.membership.ports import TeammateSeat
 from app.domain.project.models import Project
+from app.domain.user.models import User
 
 
 async def room_teammate(session: AsyncSession, room_id: uuid.UUID) -> tuple[str, str]:
@@ -103,3 +107,63 @@ async def default_teammate(
     if type_name and teammate.type_name is None:
         await agents.set_type(teammate, type_name)
         await session.flush()
+
+
+async def project_team(
+    session: AsyncSession, project_id: uuid.UUID
+) -> list[TeammateSeat]:
+    """`app.domain.membership.ports.ProjectTeam`：这个项目里坐着的队友。
+
+    筛在这一次里，因为它要的两个输入都是本包的一行：项目设置里那句「成员可以带自己
+    的 agent 进来」、以及谁是谁的 agent。关了那项的项目把成员自己的 agent 收回了
+    ——它们不是「叫不动」，是不在项目里（`own.py` 的 ``allows_own_agents``）；被主人
+    停用的也一样。项目自己的队友无论如何都在，``active`` 照实说：名册上留着它，因为
+    它接手的房间还在照常工作。
+
+    名字、席位 handle、默认队友这几样也在这里一次收成内置值：名册那一侧认不出
+    ``AgentInstance``，也不该认得。"""
+    project = await session.get(Project, project_id)
+    withdrawn = not allows_own_agents(project.settings if project is not None else None)
+    default_instance_id = (
+        project.default_agent_instance_id if project is not None else None
+    )
+    owners = await _own_owners(session, project_id)
+    seats: list[TeammateSeat] = []
+    for instance in await AgentInstanceService(session).list_for_project(project_id):
+        own = owners.get(instance.id)
+        if own is not None and (withdrawn or not instance.is_active):
+            continue
+        seats.append(
+            TeammateSeat(
+                seat=agent_instance_handle(instance.id),
+                session_handle=instance.handle,
+                name=instance.display_name or instance.handle,
+                name_source=AgentInstanceService.resolved(instance).name_source.value,
+                active=instance.is_active,
+                is_default=instance.id == default_instance_id,
+                owner_handle=own[0] if own is not None else None,
+                callers=own[1] if own is not None else None,
+            )
+        )
+    return seats
+
+
+async def _own_owners(
+    session: AsyncSession, project_id: uuid.UUID
+) -> dict[uuid.UUID, tuple[str, str]]:
+    """这个项目里哪些队友是成员自己的：归谁（按 handle），谁能叫它。"""
+
+    owned = await owned_in_project(session, project_id)
+    if not owned:
+        return {}
+    rows = await session.execute(
+        select(User.id, User.username).where(
+            User.id.in_({owner for _, owner, _ in owned})
+        )
+    )
+    users: dict[int, str] = {user_id: name for user_id, name in rows.all()}
+    return {
+        instance.id: (users[owner], callers.value)
+        for instance, owner, callers in owned
+        if owner in users
+    }

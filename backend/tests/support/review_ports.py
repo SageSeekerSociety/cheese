@@ -7,6 +7,7 @@
 接线的那几行），测试直接调这些函数时递同样的，被测的才是生产那条路。
 """
 
+from app.domain.agent_instance.adapters import task_teammate
 from app.domain.delivery.agent import (
     dispatch_pending as _dispatch_pending,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "record_task_instruction",
     "seat_instance_id",
     "settle_card",
+    "task_teammate",
 ]
 
 

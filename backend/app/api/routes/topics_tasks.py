@@ -69,7 +69,7 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.environment import default_environment
 from app.domain.agent.harness.prompt import task_opening_prompt, task_started_prompt
 from app.domain.agent.opening import opening_content
-from app.domain.agent_instance.adapters import seat_project
+from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.agent_instance.own import may_work_for
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.idempotency import store as idem
@@ -241,7 +241,11 @@ async def conclude_task(
     text = (body.conclusion or "").strip()
     conclusion = (
         await canonicalize_refs(
-            db, place.project_id, text, exclude_topic_id=place.room_id
+            db,
+            place.project_id,
+            text,
+            team=project_team,
+            exclude_topic_id=place.room_id,
         )
         if text
         else None
@@ -353,6 +357,7 @@ async def create_task(
         created_by=actor.handle,
         title=body.title,
         seat_project=seat_project,
+        team=project_team,
     )
     # 建出来即已开始：审阅人默认就是建它的人。没有那两档可退时留在讨论中，
     # 负责人在任务页点「开始」时看到的是同一句话。
@@ -420,7 +425,9 @@ async def update_task(
     if "owner_handle" in body.model_fields_set and body.owner_handle:
         # Work is handed to anyone in the project, and whoever takes it is in
         # its channel from then on.
-        if body.owner_handle not in await members.project_people(place.project_id):
+        if body.owner_handle not in await members.project_people(
+            place.project_id, team=project_team
+        ):
             raise UnprocessableEntityError(say("taskOwnerNotInProject"))
         await members.take_in(place.room_id, body.owner_handle)
         await _move_off_former_owners_computer(
@@ -436,7 +443,7 @@ async def update_task(
         ):
             raise ForbiddenError(say("ownAgentOtherOwnersTask"))
         await TopicService(db).give_task_teammate(
-            task, given, by=actor.handle, seat_project=seat_project
+            task, given, by=actor.handle, seat_project=seat_project, team=project_team
         )
     elif not await may_work_for(
         db, place.project_id, task.agent_handle, task.owner_handle, settings_now
@@ -444,10 +451,10 @@ async def update_task(
         # Handed to someone whose own agent it is not (#2991): the task goes
         # back to the project's teammate, and its new owner may give it theirs.
         await TopicService(db).give_task_teammate(
-            task, None, by=actor.handle, seat_project=seat_project
+            task, None, by=actor.handle, seat_project=seat_project, team=project_team
         )
     if body.contributor_handles is not None:
-        people = await members.project_people(place.project_id)
+        people = await members.project_people(place.project_id, team=project_team)
         wanted = list(dict.fromkeys(body.contributor_handles))
         if any(h not in people for h in wanted):
             raise UnprocessableEntityError(say("contributorNotInProject"))
@@ -557,7 +564,7 @@ async def create_teammate_task(
     )
     named = (body.owner_handle or "").strip().lstrip("@")
     if named and named not in await TopicMemberService(db).project_people(
-        place.project_id
+        place.project_id, team=project_team
     ):
         raise UnprocessableEntityError(say("taskOwnerNotInProject"))
     owner = named or (origin.author if origin is not None else None)
@@ -579,6 +586,7 @@ async def create_teammate_task(
         origin_block_id=origin.id if origin is not None else None,
         source_block_id=asked.id if asked is not None else None,
         seat_project=seat_project,
+        team=project_team,
     )
     blocks = (await discussion(db, task))[1]
     why_not = (

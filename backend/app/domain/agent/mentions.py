@@ -39,6 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.sentences import say
 from app.core.text import markdown_preview
 from app.domain.addressing import Event, Hand, address
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.about import EventAbout, landing
 from app.domain.block.models import AuthorType, Block, BlockKind
@@ -178,7 +179,7 @@ async def person_mentions(
         roster = (
             []
             if "@" not in content or dm
-            else await roster_rows(session, topic.project_id)
+            else await roster_rows(session, topic.project_id, team=project_team)
         )
         # 这间房真正坐着的 AI 席位先答这个名字：排到名册最前，名册上没有它
         # 的补一行。一间还挂着共用 `cheese` 席位的老房间（那一步是惰性的，
@@ -234,7 +235,7 @@ async def project_refs_text(
     `todo_write`, before `_persist_assistant_message` does the rest) and when
     anyone speaks on a card (`say_on_task`)."""
     return await canonicalize_refs(
-        session, project_id, content, exclude_topic_id=room_id
+        session, project_id, content, team=project_team, exclude_topic_id=room_id
     )
 
 
@@ -378,7 +379,7 @@ async def announce_mentions(
         # <@handle> is different and is NOT filtered here — that is how one
         # agent addresses another, which a room hosting several 芝士 depends
         # on.
-        people = await TopicMemberService(session).people_in(topic)
+        people = await TopicMemberService(session).people_in(topic, team=project_team)
         muted = await topics.muted_among(topic.id, people)
         concrete += [h for h in people if h not in muted]
     # Nobody needs a notification for their own message.
@@ -477,7 +478,7 @@ async def mentioned_outside(
     if not named:
         return None
     members = TopicMemberService(session)
-    handles = await members.outside(room, named)
+    handles = await members.outside(room, named, team=project_team)
     if not handles:
         return None
     return MentionedOutside(

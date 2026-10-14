@@ -20,7 +20,7 @@ from app.api.topic_member_rows import roster_rows
 from app.core.errors import AuthenticationRequiredError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.project_feed import TOPICS, tell_project
-from app.domain.agent_instance.adapters import seat_project
+from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.topic.services import TopicService
 from app.domain.topic_membership.schemas import TopicMemberCreate, TopicMemberOut
 from app.domain.topic_membership.services import TopicMemberService
@@ -58,6 +58,7 @@ async def add_topic_member(
         handle=body.handle,
         actor=who.handle,
         seat_project=seat_project,
+        team=project_team,
     )
     await db.commit()
     # A private channel appears in the list of whoever was brought in.

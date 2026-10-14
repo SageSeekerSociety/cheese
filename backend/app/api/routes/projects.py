@@ -38,7 +38,11 @@ from app.core.errors import (
 from app.core.sentences import exception_text, say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.profiles import ProfileRegistry
-from app.domain.agent_instance.adapters import default_teammate, named_teammate
+from app.domain.agent_instance.adapters import (
+    default_teammate,
+    named_teammate,
+    project_team,
+)
 from app.domain.agent_instance.own import may_chat_with
 from app.domain.block.queries import weeklies_for_project
 from app.domain.conversation.services import rooms_of_inner
@@ -780,9 +784,9 @@ async def archive_project(
     project = await ProjectService(db, settle_card=settle_card).archive(
         project_id, by=owner.handle
     )
-    await InvitationService(db, deliver=deliver, settle=settle).revoke_all_pending(
-        project_id
-    )
+    await InvitationService(
+        db, deliver=deliver, settle=settle, team=project_team
+    ).revoke_all_pending(project_id)
     await db.commit()
     return ok(await _project_payload(db, project))
 

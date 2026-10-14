@@ -26,6 +26,7 @@ from app.core.sentences import listing, say, with_keys
 from app.domain.agent.announce import settle_proposal
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.realtime.broker import get_broker
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.authorship import AuthorType
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -207,7 +208,9 @@ class RoutineService:
             # The owner is told the results, so they are a person of the
             # project, and the channel the routine runs in becomes theirs too.
             members = TopicMemberService(self._session)
-            if owner_handle not in await members.project_people(topic.project_id):
+            if owner_handle not in await members.project_people(
+                topic.project_id, team=project_team
+            ):
                 raise ValidationError(
                     say("routineOwnerNotInProject", handle=owner_handle)
                 )
@@ -472,7 +475,9 @@ class RoutineService:
                 )
             )
             for rule in rules:
-                await ProjectNotificationService(self._session).create(
+                await ProjectNotificationService(
+                    self._session, team=project_team
+                ).create(
                     project_id=rule.project_id,
                     level=NotificationLevel.light,
                     kind=NotificationType.CHANGE_ALERT,

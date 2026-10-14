@@ -28,6 +28,7 @@ from app.domain.delivery_events import (
 )
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
+from app.domain.membership.ports import ProjectTeam
 from app.domain.membership.repositories import InvitationRepository, MemberRepository
 from app.domain.membership.roster import roster
 from app.domain.membership.schemas import InvitationOut
@@ -251,8 +252,16 @@ class InvitationService:
     ``_reject_execution_identity``。
     """
 
-    def __init__(self, session: AsyncSession, *, deliver: Deliver, settle: Settle):
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        deliver: Deliver,
+        settle: Settle,
+        team: ProjectTeam,
+    ):
         self._session = session
+        self._team = team
         self._repo = InvitationRepository(session)
         self._members = MemberRepository(session)
         self._projects = ProjectRepository(session)
@@ -281,7 +290,10 @@ class InvitationService:
         那条路。
         """
 
-        return any(m.handle == handle for m in await roster(self._session, project_id))
+        return any(
+            m.handle == handle
+            for m in await roster(self._session, project_id, team=self._team)
+        )
 
     async def invite(
         self,

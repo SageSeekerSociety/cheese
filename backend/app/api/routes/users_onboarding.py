@@ -43,7 +43,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import BaseError, NotFoundError
 from app.db.session import get_db
 from app.domain.agent.environment import Sandbox, devices_of, dump
-from app.domain.agent_instance.adapters import default_teammate
+from app.domain.agent_instance.adapters import default_teammate, project_team
 from app.domain.delivery.ledger import deliver, settle
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
@@ -125,7 +125,9 @@ async def finish_onboarding(
     me = Actor(handle=user.username, user_id=user.id, via="token")
     # The invitation writes land on the delivery ledger, one layer above
     # ``membership``; this door hands the two in.
-    invitations = InvitationService(session, deliver=deliver, settle=settle)
+    invitations = InvitationService(
+        session, deliver=deliver, settle=settle, team=project_team
+    )
     not_invited: list[str] = []
     for asked in dict.fromkeys(q.strip() for q in payload.invitees if q.strip()):
         account = await lookup_account(session, asked)

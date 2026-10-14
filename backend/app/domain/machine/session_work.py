@@ -32,6 +32,7 @@ from app.domain.agent.machine_address import device_api_base, site_forward, ws_u
 from app.domain.agent.market import cloud_provisionable
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.owner_provider import OWNER_CHANNEL
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -211,7 +212,9 @@ async def tell_device_owner(db, *, topic, row, device, lease, whole=False) -> No
     owner = await db.get(User, device.owner_user_id)
     if owner is None:
         return
-    if owner.username in await TopicMemberService(db).people_in(topic):
+    if owner.username in await TopicMemberService(db).people_in(
+        topic, team=project_team
+    ):
         return
     project = await ProjectService(db).get_or_404(topic.project_id)
     team = await db.get(Team, project.team_id)

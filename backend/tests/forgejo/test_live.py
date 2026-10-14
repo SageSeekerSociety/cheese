@@ -24,6 +24,7 @@ from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
 from app.domain.agent.room_events import _known_commits, _turn_changeset
+from app.domain.agent_instance.adapters import project_team
 from app.domain.project.forge import (
     branch_head,
     ensure_repository_webhook,
@@ -677,12 +678,14 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await AcceptService(session, announce=announce).push_fix(
-                task.id
-            )
+            refreshed = await AcceptService(
+                session, announce=announce, roster_team=project_team
+            ).push_fix(task.id)
             assert refreshed["pushed"] is True
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            again = await AcceptService(session, announce=announce).push_fix(task.id)
+            again = await AcceptService(
+                session, announce=announce, roster_team=project_team
+            ).push_fix(task.id)
             assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
@@ -701,9 +704,9 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await AcceptService(session, announce=announce).accept(
-                card_id=card.id, decided_by="reviewer", head_sha=latest
-            )
+            accepted = await AcceptService(
+                session, announce=announce, roster_team=project_team
+            ).accept(card_id=card.id, decided_by="reviewer", head_sha=latest)
             await session.commit()
             assert accepted.status.value == "accepted"
             merged_sha = accepted.pr_head_sha

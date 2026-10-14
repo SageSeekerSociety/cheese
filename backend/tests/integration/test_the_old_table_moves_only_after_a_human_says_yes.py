@@ -18,6 +18,7 @@ from sqlalchemy import func, select, update
 from app.core.config import settings
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError
 from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import project_team
 from app.domain.gateway_chat import Completion, Usage
 from app.domain.memory.files import MemoryFileScope, prefix_of
 from app.domain.memory.files_store import MemoryFileStore
@@ -147,7 +148,7 @@ async def test_the_report_comes_before_any_write(business_db_factory):
             ]
         )
         plan = await MemoryMigrationService(
-            session, chat=model, announce=announce
+            session, chat=model, announce=announce, team=project_team
         ).dry_run(project.id, by="alice")
         await session.commit()
 
@@ -189,9 +190,9 @@ async def test_what_the_migration_asks_is_charged_to_the_project(business_db_fac
                 )
             ]
         )
-        await MemoryMigrationService(session, chat=model, announce=announce).dry_run(
-            project.id, by="alice"
-        )
+        await MemoryMigrationService(
+            session, chat=model, announce=announce, team=project_team
+        ).dry_run(project.id, by="alice")
         await session.commit()
 
         rows = list(await session.scalars(select(ResourceUsage)))
@@ -218,7 +219,7 @@ async def test_a_project_with_nothing_left_to_move_has_no_report(business_db_fac
         project = await _project(session)
         with pytest.raises(BadRequestError):
             await MemoryMigrationService(
-                session, chat=_Model([]), announce=announce
+                session, chat=_Model([]), announce=announce, team=project_team
             ).dry_run(project.id, by="alice")
 
 
@@ -228,7 +229,7 @@ async def test_without_a_model_there_is_no_report(business_db_factory):
         project = await _project(session)
         await _old(session, project, "一条旧记忆")
         # No gateway to mint a key on, so no model to ask.
-        service = MemoryMigrationService(session, announce=announce)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         with pytest.raises(BadRequestError):
             await service.dry_run(project.id, by="alice")
 
@@ -258,7 +259,7 @@ async def test_a_plan_that_breaks_the_hard_rules_is_refused_whole(
         )
         with pytest.raises(BadRequestError):
             await MemoryMigrationService(
-                session, chat=model, announce=announce
+                session, chat=model, announce=announce, team=project_team
             ).dry_run(project.id, by="alice")
         await session.commit()
 
@@ -279,8 +280,9 @@ async def test_only_the_named_reviewer_says_yes(business_db_factory):
             session,
             chat=_Model([_decision(f"entry:{entry.id}", "discard", "过时了")]),
             announce=announce,
+            team=project_team,
         ).dry_run(project.id, by="alice")
-        service = MemoryMigrationService(session, announce=announce)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
 
         with pytest.raises(ForbiddenError):
             await service.approve(plan.id, by="alice")
@@ -314,12 +316,13 @@ async def test_nothing_lands_before_the_yes(business_db_factory):
                 ]
             ),
             announce=announce,
+            team=project_team,
         ).dry_run(project.id, by="alice")
         await session.commit()
         plan_id = plan.id
 
     async with business_db_factory() as session:
-        service = MemoryMigrationService(session, announce=announce)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         with pytest.raises(ForbiddenError):
             await service.apply(plan_id, by=settings.memory_migration_reviewer)
         assert await _team_files(session, project.id) == {}
@@ -394,7 +397,9 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
                 ),
             ]
         )
-        service = MemoryMigrationService(session, chat=model, announce=announce)
+        service = MemoryMigrationService(
+            session, chat=model, announce=announce, team=project_team
+        )
         plan = await service.dry_run(project.id, by="alice")
         project_id = project.id
         assert plan.suggestions[0]["target"] == "CLAUDE.md"
@@ -404,9 +409,9 @@ async def test_the_approved_plan_lands_and_the_old_table_stays_put(
         plan_id = plan.id
 
     async with business_db_factory() as session:
-        row = await MemoryMigrationService(session, announce=announce).apply(
-            plan_id, by=settings.memory_migration_reviewer
-        )
+        row = await MemoryMigrationService(
+            session, announce=announce, team=project_team
+        ).apply(plan_id, by=settings.memory_migration_reviewer)
         await session.commit()
 
         assert row.status == MemoryMigrationStatus.applied.value
@@ -443,6 +448,7 @@ async def test_saying_yes_twice_changes_nothing(business_db_factory):
             session,
             chat=_Model([_decision(f"entry:{entry.id}", "discard", "过时了")]),
             announce=announce,
+            team=project_team,
         )
         plan = await service.dry_run(project.id, by="alice")
         await service.approve(plan.id, by=settings.memory_migration_reviewer)
@@ -450,12 +456,12 @@ async def test_saying_yes_twice_changes_nothing(business_db_factory):
         plan_id = plan.id
 
     async with business_db_factory() as session:
-        service = MemoryMigrationService(session, announce=announce)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         await service.apply(plan_id, by=settings.memory_migration_reviewer)
         await session.commit()
 
     async with business_db_factory() as session:
-        service = MemoryMigrationService(session, announce=announce)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         # 已经搬过的那一份不能再搬一次：report 里那几条旧记忆已经不在树上了。
         with pytest.raises(ForbiddenError):
             await service.apply(plan_id, by=settings.memory_migration_reviewer)
@@ -492,23 +498,25 @@ async def test_a_second_report_does_not_move_what_already_moved(business_db_fact
                 ),
             ]
         )
-        service = MemoryMigrationService(session, chat=model, announce=announce)
+        service = MemoryMigrationService(
+            session, chat=model, announce=announce, team=project_team
+        )
         plan = await service.dry_run(project.id, by="alice")
         await service.approve(plan.id, by=settings.memory_migration_reviewer)
         await session.commit()
         plan_id = plan.id
 
     async with business_db_factory() as session:
-        await MemoryMigrationService(session, announce=announce).apply(
-            plan_id, by=settings.memory_migration_reviewer
-        )
+        await MemoryMigrationService(
+            session, announce=announce, team=project_team
+        ).apply(plan_id, by=settings.memory_migration_reviewer)
         await session.commit()
 
     async with business_db_factory() as session:
         # 两条都搬过了：没有还没搬过的旧记忆，也就没有第二份报告。
         with pytest.raises(BadRequestError):
             await MemoryMigrationService(
-                session, chat=_Model([]), announce=announce
+                session, chat=_Model([]), announce=announce, team=project_team
             ).dry_run(project.id, by="alice")
         # 树还是那两份，没长出第二份同名的东西。
         team = await _team_files(session, project.id)
@@ -537,6 +545,7 @@ async def _one_file_plan(business_db_factory, *, handle: str = "alice"):
                 ]
             ),
             announce=announce,
+            team=project_team,
         )
         plan = await service.dry_run(project.id, by=handle)
         await service.approve(plan.id, by=settings.memory_migration_reviewer)
@@ -567,15 +576,15 @@ async def test_a_change_to_the_tree_between_yes_and_write_stops_the_whole_thing(
         await session.commit()
 
     async with business_db_factory() as session:
-        service = MemoryMigrationService(session, announce=announce)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         with pytest.raises(ConflictError):
             await service.apply(plan_id, by=settings.memory_migration_reviewer)
         await session.commit()
 
     async with business_db_factory() as session:
-        row = await MemoryMigrationService(session, announce=announce).get_or_404(
-            plan_id
-        )
+        row = await MemoryMigrationService(
+            session, announce=announce, team=project_team
+        ).get_or_404(plan_id)
         assert row.status == MemoryMigrationStatus.failed.value
         assert "复核之后有人改过这棵树" in row.summary
         team = await _team_files(session, project_id)
@@ -603,15 +612,15 @@ async def test_a_change_to_the_old_memories_between_yes_and_write_stops_it(
         await session.commit()
 
     async with business_db_factory() as session:
-        service = MemoryMigrationService(session, announce=announce)
+        service = MemoryMigrationService(session, announce=announce, team=project_team)
         with pytest.raises(ConflictError):
             await service.apply(plan_id, by=settings.memory_migration_reviewer)
         await session.commit()
 
     async with business_db_factory() as session:
-        row = await MemoryMigrationService(session, announce=announce).get_or_404(
-            plan_id
-        )
+        row = await MemoryMigrationService(
+            session, announce=announce, team=project_team
+        ).get_or_404(plan_id)
         assert row.status == MemoryMigrationStatus.failed.value
         assert "重跑 dry-run" in row.summary
         assert await _team_files(session, project_id) == {}
@@ -624,9 +633,9 @@ async def test_the_reviewer_reads_the_plan_back_before_apply(business_db_factory
     )
 
     async with business_db_factory() as session:
-        row = await MemoryMigrationService(session, announce=announce).get_or_404(
-            plan_id
-        )
+        row = await MemoryMigrationService(
+            session, announce=announce, team=project_team
+        ).get_or_404(plan_id)
         assert row.project_id == project_id
         assert row.sources_digest == digest
         assert len(row.sources) == 1

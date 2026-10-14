@@ -32,6 +32,7 @@ from app.core.errors import (
 )
 from app.core.sandbox_auth import scoped_token_claims
 from app.core.sentences import exception_text, say
+from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import project_types, type_of_seat
 from app.domain.conversation import services as conversations
 from app.domain.membership.roster import roster
@@ -52,7 +53,10 @@ async def member(
     resolver.reject_failed_credential(actor)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Login required")
-    if not any(m.handle == actor.handle for m in await roster(db, project_id)):
+    if not any(
+        m.handle == actor.handle
+        for m in await roster(db, project_id, team=project_team)
+    ):
         raise ForbiddenError(say("mcpManageMembersOnly"))
     # The project roster lists every teammate the project has, seated or not.
     await resolver.refuse_unseated_agent(actor, project_id=project_id)

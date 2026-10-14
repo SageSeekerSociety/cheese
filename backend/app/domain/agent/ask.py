@@ -20,6 +20,7 @@ from app.domain.agent.announce import (
 from app.domain.agent.mentions import MENTION_ALL
 from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.repositories import AgentTurnRepository
+from app.domain.agent_instance.adapters import project_team
 from app.domain.block.asked import SKIPPED, asked_of, skipped_by_all
 from app.domain.block.models import Block
 from app.domain.block.questions import (
@@ -89,11 +90,11 @@ async def _addressees(session, room, to) -> tuple[tuple[str, ...], bool]:
         raise UnprocessableEntityError(say("askToList"))
     members = TopicMemberService(session)
     if MENTION_ALL in to:
-        return tuple(await members.people_in(room)), True
+        return tuple(await members.people_in(room, team=project_team)), True
     can_see = set(
-        await members.people_in(room)
+        await members.people_in(room, team=project_team)
         if room.members_only
-        else await members.project_people(room.project_id)
+        else await members.project_people(room.project_id, team=project_team)
     )
     handles = tuple(dict.fromkeys(h.strip().removeprefix("@") for h in to))
     unknown = [h for h in handles if h not in can_see]

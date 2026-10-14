@@ -43,7 +43,7 @@ from app.domain.agent.realtime.activity import WORKING
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.agent.turn.intake.rewrite import text_as_sent
-from app.domain.agent_instance.adapters import room_teammate
+from app.domain.agent_instance.adapters import project_team, room_teammate
 from app.domain.block.asked import Awaited
 from app.domain.block.editing import edit_message
 from app.domain.block.models import (
@@ -101,7 +101,7 @@ async def create_topic(
     actor = await resolver.resolve(project_id=body.project_id)
     await resolver.authorize_project(actor, project_id=body.project_id)
     if not await TopicMemberService(db).may_open_channels(
-        body.project_id, actor.handle
+        body.project_id, actor.handle, team=project_team
     ):
         raise ForbiddenError(say("channelCreateExternal"))
     # The creator becomes the topic's roster owner (fusion-design §3), and the
@@ -115,7 +115,9 @@ async def create_topic(
         members_only=body.members_only,
     )
     service = TopicService(db)
-    relevance = await service.relevance_for_topics([topic], _viewer(actor))
+    relevance = await service.relevance_for_topics(
+        [topic], _viewer(actor), team=project_team
+    )
     managed = await TopicMemberService(db).managed_topic_ids([topic], actor.handle)
     response = ok(_topic_out(topic, set(), {}, relevance, managed_ids=managed))
     # The caller can configure or enter this room as soon as it gets the ID.
@@ -303,7 +305,9 @@ async def list_topics(
     # 它的 broker）正在跑的那些；一个进程按不住另一个进程手里的轮次，所以还要读一遍
     # 「哪一行还开着」（`agent.liveness.moving_topics`）。
     moving_ids = await moving_topics(db, [t.id for t in topics], running=running_ids)
-    relevance = await service.relevance_for_topics(topics, _viewer(actor))
+    relevance = await service.relevance_for_topics(
+        topics, _viewer(actor), team=project_team
+    )
     live = await topics_signals.live_cards(db, [t.id for t in topics])
     cards = topics_signals.own_cards(live)
     managed = (
@@ -452,7 +456,9 @@ async def get_topic(
     topic = place.room
     actor = await _actor_in_place(resolver, place)
     last_activity = await service.last_activity_for_topics([topic.id])
-    relevance = await service.relevance_for_topics([topic], _viewer(actor))
+    relevance = await service.relevance_for_topics(
+        [topic], _viewer(actor), team=project_team
+    )
     live = await topics_signals.live_cards(db, [topic.id])
     cards = topics_signals.own_cards(live)
     managed = (
@@ -1247,7 +1253,11 @@ async def record_weekly(
         raise ValidationError(say("bodyRequired"))
     since, until = _weekly_window(body)
     report = await canonicalize_refs(
-        db, place.project_id, report, exclude_topic_id=place.room_id
+        db,
+        place.project_id,
+        report,
+        team=project_team,
+        exclude_topic_id=place.room_id,
     )
     # 重发幂等 (④)：一轮重新送达时，同一份正文是同一份
     # 周报，不能垒出第二行。轮次之外（人在界面上点）没有 continuation，也就没有

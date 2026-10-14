@@ -45,6 +45,7 @@ from . import cards, decisions, merge_queue, notices, polling, reviewers
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.delivery_events import SettleCard
+    from app.domain.membership.ports import ProjectTeam
     from app.domain.project.protection import BranchProtection
     from app.domain.review.github_pr_status import PullRequestStatus
     from app.domain.review.ports import (
@@ -67,6 +68,7 @@ class AcceptService:
         seat_instance_id: SeatInstanceId | None = None,
         record_agent: RecordAgent | None = None,
         task_teammate: TaskTeammate | None = None,
+        roster_team: ProjectTeam | None = None,
     ):
         """``announce`` 是这个包说不了的那句话 —— 往房间里留一行（`ports.Announce`）。
 
@@ -90,6 +92,7 @@ class AcceptService:
         self._seat_instance_id = seat_instance_id
         self._record_agent = record_agent
         self._task_teammate = task_teammate
+        self._roster_team = roster_team
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False

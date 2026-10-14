@@ -17,6 +17,7 @@ from app.domain.delivery.agent import (
 )
 from app.domain.delivery.ledger import settle_card
 from app.periodic_jobs import periodic_jobs
+from tests.support.review_ports import task_teammate
 
 pytestmark = pytest.mark.anyio
 
@@ -33,6 +34,7 @@ _EXPECTED_PORTS = {
     "seat_instance_id": seat_instance_id,
     "record_agent": record_agent,
     "dispatch_pending": ANY,
+    "task_teammate": task_teammate,
 }
 _KEYWORD_PORTS = {
     "pr poll": (
@@ -41,8 +43,8 @@ _KEYWORD_PORTS = {
         "seat_instance_id",
         "record_agent",
     ),
-    "task pr poll": ("record_instruction",),
-    "landing watch": ("record_instruction",),
+    "task pr poll": ("record_instruction", "task_teammate"),
+    "landing watch": ("record_instruction", "task_teammate"),
     "draft pr sweep": ("dispatch_pending", "record_instruction"),
 }
 

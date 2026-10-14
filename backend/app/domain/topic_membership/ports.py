@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,3 +33,16 @@ class SeatProject(Protocol):
     async def __call__(
         self, session: AsyncSession, handle: str
     ) -> uuid.UUID | None: ...
+
+
+class ProjectTeam(Protocol):
+    """这个项目里坐着谁，本包只管把它原样递给 `membership.roster`。
+
+    名册本身在第 2 层的 `membership` 手里，``roster`` 要把那一列队友席位并进去；本
+    包读的是并完的那一列人（``Member``），从不看队友席位长什么样，所以这里不写它的
+    类，只用「一列东西」——和上面 `SeatProject` 同一条规矩，本包不该认得别人家的类。
+    """
+
+    async def __call__(
+        self, session: AsyncSession, project_id: uuid.UUID
+    ) -> Sequence[object]: ...

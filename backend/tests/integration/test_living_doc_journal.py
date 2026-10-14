@@ -9,7 +9,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.api.doc_store import store
 from app.core.errors import ConflictError
-from app.domain.agent_instance.adapters import seat_project
+from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.block.documents import DocumentWriter
 from app.domain.block.models import Block, BlockKind
 from app.domain.living_doc.models import (
@@ -36,6 +36,7 @@ async def seed(factory):
             room_id=project.root_topic_id,
             created_by="alice",
             seat_project=seat_project,
+            team=project_team,
         )
         await session.commit()
         return task.id

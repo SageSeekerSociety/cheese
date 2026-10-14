@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.text import markdown_preview
 from app.domain.block.models import Block
 from app.domain.conversation.models import ConversationKind
+from app.domain.membership.ports import ProjectTeam
 from app.domain.membership.roster import roster_rows
 from app.domain.room_task.models import Task
 from app.domain.thread.models import Thread
@@ -83,6 +84,7 @@ async def canonicalize_refs(
     project_id: uuid.UUID,
     text: str,
     *,
+    team: ProjectTeam,
     exclude_topic_id: uuid.UUID | None = None,
 ) -> str:
     """Load the project's roster + topic list and canonicalize friendly @refs
@@ -92,7 +94,7 @@ async def canonicalize_refs(
     发的那条 chat（结论 12）就是从这里变成可点名、通知得到的一条消息的。"""
     if not text or "@" not in text:
         return text
-    roster = await roster_rows(session, project_id)
+    roster = await roster_rows(session, project_id, team=team)
     topics = [
         {"id": str(t.id), "title": t.title}
         for t in await TopicRepository(session).list_for_project(project_id)

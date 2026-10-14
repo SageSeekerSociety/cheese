@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
 from app.domain.agent.announce import announce
+from app.domain.agent_instance.adapters import project_team
 from app.domain.delivery.agent import record_task_instruction
 from app.domain.project import forge
 from app.domain.project.models import Project
@@ -19,6 +20,12 @@ from tests.integration.conftest import a_team
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.machine_work import machine_commits
 from tests.support import git_store
+from tests.support.review_ports import (
+    record_agent,
+    seat_instance_id,
+    settle_card,
+    task_teammate,
+)
 
 
 def _room(client) -> tuple[uuid.UUID, uuid.UUID]:
@@ -113,7 +120,16 @@ def test_accepting_one_task_leaves_other_tasks_and_room_active(client, app_world
             first = await _task(session, project, room, "first")
             second = await _task(session, project, room, "second")
             delivered_head = machine_commits(project, first.id, {"a.txt": "first"})
-            service = AcceptService(session, announce=announce)
+            service = AcceptService(
+                session,
+                announce=announce,
+                settle_card=settle_card,
+                record_instruction=record_task_instruction,
+                seat_instance_id=seat_instance_id,
+                record_agent=record_agent,
+                task_teammate=task_teammate,
+                roster_team=project_team,
+            )
             card = await service.create_card(
                 topic_id=room,
                 task_id=first.id,
@@ -318,7 +334,7 @@ def test_ready_only_changes_existing_pr_review_state(client, monkeypatch):
     async def run():
         async with client.test_factory() as session:
             task = await _task(session, project, room, "ready")
-            service = AcceptService(session)
+            service = AcceptService(session, roster_team=project_team)
             assert (await service.mark_ready(room, task.id))["ready"] is False
             github.open_pr.assert_not_awaited()
             task.pr_number, task.pr_url = 123, "https://example/pull/123"

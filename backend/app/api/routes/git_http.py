@@ -24,7 +24,7 @@ from app.core.sandbox_auth import (
 )
 from app.core.sentences import say
 from app.domain.agent.announce import announce
-from app.domain.agent_instance.adapters import task_teammate
+from app.domain.agent_instance.adapters import project_team, task_teammate
 from app.domain.delivery.agent import (
     record_agent,
     record_task_instruction,
@@ -213,6 +213,7 @@ async def task_workspace(
         seat_instance_id=seat_instance_id,
         record_agent=record_agent,
         task_teammate=task_teammate,
+        roster_team=project_team,
     ).merge_queued_pr(task.id)
     return ok(
         {
