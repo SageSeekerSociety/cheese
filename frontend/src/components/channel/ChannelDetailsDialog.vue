@@ -3,12 +3,14 @@
 // 通知、私密、归档。频道里的人都能看，只有管理者能改（后端按同一条规则再判一次）；
 // 成员在页头那一串头像里。动作都交给外面做。
 import type { Topic } from '@/cx_types'
+import type { PersonIdentity } from '@/lib/personIdentity'
 import type { TopicNotifyLevel } from '@/types/channels'
 
 import { computed, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -23,8 +25,8 @@ const props = defineProps<{
   canManage: boolean
   /** 我管这个项目：私密频道只有这样的人能设回公开。 */
   managesProject: boolean
-  /** 管这个频道的人叫什么；「综合」由项目管理员管，没有。 */
-  managerName: string | null
+  /** 管这个频道的人是谁（头像+姓名）；「综合」由项目管理员管，没有。 */
+  manager: PersonIdentity | null
   level: TopicNotifyLevel
   mutedUntil: string | null
 }>()
@@ -156,10 +158,16 @@ const canMakePublic = computed(
           t('work.channel.overview.edit')
         }}</BaseButton>
       </div>
-      <div v-if="managerName" class="details__row">
+      <div v-if="manager" class="details__row">
         <div class="details__what">
           <span class="details__label">{{ t('work.projectSettings.channels.columns.manager') }}</span>
-          <span>{{ managerName }}</span>
+          <IdentityView
+            :handle="manager.handle"
+            :name="manager.name"
+            :avatar-id="manager.avatarId"
+            :agent="manager.agent"
+            :size="20"
+          />
         </div>
       </div>
       <!-- 成员：点开的是页头那串头像点开的同一份名单。换管理者、加人、移人都还在那份

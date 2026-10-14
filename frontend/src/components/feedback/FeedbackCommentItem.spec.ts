@@ -36,6 +36,7 @@ function c(extra: Partial<FeedbackComment> = {}): FeedbackComment {
     id: 'c-1',
     parent_id: null,
     author_handle: 'andylizf',
+    author_name: null,
     author_is_agent: false,
     author_avatar_id: null,
     body: '复现了。',
@@ -71,7 +72,10 @@ describe('楼内回复指代', () => {
     const { container } = mountComment({ parent_id: 'c-0', reply_to_handle: 'andylizf' })
     const line = container.querySelector('.fb-ci__re')
     expect(line, '存了 reply_to_handle 却没画「回复 X」').not.toBeNull()
-    expect(line?.querySelector('.mention')?.textContent).toBe('@andylizf')
+    // 这颗 chip 现在坐着头像 + @名字（`UserRef` 画的共享身份视图）。整颗 chip 的
+    //  textContent 里还有头像降级时那个首字母，所以断言落在名字那一层上 ——
+    //  和 `ProjectOverviewView.spec` 同一处判据。
+    expect(line?.querySelector('.identity-view__name')?.textContent).toBe('@andylizf')
   })
 
   it('顶层评论一个字都不画', () => {
@@ -145,5 +149,30 @@ describe('删除', () => {
     await fireEvent.click(ui.getByText('取消'))
     expect(emitted().remove).toBeUndefined()
     expect(ui.getByText('删除')).toBeTruthy()
+  })
+})
+
+describe('作者那一格', () => {
+  // 这一格从前是拿 `author_handle` 拼一段纯文字，现在画的是共享的身份视图（头像 + 姓名）。
+  // 名字、头像、是不是队友三格都从评论对象上取 —— **不从 handle 反推**：handle 认不出
+  // 昵称，也认不出没按命名规则起名的 AI。所以这几条钉的都是「对象上给了就画那个」，
+  // 而昵称和 handle 特意取得不一样，写错了当场看得出来。
+  it('作者起过昵称就写昵称，不写 handle', () => {
+    const { container, ui } = mountComment({
+      author_handle: 'cheese-cat',
+      author_name: '芝士助手',
+      author_avatar_id: 7,
+    })
+    expect(ui.getByText('芝士助手')).toBeTruthy()
+    // 名字和头像是同一件事的两面：昵称写出来了，这串 handle 就不该再在作者那一格露脸。
+    expect(container.textContent, '昵称已经写出来了，旁边还在重复写 handle').not.toContain('cheese-cat')
+    // 挑过头像的人画的是那张图，不是按 handle 派生的彩色首字母。
+    expect(container.querySelector('img')?.getAttribute('src')).toContain('/avatars/7')
+  })
+
+  it('没起昵称（服务端给 null）就退回 handle 读', () => {
+    const { container, ui } = mountComment({ author_handle: 'andylizf', author_name: null })
+    expect(ui.getByText('andylizf')).toBeTruthy()
+    expect(container.querySelector('img')).toBeNull()
   })
 })

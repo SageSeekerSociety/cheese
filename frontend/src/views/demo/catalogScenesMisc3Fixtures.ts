@@ -55,7 +55,12 @@ export const LEARNING_QUESTIONS: SpaceLearningQuestion[] = EXCERPTS.map((excerpt
   projectName: '光学实验',
 }))
 export const LEARNING_FILTERS: SpaceLearningFilters = {
-  students: EXCERPTS.map((excerpt) => ({ handle: excerpt.student, name: excerpt.studentName })),
+  students: EXCERPTS.map((excerpt) => ({
+    handle: excerpt.student,
+    name: excerpt.studentName,
+    avatarId: excerpt.studentAvatarId ?? null,
+    isAgent: excerpt.studentIsAgent ?? false,
+  })),
   knowledgePoints: [{ categoryId: 7, name: '瑞利散射' }],
   projectCount: 2,
 }

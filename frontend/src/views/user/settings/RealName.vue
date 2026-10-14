@@ -209,6 +209,11 @@ const nameOf = (entry: UserIdentityAccessLog) => entry.accessor.nickname || entr
 const avatarOf = (entry: UserIdentityAccessLog) =>
   isChosenAvatar(entry.accessor.avatarId) ? getAvatarUrl(entry.accessor.avatarId) : ''
 
+/** 和 `avatarOf` 同一把尺子：只有本人真的挑过的那颗头像才给 id，其余给 null，
+ *  让共用的身份视图画按 handle 派生的彩色首字母。 */
+const avatarIdOf = (entry: UserIdentityAccessLog) =>
+  isChosenAvatar(entry.accessor.avatarId) ? entry.accessor.avatarId : null
+
 const route = useRoute()
 const router = useRouter()
 
@@ -226,6 +231,7 @@ const rows = computed<RealNameLogRow[]>(() =>
     entry,
     name: nameOf(entry),
     avatarUrl: avatarOf(entry),
+    avatarId: avatarIdOf(entry),
     to: toOf(entry),
     isOwn: isOwnView(entry),
     isExport: entry.accessType === UserIdentityAccessType.EXPORT,

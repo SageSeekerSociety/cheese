@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import type { BranchProtection, BranchProtectionPatch } from '@/branchProtection'
-import type { BranchProtectionLoadState } from '@/composables/useBranchProtection'
+import type { BranchProtectionLoadState, MergeMemberItem } from '@/composables/useBranchProtection'
 
 import { computed } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 
 // 分支保护 (#718) 的那一块模板：平台侧的合并规则，照 GitHub 分支保护那一页的顺序
@@ -29,9 +30,9 @@ const props = defineProps<{
   /** 上一次保存失败那句话。 */
   error: string | null
   /** 人工放行名单的可选项（成员，去掉 AI 队友）。 */
-  memberItems: { title: string; value: string }[]
+  memberItems: MergeMemberItem[]
   /** 任务默认 reviewer 的可选项（多一个「未指定」）。 */
-  reviewerItems: { title: string; value: string }[]
+  reviewerItems: MergeMemberItem[]
   /** 调度座位的可选项（AI 队友的席位，多一个「未指定」）。 */
   dispatchSeatItems: { title: string; value: string }[]
   /** 新检查的两个草稿：名字与路径范围。 */
@@ -60,6 +61,29 @@ const emit = defineEmits<{
 // 的概念，保持可编。status === 'unknown' 查不到 ≠ 已开启，不灰。
 const ghEnforced = computed(() => props.bp?.github_protection.enforced ?? false)
 const bpBusy = computed(() => props.saving !== null)
+
+/**
+ * 下拉里的那一行（Vuetify 的内部 item）→ `IdentityView` 的 props；认不出人时给
+ * `null`，那一行画纯文字。两种情况算认得出：`raw` 是我们的身份项；或者 `raw` 是
+ * 一个字符串 —— 存着的 handle 已经不在成员名单里（人退了），Vuetify 拿字符串本身
+ * 当那一行，单看一个 handle 还画得出一张首字母脸，就照它画。「未指定」那种空
+ * handle 既不是人也没有 handle，落回纯文字。
+ */
+function faceOf(input: unknown) {
+  const item = input as { raw?: unknown }
+  const raw = item?.raw
+  if (
+    raw &&
+    typeof raw === 'object' &&
+    typeof (raw as MergeMemberItem).handle === 'string' &&
+    (raw as MergeMemberItem).handle
+  ) {
+    const r = raw as MergeMemberItem
+    return { handle: r.handle, name: r.name, avatarId: r.avatarId, agent: r.agent }
+  }
+  if (typeof raw === 'string' && raw) return { handle: raw, name: '', avatarId: null, agent: null }
+  return null
+}
 </script>
 
 <template>
@@ -232,7 +256,25 @@ const bpBusy = computed(() => props.saving !== null)
             :disabled="ghEnforced || bpBusy"
             :loading="saving === 'override_handles'"
             @update:model-value="emit('save-override', $event)"
-          />
+          >
+            <!-- Each row is avatar + name (+ @handle); person/teammate branching lives in
+                 IdentityView, not here. Clear `title` so Vuetify doesn't paint the plain
+                 text title again on top of the face. -->
+            <template #item="{ item, props: itemAttrs }">
+              <v-list-item v-bind="itemAttrs" :title="undefined">
+                <IdentityView v-if="faceOf(item)" v-bind="faceOf(item)" :size="26" handle-line />
+                <span v-else>{{ item.title }}</span>
+              </v-list-item>
+            </template>
+            <!-- A picked chip: the face replaces the default text (a VChip default slot
+                 wins over its `text` prop). -->
+            <template #chip="{ props: chipAttrs, item }">
+              <v-chip v-bind="chipAttrs">
+                <IdentityView v-if="faceOf(item)" v-bind="faceOf(item)" :size="18" />
+                <template v-else>{{ item.title }}</template>
+              </v-chip>
+            </template>
+          </v-select>
         </div>
 
         <!-- 6. approvals_required -->
@@ -283,7 +325,20 @@ const bpBusy = computed(() => props.saving !== null)
             :disabled="bpBusy"
             :loading="saving === 'default_reviewer'"
             @update:model-value="emit('save', { default_reviewer: $event ?? '' }, 'default_reviewer')"
-          />
+          >
+            <template #item="{ item, props: itemAttrs }">
+              <v-list-item v-bind="itemAttrs" :title="undefined">
+                <IdentityView v-if="faceOf(item)" v-bind="faceOf(item)" :size="26" handle-line />
+                <span v-else>{{ item.title }}</span>
+              </v-list-item>
+            </template>
+            <!-- The single-value cell: draw the picked person's face; "Unassigned" is not
+                 a person, so it stays plain text. -->
+            <template #selection="{ item }">
+              <IdentityView v-if="faceOf(item)" v-bind="faceOf(item)" :size="18" />
+              <template v-else>{{ item.title }}</template>
+            </template>
+          </v-select>
         </div>
 
         <!-- 9. dispatch_seat（平台自己的概念，不随 GitHub 灰掉） -->

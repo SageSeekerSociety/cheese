@@ -13906,6 +13906,8 @@ export interface components {
             parent_id: string | null;
             /** Author Handle */
             author_handle: string;
+            /** Author Name */
+            author_name: string | null;
             /** Author Is Agent */
             author_is_agent: boolean;
             /** Author Avatar Id */
@@ -14678,6 +14680,8 @@ export interface components {
             security: boolean;
             /** Author Handle */
             author_handle: string;
+            /** Author Name */
+            author_name: string | null;
             /** Author Is Agent */
             author_is_agent: boolean;
             /** Author Avatar Id */
@@ -14686,6 +14690,12 @@ export interface components {
             submitted_by_handle: string | null;
             /** Assignee Handle */
             assignee_handle: string | null;
+            /** Assignee Name */
+            assignee_name: string | null;
+            /** Assignee Avatar Id */
+            assignee_avatar_id: number | null;
+            /** Assignee Is Agent */
+            assignee_is_agent: boolean | null;
             /** Tags */
             tags: string[];
             /** Supports */
@@ -14817,6 +14827,8 @@ export interface components {
             security: boolean;
             /** Author Handle */
             author_handle: string;
+            /** Author Name */
+            author_name: string | null;
             /** Author Is Agent */
             author_is_agent: boolean;
             /** Author Avatar Id */
@@ -14825,6 +14837,12 @@ export interface components {
             submitted_by_handle: string | null;
             /** Assignee Handle */
             assignee_handle: string | null;
+            /** Assignee Name */
+            assignee_name: string | null;
+            /** Assignee Avatar Id */
+            assignee_avatar_id: number | null;
+            /** Assignee Is Agent */
+            assignee_is_agent: boolean | null;
             /** Tags */
             tags: string[];
             /** Supports */
@@ -16059,6 +16077,8 @@ export interface components {
             id: string;
             /** Author Handle */
             author_handle: string;
+            /** Author Name */
+            author_name: string | null;
             /** Author Avatar Id */
             author_avatar_id: number | null;
             /** Body */

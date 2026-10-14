@@ -100,9 +100,10 @@ it('shows the owner who is on each of their machines, and nobody else', async ()
     },
   })
 
-  // 用的那一位是一颗 @chip，点得到它的成员页。
-  await vi.waitFor(() => expect(view.container.textContent).toMatch(/正在用：Orchard · Pricing · \s*@Cedar/))
-  expect(view.container.querySelector('.device-user .mention')?.textContent).toBe('@Cedar')
+  // 用的那一位是一颗 @chip（头像 + @名字），点得到它的成员页。落在 chip 上的是它自己的
+  // 名字节点，不是「正在用…」那半句里的整段。
+  await vi.waitFor(() => expect(view.container.querySelector('.device-user .mention')?.textContent).toContain('@Cedar'))
+  expect(view.container.querySelector('.device-user .mention .identity-view__name')?.textContent).toBe('@Cedar')
   expect(view.getAllByText(/正在用/)).toHaveLength(1)
 })
 
@@ -145,7 +146,7 @@ it("lists a device attached only to a project, with the project and its owner's 
 
   expect(await view.findByText('仅供 Orchard、Atlas 使用')).toBeTruthy()
   expect(view.getByText('1 台设备 · 1 台在线')).toBeTruthy()
-  expect(view.container.textContent).toMatch(/正在用：Orchard · Pricing · \s*@Cedar/)
+  expect(view.container.querySelector('.device-user .mention .identity-view__name')?.textContent).toBe('@Cedar')
   // It was never added to the team, so there is nothing to take it out of.
   expect(view.queryByRole('button', { name: '移出团队' })).toBeNull()
 })

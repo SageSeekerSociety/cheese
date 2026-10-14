@@ -10,6 +10,7 @@ import type { Editor } from '@tiptap/core'
 import type { DocAgentController } from '../../../composables/useDocAgent'
 import type { DocReviewController } from '../../../composables/useDocReview'
 import type { DocSuggestionsController } from '../../../composables/useDocSuggestions'
+import type { MentionIdentity } from '../../../lib/personIdentity'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -31,6 +32,8 @@ const props = defineProps<{
   suggestionReasons: Record<string, string>
   /** handle → 名字：回答里的点名读成名字。 */
   mentionNames: Record<string, string>
+  /** handle → 头像与「是不是队友」：回答里 `<@handle>` chip 前那张脸用它。 */
+  mentionIdentities?: Record<string, MentionIdentity>
 }>()
 const emit = defineEmits<{ (e: 'open-thread', id: string): void }>()
 
@@ -224,6 +227,7 @@ onBeforeUnmount(() => {
               :busy="rewrite.busy.value"
               commentable
               :mention-names="mentionNames"
+              :mention-identities="mentionIdentities"
               @stop="rewrite.stop"
               @undo="rewrite.undo"
               @redo="rewrite.redo"

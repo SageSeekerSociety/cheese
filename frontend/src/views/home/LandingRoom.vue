@@ -110,7 +110,7 @@ function runStart(index: number) {
         <TransitionGroup name="room-line" tag="div" class="room-lines">
           <template v-for="(line, i) in shown" :key="line.id">
             <TimelineMark v-if="line.kind === 'day'" quiet>{{ line.label }}</TimelineMark>
-            <TaskCard v-else-if="line.kind === 'marker'" class="room-task" :task="marker(line)" :owner-name="null" />
+            <TaskCard v-else-if="line.kind === 'marker'" class="room-task" :task="marker(line)" :owner="null" />
             <RoomMessage
               v-else
               :block="block(line)"

@@ -54577,6 +54577,17 @@
             "type": "string",
             "title": "Author Handle"
           },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
           "author_is_agent": {
             "type": "boolean",
             "title": "Author Is Agent"
@@ -54646,6 +54657,7 @@
           "id",
           "parent_id",
           "author_handle",
+          "author_name",
           "author_is_agent",
           "author_avatar_id",
           "body",
@@ -56584,6 +56596,17 @@
             "type": "string",
             "title": "Author Handle"
           },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
           "author_is_agent": {
             "type": "boolean",
             "title": "Author Is Agent"
@@ -56620,6 +56643,39 @@
               }
             ],
             "title": "Assignee Handle"
+          },
+          "assignee_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Name"
+          },
+          "assignee_avatar_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Avatar Id"
+          },
+          "assignee_is_agent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Is Agent"
           },
           "tags": {
             "items": {
@@ -56670,10 +56726,14 @@
           "visibility",
           "security",
           "author_handle",
+          "author_name",
           "author_is_agent",
           "author_avatar_id",
           "submitted_by_handle",
           "assignee_handle",
+          "assignee_name",
+          "assignee_avatar_id",
+          "assignee_is_agent",
           "tags",
           "supports",
           "comments",
@@ -56943,6 +57003,17 @@
             "type": "string",
             "title": "Author Handle"
           },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
           "author_is_agent": {
             "type": "boolean",
             "title": "Author Is Agent"
@@ -56979,6 +57050,39 @@
               }
             ],
             "title": "Assignee Handle"
+          },
+          "assignee_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Name"
+          },
+          "assignee_avatar_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Avatar Id"
+          },
+          "assignee_is_agent": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Assignee Is Agent"
           },
           "tags": {
             "items": {
@@ -57192,10 +57296,14 @@
           "visibility",
           "security",
           "author_handle",
+          "author_name",
           "author_is_agent",
           "author_avatar_id",
           "submitted_by_handle",
           "assignee_handle",
+          "assignee_name",
+          "assignee_avatar_id",
+          "assignee_is_agent",
           "tags",
           "supports",
           "comments",
@@ -60348,6 +60456,17 @@
             "type": "string",
             "title": "Author Handle"
           },
+          "author_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Author Name"
+          },
           "author_avatar_id": {
             "anyOf": [
               {
@@ -60373,6 +60492,7 @@
         "required": [
           "id",
           "author_handle",
+          "author_name",
           "author_avatar_id",
           "body",
           "created_at"

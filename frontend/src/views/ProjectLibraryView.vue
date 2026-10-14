@@ -53,11 +53,12 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import { useTopBarBack } from '@/components/common/topBarBack'
+import UserRef from '@/components/common/UserRef.vue'
 import VirtualList from '@/components/common/VirtualList.vue'
 import { t } from '@/i18n'
-import { memberName } from '@/lib/agentNames'
 import { closeOverlay } from '@/lib/backOut'
 import { fmtBytes } from '@/lib/changesTree'
+import { memberFacesOf } from '@/lib/memberFaces'
 import { refRoute } from '@/lib/refDirectory'
 import { relTime } from '@/lib/relTime'
 import { usePageTitleStore } from '@/stores/title'
@@ -139,10 +140,12 @@ const anything = computed(() => !(browsing.value && !dir.value && pages.exhauste
 function docName(doc: { title: string | null }): string {
   return doc.title || t('work.room.doc.untitled')
 }
-function docMeta(doc: ListedDocument): string {
-  const row = workspace.members.find((m) => m.user_handle === doc.author)
-  const who = isAgentHandle(doc.author) ? workspace.agentName : memberName(row) || doc.author
-  return t('work.library.docMeta', { who, when: relTime(doc.updated_at) })
+/** 名册 → handle 那张脸；文档那一行的「谁改过」用它画头像 + 名字。 */
+const docFaces = computed(() => memberFacesOf(workspace.members))
+/** 这一行的名字：队友写它现在的名字，其余照名册；名册上没有这一位就退回 handle。 */
+function docAuthorName(doc: ListedDocument): string {
+  if (isAgentHandle(doc.author)) return workspace.agentName
+  return docFaces.value[doc.author]?.name ?? doc.author
 }
 
 const { selectedDocId, openDocument, documentReview, fromThread, openRoom, openDoc, closeDoc, titled } =
@@ -648,7 +651,19 @@ function read(file: LibraryFile) {
                   <v-icon icon="mdi-file-document-edit-outline" size="20" class="library-row__icon" />
                   <span class="library-row__id">
                     <span class="library-row__name t-body">{{ docName(item.doc) }}</span>
-                    <span class="t-meta c-faint">{{ docMeta(item.doc) }}</span>
+                    <span class="t-meta c-faint">
+                      <i18n-t keypath="work.library.docMeta" scope="global" tag="span">
+                        <template #who>
+                          <UserRef
+                            :handle="item.doc.author"
+                            :name="docAuthorName(item.doc)"
+                            :avatar-id="docFaces[item.doc.author]?.avatarId ?? null"
+                            :agent="docFaces[item.doc.author]?.agent ?? null"
+                          />
+                        </template>
+                        <template #when>{{ relTime(item.doc.updated_at) }}</template>
+                      </i18n-t>
+                    </span>
                   </span>
                 </button>
                 <AdaptiveMenu

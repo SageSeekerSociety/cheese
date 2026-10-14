@@ -12,7 +12,21 @@
         density="compact"
         hide-details
         variant="outlined"
-      />
+      >
+        <!-- One row is the member's face + name through the shared identity view; clear
+             `title` so Vuetify does not paint the plain text title on top of the face. -->
+        <template #item="{ item, props: itemProps }">
+          <v-list-item v-bind="itemProps" :title="undefined">
+            <IdentityView v-if="studentIdentityOf(item)" v-bind="studentIdentityOf(item)" :size="30" />
+            <span v-else>{{ item.title }}</span>
+          </v-list-item>
+        </template>
+        <!-- The picked member in the field itself: same face + name, no plain text title. -->
+        <template #selection="{ item }">
+          <IdentityView v-if="studentIdentityOf(item)" v-bind="studentIdentityOf(item)" :size="20" />
+          <template v-else>{{ item.title }}</template>
+        </template>
+      </v-select>
       <v-select
         v-model="knowledgePointModel"
         autocomplete="off"
@@ -140,6 +154,7 @@ import { formatCount } from './helpers'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 
 const props = defineProps<{
   loading: boolean
@@ -163,10 +178,46 @@ const emit = defineEmits<{
 const { t } = useI18n({ useScope: 'global' })
 const isSelected = (blockId: string) => props.selected.includes(blockId)
 
-const studentItems = computed(() => [
+/** 下拉里的一行：`title`/`value` 是 `v-select` 要的，另外几项是画那张脸要的。
+ *  列表行和选中值都读这几项（见模板里的 `#item` / `#selection`）。 */
+type StudentItem = {
+  title: string
+  value: string | null
+  handle?: string
+  name?: string
+  avatarId?: number | null
+  isAgent?: boolean | null
+}
+
+const studentItems = computed<StudentItem[]>(() => [
   { title: t('spaces.analytics.learning.allStudents'), value: null },
-  ...(props.learningFilters?.students ?? []).map((student) => ({ title: student.name, value: student.handle })),
+  ...(props.learningFilters?.students ?? []).map((student) => ({
+    title: student.name,
+    value: student.handle,
+    handle: student.handle,
+    name: student.name,
+    avatarId: student.avatarId ?? null,
+    // 缺省交给 IdentityView 按 handle 兜底，不硬说成「人」。
+    isAgent: student.isAgent ?? null,
+  })),
 ])
+
+/** 下拉里这一行背后的人是谁。「全部成员」那一项没有 handle，回 null，画纯文字。 */
+function studentIdentityOf(item: unknown): {
+  handle: string
+  name: string
+  avatarId: number | null
+  agent: boolean | null
+} | null {
+  const raw = (item as { raw?: StudentItem } | null)?.raw
+  if (!raw || typeof raw.handle !== 'string') return null
+  return {
+    handle: raw.handle,
+    name: raw.name ?? raw.handle,
+    avatarId: raw.avatarId ?? null,
+    agent: raw.isAgent ?? null,
+  }
+}
 
 const knowledgePointItems = computed(() => [
   { title: t('spaces.analytics.learning.allKnowledgePoints'), value: null },

@@ -305,6 +305,10 @@ export type SpaceAnalyticsParticipants = {
 export type SpaceLearningStudent = {
   handle: string
   name: string
+  /** 这个人自己挑过的头像素材 id；null = 没挑过（画彩色首字母），别退回全站默认头像。 */
+  avatarId?: number | null
+  /** 是不是 AI 队友（服务端认 agent-binding）。缺省时让 `IdentityView` 按 handle 兜底。 */
+  isAgent?: boolean
 }
 
 export type SpaceLearningKnowledgePoint = {
@@ -325,6 +329,10 @@ export type SpaceLearningExcerpt = {
   projectId: string
   student: string
   studentName: string
+  /** 发言的学生自己挑过的头像素材 id；null = 没挑过（画彩色首字母）。 */
+  studentAvatarId?: number | null
+  /** 发言的学生是不是 AI 队友；缺省时让 `IdentityView` 按 handle 兜底。 */
+  studentIsAgent?: boolean
   topicTitle: string
   createdAt: number
   quote: string

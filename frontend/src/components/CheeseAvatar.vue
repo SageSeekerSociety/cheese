@@ -19,15 +19,31 @@ import type { FaceState } from '../lib/agentFace'
 import { computed } from 'vue'
 
 import { t } from '../i18n'
-import { agentTone } from '../utils/avatar'
+import { AGENT_EYES, AGENT_TILE_PATH, agentTone } from '../utils/avatar'
 
 const props = withDefaults(
-  defineProps<{ size?: number | string; name?: string; handle?: string | null; state?: FaceState | null }>(),
+  defineProps<{
+    size?: number | string
+    name?: string
+    handle?: string | null
+    state?: FaceState | null
+    /**
+     * Hide from assistive tech. Same switch as `UserAvatar`: when the name is right
+     * there in plain text (IdentityView, rosters, message rows) the face is decor,
+     * so a shared caller passes this instead of letting the name be read twice.
+     * Left off, the avatar keeps announcing its name (role=img + aria-label).
+     */
+    decorative?: boolean
+    /** Screen-reader name when the face is the only identity in the cell; falls back to `name`. */
+    alt?: string
+  }>(),
   {
     size: 28,
     name: undefined,
     handle: null,
     state: null,
+    decorative: false,
+    alt: undefined,
   }
 )
 
@@ -44,17 +60,27 @@ const tone = computed(() => agentTone(props.handle || shownName.value))
     :width="px"
     :height="px"
     viewBox="0 0 100 100"
-    role="img"
-    :aria-label="shownName"
+    :aria-hidden="decorative ? 'true' : undefined"
+    :role="decorative ? undefined : 'img'"
+    :aria-label="decorative ? undefined : alt || shownName"
     :data-user-content="name || undefined"
     :data-tone="tone"
     :data-state="state ?? undefined"
   >
     <g class="cheese-avatar__body">
-      <path class="cheese-avatar__tile" d="M50 0C88 0 100 12 100 50S88 100 50 100S0 88 0 50S12 0 50 0Z" />
+      <path class="cheese-avatar__tile" :d="AGENT_TILE_PATH" />
       <g class="cheese-avatar__eyes">
-        <rect class="cheese-avatar__eye" x="42.5" y="44.5" width="13" height="21" rx="6.5" />
-        <rect class="cheese-avatar__eye cheese-avatar__eye--far" x="66" y="46" width="10" height="16" rx="5" />
+        <rect
+          v-for="eye in AGENT_EYES"
+          :key="eye.x"
+          class="cheese-avatar__eye"
+          :class="{ 'cheese-avatar__eye--far': eye.far }"
+          :x="eye.x"
+          :y="eye.y"
+          :width="eye.width"
+          :height="eye.height"
+          :rx="eye.rx"
+        />
       </g>
       <g v-if="state === 'done'" class="cheese-avatar__smile">
         <path d="M40 60Q49 46 58 60" stroke-width="5.5" />

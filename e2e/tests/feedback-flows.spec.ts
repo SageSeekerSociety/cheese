@@ -249,8 +249,10 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   // 「把昵称当 handle 发出去」这一类错。
   await expect(assignee).toHaveValue('alice');
   // 输入框会先更新自己的 model；详情摘要只在 PATCH 返回、store 收下服务端详情后更新。
-  // 等这份服务端状态，再继续下一次管理写。
-  await expect(detail.locator('.qdet__main-who')).toContainText(/指派\s+alice/);
+  // 等这份服务端状态，再继续下一次管理写。摘要上指派人写的是**昵称**不是 handle：
+  // 指派人和作者一样，是全平台「这是谁」的入口之一，画的是身份 chip（脸 + 昵称），
+  // 昵称取服务端卡片的 `assignee_name`（没有才退回 handle）。
+  await expect(detail.locator('.qdet__main-who')).toContainText(/指派\s+Alice/);
 
   // 内部备注：空草稿时那颗提交按钮是禁用的，写完才点得动。
   const submitNote = detail.locator('.qdet__submit');
@@ -260,9 +262,10 @@ test('管理员把一条反馈走完四级，指派、优先级、内部备注�
   await expect(detail).toContainText(note);
 
   // 收工回队列（宽屏下是那颗「返回」，不是抽屉的关闭按钮）。指派跟着进了行——队列
-  // 这一格读的是服务端那份数据，不是详情里那份本地状态。
+  // 这一格读的是服务端那份数据，不是详情里那份本地状态；画的是同一张脸 + 昵称，所以
+  // 读名字那一个节点（脸那一块画的是首字母，也落在这个格子的文字里，不该拿来断言）。
   await detail.locator('.qdet__back').click();
-  await expect(row.locator('.qrow__assignee .qrow__avalue')).toHaveText('alice');
+  await expect(row.locator('.qrow__assignee .qrow__avalue .identity-view__name')).toHaveText('Alice');
 
   // 用户侧的两栏跟着动：走完梯子的进「已完成」，不在「处理中」里。
   await page.goto('/feedback');

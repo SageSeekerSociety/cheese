@@ -22,26 +22,36 @@ function queued(id: string, turn: string, seat: string, ahead?: number): Block {
   } as Block
 }
 
+const waitFace = () => '芝士'
+const faceOf = () => ({ avatar: '/avatars/9', agent: true })
+
 describe('排队中的队友', () => {
   it('在它那一轮开始之前，输入框上方说它在排队、前面还有几个', () => {
     const records = useRunRecords()
     records.receive(queued('r1', 't1', 'cheese-a', 2))
-    const [line] = records.waitingLines(() => '芝士')
+    const [line] = records.waitingLines(waitFace, faceOf)
     expect(line.name).toBe('芝士')
     expect(line.detail).toContain('2')
+  })
+
+  it('排队的那一行也带着它的脸，不是一个光秃秃的名字', () => {
+    const records = useRunRecords()
+    records.receive(queued('r1', 't1', 'cheese-a'))
+    const [line] = records.waitingLines(waitFace, faceOf)
+    expect(line.face).toEqual({ avatar: '/avatars/9', agent: true })
   })
 
   it('那一轮一开始就不再说排队', () => {
     const records = useRunRecords()
     records.receive(queued('r1', 't1', 'cheese-a'))
     records.turnBegan('t1')
-    expect(records.waitingLines(() => '芝士')).toEqual([])
+    expect(records.waitingLines(waitFace, faceOf)).toEqual([])
   })
 
   it('换到别的对话之后，上一处的排队不跟过来', () => {
     const records = useRunRecords()
     records.receive(queued('r1', 't1', 'cheese-a'))
     records.reset()
-    expect(records.waitingLines(() => '芝士')).toEqual([])
+    expect(records.waitingLines(waitFace, faceOf)).toEqual([])
   })
 })

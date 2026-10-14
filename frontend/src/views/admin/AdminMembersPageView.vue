@@ -14,6 +14,7 @@ import BaseTable from '@/components/base/BaseTable.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { relTime } from '@/lib/relTime'
@@ -106,6 +107,25 @@ interface AddedRowView extends RowView {
  *  而分辨人正是头像唯一的活（`UserAvatar` 的约定）。 */
 function avatarUrl(avatarId: number | null): string {
   return avatarId == null ? '' : getAvatarUrl(avatarId)
+}
+
+/** 选择器里一行 / 一颗 chip 背后是哪个候选账号。选中值回的是对象（`return-object`），
+ *  所以 `item.raw` 就是候选本身；只有值不在当前候选里（旧的选择）才退成 handle 串，
+ *  那时给 `null`，界面退回纯文字。 */
+function candidateOf(item: unknown): AdminCandidate | null {
+  const raw = (item as { raw?: unknown } | null)?.raw
+  if (raw && typeof raw === 'object' && typeof (raw as AdminCandidate).handle === 'string') {
+    return raw as AdminCandidate
+  }
+  return null
+}
+
+/** `IdentityView` 要的四样：认人的 handle、显示名、头像素材 id、是不是队友。
+ *  这个数据源（`/admin/users`）回的是账号，没有队友标记，所以 agent 给 null 让视图
+ *  按 handle 兜底 —— 不硬说成「人」。 */
+function identityOf(item: unknown): { handle: string; name: string; avatarId: number | null; agent: null } | null {
+  const c = candidateOf(item)
+  return c ? { handle: c.handle, name: c.nickname, avatarId: c.avatar_id, agent: null } : null
 }
 
 /** 表体画真行还是画「读不到」。名单本身**没有整表空态**：根那两组的分组行永远在，
@@ -429,17 +449,27 @@ const countLine = computed(() =>
         <!-- `props` 在这儿是 Vuetify 塞给 slot 的那一份透传属性；这一半顶上有个
              `const props = defineProps(...)`，同名会让 eslint 报「遮蔽了外层的 props」，
              所以在这里换个名字。 -->
+        <!-- Each row is avatar + name (+ @handle) through the shared identity view.
+             Clear `title` so Vuetify does not paint the plain text title on top of the
+             face as well (the child title would then render twice). -->
         <template #item="{ item, props: itemAttrs }">
-          <v-list-item v-bind="itemAttrs" :disabled="item.raw.already_admin">
-            <template #prepend>
-              <UserAvatar :name="item.raw.handle" :avatar="avatarUrl(item.raw.avatar_id)" :size="30" />
-            </template>
-            <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
-            <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
+          <v-list-item v-bind="itemAttrs" :title="undefined" :disabled="candidateOf(item)?.already_admin">
+            <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="30" handle-line />
+            <span v-else>{{ item.title }}</span>
             <template #append>
-              <span v-if="item.raw.already_admin" class="chip-neutral">{{ t('members.addDialog.alreadyAdmin') }}</span>
+              <span v-if="candidateOf(item)?.already_admin" class="chip-neutral">
+                {{ t('members.addDialog.alreadyAdmin') }}
+              </span>
             </template>
           </v-list-item>
+        </template>
+        <!-- A picked chip: the face replaces the default text (a VChip default slot
+             wins over its `text` prop), so the chip reads as the person, not the handle. -->
+        <template #chip="{ props: chipAttrs, item }">
+          <v-chip v-bind="chipAttrs">
+            <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="18" />
+            <template v-else>{{ item.title }}</template>
+          </v-chip>
         </template>
       </v-autocomplete>
       <div class="t-meta mt-2">{{ t('members.addDialog.hint') }}</div>

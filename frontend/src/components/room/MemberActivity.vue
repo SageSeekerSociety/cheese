@@ -13,24 +13,23 @@ import type { MemberActivityLine } from '@/lib/memberActivity'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 import { formatSpan } from '@/lib/siteLog'
 
 const props = defineProps<{ lines: MemberActivityLine[] }>()
+
+/** 一位成员的「脸」和名字，交给 IdentityView 画 —— 只画名字的话，同一个人在名册
+ *  里有真图、在这一行里却是个光秃秃的名字。 */
+function face(line: MemberActivityLine) {
+  return { handle: line.handle, name: line.name, ...line.face }
+}
 
 /** 多久没有新输出就算卡住，另说一句「已 N 无新输出」。纯提示，不做任何事。 */
 const STALL_MS = 60_000
 
 const working = computed(() => props.lines.filter((l) => l.kind === 'working'))
 const typing = computed(() => props.lines.filter((l) => l.kind === 'typing'))
-
-const typingText = computed(() => {
-  const names = typing.value.map((l) => l.name)
-  if (names.length === 0) return ''
-  if (names.length === 1) return t('work.room.activity.typingOne', { name: names[0] })
-  if (names.length === 2) return t('work.room.activity.typingTwo', { first: names[0], second: names[1] })
-  return t('work.room.activity.typingMany')
-})
 
 // 干了多久每秒走一格；没有队友在干活时不必每秒重画。
 const now = ref(Date.now())
@@ -54,17 +53,15 @@ function fromAnEarlierTurn(line: MemberActivityLine): boolean {
   return line.lastFrameAt != null && line.lastFrameAt < line.since * 1000
 }
 
-/** 谁、此刻那一步 —— 会变长的那一截，用省略号收在它自己身上。 */
-function workingHead(line: MemberActivityLine): string {
-  const parts = [t('work.room.activity.working', { name: line.name })]
+/** 此刻那一步（没有就说 null）。名字那一截由 IdentityView 画，这里只管跟在它后面、
+ *  会变长的那一截 —— 省略号收在它自己身上。 */
+function workingStep(line: MemberActivityLine): string | null {
   // 有从 live 帧读来的当前一步，就用它顶掉时间线上那一个相（「思考中」）—— 它更
   // 具体，而且一次长工具调用期间时间线上根本不长新行，那个相早就是旧的了。
   // 上一轮留下的帧（比这一轮还早）不是这一轮的当前一步：那本账只在换房间时清，
   // 一轮结束后它还在，新一轮刚起来时会串进来。那时退回时间线上那一个相。
   const live = fromAnEarlierTurn(line) ? null : line.step
-  const step = live ?? line.detail
-  if (step) parts.push(step)
-  return parts.join(separator.value)
+  return live ?? line.detail ?? null
 }
 
 /** 干了多久。单独一格，长的那一截被省略号截掉时它还在。 */
@@ -101,7 +98,14 @@ const workingAria = computed(() =>
     <div v-for="line in working" :key="line.handle" class="member-activity__line" data-kind="working">
       <span class="status-dot status-dot--ok member-activity__dot" aria-hidden="true" />
       <!-- The step and the elapsed seconds churn on their own; keep both out of the live region. -->
-      <span class="member-activity__text" aria-hidden="true">{{ workingHead(line) }}</span>
+      <span class="member-activity__text" aria-hidden="true">
+        <i18n-t keypath="work.room.activity.working" scope="global" tag="span">
+          <template #name>
+            <IdentityView v-bind="face(line)" :size="16" />
+          </template>
+        </i18n-t>
+        <template v-if="workingStep(line)">{{ separator }}{{ workingStep(line) }}</template>
+      </span>
       <span v-if="workingTotal(line)" class="member-activity__meta" aria-hidden="true"
         >{{ separator }}{{ workingTotal(line) }}</span
       >
@@ -111,8 +115,24 @@ const workingAria = computed(() =>
     </div>
     <!-- What a screen reader hears: who and which phase only, so it changes on the phase, not per frame. -->
     <p v-if="workingAria" class="visually-hidden">{{ workingAria }}</p>
-    <div v-if="typingText" class="member-activity__line" data-kind="typing">
-      <span class="member-activity__dots" aria-hidden="true"><span /><span /><span /></span>{{ typingText }}
+    <div v-if="typing.length > 0" class="member-activity__line" data-kind="typing">
+      <span class="member-activity__dots" aria-hidden="true"><span /><span /><span /></span>
+      <span class="member-activity__text">
+        <i18n-t v-if="typing.length === 1" keypath="work.room.activity.typingOne" scope="global" tag="span">
+          <template #name>
+            <IdentityView v-bind="face(typing[0])" :size="16" />
+          </template>
+        </i18n-t>
+        <i18n-t v-else-if="typing.length === 2" keypath="work.room.activity.typingTwo" scope="global" tag="span">
+          <template #first>
+            <IdentityView v-bind="face(typing[0])" :size="16" />
+          </template>
+          <template #second>
+            <IdentityView v-bind="face(typing[1])" :size="16" />
+          </template>
+        </i18n-t>
+        <template v-else>{{ t('work.room.activity.typingMany') }}</template>
+      </span>
     </div>
   </div>
 </template>

@@ -166,6 +166,24 @@ export function avatarColor(seed?: string | null): string {
 }
 
 /**
+ * AI 队友头像（CheeseAvatar）超椭圆那一块的 path。放在这里而不是组件里，是因为它不止
+ * 一处要用：Vue 那边是 CheeseAvatar.vue，正文和 `@` chip 那边是 lib/identityFace ——
+ * DOM 里画不出 Vue 组件，两处得共用同一条形状，改了这里一处改。viewBox 是 0 0 100 100。
+ */
+export const AGENT_TILE_PATH = 'M50 0C88 0 100 12 100 50S88 100 50 100S0 88 0 50S12 0 50 0Z'
+
+/**
+ * AI 队友头像（CheeseAvatar）里那双眼：一双胶囊，一大一小、整体偏右，是 brand.md §10
+ * 定的样子。和 AGENT_TILE_PATH 同理放在这里，Vue 的 CheeseAvatar 与 DOM 的
+ * lib/identityFace 共用同一份几何 —— 全平台一个队友到哪儿都是同一种脸。
+ * 坐标在 AGENT_TILE_PATH 的同一个 viewBox（0 0 100 100）里；`far` 标那只小的（远的）。
+ */
+export const AGENT_EYES = [
+  { x: 42.5, y: 44.5, width: 13, height: 21, rx: 6.5, far: false },
+  { x: 66, y: 46, width: 10, height: 16, rx: 5, far: true },
+] as const
+
+/**
  * AI 队友头像（CheeseAvatar）的底色有几档：style.css 里的 `--agent-tone-0` …
  * `--agent-tone-4`，两套主题各一组。
  */

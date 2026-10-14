@@ -158,6 +158,22 @@ describe('成员管理', () => {
     expect(view.emitted().addSelected).toHaveLength(1)
   })
 
+  it('选中的候选用头像 + 名字画 chip，而不是一行纯 handle', () => {
+    const view = mount({
+      ...base,
+      dialogOpen: true,
+      candidates: MEMBERS_CANDIDATES,
+      selected: [MEMBERS_CANDIDATES[0]!],
+    })
+    // 对话框是 teleport 出去的，不在 `view.container` 里，得从 dialog 那一块找。
+    const dialog = view.getByRole('dialog')
+    // 这一格是 `v-autocomplete`（多选 chips），选中那块的容器类名是 autocomplete 那一套。
+    const chip = dialog.querySelector('.v-autocomplete__selection .identity-view')
+    expect(chip?.textContent).toContain('鲍勃')
+    // 头像对读屏是装饰（名字就在 chip 里），和别处同一套。
+    expect(chip?.querySelector('.identity-view__face')?.getAttribute('aria-hidden')).toBe('true')
+  })
+
   it('移出确认框：说清是谁、点确认报「去做移出」', async () => {
     const view = mount({ ...base, confirmHandle: 'alice' })
     const dialog = view.getByRole('dialog')

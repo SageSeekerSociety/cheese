@@ -55,7 +55,11 @@ const directory: Plugin = {
   install(app) {
     const store = useWorkspaceStore()
     app.provide(USER_REF_DIRECTORY, {
-      name: (handle: string) => memberName(store.members.find((m) => m.user_handle === handle)) || null,
+      identity: (handle: string) => {
+        const row = store.members.find((m) => m.user_handle === handle)
+        if (!row) return null
+        return { name: memberName(row) || null, avatarId: row.avatar_id ?? null, agent: row.agent === true }
+      },
       target: () => null,
       navigate: () => {},
     })

@@ -231,6 +231,7 @@ function revoke(item: SpaceInviteCode) {
                 v-if="item.createdBy"
                 :handle="item.createdBy.username"
                 :name="makerName(item)"
+                :avatar-id="item.createdBy.avatarId"
                 :to="userRefTo(item)"
                 @navigate="emit('navigateRef', userRefTo(item))"
               />

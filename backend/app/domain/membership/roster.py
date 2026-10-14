@@ -177,7 +177,26 @@ async def roster(session: AsyncSession, project_id: uuid.UUID) -> tuple[Member, 
     # in it, not merely uncallable. Opened again, they are back. One its owner
     # removed from the project is not in it either, until they add it again.
     withdrawn = not allows_own_agents(project.settings if project else None)
-    for instance in await AgentInstanceService(session).list_for_project(project_id):
+    instances = await AgentInstanceService(session).list_for_project(project_id)
+    # A teammate goes by two handles: its own (``cheese``) and the seat it sits on
+    # here (``cheese-<hex>``). A row that came back under the teammate's own
+    # handle — its grant row, with no seat of its own yet — is the one the seat
+    # loop below never reaches, because that loop looks its row up by ``seat``.
+    # Name it by the same instance anyway, ``name_source`` with it: left as the
+    # account was born it carries the stored 「芝士」 and no flag, so a screen
+    # reads it as a name a person chose and prints the Chinese in every language
+    # (the picker in a room's roster showed exactly that).
+    by_own_handle = {instance.handle: instance for instance in instances}
+    for index, member in enumerate(rows):
+        instance = by_own_handle.get(member.handle) if member.agent else None
+        if instance is None:
+            continue
+        rows[index] = replace(
+            member,
+            name=instance.display_name or instance.handle,
+            name_source=AgentInstanceService.resolved(instance).name_source.value,
+        )
+    for instance in instances:
         if instance.id in owners and (withdrawn or not instance.is_active):
             continue
         seat = agent_instance_handle(instance.id)

@@ -264,7 +264,7 @@ export const ACCEPT_CONFLICTED: AcceptCard = { ...ACCEPT_ONE, status: 'conflict'
 /** 「改由谁审阅」那一份名单：名册上还在岗的人（`useAcceptCard.ts` 就是拿 store 里的
  *  `members` 直接给菜单的）。 */
 export const ACCEPT_REVIEWERS: ProjectMemberRow[] = [
-  { user_handle: 'wang', name: '王长鑫', role: 'owner', source: 'owner' },
+  { user_handle: 'wang', name: '王长鑫', role: 'owner', source: 'owner', avatar_id: 3 },
   { user_handle: 'li', name: '李甘', role: 'member', source: 'team' },
 ]
 
@@ -490,10 +490,16 @@ function feedbackRow(over: Partial<FeedbackCard> = {}): FeedbackCard {
     visibility: 'public',
     security: false,
     author_handle: 'alice',
+    // 名册上那一格：名字和头像都从名册取，预览这份数据没接名册，所以留空 ——
+    // 界面拿不着名字时读的就是 handle，正好是这一页原来那个样子。
+    author_name: null,
     author_is_agent: false,
     author_avatar_id: null,
     submitted_by_handle: null,
     assignee_handle: null,
+    assignee_name: null,
+    assignee_avatar_id: null,
+    assignee_is_agent: null,
     tags: [],
     supports: 0,
     comments: 0,
@@ -537,6 +543,9 @@ export const EXCERPTS: SpaceLearningExcerpt[] = [
     projectId: 'p1',
     student: 'alice',
     studentName: '爱丽丝',
+    // 自己挑过的头像 id（不是默认头像）；预览站里落成 `/api/avatars/5`。
+    studentAvatarId: 5,
+    studentIsAgent: false,
     topicTitle: '第 3 题：为什么天空是蓝的',
     createdAt: Date.parse('2026-09-28T09:12:00Z'),
     quote: '因为瑞利散射，短波长的光被散射得更多。',
@@ -548,6 +557,9 @@ export const EXCERPTS: SpaceLearningExcerpt[] = [
     projectId: 'p1',
     student: 'bob',
     studentName: '鲍勃',
+    // 没挑过头像：这一条正好把「没有头像」那一支画出来（彩色首字母）。
+    studentAvatarId: null,
+    studentIsAgent: false,
     topicTitle: '第 5 题：这道题我错在哪',
     createdAt: Date.parse('2026-09-28T10:31:00Z'),
     quote:
@@ -981,9 +993,3 @@ export function chatTimelineProps(over: Record<string, unknown> = {}): Record<st
     ...over,
   }
 }
-
-/** 环境选择：两台登记的电脑，实验室那台是别人的，家里那台是读者自己的（离线）。 */
-export const COMPUTE_DEVICES = [
-  { device_id: 'lab', name: '实验室工作站', online: true, owned: false },
-  { device_id: 'home', name: '家里那台', online: false, owned: true },
-]

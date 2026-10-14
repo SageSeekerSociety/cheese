@@ -12,6 +12,7 @@ import type { TaskRelated, TaskSource } from '@/types/taskOrigin'
 import { computed, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserRef from '@/components/common/UserRef.vue'
 import TodoChecklist from '@/components/panels/TodoChecklist.vue'
 import TaskDocCompare from '@/components/task/TaskDocCompare.vue'
 import TaskOutputs from '@/components/task/TaskOutputs.vue'
@@ -19,6 +20,7 @@ import TaskRelatedList from '@/components/task/TaskRelatedList.vue'
 import TaskSourceLine from '@/components/task/TaskSourceLine.vue'
 import PanelDocHost from '@/components/work/PanelDocHost.vue'
 import { t } from '@/i18n'
+import { type MemberFace, memberFacesOf } from '@/lib/memberFaces'
 import { relTime } from '@/lib/relTime'
 
 const props = defineProps<{
@@ -62,6 +64,18 @@ watch(
 const opening = computed(() => (writingMyself.value ? null : props.task.opening ?? null))
 const done = computed(() => props.checklist.filter((i) => i.status === 'completed').length)
 
+// 名册在手，身份（头像 id、队友身份）从这里一次算好往下传：TaskSourceLine / TaskRelatedList
+// 只认 props、不查名册，拿名字也不必再反查头像。名册外的人查不到时给 null，视图退回
+// handle + 彩色首字母。
+const memberFaces = computed(() => memberFacesOf(props.members))
+function faceOf(handle: string | null | undefined): MemberFace | null {
+  return handle ? memberFaces.value[handle] ?? null : null
+}
+function faceName(handle: string | null | undefined): string {
+  if (!handle) return ''
+  return faceOf(handle)?.name ?? props.memberNames[handle] ?? handle
+}
+
 const docRef = ref<{
   pulse: () => void
   highlightTurn: (turnId: string) => void
@@ -80,15 +94,22 @@ defineExpose({
       :source="related ? related.source : undefined"
       :task="task"
       :member-names="memberNames"
+      :faces="memberFaces"
       @open="emit('open-source', $event)"
     />
     <div v-if="task.started_at" class="task-overview__started t-meta">
-      <span>{{
-        t('work.task.startedLine', {
-          who: memberNames[task.started_by ?? ''] || task.started_by || '',
-          when: relTime(task.started_at),
-        })
-      }}</span>
+      <i18n-t keypath="work.task.startedLine" scope="global" tag="span">
+        <template #who>
+          <UserRef
+            v-if="task.started_by"
+            :handle="task.started_by"
+            :name="faceName(task.started_by)"
+            :avatar-id="faceOf(task.started_by)?.avatarId"
+            :agent="faceOf(task.started_by)?.agent"
+          />
+        </template>
+        <template #when>{{ relTime(task.started_at) }}</template>
+      </i18n-t>
       <template v-if="task.document_id && task.started_doc_version != null">
         <span aria-hidden="true">·</span>
         <button type="button" class="task-overview__compare" data-testid="task-compare" @click="emit('toggle-compare')">
@@ -159,6 +180,7 @@ defineExpose({
     <TaskRelatedList
       :related="related"
       :member-names="memberNames"
+      :faces="memberFaces"
       @open-document="(id, title) => emit('open-document', id, title)"
       @open-file="emit('open-file', $event)"
     />

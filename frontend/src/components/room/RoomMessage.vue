@@ -10,6 +10,7 @@
 import type { MentionPoolEntry } from '../../composables/useRoomMentionPicker'
 import type { Block, TodoItem, Topic } from '../../cx_types'
 import type { FaceState } from '../../lib/agentFace'
+import type { RefNames } from '../../lib/refChip'
 
 import { computed, ref } from 'vue'
 
@@ -62,8 +63,8 @@ const props = defineProps<{
   /** 说话的人是这个项目的外部成员（团队以外、被邀请进来的）——名字旁挂「外部」。 */
   external?: boolean
   time: string
-  /** handle→昵称 / 话题 id→标题，正文里的 token 靠它渲染成可点的 chip。 */
-  refs: { mentionNames: Record<string, string>; topicTitles: Record<string, string> }
+  /** handle→昵称 / 话题 id→标题 / handle→头像与队友标记，正文里的 token 靠它渲染成可点的 chip。 */
+  refs: RefNames
   /** 自己的 handle，用来标出哪些表情是自己点的。 */
   viewer: string
   /** 悬停条此刻停在这一行上（指针可能在悬停条上，不在这一行上）。 */

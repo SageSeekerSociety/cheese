@@ -14,7 +14,8 @@ vi.mock('@/api', async () => ({
 
 import { useBranchProtection } from './useBranchProtection'
 
-import { getBranchProtection, listProjectAgents, setBranchProtection } from '@/api'
+import { getBranchProtection, listProjectAgents, listProjectMembers, setBranchProtection } from '@/api'
+import { t } from '@/i18n'
 
 const rules = (over: Partial<BranchProtectionRules> = {}): BranchProtection => ({
   required_checks: [],
@@ -72,6 +73,34 @@ describe('分支保护开关的乐观更新', () => {
     await bp.saveBranchProtection({ auto_merge_allowed: false }, 'auto_merge_allowed')
     expect(bp.bp.value?.auto_merge_allowed).toBe(true)
     expect(bp.bp.value?.dismiss_stale).toBe(false)
+  })
+})
+
+describe('分支保护下拉的可选项', () => {
+  it('放行名单每一项带上身份字段，供一处 IdentityView 画头像 + 姓名', async () => {
+    vi.mocked(getBranchProtection).mockResolvedValue(rules())
+    vi.mocked(listProjectMembers).mockResolvedValue({
+      data: [
+        { user_handle: 'alice', name: 'Alice', avatar_id: 7, agent: false },
+        // AI 队友不进放行名单，选项里不该出现它。
+        { user_handle: 'cheese-abc', name: 'AI', avatar_id: null, agent: true },
+      ],
+    } as never)
+    const bp = useBranchProtection(() => 'p')
+    await bp.loadBranchProtection()
+    expect(bp.bpMemberItems.value).toEqual([
+      { title: 'Alice', value: 'alice', handle: 'alice', name: 'Alice', avatarId: 7, agent: false },
+    ])
+    // 「未指定」不是某个人：handle 空着，模板据此画纯文字而不是一张脸。
+    expect(bp.bpReviewerItems.value[0]).toEqual({
+      title: t('work.projectSettings.merge.unassigned'),
+      value: '',
+      handle: '',
+      name: '',
+      avatarId: null,
+      agent: null,
+    })
+    expect(bp.bpReviewerItems.value[1]).toEqual(bp.bpMemberItems.value[0])
   })
 })
 

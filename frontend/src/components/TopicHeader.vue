@@ -14,6 +14,7 @@
 // nobody watches them. Now they load once, when the popover is opened.
 import type { MenuAction } from '@/components/common/menuAction'
 import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
+import type { PersonIdentity } from '@/lib/personIdentity'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -151,9 +152,11 @@ const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf
 
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
+// 频道详情那一行「管理者」要画头像 + 姓名，所以这里存的是整份身份、不是一个名字：
+// 名册交出来的就是这一份（`TopicMembers` 的 `manager` 事件）。
+const manager = ref<PersonIdentity | null>(null)
 // 成员名单开着没有。名单自己长在成员名册那一块上，详情只叫它开（清单第 5 条）。
 const membersOpen = ref(false)
-const managerName = ref<string | null>(null)
 // 我管不管这个项目：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
   computed(() => ({ ...projectQuery(props.topic.project_id), enabled: detailsOpen.value })),
@@ -247,7 +250,7 @@ useCommands(roomCommands)
         :project-id="topic.project_id"
         :project-members="members"
         :me="me"
-        @manager="managerName = $event"
+        @manager="manager = $event"
       />
 
       <ChannelDetailsDialog
@@ -256,7 +259,7 @@ useCommands(roomCommands)
         :topic="topic"
         :can-manage="topic.can_manage === true"
         :manages-project="managesProject"
-        :manager-name="managerName"
+        :manager="manager"
         :level="store.levelOf(topic.id)"
         :muted-until="store.mutedUntil(topic.id)"
         @rename="(next) => emit('rename', next)"

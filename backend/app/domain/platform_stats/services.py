@@ -29,6 +29,7 @@ from app.domain.admin.services import AdminService
 from app.domain.day_windows import dense_series, utc_day_window
 from app.domain.feedback.models import FeedbackStatus
 from app.domain.feedback.services import FeedbackService
+from app.domain.identity.services import IdentityService
 from app.domain.platform_stats.claude_pool import read_claude_pool, snapshot_path
 from app.domain.platform_stats.gaps import GapRepository
 from app.domain.platform_stats.integrations import IntegrationsRepository
@@ -44,7 +45,11 @@ from app.domain.platform_stats.usage_detail import (
 )
 from app.domain.usage.models import ResourceUsage
 from app.domain.usage.services import UsageService
-from app.domain.user.services import AccountService
+from app.domain.user.services import (
+    AccountService,
+    chosen_avatars_by_handle,
+    faces_by_handle,
+)
 
 #: 用量柱状图上画几根。有上界是这个查询的一部分而不是优化：窗口收时间范围、`limit`
 #: 收行数，两个都少一个都会让这个读在全平台最长的表上无界。
@@ -165,6 +170,21 @@ class PlatformStatsService:
         users, unattributed = await detail.top_users(
             since=since, until=until, limit=TOP_USERS
         )
+        recent = await detail.recent(since=since, until=until, limit=RECENT_CALLS)
+        # 这一屏画人的地方有两处：按人拆的排行，和最近几行账本里「谁触发的」。脸和
+        # 「是不是队友」都走各自域里那一处，别在这里另写一份判据（谁挑过哪张头像在
+        # user 域，谁是队友在 identity 域）；两处一起批一次，同一个人在两处
+        # 长得一样。账号已删的 handle 拿不到头像 —— 前端按首字母兜底，不共用一张
+        # 默认脸。名字不在这里补：显示名是行自己的事，`top_users` / `recent` 各自
+        # 已经带上（同一次名册查询，见 `usage_detail.py`）。
+        people = [*users, *recent]
+        user_handles = [row["handle"] for row in people if row.get("handle")]
+        avatars = await chosen_avatars_by_handle(self._session, user_handles)
+        agents = await IdentityService(self._session).agents_among(user_handles)
+        for row in people:
+            handle = row["handle"]
+            row["avatar_id"] = avatars.get(handle) if handle else None
+            row["is_agent"] = handle in agents if handle else None
         return {
             "days": days,
             "totals": totals,
@@ -187,7 +207,7 @@ class PlatformStatsService:
                 if days <= HOURLY_MAX_DAYS
                 else None
             ),
-            "recent": await detail.recent(since=since, until=until, limit=RECENT_CALLS),
+            "recent": recent,
             # 上一窗口的同一口径合计（环比用）。`unpriced_tokens` 不进 prev：环比那
             # 三张卡是 token / 调用 / 成本，prev 的形状与那三张一一对应。
             "prev": {
@@ -283,12 +303,35 @@ class PlatformStatsService:
         这是产品自己的主链（「AI 干活、人验收」），也是看板上第一次有它的数字。
         口径的三条硬事实（闸门已退役 / `void` 不是状态 / `decided_at` 会被覆写）写在
         `pipeline.py` 的模块 docstring 里，页面上的注脚对应的是它们。
+
+        `stuck_cards` 每一行的验收人除了 `reviewer_handle` 还带 `reviewer_name` /
+        `reviewer_avatar_id` / `reviewer_is_agent` —— 一列裸 handle 在滚动时读不出是
+        谁，这一屏里这一格正是「这堆卡堵在谁手上」。
         """
         since, until, _ = utc_day_window(days)
+        stuck = await self._pipeline.stuck_cards()
+        # 卡住了的卡上「验收人是谁」也要画脸和名：名和头像是 user 域的事实
+        # （`faces_by_handle` 一次 join 给两样），「是不是队友」是 identity 域的事实
+        # （`agents_among`），和用量那一屏同一套，别在这里另写判据。没人验收的行
+        # （`reviewer_handle` 空）不画人 —— 那一行是「这张卡没写验收人」，
+        # 不是「验收人叫 null」。
+        faces = await faces_by_handle(
+            self._session,
+            [row["reviewer_handle"] for row in stuck if row.get("reviewer_handle")],
+        )
+        reviewer_agents = await IdentityService(self._session).agents_among(list(faces))
+        for row in stuck:
+            handle = row["reviewer_handle"]
+            name, avatar_id = (
+                faces.get(handle, (None, None)) if handle else (None, None)
+            )
+            row["reviewer_name"] = name
+            row["reviewer_avatar_id"] = avatar_id
+            row["reviewer_is_agent"] = handle in reviewer_agents if handle else None
         return {
             "days": days,
             "backlog": await self._pipeline.backlog(),
-            "stuck_cards": await self._pipeline.stuck_cards(),
+            "stuck_cards": stuck,
             "dwell": await self._pipeline.dwell(since=since, until=until),
             "needs_you": await self._pipeline.needs_you(),
             "turn_failures": await self._pipeline.turn_failures(

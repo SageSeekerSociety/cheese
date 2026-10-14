@@ -86,7 +86,13 @@ function mountPanel() {
 }
 
 function said(view: ReturnType<typeof mountPanel>): string[] {
-  return Array.from(view.container.querySelectorAll('.member-activity__line')).map((el) => el.textContent?.trim() ?? '')
+  return Array.from(view.container.querySelectorAll('.member-activity__line')).map((el) => {
+    // 名字后面那张脸是装饰（没真图时画一个彩色首字母，带 `data-user-content`）：读这一行
+    // 说了什么，先把那块抠掉。
+    const clone = el.cloneNode(true) as Element
+    clone.querySelectorAll('[data-user-content]').forEach((node) => node.remove())
+    return clone.textContent?.trim() ?? ''
+  })
 }
 
 function lastLines(view: ReturnType<typeof mountPanel>): MemberActivityLine[] {
@@ -118,6 +124,21 @@ describe('who is busy in the room', () => {
     socket.emit({ type: 'activity', member: KIMI, kind: 'working', active: false, since: 3 })
     await flush()
     expect(said(view).map((s) => s.split(' · ')[0])).toEqual(['Opus is working…'])
+  })
+
+  it('each busy line carries that member’s face, taken from the room roster', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [{ member_handle: KIMI, name: 'Kimi', agent: true, avatar_id: 5 }],
+      total: 1,
+    })
+    const view = mountPanel()
+    await flush()
+    FakeWebSocket.instances.at(-1)!.emit({ type: 'activity', member: KIMI, kind: 'working', active: true, since: 1 })
+    await flush()
+    const [line] = lastLines(view)
+    // 这一行说的永远是某一位成员：名字之外还得带上它自己挑过的头像和「是不是队友」。
+    expect(line.name).toBe('Kimi')
+    expect(line.face).toEqual({ avatar: '/api/avatars/5', agent: true })
   })
 
   it('a socket that joins late learns who is busy from the snapshot', async () => {

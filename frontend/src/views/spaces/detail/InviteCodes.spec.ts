@@ -214,10 +214,24 @@ describe('这一张码是谁的、给谁用的', () => {
     }))
     await mount()
 
-    expect(document.body.textContent).toMatch(/建码人\s*@林/)
+    // 认名字看那颗 chip 自己，不读整页正文：没有头像时头像格子会把它画的首字母
+    // 也写进正文（「建码人 林@林」），整页断言会把那颗首字母也算进来。
+    expect(document.body.textContent).toContain('建码人')
+    expect(document.querySelector('.user-ref .identity-view__name')?.textContent).toBe('@林')
     expect(document.body.textContent).toContain('给新来的设计师')
     // 昵称为空时退到用户名，这是后端 `createdBy` 里两个都可能缺的那一格的兜底。
     expect(document.body.textContent).not.toContain('未知')
+  })
+
+  it('建码人挑过头像就画那张脸，不只是一串 @名字', async () => {
+    listInviteCodes.mockImplementation(async () => ({
+      inviteCodes: [code({ createdBy: { id: 3, username: 'lin', nickname: '林', avatarId: 9 } })],
+    }))
+    await mount()
+
+    const ref = document.querySelector('.user-ref') as HTMLElement
+    expect(ref.querySelector('.identity-view'), '建码人没走共用身份视图').not.toBeNull()
+    expect(ref.querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
   })
 
   it('两处都缺的时候写「未知」「没写说明」，不留白', async () => {

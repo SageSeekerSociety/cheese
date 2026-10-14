@@ -16,6 +16,7 @@ import type { DocEdit } from '../../lib/docEdits'
 import type { DocVersionPage } from '../../lib/docHistory'
 import type { DocReviewRequest } from '../../lib/docReview'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/docThreadTypes'
+import type { MentionIdentity } from '../../lib/personIdentity'
 import type { CanvasData } from '../../types/canvas'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -29,6 +30,7 @@ import { useDocReview } from '../../composables/useDocReview'
 import { useDocSuggestions } from '../../composables/useDocSuggestions'
 import { anchorComment } from '../../lib/docCommentSpots'
 import { exportMarkdown } from '../../lib/docSchema'
+import { identitiesFrom } from '../../lib/personIdentity'
 import { topicTitle } from '../../lib/topicState'
 
 import DocCommentPanel from './doc/DocCommentPanel.vue'
@@ -116,8 +118,15 @@ const props = withDefaults(
     /** 以自己的名义替换正文里的字（撤销、还原 AI 队友的修改）。 */
     applyDocEdits?: (edits: DocEdit[]) => Promise<unknown>
     // ---- 修改记录 ----
-    /** 最近一次编辑：谁（读成名字）、什么时候。 */
-    lastEdit?: { name: string; at: string } | null
+    /** 最近一次编辑：谁（读成名字）、什么时候，以及画那张脸要的 handle / 头像地址 /
+     *  是不是队友（顶栏的左半边画的是脸 + 名，不是一串 handle）。 */
+    lastEdit?: {
+      name: string
+      at: string
+      handle?: string | null
+      avatar?: string | null
+      agent?: boolean | null
+    } | null
     /** handle 读成名字。 */
     nameOf?: (handle: string) => string
     /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
@@ -292,6 +301,9 @@ const {
 const mentionNames = computed<Record<string, string>>(
   () => props.mentionNames ?? (props.agentHandle ? { [props.agentHandle]: props.agentName } : {})
 )
+// 同一份名册上的头像与「是不是队友」：正文、旧版本、评论里的 `<@handle>` chip 前那张脸
+// 用它，缺谁都不会塌成一行光字（lib/refChip 会退回 handle 首字母）。
+const mentionIdentities = computed<Record<string, MentionIdentity>>(() => identitiesFrom(props.mentionPeople ?? []))
 
 const agentOptions = {
   editor: () => surfaceRef.value?.editor ?? null,
@@ -412,6 +424,7 @@ defineExpose({
             :agent-handle="agentHandle"
             :agent="canAskDocument ? docAgent : undefined"
             :mention-names="mentionNames"
+            :mention-identities="mentionIdentities"
             :headings="outlineHeadings"
             :find-open="findOpen"
             :deletable="!!document && !readOnly"
@@ -473,6 +486,7 @@ defineExpose({
           :place-of="placeOfThread"
           :agent-name="agentName"
           :mention-names="mentionNames"
+          :mention-identities="mentionIdentities"
           :name-of="nameOf"
           :avatar-of="avatarOf"
           :writable="!readOnly"
@@ -540,6 +554,7 @@ defineExpose({
                 :suggestions="suggestions"
                 :suggestion-reasons="suggestionReasons"
                 :mention-names="mentionNames"
+                :mention-identities="mentionIdentities"
                 @open-thread="locateComment"
               />
             </div>
@@ -556,6 +571,7 @@ defineExpose({
         :editable="editable"
         :name-of="nameOf"
         :mention-names="mentionNames"
+        :mention-identities="mentionIdentities"
       />
 
       <!-- Floating, never clipped: the old flow-layout alert sat below the

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { agentTone, avatarColor, avatarHue, avatarInitial } from './avatar'
+import { AGENT_EYES, agentTone, avatarColor, avatarHue, avatarInitial } from './avatar'
 
 /**
  * The avatar background is theme-invariant and always carries white `#fff`
@@ -133,6 +133,19 @@ describe('agentTone', () => {
     expect(agentTone('cheese-1f88')).toBe(2)
     expect(agentTone('cheese-6e24')).toBe(3)
     expect(agentTone('cheese-4a60')).toBe(4)
+  })
+})
+
+describe('AGENT_EYES', () => {
+  // brand.md §10：一双胶囊眼，一大一小、整体偏右。Vue 的 CheeseAvatar 和 DOM 的
+  // lib/identityFace 共用这一份，所以这里把形状本身钉住。
+  it('is one big eye and one smaller eye, the smaller one to the right', () => {
+    const [near, far] = AGENT_EYES
+    expect(far.width).toBeLessThan(near.width)
+    expect(far.height).toBeLessThan(near.height)
+    expect(far.x).toBeGreaterThan(near.x)
+    expect(near.far).toBe(false)
+    expect(far.far).toBe(true)
   })
 })
 

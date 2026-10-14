@@ -127,6 +127,7 @@
                 ><UserRef
                   :handle="row.entry.accessor.username"
                   :name="row.name"
+                  :avatar-id="row.avatarId"
                   :to="row.to"
                   @navigate="emit('visitUser', row.to)"
               /></template>
@@ -188,6 +189,8 @@ export interface RealNameLogRow {
   entry: UserIdentityAccessLog
   name: string
   avatarUrl: string
+  /** 本人挑过的头像素材 id；没挑过给 null，由共用的身份视图画彩色首字母。 */
+  avatarId: number | null
   /** Where clicking the person's name goes. Null when there is no handle to follow. */
   to: UserRefTarget | null
   isOwn: boolean

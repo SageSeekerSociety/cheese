@@ -4,8 +4,8 @@ import type { FeedbackComment } from '@/cx_types'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
-import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 
@@ -128,13 +128,13 @@ function confirmRemove() {
 <template>
   <div class="fb-ci">
     <div class="fb-ci__head">
-      <FeedbackAuthorAvatar
+      <IdentityView
         :handle="comment.author_handle"
-        :is-agent="comment.author_is_agent"
+        :name="comment.author_name"
         :avatar-id="comment.author_avatar_id"
+        :agent="comment.author_is_agent"
         :size="isReply ? 20 : 22"
       />
-      <span class="fb-ci__author">{{ comment.author_handle }}</span>
       <span v-if="comment.author_is_agent" class="chip-neutral">{{ t('feedback.comment.agent') }}</span>
       <span class="t-meta-read t-num">{{ relTime(comment.created_at) }}</span>
     </div>
@@ -231,17 +231,6 @@ function confirmRemove() {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-}
-.fb-ci__author {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: var(--lh-13);
-  color: var(--ink);
-  /* 一个 60 个字符、中间不带空格的 handle 在 flex 行里不会断行，于是把整行撑到
-     横向溢出、把上面那个时间戳推出屏幕。`min-width: 0` 放开 flex 项的最小尺寸，
-     `overflow-wrap` 才真的能在这两个字上断开。 */
-  min-width: 0;
-  overflow-wrap: anywhere;
 }
 .fb-ci__re {
   font-size: 12px;

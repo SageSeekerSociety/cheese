@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import type { AdminCandidate } from '@/types'
+
 import { computed } from 'vue'
 
 import { useAdminCandidateSearch } from '@/composables/useAdminCandidateSearch'
 
-import FeedbackAuthorAvatar from '@/components/feedback/FeedbackAuthorAvatar.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 
 /**
@@ -41,6 +43,24 @@ const hint = computed(() => {
   if (searching.value) return t('admin.assignee.searching')
   return search.value.trim() ? t('admin.assignee.noMatch') : t('admin.assignee.placeholder')
 })
+
+/** 一行 / 选中值后面是哪个候选账号。候选是对象，选中值也是（值就是 handle）；当那个
+ *  handle 不在当前候选里（换过一次搜索、或当前指派的人没被搜出来）时 `raw` 退成 handle
+ *  串，这里给 `null`，界面画纯文字 handle。 */
+function candidateOf(item: unknown): AdminCandidate | null {
+  const raw = (item as { raw?: unknown } | null)?.raw
+  if (raw && typeof raw === 'object' && typeof (raw as AdminCandidate).handle === 'string') {
+    return raw as AdminCandidate
+  }
+  return null
+}
+
+/** `IdentityView` 要的四样（同 AdminMembersPageView）：账号数据源没有队友标记，
+ *  agent 给 null 让视图按 handle 兜底，不硬说成「人」。 */
+function identityOf(item: unknown): { handle: string; name: string; avatarId: number | null; agent: null } | null {
+  const c = candidateOf(item)
+  return c ? { handle: c.handle, name: c.nickname, avatarId: c.avatar_id, agent: null } : null
+}
 </script>
 
 <template>
@@ -61,16 +81,21 @@ const hint = computed(() => {
     clearable
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <!-- 昵称当标题、handle 当副标题：搜的是账号，但人认的是昵称。 -->
+    <!-- Each row is avatar + name (+ @handle) through the shared identity view. Clear
+         `title` so Vuetify does not paint the plain text title on top of the face. -->
     <template #item="{ item, props: itemProps }">
-      <v-list-item v-bind="itemProps">
-        <template #prepend>
-          <FeedbackAuthorAvatar :handle="item.raw.handle" :avatar-id="item.raw.avatar_id" :size="30" />
-        </template>
-        <v-list-item-title>{{ item.raw.nickname }}</v-list-item-title>
-        <v-list-item-subtitle>{{ item.raw.handle }}</v-list-item-subtitle>
+      <v-list-item v-bind="itemProps" :title="undefined">
+        <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="30" handle-line />
+        <span v-else>{{ item.title }}</span>
       </v-list-item>
     </template>
+    <!-- No `#selection` slot here, unlike the plain `v-select`s elsewhere: this is a
+         `v-autocomplete`, whose input IS the editable field. A `#selection` slot would
+         draw the picked account with a face and drop the handle out of that field — but
+         the field must keep showing the handle, because that is what actually gets sent.
+         The feedback e2e pins it (`toHaveValue('alice')`) exactly to catch a nickname
+         being filed as the handle. The picked person's face still shows on every
+         candidate row above (`#item`). -->
     <!-- 这一句得挂在 `no-data` 上，不能挂 `append-item`：`hide-no-data` 会让候选为空时
          整张菜单直接不可打开（VSelect 的 `menuDisabled`），那时什么提示都露不出来。 -->
     <template #no-data>

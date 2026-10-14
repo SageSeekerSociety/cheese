@@ -5,6 +5,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import StatusRail from '@/components/admin/StatusRail.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { priorityMeta, statusMeta } from '@/lib/feedbackMeta'
 import { relTime } from '@/lib/relTime'
 
@@ -115,7 +116,20 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
         </template>
         <span>{{ item.display_id }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
-        <span>{{ item.author_handle }}</span>
+        <!-- The submitter is a person, not one more reading: priority, status, id and
+             time are facts about the card, but "who filed it" is the same question the
+             assignee cell twenty lines down already answers with a face. So the author
+             carries the same face + display name as every other identity entry on the
+             platform. The name, avatar and agent flag all come from the card the server
+             sends (`author_name` / `author_avatar_id` / `author_is_agent`) — nothing is
+             guessed from what the handle looks like. -->
+        <IdentityView
+          :handle="item.author_handle"
+          :name="item.author_name"
+          :avatar-id="item.author_avatar_id"
+          :agent="item.author_is_agent"
+          :size="18"
+        />
         <span class="qrow__sep" aria-hidden="true">·</span>
         <span>{{ createdAt }}</span>
         <span class="qrow__sep" aria-hidden="true">·</span>
@@ -132,7 +146,19 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
       <span class="qrow__alabel">{{ t('feedback.queue.col.assignee') }}</span>
       <!-- 值单独包一层：窄屏那个标签也是这一格的文字，读「指派给了谁」的地方（e2e 的
            feedback-flows 就是一处）要读的是这一层，不是整格。 -->
-      <span v-if="item.assignee_handle" class="qrow__avalue">{{ item.assignee_handle }}</span>
+      <span v-if="item.assignee_handle" class="qrow__avalue">
+        <!-- The person holding this row gets a face + display name. The avatar
+             comes from the server's `assignee_avatar_id` — only if they picked one,
+             else a coloured initial; the name is `assignee_name`; `assignee_is_agent`
+             is asked of the server, never guessed from what the handle looks like. -->
+        <IdentityView
+          :handle="item.assignee_handle"
+          :name="item.assignee_name"
+          :avatar-id="item.assignee_avatar_id"
+          :agent="item.assignee_is_agent"
+          :size="18"
+        />
+      </span>
       <span v-else class="qrow__avalue qrow__dim">—</span>
     </span>
 
@@ -227,6 +253,14 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   white-space: nowrap;
 }
 
+/* 作者的身份 chip 画的是公共那一个（`IdentityView`），它的名字行用的是 `--lh-14`
+   （20px）。这一行是 meta 行盒，高 `--lh-12`（18px）—— 61px 就是照这个数算出来的。
+   chip 比行盒高 2px 会把整行顶高，所以在这里把它拉回 meta 的行高；这一处只压高度，
+   其余（脸、降级、队友判断）都还是公共那一份。 */
+.qrow__meta :deep(.identity-view__text) {
+  line-height: var(--lh-12);
+}
+
 .qrow__word {
   flex: 0 0 auto;
 }
@@ -259,6 +293,16 @@ const updatedAt = computed(() => relTime(props.item.last_activity_at ?? props.it
   line-height: var(--lh-13);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 指派那一格的值（没指派时是那个 `—`）。有人时里面是共享身份视图（脸 + handle），
+   所以这一层要是能收窄的 `inline-flex`：把格子的宽度（宽屏 116 / 窄屏吃中间那段）
+   让给里面的名字，长了才截得住。`vertical-align: middle` 让它在窄屏和行内标签同排。 */
+.qrow__avalue {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  vertical-align: middle;
 }
 
 .qrow__dim {

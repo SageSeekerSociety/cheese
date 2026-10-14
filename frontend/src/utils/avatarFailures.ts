@@ -34,3 +34,27 @@ export function isAvatarKnownFailed(url: string): boolean {
 export function rememberAvatarFailure(url: string): void {
   if (url) failedAvatarUrls.add(url)
 }
+
+/** 本次会话里已经派过探针的 URL，免得同一次渲染反复造 `<img>`。 */
+const probedAvatarUrls = new Set<string>()
+
+/**
+ * 替一张**背景图**探一次「取得到吗」。
+ *
+ * 为什么需要：正文那张小脸（lib/identityFace）把头像当背景图画在首字母上面，好处是
+ * 图坏了只是「什么都不画」、露出的正是底下那层首字母，序列化也成立。代价是背景图
+ * 坏了**不触发任何事件** —— `<img>` 的 error 那条路到不了这里，这份「取不到」的记忆
+ * 就补不上，下一屏又会去要一次注定失败的图。
+ *
+ * 做法：造一个从不插进文档的 `<img>`，只挂 error。它拿到的就是背景图拿不到的那次
+ * 失败，照样记进同一份记忆。**记的是传进来的原文**（`/api/avatars/7` 这样的相对
+ * 地址），不是 `img.src` 绝对化之后的串 —— 后者和 UserAvatar 记的键对不上，同一张
+ * 图在两处会被当成两张、各查一次。空串是空操作。
+ */
+export function probeAvatarFailure(url: string): void {
+  if (!url || failedAvatarUrls.has(url) || probedAvatarUrls.has(url)) return
+  probedAvatarUrls.add(url)
+  const probe = document.createElement('img')
+  probe.addEventListener('error', () => rememberAvatarFailure(url))
+  probe.src = url
+}

@@ -2,6 +2,8 @@
 // 名字和「哪一步」由调用方给（名册和轮次在它手上），这里只把它们拼成一种形状，
 // 房间的输入框下面和现场那一格读的是同一份。
 
+import type { MentionIdentity } from './personIdentity'
+
 /** 一位成员此刻在一个房间里忙着的事。`since` 是 epoch 秒；打字带 `expires_in`（秒），
  * 过了这么久没有新的一下就算停了。 */
 export interface MemberActivity {
@@ -19,9 +21,37 @@ export interface MemberWait {
   pr?: number | null
 }
 
+/** 一位成员的「脸」：自己挑过的头像地址，和是不是 AI 队友。名册在手时由调用方给，
+ *  拿不到时留空交给 `IdentityView` 按 handle 兜底。 */
+export interface MemberFace {
+  /** 这个人**自己挑过的**头像地址；没挑过、或名册上没他（已经退出项目）时是 null，
+   *  画彩色首字母。别在这里退回默认头像 —— 那是所有没挑过的人共用的一张脸。 */
+  avatar: string | null
+  /** 是不是 AI 队友；名册认不出时是 null，由 `IdentityView` 按 handle 命名规则兜底。 */
+  agent: boolean | null
+}
+
+/** 名册那一张表：handle → 这位自己挑过的头像地址 + 是不是队友（`lib/personIdentity` 那份）。 */
+export type MentionFaceMap = Record<string, MentionIdentity>
+
+/** 由名册那一张表算出「一位成员的脸」。表里没有的人退回 `avatarSrc`（项目名册那一份，
+ *  它那边也可能没有这一位，回 null）；队友身份留 null 交给 `IdentityView` 按 handle
+ *  兜底 —— 那条规则只在一个地方写，别在这里再抄一份。 */
+export function faceLookup(
+  identities: MentionFaceMap,
+  avatarSrc: (handle: string) => string | null
+): (handle: string) => MemberFace {
+  return (handle) => {
+    const known = identities[handle]
+    return { avatar: known?.avatar ?? avatarSrc(handle), agent: known?.agent ?? null }
+  }
+}
+
 export interface MemberActivityLine {
   handle: string
   name: string
+  /** 这一位的脸（头像地址 + 是不是队友）。只画名字、不给这个，就退回一个光秃秃的名字。 */
+  face: MemberFace
   kind: 'typing' | 'working'
   /** epoch 秒。 */
   since: number
@@ -38,13 +68,15 @@ export function activityLines(
   nameOf: (handle: string) => string,
   detailOf: (handle: string) => string | null = () => null,
   stepOf: (handle: string) => string | null = () => null,
-  lastFrameOf: (handle: string) => number | null = () => null
+  lastFrameOf: (handle: string) => number | null = () => null,
+  faceOf: (handle: string) => MemberFace = () => ({ avatar: null, agent: null })
 ): MemberActivityLine[] {
   return [...entries]
     .sort((a, b) => a.since - b.since)
     .map((e) => ({
       handle: e.member,
       name: nameOf(e.member),
+      face: faceOf(e.member),
       kind: e.kind,
       since: e.since,
       detail: e.kind === 'working' ? detailOf(e.member) : null,

@@ -12,6 +12,7 @@ import { useOwnAgents } from '@/composables/useOwnAgents'
 import { holdRevealGate } from '@/composables/useRevealGate'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { OWN_AGENT_KINDS } from '@/types/ownAgents'
@@ -170,7 +171,7 @@ onMounted(() => load().finally(releaseGate))
       </fieldset>
       <ul v-if="state.agents.length" class="own-agents__list">
         <li v-for="a in state.agents" :key="a.handle" class="own-agents__row" data-testid="own-agent">
-          <span class="own-agents__name">{{ a.name }}</span>
+          <IdentityView class="own-agents__name" :handle="a.handle" :name="a.name" :agent="true" :size="16" />
           <span v-if="a.connection" class="own-agents__machine">
             · {{ connectionLabel(a.connection) }}
             <span v-if="refusal(a.connection)" class="own-agents__refused">{{ refusal(a.connection) }}</span>

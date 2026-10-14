@@ -64,7 +64,7 @@ from app.domain.feedback.schemas import (
     FeedbackPatch,
 )
 from app.domain.identity.services import IdentityService
-from app.domain.user.services import chosen_avatars_by_handle
+from app.domain.user.services import faces_by_handle
 
 #: The admin surface's tiers, in the order the admin tab bar draws them.
 ADMIN_TABS: tuple[str, ...] = ("public", "private", "agent", "security")
@@ -474,21 +474,28 @@ class FeedbackService:
         """Newest comment-or-status time per row, for the card's 「刚刚」 line."""
         return await self._repo.latest_activity_of(ids)
 
-    async def chosen_avatars(self, handles: Iterable[str]) -> dict[str, int]:
-        """Faces for one screenful of feedback — report, comments and notes.
+    async def faces(
+        self, handles: Iterable[str]
+    ) -> dict[str, tuple[str | None, int | None]]:
+        """handle -> (昵称, 自己挑过的头像 id) —— 一页反馈上每个人要画的一样东西。
 
-        A thin pass-through: the lookup itself is the user domain's, because
-        "which avatar did this person pick" is a fact about `UserProfile` and
-        the rule for reading it (a person who never chose is **absent**, not
-        mapped to the global default) belongs to the domain that owns the
-        column. See `chosen_avatars_by_handle`.
-
-        It stays a method here so the five call sites — the public centre, the
-        thread, a single new comment and the admin queue — ask for "the faces on
-        this page" once, instead of each one importing another domain's service
-        and re-deciding which handles are worth resolving.
+        这一趟同时给出名字和脸，因为画人名的 chip 两样一起画：只回脸的话，调用方为了
+        名字还得再查一次同一个 join。`faces_by_handle` 是那次 join 的唯一实现
+        （`UserProfileRepository.nickname_and_avatar_by_user_id`），头像的「哪一行是
+        默认图」判据也就没多漂一处 —— 服务端按「脸不为空」筛一遍，就是
+        `chosen_avatars_by_handle` 的口径。平台上没有这个 handle 的整条不在映射里，
+        调用方把名字退回 handle、把脸退回彩色首字母。
         """
-        return await chosen_avatars_by_handle(self._session, handles)
+        return await faces_by_handle(self._session, handles)
+
+    async def agents_among(self, handles: Iterable[str]) -> set[str]:
+        """These handles 里哪些是 AI 队友 —— 卡片画指派人头像时要问这一句。
+
+        和 `faces` 同一条路数：判据是身份域的事（带不带 agent-binding），这里只把
+        「一页上的人」一次问完。不从 handle 前缀猜 —— 领取反馈的 agent 未必叫
+        `cheese`，而一个叫 `cheese` 的 handle 也可能是普通账号。
+        """
+        return await IdentityService(self._session).agents_among(list(handles))
 
     async def thread_page(
         self,
@@ -530,6 +537,7 @@ class FeedbackService:
         handle: str | None,
         is_admin: bool,
         avatars: Mapping[str, int] | None = None,
+        names: Mapping[str, str] | None = None,
         reply_counts: Mapping[uuid.UUID, int] | None = None,
         reply_cursors: Mapping[uuid.UUID, str] | None = None,
     ) -> list[CommentOut]:
@@ -557,18 +565,27 @@ class FeedbackService:
         answers "is there more", but only the cursor answers "from where".
         Absent from the map means there is no next page.
 
-        ``avatars`` exists so the detail screen resolves faces **once**. It draws
-        the report, every comment and every admin note on one page, and it
-        already builds a map covering all three; passing that in keeps this
-        method from resolving the comment authors a second time. ``None`` means
-        "resolve them for these rows", which is what the comments endpoint
-        (which has nothing but the thread) wants.
+        ``avatars`` and ``names`` exist so the detail screen resolves faces and
+        display names **once**. It draws the report, every comment and every
+        admin note on one page, and it already builds a map covering all three;
+        passing those in keeps this method from resolving the comment authors a
+        second time. ``None`` on either means "resolve it for these rows" — and
+        because a name and a face are one lookup (`faces_by_handle`), asking for
+        just one of them still runs that lookup once and keeps the other.
         """
         if not rows:
             return []
         ids = [row.id for row in rows]
-        if avatars is None:
-            avatars = await self.chosen_avatars([row.author_handle for row in rows])
+        # Names and faces are one lookup when neither was handed in: the comments
+        # endpoint has nothing but the thread, so it asks for both here. The
+        # detail screen passes both (it already resolved the page-wide pass), so
+        # this runs only for the bare thread.
+        if avatars is None or names is None:
+            faces = await self.faces([row.author_handle for row in rows])
+            if avatars is None:
+                avatars = {h: a for h, (_, a) in faces.items() if a is not None}
+            if names is None:
+                names = {h: n for h, (n, _) in faces.items() if n}
         like_counts = await self._repo.comment_like_counts(ids)
         liked = await self._repo.comment_liked_by(ids, handle) if handle else set()
         counts = reply_counts or {}
@@ -577,6 +594,7 @@ class FeedbackService:
             CommentOut.from_row(
                 row,
                 avatars=avatars,
+                names=names,
                 likes=like_counts.get(row.id, 0),
                 liked=row.id in liked,
                 reply_count=counts.get(row.id, 0),
@@ -635,12 +653,25 @@ class FeedbackService:
         # One resolution pass for the report, every comment and every note. The
         # detail page draws all of them in one screen, so a per-author lookup
         # would be exactly the N+1 this method's callers avoid for counters.
-        avatars = await self.chosen_avatars(
-            [
-                row.author_handle,
-                *[c.author_handle for c in page.rows],
-                *[n.author_handle for n in notes],
-            ]
+        page_handles = [
+            row.author_handle,
+            *[c.author_handle for c in page.rows],
+            *[n.author_handle for n in notes],
+        ]
+        # The assignee is drawn on the card too (the queue list and the detail
+        # header both show who holds it), so their face and "is this an agent"
+        # come from the same page-wide pass — not a second lookup.
+        if row.assignee_handle:
+            page_handles.append(row.assignee_handle)
+        # One pass for the page's names and faces: every person drawn on this
+        # screen (report author, commenters, note writers, the holder) is in
+        # `page_handles`, so a second lookup for names would re-run the same
+        # handle→user→profile join.
+        faces = await self.faces(page_handles)
+        avatars = {h: a for h, (_, a) in faces.items() if a is not None}
+        names = {h: n for h, (n, _) in faces.items() if n}
+        agents = await self.agents_among(
+            [row.assignee_handle] if row.assignee_handle else []
         )
         return FeedbackDetail.from_row(
             row,
@@ -653,7 +684,9 @@ class FeedbackService:
             # 拿到的永远是「这条反馈一共有多少条评论」。
             comments=(await self._repo.comment_counts([row.id])).get(row.id, 0),
             avatars=avatars,
+            names=names,
             last_activity_at=activity.get(row.id),
+            agents=agents,
             # The page-wide map goes straight back in: the comment authors are a
             # subset of the handles resolved above, so this costs nothing.
             thread=await self.comments_out(
@@ -661,6 +694,7 @@ class FeedbackService:
                 handle=handle,
                 is_admin=is_admin,
                 avatars=avatars,
+                names=names,
                 reply_counts=page.reply_counts,
                 reply_cursors=page.reply_cursors,
             ),

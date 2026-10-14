@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminNoteTip from '@/components/admin/AdminNoteTip.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import NavLink from '@/components/common/NavLink.vue'
 
 // 「等你处理 / 卡住了」那一列。有 `to` 的行整行是一个目的地 —— 这一块的全部用处
@@ -27,6 +28,12 @@ const props = withDefaults(
       id: string
       title: string
       subtitle?: string
+      /**
+       * 这一行「关谁的事」—— 验收人这类。给了就在副标题那一行画一颗共用身份
+       * （脸 + 名），只写 handle 的一行在滚动里读不出是谁。纯展示，不是焦点元素：
+       * 一行仍然只有整行那一个 Tab 站（见文件头）。
+       */
+      who?: { handle: string; name?: string | null; avatarId?: number | null; agent?: boolean | null }
       statusLabel?: string
       /** 只有 `warn` / `danger` 会用到状态色；`ink` 是中性阶（默认）。 */
       tone?: 'ink' | 'ok' | 'warn' | 'danger'
@@ -72,7 +79,17 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
           <span class="aal__bar" :class="`aal__bar--${row.tone ?? 'ink'}`" aria-hidden="true" />
           <span class="aal__body">
             <span class="aal__rowtitle t-body">{{ row.title }}</span>
-            <span v-if="row.subtitle" class="aal__sub t-meta-read">{{ row.subtitle }}</span>
+            <span v-if="row.subtitle || row.who" class="aal__sub t-meta-read">
+              <IdentityView
+                v-if="row.who"
+                :handle="row.who.handle"
+                :name="row.who.name"
+                :avatar-id="row.who.avatarId"
+                :agent="row.who.agent"
+                :size="14"
+              />
+              <span v-if="row.subtitle" class="aal__sub-text">{{ row.subtitle }}</span>
+            </span>
           </span>
           <span v-if="row.statusLabel" class="aal__status t-dense">{{ row.statusLabel }}</span>
           <span v-if="row.age" class="aal__age t-meta-read t-num">{{ row.age }}</span>
@@ -82,7 +99,17 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
           <span class="aal__bar" :class="`aal__bar--${row.tone ?? 'ink'}`" aria-hidden="true" />
           <span class="aal__body">
             <span class="aal__rowtitle t-body">{{ row.title }}</span>
-            <span v-if="row.subtitle" class="aal__sub t-meta-read">{{ row.subtitle }}</span>
+            <span v-if="row.subtitle || row.who" class="aal__sub t-meta-read">
+              <IdentityView
+                v-if="row.who"
+                :handle="row.who.handle"
+                :name="row.who.name"
+                :avatar-id="row.who.avatarId"
+                :agent="row.who.agent"
+                :size="14"
+              />
+              <span v-if="row.subtitle" class="aal__sub-text">{{ row.subtitle }}</span>
+            </span>
           </span>
           <span v-if="row.statusLabel" class="aal__status t-dense">{{ row.statusLabel }}</span>
           <span v-if="row.age" class="aal__age t-meta-read t-num">{{ row.age }}</span>
@@ -179,7 +206,18 @@ const rest = computed(() => Math.max(0, props.rows.length - SHOWN))
   white-space: nowrap;
 }
 
+/* 副标题那一行现在可能坐着一颗身份（脸 + 名），所以它是一个 flex 行，截断落在
+   里面那段文字上 —— 被截的必须是一行文字，flex 容器的文字会变成匿名 flex 项、
+   `text-overflow` 在它身上不生效。没有身份的行也走同一个壳。 */
 .aal__sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.aal__sub-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

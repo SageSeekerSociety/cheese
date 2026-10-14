@@ -1190,6 +1190,10 @@
     "s6": {
       "name": "Challenge-born project with a deadline",
       "note": "A project born from a task adds a deadline line above the document: if your own registration was approved it says 'Submission deadline', otherwise 'Task deadline'."
+    },
+    "s7": {
+      "name": "Who did it: a face and a name",
+      "note": "Each recent-progress row's actor is no longer a bare name: it is drawn as an avatar + name chip, taken from that person's row in the roster."
     }
   },
   "mineView": {

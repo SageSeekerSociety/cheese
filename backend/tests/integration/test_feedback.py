@@ -2550,6 +2550,79 @@ def test_cards_report_the_avatar_its_author_picked_and_null_for_everyone_else(cl
     assert rows["没有档案的人提的"]["author_avatar_id"] is None
 
 
+def test_the_assignee_is_drawn_from_the_same_identity_pass(client, as_admin):
+    """指派人也要画脸：挑过就给 id、没挑过给 null，没人指派时两个字段都是 null。
+
+    指派人是卡片上和作者并列的第二个「这是谁」，但它同样不挂在反馈行上 —— 行里只有
+    一个 `assignee_handle`。所以它和作者走同一次的整页解析（公开列表、管理端列表、
+    详情三处共用 `from_row`），而不是各查各的。没人指派时给 **null 而不是 False**：
+    客户端据此根本不画脸，也不会把「没人」画成一个人。
+    """
+    ids = _seed_profiles(client, {REPORTER: "predefined", ADMIN: "upload"})
+    fid = _report(client, REPORTER, title="指派给谁")["id"]
+
+    # 还没指派：一个脸都不画，三列都是「没有」。
+    fresh = {c["title"]: c for c in _cards(client)}["指派给谁"]
+    assert fresh["assignee_handle"] is None
+    assert fresh["assignee_avatar_id"] is None
+    assert fresh["assignee_is_agent"] is None
+
+    patched = client.patch(
+        f"/admin/feedback/{fid}",
+        json={"assignee_handle": ADMIN},
+        headers=session_auth_headers(ADMIN),
+    )
+    assert patched.status_code == 200, patched.text
+
+    # 公开列表、管理端列表、详情：同一个人在三处拿到同一个头像，且认得出是真人。
+    listed = {c["title"]: c for c in _cards(client)}["指派给谁"]
+    assert listed["assignee_handle"] == ADMIN
+    assert listed["assignee_avatar_id"] == ids[ADMIN]
+    assert listed["assignee_is_agent"] is False
+
+    admin_rows = client.get(
+        "/admin/feedback", headers=session_auth_headers(ADMIN)
+    ).json()["data"]["data"]
+    assert admin_rows[0]["assignee_avatar_id"] == ids[ADMIN]
+
+    detail = client.get(
+        f"/admin/feedback/{fid}", headers=session_auth_headers(ADMIN)
+    ).json()["data"]
+    assert detail["assignee_avatar_id"] == ids[ADMIN]
+    assert detail["assignee_is_agent"] is False
+
+
+def test_a_held_row_says_whether_its_holder_is_an_agent(client, as_admin):
+    """持有人可能是 AI 队友，「是不是队友」由身份域答，**不按 handle 长相猜**。
+
+    `assignee_handle` 只是一个字符串，谁都能被指上去；有 agent-binding 的 handle 才算
+    队友（和名册同一处判据 `IdentityService.agents_among`）。这里用一个真的 agent-user
+    来领，断言服务端说了 True；上一条里真人领时是 False —— 两条合起来才是「按 binding
+    判，不按名字」。
+    """
+    project = _project(client, REPORTER)
+    made = client.post(
+        f"/projects/{project}/agents",
+        json={"handle": "planner", "display_name": "规划师"},
+    )
+    assert made.status_code == 200, made.text
+    agent = agent_instance_handle(made.json()["data"]["id"])
+
+    fid = _report(client, REPORTER, title="队友领的")["id"]
+    patched = client.patch(
+        f"/admin/feedback/{fid}",
+        json={"assignee_handle": agent},
+        headers=session_auth_headers(ADMIN),
+    )
+    assert patched.status_code == 200, patched.text
+
+    held = {c["title"]: c for c in _cards(client)}["队友领的"]
+    assert held["assignee_handle"] == agent
+    assert held["assignee_is_agent"] is True
+    # agent 座位没有个人档案，所以没有「挑过的头像」—— 画彩色首字母，不是默认头像。
+    assert held["assignee_avatar_id"] is None
+
+
 def test_the_chat_roster_and_the_feedback_card_report_the_same_face(client):
     """工作台聊天区读的那份名册和反馈读的是**同一个判断**，不是两条。
 

@@ -32,6 +32,13 @@ export interface StatsPipeline {
     project_id: string
     task_id: string | null
     reviewer_handle: string
+    /** 验收人的显示名（昵称，没有就 null，前端退回 handle）。可选：旧后端还没有它。 */
+    reviewer_name?: string | null
+    /** 验收人**自己挑过**的头像素材 id；没挑过、账号已删都是 null（前端画首字母）。
+     *  可选：旧后端还没有它。 */
+    reviewer_avatar_id?: number | null
+    /** 验收人是不是 AI 队友。判据是绑定关系，不是 handle 长相。可选：旧后端还没有它。 */
+    reviewer_is_agent?: boolean | null
     status: string
     note_code: string | null
     note: string

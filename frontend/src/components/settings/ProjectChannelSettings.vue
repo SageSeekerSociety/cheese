@@ -17,8 +17,10 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import { t } from '@/i18n'
 import { memberName } from '@/lib/agentNames'
+import { memberFacesOf } from '@/lib/memberFaces'
 import { relTime } from '@/lib/relTime'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -72,6 +74,50 @@ function personName(handle: string | null): string {
   if (!handle) return t('work.projectSettings.channels.projectManagers')
   const row = props.members.find((m) => m.user_handle === handle)
   return row ? memberName(row) || handle : handle
+}
+
+/** 名册 → handle 那张脸（名字、头像 id、是不是队友）。管理者那一格和换人的下拉都用它，
+ *  「项目管理者」这种不是人的写法照旧走文字。 */
+const faces = computed(() => memberFacesOf(props.members))
+const faceOf = (handle: string | null) => (handle ? faces.value[handle] ?? null : null)
+
+/** 换管理者下拉的一行：身份字段跟着 item 走，画脸靠共用的 IdentityView。 */
+const managerItems = computed(() =>
+  people.value.map((p) => ({
+    title: memberName(p) || p.user_handle,
+    value: p.user_handle,
+    handle: p.user_handle,
+    name: memberName(p) || p.user_handle,
+    avatarId: faceOf(p.user_handle)?.avatarId ?? null,
+    agent: faceOf(p.user_handle)?.agent ?? null,
+  }))
+)
+
+/** 「选中」那一格也画身份字段，但这一格不一定是上面那几行中的一行：管理者若是名册外的人
+ *  （人已经退出了），或者还没挑（模型是空串），Vuetify 就把那串裸值交给插槽，`item.raw`
+ *  是一串字符串而不是 `{handle, name, avatarId}`。这时交回 null，让调用处把这串 handle
+ *  原样写出来 —— 别拿一个 `undefined` 的 handle 去画 IdentityView，那会画出一张认不出
+ *  是谁的空脸（只剩一个「·」），也把这串本来就该读出来的 handle 丢了。
+ *  姓名/头像/队友身份只从对象那一份取，不从字符串反推（`TaskHeader` 的下拉同一条规则）。 */
+function identityOf(item: { raw?: unknown }): {
+  handle: string
+  name: string
+  avatarId: number | null
+  agent: boolean | null
+} | null {
+  const raw = item.raw
+  if (raw && typeof raw === 'object' && 'handle' in raw) {
+    const row = raw as { handle?: unknown; name?: unknown; avatarId?: unknown; agent?: unknown }
+    if (typeof row.handle === 'string' && row.handle) {
+      return {
+        handle: row.handle,
+        name: typeof row.name === 'string' ? row.name : row.handle,
+        avatarId: typeof row.avatarId === 'number' ? row.avatarId : null,
+        agent: typeof row.agent === 'boolean' ? row.agent : null,
+      }
+    }
+  }
+  return null
 }
 
 // 每个动作跑完都重读一遍：数字和管理者都从服务器那一份来，不在这里猜。
@@ -266,7 +312,18 @@ function actions(c: ChannelEntry): MenuAction[] {
               <span v-if="c.general" class="t-meta c-faint"> {{ t('work.channelBrowse.general') }}</span>
               <span v-else-if="!c.visible" class="t-meta c-faint"> {{ t('work.projectSettings.channels.notIn') }}</span>
             </td>
-            <td>{{ personName(c.manager) }}</td>
+            <td>
+              <IdentityView
+                v-if="c.manager"
+                :handle="c.manager"
+                :name="faceOf(c.manager)?.name ?? personName(c.manager)"
+                :avatar-id="faceOf(c.manager)?.avatarId ?? null"
+                :agent="faceOf(c.manager)?.agent ?? null"
+                :size="20"
+                :data-user-content="''"
+              />
+              <span v-else>{{ personName(c.manager) }}</span>
+            </td>
             <td>{{ c.member_count }}</td>
             <td>{{ c.open_tasks ?? '—' }}</td>
             <td class="c-muted">{{ c.last_activity_at ? relTime(c.last_activity_at) : '—' }}</td>
@@ -326,12 +383,28 @@ function actions(c: ChannelEntry): MenuAction[] {
         v-else-if="editing?.kind === 'manager'"
         v-model="draft"
         :label="t('work.projectSettings.channels.columns.manager')"
-        :items="people.map((p) => ({ title: memberName(p) || p.user_handle, value: p.user_handle }))"
+        :items="managerItems"
         variant="outlined"
         density="comfortable"
         hide-details
         autocomplete="off"
-      />
+      >
+        <template #item="{ item, props: itemAttrs }">
+          <v-list-item v-bind="itemAttrs" :title="undefined">
+            <IdentityView
+              :handle="item.raw.handle"
+              :name="item.raw.name"
+              :avatar-id="item.raw.avatarId"
+              :agent="item.raw.agent"
+              :size="24"
+            />
+          </v-list-item>
+        </template>
+        <template #selection="{ item }">
+          <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="18" />
+          <template v-else>{{ item.raw }}</template>
+        </template>
+      </v-select>
     </AdaptiveDialog>
 
     <AdaptiveDialog

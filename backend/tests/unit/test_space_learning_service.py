@@ -214,8 +214,19 @@ def task(task_id: int, category_id: int):
     return SimpleNamespace(id=task_id, category_id=category_id)
 
 
-def user(username: str, nickname: str | None):
-    return SimpleNamespace(username=username, nickname=nickname)
+def user(
+    username: str,
+    nickname: str | None,
+    *,
+    avatar_id: int | None = None,
+    is_agent: bool = False,
+):
+    return SimpleNamespace(
+        username=username,
+        nickname=nickname,
+        avatar_id=avatar_id,
+        is_agent=is_agent,
+    )
 
 
 def _service(
@@ -229,11 +240,17 @@ def _service(
 
     ``readable`` 省掉就是全都读得了；给了就是「只有这些读得了」—— 页面上的成员
     名单、队列、提纲三处都该跟着它一起缩。
+
+    学生那一行的名字和脸走的是两条共享的批量查询（``faces_by_handle`` 与
+    ``IdentityService.agents_among``），它们各自有自己的测试；这里只把这一格的
+    **接线**换成假的 —— 直接从 ``session.users`` 上读，和假 session 读别的表是同
+    一回事，被测的是这一格怎么用那几条结果。
     """
     ids = list(
         project_ids if project_ids is not None else [p.id for p in session.projects]
     )
     allowed = set(ids if readable is None else readable)
+    by_handle = {u.username: u for u in session.users}
 
     class DummyProjectRepository:
         def __init__(self, _session):
@@ -245,8 +262,26 @@ def _service(
     async def _may_read_project(_session, *, project_id, handle):
         return project_id in allowed
 
+    async def _faces_by_handle(_session, handles):
+        wanted = {h for h in handles if h}
+        return {
+            h: (by_handle[h].nickname, by_handle[h].avatar_id)
+            for h in wanted
+            if h in by_handle
+        }
+
+    class DummyIdentityService:
+        def __init__(self, _session):
+            pass
+
+        async def agents_among(self, handles):
+            wanted = set(handles)
+            return {h for h in wanted if by_handle.get(h) and by_handle[h].is_agent}
+
     monkeypatch.setattr(learning_service, "ProjectRepository", DummyProjectRepository)
     monkeypatch.setattr(learning_service, "may_read_project", _may_read_project)
+    monkeypatch.setattr(learning_service, "faces_by_handle", _faces_by_handle)
+    monkeypatch.setattr(learning_service, "IdentityService", DummyIdentityService)
     return SpaceLearningService(session=session)
 
 
@@ -285,6 +320,32 @@ async def test_filters_falls_back_to_the_handle_when_there_is_no_nickname(monkey
 
     names = {s["handle"]: s["name"] for s in data["students"]}
     assert names == {"alice": "爱丽丝", "bob": "bob"}
+
+
+@pytest.mark.anyio
+async def test_filters_carry_each_students_own_face(monkeypatch):
+    """一行学生要画得出脸：他自己挑过的头像 id，和「是不是队友」。"""
+    alice = project("Alice 的作业", "alice", 1)
+    bob = project("Bob 的作业", "bob", 2)
+    session = FakeSession(
+        projects=[alice, bob],
+        users=[
+            user("alice", "爱丽丝", avatar_id=5),
+            user("bob", "鲍勃", is_agent=True),
+        ],
+    )
+    svc = _service(monkeypatch, session)
+
+    data = await svc.filters(space_id=7, handle="teacher")
+
+    rows = {s["handle"]: s for s in data["students"]}
+    assert rows["alice"]["avatarId"] == 5
+    assert rows["alice"]["isAgent"] is False
+    # 没挑过头像的是 null（前端画彩色首字母），**不退回全站默认头像** —— 那是所有
+    # 没挑过的人共用的一张脸。
+    assert rows["bob"]["avatarId"] is None
+    # 「是不是队友」认 agent-binding，不按 handle 长相猜。
+    assert rows["bob"]["isAgent"] is True
 
 
 @pytest.mark.anyio
@@ -578,6 +639,35 @@ async def test_every_question_carries_the_coordinates_to_jump_back(monkeypatch):
     uuid.UUID(item["projectId"])
     assert item["topicTitle"] == "循环作业"
     assert item["projectName"] == "Alice 的作业"
+
+
+@pytest.mark.anyio
+async def test_a_question_carries_the_students_own_face(monkeypatch):
+    """一条发言也要认得回是谁：handle 与名字之外，头像 id 和「是不是队友」跟着走。"""
+    alice = project("Alice 的作业", "alice", 1)
+    room = topic("循环作业")
+    session = FakeSession(
+        projects=[alice],
+        topics=[room],
+        users=[user("alice", "爱丽丝", avatar_id=9)],
+        blocks=[block(alice, topic_id=room.id)],
+    )
+    svc = _service(monkeypatch, session)
+
+    data = await svc.questions(
+        space_id=7,
+        handle="teacher",
+        student=None,
+        from_ts=None,
+        to_ts=None,
+        knowledge_point=None,
+    )
+
+    item = data["questions"][0]
+    assert item["student"] == "alice"
+    assert item["studentName"] == "爱丽丝"
+    assert item["studentAvatarId"] == 9
+    assert item["studentIsAgent"] is False
 
 
 # ---------------------------------------------------------------------------

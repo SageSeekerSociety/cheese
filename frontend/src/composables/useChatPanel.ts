@@ -21,7 +21,7 @@ import type { NoticeAgent } from '../lib/platformNotice'
 import type { QuotedContext } from '../lib/quotedContext'
 import type { ChatPanelOptions } from './chatPanelContract'
 
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -47,6 +47,7 @@ import { useTypingPreview } from '../components/room/composables/useTypingPrevie
 import { isAgentBlock, isAgentHandle, isPersonBlock } from '../lib/authorship'
 import { applyLiveChanges } from '../lib/blockPaging'
 import { dayLabelsFor, outboxEdgeAfter, type RunEdge, runEdgeBetween, unreadAnchorBlock } from '../lib/chatGrouping'
+import { faceLookup } from '../lib/memberActivity'
 import { renderNoticeMessage } from '../lib/noticeText'
 import { outgoingMessageBody, pendingMessageBlock } from '../lib/outgoingMessage'
 import { AGENT_STATUS_EVENTS, collapseNotices, type PlatformNotice, rendersInRoom } from '../lib/platformNotice'
@@ -60,6 +61,7 @@ import { useAgentNaming } from './useAgentNaming'
 import { useChatComposer } from './useChatComposer'
 import { useChatMessageClicks } from './useChatMessageClicks'
 import { useChatPaging } from './useChatPaging'
+import { useMentionMaps } from './useMentionMaps'
 import { useMessageReactions } from './useMessageReactions'
 import { useOwnChecklist } from './useOwnChecklist'
 import { applyRoomState, useRoomResync } from './useRoomResync'
@@ -88,12 +90,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     return room && id && id !== room.id ? { ...room, id } : room
   }
 
-  // Message rendering (markdown / plain / reference chips) lives in
-  // ../lib/renderMessage and happens in the row components; here we only fill the
-  // handle→name and id→title maps they render with, from the roster / topics props.
-  const mentionNames = reactive<Record<string, string>>({})
-  const topicTitles = reactive<Record<string, string>>({})
-  const refMaps = { mentionNames, topicTitles }
+  // 正文渲染在 ../lib/renderMessage（行组件里做）；它读的那几张表建在 useMentionMaps，这里填上。
+  const { mentionNames, mentionIdentities, topicTitles, refMaps } = useMentionMaps()
 
   const AUTHOR = myHandle()
 
@@ -128,6 +126,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     pool: mentionPool,
     nameOf: agentNameOf,
     names: mentionNames,
+    identities: mentionIdentities,
     agentHandle: opts.agentHandle,
     alwaysSummon,
   })
@@ -252,8 +251,8 @@ export function useChatPanel(opts: ChatPanelOptions) {
     errorMsg,
   })
 
-  // 此刻谁在这个房间里忙（打字的人、干活的队友）—— 见 room/composables/useRoomActivity；
-  // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步、多久没新帧）。
+  // 每个人自己挑过的头像在 `mentionIdentities` 上，没有的退回项目名册那一份（见 faceLookup）。
+  const faceOf = faceLookup(mentionIdentities, avatarSrc)
   const activity = useRoomActivity({ me: AUTHOR, send: sendOnSocket })
   const liveSteps = useLiveSteps()
   const activityLines = useActivityLines(
@@ -262,12 +261,13 @@ export function useChatPanel(opts: ChatPanelOptions) {
     (handle) =>
       agentNameOf(handle) ??
       (isAgentHandle(handle) ? agentDisplayName(handle) : memberByHandle.value.get(handle)?.name || handle),
-    (handle) => turns.faces.value[handle]?.status
+    (handle) => turns.faces.value[handle]?.status,
+    faceOf
   )
   watch(
     () => {
       const busy = new Set(activityLines.value.map((l) => l.handle))
-      const queued = runRecords.waitingLines((h) => agentNameOf(h) ?? agentDisplayName(h))
+      const queued = runRecords.waitingLines((h) => agentNameOf(h) ?? agentDisplayName(h), faceOf)
       return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
     },
     (v) => emit('activity', v)

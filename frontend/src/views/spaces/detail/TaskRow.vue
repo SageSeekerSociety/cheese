@@ -10,6 +10,7 @@ import dayjs from 'dayjs'
 
 import { taskState } from '@/utils/tasks'
 
+import UserRef from '@/components/common/UserRef.vue'
 import { splitOrigin } from '@/views/spaces/model'
 
 const props = defineProps<{
@@ -49,7 +50,13 @@ const deadline = computed(() =>
       </div>
       <p v-if="summary" class="tr__intro">{{ summary }}</p>
       <div class="tr__meta">
-        <span>{{ t('spaces.detail.tasks.row.by', { name: publisher }) }}</span>
+        <span>
+          <i18n-t keypath="spaces.detail.tasks.row.by" scope="global" tag="span">
+            <template #name>
+              <UserRef :handle="task.creator.username" :name="publisher" :avatar-id="task.creator.avatarId" />
+            </template>
+          </i18n-t>
+        </span>
         <span>{{ date(task.createdAt) }}</span>
         <span v-for="topic in task.topics ?? []" :key="topic.id" class="tr__topic">{{ topic.name }}</span>
       </div>

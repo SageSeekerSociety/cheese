@@ -14,6 +14,7 @@ import type { DocVersion, DocVersionPage } from '@/lib/docHistory'
 import type { OutlineHeading } from '@/lib/docOutline'
 import type { SlashItem } from '@/lib/docSlashMenu'
 import type { DocComment, DocThread, DocThreadActions, DocThreadState, ThreadPlace } from '@/lib/docThreadTypes'
+import type { MentionIdentity } from '@/lib/personIdentity'
 import type { VersionDiff } from '@/lib/versionDiff'
 
 import { Editor as TiptapEditor } from '@tiptap/core'
@@ -23,6 +24,7 @@ import { PANEL_NAMES } from './catalogPanelsFixtures'
 
 import { docExtensions } from '@/lib/docSchema'
 import { SLASH_ITEMS } from '@/lib/docSlashMenu'
+import { identitiesFrom } from '@/lib/personIdentity'
 import { versionDiff } from '@/lib/versionDiff'
 
 /** 这一册里当「AI 队友」用的名字和 handle（正文里点名读成它）。 */
@@ -82,6 +84,10 @@ export const DOC_PEERS: DocPeer[] = [
   { clientId: 5, handle: 'sunqi', agent: false, name: '孙琪', avatar: '', color: '#ef4444' },
   { clientId: 6, handle: 'chenmo', agent: false, name: '陈默', avatar: '', color: '#06b6d4' },
 ]
+
+/** 正文标签和修改记录上画脸用：handle → 头像地址与「是不是队友」。预览站没有人挑过头像
+ *  （`DocPeer.avatar` 是空的），头像退回彩色首字母 —— 但队友仍是队友，不会画成真人。 */
+export const DOC_MENTION_IDENTITIES: Record<string, MentionIdentity> = identitiesFrom(DOC_PEERS)
 
 /** 一篇还没起标题的文档：大纲那一格要的空态。 */
 export const DOC_HEADINGS_EMPTY: OutlineHeading[] = []

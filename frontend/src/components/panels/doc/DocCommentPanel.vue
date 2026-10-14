@@ -3,6 +3,7 @@
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
+import type { MentionIdentity } from '../../../lib/personIdentity'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 
@@ -25,6 +26,8 @@ const props = defineProps<{
   placeOf: (id: string) => ThreadPlace
   agentName: string
   mentionNames: Record<string, string>
+  /** handle → 头像与「是不是队友」：评论正文里 `<@handle>` chip 前那张脸用它。 */
+  mentionIdentities?: Record<string, MentionIdentity>
   nameOf: (handle: string) => string
   /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
   avatarOf?: (handle: string) => string
@@ -352,6 +355,7 @@ defineExpose({ open, locate, toggle, close, opened, busy })
             :place-of="placeOf"
             :agent-name="agentName"
             :mention-names="mentionNames"
+            :mention-identities="mentionIdentities"
             :name-of="nameOf"
             :avatar-of="avatarOf"
             :writable="writable"

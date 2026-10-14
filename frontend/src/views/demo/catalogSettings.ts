@@ -28,7 +28,7 @@
  */
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
-import { COMPUTE_DEVICES } from './catalogFixtures'
+import { COMPUTE_DEVICES } from './catalogComputeFixtures'
 import {
   accountConn,
   accountProps,

@@ -10,6 +10,7 @@
 // 对话只是藏起来，连接和滚动位置都还在。
 import type { Block, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
+import type { FaceIdentity } from '@/lib/identityFace'
 import type { Thread } from '@/types/threads'
 
 import { computed, ref, watch } from 'vue'
@@ -145,6 +146,13 @@ function nameOf(handle: string): string {
 // （avatar_id 是 null）都给空串，让 UserAvatar 画彩色首字母——别再退回全站默认脸。
 function avatarOf(handle: string): string {
   return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
+}
+/** 一件任务的负责人那张脸：名字照这一页的叫法，头像地址照 `avatarOf`，「是不是队友」
+ *  照名册那一行（人的行没有 `agent`）。名册上没有这一位时也给得出 handle，画彩色首字母。 */
+function ownerFace(handle: string | null | undefined): FaceIdentity | null {
+  if (!handle) return null
+  const row = props.members.find((m) => m.user_handle === handle || m.instance_handle === handle)
+  return { handle, name: nameOf(handle), avatar: avatarOf(handle) || null, agent: row?.agent ?? null }
 }
 const subtitle = computed(() => {
   const head = `#${topicTitle(props.room)}`
@@ -284,7 +292,7 @@ function toTask() {
               v-for="task in tasks"
               :key="task.id"
               :task="task"
-              :owner-name="task.owner ? nameOf(task.owner) : null"
+              :owner="ownerFace(task.owner)"
               in-list
               @open="emit('open-task', $event)"
             />

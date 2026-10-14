@@ -17,7 +17,7 @@ vi.mock('@/components/common/UserRefLink.vue', () => ({ default: { name: 'UserRe
 
 import TaskHeader from './TaskHeader.vue'
 
-import { setLocale } from '@/i18n'
+import i18n, { setLocale } from '@/i18n'
 
 setLocale('zh-CN')
 const vuetify = createVuetify({ components, directives })
@@ -75,6 +75,19 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
+/** 名册那张「画脸要的三样」（`memberFacesOf` 的样子，键是 handle）：页头负责人那颗 chip 只
+ *  查它，名字跟着 `memberNames`（和页头别处一个读法），没挑过头像（`avatar_id` 缺省或 null）
+ *  给 null，交给 `UserAvatar` 画按 handle 派生的首字母。 */
+function facesOf(rows: readonly { member_handle: string; agent: boolean; avatar_id?: number | null }[]) {
+  const names = AGENT_NAMES as Record<string, string>
+  return Object.fromEntries(
+    rows.map((m) => [
+      m.member_handle,
+      { name: names[m.member_handle] ?? m.member_handle, avatarId: m.avatar_id ?? null, agent: m.agent },
+    ])
+  )
+}
+
 function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
@@ -82,33 +95,37 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
   const setAgent = vi.fn(async () => true)
   const rename = vi.fn(async () => true)
   const reopen = vi.fn(async () => true)
+  const baseProps = {
+    room: ROOM,
+    task: task(over),
+    memberNames: AGENT_NAMES,
+    agentName: '芝士',
+    people,
+    agents,
+    memberFaces: { ...facesOf(people), ...facesOf(agents) },
+    machine: MACHINE,
+    machineError: false,
+    starting: false,
+    startError,
+    actionError: null,
+    start,
+    close: async () => true,
+    reopen,
+    handOver: async () => true,
+    rename,
+    setCollaborators,
+    setAgent,
+    loadMachine,
+    setMachine: vi.fn(async () => ({})),
+    setMachineDefault: vi.fn(async () => ({})),
+  }
   const view = render(TaskHeader as Component, {
-    props: {
-      room: ROOM,
-      task: task(over),
-      memberNames: AGENT_NAMES,
-      agentName: '芝士',
-      people,
-      agents,
-      machine: MACHINE,
-      machineError: false,
-      starting: false,
-      startError,
-      actionError: null,
-      start,
-      close: async () => true,
-      reopen,
-      handOver: async () => true,
-      rename,
-      setCollaborators,
-      setAgent,
-      loadMachine,
-      setMachine: vi.fn(async () => ({})),
-      setMachineDefault: vi.fn(async () => ({})),
-    },
-    global: { plugins: [vuetify] },
+    props: baseProps,
+    global: { plugins: [vuetify, i18n] },
   })
-  return { ...view, start, loadMachine, setCollaborators, setAgent, rename, reopen }
+  // 名册会变（有人退出这间房）：重画时整份 props 再交一遍，只换掉名册那一项。
+  const rerender = (over2: { people?: typeof PEOPLE }) => view.rerender({ ...baseProps, ...over2 })
+  return { ...view, rerender, start, loadMachine, setCollaborators, setAgent, rename, reopen }
 }
 
 function stubViewport() {
@@ -280,17 +297,105 @@ describe('任务页头', () => {
     expect(agentMenuOpen()).toBe(true)
   })
 
+  /** 挑人那格是一条 Vuetify 下拉（走头像 + 名字那条路），不是原生 select：
+   *  打开它、把它里面那一行拿出来。 */
+  async function openPicker(container: Element): Promise<HTMLElement[]> {
+    await openDetails(container)
+    const box = document.querySelector<HTMLElement>('[role="combobox"]')
+    expect(box, '挑人下拉没画出来').not.toBeNull()
+    await fireEvent.mouseDown(box!)
+    await waitFor(() => expect(document.querySelector('.v-overlay--active .v-list-item')).not.toBeNull())
+    return [...document.querySelectorAll<HTMLElement>('.v-overlay--active .v-list-item')]
+  }
+
+  /** 下拉里真正的那个 `<input>`：`[role="combobox"]` 命中的是外面那层 VField，
+   *  占位提示写在里面这个输入框上。 */
+  function comboInput(scope: ParentNode = document): HTMLInputElement {
+    return scope.querySelector<HTMLElement>('[role="combobox"]')!.querySelector('input')!
+  }
+
   it('负责人把名册上的人加为协作者', async () => {
     const { container, setCollaborators } = mount({ contributor_handles: ['bob'] })
-    await openDetails(container)
-    const row = document.querySelector('[data-testid="task-collaborators"]')!
-    const pick = row.querySelector('select')!
+    const rows = await openPicker(container)
     // 能加的只有还不在任务里的人：负责人自己和已经在协作的不在里面。
-    expect([...pick.options].map((o) => o.value).filter(Boolean)).toEqual(['carol'])
-    await fireEvent.update(pick, 'carol')
-    const add = [...row.querySelectorAll('button')].find((b) => b.textContent?.includes('添加协作者'))!
+    expect(rows).toHaveLength(1)
+    expect(rows[0].textContent).toContain('carol')
+    await fireEvent.click(rows[0])
+    const holder = document.querySelector('[data-testid="task-collaborators"]')!
+    const add = [...holder.querySelectorAll('button')].find((b) => b.textContent?.includes('添加协作者'))!
     await fireEvent.click(add)
     expect(setCollaborators).toHaveBeenCalledWith(['bob', 'carol'])
+  })
+
+  it('挑人那格画的是头像 + 名字，不是一行纯文字', async () => {
+    const { container } = mount({ contributor_handles: ['bob'] }, PICKED)
+    const rows = await openPicker(container)
+    expect(rows[0].querySelector('.identity-view')).not.toBeNull()
+    expect(rows[0].textContent).toContain('carol')
+  })
+
+  /** 还没挑人时那一格该是空的、露出占位提示 —— 不是一张认不出是谁的空脸。 */
+  it('没挑人时，挑人那格露出占位提示，不画脸', async () => {
+    const { container } = mount()
+    await openDetails(container)
+    expect(comboInput().getAttribute('placeholder')).toBe('添加协作者')
+    const holder = document.querySelector('[data-testid="task-collaborators"]')!
+    expect(holder.querySelector('.identity-view'), '没挑人就不该画脸').toBeNull()
+  })
+
+  it('挑人那格挑到谁就画成谁，加进去之后清回占位提示', async () => {
+    // 多留一个人，加走一个之后下拉还在，才看得到那一格清回去了。
+    const FOUR = ['alice', 'bob', 'carol', 'dave'].map((member_handle) => ({ member_handle, agent: false }))
+    const { container, setCollaborators } = mount({ contributor_handles: ['bob'] }, FOUR)
+    const rows = await openPicker(container)
+    await fireEvent.click(rows[0])
+    const holder = document.querySelector('[data-testid="task-collaborators"]')!
+    await waitFor(() => expect(holder.querySelector('.identity-view')).not.toBeNull())
+    expect(holder.querySelector('.v-select__selection')?.textContent).toContain('carol')
+    expect(comboInput().getAttribute('placeholder')).toBeNull()
+
+    const add = [...holder.querySelectorAll('button')].find((b) => b.textContent?.includes('添加协作者'))!
+    await fireEvent.click(add)
+    expect(setCollaborators).toHaveBeenCalledWith(['bob', 'carol'])
+    await waitFor(() => expect(holder.querySelector('.identity-view')).toBeNull())
+    expect(comboInput().getAttribute('placeholder')).toBe('添加协作者')
+  })
+
+  it('转交那格没挑人时也是占位提示，挑到谁就画成谁', async () => {
+    const { container, rerender } = mount()
+    stubViewport()
+    await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
+    await waitFor(() => expect(document.querySelector('[role="menu"]')).not.toBeNull())
+    const handOver = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((el) =>
+      el.textContent?.includes('转交')
+    )!
+    await fireEvent.click(handOver)
+    const dialog = await waitFor(() => {
+      const el = document.querySelector('[role="dialog"]')
+      expect(el, '转交对话框没画出来').not.toBeNull()
+      return el!
+    })
+    expect(dialog.querySelector('.v-select'), '转交下拉没画出来').not.toBeNull()
+    expect(comboInput(dialog).getAttribute('placeholder')).toBe('选择新的负责人')
+    expect(dialog.querySelector('.identity-view'), '没挑人就不该画脸').toBeNull()
+
+    await fireEvent.mouseDown(dialog.querySelector('[role="combobox"]')!)
+    await waitFor(() => expect(document.querySelector('.v-overlay--active .v-list-item')).not.toBeNull())
+    await fireEvent.click(document.querySelector<HTMLElement>('.v-overlay--active .v-list-item')!)
+    await waitFor(() => expect(dialog.querySelector('.v-select__selection .identity-view')).not.toBeNull())
+    // 转交名单上第一个是 bob（负责人自己不在里面）。
+    expect(dialog.querySelector('.v-select__selection')?.textContent).toContain('bob')
+
+    // 挑到的人后来退出了这间房：名单里没了他，那一格退回他那串 handle ——
+    // 别画一张认不出是谁的空脸，也别把是谁这件事丢掉。
+    await rerender({
+      people: [
+        { member_handle: 'alice', agent: false },
+        { member_handle: 'carol', agent: false },
+      ],
+    })
+    await waitFor(() => expect(dialog.querySelector('.v-select__selection')?.textContent).toContain('bob'))
+    expect(dialog.querySelector('.v-select__selection .identity-view')).toBeNull()
   })
 
   it('协作者只能把自己去掉，不能加别人', async () => {

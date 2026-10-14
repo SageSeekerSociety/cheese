@@ -10,8 +10,6 @@ import { computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
-import { getAvatarUrl } from '@/utils/materials'
-
 import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import {
@@ -22,7 +20,7 @@ import {
   publishProjectSite,
   renameProjectArtifact,
 } from '@/api'
-import { memberName } from '@/lib/agentNames'
+import { memberFacesOf } from '@/lib/memberFaces'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
@@ -89,12 +87,11 @@ function loadProgress() {
 
 const projectName = computed(() => store.projects.find((p) => p.id === props.projectId)?.name ?? '')
 const members = computed(() => store.members as ProjectMemberRow[])
+// 名册那一张画人用的表（名字 / 自选头像 id / 是不是队友），画面上的头像+名字都照它画。
+const faces = computed(() => memberFacesOf(members.value))
+// 只带名字的旧表：产物清单（ArtifactManifest）的约定只要 handle → 名字。
 const names = computed(() =>
-  Object.fromEntries(members.value.map((m) => [m.user_handle, memberName(m) || m.user_handle]))
-)
-// 没挑过头像（avatar_id 是 null）时给空串，交给 UserAvatar 画首字母。
-const avatars = computed(() =>
-  Object.fromEntries(members.value.map((m) => [m.user_handle, m.avatar_id == null ? '' : getAvatarUrl(m.avatar_id)]))
+  Object.fromEntries(Object.entries(faces.value).map(([handle, face]) => [handle, face.name]))
 )
 
 const artifactApi: ArtifactApi = {
@@ -140,7 +137,7 @@ function allTasks() {
     :tasks="tasks"
     :underway="underway"
     :names="names"
-    :avatars="avatars"
+    :faces="faces"
     :me="myHandle()"
     :artifact-api="artifactApi"
     @edit-overview="editOverview"

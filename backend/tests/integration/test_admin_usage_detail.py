@@ -28,6 +28,7 @@ from tests.integration.test_admin_stats import (
     _stats,
     as_admin,  # noqa: F401 — the fixture, used by name
 )
+from tests.integration.test_feedback import _seed_profiles
 
 ASKER = "usage-asker"
 
@@ -224,11 +225,29 @@ def test_spend_goes_to_whoever_triggered_it_and_the_platform_keeps_its_own(
         (REPORTER, "报告人", 500, 2, pytest.approx(5.0)),
         (ASKER, "提问的人", 50, 1, pytest.approx(0.5)),
     ]
+    # 这一屏也画脸：这一组没人挑过头像、也没有队友，两栏都该是「没有」，不是默认图。
+    assert [(row["avatar_id"], row["is_agent"]) for row in body["top_users"]] == [
+        (None, False),
+        (None, False),
+    ]
     assert body["unattributed"] == {
         "tokens": 100,
         "calls": 2,
         "cost_usd": pytest.approx(1.0),
     }
+
+
+def test_a_top_user_who_picked_an_avatar_reports_its_id(client, as_admin):  # noqa: F811
+    """触发榜上挑过头像的人给素材 id：头像在档案上，不解析就永远没有。"""
+    ids = _seed_profiles(client, {"usage-picker": "predefined"})
+    uid = _user_id(client, "usage-picker")
+    _seed(client, _row(user_id=uid, kind="docs_ask", input_tokens=10, cost_usd=0.1))
+
+    body = _stats(client, as_admin, "usage", days=DAYS)
+
+    row = next(r for r in body["top_users"] if r["handle"] == "usage-picker")
+    assert row["avatar_id"] == ids["usage-picker"]
+    assert row["is_agent"] is False
 
 
 def test_recent_calls_come_newest_first_with_who_and_where(client, as_admin):  # noqa: F811

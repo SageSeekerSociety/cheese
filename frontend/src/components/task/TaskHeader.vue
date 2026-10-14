@@ -4,6 +4,7 @@
 // 在哪台电脑上做，负责人在这里增减协作者），以及「开始」和 ⋯（重命名归负责人和协作者，
 // 转交、关闭只归负责人）。
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
+import type { MemberFace, MemberFaces } from '@/lib/memberFaces'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref, watch } from 'vue'
@@ -15,6 +16,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
@@ -29,6 +31,9 @@ const props = defineProps<{
   room: Topic
   task: RoomTask | null
   memberNames: Record<string, string>
+  /** 名册那张「画脸要的三样」（`memberFacesOf`，同 TaskOverview）：负责人那颗 chip 只查这张表。
+   *  不传（单测、/demo 的卡片）时负责人那颗 chip 退回 memberNames 的纯文字，不画脸。 */
+  memberFaces?: MemberFaces
   agentName: string
   people: TopicMemberRow[]
   /** 这间房名册上的 AI 队友：负责人从这里挑一位做这件事。 */
@@ -82,16 +87,53 @@ function avatarOf(handle: string | null | undefined): string {
   const chosen = props.people.find((m) => m.member_handle === handle)?.avatar_id
   return chosen ? getAvatarUrl(chosen) : ''
 }
+/** 负责人那颗 chip 画脸要的三样，取自名册那张 `memberFaces`（`memberFacesOf`，同 TaskOverview）：
+ *  名字/头像 id/队友标记在名册一处算好，这里只查表——人和队友是同一张名册的两个来源，
+ *  合的地方只有一处，调用点不再另拼一份。名册上没有这一位时给 null，调用处退回纯文字。 */
+function faceOf(handle: string | null | undefined): MemberFace | null {
+  return handle ? props.memberFaces?.[handle] ?? null : null
+}
+/** 身份字段跟着下拉行走：这一行是 `{handle, name, avatarId}` 就画脸 + 名字，画的是谁一处说了算。
+ * 还没挑（模型是 `null`）时 Vuetify 根本不调「选中」那个插槽，占位提示照常露出；但模型里
+ * 若是一串没匹配上任何一行的裸 handle（比如这个人已经退出名册），`raw` 就是那串字符串 ——
+ * 这时交回 null，让调用处把那串 handle 原样写出来：别画一张认不出是谁的空脸，也别把身份丢掉。 */
+function identityOf(item: { raw?: unknown }): { handle: string; name: string; avatarId: number | null } | null {
+  const raw = item.raw
+  if (raw && typeof raw === 'object' && 'handle' in raw) {
+    const row = raw as { handle?: unknown; name?: unknown; avatarId?: unknown }
+    if (typeof row.handle === 'string' && row.handle) {
+      return {
+        handle: row.handle,
+        name: typeof row.name === 'string' ? row.name : row.handle,
+        avatarId: typeof row.avatarId === 'number' ? row.avatarId : null,
+      }
+    }
+  }
+  return null
+}
 // 还能拉进来的人：名册上的人，除了负责人和已经在协作的。
 const addable = computed(() =>
   props.people.filter(
     (m) => m.member_handle !== props.task?.owner_handle && !collaborators.value.includes(m.member_handle)
   )
 )
-const adding = ref('')
+// 还没挑人时是 `null`，不是 `''`：`''` 会被 Vuetify 当成一个「有值但没匹配上任何一行」
+// 的选中项，占位提示藏起来、格子里画一张空脸。`null` 才是不挑。
+const adding = ref<string | null>(null)
+/** 下拉里的每一行：身份字段跟着走，画头像 + 名字靠一处 IdentityView。 */
+const addableItems = computed(() =>
+  addable.value.map((m) => ({
+    title: nameOf(m.member_handle),
+    value: m.member_handle,
+    handle: m.member_handle,
+    name: nameOf(m.member_handle),
+    avatarId: m.avatar_id ?? null,
+  }))
+)
 async function addCollaborator() {
-  if (!adding.value) return
-  if (await props.setCollaborators([...collaborators.value, adding.value])) adding.value = ''
+  const picked = adding.value
+  if (!picked) return
+  if (await props.setCollaborators([...collaborators.value, picked])) adding.value = null
 }
 function removeCollaborator(handle: string) {
   void props.setCollaborators(collaborators.value.filter((h) => h !== handle))
@@ -172,11 +214,24 @@ async function confirmRename() {
 
 const handOverOpen = ref(false)
 const handingOver = ref(false)
-const nextOwner = ref('')
+// 同 `adding`：没挑人是 `null`，不是 `''` —— 见上面那段的理由。
+const nextOwner = ref<string | null>(null)
+/** 转交下拉的每一行，同 `addableItems`：身份字段跟着走，画脸靠 IdentityView。 */
+const handOverItems = computed(() =>
+  otherPeople.value.map((m) => ({
+    title: nameOf(m.member_handle),
+    value: m.member_handle,
+    handle: m.member_handle,
+    name: nameOf(m.member_handle),
+    avatarId: m.avatar_id ?? null,
+  }))
+)
 async function confirmHandOver() {
+  const picked = nextOwner.value
+  if (!picked) return
   handingOver.value = true
   try {
-    if (await props.handOver(nextOwner.value)) handOverOpen.value = false
+    if (await props.handOver(picked)) handOverOpen.value = false
   } finally {
     handingOver.value = false
   }
@@ -209,8 +264,19 @@ async function confirmHandOver() {
             :title="t('work.task.details')"
             data-testid="task-details"
           >
-            <UserAvatar :size="20" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
-            <span class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
+            <span class="task-header__owner-name">
+              <i18n-t keypath="work.task.ownerChip" scope="global" tag="span">
+                <template #name>
+                  <IdentityView
+                    :handle="task?.owner_handle"
+                    :name="faceOf(task?.owner_handle)?.name ?? ownerName"
+                    :avatar-id="faceOf(task?.owner_handle)?.avatarId ?? null"
+                    :agent="faceOf(task?.owner_handle)?.agent ?? null"
+                    :size="20"
+                  />
+                </template>
+              </i18n-t>
+            </span>
             <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
               <UserAvatar
                 v-for="handle in collaborators.slice(0, 3)"
@@ -248,16 +314,33 @@ async function confirmHandOver() {
                   </button>
                 </span>
                 <span v-if="isOwner && isOpen && addable.length" class="task-details__person">
-                  <select
+                  <v-select
                     v-model="adding"
-                    class="task-notice__select t-meta"
+                    class="task-details__picker"
+                    density="compact"
+                    variant="outlined"
+                    hide-details
+                    autocomplete="off"
                     :aria-label="t('work.task.addCollaborator')"
+                    :placeholder="t('work.task.addCollaborator')"
+                    :items="addableItems"
                   >
-                    <option value="">{{ t('work.task.addCollaborator') }}</option>
-                    <option v-for="m in addable" :key="m.member_handle" :value="m.member_handle">
-                      {{ nameOf(m.member_handle) }}
-                    </option>
-                  </select>
+                    <template #item="{ item, props: itemAttrs }">
+                      <v-list-item v-bind="itemAttrs" :title="undefined">
+                        <IdentityView
+                          :handle="item.raw.handle"
+                          :name="item.raw.name"
+                          :avatar-id="item.raw.avatarId"
+                          :size="24"
+                          handle-line
+                        />
+                      </v-list-item>
+                    </template>
+                    <template #selection="{ item }">
+                      <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="18" />
+                      <template v-else>{{ item.raw }}</template>
+                    </template>
+                  </v-select>
                   <button v-if="adding" type="button" class="task-details__retry" @click="addCollaborator">
                     {{ t('work.task.addCollaborator') }}
                   </button>
@@ -295,7 +378,16 @@ async function confirmHandOver() {
                       <v-icon size="18">{{
                         (task.agent_handle ?? null) === option.handle ? 'mdi-radiobox-marked' : 'mdi-radiobox-blank'
                       }}</v-icon>
-                      <span>{{ option.name }}</span>
+                      <!-- A teammate row is a face + name via the shared view; the
+                           "follows channel" row is not a person, so it stays text. -->
+                      <IdentityView
+                        v-if="option.handle"
+                        :handle="option.handle"
+                        :name="option.name"
+                        :agent="true"
+                        :size="20"
+                      />
+                      <span v-else>{{ option.name }}</span>
                     </button>
                   </v-card>
                 </v-menu>
@@ -463,12 +555,33 @@ async function confirmHandOver() {
     :disabled="!nextOwner"
     @confirm="confirmHandOver"
   >
-    <select v-model="nextOwner" class="task-dialog__input t-body" :aria-label="t('work.task.handOverTo')">
-      <option value="" disabled>{{ t('work.task.handOverTo') }}</option>
-      <option v-for="m in otherPeople" :key="m.member_handle" :value="m.member_handle">
-        {{ memberNames[m.member_handle] || m.member_handle }}
-      </option>
-    </select>
+    <v-select
+      v-model="nextOwner"
+      class="task-dialog__picker t-body"
+      density="compact"
+      variant="outlined"
+      hide-details
+      autocomplete="off"
+      :aria-label="t('work.task.handOverTo')"
+      :placeholder="t('work.task.handOverTo')"
+      :items="handOverItems"
+    >
+      <template #item="{ item, props: itemAttrs }">
+        <v-list-item v-bind="itemAttrs" :title="undefined">
+          <IdentityView
+            :handle="item.raw.handle"
+            :name="item.raw.name"
+            :avatar-id="item.raw.avatarId"
+            :size="24"
+            handle-line
+          />
+        </v-list-item>
+      </template>
+      <template #selection="{ item }">
+        <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="18" />
+        <template v-else>{{ item.raw }}</template>
+      </template>
+    </v-select>
   </ConfirmDialog>
 </template>
 
@@ -692,12 +805,14 @@ async function confirmHandOver() {
   background: var(--warn-wash);
   color: var(--warn-ink);
 }
-.task-notice__select {
-  padding: 2px 8px;
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink);
+/* 选人那两处下拉：一个塞在任务信息那一列里，一个铺满转交对话框。 */
+.task-details__picker {
+  flex: 1 1 auto;
+  min-width: 160px;
+  max-width: 240px;
+}
+.task-dialog__picker {
+  width: 100%;
 }
 .task-dialog__input {
   width: 100%;

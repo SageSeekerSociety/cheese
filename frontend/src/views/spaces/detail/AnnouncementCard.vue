@@ -11,6 +11,7 @@ import { announcementDay, expiryDay } from '../model'
 import { useAnnouncementDay } from './useAnnouncementDay'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import UserRef from '@/components/common/UserRef.vue'
 
 const TipTapViewer = defineAsyncComponent(() => import('@/components/common/Editor/TipTapViewer.vue'))
 
@@ -20,17 +21,12 @@ defineEmits<{ pin: []; edit: []; remove: [] }>()
 const { t } = useI18n()
 const dayText = useAnnouncementDay()
 
+/** 发布日期单独算，好让发布人那一格交给 `UserRef` 画头像 + 名字，而不是拼进一串死文本。 */
+const publishedOn = computed(() =>
+  t('spaces.announcements.publishedOn', { day: dayText(announcementDay(props.announcement.createdAt)) })
+)
 /** 「已编辑」只说标题、正文或到期日改过；置顶不算，服务端也不为它挪 `updatedAt`。 */
-const byline = computed(() => {
-  const a = props.announcement
-  return [
-    a.author?.nickname,
-    t('spaces.announcements.publishedOn', { day: dayText(announcementDay(a.createdAt)) }),
-    a.updatedAt > a.createdAt ? t('spaces.announcements.edited') : '',
-  ]
-    .filter(Boolean)
-    .join(' · ')
-})
+const edited = computed(() => props.announcement.updatedAt > props.announcement.createdAt)
 </script>
 
 <template>
@@ -43,7 +39,20 @@ const byline = computed(() => {
     </div>
     <TipTapViewer v-if="announcement.content" class="acard__body t-body-readable" :value="announcement.content" />
     <div class="acard__meta t-meta-read">
-      <span>{{ byline }}</span>
+      <span class="acard__byline">
+        <UserRef
+          v-if="announcement.author"
+          :handle="announcement.author.username"
+          :name="announcement.author.nickname"
+          :avatar-id="announcement.author.avatarId"
+        />
+        <span v-if="announcement.author">·</span>
+        <span>{{ publishedOn }}</span>
+        <template v-if="edited">
+          <span>·</span>
+          <span>{{ t('spaces.announcements.edited') }}</span>
+        </template>
+      </span>
       <span v-if="announcement.expiresAt !== null">
         {{ t('spaces.announcements.expiresOn', { day: dayText(expiryDay(announcement.expiresAt)) }) }}
       </span>
@@ -130,6 +139,14 @@ const byline = computed(() => {
   gap: 4px 12px;
   align-items: center;
   margin-top: 12px;
+}
+
+.acard__byline {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0 4px;
+  align-items: center;
+  min-width: 0;
 }
 
 .acard__ops {

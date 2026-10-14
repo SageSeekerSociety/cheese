@@ -21,6 +21,13 @@ not the question, and filling the gap with the default would draw every
 never-chooser as the one shared face. Absent means the UI draws its coloured
 initial — see `UserProfileRepository.chosen_avatar_ids`.
 
+A person's **display name** rides along with that face: ``from_row`` takes a
+page-wide ``names`` map (handle → nickname) as well, because a chip that draws a
+face draws the name beside it, and the two are one join over ``UserProfile``
+(`faces_by_handle`), not two lookups that could drift. A handle with no profile,
+or one the platform does not know, is absent from the map and the chip falls
+back to the handle — the same deal as the avatar.
+
 There is deliberately no schema with a ``status`` field on the write side: status
 only ever moves through ``PATCH /admin/feedback/{id}``, where the service writes
 the timeline row in the same transaction. A client cannot set it directly, so a
@@ -30,7 +37,7 @@ schema that accepted it would be a lie.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Set
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -210,6 +217,10 @@ class CommentOut(BaseModel):
     id: uuid.UUID
     parent_id: uuid.UUID | None
     author_handle: str
+    #: 作者的显示名，没起昵称、或平台上没有这个 handle 时是 None（客户端退回
+    #: handle）。和 `author_avatar_id` 走同一次批量取数（`faces_by_handle`）：一个
+    #: 人的名字和脸是同一件事的两面，分两次查就是同一个 join 写两遍。
+    author_name: str | None = None
     author_is_agent: bool
     #: 作者挑过的头像 id，没挑过就是 None（客户端画首字母）。和卡片的
     #: `author_avatar_id` 是同一份契约，理由也一样。
@@ -249,6 +260,7 @@ class CommentOut(BaseModel):
         row: FeedbackComment,
         *,
         avatars: Mapping[str, int],
+        names: Mapping[str, str],
         likes: int,
         liked: bool,
         can_delete: bool,
@@ -259,6 +271,7 @@ class CommentOut(BaseModel):
             id=row.id,
             parent_id=row.parent_id,
             author_handle=row.author_handle,
+            author_name=names.get(row.author_handle),
             author_is_agent=row.author_is_agent,
             author_avatar_id=avatars.get(row.author_handle),
             body=row.body,
@@ -277,16 +290,21 @@ class NoteOut(BaseModel):
 
     id: uuid.UUID
     author_handle: str
+    #: 同 `CommentOut.author_name`。
+    author_name: str | None = None
     #: 同 `CommentOut.author_avatar_id`。
     author_avatar_id: int | None
     body: str
     created_at: datetime
 
     @classmethod
-    def from_row(cls, row: FeedbackNote, *, avatars: Mapping[str, int]) -> NoteOut:
+    def from_row(
+        cls, row: FeedbackNote, *, avatars: Mapping[str, int], names: Mapping[str, str]
+    ) -> NoteOut:
         return cls(
             id=row.id,
             author_handle=row.author_handle,
+            author_name=names.get(row.author_handle),
             author_avatar_id=avatars.get(row.author_handle),
             body=row.body,
             created_at=row.created_at,
@@ -324,12 +342,23 @@ class FeedbackCard(BaseModel):
     visibility: FeedbackVisibility
     security: bool
     author_handle: str
+    #: 作者的显示名，没起昵称、或平台上没有这个 handle 时是 None（客户端退回
+    #: handle）。和 `author_avatar_id` 一次性取回来（`faces_by_handle`）。
+    author_name: str | None = None
     author_is_agent: bool
     #: 作者挑过的头像 id，没挑过就是 None —— 客户端画首字母，不拿默认头像顶替。
     #: 判据见模块顶部和 `UserProfileRepository.chosen_avatar_ids`。
     author_avatar_id: int | None
     submitted_by_handle: str | None
     assignee_handle: str | None
+    #: 指派人的显示名，判据同 `author_name`；没人指派时是 None。
+    assignee_name: str | None = None
+    #: 指派人挑过的头像 id，判据同 `author_avatar_id`；没人指派时是 None。
+    assignee_avatar_id: int | None = None
+    #: 指派人是不是 AI 队友。**由 `agents` 名单问出来，不从名字前缀猜** —— 领这条
+    #: 反馈的可能是一个 agent-user，而 handle 长什么样不说明这一点。没人指派时是
+    #: None（不是 False）：客户端据此根本不画头像，也不会把「没这个人」画成「人」。
+    assignee_is_agent: bool | None = None
     tags: list[str]
     supports: int
     comments: int
@@ -346,7 +375,9 @@ class FeedbackCard(BaseModel):
         comments: int,
         supported: bool,
         avatars: Mapping[str, int],
+        names: Mapping[str, str],
         last_activity_at: datetime | None = None,
+        agents: Set[str] = frozenset(),
     ) -> FeedbackCard:
         return cls(
             id=row.id,
@@ -359,10 +390,20 @@ class FeedbackCard(BaseModel):
             visibility=row.visibility,
             security=row.security,
             author_handle=row.author_handle,
+            author_name=names.get(row.author_handle),
             author_is_agent=row.author_is_agent,
             author_avatar_id=avatars.get(row.author_handle),
             submitted_by_handle=row.submitted_by_handle,
             assignee_handle=row.assignee_handle,
+            assignee_name=(
+                names.get(row.assignee_handle) if row.assignee_handle else None
+            ),
+            assignee_avatar_id=(
+                avatars.get(row.assignee_handle) if row.assignee_handle else None
+            ),
+            assignee_is_agent=(
+                row.assignee_handle in agents if row.assignee_handle else None
+            ),
             tags=list(row.tags or []),
             supports=supports,
             comments=comments,
@@ -416,7 +457,9 @@ class FeedbackDetail(FeedbackCard):
         comments: int,
         supported: bool,
         avatars: Mapping[str, int],
+        names: Mapping[str, str],
         last_activity_at: datetime | None = None,
+        agents: Set[str] = frozenset(),
         timeline: list[FeedbackTimeline] | None = None,
         thread: list[CommentOut] | None = None,
         thread_next_cursor: str | None = None,
@@ -431,7 +474,9 @@ class FeedbackDetail(FeedbackCard):
             comments=comments,
             supported=supported,
             avatars=avatars,
+            names=names,
             last_activity_at=last_activity_at,
+            agents=agents,
         )
         return cls(
             **card.model_dump(),
@@ -459,7 +504,9 @@ class FeedbackDetail(FeedbackCard):
             # place that already has the page-wide map.
             thread=list(thread or []),
             thread_next_cursor=thread_next_cursor,
-            notes=[NoteOut.from_row(x, avatars=avatars) for x in notes or []],
+            notes=[
+                NoteOut.from_row(x, avatars=avatars, names=names) for x in notes or []
+            ],
             can_delete=can_delete,
             can_claim=can_claim,
             can_release=can_release,

@@ -5,6 +5,7 @@ import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseTable from '@/components/base/BaseTable.vue'
+import IdentityView from '@/components/common/IdentityView.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { usageRouteLabel } from '@/lib/adminStats'
 import { fmtCost, fmtNum, fmtPercent } from '@/lib/usageFormat'
@@ -77,8 +78,14 @@ function when(at: string): string {
       <tr v-for="row in users" :key="row.handle">
         <td data-card="primary">
           <NavLink :to="userRefRoute(row.handle)" class="adw__link">
-            <span class="adw__name">{{ row.name || row.handle }}</span>
-            <span v-if="row.name" class="adw__handle">@{{ row.handle }}</span>
+            <IdentityView
+              :handle="row.handle"
+              :name="row.name"
+              :avatar-id="row.avatar_id ?? null"
+              :agent="row.is_agent ?? null"
+              :size="18"
+              handle-line
+            />
           </NavLink>
         </td>
         <td class="adw__num t-num" :data-label="t('feedback.dashboard.usage.col.tokens')">{{ fmtNum(row.tokens) }}</td>
@@ -156,7 +163,20 @@ function when(at: string): string {
         <td class="t-num" data-card="primary">{{ when(row.at) }}</td>
         <td :data-label="t('feedback.dashboard.usage.col.project')">{{ row.project || '—' }}</td>
         <td :data-label="t('feedback.dashboard.usage.col.person')">
-          {{ row.handle ? `@${row.handle}` : t('feedback.dashboard.usage.byPlatform') }}
+          <!-- Same identity as the by-user column above: face + display name, falling
+               back to the handle. Rows with no triggerer are platform-initiated and
+               keep the plain note. -->
+          <NavLink v-if="row.handle" :to="userRefRoute(row.handle)" class="adw__link">
+            <IdentityView
+              :handle="row.handle"
+              :name="row.name"
+              :avatar-id="row.avatar_id ?? null"
+              :agent="row.is_agent ?? null"
+              :size="18"
+              handle-line
+            />
+          </NavLink>
+          <template v-else>{{ t('feedback.dashboard.usage.byPlatform') }}</template>
         </td>
         <td class="adw__model" :data-label="t('feedback.dashboard.usage.col.model')" :title="row.model">
           {{ row.model || t('feedback.dashboard.usage.unknownModel') }}
@@ -204,27 +224,16 @@ function when(at: string): string {
 
 .adw__link {
   display: inline-flex;
-  gap: 6px;
-  align-items: baseline;
+  align-items: center;
   max-width: 100%;
   overflow: hidden;
   color: var(--ink);
   text-decoration: none;
 }
 
-.adw__link:hover .adw__name {
+/* 名字在共用的 IdentityView 里，悬停划线要穿进子组件那一层。 */
+.adw__link:hover :deep(.identity-view__name) {
   text-decoration: underline;
-}
-
-.adw__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.adw__handle {
-  color: var(--muted);
-  white-space: nowrap;
 }
 
 .adw__models,

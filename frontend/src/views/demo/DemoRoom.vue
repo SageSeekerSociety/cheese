@@ -288,7 +288,7 @@ function splitTask(split: SplitLine): TaskLine {
               v-else-if="row.line.kind === 'split' && row.line.split"
               class="demo-task"
               :task="splitTask(row.line.split)"
-              :owner-name="null"
+              :owner="null"
             />
             <RoomNotice
               v-else-if="row.block && row.notice"

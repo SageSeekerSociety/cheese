@@ -33,6 +33,7 @@ import {
   SETTINGS_USER,
   STALLED_TASK,
   TASK_CHANNELS,
+  TASK_FACES,
   TASK_NAMES,
 } from './catalogViewSettingsWorkspaceFixtures'
 
@@ -840,7 +841,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
       // 「进行中的任务」那个数（清单第 14 条）和下面这几件对得上：四件都还没做完。
       underway: 4,
       names: TASK_NAMES,
-      avatars: {},
+      faces: TASK_FACES,
       me: 'wangxiaoming',
       artifactApi: artifactApi(),
     },
@@ -911,6 +912,18 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES: CatalogEntry[] = [
         props: { challengeDeadline: { at: Date.UTC(2026, 11, 31, 15, 59, 0), mine: true } },
         expect: '提交截止',
         expectSelector: '[data-testid="overview-deadline"]',
+      },
+      {
+        get name() {
+          return t('catalog.projectOverviewView.s7.name')
+        },
+        get note() {
+          return t('catalog.projectOverviewView.s7.note')
+        },
+        props: {},
+        // 最近进展每一条的「谁做的」画成头像 + 名字的一颗 chip，照名册上是谁来画。
+        expect: '王小明',
+        expectSelector: '.ov-event__by .identity-view__name',
       },
     ],
   },

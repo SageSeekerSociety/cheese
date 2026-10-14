@@ -105,6 +105,37 @@ describe('修改记录', () => {
     )
   })
 
+  it('改的那位和让改的那位都画脸，不是一个光秃秃的 handle', async () => {
+    const asked: DocVersion = {
+      version: 1,
+      content: '只有一段',
+      actor: 'cheese',
+      requested_by: 'alice',
+      created_at: at(60),
+    }
+    const { container } = render(DocHistory, {
+      props: {
+        open: true,
+        load: async () => ({ versions: [asked], cursor: null }),
+        editable: false,
+        nameOf: (h: string) => ({ alice: '爱丽丝', cheese: '芝士' })[h] ?? h,
+        mentionNames: {},
+        mentionIdentities: {
+          alice: { avatar: '/avatars/3', agent: false },
+          cheese: { avatar: null, agent: true },
+        },
+      },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await screen.findByText('爱丽丝')
+    const doc = container.ownerDocument
+    expect(doc.querySelectorAll('.doc-history__who .identity-view')).toHaveLength(2)
+    // 让改的那位挑过头像：画那张脸。
+    expect(doc.querySelector('.doc-history__who img')?.getAttribute('src')).toContain('/avatars/3')
+    // 改的那位是队友：画超椭圆，不画真人的圆头像。
+    expect(doc.querySelector('.doc-history__who .cheese-avatar')).not.toBeNull()
+  })
+
   it('最新一页全是同一个人连着存的：自动再读一页找上一条', async () => {
     const page1 = [version(30, 'bob', 1, '新'), version(29, 'bob', 2, '中')]
     const page2 = [version(28, 'alice', 60, '旧')]

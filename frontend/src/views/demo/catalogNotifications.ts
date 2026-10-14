@@ -124,7 +124,8 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     about: '一条「有人对你的内容做出了反应」的动态：谁回的、用什么表情回的。',
     file: 'src/components/common/Notification/renders/RenderReactionNotification.vue',
     component: RenderReactionNotification,
-    needs: TEXT,
+    // 认得出是谁那一格里的 @名字 是共用 chip（IdentityView 的头像落到 v-avatar 上）。
+    needs: UI_T,
     states: [
       {
         name: '带表情的那一下',
@@ -168,7 +169,8 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     about: '一条「你发出去的团队邀请被接受了」的动态：谁接受的、进了哪个团队。',
     file: 'src/components/common/Notification/renders/RenderTeamInvitationAcceptedNotification.vue',
     component: RenderTeamInvitationAcceptedNotification,
-    needs: TEXT,
+    // 认得出是谁那一格里的 @名字 是共用 chip（IdentityView 的头像落到 v-avatar 上）。
+    needs: UI_T,
     states: [
       {
         name: '认得出是谁接受的',
@@ -190,7 +192,8 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     about: '一条「发给你的团队邀请被撤回了」的动态：谁撤的、撤的是哪个团队。',
     file: 'src/components/common/Notification/renders/RenderTeamInvitationCanceledNotification.vue',
     component: RenderTeamInvitationCanceledNotification,
-    needs: TEXT,
+    // 认得出是谁那一格里的 @名字 是共用 chip（IdentityView 的头像落到 v-avatar 上）。
+    needs: UI_T,
     states: [
       {
         name: '认得出是谁撤的',
@@ -212,7 +215,8 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     about: '一条「你发出去的团队邀请被拒绝了」的动态：谁拒绝的、拒了哪个团队，下面还有拒绝的理由。',
     file: 'src/components/common/Notification/renders/RenderTeamInvitationDeclinedNotification.vue',
     component: RenderTeamInvitationDeclinedNotification,
-    needs: TEXT,
+    // 认得出是谁那一格里的 @名字 是共用 chip（IdentityView 的头像落到 v-avatar 上）。
+    needs: UI_T,
     states: [
       {
         name: '带了拒绝的理由',
@@ -234,7 +238,8 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     about: '一条「你的加入请求批准了」的动态：谁批的、进的是哪个团队。',
     file: 'src/components/common/Notification/renders/RenderTeamRequestApprovedNotification.vue',
     component: RenderTeamRequestApprovedNotification,
-    needs: TEXT,
+    // 认得出是谁那一格里的 @名字 是共用 chip（IdentityView 的头像落到 v-avatar 上）。
+    needs: UI_T,
     states: [
       {
         name: '认得出是谁批的',
@@ -256,7 +261,8 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     about: '一条「你的加入请求被撤回了」的动态：谁撤的、撤的是哪个团队。',
     file: 'src/components/common/Notification/renders/RenderTeamRequestCanceledNotification.vue',
     component: RenderTeamRequestCanceledNotification,
-    needs: TEXT,
+    // 认得出是谁那一格里的 @名字 是共用 chip（IdentityView 的头像落到 v-avatar 上）。
+    needs: UI_T,
     states: [
       {
         name: '认得出是谁撤的',
@@ -278,7 +284,8 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     about: '一条「你的加入请求被拒绝了」的动态：谁拒的、拒的是哪个团队，下面还有拒绝的理由。',
     file: 'src/components/common/Notification/renders/RenderTeamRequestRejectedNotification.vue',
     component: RenderTeamRequestRejectedNotification,
-    needs: TEXT,
+    // 认得出是谁那一格里的 @名字 是共用 chip（IdentityView 的头像落到 v-avatar 上）。
+    needs: UI_T,
     states: [
       {
         name: '带了拒绝的理由',

@@ -2,15 +2,19 @@
 // 频道主线上的一张任务卡：标题、谁负责、此刻到哪一步、上一次变化是什么时候。点它打开任务。
 // 同一张卡在原处变化（lib/channelTasks）；`inList` 时它是支线区里的一行，否则单独成卡。
 import type { TaskLine } from '../../lib/channelTasks'
+import type { FaceIdentity } from '../../lib/identityFace'
 
 import { relTime } from '../../lib/relTime'
 
-import { t } from '@/i18n'
+import IdentityView from '@/components/common/IdentityView.vue'
 
 defineProps<{
   task: TaskLine
-  /** 负责人的名字（按房间里的叫法）。 */
-  ownerName: string | null
+  /**
+   * 负责人：认人的 handle、名字（按房间里的叫法）、名册上他挑过的那张脸，和「是不是
+   * 队友」。null = 这件任务没写负责人（或者名册还没到），那一行不画，也不凭空画一张脸。
+   */
+  owner: FaceIdentity | null
   /** 是支线区里几行中的一行，不单独画边框。 */
   inList?: boolean
 }>()
@@ -33,7 +37,19 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
   >
     <v-icon size="16" class="task-card__icon" aria-hidden="true">mdi-checkbox-marked-outline</v-icon>
     <span class="task-card__title">{{ task.title }}</span>
-    <span v-if="ownerName" class="task-card__owner">{{ t('work.room.taskCard.owner', { name: ownerName }) }}</span>
+    <span v-if="owner" class="task-card__owner">
+      <i18n-t keypath="work.room.taskCard.owner" scope="global" tag="span">
+        <template #name>
+          <IdentityView
+            :handle="owner.handle"
+            :name="owner.name"
+            :avatar="owner.avatar"
+            :agent="owner.agent"
+            :size="18"
+          />
+        </template>
+      </i18n-t>
+    </span>
     <span class="task-card__gap" />
     <span v-if="task.accepted" class="task-card__accepted">{{ task.accepted }}</span>
     <span class="task-card__status" :data-tone="task.tone" data-testid="task-card-status">

@@ -8,7 +8,7 @@
  */
 
 import type { Block } from '../../../cx_types'
-import type { MemberActivityLine } from '../../../lib/memberActivity'
+import type { MemberActivityLine, MemberFace } from '../../../lib/memberActivity'
 
 import { computed, ref } from 'vue'
 
@@ -81,13 +81,17 @@ export function useRunRecords() {
     return latest
   })
 
-  /** 输入框上方那一行里，排队的队友各一行（名字由房间给）。 */
-  function waitingLines(nameOf: (handle: string) => string): MemberActivityLine[] {
+  /** 输入框上方那一行里，排队的队友各一行（名字和那张脸由房间给）。 */
+  function waitingLines(
+    nameOf: (handle: string) => string,
+    faceOf: (handle: string) => MemberFace
+  ): MemberActivityLine[] {
     return [...waiting.value.entries()].map(([handle, r]) => {
       const n = ahead(r)
       return {
         handle,
         name: nameOf(handle),
+        face: faceOf(handle),
         kind: 'working',
         since: Date.parse(r.created_at) / 1000,
         detail: n ? t('work.room.site.status.queuedBehind', { ahead: n }) : t('work.room.site.status.queued'),

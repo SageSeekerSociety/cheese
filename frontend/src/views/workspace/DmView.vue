@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Topic } from '@/cx_types'
+import type { PersonIdentity } from '@/lib/personIdentity'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -51,6 +52,21 @@ const title = computed<string>(() => {
   if (agentHandle.value !== null) return agentName.value || agentHandle.value
   const m = store.members.find((x) => x.user_handle === peerHandle.value)
   return memberName(m) || peerHandle.value || ''
+})
+
+// 顶栏上那个人自己：名字照 `title`（队友是自己那一行的名字，人是名册上的名字），
+// 认人的 handle、自己挑过的头像和「是不是队友」都从名册那一行拿 —— 缺头像时画彩
+// 色首字母，队友画超椭圆。名册上暂时没有这一行（还没读回来）也给得出 handle，
+// 只是没有脸。
+const titlePeer = computed<PersonIdentity>(() => {
+  if (agentHandle.value !== null) {
+    const row = store.members.find(
+      (x) => x.agent && (x.instance_handle === agentHandle.value || x.user_handle === agentHandle.value)
+    )
+    return { handle: agentHandle.value, name: title.value, avatarId: row?.avatar_id ?? null, agent: true }
+  }
+  const row = store.members.find((x) => x.user_handle === peerHandle.value)
+  return { handle: peerHandle.value ?? '', name: title.value, avatarId: row?.avatar_id ?? null, agent: !!row?.agent }
 })
 
 // 手机上只有一条顶栏：它写对方的名字，← 回名册（路由的 backTo），页内那条头就
@@ -140,6 +156,7 @@ function handleMentionClick(handle: string) {
       :always-summon="agentHandle !== null"
       :hand-off="agentHandle === null"
       :title-override="title"
+      :title-peer="titlePeer"
       :back-label="t('navigation.project.members')"
       :members="store.members"
       :topic-list="store.topics"

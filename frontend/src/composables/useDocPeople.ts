@@ -7,6 +7,7 @@ import { computed } from 'vue'
 
 import { memberName } from '../lib/agentNames'
 import { isExternalMember } from '../lib/externalMembers'
+import { identitiesFrom, type MentionIdentity } from '../lib/personIdentity'
 import { getAvatarUrl } from '../utils/materials'
 
 /** 这一包递给画的那一层（props）：名册是调用方给的，面板不再自己去取。 */
@@ -38,6 +39,9 @@ export function useDocPeople(source: {
   const avatars = computed<Record<string, string>>(() =>
     Object.fromEntries(people.value.flatMap((p) => (p.avatar ? [[p.handle, p.avatar] as const] : [])))
   )
+  // handle → 头像与「是不是队友」。文档正文里的 `<@handle>` chip 前那张脸用它，
+  // 和名册、对话栏里的是同一张（见 lib/refChip 的 RefNames.mentionIdentities）。
+  const identities = computed<Record<string, MentionIdentity>>(() => identitiesFrom(people.value))
 
-  return { people, names, avatars }
+  return { people, names, avatars, identities }
 }

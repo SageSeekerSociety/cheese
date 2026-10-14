@@ -25,6 +25,25 @@ describe('CheeseAvatar', () => {
     expect(getByRole('img', { name: '审稿' })).toBeTruthy()
   })
 
+  it('装饰模式：名字在旁边已经读得到，这张脸就不再念一遍', () => {
+    const { container, queryByRole } = render(CheeseAvatar, {
+      props: { name: '审稿', handle: 'cheese-3f2a', decorative: true },
+    })
+    const svg = container.querySelector('.cheese-avatar')!
+    expect(svg.getAttribute('aria-hidden')).toBe('true')
+    // 不再是 role=img，也没有 aria-label：读屏树里查不到这张脸。
+    expect(svg.getAttribute('role')).toBeNull()
+    expect(svg.getAttribute('aria-label')).toBeNull()
+    expect(queryByRole('img', { name: '审稿' })).toBeNull()
+  })
+
+  it('显式 alt 时读的是 alt，不是名字', () => {
+    const { getByRole } = render(CheeseAvatar, {
+      props: { name: '审稿', handle: 'cheese-3f2a', alt: '队友：审稿' },
+    })
+    expect(getByRole('img', { name: '队友：审稿' })).toBeTruthy()
+  })
+
   it('队友改了名，头像颜色不变', () => {
     const before = toneOf({ name: '芝士', handle: 'cheese-3f2a' })
     const after = toneOf({ name: '审稿助手', handle: 'cheese-3f2a' })

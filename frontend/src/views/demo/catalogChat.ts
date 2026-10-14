@@ -113,10 +113,11 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '私聊（普通形态）',
-        note: '没有 PR 那一套，只剩标题和连接状态。左边那颗 ← 是给「点进来的名册页不在侧栏」的地方退回去用的。',
+        note: '没有 PR 那一套，只剩标题和连接状态。标题就是对方本人：一张脸加他的名字（`titlePeer`），不再是一个光秃秃的字符串。左边那颗 ← 是给「点进来的名册页不在侧栏」的地方退回去用的。',
         props: {
           ...HEADER_BASE,
           titleOverride: '爱丽丝',
+          titlePeer: { handle: 'alice', name: '爱丽丝', avatarId: 5, agent: false },
           backLabel: '返回名册',
           connected: false,
         },
