@@ -37,6 +37,9 @@ ALL_HOOKS = [
 BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
+# Hooks that judge against the merge base, so they are the ones that must report
+# not-run — never a pass — when there is no base or the caller names another one.
+BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet"}
 
 
 def git(repo, *args):
@@ -186,12 +189,14 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(rep["status"], "unknown")
         self.assertTrue(rep["fallback"])
         # everything ran except the checks that themselves need the merge base
-        self.assertTrue((BACKEND_HOOKS - {"migration-fork"}) | FRONTEND_HOOKS <= self.ran_hooks())
+        self.assertTrue((BACKEND_HOOKS | FRONTEND_HOOKS) - BASE_JUDGING_HOOKS <= self.ran_hooks())
         self.assertNotIn("file-size", self.ran_hooks())
-        self.assertNotIn("migration-fork", self.ran_hooks())
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertNotIn(hook, self.ran_hooks())
         skipped = {n["id"] for n in rep["not_run"]}
         self.assertIn("file-size", skipped)
-        self.assertIn("migration-fork", skipped)
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertIn(hook, skipped)
 
     # --- a custom --base cannot be honored by the base-judging hooks (they
     # --- always judge origin/main), so the run must NOT pass — exit 2
@@ -272,6 +277,27 @@ class CiFastTest(unittest.TestCase):
         self.assertNotIn("scene-ratchet", results)
         not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
         self.assertIn("无相关文件", not_run["scene-ratchet"])
+
+    # --- a base-judging hook whose own `files:` matches nothing changed must
+    # --- still be named as not run when there is no base: the widened selector
+    # --- that runs everything must not promote it to have-run, and the reason
+    # --- must name the base, which is the thing that could not be checked
+    def test_base_judging_hook_with_no_files_is_still_not_run(self):
+        self.write_hooks(extra_entries="""      - id: scene-ratchet
+        name: scene-ratchet filtered stub
+        entry: bash -c 'echo scene-ratchet >> .ci-fast-ran'
+        language: system
+        files: '\\.xyz$'
+""", omit={"scene-ratchet"})
+        self.commit_file("frontend/src/x.ts")  # no refs/remotes/origin/main
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+        self.assertTrue(self.report()["fallback"])
+        self.assertNotIn("scene-ratchet", self.ran_hooks())
+        not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
+        self.assertIn("merge base", not_run["scene-ratchet"])
+        self.assertNotIn("无相关文件", not_run["scene-ratchet"])
 
     # --- the pre-push entry point (the platform's task-worktree hook calls
     # --- this): the three hooks that spawn the node toolchain leave the

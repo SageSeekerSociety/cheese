@@ -1024,9 +1024,14 @@ def self_test() -> int:
         base_sha = _freeze(root)
         result = run_cli(root)
         check("the fixture's own tree passes", result.returncode, 0)
-        check("grades the pages the router reaches", "A src/views/Home.vue" in run_cli(
-            root, "--list").stdout, True)
-        check("does not judge a spec file's imports", "src/views/NotAPage.vue" in result.stdout, False)
+        #    `--list` names every scene, the verdict only ever names the ones it
+        #    has something to say about — so the tree's membership is asked of
+        #    the listing. A page reached only through a `.spec.ts` import is not
+        #    a scene; it is A in the fixture, so a report would stay silent about
+        #    it even if the walk had wrongly taken the spec file as an edge.
+        listed = run_cli(root, "--list").stdout
+        check("grades the pages the router reaches", "A src/views/Home.vue" in listed, True)
+        check("does not judge a spec file's imports", "src/views/NotAPage.vue" in listed, False)
 
         # -- 1. a baselined scene that regresses -----------------------------
         _fixture(root, {"frontend/src/views/Home.vue": (
@@ -1875,6 +1880,23 @@ def self_test() -> int:
         hooks = (REPO_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
         check("and a commit runs it with the same base",
               "scene-ratchet.py --base origin/main" in hooks, True)
+        #    Whether the hook fires at all is `files:`. The pattern used to end
+        #    at the directory -- `src/(views|router|components/panels)/$` -- so
+        #    it matched no file that exists and the local gate never ran for a
+        #    scene change. Pre-commit searches the whole path, so the answer is
+        #    checked here rather than assumed from the string.
+        block = re.search(r"- id: scene-ratchet\n(?:.*\n)*?\s+files: (\S+)", hooks)
+        files = re.compile(block.group(1)) if block else None
+        check("and that hook fires on what a scene change touches",
+              files is not None
+              and all(files.search(path) is not None for path in (
+                  "frontend/src/views/Home.vue",
+                  "frontend/src/router/index.ts",
+                  "frontend/src/components/panels/catalog/CatalogTable.vue",
+                  "frontend/package.json",
+                  ".claude/scripts/scene-ratchet.py",
+              ))
+              and files.search("backend/app/main.py") is None, True)
         check("and the ledger is gone",
               (REPO_ROOT / "frontend" / "scene-baseline.json").exists(), False)
         fast = (REPO_ROOT / ".github" / "scripts" / "ci-fast.py").read_text(encoding="utf-8")
@@ -1911,7 +1933,8 @@ def self_test() -> int:
         "with the controls that stay green, "
         "debt read off the base tree, debt paid down, a type-only import that "
         "is not reach, no list to launder a regression or a new scene, four ways "
-        "of not being able to read the freeze, and a wrong root being a 2)"
+        "of not being able to read the freeze, a hook pattern that really fires "
+        "on a scene change, and a wrong root being a 2)"
     )
     return 0
 
