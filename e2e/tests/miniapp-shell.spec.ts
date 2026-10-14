@@ -146,6 +146,36 @@ async function dotCentre(page: Page, nth: number) {
   return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
 }
 
+test('a plane asked for equal scales draws a unit square square, with every asked-for range still in view', async ({
+  page,
+}) => {
+  const errors = await runApp(
+    page,
+    `<script setup>
+import { ref } from 'vue'
+const a = ref([-4, 4])
+const b = ref([4, -4])
+</script>
+<template>
+  <c-plane :x="[-4, 4]" :y="[-4, 4]" :height="240" equal>
+    <c-area :points="[[0, 0], [1, 0], [1, 1], [0, 1]]" />
+    <c-point v-model="a" drag="xy" /><c-point v-model="b" drag="xy" />
+  </c-plane>
+</template>`
+  );
+  const square = (await page.locator('c-plane path.area').boundingBox())!;
+  expect(Math.abs(square.width - square.height)).toBeLessThan(1.5);
+  const plane = (await page.locator('c-plane svg').first().boundingBox())!;
+  for (const i of [0, 1]) {
+    const dot = await dotCentre(page, i);
+    expect(dot.x).toBeGreaterThan(plane.x);
+    expect(dot.x).toBeLessThan(plane.x + plane.width);
+    expect(dot.y).toBeGreaterThan(plane.y);
+    expect(dot.y).toBeLessThan(plane.y + plane.height);
+  }
+  expect(errors).toEqual([]);
+});
+
 test('a point dragged on a plane hands the app its place in the plane’s own numbers, inside the plane and on its grid', async ({
   page,
 }) => {

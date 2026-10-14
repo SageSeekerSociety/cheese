@@ -12,8 +12,16 @@ import { duration, ease, still } from './motion'
 import { PLANE_ITEM_CHANGED } from './planeItem'
 
 const props = withDefaults(
-  defineProps<{ x?: number[]; y?: number[]; height?: number; xLabel?: string; yLabel?: string; grid?: boolean }>(),
-  { x: () => [0, 10], y: () => [0, 10], height: 240, xLabel: '', yLabel: '', grid: true }
+  defineProps<{
+    x?: number[]
+    y?: number[]
+    height?: number
+    xLabel?: string
+    yLabel?: string
+    grid?: boolean
+    equal?: boolean
+  }>(),
+  { x: () => [0, 10], y: () => [0, 10], height: 240, xLabel: '', yLabel: '', grid: true, equal: false }
 )
 type Fn = (x: number) => number
 type Held = HTMLElement & Record<string, unknown>
@@ -32,10 +40,26 @@ const pair = (v: unknown): [number, number] | null =>
 const flag = (v: unknown) => v === '' || v === true || v === 'true'
 const fn = (v: unknown): Fn | null => (typeof v === 'function' ? (v as Fn) : null)
 
-const xr = computed(() => pair(props.x) ?? [0, 10])
-const yr = computed(() => pair(props.y) ?? [0, 10])
 const H = computed(() => Math.max(120, num(props.height, 240)))
 const pad = computed(() => ({ l: 44, r: 14, t: props.yLabel ? 26 : 12, b: props.xLabel ? 44 : 26 }))
+/** The ranges drawn. With `equal`, a unit is as long across as up, so a square
+ *  stays square: the range with room to spare widens about its middle to fill
+ *  the box, and both ranges asked for stay in view. */
+const ranges = computed(() => {
+  const x = pair(props.x) ?? [0, 10]
+  const y = pair(props.y) ?? [0, 10]
+  const w = width.value - pad.value.l - pad.value.r
+  const h = H.value - pad.value.t - pad.value.b
+  if (!flag(props.equal) || w <= 0 || h <= 0) return { x, y }
+  const unit = Math.min(w / (x[1] - x[0]), h / (y[1] - y[0]))
+  const around = ([lo, hi]: [number, number], span: number): [number, number] => [
+    (lo + hi) / 2 - span / 2,
+    (lo + hi) / 2 + span / 2,
+  ]
+  return { x: around(x, w / unit), y: around(y, h / unit) }
+})
+const xr = computed(() => ranges.value.x)
+const yr = computed(() => ranges.value.y)
 const sx = (x: number) =>
   pad.value.l + ((x - xr.value[0]) / (xr.value[1] - xr.value[0])) * (width.value - pad.value.l - pad.value.r)
 const sy = (y: number) =>
