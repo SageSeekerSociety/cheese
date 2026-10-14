@@ -15,11 +15,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 // 这一格的 ref 调的，到没到只有这里看得见。
 const docHostCalls = vi.hoisted(() => [] as string[])
 
+// 那一块是什么时候被要的：`defineAsyncComponent` 只在这一格真要画时才来要它，静态 import
+// 则是导入 `TaskOverview` 本身时就要。第一条就钉这个差别，见下面。
+const docHostAsked = vi.hoisted(() => ({ yes: false }))
+
 // `TaskOverview` 里 `PanelDocHost` 是 `defineAsyncComponent`（按需取）。`__esModule` 不
 // 是给这个 spec 用的：Vue 拿到异步取回来的那一份之后，靠这个标记认出「组件在 `.default`
 // 上」。少了它，被当成组件的是整个模块对象，`@vue/test-utils` 一读它的 `name` 就抛
 // 「No "name" export is defined on the mock」。
 vi.mock('@/components/work/PanelDocHost.vue', async () => {
+  docHostAsked.yes = true
   const { defineComponent, h } = await import('vue')
   return {
     __esModule: true,
@@ -113,6 +118,18 @@ describe('新任务的第一轮', () => {
     docHostCalls.length = 0
   })
 
+  it('编辑器那一块按需取：这一页都画出来了，那一块还没被要过', () => {
+    // `TaskOverview` 改回静态 import 的话，这个文件一加载（上面那条 import 语句）那一块
+    // 就已经在模块图里了，`asked` 在这次断言之前就是 true —— 那一坨约 1.1 MB 会跟着任务页
+    // 的首屏一起下来。`WorkPanel` 那一侧同样的边界在 `WorkPanel.docLazy.spec.ts` 里。
+    // 这一条得杵在这个文件的最前面：「要过没有」是模块级的一次事实，前面有谁先画了编辑器
+    // 那一格，它就翻过去了。
+    expect(docHostAsked.yes).toBe(false)
+    const ui = mount('drafting')
+    expect(ui.queryByTestId('doc')).toBeNull()
+    expect(docHostAsked.yes).toBe(false)
+  })
+
   it('还在整理：说正在整理，不给重试', () => {
     const ui = mount('drafting')
     expect(ui.queryByRole('button', { name: '重试' })).toBeNull()
@@ -156,5 +173,31 @@ describe('新任务的第一轮', () => {
     expect(await ui.findByTestId('doc')).toBeTruthy()
 
     await waitFor(() => expect(docHostCalls).toContain('review'))
+  })
+
+  it('编辑器自己还在网络上时递进来的高亮，等它挂上再补一次', async () => {
+    const { api } = mountWithRef(null)
+    // 这一刻 `docRef` 一定是空的：`PanelDocHost` 的 import 还没落地。
+    api().highlightTurn('turn-9')
+    await waitFor(() => expect(docHostCalls).toContain('turn:turn-9'))
+  })
+
+  it('递进来的是闪一下：一样等它挂上再补，不是只补「查看改动」那一种', async () => {
+    const { ui, api } = mountWithRef('failed')
+    api().pulse()
+    expect(docHostCalls).toEqual([])
+
+    await fireEvent.click(ui.getByRole('button', { name: '自己写' }))
+    await waitFor(() => expect(docHostCalls).toContain('pulse'))
+  })
+
+  it('还没递出去又来了一个：只补最后那一个，不把前一个也发了', async () => {
+    const { ui, api } = mountWithRef('failed')
+    api().highlightTurn('turn-1')
+    api().reviewEdits({ requester: '芝士', edits: [{ old: '30 天', new: '60 天' }] })
+
+    await fireEvent.click(ui.getByRole('button', { name: '自己写' }))
+    await waitFor(() => expect(docHostCalls).toContain('review'))
+    expect(docHostCalls).not.toContain('turn:turn-1')
   })
 })
