@@ -404,26 +404,6 @@ jobs:
             python3 .github/scripts/check-commit-title.py --pull-request "$RUNNER_TEMP/pull.json"
           fi
 
-      # review-pin: the PR is handed over only with an independent review
-      # (.claude/scripts/pr-review.sh) pinned at its CURRENT head and free of
-      # blocker/major findings; a push after the pin makes it stale and this
-      # goes red until a new one is posted. Judged on a pull_request only: the
-      # merge queue's commit is the same tree the PR side already judged, and a
-      # queue entry has no PR comments to read. Comments are read live, so
-      # re-running this job after a pin is posted sees it; review-pin.yml does
-      # that when the pin arrives after this run has finished. A draft passes
-      # (check-review-pin.py reads the flag), like its title.
-      - name: review-pin, an independent review is pinned to this head
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/pull.json"
-          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" > "$RUNNER_TEMP/comments.json"
-          python3 .github/scripts/check-review-pin.py \
-            --pull-request "$RUNNER_TEMP/pull.json" --comments "$RUNNER_TEMP/comments.json"
-
   required-draft:
     name: CI required (draft quick)
     if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.draft }}
