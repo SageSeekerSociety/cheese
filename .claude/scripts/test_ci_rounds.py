@@ -45,6 +45,13 @@ class Rounds(unittest.TestCase):
         self.assertEqual(result["same_head_overhead"]["full_red_to_green_heads"], 0)
         self.assertEqual(result["same_head_overhead"]["rerun_attempts_observed"], 2)
 
+    def test_draft_and_full_without_promotion_event_is_not_promotion(self):
+        data = snapshot([run(1, "a", SINCE, [check(report.DRAFT)]),
+                         run(2, "a", "2026-10-03T00:00:00Z", [check()])])
+        result = report.summarize(data)
+        self.assertEqual(result["same_head_overhead"]["draft_and_full_judged_heads"], 1)
+        self.assertEqual(result["same_head_overhead"]["promotion_event_evidenced_heads"], 0)
+
     def test_full_red_to_green_is_reported_for_one_head(self):
         data = snapshot([run(1, "a", SINCE, [check(conclusion="FAILURE")]),
                          run(2, "a", "2026-10-03T00:00:00Z",
@@ -86,6 +93,7 @@ class Rounds(unittest.TestCase):
         data["prs"][0]["closed_at"] = "2026-10-03T00:00:00Z"
         result = report.summarize(data)
         self.assertEqual(result["all_prs"]["distinct_head_rounds"], 1)
+        self.assertEqual(result["prs"][0]["exposure_hours"], 48)
 
     def test_timeline_scope_is_explicit_when_enrichment_is_bounded(self):
         data = snapshot()
@@ -116,7 +124,9 @@ class Rounds(unittest.TestCase):
         self.assertEqual(report.summarize(data)["extra_head_attribution"], {"unattributed": 1})
 
     def test_open_counts_are_explicitly_right_censored(self):
-        result = report.summarize(snapshot())
+        data = snapshot()
+        data["observed_at"] = "2026-10-15T01:00:00Z"
+        result = report.summarize(data)
         self.assertEqual(result["right_censored_prs"], 1)
         self.assertTrue(result["prs"][0]["right_censored"])
         self.assertEqual(result["prs"][0]["exposure_hours"], 336)
@@ -137,6 +147,27 @@ class Rounds(unittest.TestCase):
         self.assertEqual(report.summarize(data)["extra_head_attribution"], {"base_sync_subject": 1})
         data["runs"][1]["commit_message"] = "Merge branch 'feature' into task/x"
         self.assertEqual(report.summarize(data)["extra_head_attribution"], {"unattributed": 1})
+
+    def test_base_sync_takes_precedence_over_red_evidence(self):
+        data = snapshot([run(1, "a", SINCE, [check(conclusion="FAILURE")]),
+                         run(2, "b", "2026-10-03T00:00:00Z",
+                             message="Merge remote-tracking branch 'origin/main' into task/x")])
+        result = report.summarize(data)
+        extra = result["prs"][0]["extra_heads"][0]
+        self.assertEqual(extra["label"], "base_sync_subject")
+        self.assertTrue(extra["failures_before_push"])
+        data["prs"][0]["timeline"] = [{"event": "reviewed", "state": "changes_requested",
+                                        "submitted_at": "2026-10-02T02:00:00Z", "id": 12}]
+        extra = report.summarize(data)["prs"][0]["extra_heads"][0]
+        self.assertEqual(extra["label"], "base_sync_subject")
+        self.assertEqual(extra["change_requests"], [12])
+
+    def test_distribution_separates_mean_and_median(self):
+        result = report.distribution([0, 1, 4])
+        self.assertEqual(result["prs"], 3)
+        self.assertEqual(result["distinct_head_rounds"], 5)
+        self.assertEqual(result["mean"], 5 / 3)
+        self.assertEqual(result["median"], 1)
 
     def test_duplicate_runs_and_prs_fail_instead_of_inflating(self):
         data = snapshot([run(1, "a", SINCE)])
@@ -206,6 +237,9 @@ class Collector(unittest.TestCase):
         row = {"id": 1, "head_branch": "task/x", "pull_requests": [],
                "repository": {"full_name": "owner/repo"}, "created_at": SINCE}
         self.assertEqual(collect.associate(row, [pr]), [1])
+        row["created_at"] = "2026-09-30T23:59:59Z"
+        self.assertEqual(collect.associate(row, [pr]), [])
+        row["created_at"] = SINCE
         other = deepcopy(pr)
         other["number"] = 2
         with self.assertRaises(ValueError):

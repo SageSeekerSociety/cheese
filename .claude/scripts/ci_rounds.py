@@ -143,7 +143,7 @@ def summarize(data: dict) -> dict:
         right_censored = not before(closed_at, cutoff)
         rows.append({"number": pr["number"], "state_at_cutoff": status,
                      "distinct_head_rounds": len(heads),
-                     "exposure_hours": (instant(cutoff) - instant(pr["created_at"])).total_seconds() / 3600,
+                     "exposure_hours": (run_until - instant(pr["created_at"])).total_seconds() / 3600,
                      "right_censored": right_censored,
                      "full_judged_heads": full_heads, "extra_heads": extras,
                      "same_head": [same_head(h, pr["timeline"], cutoff) for h in heads],
