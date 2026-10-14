@@ -13,8 +13,9 @@ under "This review" at the end.
 
 The review result is not posted on GitHub. `post` writes it to
 `REVIEW-RESULT.md`; the seat delivering the PR pastes it into the acceptance
-card body, and its first line (`独立 review：head <sha8> 结论 ...`) is what
-the patrol sweep reads there.
+card body, after the author's own sections (the board reads what the PR
+changed and how it was verified from the text before that line), and its
+first line (`独立 review：head <sha8> 结论 ...`) is what the patrol sweep reads there.
 
 - The first round reviews the whole PR, as below.
 - If it has blocker or major findings, fix them, then run
@@ -125,4 +126,4 @@ finding on its own. If nothing survives, no findings and one sentence in
 the summary; do not invent feedback. Then run the post command below. It
 checks the result names the pinned commit, writes `REVIEW-RESULT.md` next
 to the result, prints it, and removes the review tree; it posts nothing.
-Tell whoever delivers the PR to paste that file into the card body.
+Tell whoever delivers the PR to paste that file at the end of the card body.

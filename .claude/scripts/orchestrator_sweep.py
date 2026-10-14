@@ -447,6 +447,11 @@ def brief(desc, limit=400):
     trailer = _TRAILER_LINE.search(text)
     if trailer:
         text = text[:trailer.start()]
+    # 卡片正文末尾贴着独立审查的结果，平台把它原样镜像进 PR 正文；它的标题（「### 1.
+    # [major] tests do not bite」）不是作者写的章节，不能当 改了什么／怎么验证的 读。
+    review = REVIEW_LINE.search(text)
+    if review:
+        text = text[:review.start()]
     agent = _AGENT_MARK.search(text)
     if agent:
         text = text[agent.end():]
@@ -1537,7 +1542,16 @@ def _self_test_review():
         text_rows, _ = sweep("tok", "room", 60, set(), False)
     finally:
         globals()["get"], subprocess.run = real_get, real_run
+    # 审查结果贴在卡片正文末尾、被镜像进 PR 正文后，看板读 改了什么／怎么验证的 不能读到它的标题。
+    authored = "## Change\n\n- swap A for B\n\n验证：ran pytest, green\n\n"
+    pasted = authored + renderer.render(
+        {**result("major"), "findings": [{**finding("major"), "title": "tests do not bite"}]},
+        head, "m" * 40, "")
     out += [
+        ("审查结果贴在正文末尾时，改了什么／怎么验证的 仍读作者写的",
+         brief(pasted), brief(authored)),
+        ("审查结果贴在正文末尾时，作者那两段读得出来",
+         brief(pasted), ("- swap A for B", "ran pytest, green")),
         ("GitHub 查询里不再要评论", [q for q in queries if "comments" in q], []),
         ("行里带着卡片上的审查行",
          [(r["review_head"], r["review_since"], r["review_verdict"]) for r in rows],
