@@ -645,7 +645,7 @@ export const CATALOG: CatalogEntry[] = [
   // 第四批拆出来的画面（空间名录、小队链接落地页、小队项目列表、提问页）在自己的文件里：
   // `catalogScenesPages.ts`，数据在 `catalogScenesPagesFixtures.ts`。
   ...SCENES_PAGES_ENTRIES,
-  // 第五批拆出来的画面（功能数据页、我的连接、反馈详情、项目的技能）：`catalogScenesPages2.ts`，
+  // 这一批拆出来的画面（功能数据页、我的连接、反馈详情、项目的技能）：`catalogScenesPages2.ts`，
   // 数据在 `catalogScenesPages2Fixtures.ts`。
   ...SCENES_PAGES2_ENTRIES,
   ...SCENES_SPACES_ENTRIES,
