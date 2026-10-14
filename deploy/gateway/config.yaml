@@ -130,6 +130,11 @@ model_list:
     model_info:
       cheese_selectable: true
       cheese_label: GLM-5.2
+      # Measured 2026-10-14 on the OpenCode Go chat route this group is getting
+      # (hosted_vllm/, added from the admin page): a mid-conversation system
+      # message is dropped there. The flag tells Claude Code to fold it into the
+      # first user message, which every upstream of the group then receives.
+      supports_mid_conversation_system: false
 
   # One model, tried in `order`: RUC's self-hosted copy first, DeepSeek's API
   # when every RUC key fails or is cooling down. RUC admits 3 parallel
