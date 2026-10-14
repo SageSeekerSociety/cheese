@@ -167,7 +167,7 @@ a.pr{color:var(--info-ink);text-decoration:none}
       <table class="grid">
         <thead><tr><th>检查</th><th class="num">当前</th><th class="num">基线</th><th>结果</th><th>规则指纹</th><th>数据来源</th></tr></thead>
         <tbody>
-          <tr class="row" data-d="d-scene"><td><div class="name">场景棘轮：新页面必须能独立运行</div><div class="src">scene-ratchet.py · <span class="mono">pnpm run lint:scenes</span></div></td><td class="num" data-c="scene-ratchet.actual">—</td><td class="num" data-c="scene-ratchet.frozen">—</td><td><span data-c="scene-ratchet.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="scene-ratchet.fingerprint">—</span></td><td class="src">ready / debt；基线 <span class="mono">frontend/scene-baseline.json</span></td></tr>
+          <tr class="row" data-d="d-scene"><td><div class="name">场景棘轮：新页面必须能独立运行</div><div class="src">scene-ratchet.py · <span class="mono">pnpm run lint:scenes</span></div></td><td class="num" data-c="scene-ratchet.actual">—</td><td class="num" data-c="scene-ratchet.frozen">—</td><td><span data-c="scene-ratchet.status" class="tag t-pass">通过</span></td><td><span class="fp" data-c="scene-ratchet.fingerprint">—</span></td><td class="src">ready / debt；冻结集读自与 origin/main 的合并基准树</td></tr>
           <tr class="detail" id="d-scene" hidden><td colspan="6"><dl class="dl">
             <dt>规则</dt><dd>已经能独立运行的场景不许退化；新加的页面或面板从第一天起就要能独立运行</dd>
             <dt>判定来源</dt><dd><span class="mono">.claude/scripts/frontend_grade.py</span>，指标板和闸门共用这一份，本页只读它的输出</dd>

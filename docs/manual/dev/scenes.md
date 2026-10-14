@@ -8,7 +8,6 @@ covers:
   - .claude/scripts/catalog-ratchet.py
   - frontend/scripts/scene-split.mjs
   - frontend/scripts/scene-split-core.mjs
-  - frontend/scene-baseline.json
   - frontend/catalog-baseline.json
   - frontend/src/components/panels/
   - frontend/src/views/demo/catalog.ts
@@ -32,7 +31,7 @@ covers:
 | **C** | 自己取数——直接 import、经中间模块绕、自己写 `fetch`/`axios`——或者读业务 store | 把取数那一段挪出去：外面拿数据，它只收结果。已合的样板：#2193 的 `views/spaces/detail/settings/BasicInfo.vue` 取数、读 store、保存、删除后跳转，同目录 `BasicInfoView.vue` 只收 props 和事件，A 级、已冻结在 ready |
 | **D** | 还绑在挂载位置上：读路由、画 `<router-view>` / `<router-link>`、`$parent` / `$root`、事件总线、`provide` / `inject` | 先把「从哪来」改成 props 或事件，再谈数据 |
 
-判据只有一份，写在 `.claude/scripts/frontend_grade.py` 里：看板（`arch-metrics.py`）和下面那条闸门读的是同一个函数，所以不会出现「看板说是 A、闸门说不是」。`vue-router` 按**脚本里出现的 import 和模板里画出来的标签**算：注释先被去掉，写在注释里的话不算（`components/common/NavLink.vue` 的注释就在说它替谁干活，它是 A 级）。**A 档在这一页就叫「能单独跑」**，[基线](#ratchet)冻的就是它。
+判据只有一份，写在 `.claude/scripts/frontend_grade.py` 里：看板（`arch-metrics.py`）和下面那条闸门读的是同一个函数，所以不会出现「看板说是 A、闸门说不是」。`vue-router` 按**脚本里出现的 import 和模板里画出来的标签**算：注释先被去掉，写在注释里的话不算（`components/common/NavLink.vue` 的注释就在说它替谁干活，它是 A 级）。**A 档在这一页就叫「能单独跑」**，[闸门](#ratchet)冻的就是它。
 
 ## 一共多少 {#totals}
 
@@ -43,7 +42,7 @@ covers:
 | 路由页（`src/views/`，router 表里挂上去的每一页） | 126 | 4 | 88 | 9 | 25 |
 | 工作面板（`src/components/panels/` 下的 SFC） | 62 | 62 | — | 0 | 0 |
 
-4 + 88 + 62 = 154，就是 `ready` 的条数；9 + 25 = 34，就是 `debt` 的条数。一个场景可以同时踩中好几条（44 页直接 import 了取数模块，111 页经中间模块绕到取数，75 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。容器页不进两份名单，冻结的是它的视图。
+4 + 88 + 62 = 154 个今天就能单独跑；9 + 25 = 34 个还跑不起来。一个场景可以同时踩中好几条（44 页直接 import 了取数模块，111 页经中间模块绕到取数，75 页读路由），**档位取最差的那条**——所以 D 那一列不是「只差一个路由」。容器页不算场景，算场景的是它的视图。
 
 （2026-09-30 首次数这套数时是 111 个路由页 + 27 个面板，其中 10 个能单独跑——那之前 #2152 / #2154 刚删掉 24 个旧场景（旧 `courses`、`board/pages/*`、`discussions` 等，功能下线，不是改名）。之后的每次变动记在下面那段日志里。）
 
@@ -77,16 +76,17 @@ covers:
 
 ## 从今天起它是一条闸门 {#ratchet}
 
-2026-09-30 起，「能单独跑」不只是一张表上的状态：`pnpm run lint:scenes` 会逐场景重新判一遍，该红的红、该退 2 的退 2，commit 和 CI 都跑（`--self-test` 在 `repo-guards.yml` 里）。产品定的规则是**只拦新增**：今天能单独跑的冻结下来只许多，今天跑不起来的允许继续躺着，**从今往后新加的每一个场景必须第一天就能单独跑**。
+2026-09-30 起，「能单独跑」不只是一张表上的状态：`pnpm run lint:scenes` 会逐场景重新判一遍，该红的红、该退 2 的退 2，commit 和 CI 都跑（`--self-test` 在 `repo-guards.yml` 里）。产品定的规则是**只拦新增**：今天能单独跑的只许多，今天跑不起来的允许继续躺着，**从今往后新加的每一个场景必须第一天就能单独跑**。
 
-冻在哪：`frontend/scene-baseline.json`，两份名单。
+冻在哪：**分支与 `origin/main` 的合并基准那一棵树**，用它自己这套判据重新判一遍。
 
-| 名单 | 是什么 | 只能 |
-|---|---|---|
-| `ready` | 今天就能单独跑的场景（154 个：62 个面板、88 个容器视图、4 个本来就 A 的路由页） | 增（掉档就红） |
-| `debt` | 仓库里本来就跑不起来的场景（34 个：9 个 C、25 个 D） | 减（变 A 会提示你收紧） |
+| 那一棵树上的场景 | 在这个分支上只能 |
+|---|---|
+| 已经能单独跑（2026-10-14 有 154 个：62 个面板、88 个容器视图、4 个本来就 A 的路由页） | 不能掉档，掉档就红 |
+| 跑不起来（同期 34 个：9 个 C、25 个 D） | 随便躺着；变 A 了会列为「比冻结集好」，不必做什么 |
+| 树上还没有的（这个分支新加的） | 第一天就得能单独跑，不然红 |
 
-不在两份名单里的场景就是**新的**——这也是为什么债务必须一条条列出来，而不是记一个数字：没有这张表，「新」和「旧」没法分。六种结果：
+「新」和「旧」由**树本身**分，不再由一张表分——这也是为什么 2026-10-14 起仓库里没有 `frontend/scene-baseline.json` 了。那张表是同一份冻结集的缓存，九十天里四十来个提交碰过它，两条在飞的分支拆同一页就会在它上面撞车；改成读合并基准以后，分支改不动冻结集，能改的只有场景本身。六种结果：
 
 | 情况 | 结果 |
 |---|---|
@@ -94,12 +94,12 @@ covers:
 | 新场景（新挂的路由页、新加的面板）不是 A | 红（退出 1） |
 | 页面不是 A，但它渲染同目录的 `<页面名>View.vue`，而那个视图是 A | 过：页面算这个视图的容器，冻结的是视图（见下） |
 | 老场景本来就不是 A | 过（它在 `debt` 里） |
-| `debt` 里的场景变 A 了 | 过，并提示你 `--update` 收紧基线 |
-| 判断不了（没有 `frontend/src/`、基线读不出来、场景文件读不了） | 退出 2，永远不算过 |
+| `debt` 里的场景变 A 了 | 过，只写一句「was debt, is standalone-ready now」；没有名单要收紧 |
+| 判断不了（没有 `frontend/src/`、合并基准那棵树读不出来、场景文件读不了） | 退出 2，永远不算过 |
 
 场景从哪来：**页面**是 router 的 import 图能走到的每个 `views/*.vue`（新挂一页就自动进集合，不用改这里），**面板**是 `components/panels/` 目录下的每个 SFC，**视图**是页面 import 的那个同目录 `<页面名>View.vue`。所以「新场景」不需要谁记得去登记。
 
-**新页面可以是容器。** 路由落到页面，读地址、取数、保存本来就是页面的活；一刀切地不许页面做这些，新页面的数据就没有地方放了。所以页面可以留着这些活，前提是把画面交给一个视图：同目录的 `<页面名>View.vue`，由页面用值 import 进来（`import type` 不算）**并且模板真的渲染它**——只 import 不渲染不算容器。渲染用的是静态判断：HTML 注释里的标签不算渲染，属性值里的 `</template>` 不会截断扫描，`<component :is>` 判不了、直接不当容器。除了视图本身，模板渲染的其他组件也都要么是包里的、Vuetify（按仓库 vuetify 的自动导入表认名字，不是按 V 前缀）、要么是能核实为 A 的自家组件，不然取数只是往下挪了一层；小写标签只有真是 HTML/SVG 元素才算原生，否则按组件核（`<child />` 会去找 `child`/`Child` 的 import）；本地绑定的名字优先于内置名——import 的照常评级，`const RouterView = …` 这类声明让名字无从核实，核实不了就不豁免。视图单独算一个场景，和别的场景一样评级、冻结，新的必须第一天就是 A；页面按容器处理，不进两份名单，每次检查都重新看它的视图。`--list` 里容器那一行会写「container of …」。容器规则只给页面：面板没有路由，穿同样衣服的面板就是一个会取数的面板，照常评级。
+**新页面可以是容器。** 路由落到页面，读地址、取数、保存本来就是页面的活；一刀切地不许页面做这些，新页面的数据就没有地方放了。所以页面可以留着这些活，前提是把画面交给一个视图：同目录的 `<页面名>View.vue`，由页面用值 import 进来（`import type` 不算）**并且模板真的渲染它**——只 import 不渲染不算容器。渲染用的是静态判断：HTML 注释里的标签不算渲染，属性值里的 `</template>` 不会截断扫描，`<component :is>` 判不了、直接不当容器。除了视图本身，模板渲染的其他组件也都要么是包里的、Vuetify（按仓库 vuetify 的自动导入表认名字，不是按 V 前缀）、要么是能核实为 A 的自家组件，不然取数只是往下挪了一层；小写标签只有真是 HTML/SVG 元素才算原生，否则按组件核（`<child />` 会去找 `child`/`Child` 的 import）；本地绑定的名字优先于内置名——import 的照常评级，`const RouterView = …` 这类声明让名字无从核实，核实不了就不豁免。视图单独算一个场景，和别的场景一样评级、冻结，新的必须第一天就是 A；页面按容器处理，不算场景，每次检查都重新看它的视图。`--list` 里容器那一行会写「container of …」。容器规则只给页面：面板没有路由，穿同样衣服的面板就是一个会取数的面板，照常评级。
 
 ### 怎么把一个场景改成能单独跑 {#make-standalone}
 
@@ -114,7 +114,7 @@ covers:
 | `provide()` / `inject()` | 先改成 props / 事件——它是「从哪来」的问题，排在数据前面 |
 | `$parent` / `$root`、事件总线 | 改成 props / 事件 |
 
-改完 `pnpm run lint:scenes`；它判成 A 了，会提示你跑 `--update` 把这一条从 `debt` 搬进 `ready`（搬进去就再也不许掉出来了）。
+改完 `pnpm run lint:scenes`。判成 A 就过了，不必登记什么——合并进主干那天起，它就在两边都同意的那棵树里，从这里往后不许再掉档。
 
 #### 脚手架：先把画面那一半拆出来 {#scene-split}
 
@@ -124,17 +124,16 @@ covers:
 
 判据在 `frontend/scripts/scene-split-core.mjs`，样例页面盯着它：`pnpm run test:ratchet`。
 
-### 基线怎么更新 {#update-baseline}
+### 没有基线可以更新 {#update-baseline}
 
-三条命令，读的那条是 CI 跑的，写的那条只加不减。
+冻结集是读出来的，不是写下来的，所以这一条没有 `--update`。
 
 ```bash
 pnpm run lint:scenes                                # 检查（CI 跑的就是它）
-pnpm run lint:scenes:update                         # 收紧基线：往 ready 加、从 debt 减
 python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理由，用来重算这一页的表
 ```
 
-`--update` 有两种情况会**拒绝执行**（退出 1）：有场景掉了档、有新场景不是 A。它拒绝时一个字节都不写——这不是它的脾气，是它唯一值钱的地方：能靠改基线过关的闸门等于没有。掉了档的场景只能改回去（或走 review 改规则），做不到的场景只能改到能单独跑。
+两条命令都不动文件。以前能靠改名单过关的两件事，现在都不可能：掉了档的场景只能改回去（或走 review 改判据），做不到的场景只能改到能单独跑。判据本身要改，改的是合并基准两边都会用到的那一个 `frontend_grade.py`——一次改两边，没有「新判据抓到的旧场景」被为难这一说。
 
 ### 进没进目录，归另一条检查 {#catalog-ratchet}
 
@@ -323,6 +322,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 
 1. **已经拆出来的三个视图挂上目录**：`PanelChangesView`、`PanelPreviewView`、`PanelDocView`，每个带 loading / 空 / 有数据 / 出错几种状态。上一版已经做了。
 2. **A 档的先补目录**，成本几乎为零：还没挂的 A 级组件（不止场景，所有组件）列在 `frontend/catalog-baseline.json` 的 `pending` 里，`python3 .claude/scripts/catalog-ratchet.py --list` 逐个标出来（见[上面](#catalog-ratchet)）。挂一个就跑 `pnpm run lint:catalog:update` 划掉一个；挂上去之后，改外观和改排版就有地方看效果。
-3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；每拆出一个就跑 `pnpm run lint:scenes:update` 把它从 `debt` 搬进 `ready`。
+3. **C 档按「外壳 / 内容」拆**：取数留在外层 composable，视图只收 props，一次一个页签；拆出来跑一遍 `pnpm run lint:scenes` 就行，不必登记。
 4. **D 档要单独排**，不是一页一页能拆完的：读路由那一批要先定「参数从哪进来」。`views/account/` 已按「参数当 props 进视图」拆完（2026-10-05），`views/workspace/`、`views/spaces/` 两块各还要一个方案，动哪块由产品定。
-5. **剩下的就是搬 `debt`。** `ready` 只增不减、`debt` 只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：34 → 0。
+5. **剩下的就是搬欠债。** 能单独跑的那 154 个只增不减，34 个跑不起来的只减不增（[规则](#ratchet)之后没有别的口子），所以这条曲线只有一个方向：34 → 0。

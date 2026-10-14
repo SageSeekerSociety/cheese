@@ -12,9 +12,9 @@
  * （`frontend_grade.py` 的 A 级，取数全在 `composables/useProjectSettings.ts` 和
  * `composables/useBranchProtection.ts` 里），于是每一件都能单独摆在预览站里。
  *
- * 这里没有登记整页：整页现在只剩接线（取数 + 把六件摆进四组里），而且它在
- * `scene-baseline.json` 的 debt 里 —— 「场景」指的是路由页和 `components/panels/**`，
- * `components/settings/**` 这几件不是场景，也不该往那张表里加。
+ * 这里没有登记整页：整页现在只剩接线（取数 + 把六件摆进四组里），而且它自己不是
+ * A 级，在场景棘轮眼里是那棵树上的欠债 —— 「场景」指的是路由页和
+ * `components/panels/**`，`components/settings/**` 这几件不是场景。
  *
  * 末尾另收「归档项目」那一块（`ArchiveProjectSection`）和它的确认框（`ArchiveProjectDialog`）：
  * 两件都是哑的，请求和状态在 `composables/useProjectArchive.ts`。

@@ -16,8 +16,8 @@
  *
  * 不登记 `ProjectSettingsView` 整页：它现在只剩接线（实例化那五个 composable、把
  * 把 `DeviceSessionsSwitch` 作为设备入口组件传入、按 `section` 门控取数），
- * 而且它在 `scene-baseline.json` 的 debt 里 —— 场景是路由页和 `components/panels/**`，
- * 整页不是给预览站单独画的。
+ * 而且它自己不是 A 级，在场景棘轮眼里是那棵树上的欠债 —— 场景是路由页和
+ * `components/panels/**`，整页不是给预览站单独画的。
  *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要 `SETTINGS_DATA_ENTRIES`
  * 这个值，运行时不构成循环。

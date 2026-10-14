@@ -695,7 +695,7 @@ ${workflows.map((w) => `| \`${w.f}\` | ${mdCell(w.name)} | ${w.triggers.map((t) 
   const components = gen('components.py')
   out['ref-components'] = {
     title: '组件总览', kind: '参考',
-    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json', 'frontend/scene-baseline.json'],
+    covers: ['.claude/scripts/frontend_grade.py', '.claude/scripts/catalog-ratchet.py', '.claude/scripts/scene-ratchet.py', 'frontend/catalog-baseline.json'],
     summary: `frontend/src 下全部 ${components.totals.components} 个 .vue 组件：每个的档位（A 能单独渲染）、有没有进预览站 /demo/catalog、属于哪个场景。`,
     body: componentsReference(components),
   }
