@@ -163,7 +163,7 @@ covers:
 | routines | 固定 30s | 周期任务与事件触发的一次执行 |
 | task deadline sweep | `task_deadline_sweep_interval_s` | 任务截止 |
 | memory dream | `memory_dream_sweep_interval_s` | 记忆整理 |
-| wake watch | `wake_watch_interval_s` | 盯叫醒链上那两拍（定时器每拍一条消息、看门狗原地改一条心跳），静满 60 分钟记一条运行记录（影子期只记不补跳） |
+| wake watch | `wake_watch_interval_s` | 盯叫醒链上那两拍（定时器每拍一条消息、看门狗原地改一条心跳），静满 60 分钟记一条运行记录，并点 #1343 那条线上的座位补一跳（`wake_watch_catchup` 关掉就只记不补） |
 
 `spawn()` 是不留句柄的那一类：任务可能被 GC 掉，所以平台持一个强引用集合 `_INFLIGHT`；`hold()` 给需要留句柄以便关停时取消的工作。两者的崩溃都记 ERROR 而不是 WARNING（告警只捡 ERROR）。
 

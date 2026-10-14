@@ -202,7 +202,7 @@ def load(loader):
     CLAUDE_ACCOUNTS.snapshot()
 
 
-def _record_usage(project_id, topic_id, usage, model, kind=""):
+def _record_usage(project_id, topic_id, usage, model, kind="", account=""):
     """Meter a turn, then refresh the pool the board reads.
 
     The two belong together: the snapshot's `retry_after` is a countdown, so it
@@ -210,7 +210,7 @@ def _record_usage(project_id, topic_id, usage, model, kind=""):
     happens on every served turn. Cooldown changes publish on their own (every
     state change writes through `ClaudeAccounts._save`).
     """
-    METER.record(project_id, topic_id, usage, model, kind)
+    METER.record(project_id, topic_id, usage, model, kind, account)
     CLAUDE_ACCOUNTS.snapshot()
 
 
@@ -1334,6 +1334,7 @@ def _retry_claude(attempt):
         "Claude request %s switches %s -> %s after 429", flow.id, attempt.account, name
     )
     attempt.account = name
+    flow.metadata["cheese_claude_account"] = name
     return True
 
 
@@ -1488,6 +1489,8 @@ def _route(
     if selected:
         attempt = Attempt(flow, selected[0], _retry_claude)
         ATTEMPTS[flow.id] = attempt
+        # Read when the turn is metered: the account it was last sent to.
+        flow.metadata["cheese_claude_account"] = selected[0]
         if buffered:
             attempt.tee(flow.request.raw_content or b"")
             attempt.complete = True
@@ -1710,6 +1713,7 @@ def _meter_subscription_stream(
             extractor.usage,
             extractor.model,
             flow.metadata.get("cheese_usage_kind", ""),
+            flow.metadata.get("cheese_claude_account", ""),
         )
         if interrupted:
             logger.warning(
@@ -2328,4 +2332,5 @@ def response(flow: http.HTTPFlow) -> None:
     usage, model = payload.get("usage", {}), payload.get("model", "")
     if usage:
         kind = flow.metadata.get("cheese_usage_kind", "")
-        _record_usage(project_id, topic_id, usage, model, kind)
+        account = flow.metadata.get("cheese_claude_account", "")
+        _record_usage(project_id, topic_id, usage, model, kind, account)

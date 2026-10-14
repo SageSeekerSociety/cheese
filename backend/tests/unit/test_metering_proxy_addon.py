@@ -1485,6 +1485,25 @@ def test_a_streamed_message_is_metered_through_the_response_tee(monkeypatch, tmp
     assert mod.METER.used() == 100  # 10 input + 90 output
 
 
+def test_a_metered_turn_names_the_claude_account_that_served_it(monkeypatch, tmp_path):
+    """With several subscription accounts in the pool, the ledger line names the
+    one the turn was sent to, so a seat's spend traces back to its rooms."""
+    mod = _load_addon(monkeypatch, tmp_path)
+
+    flow = _make_flow()
+    flow.metadata["cheese_attr"] = ("proj-x", "topic-y")
+    flow.metadata["cheese_claude_account"] = "extra"
+    flow.response = _make_response()
+    mod.responseheaders(flow)
+    flow.response.stream(
+        b'data: {"type":"message_start","message":{"model":"claude-opus-5",'
+        b'"usage":{"input_tokens":10,"output_tokens":1}}}\n'
+    )
+    flow.response.stream(b"")  # sentinel
+
+    assert [line.get("account") for line in _usage_lines(tmp_path)] == ["extra"]
+
+
 def _usage_lines(tmp_path) -> list[dict]:
     log = tmp_path / "usage.jsonl"
     if not log.exists():
