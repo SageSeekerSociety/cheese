@@ -113,13 +113,11 @@ describe('新任务的第一轮', () => {
     docHostCalls.length = 0
   })
 
-  it('还在整理：说正在整理，不给重试', async () => {
+  it('还在整理：说正在整理，不给重试', () => {
     const ui = mount('drafting')
     expect(ui.queryByRole('button', { name: '重试' })).toBeNull()
-    // 文档那一格是 `defineAsyncComponent`（`TaskOverview` 里按需取 `PanelDocHost`）：
-    // 先给它一个到位的机会，再断言它没被画出来。不等的话，这一条在按需取的那一块还没到
-    // 时就通过了 —— 它要守的「这一格不该出现」，得等它真有可能出现才算守住了。
-    await ui.findByTestId('doc', {}, { timeout: 250 }).catch(() => undefined)
+    // 这一条不用等 `defineAsyncComponent`：`drafting` 走的是 `v-if="opening"` 那半边，
+    // 编辑器那一格（`v-else`）不进渲染树，异步组件连要都不会被要。等在这儿只会超时。
     expect(ui.queryByTestId('doc')).toBeNull()
   })
 
