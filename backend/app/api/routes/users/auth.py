@@ -409,16 +409,15 @@ async def user_login(
             profile=profile,
             viewer_id=user.id,
         )
-        return {
-            "code": 201,
-            "message": "Login successfully.",
-            "data": {
+        return ok(
+            {
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
                 "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
-        }
+            "Login successfully.",
+        )
     finally:
         await redis.aclose()
 
@@ -518,22 +517,21 @@ async def verify_2fa_login(
             profile=profile,
             viewer_id=user.id,
         )
-        return {
-            "code": 201,
-            "message": (
-                "Login successfully. Note: This backup code has expired. "
-                "Please generate a new backup code for future use."
-                if used_backup_code
-                else "Login successfully."
-            ),
-            "data": {
+        return ok(
+            {
                 "user": user_dto,
                 "accessToken": access_token,
                 "requires2FA": False,
                 "usedBackupCode": used_backup_code,
                 "passkeyEnrollment": await _passkey_enrollment(user.id, session),
             },
-        }
+            (
+                "Login successfully. Note: This backup code has expired. "
+                "Please generate a new backup code for future use."
+                if used_backup_code
+                else "Login successfully."
+            ),
+        )
     finally:
         await redis.aclose()
 
@@ -671,16 +669,15 @@ async def verify_sign_in_code(
         profile=profile,
         viewer_id=user.id,
     )
-    return {
-        "code": 201,
-        "message": "Login successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
             "accessToken": access_token,
             "requires2FA": False,
             "passkeyEnrollment": await _passkey_enrollment(user.id, session),
         },
-    }
+        "Login successfully.",
+    )
 
 
 @router.post(
@@ -724,14 +721,13 @@ async def refresh_access_token(
         profile=profile,
         viewer_id=user.id,
     )
-    return {
-        "code": 201,
-        "message": "Refresh token successfully.",
-        "data": {
+    return ok(
+        {
             "accessToken": access_token,
             "user": user_dto,
         },
-    }
+        "Refresh token successfully.",
+    )
 
 
 @router.post(
@@ -753,10 +749,7 @@ async def user_logout(
     if refresh_token:
         await SessionService(session).end(refresh_token)
     _clear_refresh_cookie(response)
-    return {
-        "code": 201,
-        "message": "Logout successfully.",
-    }
+    return ok(None, "Logout successfully.")
 
 
 @router.post(

@@ -157,11 +157,7 @@ async def passkey_register_verify(
     )
     await PasskeyPromptService(session).end(auth_user.user_id)
 
-    return {
-        "code": 201,
-        "message": "Passkey registered successfully.",
-        "data": {"passkey": result},
-    }
+    return ok({"passkey": result}, "Passkey registered successfully.")
 
 
 class PasskeyPromptDismissal(BaseModel):
@@ -261,14 +257,13 @@ async def passkey_authenticate_verify(
         profile=profile,
         viewer_id=user_id,
     )
-    return {
-        "code": 201,
-        "message": "Login successfully.",
-        "data": {
+    return ok(
+        {
             "user": user_dto,
             "accessToken": access_token,
         },
-    }
+        "Login successfully.",
+    )
 
 
 @router.get(

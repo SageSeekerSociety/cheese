@@ -106,7 +106,7 @@ async def create_space_invite_code(
         note=payload.note,
     )
     items = await _invite_codes_to_api_models([invite], db=db)
-    return {"code": 201, "message": "Created", "data": {"inviteCode": items[0]}}
+    return ok({"inviteCode": items[0]})
 
 
 @router.patch(

@@ -324,10 +324,8 @@ async def create_recruitment_post(
     teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
         db, [post]
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
+    return ok(
+        {
             "post": _post_to_api(
                 post,
                 teams_map=teams_map,
@@ -335,8 +333,8 @@ async def create_recruitment_post(
                 profiles_map=profiles_map,
                 chosen_map=chosen_map,
             )
-        },
-    }
+        }
+    )
 
 
 @team_recruitment_router.get(
