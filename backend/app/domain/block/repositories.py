@@ -528,10 +528,10 @@ class BlockRepository:
 
     #: 等一道题的地方（频道、活、支线）一屏最多七百来个，下面两句查询都只把这些 id
     #: 当**参数**收进来。按名绑定的数组参数，语句本身与调用无关，于是可以建一次、
-    #: 处处复用：原先每次调用重建一遍，量出来这两句的构造本身约 410µs / 480µs，
-    #: 而一次「待我处理」一共有 11 句查询、光造语句对象就是约 4.8 毫秒 —— 比这 11
-    #: 句真正执行的那部分还贵。语句是只读的（执行不往它上面挂编译期状态），一份拿给
-    #: 并发用安全，和 `room_task/repositories.py` 的 `_uuids` 是同一个写法。
+    #: 处处复用：原先每次调用重建一遍，量出来这两句的构造本身约 406µs / 449µs（中位）。
+    #: 一次「待我处理」一共 11 句查询，原先每请求都重建一遍。语句是只读的（执行不往
+    #: 它上面挂编译期状态），一份拿给并发用安全，和 `room_task/repositories.py` 的
+    #: `_uuids` 是同一个写法。
     _places_param = bindparam("places", type_=ARRAY(Uuid))
     _ats_param = bindparam("ats", type_=ARRAY(DateTime(timezone=True)))
     _awaiting_statements: dict[str, Select] = {}
