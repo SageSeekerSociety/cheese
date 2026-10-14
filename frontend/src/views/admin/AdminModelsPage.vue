@@ -98,7 +98,7 @@ const {
   sourceFormMode,
   sourceModel,
   sourceSeed,
-  sourceNextOrder,
+  sourceSiblings,
   sourceSaving,
   sourceError,
   sourceBusy,
@@ -228,7 +228,7 @@ const {
       :mode="sourceFormMode"
       :model-name="sourceModel"
       :seed="sourceSeed"
-      :next-order="sourceNextOrder"
+      :siblings="sourceSiblings"
       :saving="sourceSaving"
       :error="sourceError"
       @submit="onSourceSubmit"

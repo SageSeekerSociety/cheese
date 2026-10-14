@@ -110,7 +110,7 @@ export function useAdminModels() {
   const sourceFormMode = ref<'add' | 'edit'>('add')
   const sourceModel = ref('')
   const sourceSeed = ref<SourceRow | null>(null)
-  const sourceNextOrder = ref(1)
+  const sourceSiblings = ref<SourceRow[]>([])
   const sourceSaving = ref(false)
   const sourceError = ref<string | null>(null)
   const sourceBusy = ref(false)
@@ -401,11 +401,11 @@ export function useAdminModels() {
     await load()
   }
 
-  function openAddSource(name: string, nextOrder: number) {
+  function openAddSource(name: string, siblings: SourceRow[]) {
     sourceFormMode.value = 'add'
     sourceModel.value = name
     sourceSeed.value = null
-    sourceNextOrder.value = nextOrder
+    sourceSiblings.value = siblings
     sourceError.value = null
     sourceFormOpen.value = true
   }
@@ -612,7 +612,7 @@ export function useAdminModels() {
     sourceFormMode,
     sourceModel,
     sourceSeed,
-    sourceNextOrder,
+    sourceSiblings,
     sourceSaving,
     sourceError,
     sourceBusy,

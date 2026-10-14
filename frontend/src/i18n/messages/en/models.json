@@ -296,7 +296,12 @@
       "removeHeader": "Remove this header",
       "headerInvalid": "A header name or value isn't valid: authentication and transport headers can't be set per source, and values can't contain line breaks.",
       "session": "Session header name",
-      "sessionHint": "For upstreams that route or cache by session (such as x-opencode-session): the gateway puts Claude Code's session id in this header. Leave empty to send none."
+      "sessionHint": "For upstreams that route or cache by session (such as x-opencode-session): the gateway puts Claude Code's session id in this header. Leave empty to send none.",
+      "leadsWarning": "This priority puts the new source ahead of every source in use, taking their traffic (a source with no priority is only used when every source with one is unavailable).",
+      "makePrimary": "Make it the primary source",
+      "fallback": "It goes after the existing sources as a fallback: it is used only when the ones ahead are unavailable.",
+      "mixedFree": "This model will have both free and paid sources: it is billed at the paid price, traffic on the free source included.",
+      "headersPublic": "Header values aren't secret: unless the name contains key, token, secret, auth, password, credential or cookie, any caller holding a project key can read them from the gateway. Put the upstream credential in the API key."
     },
     "confirm": {
       "delete": {

@@ -121,11 +121,12 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 
 同一个 `model_name` 在网关里可以有好几行（部署），网关按 `litellm_params.order` 从小到大试，相同的一起分流，没有 order 的只在所有有 order 的都冷却时才轮到。管理页把它们叫「线路」：任何模型都能加运行时线路，包括 `config.yaml` 声明的（`kimi-k3` 的官方行在 config 里，OpenCode Go 那一行可以从页面加），config 的那几行在页面上列出来但只读。不用发布网关，加完立刻生效。
 
-- **模型的元数据每一行都一样**：上架、名字、档位、思考档、能力，目录读 `/model/info` 列出的第一行，而哪一行排第一不由我们定。加线路时服务层从已有那一行抄，改模型时每一行都改；部署 id 不抄（共用一个 id，一行 429 冷却全组，#3294）。
-- **线路自己的键**：`cheese_upstream_headers`（静态请求头，如 `user-agent`）、`cheese_session_header`（接收 Claude Code 会话 id 的头名，如 `x-opencode-session`）、`cheese_free`，都在这一行的 `model_info` 里，由网关侧的请求头钩子（`deploy/gateway/upstream_headers.py`）在选定部署后加到请求上。认证与传输相关的头不许按线路写；页面只列头名，值不回显、不进审计。
+- **模型的元数据每一行都一样**：上架、名字、档位、思考档、能力，目录读 `/model/info` 列出的第一行，而哪一行排第一不由我们定。加线路时服务层从已有那一行抄（`cheese_*` 里属于模型的键，加上每一个显式写了的 `supports_*`，`supports_output_config` 这类决定思考档送不送得到上游），改模型时每一行都改；部署 id 不抄（共用一个 id，一行 429 冷却全组，#3294）。
+- **新线路默认是兜底**：默认优先级排在现有带 order 的线路之后。新线路会接走在用线路的流量时，请求体必须带 `make_primary: true`，页面上要勾「让它成为首选」，不带就 400。这种情况是它的数不大于在用线路里最小的那个，或者旁边的线路都没写 order。给停用的模型加线路，新线路也是停用的。
+- **请求头**：静态头写在这一行的 `litellm_params.extra_headers`，LiteLLM 原样发给上游（`hosted_vllm/` 与 `anthropic/` 两种都实测过）；接收 Claude Code 会话 id 的头名写在 `model_info.cheese_session_header`，由网关侧的钩子填值。`/model/info` 对每一把虚拟 key 都开放：`model_info` 原样回，`litellm_params` 过 LiteLLM 的掩码，而掩码只看头名——名字里有 key、token、secret、auth、password、credential、cookie 这一段的，值被打码，别的原样可读（1.103.3 上实测）。所以头的值按公开对待，上游凭据填 `api_key`；认证与传输相关的头不许按线路写。页面只列头名，审计里也只留头名。
 - **协议**：`anthropic` → `anthropic/<上游名>`（原生 Messages）；`openai-chat` → `hosted_vllm/<上游名>`（只有 chat/completions 的中转站与 OpenCode Go；不能用 `openai/`，那会被翻成 Responses API）；`openai-responses` → `openai/<上游名>`。不选协议时 `upstream_model` 就是完整的 LiteLLM 模型串。原生 Messages 的地址不带 `/v1`（LiteLLM 自己拼 `/v1/messages`，服务层把多填的 `/v1` 去掉）；Chat 线路的地址要带到 `/v1`。
 - **Chat 线路让整组折叠 system 消息**：Messages 翻成 chat/completions 会丢掉对话中间的 system 消息（实测 glm-5.2、MiMo），所以一个模型一旦有 `openai-chat` 线路，组里每一行都标 `supports_mid_conversation_system: false`，服务层加线路时顺手改齐运行时的行；config.yaml 的行没标就拒，先去改 config。
-- **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它，`check_config.py` 同一条）；没标免费的零价一律拒。
+- **免费**：唯一合法的零价是声明出来的——`cheese_free: true` 且输入、输出都写成 0（`price_is_set` 认它，`check_config.py` 同一条）；没标免费的零价一律拒。免费线路和付费线路在同一个模型里时，用量估价按付费线路里最高的那一档算，免费线路上的流量也一样（`usage.pricing`）。页面在混用时会提示这一点。
 - 目录对一个模型的判断看整组：有一行没停用就还能选，在用的每一行都有价（或声明免费）才算有价。
 
 还有一项要按模型手动标：**`supports_mid_conversation_system: false`**。Claude Code 会把技能清单、运行环境和日期放在对话中间的 system 消息里；有的线路收不了它，有的是网关转换时丢掉，有的是上游丢掉或整条请求拒绝。标了 `false` 的模型，平台启动 Claude Code 时设 `CLAUDE_CODE_MODEL_CAPABILITIES`，让它把这些内容并进第一条用户消息（`gateway_usage.model_capabilities`）。没标的照 Claude Code 的默认。这一项只在量过之后手动标，不按上游推断：线路以后支持了，把标记去掉就行。量法是从后端经网关发一条对话中间带暗号的 system 消息，问模型暗号是什么。`config.yaml` 里的模型写在条目里，运行时模型在管理页的能力开关里关掉。

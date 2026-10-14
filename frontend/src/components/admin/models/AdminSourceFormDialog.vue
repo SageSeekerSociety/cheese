@@ -7,7 +7,7 @@ import { useI18n } from 'vue-i18n'
 
 import AdminSourceFields from '@/components/admin/models/AdminSourceFields.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import { draftFromSource, draftValid, emptySourceDraft } from '@/lib/adminSources'
+import { defaultOrder, draftFromSource, draftValid, emptySourceDraft, wouldLead } from '@/lib/adminSources'
 
 // 添加 / 编辑一条线路的框。和模型表单同一条分工：这一层收字、先按服务端的规则自查、
 // 把草稿 emit 出去；打接口、失败时不关框，是页面的事（它同时看得到请求结果和框开没开）。
@@ -22,12 +22,12 @@ const props = withDefaults(
     modelName: string
     /** `edit` 时那条线路。 */
     seed?: SourceRow | null
-    /** `add` 时新线路的默认优先级：排在现有线路之后。 */
-    nextOrder?: number
+    /** 同组现有的线路：新线路的默认优先级排在它们之后，排到最前时要人明确选择。 */
+    siblings?: SourceRow[]
     saving?: boolean
     error?: string | null
   }>(),
-  { seed: null, nextOrder: 1, saving: false, error: null }
+  { seed: null, siblings: () => [], saving: false, error: null }
 )
 
 const emit = defineEmits<{
@@ -44,12 +44,17 @@ watch(
   () => props.modelValue,
   (open) => {
     if (!open) return
-    draft.value = props.mode === 'edit' && props.seed ? draftFromSource(props.seed) : emptySourceDraft(props.nextOrder)
+    draft.value =
+      props.mode === 'edit' && props.seed ? draftFromSource(props.seed) : emptySourceDraft(defaultOrder(props.siblings))
   },
   { immediate: true }
 )
 
-const valid = computed(() => draftValid(draft.value))
+/** 加线路且它会接走现有流量时，没勾「让它成为首选」不放行（服务端同样会拒）。 */
+const leadUnconfirmed = computed(
+  () => props.mode === 'add' && wouldLead(props.siblings, Number(draft.value.order)) && !draft.value.makePrimary
+)
+const valid = computed(() => draftValid(draft.value) && !leadUnconfirmed.value)
 
 function close() {
   emit('update:modelValue', false)
@@ -77,7 +82,7 @@ function submit() {
     @update:model-value="!$event && close()"
     @primary="submit"
   >
-    <AdminSourceFields v-model="draft" :editing="mode === 'edit'" />
+    <AdminSourceFields v-model="draft" :editing="mode === 'edit'" :siblings="mode === 'add' ? siblings : undefined" />
 
     <v-alert v-if="error" type="error" density="compact" variant="tonal" class="asd__alert" role="alert">
       {{ error }}

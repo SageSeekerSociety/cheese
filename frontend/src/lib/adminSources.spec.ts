@@ -10,12 +10,15 @@ import type { SourceRow } from './adminModels'
 import { describe, expect, it } from 'vitest'
 
 import {
+  defaultOrder,
   draftFromSource,
   draftPriced,
   draftProblems,
   draftToFields,
   draftValid,
   emptySourceDraft,
+  mixesFreeAndPaid,
+  wouldLead,
 } from './adminSources'
 
 function source(over: Partial<SourceRow> = {}): SourceRow {
@@ -129,5 +132,24 @@ describe('线路草稿 · 请求头', () => {
 describe('线路草稿 · 优先级', () => {
   it.each(['0', '101', '1.5', ''])('%s 不放行', (order) => {
     expect(draftProblems({ ...emptySourceDraft(), upstream: 'm', order }).order).toBe(true)
+  })
+})
+
+describe('线路草稿 · 新线路排在哪', () => {
+  it('默认排在现有带优先级的线路之后', () => {
+    expect(defaultOrder([source({ order: 1 }), source({ order: 3 })])).toBe(4)
+  })
+
+  it('排到最前、或旁边的线路都没写优先级，就是接走流量', () => {
+    expect(wouldLead([source({ order: 2 })], 2)).toBe(true)
+    expect(wouldLead([source({ order: 2 })], 3)).toBe(false)
+    expect(wouldLead([source({ order: null })], 50)).toBe(true)
+    // 整组都停着时谁也不接走谁。
+    expect(wouldLead([source({ order: 2, blocked: true })], 1)).toBe(false)
+  })
+
+  it('免费与付费混用要说出来', () => {
+    expect(mixesFreeAndPaid([source({ free: false })], true)).toBe(true)
+    expect(mixesFreeAndPaid([source({ free: false })], false)).toBe(false)
   })
 })

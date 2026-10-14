@@ -535,8 +535,8 @@ describe('模型管理 · 线路', () => {
     session_header: 'x-opencode-session',
   }
 
-  async function openDrawer() {
-    const model = configModel({ sources: [goSource] })
+  async function openDrawer(sources: unknown[] = [goSource]) {
+    const model = configModel({ sources })
     getGatewayModels.mockResolvedValue(modelsPayload([model]))
     getGatewayModel.mockResolvedValue({
       model,
@@ -569,5 +569,74 @@ describe('模型管理 · 线路', () => {
 
     expect(await page.findByText(/config\.yaml 声明/)).toBeTruthy()
     expect(reorderGatewaySources).toHaveBeenCalledWith('mimo-v2.6-pro', { 'go-1': 2 })
+  })
+
+  it('加线路默认排在现有线路之后作兜底，发出去的就是那个优先级', async () => {
+    const page = await openDrawer()
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.source.add' }))
+    await page.findByText('models.source.dialog.addTitle')
+    await fireEvent.update(page.getByLabelText('models.dialog.field.upstreamModel'), 'mimo-relay')
+    await fireEvent.update(page.getByLabelText('models.price.input'), '1')
+    await fireEvent.update(page.getByLabelText('models.price.output'), '2')
+    await fireEvent.click(page.getByRole('button', { name: 'models.dialog.create' }))
+
+    await waitFor(() => expect(addGatewaySource).toHaveBeenCalled())
+    const [name, body] = addGatewaySource.mock.calls[0]
+    expect(name).toBe('mimo-v2.6-pro')
+    expect(body).toMatchObject({ protocol: 'anthropic', upstream_model: 'mimo-relay', order: 2, free: false })
+    expect(body).not.toHaveProperty('make_primary')
+  })
+
+  it('现有线路都没写优先级时，新线路会被先试：不勾「让它成为首选」就不放行', async () => {
+    const page = await openDrawer([{ ...goSource, origin: 'config', order: null }])
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.source.add' }))
+    await page.findByText('models.source.dialog.addTitle')
+    await fireEvent.update(page.getByLabelText('models.dialog.field.upstreamModel'), 'mimo-relay')
+    await fireEvent.update(page.getByLabelText('models.price.input'), '1')
+    await fireEvent.update(page.getByLabelText('models.price.output'), '2')
+    const create = page.getByRole('button', { name: 'models.dialog.create' }) as HTMLButtonElement
+    expect(create.disabled).toBe(true)
+
+    const primary = page.getByLabelText('models.source.field.makePrimary') as HTMLInputElement
+    // Vuetify 的勾选框听的是 input 事件；happy-dom 里点一下不会派发它。
+    primary.checked = true
+    await fireEvent.input(primary)
+    await waitFor(() => expect(create.disabled).toBe(false))
+    await fireEvent.click(create)
+    await waitFor(() => expect(addGatewaySource).toHaveBeenCalled())
+    expect(addGatewaySource.mock.calls[0][1]).toMatchObject({ order: 1, make_primary: true })
+  })
+})
+
+describe('模型管理 · 新建模型发出去的请求体', () => {
+  it('模型的字段和第一条线路一起发：协议、上游名、优先级、单价', async () => {
+    const page = mountPage()
+    await page.findByText('GLM 4.7')
+
+    await fireEvent.click(page.getByRole('button', { name: 'models.page.add' }))
+    await page.findByText('models.dialog.add.title')
+    await fireEvent.update(page.getByLabelText('models.dialog.field.name'), 'glm-5.2-x')
+    await fireEvent.update(page.getByLabelText('models.dialog.field.label'), 'GLM X')
+    await fireEvent.update(page.getByLabelText('models.dialog.field.upstreamModel'), 'glm-5.2')
+    await fireEvent.update(page.getByLabelText('models.dialog.field.apiBase'), 'https://open.bigmodel.cn/api/anthropic')
+    await fireEvent.update(page.getByLabelText('models.dialog.field.apiKey'), 'sk-upstream')
+    await fireEvent.update(page.getByLabelText('models.price.input'), '1')
+    await fireEvent.update(page.getByLabelText('models.price.output'), '2')
+    await fireEvent.click(page.getByRole('button', { name: 'models.dialog.create' }))
+
+    await waitFor(() => expect(createGatewayModel).toHaveBeenCalled())
+    expect(createGatewayModel.mock.calls[0][0]).toMatchObject({
+      name: 'glm-5.2-x',
+      label: 'GLM X',
+      protocol: 'anthropic',
+      upstream_model: 'glm-5.2',
+      api_base: 'https://open.bigmodel.cn/api/anthropic',
+      api_key: 'sk-upstream',
+      order: 1,
+      free: false,
+      prices: { input: 1e-6, output: 2e-6, cache_read: null, cache_creation: null },
+    })
   })
 })

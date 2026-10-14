@@ -757,6 +757,10 @@ class GatewayModelsService:
             _require_price_when_selectable(model.selectable, prices, free)
             # 模型那一层的元数据从已有那一行抄：同组每一行必须一字不差。
             catalogue = dict(model.sources[0].catalogue if model.sources else {})
+            if _would_lead(model, data["order"]) and not data.get("make_primary"):
+                raise BadRequestError(
+                    say("sourceWouldBePrimary", name=name, order=data["order"])
+                )
             if _translated_to_chat(upstream_model):
                 await self._fold_system_messages(model)
                 catalogue[_MID_SYSTEM_FIELD] = False
@@ -773,6 +777,10 @@ class GatewayModelsService:
                 session_header=data.get("session_header") or None,
             )
             data["source_id"] = source_id
+            if model.blocked:
+                # 停用的模型加一条线路，不能顺手把模型启用了：新线路跟着停着，
+                # 要用的时候整组一起启用。
+                await self._admin.set_blocked(source_id, True)  # type: ignore[union-attr]
             await self._after_write()
             return {"model": await self._read_back(name, {}, model.model_id)}
 
@@ -1172,6 +1180,21 @@ _FIRST_ORDER = 1
 # `supports_mid_conversation_system`）。
 _MID_SYSTEM = "mid_conversation_system"
 _MID_SYSTEM_FIELD = "supports_mid_conversation_system"
+
+
+def _would_lead(model: AdminModel, order: int) -> bool:
+    """一条优先级为 `order` 的新线路，会不会接走这个模型在用线路的流量。
+
+    LiteLLM 先在健康的、带 order 的部署里取最小的那一档；没有 order 的只在所有带
+    order 的都不可用时才轮到。所以组里在用的线路要么都没有 order（新线路一来就排在
+    它们前面），要么新线路的数不大于其中最小的那个（排到最前或与之分流），就是
+    「接走流量」。整组都停着时谁也不接走谁。
+    """
+    live = [s.order for s in model.sources if not s.blocked]
+    if not live:
+        return False
+    ordered = [o for o in live if o is not None]
+    return not ordered or order <= min(ordered)
 
 
 def _translated_to_chat(upstream_model: str) -> bool:

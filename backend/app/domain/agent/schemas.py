@@ -303,6 +303,9 @@ class SourceCreate(_SourceFields):
 
     upstream_model: str = Field(min_length=1, max_length=200)
     order: int = Field(ge=ORDER_MIN, le=ORDER_MAX)
+    # 这个优先级会让新线路排到所有在用线路的最前（或旁边那几条根本没有 order）时，
+    # 必须显式说「就让它当首选」。加线路默认是加一条兜底，不能悄悄接走全部流量。
+    make_primary: bool = False
     api_base: str | None = None
     api_key: str | None = None
     prices: ModelPrices | None = None

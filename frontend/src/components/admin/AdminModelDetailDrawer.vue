@@ -41,7 +41,7 @@ const props = defineProps<{
 // 线路那一段的动作只往上报：确认框、表单、接口都归页面（同模型表那几个按钮）。
 const emit = defineEmits<{
   (e: 'update:modelValue', value: boolean): void
-  (e: 'add-source', name: string, nextOrder: number): void
+  (e: 'add-source', name: string, siblings: SourceRow[]): void
   (e: 'edit-source', name: string, source: SourceRow): void
   (e: 'block-source', name: string, source: SourceRow): void
   (e: 'delete-source', name: string, source: SourceRow): void
@@ -72,12 +72,6 @@ watch(
 )
 
 const model = computed(() => detail.value?.model ?? null)
-
-/** 新加的线路默认排在现有的最后一条之后（上限 100）。 */
-const nextOrder = computed(() => {
-  const orders = (model.value?.sources ?? []).map((s) => s.order ?? 0)
-  return Math.min(100, Math.max(0, ...orders) + 1)
-})
 
 const caps = computed(() => {
   const c = model.value?.capabilities ?? {}
@@ -183,7 +177,7 @@ function close() {
             <AdminModelSources
               :sources="model.sources ?? []"
               :busy="sourceBusy"
-              @add="emit('add-source', model.name, nextOrder)"
+              @add="emit('add-source', model.name, model.sources ?? [])"
               @edit="emit('edit-source', model.name, $event)"
               @block="emit('block-source', model.name, $event)"
               @delete="emit('delete-source', model.name, $event)"

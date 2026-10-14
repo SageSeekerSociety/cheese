@@ -96,6 +96,8 @@ export interface GatewaySourceFields {
   free?: boolean
   upstream_headers?: Record<string, string>
   session_header?: string
+  /** 只在加线路时：这个优先级会接走在用线路的流量，人已经明确同意。 */
+  make_primary?: boolean
 }
 
 /** 清单里的一个模型（契约 §3.1）。

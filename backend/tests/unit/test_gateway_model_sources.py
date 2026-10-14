@@ -70,6 +70,7 @@ _KIMI_CONFIG = {
         "cheese_efforts": ["low", "high", "max"],
         "supports_reasoning": True,
         "supports_output_config": True,
+        "supports_max_reasoning_effort": True,
         # Chat 线路要求整组都标（见下面那一节）；config 的行只能在 config.yaml 里标。
         "supports_mid_conversation_system": False,
     },
@@ -186,6 +187,8 @@ _GO = {
     "prices": {"input": 1e-6, "output": 4e-6},
     "upstream_headers": {"user-agent": "cheese-gateway/1.0"},
     "session_header": "x-opencode-session",
+    # Go 排在官方 API 前面是有意为之：config 那一行没有 order，新线路一来就是首选。
+    "make_primary": True,
 }
 
 
@@ -210,6 +213,9 @@ async def test_a_source_added_beside_a_config_model_carries_the_models_metadata(
         "cheese_tier",
         "cheese_efforts",
         "supports_reasoning",
+        # 思考档送不送得到上游看这两项；少抄一项，落到新线路的请求就丢了 effort。
+        "supports_output_config",
+        "supports_max_reasoning_effort",
     ):
         assert new_row["model_info"][key] == config_row["model_info"][key], key
     # 自己的部署 id：抄来同一个，一行 429 就把全组冷却了。
@@ -218,12 +224,15 @@ async def test_a_source_added_beside_a_config_model_carries_the_models_metadata(
         next(r for r in gw.requests if r.url.path == "/model/new").content
     )
     assert "id" not in sent["model_info"]
-    # 请求头只属于这一行：官方那一行不该收到 Go 的 User-Agent 与会话头。
-    assert new_row["model_info"]["cheese_upstream_headers"] == {
+    # 请求头只属于这一行：官方那一行不该收到 Go 的 User-Agent 与会话头。静态头的值
+    # 在 litellm_params 里（/model/info 对每把虚拟 key 都开放，model_info 原样回，
+    # litellm_params 过 LiteLLM 的掩码），model_info 里只有会话头的名字。
+    assert new_row["litellm_params"]["extra_headers"] == {
         "user-agent": "cheese-gateway/1.0"
     }
+    assert "cheese-gateway/1.0" not in json.dumps(new_row["model_info"])
     assert new_row["model_info"]["cheese_session_header"] == "x-opencode-session"
-    assert "cheese_upstream_headers" not in config_row["model_info"]
+    assert "extra_headers" not in config_row["litellm_params"]
     assert new_row["litellm_params"]["order"] == 1
 
 
@@ -766,3 +775,71 @@ async def test_a_messages_base_with_v1_is_not_sent_twice():
     assert gw.group("kimi-k3")[1]["litellm_params"]["api_base"] == (
         "https://opencode.ai/inference/go"
     )
+
+
+# --- 加线路默认是兜底，停着的模型加线路也还停着 -----------------------------------
+
+_PAID = {"prices": {"input": 1e-6, "output": 2e-6}}
+
+
+@pytest.mark.anyio
+async def test_a_new_source_does_not_take_the_traffic_unless_asked():
+    """config 那一行没有 order：带 order 的新线路一来就是首选（LiteLLM 只在带 order
+    的都不可用时才轮到不带的）。不说「让它当首选」就拒，一行都不写。"""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw)
+
+    with pytest.raises(BadRequestError):
+        await service.add_source(
+            handle="admin",
+            name="kimi-k3",
+            payload=SourceCreate(**{**_GO, "make_primary": False}),
+        )
+    assert gw.writes() == []
+
+
+@pytest.mark.anyio
+async def test_a_source_ordered_after_the_others_needs_no_say_so():
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)  # 优先级 1 与 2
+
+    await service.add_source(
+        handle="admin",
+        name="glm",
+        payload=SourceCreate(**_PAID, upstream_model="anthropic/glm-5.2-b", order=3),
+    )
+    assert len(gw.group("glm")) == 3
+
+    reset_cache()
+    with pytest.raises(BadRequestError):
+        await service.add_source(
+            handle="admin",
+            name="glm",
+            payload=SourceCreate(
+                **_PAID, upstream_model="anthropic/glm-5.2-c", order=1
+            ),
+        )
+
+
+@pytest.mark.anyio
+async def test_a_source_added_to_a_paused_model_stays_paused():
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)
+    await service.set_blocked(handle="admin", name="glm", blocked=True)
+    reset_cache()
+
+    await service.add_source(
+        handle="admin",
+        name="glm",
+        payload=SourceCreate(**_PAID, upstream_model="anthropic/glm-5.2-b", order=3),
+    )
+
+    assert [r["model_info"].get("blocked") for r in gw.group("glm")] == [
+        True,
+        True,
+        True,
+    ]
+    picker = {m.id: m for m in await gw.catalogue().models()}
+    assert picker["glm"].selectable is False

@@ -354,8 +354,8 @@ export const MODELS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '添加线路',
-        note: '默认优先级排在现有线路之后。',
-        props: { modelValue: true, mode: 'add', modelName: 'kimi-k3', nextOrder: 3 },
+        note: '默认优先级排在现有线路之后，作兜底；填到最前要明确勾「让它成为首选」。',
+        props: { modelValue: true, mode: 'add', modelName: 'kimi-k3', siblings: [GO_SOURCE, OFFICIAL_SOURCE] },
         expect: '给 kimi-k3 添加线路',
       },
       {

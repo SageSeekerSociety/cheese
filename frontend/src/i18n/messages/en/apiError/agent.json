@@ -111,6 +111,7 @@
   "sourceModelHasSeveralSources": "{name} has several sources; change the upstream address, credential and prices on the source itself",
   "sourceNotFound": "{name} has no source {source}",
   "sourceOrderRange": "Priority must be between {min} and {max}",
+  "sourceWouldBePrimary": "Priority {order} would put this source ahead of every source {name} is serving from, taking their traffic; choose to make it the primary source explicitly, or give it a larger priority than the existing ones",
   "sourceZeroPriceNeedsFree": "An input or output price of 0 is only allowed on a source marked free: an unmarked zero price silently disables the project's max_budget brake",
   "subagentModelNotAllowed": "The model {model} the subagent asked for isn't among the models this project can use. Available: {offer}",
   "subagentModelNotInCatalog": "The model {model} the subagent asked for isn't in this project's model catalog. Available: {offer}",

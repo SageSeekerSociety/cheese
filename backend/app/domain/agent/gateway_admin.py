@@ -52,6 +52,14 @@ _CAPABILITY_FIELDS = {
 
 # 一条线路自己的 model_info 键：不跟着模型走，加新线路时也不从别的线路抄。名字与网关
 # 侧读它们的钩子（deploy/gateway 的 upstream_headers.py）逐字一致。
+#
+# 静态请求头不写进 model_info，写进 ``litellm_params.extra_headers``：LiteLLM 原样把
+# 它发给上游（两种协议都实测过），而 ``/model/info`` 对每把虚拟 key 都开放，
+# model_info 原样回、litellm_params 过 LiteLLM 的掩码（名字里带 key/token/secret/
+# auth/password/credential/cookie 一段的头，值被打码）。所以页面只列头名，头的值
+# 按「名字不像凭据就是公开的」对待，凭据走 ``api_key``。config.yaml 里写在
+# model_info 的那份（``cheese_upstream_headers``）照样读出头名。
+EXTRA_HEADERS = "extra_headers"
 UPSTREAM_HEADERS = "cheese_upstream_headers"
 SESSION_HEADER = "cheese_session_header"
 FREE = "cheese_free"
@@ -66,12 +74,14 @@ def catalogue_info(info: Mapping[str, object]) -> dict[str, object]:
     (``_SOURCE_INFO_KEYS``)与网关自己写进去的键(``id``、``db_model``、``blocked``……)
     都不在内 —— 抄了 ``id`` 就是两行同一个部署 id,一行 429 冷却全组(#3294)。
     """
-    capability_fields = set(_CAPABILITY_FIELDS.values())
     return {
         key: value
         for key, value in info.items()
         if (key.startswith("cheese_") and key not in _SOURCE_INFO_KEYS)
-        or key in capability_fields
+        # 每一个显式写了的 supports_* 都抄：`supports_output_config`、
+        # `supports_max_reasoning_effort` 决定思考档能不能送到上游，少抄一个，
+        # 落到新线路的请求就悄悄丢了 effort。没写（None）的是网关自己的默认，不抄。
+        or (key.startswith("supports_") and isinstance(value, bool))
     }
 
 
@@ -465,7 +475,9 @@ class GatewayAdmin:
         params.update(_price_params(prices))
         if order is not None:
             params["order"] = order
-        info.update(_source_info(free, upstream_headers, session_header))
+        if upstream_headers:
+            params[EXTRA_HEADERS] = dict(upstream_headers)
+        info.update(_source_info(free, session_header))
         response = await self._request(
             "POST",
             "/model/new",
@@ -523,10 +535,14 @@ class GatewayAdmin:
         if tier is not None:
             info["cheese_tier"] = tier
         info.update(_capability_params(capabilities))
-        info.update(_source_info(free, upstream_headers, session_header))
+        info.update(_source_info(free, session_header))
         params: dict[str, object] = {}
         if order is not None:
             params["order"] = order
+        if upstream_headers is not None:
+            # 整份替换：网关按键合并 litellm_params，`extra_headers` 这一键被新值
+            # 盖掉；`{}` 就是一个头都不发。
+            params[EXTRA_HEADERS] = dict(upstream_headers)
         if upstream_model is not None:
             params["model"] = upstream_model
         if api_base is not None:
@@ -772,22 +788,16 @@ def _capability_params(
     return out
 
 
-def _source_info(
-    free: bool | None,
-    upstream_headers: Mapping[str, str] | None,
-    session_header: str | None,
-) -> dict[str, object]:
+def _source_info(free: bool | None, session_header: str | None) -> dict[str, object]:
     """线路自己的那几个 model_info 键。``None`` 是「不动」,所以不出现。
 
     清空用的是空值而不是 null:网关 PATCH 合并 model_info 时丢掉 null
-    (``exclude_none``),发 null 等于什么都没改。``{}`` 让静态头一个不发,
-    ``""`` 让网关侧的钩子不转会话(它只认非空的头名)。
+    (``exclude_none``),发 null 等于什么都没改。``""`` 让网关侧的钩子不转会话
+    (它只认非空的头名)。会话头只有名字,放在 model_info 里公开无妨。
     """
     out: dict[str, object] = {}
     if free is not None:
         out[FREE] = bool(free)
-    if upstream_headers is not None:
-        out[UPSTREAM_HEADERS] = dict(upstream_headers)
     if session_header is not None:
         out[SESSION_HEADER] = session_header
     return out
@@ -822,7 +832,13 @@ def _admin_source(row: dict) -> AdminSource:
     upstream = upstream if isinstance(upstream, str) else ""
     api_base = params.get("api_base")
     order = params.get("order", info.get("order"))
-    headers = info.get(UPSTREAM_HEADERS)
+    header_names = {
+        name
+        for source in (params.get(EXTRA_HEADERS), info.get(UPSTREAM_HEADERS))
+        if isinstance(source, dict)
+        for name in source
+        if isinstance(name, str)
+    }
     session = info.get(SESSION_HEADER)
     model_id = info.get("id")
     return AdminSource(
@@ -836,11 +852,7 @@ def _admin_source(row: dict) -> AdminSource:
         prices=_read_prices(params, info),
         free=declared_free(params, info),
         priced=price_is_set(params, info),
-        header_names=tuple(
-            sorted(k for k in headers if isinstance(k, str))
-            if isinstance(headers, dict)
-            else ()
-        ),
+        header_names=tuple(sorted(header_names)),
         session_header=session if isinstance(session, str) and session else None,
         catalogue=catalogue_info(info),
     )

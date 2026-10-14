@@ -48,6 +48,8 @@ export interface SourceDraft {
   /** 编辑时这条线路现有的头名（只有名字）。 */
   existingHeaderNames: string[]
   sessionHeader: string
+  /** 加线路时，这个优先级会让它接走在用线路的流量：要人明确勾上才放行（`wouldLead`）。 */
+  makePrimary: boolean
 }
 
 export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
@@ -63,6 +65,7 @@ export function emptySourceDraft(order = ORDER_MIN): SourceDraft {
     headers: [],
     existingHeaderNames: [],
     sessionHeader: '',
+    makePrimary: false,
   }
 }
 
@@ -92,7 +95,31 @@ export function draftFromSource(source: SourceRow): SourceDraft {
     headers: [],
     existingHeaderNames: [...source.header_names],
     sessionHeader: source.session_header ?? '',
+    makePrimary: false,
   }
+}
+
+/** 给一个模型加线路时默认的优先级：排在现有带优先级的线路之后，作兜底。现有线路都
+ *  没有优先级时（config.yaml 里没写 order），无论填几都会排到它们前面 —— 那时给 1，
+ *  由 `wouldLead` 让人明确选择。 */
+export function defaultOrder(siblings: SourceRow[]): number {
+  const orders = siblings.map((s) => s.order).filter((o): o is number => o !== null)
+  return orders.length ? Math.min(ORDER_MAX, Math.max(...orders) + 1) : ORDER_MIN
+}
+
+/** 优先级为 `order` 的新线路会不会接走这个模型在用线路的流量（同服务端的
+ *  `_would_lead`）：LiteLLM 先在带 order 的里取最小的一档，不带的垫底。 */
+export function wouldLead(siblings: SourceRow[], order: number): boolean {
+  const live = siblings.filter((s) => !s.blocked)
+  if (!live.length) return false
+  const ordered = live.map((s) => s.order).filter((o): o is number => o !== null)
+  return !ordered.length || order <= Math.min(...ordered)
+}
+
+/** 免费与付费线路混在一个模型里：账按付费线路的价记（免费线路上的流量也一样），
+ *  表单要说出来。 */
+export function mixesFreeAndPaid(siblings: SourceRow[], free: boolean): boolean {
+  return siblings.some((s) => !s.blocked && s.free !== free)
 }
 
 /** 每百万 → 每 token，空串给 null，不是数给 undefined（表单会把它判成不合法）。 */
@@ -186,7 +213,7 @@ export function draftPriced(draft: SourceDraft): boolean {
 
 /** 草稿 → 请求体。`mode = 'edit'` 时没填的凭据 / 地址、没动过的请求头都不发（不发 =
  *  不动），凭据还要显式声明 `api_key_unchanged`。免费线路不发输入输出价：服务端写 0。 */
-export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): GatewaySourceFields & { order?: number } {
+export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): GatewaySourceFields {
   const out: GatewaySourceFields = {
     protocol: draft.protocol === 'other' ? null : draft.protocol,
     upstream_model: draft.upstream.trim(),
@@ -203,6 +230,7 @@ export function draftToFields(draft: SourceDraft, mode: 'add' | 'edit'): Gateway
   if (draft.apiBase.trim()) out.api_base = draft.apiBase.trim()
   if (draft.apiKey.trim()) out.api_key = draft.apiKey.trim()
   else if (mode === 'edit') out.api_key_unchanged = true
+  if (mode === 'add' && draft.makePrimary) out.make_primary = true
   if (draft.headersTouched) {
     out.upstream_headers = Object.fromEntries(draft.headers.map((h) => [h.name.trim(), h.value]))
   }
