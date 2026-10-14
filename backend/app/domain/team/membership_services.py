@@ -28,7 +28,7 @@ from app.domain.team.repositories import (
     refuse_anyone_but_the_owner,
 )
 from app.domain.user.models import User
-from app.domain.user.services import handles_by_ids
+from app.domain.user.services import faces_by_handle, handles_by_ids
 
 
 async def _notify(
@@ -160,9 +160,16 @@ class TeamMembershipService:
         )
         saved = await self._app_repo.save(app)
 
+        # 推送是服务端替人渲染好的一句话，拿不到实体解析（`push.push_text`），
+        # 所以这两个名字跟着 payload 走，和频道里那几种带 `authorName` 一样。
+        handle = next(iter(await handles_by_ids(self._session, [user_id])), "")
+        faces = await faces_by_handle(self._session, [handle])
+        nickname = faces.get(handle, (None, None))[0]
         payload: dict[str, Any] = {
             "requester": {"type": "user", "id": str(user_id)},
+            "requesterName": nickname or handle,
             "team": {"type": "team", "id": str(team.id)},
+            "teamName": team.name,
             "application": {
                 "type": "team_membership_application",
                 "id": str(saved.id),

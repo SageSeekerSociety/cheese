@@ -419,6 +419,7 @@
   "pushAwaitingAnswer": "Waiting for your answer",
   "pushMentioned": "{who} mentioned you in “{room}”",
   "pushThreadReply": "{who} replied in a thread in “{room}”",
+  "pushJoinRequest": "{who} asked to join “{team}”",
   "pushAway": "{count} new notifications while you were away",
   "sandboxPreparing": "Preparing the environment",
   "sandboxReady": "The environment is ready",

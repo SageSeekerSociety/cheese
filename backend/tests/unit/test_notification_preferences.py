@@ -188,6 +188,12 @@ class TestTypesOutsideTheMatrix:
         assert intent.in_app is True
         assert intent.digest is True
 
+    def test_a_join_request_pushes_to_the_admins_who_must_answer_it(self):
+        intent = resolve(
+            default_preferences(), NotificationType.TEAM_JOIN_REQUEST, now=NOON
+        )
+        assert intent.push is True
+
     def test_a_non_pushable_legacy_type_does_not_push(self):
         intent = resolve(
             default_preferences(), NotificationType.DEADLINE_REMIND, now=NOON

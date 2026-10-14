@@ -96,7 +96,8 @@
           v-if="pendingRequests.length > 0"
           :content="pendingRequests.length"
           color="error"
-          class="ml-2"
+          inline
+          class="ml-1"
         ></v-badge>
       </v-tab>
       <v-tab v-if="canBringPeopleIn" value="invitations">{{ t('teams.members.tabInvitations') }}</v-tab>
