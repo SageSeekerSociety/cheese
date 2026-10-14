@@ -137,6 +137,43 @@ class MigrationTouchesTest(unittest.TestCase):
                 (found,) = touches(HEAD + "\ndef upgrade():\n    " + body + "\n")
                 self.assertIn("*", found)
 
+    def test_schema_changes_it_does_not_parse_touch_everything(self):
+        for body in (
+            "op.execute(f'ALTER {kind} IF EXISTS \"{old}\" RENAME TO \"{new}\"')",
+            "op.execute('ALTER TYPE task_status RENAME VALUE \\'open\\' TO \\'todo\\'')",
+            "op.execute('DROP VIEW topic_summary')",
+            "op.execute('DROP TYPE task_status')",
+            "op.execute(\"DO $$ BEGIN EXECUTE 'ALTER TABLE topics DROP COLUMN x'; END $$\")",
+            "_sibling('8b2f4d6a1c37_backfill_agent_environments').upgrade()",
+        ):
+            with self.subTest(body=body):
+                (found,) = touches(HEAD + "\ndef upgrade():\n    " + body + "\n")
+                self.assertIn("*", found)
+
+    def test_dropped_indexes_and_constraints_and_new_required_columns_touch_their_table(self):
+        # An older writer's ON CONFLICT names a unique index or constraint, and
+        # its insert leaves a new NOT NULL column without a default empty.
+        (found,) = touches(
+            migration(
+                """
+            def upgrade():
+                op.drop_index("uq_room_task", table_name="tasks")
+                op.drop_constraint("uq_member", "members", type_="unique")
+                op.add_column("topics", sa.Column("kind", sa.Text(), nullable=False))
+                op.add_column("blocks", sa.Column("seq", sa.Integer(), nullable=False, server_default="0"))
+                op.execute("ALTER TABLE devices ADD COLUMN owner uuid NOT NULL")
+                op.execute("ALTER TABLE devices ALTER COLUMN name SET NOT NULL")
+            """)
+        )
+        self.assertEqual(found, {"tasks", "members", "topics", "devices", "devices.name"})
+
+    def test_migrations_that_read_as_nothing_but_change_tables(self):
+        # Both rename tables through helpers or another migration's code.
+        for revision in ("b5d90a17c3e2", "e7c2b41d90a5"):
+            with self.subTest(revision=revision):
+                (found,) = read([str(next(VERSIONS.glob(f"{revision}_*.py")))])
+                self.assertIn("*", found)
+
     def test_downgrade_is_never_run_by_a_deploy(self):
         (found,) = touches(
             migration(

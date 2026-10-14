@@ -11,14 +11,22 @@ have a server default, so the owner's inserts still succeed.
 
 Output, one item per line:
   migration-touches pending <revision>   a migration this deploy will run
-  migration-touches <table>              a table it drops or renames
+  migration-touches <table>              a table it drops, renames or changes
+                                         an index or constraint of
   migration-touches <table>.<column>     a column it drops, renames or alters
   migration-touches *                    something it changes that this cannot read
+  migration-touches present <table>[.<column>]  what the database has now
   migration-touches ok                   the answer is complete
 
-`*` touches everything: a name that is not a literal, or SQL that comes from
-outside the file, is not proof that the change is safe. Only `upgrade()` and
-the module-level code it can call are read; a deploy never runs `downgrade()`.
+`*` touches everything: a name that is not a literal, SQL that comes from
+outside the file, a schema statement this does not parse, or code from another
+migration is not proof that the change is safe. Only `upgrade()` and the
+module-level code it can call are read; a deploy never runs `downgrade()`.
+
+The `present` lines let the deploy release an owner that already maps
+something the database lacks: migrations commit one by one, so a deploy whose
+second migration failed leaves the first one's drop in place, and the next
+deploy's pending list no longer shows it.
 
 `python - --files A.py B.py` reads the named migration files instead of asking
 the database which ones are pending (the deploy tests use it).
@@ -34,8 +42,8 @@ import sys
 UNKNOWN = "*"
 HOLE = "\x00"
 
-_DROP_TABLE = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([\w\",.\s\x00]+?)(?:\s+CASCADE|\s+RESTRICT|\s*$)", re.I)
-_ALTER_TABLE = re.compile(r"\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:\"?[\w\x00]+\"?\.)?\"?([\w\x00]+)\"?(.*)$", re.I | re.S)
+_DROP_TABLE = re.compile(r"^DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([\w\",.\s\x00]+?)(?:\s+CASCADE|\s+RESTRICT|\s*$)", re.I)
+_ALTER_TABLE = re.compile(r"^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:\"?[\w\x00]+\"?\.)?\"?([\w\x00]+)\"?(.*)$", re.I | re.S)
 _RENAME_TABLE = re.compile(r"^\s*RENAME\s+TO\b", re.I)
 _COLUMN_CLAUSE = re.compile(
     r"^\s*(?:RENAME|DROP|ALTER)\s+(?:COLUMN\s+)?(?:IF\s+EXISTS\s+)?\"?([\w\x00]+)\"?", re.I
@@ -48,8 +56,22 @@ _HARMLESS = re.compile(
     r"ALTER\s+(?:COLUMN\s+)?\"?\w+\"?\s+(?:SET\s+DEFAULT|DROP\s+DEFAULT|DROP\s+NOT\s+NULL|SET\s+STATISTICS|SET\s+STORAGE)\b)",
     re.I,
 )
+# A statement that starts like this changes rows or adds things, never what an
+# older model reads; anything else that drops, renames, alters or runs SQL it
+# builds itself is read below or counts as touching everything.
+_ADDITIVE = re.compile(
+    r"^\s*(?:CREATE|COMMENT|ANALYZE|SELECT|INSERT|UPDATE|DELETE|WITH|SET|RESET|LOCK|GRANT|REVOKE|"
+    r"REFRESH|NOTIFY|VACUUM|REINDEX|CLUSTER)\b",
+    re.I,
+)
+_SCHEMA_CHANGE = re.compile(r"\b(?:DROP|RENAME|ALTER|EXECUTE|TRUNCATE)\b", re.I)
+# Calls that run another migration's code, which this file does not show.
+_FOREIGN_CODE = {"upgrade", "exec_module", "import_module", "run_path", "exec"}
 # SQLAlchemy DDL elements an execute may be handed: these leave columns alone.
-_HARMLESS_ELEMENTS = {"CreateSequence", "DropSequence", "CreateIndex", "DropIndex", "AddConstraint", "DropConstraint"}
+_HARMLESS_ELEMENTS = {"CreateSequence", "DropSequence", "CreateIndex", "AddConstraint"}
+_ADD_NOT_NULL = re.compile(
+    r"^\s*ADD\s+(?:COLUMN\s+)?(?:IF\s+NOT\s+EXISTS\s+)?\"?\w+\"?\s+.*\bNOT\s+NULL\b", re.I | re.S
+)
 # Core statements built from a table object (update(), insert(), …) change rows.
 _ROW_STATEMENTS = {"update", "insert", "delete", "select", "values", "where"}
 
@@ -236,8 +258,32 @@ class Migration:
 
     def _call(self, node: ast.Call) -> None:
         name = _callee(node)
-        if name in {"drop_table", "rename_table"}:
+        if name in _FOREIGN_CODE:
+            self.touches.add(UNKNOWN)
+        elif name in {"drop_table", "rename_table"}:
             self.touches.update(self._names(self._table(node)))
+        elif name in {"drop_index", "drop_constraint"}:
+            # A unique index or constraint is what an older writer's
+            # ON CONFLICT names; without it every such write fails.
+            table = None
+            for keyword in node.keywords:
+                if keyword.arg == "table_name":
+                    table = keyword.value
+            if table is None and name == "drop_constraint" and len(node.args) > 1:
+                table = node.args[1]
+            self.touches.update(self._names(table))
+        elif name == "add_column":
+            # NOT NULL without a server default: an older writer's insert fails.
+            column = node.args[1] if len(node.args) > 1 else None
+            if isinstance(column, ast.Call) and _callee(column) == "Column":
+                keywords = {keyword.arg: keyword.value for keyword in column.keywords}
+                nullable = keywords.get("nullable")
+                if (
+                    isinstance(nullable, ast.Constant)
+                    and nullable.value is False
+                    and "server_default" not in keywords
+                ):
+                    self.touches.update(self._names(self._table(node)))
         elif name in {"drop_column", "alter_column"}:
             table, column = self._table_and_column(node)
             for one_table, one_column in self._pairs(table, column):
@@ -262,23 +308,36 @@ class Migration:
                 self._statement(statement)
 
     def _statement(self, sql: str) -> None:
-        if sql.lstrip().startswith(HOLE):
+        sql = sql.strip()
+        if not sql:
+            return
+        if sql.startswith(HOLE):
             # The statement itself is a hole: it could be anything.
             self.touches.add(UNKNOWN)
             return
-        if match := _DROP_TABLE.search(sql):
+        if _ADDITIVE.match(sql):
+            return
+        if match := _DROP_TABLE.match(sql):
             for name in re.split(r"[\s,]+", match.group(1).replace('"', "")):
                 name = name.rsplit(".", 1)[-1]
                 if name:
                     self.touches.add(UNKNOWN if HOLE in name else name)
-        match = _ALTER_TABLE.search(sql)
+            return
+        match = _ALTER_TABLE.match(sql)
         if not match:
+            if _SCHEMA_CHANGE.search(sql) or HOLE in sql:
+                # ALTER TYPE, DROP VIEW, a DO block, dynamic EXECUTE, …
+                self.touches.add(UNKNOWN)
             return
         table, rest = match.group(1), match.group(2)
         if HOLE in table:
             self.touches.add(UNKNOWN)
             return
         for clause in _clauses(rest):
+            if _ADD_NOT_NULL.match(clause) and not re.search(r"\bDEFAULT\b", clause, re.I):
+                # An older writer's insert leaves it empty and fails.
+                self.touches.add(table)
+                continue
             if not clause.strip() or _HARMLESS.match(clause):
                 continue
             if HOLE in clause.split()[0]:
@@ -293,36 +352,54 @@ class Migration:
                 self.touches.add(table)
 
 
-def pending_migrations() -> list[tuple[str, str]]:
-    """(revision, path) of every migration `alembic upgrade head` would run."""
+def read_database(database_url: str, config: str = "alembic.ini") -> tuple[list[tuple[str, str]], list[str]]:
+    """(revision, path) of every migration `alembic upgrade head` would run on
+    the database, and every table and table.column it has now."""
     import asyncio
 
     from alembic.config import Config
     from alembic.runtime.migration import MigrationContext
     from alembic.script import ScriptDirectory
+    from sqlalchemy import text
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import NullPool
 
-    from app.core.config import settings
-
-    async def current() -> tuple[str, ...]:
-        engine = create_async_engine(settings.database_url, poolclass=NullPool)
+    async def read() -> tuple[tuple[str, ...], list[str]]:
+        engine = create_async_engine(database_url, poolclass=NullPool)
         try:
             async with engine.connect() as connection:
-                return await connection.run_sync(lambda sync: tuple(MigrationContext.configure(sync).get_current_heads()))
+                heads = await connection.run_sync(
+                    lambda sync: tuple(MigrationContext.configure(sync).get_current_heads())
+                )
+                rows = await connection.execute(
+                    text(
+                        "SELECT table_name, column_name FROM information_schema.columns"
+                        " WHERE table_schema = current_schema()"
+                    )
+                )
+                present = set()
+                for table, column in rows:
+                    present.update((table, f"{table}.{column}"))
+                return heads, sorted(present)
         finally:
             await engine.dispose()
 
-    script = ScriptDirectory.from_config(Config("alembic.ini"))
-    heads = asyncio.run(current())
-    return [(rev.revision, rev.path) for rev in script.iterate_revisions("heads", heads or "base")]
+    script = ScriptDirectory.from_config(Config(config))
+    heads, present = asyncio.run(read())
+    pending = [(rev.revision, rev.path) for rev in script.iterate_revisions("heads", heads or "base")]
+    return pending, present
 
 
 def main(argv: list[str]) -> None:
+    present: list[str] = []
     if argv[:1] == ["--files"]:
         migrations = [(path, path) for path in argv[1:]]
     else:
-        migrations = pending_migrations()
+        from app.core.config import settings
+
+        migrations, present = read_database(settings.database_url)
+    for item in present:
+        print(f"migration-touches present {item}")
     for revision, path in migrations:
         print(f"migration-touches pending {revision}")
         with open(path, encoding="utf-8") as handle:

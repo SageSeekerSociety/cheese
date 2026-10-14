@@ -96,11 +96,18 @@ release's image; a failed migration resumes the old owner instead. The preview
 owner, which has no drain, is recreated after the migrations the same way. A
 release that only stops mapping a column, the first of the two releases a drop
 takes, leaves the owners running; so does one whose migrations add tables or
-columns or change only tables the owners do not map.
+columns or change only tables the owners do not map. The same script reports
+every table and column the database has, and an owner that maps one it lacks
+is released too: migrations commit one by one, so a deploy whose second
+migration failed keeps the first one's drop and resumes the old owner on it,
+and the next deploy no longer lists that migration as pending.
 
-A dispatched release of the image a healthy owner already runs leaves it
-running: replacing it would change nothing it serves and close every
-connection it holds. An unhealthy owner on that image is still replaced.
+A dispatched release of the image and compose configuration a healthy owner
+already runs leaves it running: replacing it would change nothing it serves
+and close every connection it holds. The configuration is compared by the
+hash compose labels each container with, so a rotated secret or a changed env
+file still releases it. An unhealthy owner on that image is still replaced,
+and the device owner's `/healthz` answers 503 while it is draining.
 
 Each standing owner's database pool is set in the compose file
 (`DB_POOL_SIZE=5`, `DB_MAX_OVERFLOW=5` on `device-connection`; `3` and `2` on

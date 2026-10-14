@@ -47,6 +47,7 @@
   ],
   "deploy": [
     "deploy/**",
+    "backend/alembic/versions/**",
     ".github/scripts/ensure-apt.sh",
     ".claude/scripts/pr-watch.sh",
     "backend/scripts/gateway_supply_probe.py",
