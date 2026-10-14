@@ -22,13 +22,17 @@ class GatewayHealthWorkflowTest(unittest.TestCase):
             if "gateway_supply_probe.py" in step.get("run", "")
         )
 
-    def run_probe(self, status, missing_source=False):
+    def run_probe(self, status, missing_source=False, **env):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             fake = root / "docker"
             fake.write_text(
                 "#!/usr/bin/env python3\n"
                 "import json, os, pathlib, sys\n"
+                "if sys.argv[1] == 'ps':\n"
+                "    print('cheese-gateway-litellm-db-1')\n"
+                "    print(os.environ.get('SERVING', 'cheese-gateway-litellm-green-1'))\n"
+                "    sys.exit(int(os.environ.get('PS_STATUS', '0')))\n"
                 "pathlib.Path(os.environ['CALLS']).write_text(json.dumps(sys.argv[1:]))\n"
                 "pathlib.Path(os.environ['INPUT']).write_text(sys.stdin.read())\n"
                 "print('probe result')\n"
@@ -44,6 +48,7 @@ class GatewayHealthWorkflowTest(unittest.TestCase):
                     "CALLS": str(root / "calls"),
                     "INPUT": str(root / "input"),
                     "STATUS": str(status),
+                    **env,
                 },
                 capture_output=True,
                 text=True,
@@ -65,8 +70,18 @@ class GatewayHealthWorkflowTest(unittest.TestCase):
     def test_default_probe_uses_container_credentials_and_never_generates(self):
         result, args, source = self.run_probe(0)
         self.assertEqual(result.returncode, 0, result.stderr)
+        # Inside the serving color, asking the gateway the way callers do.
         self.assertEqual(
-            args, ["exec", "-i", "cheese-gateway-litellm-1", "python", "-"]
+            args,
+            [
+                "exec",
+                "-i",
+                "-e",
+                "GATEWAY_BASE=http://gateway-proxy:4000",
+                "cheese-gateway-litellm-green-1",
+                "python",
+                "-",
+            ],
         )
         self.assertEqual(
             source, (ROOT / "backend/scripts/gateway_supply_probe.py").read_text()
@@ -86,6 +101,13 @@ class GatewayHealthWorkflowTest(unittest.TestCase):
     def test_unavailable_docker_is_not_reported_healthy(self):
         result, _, _ = self.run_probe(125)
         self.assertNotEqual(result.returncode, 0)
+
+    def test_no_running_gateway_is_not_reported_healthy(self):
+        for env in ({"SERVING": ""}, {"PS_STATUS": "1", "SERVING": ""}):
+            with self.subTest(env):
+                result, args, _ = self.run_probe(0, **env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(args, [])
 
 
 if __name__ == "__main__":

@@ -7,7 +7,10 @@ on:
         description: Full merged main SHA with successful Build and Required CI
         required: true
       interrupt:
-        description: Acknowledge that replacing the gateway interrupts active model streams
+        description: >-
+          Acknowledge interrupting active model streams. Needed only when the release must
+          replace gateway-proxy itself (the move from the single gateway container, or a
+          change to the proxy's image or service); a code or configuration release never does.
         type: boolean
         required: true
         default: false
@@ -23,10 +26,12 @@ concurrency:
 
 jobs:
   release:
-    if: github.ref == 'refs/heads/main' && inputs.interrupt
+    if: github.ref == 'refs/heads/main'
     environment: dev
     runs-on: [self-hosted, cheese-dev]
-    timeout-minutes: 15
+    # The old color may serve its streams for up to 30 minutes after the switch
+    # (GATEWAY_DRAIN_SECONDS in deploy/release-gateway.sh).
+    timeout-minutes: 50
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -45,8 +50,8 @@ jobs:
           username: ${{ github.repository_owner }}
           password: ${{ secrets.GITHUB_TOKEN }}
           logout: false
-      - name: Release the CI-built gateway and verify health
+      - name: Release the CI-built gateway without dropping a stream
         env:
           RELEASE_SHA: ${{ inputs.sha }}
-          GATEWAY_ALLOW_INTERRUPT: '1'
+          GATEWAY_ALLOW_INTERRUPT: ${{ inputs.interrupt && '1' || '0' }}
         run: bash deploy/release-gateway.sh "$RELEASE_SHA"

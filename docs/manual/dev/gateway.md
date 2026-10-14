@@ -33,8 +33,21 @@ covers:
 
 - 它有自己的一套 compose，故意的：`deploy-docker.sh` 只认一个 compose 文件、只拉起 `backend frontend`，而那个文件跟生产共用。**应用发布不碰网关，重启网关也不会重启应用。**
 - 镜像流水线只在 `deploy/gateway/` 变了的时候重建网关，否则复用上一版镜像、打成当前 commit 的 tag。构建过程会跑适配与时序测试，不发真实请求。
-- 发布走 **Release gateway** 工作流（`main` 上、镜像构建成功的完整 SHA、显式确认会打断正在流的会话）；凭据从 `$HOME/gateway/compose/.env` 读，旧镜像与配置先存进 `$HOME/gateway/releases/`，健康检查不过就回滚。
-- **不发布端口**：它加入应用所在的 docker 网络。绑宿主机环回，容器够不着（应用在自己的网桥上）；绑网桥地址，等于把上游 key 和管理 API 摊在机器的局域网上。加入网络就不用选了。
+- 发布走 **Release gateway** 工作流（`main` 上、镜像构建成功的完整 SHA），不断流，做法见[发布不断流](#release)。凭据从 `$HOME/gateway/compose/.env` 读，每次发布的配置存进 `$HOME/gateway/releases/`。
+- 调用方找的是 `gateway-proxy`（HAProxy）：沙箱和计量代理走 `172.17.0.1:4000`（docker0 网桥地址，容器够得着、局域网够不着），后端走应用网络上的别名 `http://litellm:4000`。两个 LiteLLM 实例 `litellm-blue`、`litellm-green` 不发布端口，也不在应用网络上。
+
+## 发布不断流 {#release}
+
+Claude Code 的一条流常常要几分钟，流到一半断掉的不会重放，所以发布不能重启正在服务的实例。
+
+- **拓扑**：`gateway-proxy` 后面有两个颜色，平时只有一个在跑。两个颜色同一份 compose 定义，共用 `litellm-db` 和 `litellm-redis`。
+- **一次发布**：在空闲的颜色上起新镜像，等它通过 docker 健康检查、`/health/readiness` 和 HAProxy 自己的检查，再通过 HAProxy 的运行时 API 一条命令把它设成 ready、把旧颜色设成 drain。HAProxy 不重载，调用方的连接一条都不断；HAProxy 按请求选后端，所以计量代理复用的旧连接，下一个请求就落到新颜色。旧颜色继续把手上的流放完，脚本每 5 秒读一次它在 HAProxy 里的 `scur`，到 0 才停它，最多等 30 分钟（`GATEWAY_DRAIN_SECONDS`）。
+- **停的时候**：LiteLLM 收到 SIGTERM 会先把在途的流放完，再把内存里的花销计数和花销日志写进库；`stop_grace_period: 60s` 就是留给这一步的，docker 默认的 10 秒到点会 SIGKILL。
+- **失败与回滚**：新颜色不健康、不 ready，或者 HAProxy 迟迟看不到它起来，就删掉它，流量一直留在旧颜色上，发布报失败。上线后要回退，就用同一个工作流发上一个 SHA，走的也是不断流的路。
+- **颜色用固定地址**（内部网络 `10.213.47.0/28`），不用容器名：docker 内置 DNS 不认识的名字会转给宿主机的解析器，dev 机器的解析器对任何名字都回一个 `198.18.x` 的地址，于是没在跑的颜色照样“解析得到”，请求会被送到那个地址背后不知道什么地方。
+- **会断流的只有换代理本身**：`gateway-proxy` 的镜像或 compose 定义一变，就得重建它，它身上的每条流都会断，所以工作流要勾上 `interrupt` 才肯做。只改 `deploy/compose/gateway-proxy.cfg` 时用 HAProxy 的平滑重载，什么都不断：旧进程留着手上的每条连接，空闲连接上的下一个请求照常处理、回 `Connection: close` 再关；脚本等旧进程退出后才停旧颜色。
+- **从单容器迁过来那一次**：旧的 `cheese-gateway-litellm-1` 占着 `172.17.0.1:4000` 和别名 `litellm`，docker 不会把它们从一个还在跑的容器上挪走，所以第一次发布要勾 `interrupt`。脚本先把 `litellm-blue` 起好、确认 ready，再给旧容器 SIGTERM，给在途请求 30 秒（`GATEWAY_MIGRATION_GRACE`），然后启动 `gateway-proxy`。这段时间里新请求被拒，30 秒内放完的流不受影响，更长的流会被切断。代理起不来就把旧容器重新拉起。
+- **两个颜色同时在跑的那几分钟**：LiteLLM 启动时自己跑数据库迁移，新颜色会在旧颜色还在服务的时候改共享的库；LiteLLM 的迁移一般只加不删，但升级上游镜像的那次发布要看一眼迁移里有没有删列或改列。路由器的冷却状态和 `deepseek-flash` 的会话亲和都在进程内存里（`router_settings` 没配 Redis），新颜色从空开始，所以每次发布后每个会话第一次请求会重新选一次 RUC 节点、丢一次前缀缓存。预算刹车的花销计数在 `coordination_redis` 里，两个颜色共用，不受影响。
 
 ## 一个项目一把虚拟 key {#keys}
 
@@ -105,7 +118,7 @@ Dockerfile 从上游镜像的 digest 派生，打补丁前先核对被改文件�
 两条路欠同一个不变式，服务层与 `check_config.py` 各守一边：**没价的可选模型等于不上架**。它的 token 会按零计费，项目的 `max_budget` 永远不会跳，第一个征兆是发票——模型从选单里消失会被发现，一个悄悄失灵的刹车不会。改完清单跑：
 
 ```sh
-docker exec -i cheese-gateway-litellm-1 python - /app/config.yaml < deploy/gateway/check_config.py
+docker exec -i cheese-gateway-litellm-blue-1 python - /app/config.yaml < deploy/gateway/check_config.py   # 或正在服务的 green
 ```
 
 价格用人民币rate 除以「7.1 人民币/美元」这个既有约定折算，是估算而不是实时汇率（`kimi-k3`、`mimo-v2.6-pro` 的注释里都写了各自的原始人民币价）。Kimi K3 走原生 Messages 端点 `https://api.moonshot.cn/anthropic`，发布带它的配置前要在网关 `.env` 里备好 `MOONSHOT_API_KEY`。GLM 系列必须用 `anthropic/` 前缀而不是 `openai/`：调用方说的是 Anthropic 协议，被 `openai/` 前缀一转，LiteLLM 会翻成 OpenAI Responses API——智谱那条路是 404。
