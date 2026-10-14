@@ -256,8 +256,7 @@ class ChatService(SessionRecovery):
         # 全在 `turn/state/live.py` 那片叶子里。本对象唯一持有它，处理器按一个方向读
         # 它——见那里的文档；不是服务依赖（`_compute`/`_sessions` 那种），而是
         # 这台进程此刻手上正接着什么。
-        # 写穿回调把这台进程手上的「在跑」落到权威的那行 `AgentTurn`；这一层是
-        # 唯一知道 sessions 的地方，leaf 自己不认识库。
+        # 写穿回调把「在跑」落到权威的那行 `AgentTurn`：leaf 不认识库，这一层认识。
         self.live = LiveWork(
             write_open=self._confirm_turn_row_open,
             confirm_closed=self._confirm_turn_row_closed,
@@ -488,14 +487,11 @@ class ChatService(SessionRecovery):
     ) -> AsyncIterator[None]:
 
         async with seat_admission(self.live.seat_lock_for(topic_id, seat_handle)):
-            # 这里不标「在跑」：轮次那行 `AgentTurn` 要到这个 `yield` 里面
-            # （`open_turn` / `open_interval`）才提交，先标就是让缓存替一个还
-            # 不存在的轮次说话，正是「写落地之前不许被看见在跑」不许的那件事
-            # —— 见 `mark_turn_active`。醒着的记号落在提交之后的那一步：平台轮
-            # 次在 `send_prepared` 等 `open_interval` 提交返回后标
-            # （`steps/send.py`），自起的轮次在自己的行开好后标
-            # （`native_turns.begin`）。会话的 Working 事件（`_set_hook_activity`）
-            # 只发布那一帧：它可能早于行，也可能晚于轮次结束。
+            # 这里不标「在跑」：轮次那行 `AgentTurn` 要到 `yield` 里面
+            # （`open_turn` / `open_interval`）才提交，先标就是让缓存替一个不
+            # 存在的轮次说话。记号落在提交之后那一步：`steps/send.py`
+            # （`send_prepared`），自起的轮次在 `native_turns.begin`——见
+            # `mark_turn_active`。
             try:
                 yield
             finally:
@@ -999,10 +995,9 @@ class ChatService(SessionRecovery):
     ) -> bool:
         """Whether a turn is running in the topic — durably, across processes.
 
-        Delegates to the authority (`turn/state/authority.py`): the open
-        ``AgentTurn`` row is what answers, not this process's cache, so a turn a
-        teammate runs from another backend is seen here and a finished one is
-        not kept alive by a stale cache entry.
+        The open ``AgentTurn`` row answers (`turn/state/authority.py`), not this
+        process's cache: a teammate's turn from another backend is seen here, a
+        finished one is not kept alive by a stale entry.
         """
         return await authority.has_running_turn(self._sessions, topic_id, agent_handle)
 
@@ -1288,15 +1283,10 @@ class ChatService(SessionRecovery):
         agent = (state.acting_agent if state is not None else None) or agent_handle
         if active:
             # A Working event is a session SPEAKING about a turn, not the step
-            # that opened it, and the mark belongs to that step: the turn
-            # lifecycle places it once its own await has committed the row
-            # (`steps/send.py`, `native_turns.begin`). So this only publishes.
-            # Neither may it mark here — a session that opens its own turn
-            # announces it BEFORE the room opens the row, and a mark now would
-            # name a turn the authority has never seen — nor DROP a mark
-            # (`mark_turn_active`'s confirm runs on a fresh connection and can
-            # say no for a row committed a moment ago), which left a running
-            # turn unmarked until its next event.
+            # that opened it: the mark belongs to that step, after its own await
+            # commits the row (`steps/send.py`, `native_turns.begin`). Nor may
+            # it drop a mark — `mark_turn_active`'s confirm can say no for a row
+            # committed a moment ago, leaving a running turn unmarked.
             frame = {"type": "turn_started", "turn_id": str(work_id), "agent": agent}
         else:
             await self.live.mark_turn_inactive(topic_id, work_id)
