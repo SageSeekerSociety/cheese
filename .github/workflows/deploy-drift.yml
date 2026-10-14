@@ -107,11 +107,11 @@ jobs:
       - name: Gateway database and authenticated catalog are ready
         if: ${{ always() }}
         timeout-minutes: 1
-        # Run inside whichever color serves, against gateway-proxy: the path callers take.
+        # Run inside whichever color serves, against the proxy at gateway-netns: the path callers take.
         run: |
           set -euo pipefail
           gateway="$(docker ps --format '{{.Names}}' | grep -E '^cheese-gateway-litellm-(blue|green)-1$' | head -n 1 || true)"
-          if [ -z "$gateway" ] || ! docker exec -i -e GATEWAY_BASE=http://gateway-proxy:4000 "$gateway" python - \
+          if [ -z "$gateway" ] || ! docker exec -i -e GATEWAY_BASE=http://gateway-netns:4000 "$gateway" python - \
             < backend/scripts/gateway_supply_probe.py; then
             echo '::error::Gateway readiness failed. Inspect the classified probe result; use the Release gateway workflow for code or configuration recovery.'
             exit 1

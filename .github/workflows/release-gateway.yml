@@ -9,8 +9,9 @@ on:
       interrupt:
         description: >-
           Acknowledge interrupting active model streams. Needed only when the release must
-          replace gateway-proxy itself (the move from the single gateway container, or a
-          change to the proxy's image or service); a code or configuration release never does.
+          replace gateway-netns, the container that owns the gateway's address (the move
+          from the single gateway container, or a change to its port, networks or image);
+          a gateway or proxy release never does.
         type: boolean
         required: true
         default: false
@@ -30,7 +31,9 @@ jobs:
     environment: dev
     runs-on: [self-hosted, cheese-dev]
     # The old color may serve its streams for up to 30 minutes after the switch
-    # (GATEWAY_DRAIN_SECONDS in deploy/release-gateway.sh).
+    # (GATEWAY_DRAIN_SECONDS in deploy/release-gateway.sh), and a replaced proxy
+    # lives at most 35 (hard-stop-after); the one-time move waits up to 10 for
+    # a quiet moment.
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

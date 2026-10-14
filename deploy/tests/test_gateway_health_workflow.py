@@ -77,7 +77,7 @@ class GatewayHealthWorkflowTest(unittest.TestCase):
                 "exec",
                 "-i",
                 "-e",
-                "GATEWAY_BASE=http://gateway-proxy:4000",
+                "GATEWAY_BASE=http://gateway-netns:4000",
                 "cheese-gateway-litellm-green-1",
                 "python",
                 "-",

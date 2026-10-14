@@ -42,39 +42,73 @@ Supply the full SHA of a commit on `main` whose Build and Required CI succeeded.
 A release does not interrupt model streams and does not restart the application
 or gateway database. This workflow does not target production.
 
-Callers reach `gateway-proxy` (HAProxy, `deploy/compose/gateway-proxy.cfg`) at
-`172.17.0.1:4000` and, on the app network, `http://litellm:4000`. Behind it run
-two LiteLLM instances, `litellm-blue` and `litellm-green`, sharing the gateway
-database and Redis; outside a release only one of them runs. A release
-(`deploy/release-gateway.sh`) reads credentials from
-`$HOME/gateway/compose/.env`, pulls the CI-built image, tests image preservation,
-and starts the idle color with the configuration bundled in the image (kept in
-`$HOME/gateway/releases/`). Once that color passes its health check, answers
-`/health/readiness`, and the proxy's own check sees it up, one runtime-API
-command makes it serve and sets the old color to drain. The proxy is not
-reloaded, so no caller connection closes, and the next request on any of them
-goes to the new color. The old color finishes the streams it has; the release
-stops it when the proxy counts no open request on it, or after 30 minutes. A
-new color that fails any check is removed and traffic never leaves the old one.
-To roll back, release the previous SHA the same way.
+Callers reach `172.17.0.1:4000` and, on the app network, `http://litellm:4000`,
+an address `gateway-netns` owns and nothing else does: it holds the network
+namespace in which HAProxy (`gateway-proxy-a` or `-b`,
+`deploy/compose/gateway-proxy.cfg`) runs. Behind the proxy run two LiteLLM
+instances, `litellm-blue` and `litellm-green`, sharing the gateway database and
+Redis. Outside a release one proxy and one color run.
+
+Only one color runs at a time on purpose. LiteLLM keeps router cooldowns and
+the `deepseek-flash` session affinity in process memory (`router_settings` has
+no Redis), so two colors taking traffic would each keep their own, and a
+conversation would bounce between RUC nodes and keep missing its prefix cache.
+A second standing color would only help if the gateway crashed on its own;
+that case would also need the router state moved to Redis first.
+
+A release (`deploy/release-gateway.sh`) reads credentials from
+`$HOME/gateway/compose/.env`, pulls the CI-built image, tests image
+preservation, and starts the idle color with the configuration bundled in the
+image (kept in `$HOME/gateway/releases/`). The new color takes traffic only
+after it passes its Docker health check, answers `/health/readiness`, lists
+through `GET /v1/models` (with the master key) every model the serving color
+lists apart from any this release removes from `config.yaml`, so a model added
+on the admin page has loaded from the database, and the proxy's own check sees
+it up. `/health` is not used: it calls every model. Then one runtime-API
+command makes the new color serve and sets the old one to drain. The proxy is
+not restarted, so no caller connection closes, and the next request on any of
+them goes to the new color. The old color finishes the streams it has; the
+release stops it when the proxy counts no open request on it, or after 30
+minutes, in which case it says in a workflow warning how many requests that
+cut. A new color that fails any check is removed and traffic never leaves the
+old one. To roll back, release the previous SHA the same way.
+
+The proxy retries a request on the other color only when the connection itself
+failed (`retry-on conn-failure`, the HAProxy 3.2 default, written out). It
+never retries a request a color may have started, because LiteLLM may already
+have called the provider and a second attempt would be billed twice. Its
+health check is `/health/liveliness`; readiness fails while the database is out
+of reach, which would take both colors out at once.
 
 The colors have fixed addresses on an internal network rather than being found
 by name. Docker's DNS passes names it does not know to the host's resolver, and
 the dev box's resolver answers every name with an address (`198.18.x`), so a
 stopped color's name would still resolve and requests would go to that address.
 
-Two cases still interrupt streams, and the workflow refuses them unless its
-`interrupt` box is ticked: replacing `gateway-proxy` itself (a change to its
-image or service definition), and the one release that moves a box from the
-single `cheese-gateway-litellm-1` container to this layout. That container holds
-the port and the `litellm` alias, and Docker cannot move them off a running
-container, so the move stops it (in-flight requests get 30 seconds, during which
-new requests are refused) and starts the proxy in its place; if the proxy does
-not come up, the old container is started again. A change to
-`gateway-proxy.cfg` alone is applied by HAProxy's seamless reload, which cuts
-nothing: the previous process keeps every connection it has, serves the next
-request on each idle one with `Connection: close`, and the release stops the
-old color only after that process has exited.
+A change to the proxy (its configuration, image or service definition) does not
+interrupt anything either. The release starts the other proxy in the same
+network namespace with the colors' current states (`server-state-file`, drain
+flags included); both listen on `:4000` (SO_REUSEPORT). Once the new one sees
+the serving color, the old one is soft-stopped: it stops accepting at once,
+connections already queued on its listener move to the new one
+(`net.ipv4.tcp_migrate_req`), it serves the connections it has, answers the next
+request on each idle one with `Connection: close`
+(`option idle-close-on-response`), and exits when they end or after 35 minutes
+(`hard-stop-after`). The old color is stopped only after that proxy has
+exited, because its streams are on no count the new proxy keeps.
+
+Two cases interrupt streams, and the workflow refuses them unless its
+`interrupt` box is ticked: replacing `gateway-netns` itself (a change to its
+port, networks or image), and the one release that moves a box from the single
+`cheese-gateway-litellm-1` container to this layout. That container holds the
+port and the `litellm` alias, and Docker cannot move them off a running
+container. The move starts blue, waits up to 10 minutes for a moment when no
+connection to the old container has carried data for 30 seconds (read with
+`ss` in its network namespace, through sudo), stops it with 30 seconds for
+in-flight requests, during which new requests are refused, and starts the
+holder and proxy in its place; if the proxy does not come up, the old container
+is started again. The metering proxy's idle connections to the old container
+die with it, so the next request on each fails once.
 
 Kimi K3 uses the native Messages endpoint at
 `https://api.moonshot.cn/anthropic`. Set `MOONSHOT_API_KEY` in the gateway's
@@ -225,7 +259,7 @@ provider quota and inference remain untested. For a bounded inference check, run
 the existing supply probe with `--generate --model kimi-k3`:
 
 ```sh
-docker exec -i -e GATEWAY_BASE=http://gateway-proxy:4000 cheese-gateway-litellm-blue-1 python - --generate --model kimi-k3 < backend/scripts/gateway_supply_probe.py
+docker exec -i -e GATEWAY_BASE=http://gateway-netns:4000 cheese-gateway-litellm-blue-1 python - --generate --model kimi-k3 < backend/scripts/gateway_supply_probe.py
 ```
 
 It makes one native Messages request with a 512-token output limit and a 60-second
@@ -241,7 +275,7 @@ checks the Messages terminal event.
 
 ## Two things that will bite
 
-**The port is on the docker0 bridge address.** `gateway-proxy` publishes
+**The port is on the docker0 bridge address.** `gateway-netns` publishes
 `172.17.0.1:4000`: sandbox containers sit on the default bridge and cannot use
 the app network's alias, loopback is unreachable from any container, and
 `0.0.0.0` would put the admin API on the box's LAN.
