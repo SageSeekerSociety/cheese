@@ -221,18 +221,13 @@ async function mountThread(threadId: string, block: Block, start?: RouteLocation
   return { ...view, router, threadFullPath }
 }
 
-describe('支线里的资料库文档卡', () => {
-  it.each([
-    [DESKTOP, 'Release plan'],
-    [DESKTOP, '打开'],
-    [PHONE, 'Release plan'],
-    [PHONE, '打开'],
-  ])('%i 宽度点击 %s 进入对应文档页', async (width, label) => {
+describe('支线里的资料库文档那一行', () => {
+  it.each([DESKTOP, PHONE])('%i 宽度点那一行进入对应文档页', async (width) => {
     widthIs(width)
     const threadId = `document-thread-${sequence}`
     const view = await mountThread(threadId, documentCardBlock(threadId, ++sequence, []))
 
-    await fireEvent.click(await view.findByText(label, { exact: true }))
+    await fireEvent.click(await view.findByRole('button', { name: /Release plan/ }))
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
     expect(view.router.currentRoute.value.params).toEqual({ projectId: SLUG, docId: 'library-doc' })
@@ -247,7 +242,7 @@ describe('支线里的资料库文档卡', () => {
     ]
     const view = await mountThread(threadId, documentCardBlock(threadId, ++sequence, edits))
 
-    // 卡片上写的是「查看改动」，点它。
+    // 那一行末尾是「查看改动」，点它。
     await fireEvent.click(await view.findByRole('button', { name: /查看改动/ }))
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
@@ -259,7 +254,7 @@ describe('支线里的资料库文档卡', () => {
     })
   })
 
-  it.each([DESKTOP, PHONE])('%i 宽度点改过的卡片本身，打开文档，不进改动对比', async (width) => {
+  it.each([DESKTOP, PHONE])('%i 宽度点改过的那一行本身，打开文档，不进改动对比', async (width) => {
     widthIs(width)
     const threadId = `card-body-thread-${sequence}`
     const view = await mountThread(
@@ -267,7 +262,7 @@ describe('支线里的资料库文档卡', () => {
       documentCardBlock(threadId, ++sequence, [{ old: '旧条款', new: '新条款' }])
     )
 
-    await fireEvent.click(await view.findByText('Release plan', { exact: true }))
+    await fireEvent.click(await view.findByRole('button', { name: /Release plan/ }))
 
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
     await waitFor(() => expect(view.container.querySelector('[data-open-document="library-doc"]')).not.toBeNull())

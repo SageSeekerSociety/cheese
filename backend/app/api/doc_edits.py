@@ -14,12 +14,15 @@ A person calling here (restoring one change, undoing a rewrite) edits directly,
 as themselves.
 """
 
+import uuid
 from dataclasses import dataclass
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent.announce import instance_of_seat
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.block.documents import whose_document
+from app.domain.identity.handles import looks_like_agent_handle
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.models import Document
 from app.domain.living_doc.services import Documents
@@ -77,6 +80,20 @@ async def _touches_someone_elses_text(
         if any(s < hi and lo < e and author not in agents for s, e, author in spans):
             return True
     return False
+
+
+async def edit_turn(
+    db: AsyncSession, *, project_id: uuid.UUID, conversation_id: uuid.UUID, actor: str
+) -> uuid.UUID | None:
+    """The running turn of ``actor`` (an AI teammate's seat) in
+    ``conversation_id``: the turn whose tool call made the change, which the
+    conversation's line about it is part of. None for a person, or an agent
+    with no turn open there."""
+    if not looks_like_agent_handle(actor):
+        return None
+    instance = await instance_of_seat(db, project_id, actor)
+    handles = [actor, *((instance.handle,) if instance is not None else ())]
+    return await AgentTurnRepository(db).open_turn_id_of(conversation_id, handles)
 
 
 async def decide(

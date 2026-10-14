@@ -159,7 +159,7 @@ export interface CatalogEntry {
   states: CatalogState[]
 }
 
-/** AI 队友改了资料库里的一份文档：对话里那一行带着这份文档的卡。 */
+/** AI 队友在它那一轮里改了资料库里的一份文档：对话里那一行是这一轮里的一步。 */
 const LIBRARY_DOC_EDITED: Block = {
   id: 'catalog-library-doc-edited',
   conversation_id: 'demo',
@@ -167,6 +167,7 @@ const LIBRARY_DOC_EDITED: Block = {
   author_type: 'platform',
   author: 'cheese',
   content: '<@cheese> 改了文档《第一周课件》',
+  turn_id: 'catalog-turn',
   created_at: new Date('2026-09-28T14:32:00+08:00').toISOString(),
   meta: {
     platform: true,
@@ -377,8 +378,8 @@ export const CATALOG: CatalogEntry[] = [
         expect: '采纳了这次改动',
       },
       {
-        name: '资料库文档卡',
-        note: '卡片哪里都能点，打开文档本身；「查看改动」打开时一处处标出改了什么。',
+        name: '改了资料库文档（在一轮里）',
+        note: '一行淡字，不再写队友的名字；点这一行打开文档本身，「查看改动」打开时一处处标出改了什么。',
         props: {
           block: LIBRARY_DOC_EDITED,
           notice: platformNotice(LIBRARY_DOC_EDITED),
@@ -388,7 +389,7 @@ export const CATALOG: CatalogEntry[] = [
           agentName: AGENT_NAME,
           refs: ROOM_REFS,
         },
-        expect: '改了 3 处',
+        expect: '3 处',
       },
     ],
   },
