@@ -311,7 +311,13 @@ class Meter:
             return used + self._inflight_tokens(now) >= cap
 
     def record(
-        self, project_id: str, topic_id: str, usage: dict, model: str, kind: str = ""
+        self,
+        project_id: str,
+        topic_id: str,
+        usage: dict,
+        model: str,
+        kind: str = "",
+        account: str = "",
     ) -> None:
         total = (
             int(usage.get("input_tokens", 0))
@@ -338,6 +344,10 @@ class Meter:
             # What admission said the call was for, when it was not a room
             # turn (`Verdict.usage_kind`); the backend's ingest keeps it.
             rec["kind"] = kind
+        if account:
+            # Which pool account (`ClaudeAccounts`) served the turn, so a seat's
+            # spend can be traced to the projects and rooms behind it.
+            rec["account"] = account
         split = usage.get("cache_creation")
         if isinstance(split, dict):
             # Written only when the response split its cache writes by
