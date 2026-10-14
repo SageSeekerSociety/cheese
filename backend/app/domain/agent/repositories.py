@@ -1,7 +1,7 @@
 """Reading and writing the turn intervals in :mod:`app.domain.agent.models`."""
 
 import uuid
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from app.domain.agent.models import AgentTurn
+from app.domain.room_task.closing import turns_ended
 from app.domain.room_task.live import turns_moved
 
 
@@ -210,6 +211,26 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
+    async def open_turn_of(
+        self, topic_id: uuid.UUID, agent_handles: Sequence[str]
+    ) -> AgentTurn | None:
+        """The still-running turn at this place of the agent known by any of
+        ``agent_handles`` (a turn row names it by its instance's handle, a room
+        by its seat's), the latest if several."""
+        if not agent_handles:
+            return None
+        stmt = (
+            select(AgentTurn)
+            .where(
+                AgentTurn.conversation_id == topic_id,
+                AgentTurn.stopped_at.is_(None),
+                AgentTurn.agent_handle.in_(list(agent_handles)),
+            )
+            .order_by(AgentTurn.started_at.desc())
+            .limit(1)
+        )
+        return (await self._session.execute(stmt)).scalar_one_or_none()
+
     async def open_turn_author_for_topic(
         self, topic_id: uuid.UUID, *, agent_handle: str | None = None
     ) -> str | None:
@@ -296,7 +317,9 @@ class AgentTurnRepository:
             .values(stopped_at=at)
             .returning(AgentTurn.conversation_id)
         )
-        await turns_moved(self._session, closed.scalars())
+        conversations = list(closed.scalars())
+        await turns_moved(self._session, conversations)
+        await turns_ended(self._session, conversations)
 
     async def still_open(
         self, topic_id: uuid.UUID, turn_ids: list[uuid.UUID]
@@ -381,6 +404,7 @@ class AgentTurnRepository:
         )
         conversations = list(closed.scalars())
         await turns_moved(self._session, conversations)
+        await turns_ended(self._session, conversations)
         return len(conversations)
 
     async def started_at_of(

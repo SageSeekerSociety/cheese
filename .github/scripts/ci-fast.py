@@ -75,7 +75,14 @@ TYPES_HOOKS = {"backend": ["pyright"], "frontend": ["frontend-typecheck"]}
 # next to them are python scripts and cost seconds, so they are not guarded:
 # their own per-check timeout reports them unknown if the budget really is gone.
 JS_RUNTIME_HOOKS = {"eslint", "stylelint", "boundary-check-frontend"}
-MERGE_BASE_HOOKS = {"file-size", "migration-fork"}
+# Hooks whose entry point reads a tree other than the working one: the merge
+# base with origin/main. Their answer depends on a history this tool only has on
+# the branch it is told about, so without that base (or under a custom `--base`
+# the hook's own argv does not carry) they report unknown rather than a verdict
+# about the wrong tree. `boundary-check` grades the tree at the merge base with
+# the same contracts it grades this one with, so a base this tool cannot reach
+# is a verdict it cannot give.
+MERGE_BASE_HOOKS = {"file-size", "migration-fork", "scene-ratchet", "boundary-check"}
 # Every hook this tool can select that spawns the node toolchain: the three
 # above, and the frontend type check next to pyright, which runs
 # `pnpm run typecheck`. The preflight blocks a run whose selection needs
@@ -384,11 +391,11 @@ def run(args, report, finish, started):
     if any(p.startswith("frontend/src/i18n/messages/") for p in changed):
         report["i18n_backend_guard"] = not scope.get("backend")
         scope["backend"] = True
-    # Which paths the map itself routed into frontend scope, for the planner:
-    # a backend change reaches that scope through a regenerated
-    # backend/openapi.json, and the planner must not read the same change's
-    # .py files as frontend content the suite has to execute — it would run the
-    # whole Vitest suite for a document no test can load.
+    # Which paths the map itself routed into frontend scope, for the planner: a
+    # backend path the map routes here is the trigger and nothing more, and the
+    # planner must not read the same change's .py files as frontend content the
+    # suite has to execute — it would run the whole Vitest suite for a document
+    # no test can load.
     frontend_scope = [p for p in changed
                       if any(fnmatch.fnmatchcase(p, pat) for pat in paths_map["frontend"])]
     report["scope"] = scope

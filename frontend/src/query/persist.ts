@@ -8,6 +8,7 @@ import type { PersistedClient, Persister } from '@tanstack/query-persist-client-
 import { persistQueryClient } from '@tanstack/query-persist-client-core'
 
 import { rememberProjects } from '@/lib/addresses'
+import { storageGetJson, storageRemove, storageSetJson } from '@/lib/browserStorage'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -15,36 +16,16 @@ import { keys } from '@/query/keys'
 const STORAGE_KEY = 'cheesex.queries.v1'
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
 
-function storage(): Storage | null {
-  try {
-    return typeof sessionStorage === 'undefined' ? null : sessionStorage
-  } catch {
-    return null
-  }
-}
-
 const persister: Persister = {
   persistClient(client: PersistedClient) {
-    try {
-      storage()?.setItem(STORAGE_KEY, JSON.stringify(client))
-    } catch {
-      // 存储被禁用或写满：内存里那份照样能用。
-    }
+    // 写不进去（存储被禁用或写满）就算了：内存里那份照样能用。
+    storageSetJson(STORAGE_KEY, client, 'session')
   },
   restoreClient() {
-    try {
-      const raw = storage()?.getItem(STORAGE_KEY)
-      return raw ? (JSON.parse(raw) as PersistedClient) : undefined
-    } catch {
-      return undefined
-    }
+    return storageGetJson<PersistedClient>(STORAGE_KEY, 'session') ?? undefined
   },
   removeClient() {
-    try {
-      storage()?.removeItem(STORAGE_KEY)
-    } catch {
-      // 同上。
-    }
+    storageRemove(STORAGE_KEY, 'session')
   },
 }
 
@@ -59,19 +40,20 @@ const persister: Persister = {
  * 重读一次。换了人（`buster` 对不上）或者存得太久的一律不看。
  */
 function seedKnownProjects(): void {
+  // 读不动（没存过、坏了、存储被禁用）就是没有：后面照常去读。
+  const stored = storageGetJson<PersistedClient>(STORAGE_KEY, 'session')
+  if (!stored) return
+  if (stored.buster !== myHandle()) return
+  if (Date.now() - stored.timestamp > MAX_AGE_MS) return
   try {
-    const raw = storage()?.getItem(STORAGE_KEY)
-    if (!raw) return
-    const stored = JSON.parse(raw) as PersistedClient
-    if (stored.buster !== myHandle()) return
-    if (Date.now() - stored.timestamp > MAX_AGE_MS) return
     for (const query of stored.clientState?.queries ?? []) {
       if (query.queryKey?.[0] !== keys.projects()[0]) continue
       const rows = query.state?.data
       if (Array.isArray(rows)) rememberProjects(rows as { id: string; slug?: string }[])
     }
   } catch {
-    // 存的那份读不动（坏了、格式变了、存储被禁用）：当作没有，后面照常去读。
+    // 模块只保证「读不抛」，不管存进去的**形状**（判据 2）——形状不对的这份跳过就好，
+    // 不拖累启动。
   }
 }
 

@@ -27,6 +27,8 @@ const props = defineProps<{
   faceLabel?: string | null
   /** 头像在动时，读屏读到的那一句：只有状态，不带在走的秒数，免得每秒再念一遍。 */
   faceStatus?: string | null
+  /** 不署名那一行头像列里的记号：默认是平台的；一条改文档的记录换成文档的。 */
+  mark?: string
 }>()
 
 const liveLabel = computed(() =>
@@ -68,9 +70,9 @@ const liveName = computed(() =>
     </div>
   </div>
   <div v-else class="notice-row">
-    <span class="notice-row__mark" :title="t('work.room.notice.platform')">
+    <span class="notice-row__mark" :title="mark ? undefined : t('work.room.notice.platform')">
       <span class="notice-row__platform" aria-hidden="true">
-        <v-icon size="12">mdi-server</v-icon>
+        <v-icon size="12">{{ mark ?? 'mdi-server' }}</v-icon>
       </span>
     </span>
     <div class="notice-row__body notice-row__body--platform">

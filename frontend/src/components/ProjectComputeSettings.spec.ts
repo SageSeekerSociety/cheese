@@ -151,10 +151,10 @@ describe('project environment settings', () => {
     expect(view.emitted('toggle')).toEqual([[]])
   })
 
-  it('does not offer changes to someone who cannot manage the project', () => {
-    mount(configs({ can_manage: false }), { editing: true })
-    expect(screen.queryByRole('button', { name: '更换' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '使用这个环境' })).toBeNull()
+  it('lets a member who does not manage the project change the default, not move agents off a device', async () => {
+    const view = mount(configs({ can_manage: false }))
+    await fireEvent.click(screen.getByRole('button', { name: '更换' }))
+    expect(view.emitted('toggle')).toEqual([[]])
     expect(screen.queryByRole('button', { name: '查看并更换…' })).toBeNull()
   })
 

@@ -62,14 +62,17 @@ repos:
       # The import graph, not the diff: this walks every module under app/ and
       # reports the ones that broke a declared boundary (api -> domain -> core,
       # no route reaching another domain's models, no cycle between sibling
-      # domains). 373 pre-existing violations are frozen inside
-      # backend/.importlinter as exact `importer -> imported` pairs, so this
-      # blocks new ones and stays quiet about the old ones.
+      # domains). The baseline it measures against is the tree at the merge base
+      # with origin/main: the violations that tree already has are held open,
+      # and a violation only this tree has is the verdict. Nothing is stored, so
+      # no pull request has to carry a list of exemptions and no writer has to
+      # keep one in step.
       #
-      # `files:` includes .importlinter because editing the freeze is how
-      # somebody would make a violation go away without fixing it.
+      # `files:` includes .importlinter because it is the declaration the check
+      # reads, and because writing an exception in it is how somebody could make
+      # a violation go away without fixing it.
       - id: boundary-check
-        name: module boundaries (import-linter + frozen baseline)
+        name: module boundaries (import-linter, baseline from the merge base)
         entry: bash -c 'cd backend && uv run python scripts/check_boundaries.py'
         language: system
         pass_filenames: false
@@ -168,19 +171,20 @@ repos:
 
       # Every page the router reaches and every SFC under
       # src/components/panels/ has to render with no backend, no route and no
-      # business store: 20 do today (frontend/scene-baseline.json) and may not
-      # stop, and a scene added from now on has to from its first commit. The
-      # router is in `files:` because registering a page there is what makes it
-      # a scene. python3 stdlib only — no venv, no node_modules — because it
+      # business store. The freeze is the tree at the merge base with
+      # origin/main: a scene that is standalone-ready there may not stop being,
+      # and a scene added from now on has to be from its first commit. Nothing
+      # is written down, so there is no writer and no list to edit. The router
+      # is in `files:` because registering a page there is what makes it a
+      # scene. python3 stdlib only — no venv, no node_modules — because it
       # grades with the same module arch-metrics.py reports from, and the two
-      # must not disagree about a scene. The writer is
-      # `pnpm run lint:scenes:update`, which only ever adds to the frozen set.
+      # must not disagree about a scene.
       - id: scene-ratchet
         name: scenes run standalone (python ratchet)
-        entry: python3 .claude/scripts/scene-ratchet.py
+        entry: python3 .claude/scripts/scene-ratchet.py --base origin/main
         language: system
         pass_filenames: false
-        files: ^(frontend/(src/(views|router|components/panels)/|scene-baseline\.json|package\.json)|\.claude/scripts/(frontend_grade|scene-ratchet|ratchet_report)\.py)$
+        files: ^(frontend/(src/(views|router|components/panels)/.*|package\.json)|\.claude/scripts/(frontend_grade|scene-ratchet|ratchet_report)\.py)$
 
       # Exact rendered child edges, useRoute callers and legacy importers can
       # only disappear. This parser needs frontend dependencies and origin/main.

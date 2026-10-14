@@ -99,6 +99,25 @@ def _spec(spec: str, label) -> dict:
     return {"spec": spec, "label": str(label), **notice_keys(label=label)}
 
 
+async def environment_words(db: AsyncSession, environment: Sandbox | SelfHosted):
+    """What a sentence calls ``environment``: its spec's name, as the picker
+    shows it, or the name of the one computer it runs on."""
+    if isinstance(environment, Sandbox):
+        if environment.spec == STANDARD:
+            return say("specStandard")
+        if environment.spec == VM:
+            return say("specVm")
+        spec = spec_of(environment.spec)
+        owner = (
+            await db.get(User, spec.owner_user_id)
+            if spec is not None and spec.owner_user_id is not None
+            else None
+        )
+        return say("specDevicesOf", name=owner.username) if owner else environment.spec
+    device = await sql_device_service(db).get_device(environment.device_id)
+    return device.name if device is not None and device.name else environment.device_id
+
+
 async def _people_with_sandboxes(db: AsyncSession, project_id: uuid.UUID) -> list[int]:
     """The owners of the project's own computers that can make a sandbox, in
     the order their first such computer joined."""

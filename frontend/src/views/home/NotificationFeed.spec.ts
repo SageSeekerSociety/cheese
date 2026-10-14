@@ -27,6 +27,18 @@ vi.mock('@/composables/useUnreadNotifications', () => ({
   useUnreadNotifications: () => ({ count: { value: 0 }, refresh, set: vi.fn() }),
 }))
 
+// 服务端那条连接换成一个能在测试里拨动的开关：拨一下就是「收件箱多了一行」。
+const inboxListeners = new Set<() => void>()
+vi.mock('@/lib/inboxLive', () => ({
+  onInboxChange: (listener: () => void) => {
+    inboxListeners.add(listener)
+    return () => inboxListeners.delete(listener)
+  },
+}))
+function somethingNewArrives() {
+  for (const listener of inboxListeners) listener()
+}
+
 import NotificationFeed from './NotificationFeed.vue'
 
 import i18n, { setLocale, t } from '@/i18n'
@@ -184,5 +196,54 @@ describe('待办页「动态」这一块', () => {
     expect(asked.type).not.toContain('CHEESE_QUESTION')
     // 换了档就从第一页来：游标是跟着上一档走到底的，接着往下翻会漏。
     expect(asked.pageStart).toBeUndefined()
+  })
+
+  // 看着列表时来了新的：不把正在读的那几行往下挤，顶上说一声「有 N 条新动态」，点了
+  // 才换成最新的。
+  it('来了新的先在顶上说一声，点了才换成最新的', async () => {
+    list.mockResolvedValueOnce({ notifications: [{ id: 5, read: true }], page: { hasMore: false } })
+    const { container } = await mount()
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(1))
+
+    list.mockResolvedValue({
+      notifications: [
+        { id: 7, read: false },
+        { id: 6, read: false },
+        { id: 5, read: true },
+      ],
+      page: { hasMore: false },
+    })
+    somethingNewArrives()
+
+    const fresh = await screen.findByRole('button', { name: t('notifications.common.newItems', { count: 2 }) })
+    // 正在读的那一行没被挤走，新的也还没塞进来。
+    expect(container.querySelectorAll('notification-item-stub').length).toBe(1)
+
+    await fireEvent.click(fresh)
+
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(3))
+    expect(screen.queryByRole('button', { name: t('notifications.common.newItems', { count: 2 }) })).toBeNull()
+  })
+
+  it('说有变化、这一档里却没有新的时，什么也不提示', async () => {
+    list.mockResolvedValue({ notifications: [{ id: 5, read: true }], page: { hasMore: false } })
+    const { container } = await mount()
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(1))
+
+    somethingNewArrives()
+
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(screen.queryByRole('button', { name: /动态/ })).toBeNull()
+  })
+
+  it('列表本来是空的，来了新的就直接摆上来', async () => {
+    list.mockResolvedValueOnce(emptyPage())
+    const { container } = await mount()
+    await screen.findByText(t('notifications.common.noNotifications'))
+
+    list.mockResolvedValue({ notifications: [{ id: 9, read: false }], page: { hasMore: false } })
+    somethingNewArrives()
+
+    await waitFor(() => expect(container.querySelectorAll('notification-item-stub').length).toBe(1))
   })
 })

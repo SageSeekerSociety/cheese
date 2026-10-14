@@ -52,6 +52,8 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  // 有用例把 localStorage 这个全局换成会抛的，别让它漏给后面的用例。
+  vi.restoreAllMocks()
 })
 
 function mountPrompt(working = true) {
@@ -141,6 +143,21 @@ describe('问推送权限的时机', () => {
     expect(enablePush).toHaveBeenCalled()
     expect(localStorage.getItem(ASKED_KEY)).toBe('1')
     expect(screen.queryByText(ASK_TEXT, { exact: false })).toBeNull()
+  })
+
+  // 站点数据被禁时这里连「问过没有」都记不住，所以只能当作问过：不当作问过的话，
+  // 每一个跑过一分钟的轮次都会再弹一次，而追问恰恰是人关掉这个渠道的头号原因。
+  it('站点数据被禁时根本不问', async () => {
+    vi.spyOn(globalThis, 'localStorage', 'get').mockImplementation(() => {
+      throw new DOMException('SecurityError')
+    })
+
+    const screen = mountPrompt()
+    await advance(61_000)
+
+    expect(screen.queryByText(ASK_TEXT, { exact: false })).toBeNull()
+    // 连「这个部署开没开推送」都不该去问 —— 那是一次没有用处的请求。
+    expect(pushAvailable).not.toHaveBeenCalled()
   })
 
   it('浏览器已经答复过权限就不再问', async () => {

@@ -37,6 +37,11 @@ ALL_HOOKS = [
 BACKEND_HOOKS = {"ruff", "ruff-format", "boundary-check", "deferred-imports", "migration-fork"}
 FRONTEND_HOOKS = {"eslint", "stylelint", "boundary-check-frontend", "scene-ratchet", "catalog-ratchet"}
 GUARD_HOOKS = {"repo-rules", "action-pins", "manual-anchors", "file-size", "doc-references"}
+# Hooks that judge against the merge base, so they are the ones that must report
+# not-run — never a pass — when there is no base or the caller names another one.
+# Kept in step with `MERGE_BASE_HOOKS` in ci-fast.py, minus `file-size`, which
+# is one of the guard hooks this file tracks separately.
+BASE_JUDGING_HOOKS = {"migration-fork", "scene-ratchet", "boundary-check"}
 
 
 def git(repo, *args):
@@ -186,12 +191,14 @@ class CiFastTest(unittest.TestCase):
         self.assertEqual(rep["status"], "unknown")
         self.assertTrue(rep["fallback"])
         # everything ran except the checks that themselves need the merge base
-        self.assertTrue((BACKEND_HOOKS - {"migration-fork"}) | FRONTEND_HOOKS <= self.ran_hooks())
+        self.assertTrue((BACKEND_HOOKS | FRONTEND_HOOKS) - BASE_JUDGING_HOOKS <= self.ran_hooks())
         self.assertNotIn("file-size", self.ran_hooks())
-        self.assertNotIn("migration-fork", self.ran_hooks())
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertNotIn(hook, self.ran_hooks())
         skipped = {n["id"] for n in rep["not_run"]}
         self.assertIn("file-size", skipped)
-        self.assertIn("migration-fork", skipped)
+        for hook in BASE_JUDGING_HOOKS:
+            self.assertIn(hook, skipped)
 
     # --- a custom --base cannot be honored by the base-judging hooks (they
     # --- always judge origin/main), so the run must NOT pass — exit 2
@@ -272,6 +279,27 @@ class CiFastTest(unittest.TestCase):
         self.assertNotIn("scene-ratchet", results)
         not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
         self.assertIn("无相关文件", not_run["scene-ratchet"])
+
+    # --- a base-judging hook whose own `files:` matches nothing changed must
+    # --- still be named as not run when there is no base: the widened selector
+    # --- that runs everything must not promote it to have-run, and the reason
+    # --- must name the base, which is the thing that could not be checked
+    def test_base_judging_hook_with_no_files_is_still_not_run(self):
+        self.write_hooks(extra_entries="""      - id: scene-ratchet
+        name: scene-ratchet filtered stub
+        entry: bash -c 'echo scene-ratchet >> .ci-fast-ran'
+        language: system
+        files: '\\.xyz$'
+""", omit={"scene-ratchet"})
+        self.commit_file("frontend/src/x.ts")  # no refs/remotes/origin/main
+        proc = self.run_ci_fast()
+        self.assertEqual(proc.returncode, 2, proc.stdout)
+        self.assertEqual(self.report()["status"], "unknown")
+        self.assertTrue(self.report()["fallback"])
+        self.assertNotIn("scene-ratchet", self.ran_hooks())
+        not_run = {n["id"]: n.get("reason", "") for n in self.report()["not_run"]}
+        self.assertIn("merge base", not_run["scene-ratchet"])
+        self.assertNotIn("无相关文件", not_run["scene-ratchet"])
 
     # --- the pre-push entry point (the platform's task-worktree hook calls
     # --- this): the three hooks that spawn the node toolchain leave the
@@ -1623,15 +1651,17 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_types_only_input_widens_types_not_the_test_run(self):
-        # A backend route change regenerates openapi.json and the types-only
-        # src/api/openapi.d.ts. Nothing in frontend/src reads the document at
-        # runtime, so the suite would be checking nothing new; the type check is
-        # what has to widen.
+        # A backend route change carries the frontend suite with it through the
+        # digest of the rebuilt document and the regenerated, types-only
+        # src/api/openapi.d.ts. Nothing in frontend/src reads either at runtime,
+        # so the suite would be checking nothing new; the type check is what has
+        # to widen.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
         self.put("frontend/src/use.ts", "export const x = 1\n")
         plan, omissions = test_plan(
-            self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts", "frontend/src/use.ts"],
+            self.root, ["backend/openapi.sha256", "frontend/src/api/openapi.d.ts",
+                        "frontend/src/use.ts"],
             {"frontend": True}, self.root)
         unit = next(p for p in plan if p["id"] == "frontend-unit")
         self.assertEqual(unit["evidence"]["mode"], "related")
@@ -1639,9 +1669,10 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertEqual(unit["evidence"]["roots"], ["src/use.ts"])
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
         self.assertEqual(omissions, [])
-        # Alone, the regenerated declaration runs no test at all — that is a
+        # Alone, the digest and the declaration run no test at all — that is a
         # stated omission, not a suite-wide run and not an unknown.
-        plan, omissions = test_plan(self.root, ["backend/openapi.json", "frontend/src/api/openapi.d.ts"],
+        plan, omissions = test_plan(self.root, ["backend/openapi.sha256",
+                                                "frontend/src/api/openapi.d.ts"],
                                     {"frontend": True}, self.root)
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-i18n" for p in plan))
@@ -1713,24 +1744,33 @@ class SelectionEvidenceTest(unittest.TestCase):
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
 
     def test_frontend_scope_is_the_paths_the_map_routed_there(self):
-        # The path map routes backend/openapi.json into frontend scope, so a
+        # The path map routes the document's digest into frontend scope, so a
         # backend change enters this branch through it. Read from the whole
         # change, its own .py files counted as frontend runtime content and the
         # suite ran in full for a document no test can load.
         from ci_fast_checks import test_plan
         self.put("frontend/src/api/openapi.d.ts", "export interface paths {}\n")
-        changed = ["backend/app/api/projects.py", "backend/openapi.json",
+        changed = ["backend/app/api/projects.py", "backend/openapi.sha256",
                    "frontend/src/api/openapi.d.ts"]
         plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root,
-                                    frontend_scope=["backend/openapi.json",
+                                    frontend_scope=["backend/openapi.sha256",
                                                     "frontend/src/api/openapi.d.ts"])
         self.assertEqual([o["id"] for o in omissions], ["frontend-unit"])
         self.assertFalse(any(p["id"] == "frontend-unit" for p in plan))
         self.assertTrue(any(p["id"] == "frontend-typecheck-full" for p in plan))
-        # With no scope from the caller the whole change is read, as before.
+        # With no scope from the caller the whole change is read, and a .py file
+        # beside the digest is not something this branch knows how to rule out:
+        # it runs in full. The path map is what keeps that from happening, and
+        # this is the answer when it has not spoken.
         plan, _ = test_plan(self.root, changed, {"frontend": True}, self.root)
         self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
                          "full")
+        # A frontend source file beside them is still content.
+        self.put("frontend/src/use.ts", "export const x = 1\n")
+        plan, _ = test_plan(self.root, changed + ["frontend/src/use.ts"],
+                            {"frontend": True}, self.root)
+        self.assertEqual(next(p for p in plan if p["id"] == "frontend-unit")["evidence"]["mode"],
+                         "related")
 
     def test_read_off_disk_specs_matches_the_specs_that_read_the_tree(self):
         # The tuple is written by hand, and a stale entry is filtered out of
@@ -1762,9 +1802,9 @@ class SelectionEvidenceTest(unittest.TestCase):
         # edit. A deletion with no surviving root is the same case.
         from ci_fast_checks import test_plan
         self.put("frontend/src/i18n/messages/en/tasks.json", "{}\n")
-        self.put("frontend/scene-baseline.json", "{}\n")
+        self.put("frontend/catalog-baseline.json", "{}\n")
         for changed in (["frontend/src/i18n/messages/en/tasks.json"],
-                        ["frontend/scene-baseline.json"],
+                        ["frontend/catalog-baseline.json"],
                         ["frontend/src/styles/docBlocks.css"],
                         ["frontend/src/gone.ts"]):
             plan, omissions = test_plan(self.root, changed, {"frontend": True}, self.root)

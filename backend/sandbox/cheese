@@ -1752,6 +1752,20 @@ class PlatformToolError(Exception):
     """A refusal the agent reads as written: what happened and what to do next."""
 
 
+class Said(str):
+    """What a tool says, with pictures for an agent that can look at them:
+    `images` holds {"data": base64, "mimeType": ...}. Every caller takes it as
+    the text it is; a session runner that can hand pictures to its model (pi,
+    Codex) hands these over as well."""
+
+    images: tuple = ()
+
+    def __new__(cls, text: str, images=()):
+        said = super().__new__(cls, text)
+        said.images = tuple(images)
+        return said
+
+
 class PlatformHTTPError(RuntimeError):
     """The backend answered, and not with success. `status` is what callers branch
     on; the message keeps the backend's own words for the agent."""
@@ -2185,11 +2199,14 @@ def _app_save(args: dict, host) -> str:
     just made and the document's history keeps which code it showed."""
     body = {"code": str(args["code"]), "note": str(args.get("note") or "")}
     key = str(args.get("app") or "").strip()
+    # The pictures the platform took come back with the answer, for the writer
+    # to look at what it made (`_LOOK`).
     if key:
-        plan = {"method": "POST", "path": _app_path(key) + "/versions", "body": body}
+        path = _app_path(key) + "/versions?pictures=true"
     else:
         document = _document(host, args)["CHEESE_DOCUMENT"]
-        plan = {"method": "POST", "path": f"/documents/{document}/apps", "body": body}
+        path = f"/documents/{document}/apps?pictures=true"
+    plan = {"method": "POST", "path": path, "body": body}
     try:
         answer = host.request(plan)
     except Exception as exc:
@@ -2205,18 +2222,36 @@ def _app_save(args: dict, host) -> str:
         if saved.get("checked")
         else "平台的浏览器暂时不可用，这一版未经试运行，也没有截图。"
     )
+    images = [
+        {"data": data, "mimeType": "image/png"}
+        for _, data in sorted((saved.get("pictures") or {}).items(), key=lambda kv: -int(kv[0]))
+    ]
     if not key:
         title = str(args.get("title") or "").strip() or "小程序"
         made = saved.get("key") or "?"
-        return (
+        said = (
             f"已保存小程序 {made} 的第 1 版。{unchecked}它还不在文档中：用 "
             "cheese_doc_edit 把下面的块放到文档中合适的位置，并把第二行改写为一句说明，"
             "写明它展示什么、最重要的结论是什么。读者和你以后读文档时，都只读这一句。\n\n"
             f":::app {made}@1 {title}\n一句话说明\n:::"
         )
+        if images:
+            said += _LOOK.format(app=made) + "无论是否修改，最后都要把块放进文档。"
+        return Said(said, images)
     version = saved.get("version") or 1
-    done = f"已保存小程序 {key} 的第 {version} 版。{unchecked}"
-    return done + _point_at(host, key, version)
+    said = f"已保存小程序 {key} 的第 {version} 版。{unchecked}" + _point_at(host, key, version)
+    if images:
+        said += _LOOK.format(app=key)
+    return Said(said, images)
+
+
+#: What the writer is asked to do with the pictures of what it just saved.
+_LOOK = (
+    "\n\n附上平台试运行这一版时拍下的截图，依次是桌面宽度和手机宽度（浅色），读者"
+    "打开时看到的就是这样。看一眼：画面是否讲清楚了要讲的东西，数字和标注是否正确，"
+    "手机宽度上是否挤在一起、重叠或被截断。有问题就改好后带上 app（{app}）再保存一版，"
+    "文档中的块会改用新的一版。"
+)
 
 
 def _point_at(host, key: str, version: int) -> str:
@@ -2232,7 +2267,10 @@ def _point_at(host, key: str, version: int) -> str:
         if (m := head.match(line)) and int(m.group(1)) != version
     ]
     if not any(head.match(line) for line in content.splitlines()):
-        return "文档中没有这个小程序的块，读者还看不到这一版。"
+        return (
+            "文档中还没有这个小程序的块，读者还看不到它。放进文档时写这一版："
+            f":::app {key}@{version}。"
+        )
     if not edits:
         return "文档中的块已经是这一版。"
     try:
@@ -5179,18 +5217,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="已整理并验证独立改动后，将现有 PR 改到项目默认分支，清除任务依赖和旧批准",
     )
 
-    sub.add_parser(
-        "sync-agents",
-        help="把项目模型目录写成本会话的分身定义(钩子自动调,一般不用手跑)",
-        description=(
-            "从项目 default-model 接口读出模型目录,在 $CLAUDE_CONFIG_DIR/agents/ 下"
-            "给每个可指定模型写一份 model-<id>.md(名字、一句话描述、model=目录 id),"
-            "不再可指定的对应 model-*.md 一并清掉(旧版按队友生成的 mate-*.md 也清)。"
-            "写在 SessionStart/UserPromptSubmit 钩子上自动跑;它只是发现层,任何失败"
-            "都不打断会话(恒退出 0)。"
-        ),
-    )
-
     psv = sub.add_parser(
         "serve",
         help="把这台机器上跑起来的应用设为当前预览(先起服务,报端口前先探通)",
@@ -5449,95 +5475,6 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def _sync_agents() -> None:
-    """把项目的模型目录写成本会话的 Claude Code 分身定义文件。
-
-    挂在 SessionStart / UserPromptSubmit 钩子上跑：主 agent 用 Agent 工具按名
-    起分身（模型=目录里的那一个）靠的就是这批文件。它只是发现层 —— 真正的
-    闸在准入（指定了目录外的模型会被拒绝并列出可选）—— 所以任何失败都不
-    许打断会话：`_call` 自己打印原因，这里恒退出 0。
-
-    分身是骨架原生机制，没有平台语义（无身份/席位/记忆）：文件按模型起，
-    不按队友起（2026-09-23 拍板）。
-    """
-    try:
-        _sync_agents_core()
-    except SystemExit:
-        pass  # `_call` 已经说过为什么了
-    except Exception as exc:  # noqa: BLE001
-        print(f"[cheese] sync-agents 跳过: {exc}", file=sys.stderr)
-
-
-def _sync_agents_core() -> None:
-    if not PROJECT:
-        return
-    # A member's own Claude Code runs on its owner's login, which serves its
-    # own models and none of the project's catalogue: listing the catalogue's
-    # would offer subagents models this session cannot reach.
-    if os.environ.get("CHEESE_OWN_LOGIN"):
-        return
-    res = _call(
-        "GET",
-        f"/projects/{PROJECT}/default-model",
-        tolerate=(401, 403, 404),
-        timeout=8,
-    )
-    if res.get("ok") is False:
-        return
-    state = res.get("data") or {}
-    choices = state.get("choices") or []
-    # 项目自己的池：后端直接给（与准入的 resolve_pool 同源）；旧后端没有这个
-    # 字段时退回「默认那一项的供给」。池外的模型主 agent 指定了也跑不起来,
-    # 所以知道池就按池列。实在推不出池（零默认的旧响应）就全列——准入兜底
-    # 会拒掉错池并给出正确的可选清单,比整个发现层空转强。
-    pool = state.get("pool")
-    if not isinstance(pool, str) or not pool:
-        pool = next(
-            (c.get("supply") for c in choices if c.get("default") and c.get("supply")),
-            None,
-        )
-    agents_dir = (
-        Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "agents"
-    )
-    marker = "由 cheese sync-agents 按项目模型目录生成，别手改。"
-    wanted: dict[str, str] = {}
-    for item in choices:
-        model = item.get("id") or ""
-        if pool is not None and item.get("supply") != pool:
-            continue
-        # CC 的分身名比模型 id 严格：清洗出名字,真 id 由 frontmatter 的
-        # model 带过去,准入认的是它。
-        name = re.sub(r"[^a-z0-9._-]+", "-", model.lower()).strip("-.")
-        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,62}", name):
-            continue
-        label = item.get("label") or model
-        # description 就是主 agent 在 Agent 工具的可用清单里读到的那一行 ——
-        # 发现模型、知道起哪个分身跑它，全在这一行里,所以要短。
-        desc = f"平台模型目录 · {label}（{model}）"
-        content = (
-            "---\n"
-            f"name: {name}\n"
-            f"description: {json.dumps(desc, ensure_ascii=False)}\n"
-            f"model: {model}\n"
-            "---\n\n" + marker + "\n"
-        )
-        wanted[f"model-{name}.md"] = content
-    agents_dir.mkdir(parents=True, exist_ok=True)
-    for name, content in wanted.items():
-        path = agents_dir / name
-        if not path.exists() or path.read_text(encoding="utf-8") != content:
-            path.write_text(content, encoding="utf-8")
-    # model-*.md 只收带自己记号的（别人手写的同名前缀文件不动）；
-    # mate-*.md 是上一版按队友生成的，全是我们的陈迹，无条件清。
-    for stale in agents_dir.glob("model-*.md"):
-        if stale.name in wanted:
-            continue
-        if marker in stale.read_text(encoding="utf-8", errors="replace"):
-            stale.unlink()
-    for stale in agents_dir.glob("mate-*.md"):
-        stale.unlink()
-
-
 def main() -> None:
     parser = build_parser()
     a = parser.parse_args()
@@ -5606,8 +5543,6 @@ def main() -> None:
             if parent:
                 os.makedirs(parent, exist_ok=True)
             _raw_request("GET", f"{base}/attachments/{a.index}{where}", None, out=out)
-    elif a.cmd == "sync-agents":
-        _sync_agents()
     elif a.cmd == "serve":
         topic = _need("CHEESE_TOPIC", TOPIC)
         if not (1 <= a.port <= 65535):

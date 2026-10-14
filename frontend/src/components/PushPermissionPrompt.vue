@@ -17,6 +17,7 @@ import { onUnmounted, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
+import { storageAvailable, storageGet, storageSet } from '@/lib/browserStorage'
 import { enablePush, permissionSettled, pushAvailable, pushSupported } from '@/services/webPush'
 
 const props = defineProps<{
@@ -34,20 +35,17 @@ const busy = ref(false)
 let timer: ReturnType<typeof setTimeout> | null = null
 
 function asked(): boolean {
-  try {
-    return localStorage.getItem(ASKED_KEY) === '1'
-  } catch {
-    // 隐私窗口和禁用站点数据会抛。那种环境下推送本来也留不住，当作问过。
-    return true
-  }
+  // 读都读不回来时（站点数据被禁）连「问过没有」都记不住，当作问过，别追着问：追问
+  // 是人关掉一个渠道的头号原因，#1084 为通知定的那条规矩在这里同样成立。
+  // 探针只看读得到读不到 —— 「读得到、写不进」那一种它探不出来，见 remember。
+  if (!storageAvailable()) return true
+  return storageGet(ASKED_KEY) === '1'
 }
 
 function remember() {
-  try {
-    localStorage.setItem(ASKED_KEY, '1')
-  } catch {
-    // 写不进去就只在这一次会话里生效；下次进来最多再问一次，不会连着问。
-  }
+  // 写不进去（配额满、Safari 隐私模式）就只在这一轮里算数，下一次跑过一分钟还会再问
+  // 一次；装上软提示前就是这样，这次搬家没改它。
+  storageSet(ASKED_KEY, '1')
 }
 
 function stopTimer() {

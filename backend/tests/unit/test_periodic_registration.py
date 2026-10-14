@@ -78,6 +78,7 @@ def _world():
         ("landing watch", "review.pr_poll.watch_landings", "chat"),
         ("draft pr sweep", "review.pr_poll.open_draft_prs", "chat"),
         ("cloud warm pool", "machine.warm.sweep_warm_pool", "sessions"),
+        ("sandbox disk guard", "machine.disk_guard.sweep", "sessions"),
         ("run record expiry", "run_record.service.purge_expired", "sessions"),
         (
             "notification email drain",
@@ -328,6 +329,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "memory_dream_sweep_interval_s",
         "ratchet_ingest_interval_s",
         "wake_watch_interval_s",
+        "sandbox_disk_check_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -352,6 +354,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("cloud sandbox lifecycle", 107),
         ("cloud compute metering", 107),
         ("cloud warm pool", 107),
+        ("sandbox disk guard", 120),
         ("subscription usage ingest", 108),
         ("backend error flush", 109),
         ("run record expiry", 110),

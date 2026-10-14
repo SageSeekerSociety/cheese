@@ -5,7 +5,6 @@
   "loadError": "Could not load models",
   "main": "Project main model",
   "notInPlan": "Not included in your plan",
-  "readOnly": "Project managers can change the default models",
   "requiresPlan": "Requires the {plan} plan",
   "subagent": "Default subagent model",
   "subagentHint": "Used by temporary subagents Claude Code spawns within a turn",

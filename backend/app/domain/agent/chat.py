@@ -116,7 +116,7 @@ from app.domain.agent.prompt import (
     _progress_lines,  # noqa: F401
     _prompt_topic_refs,  # noqa: F401
     live_inputs,
-    read_images,
+    model_images,
 )
 
 # Canonical read/policy implementations; gateway consumers retain their narrow calls.
@@ -267,20 +267,16 @@ class ChatService(SessionRecovery):
         self._profiles = profiles
         # LiteLLM gateway ADMIN client (L1/L2 — defined in
         # `app.domain.agent.gateway`). None = off.
-        # The lock serializes key-mint and usage-drain read-modify-writes on
-        # project.settings (single-process reality, like the topic locks).
         self._gateway = gateway
-        self._gateway_lock = asyncio.Lock()
         # 记忆的对账（铺下去 / 收回来）走的是会话那条通道，所以回调挂在这里，
         # 由 harness 在两个时刻问它：输入之前、这一轮结束之后。这一簇连同它按
-        # 房间记的四份状态都在 `memory_ledger.py` 里；它会用到的四件协作者显式
-        # 传进去（`gateway`/`gateway_lock` 要先建好），留在 `ChatService` 上的
+        # 房间记的四份状态都在 `memory_ledger.py` 里；它会用到的协作者显式
+        # 传进去（`gateway` 要先建好），留在 `ChatService` 上的
         # 只有 `_lock_for` 和 `_model_kwargs` 两件同事还在用的东西。
         self._memory: MemoryLedger = MemoryLedger(
             sessions=session_factory,
             compute=compute,
             gateway=gateway,
-            gateway_lock=self._gateway_lock,
             base_prompt=base_system_prompt,
             host=self,
             live=self.live,
@@ -756,15 +752,12 @@ class ChatService(SessionRecovery):
             # 中途插进来的话也带着平台自己那几句，同样按正在说话的那个人的
             # 语言走（`user.language`）。
             language = await language_of(session, author)
-        lines, images = live_input_lines(
-            author,
-            content,
-            attachments,
-            stored=stored,
-            replied=replied,
-            recipient=state.acting_agent if state else None,
-        )
-        line = publication_prompt("\n".join(lines), language)
+        recipient = state.acting_agent if state else None
+        files = [
+            (str(a["path"]), str(a.get("mime") or ""))
+            for a in attachments or []
+            if a.get("path")
+        ]
         registrar = self._input_registrar(
             InputEffects(
                 held_block_ids=tuple(user_block_ids),
@@ -787,9 +780,31 @@ class ChatService(SessionRecovery):
                     or place.room.status == TopicStatus.archived
                     or (place.task is not None and place.task.status != TaskStatus.open)
                 )
-                pictures = await read_images(
-                    session, place.room if place else None, images
+                # The pictures are read here, and the lines written after: a line
+                # says whether its file arrives as a picture, and only reading
+                # the bytes can tell (`model_images`).
+                images, undecodable = (
+                    await model_images(
+                        session, place.room.project_id, place.room.id, files
+                    )
+                    if place is not None
+                    else ({}, set())
                 )
+            pictures = [images[path] for path, _ in files if path in images]
+            line = publication_prompt(
+                "\n".join(
+                    live_input_lines(
+                        author,
+                        content,
+                        attachments,
+                        stored=stored,
+                        replied=replied,
+                        recipient=recipient,
+                        undecodable=undecodable,
+                    )
+                ),
+                language,
+            )
             if archived:
                 delivered = False
             else:
@@ -1434,7 +1449,6 @@ class ChatService(SessionRecovery):
             self._sessions,
             self._gateway,
             self._profiles,
-            self._gateway_lock,
             project_id,
             provider,
             topic_id,
@@ -1451,7 +1465,6 @@ class ChatService(SessionRecovery):
             self,
             self._sessions,
             self._gateway,
-            self._gateway_lock,
             project_id,
             dream=dream,
         )
@@ -1464,7 +1477,7 @@ class ChatService(SessionRecovery):
     async def _gateway_project_env(self, project_id: uuid.UUID) -> dict | None:
         """Env override for a gateway-routed turn (gateway_usage.py)."""
         return await _gateway_project_env(
-            self, self._sessions, self._gateway, self._gateway_lock, project_id
+            self, self._sessions, self._gateway, project_id
         )
 
     def _schedule_deferred_drain(
@@ -1475,7 +1488,6 @@ class ChatService(SessionRecovery):
         return _schedule_deferred_drain(
             self._sessions,
             self._gateway,
-            self._gateway_lock,
             self._background_tasks,
             project_id,
             topic_id,
@@ -1490,7 +1502,6 @@ class ChatService(SessionRecovery):
         return await charge_turn_spend(
             self._sessions,
             self._gateway,
-            self._gateway_lock,
             project_id,
             topic_id,
             turn_id,

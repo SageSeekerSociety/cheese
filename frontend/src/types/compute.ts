@@ -64,6 +64,7 @@ export interface TopicEnvironment {
 // where the project's agents that have started are working now.
 export interface ProjectComputeConfigs {
   default: Environment
+  /** Whether this caller may move agents already on a device elsewhere (a manager's); the default is anyone's. */
   can_manage: boolean
   devices: EnvironmentDevice[]
   specs: SandboxSpec[]

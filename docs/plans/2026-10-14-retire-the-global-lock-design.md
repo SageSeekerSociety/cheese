@@ -21,13 +21,13 @@
 
 `#1510` 的诊断（`docs/topics/perf-awaiting-me-queue.md`）测出 `GET /awaiting-me` 一个请求吃掉约 35 ms 循环 CPU，20 个请求约 0.7 s，全部挤在一个事件循环上。它同时给出了两条路：削每请求 CPU，或者加工作进程。
 
-加 `--workers 2` 今天不是慢，是坏。诊断点了三处单进程假设：
+加 `--workers 2` 今天不是慢，是坏。诊断第 5 节点了三处：
 
-- 轮次准入握在一把进程内的锁上，消息落到没有这把锁的那条进程就永远不会被放出去，于是谎报「投递失败」；
-- `ChatService.live`（`backend/app/domain/agent/chat.py`，`turn/state/live.py` 自己写着 “lives and dies with the process”）；
-- `_gateway_lock`（对 `project.settings` 的读改写）。
+- 连接预算。每个 worker 有自己的池，`backend/app/core/config.py` 92–113 行那笔账按「两个后端进程 + 连接持有者」算出 2 × (35 + 1) + 10 + 10 = 92 / 97，dev 的服务器 2026-09-18 才提到 200 条，上线时的三份变四份。
+- 进程内状态：`ChatService.live`（`backend/app/domain/agent/chat.py`，`turn/state/live.py` 自己写着 “lives and dies with the process”）。
+- 其余单进程假设：`_gateway_lock`（对 `project.settings` 的读改写）和周期性任务。
 
-连接预算是第四笔账：`backend/app/core/config.py` 92–113 行那笔账按「两个后端进程 + 连接持有者」算出 2 × (35 + 1) + 10 + 10 = 92 / 97，dev 的服务器 2026-09-18 才提到 200 条。每个 worker 有自己的池，上线时的三份变四份。
+座位准入是第四处，诊断没点到，这一条是本文件照代码推的（见 2.2）：轮次准入握在一把进程内的锁上，消息落到没有这把锁的那条进程就永远不会被放出去，于是谎报「投递失败」。
 
 ## 2. 今天有哪些状态活在进程里，谁在读
 
@@ -66,7 +66,7 @@
 
 一个 `ContextVar` 加一把 `asyncio.Lock` 的上下文管理器，文档只有一句：「Serialize prompt preparation and live offers on the same recipient seat.」
 
-这就是诊断里那把「进程内的咨询锁」。它按 `(topic, agent)` 取 `live.seat_locks`，所以是**进程内**的：第二条进程对同一个座位拿到的是另一把锁，两边同时放行同一个座位的消息。诊断描述的后果是消息落到没有锁的那条进程就再也不会被放出去、谎报投递失败。
+它按 `(topic, agent)` 取 `live.seat_locks`，那格子的注释写着「Prompt construction is serialized per (topic, agent) seat」，所以是**进程内**的：第二条进程对同一个座位拿到的是另一把锁，两边同时放行同一个座位的消息。后果是消息落到没有锁的那条进程就再也不会被放出去、谎报投递失败。这一条是照这段代码推出来的，`docs/topics/perf-awaiting-me-queue.md` 没写过。
 
 ### 2.3 `_gateway_lock`（`backend/app/domain/agent/gateway_usage.py`）
 
@@ -129,7 +129,7 @@
 | `retry_notes` / `waiting_notes` / `compact_notes` | 提示行的**持久身份**做去重键 | 一串重试只该有一行，不管谁在看 |
 | `_gateway_lock` | **库行锁** `SELECT … FOR UPDATE` on `projects` | 写路径已经在拿它了 |
 | `HostMemory` 读数 | **全机一份、2 秒 TTL 的共享读数**（Valkey） | 闸门是给整台宿主机的，不该由 N 个进程各判一次 |
-| 周期任务 | **每个任务名一把租约**，谁拿到谁跑 | 已有租约机制；没有就只能靠幂等硬扛 |
+| 周期任务 | **每个任务名一把租约**，谁拿到谁跑 | 这把租约就是 `core/job_runs.py` 的 `JobRuns.claim`：一个任务名一行（`run_by`/`run_until`），`PeriodicRunner._take_tick` 每拍去领，拿到才跑、过期换人。迁移顺序 2e 已经建好，不要再套一层 `admission.Hold`（30 秒续租的粒度配不上 3600 秒的任务，白留三层）。验证口径就是 `test_two_processes_claiming_at_once_only_one_gets_the_tick` 与 `test_a_job_scheduled_on_every_process_runs_once_a_tick` |
 | `pending_messages._runner` 单例 | 按租约认领，或把 nudge 广播出去 | 现在落错进程就只能等清扫 |
 | `InProcessBroker` 现场帧 | **本进程扇出 + Valkey pub/sub 跨进程** | 现场帧本来就丢得起，at-most-once 正好 |
 | `session_route` / `session_model` / `conversation_rooms` / `room_session_agents` | 从库里**按需重算**（`AgentSession`、`threads.room_id`、`tasks.room_id`） | 这几样本来就有持久副本 |
@@ -158,7 +158,7 @@
 
 **反方二：用粘性路由代替，一间房固定落在一条进程上。** 能减小消息落错进程的概率。
 
-**为什么否掉**：减小不等于消除。重连、部署、客户端开第二条连接都会打穿粘性，而打穿的那一次正好是诊断里那个静默的「投递失败」。粘性把故障从「看得见」变成「偶尔才出现」，更难查。
+**为什么否掉**：减小不等于消除。重连、部署、客户端开第二条连接都会打穿粘性，而打穿的那一次正好是 2.2 里那个静默的「投递失败」。粘性把故障从「看得见」变成「偶尔才出现」，更难查。
 
 **反方三：全搬库里，别引 Valkey。** 少一个依赖。
 
@@ -221,14 +221,14 @@
 
 ### Step 5 — 周期任务单实例化 + 网关 key 改行锁
 
-- 每个周期任务名一把 `admission.Hold`，拿到才跑，租约过期自动换人跑。
+- 周期任务单实例化：这把租约已经有了，就是 `core/job_runs.py` 的 `JobRuns.claim`（一个任务名一行，`PeriodicRunner._take_tick` 每拍去领，拿到才跑、过期换人）。本步只把口径写清楚，不新增机制；两个进程同时跑一个周期只起一次的验证，就是 `test_two_processes_claiming_at_once_only_one_gets_the_tick` 与 `test_a_job_scheduled_on_every_process_runs_once_a_tick`。把周期任务搬出归属锁是迁移顺序 3e，一条任务一个 PR，不在本步。
 - `_gateway_lock` 去掉，写路径整段握着 `repo.lock_settings(project)`；**读路径保持不拿锁**（那 5.8 s 尾巴的教训）。
 - `HostMemory` 的读数挂到共享短 TTL 上。
-- `pending_messages._runner` 的 nudge 改成广播或按租约认领。
+- `pending_messages._runner` 的 nudge 改成广播或按租约认领。（要做它得先有 Step 1–4 的地盘：广播是第 4 步的跨进程通道，按租约认领要有人接得住轮次。不在本步。）
 
 **合进去之后仍然正确**：清扫、提醒、dream 全机一次；两个进程不能各铸一把项目 key。
 
-**怎么验证**：两个 worker 同时跑一个周期，日志里每样任务只该起一次；同一个项目连开两轮，`project.settings` 里的 `llm_gateway_key` 应还是同一把。
+**怎么验证**：同一个项目连开两轮，`project.settings` 里的 `llm_gateway_key` 应还是同一把；两个 worker 同时跑一个周期，日志里每样任务只该起一次（上面两个测试即是）。
 
 ## 7. 停在第 1 步 / 第 2 步会坏什么
 
@@ -236,7 +236,7 @@
 
 **停在第 1 步（只做准入租约）**：
 
-- 拿不到：消息不再被谎报投递失败，同一个座位不会被两条进程同时放行。这是诊断里最疼的那条，已经修好。
+- 拿不到：消息不再被谎报投递失败，同一个座位不会被两条进程同时放行。这是 2.2 里最疼的那条，已经修好。
 - 还会坏：
   - `active_turn_ids` 仍是每进程一份。消息落错进程时会**等**（正确，因为租约说有人占着），但只能等周期清扫来接，最多拖 `queued_message_sweep_interval_s`。
   - 部署到一半的轮次仍然丢 `hook_work`——今天就丢，不是新坏的，但也没修。

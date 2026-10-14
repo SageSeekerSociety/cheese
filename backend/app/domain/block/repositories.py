@@ -8,6 +8,7 @@ from typing import Literal, overload
 
 from sqlalchemy import (
     DateTime,
+    Select,
     Text,
     Uuid,
     and_,
@@ -525,15 +526,33 @@ class BlockRepository:
         with_blocks: Literal[True],
     ) -> dict[uuid.UUID, tuple[Awaited, uuid.UUID, str]]: ...
 
-    async def _awaiting_an_answer(self, place_ids: list[uuid.UUID], with_blocks=False):
-        if not place_ids:
-            return {}
+    #: 等一道题的地方（频道、活、支线）一屏最多七百来个，下面两句查询都只把这些 id
+    #: 当**参数**收进来。按名绑定的数组参数，语句本身与调用无关，于是可以建一次、
+    #: 处处复用：原先每次调用重建一遍，量出来这两句的构造本身约 406µs / 449µs（中位）。
+    #: 一次「待我处理」一共 11 句查询，原先每请求都重建一遍。语句是只读的（执行不往
+    #: 它上面挂编译期状态），一份拿给并发用安全，和 `room_task/repositories.py` 的
+    #: `_uuids` 是同一个写法。
+    _places_param = bindparam("places", type_=ARRAY(Uuid))
+    _ats_param = bindparam("ats", type_=ARRAY(DateTime(timezone=True)))
+    _awaiting_statements: dict[str, Select] = {}
+
+    @classmethod
+    def _awaiting_statement(cls, key: str, build) -> Select:
+        """建一次就留着；绑定值每次执行时按名给（`keys` 见上面的参数）。"""
+        statement = cls._awaiting_statements.get(key)
+        if statement is None:
+            statement = build()
+            cls._awaiting_statements[key] = statement
+        return statement
+
+    @classmethod
+    def _build_places_statement(cls) -> Select:
         place_column = Block.conversation_id.label("place_id")
         # `in_()` 会把这一串 id 摊成同样多个绑定参数，每执行一次都要重新拼一遍
         # SQL（一屏「待我处理」要拿七百来个对话来问，量出来光这一步就 8~9 毫秒）。
-        # 收成一个数组参数之后语句只编译一次，后面每次都由驱动直接复用；和
-        # `room_task/repositories.py` 的 `_uuids` 是同一个写法。
-        among = any_(bindparam(None, list(place_ids), type_=ARRAY(Uuid)))
+        # 收成一个数组参数（`_places_param`）之后语句只编译一次，后面每次都由驱动
+        # 直接复用。
+        #
         # 每段只取最近一题（#1084 的原语义），连同**题文**和这条活的「开始」一起
         # 回来：清单第二行要显示题文，而「开始」决定了开始之前问的题还算不算数 ——
         # 两笔本来就要和这一趟的答案并起来读，各自再问一趟就是白白多两次往返
@@ -549,7 +568,7 @@ class BlockRepository:
                 Block.content,
             )
             .where(
-                place_column == among,
+                place_column == any_(cls._places_param),
                 # 和 `ix_blocks_questions` 的谓词是同一个对象，规划器才认得出
                 # 能用那个部分索引。
                 QUESTION_ROWS,
@@ -558,13 +577,49 @@ class BlockRepository:
             .distinct(place_column)
             .subquery()
         )
+        return select(latest, _tasks.c.started_at).select_from(
+            latest.outerjoin(_tasks, _tasks.c.id == latest.c.place_id)
+        )
+
+    @classmethod
+    def _build_spoke_statement(cls) -> Select:
+        # 下面这一趟只回答「说过话的时间 > 提问时间吗」，每个对话的界限不一样，所以
+        # 界限**按行带进查询**：两张同样长的数组（哪一段对话、它的提问时刻）展开成
+        # 一个派生表，再按它横向读一次区块。以前是拿「最早那道题」当所有对话的共同
+        # 下界、写成一个 `created_at > <那个时刻>` 的区间，那要分两趟问（人和芝士各
+        # 一趟），而且非得把整张表按对话分组算一遍 —— 规划器在这里会走一次全表哈希
+        # 连接（本机 48 万条区块实测 134ms），横向读一张按 (conversation_id,
+        # created_at) 排的索引才是每段对话读一小段（约 2ms）。题上没记是谁、说话
+        # 的人是哪一类（芝士还是人）在下面按题分，不再各问一趟。
+        asked_places = (
+            func.unnest(cls._places_param, cls._ats_param)
+            .table_valued("place", "asked_at")
+            .render_derived()
+        )
+        said_since = (
+            select(Block.author.label("author"), func.max(Block.created_at).label("at"))
+            .where(
+                Block.conversation_id == asked_places.c.place,
+                Block.created_at > asked_places.c.asked_at,
+                Block.kind == BlockKind.message,
+                participant_blocks(),
+            )
+            .group_by(Block.author)
+            .lateral("said_since")
+        )
+        return select(
+            asked_places.c.place, said_since.c.author, said_since.c.at
+        ).select_from(asked_places.join(said_since, true()))
+
+    async def _awaiting_an_answer(self, place_ids: list[uuid.UUID], with_blocks=False):
+        if not place_ids:
+            return {}
         selected = {}
         rows = []
         for place_id, meta, at, asker, block_id, content, started_at in (
             await self._session.execute(
-                select(latest, _tasks.c.started_at).select_from(
-                    latest.outerjoin(_tasks, _tasks.c.id == latest.c.place_id)
-                )
+                self._awaiting_statement("places", self._build_places_statement),
+                {"places": list(place_ids)},
             )
         ).all():
             if place_id is None:
@@ -585,41 +640,7 @@ class BlockRepository:
             return {}
         # 没点按钮、直接打字回了一句，也是回应过了：题问出来之后，被问的那个人
         # （题上没记是谁，就任何一个人）在这里说过话，这道题就不再挂在他身上。
-        #
-        # 下面这一趟只回答「说过话的时间 > 提问时间吗」，每个对话的界限不一样，所以
-        # 界限**按行带进查询**：两张同样长的数组（哪一段对话、它的提问时刻）展开成
-        # 一个派生表，再按它横向读一次区块。以前是拿「最早那道题」当所有对话的共同
-        # 下界、写成一个 `created_at > <那个时刻>` 的区间，那要分两趟问（人和芝士各
-        # 一趟），而且非得把整张表按对话分组算一遍 —— 规划器在这里会走一次全表哈希
-        # 连接（本机 48 万条区块实测 134ms），横向读一张按 (conversation_id,
-        # created_at) 排的索引才是每段对话读一小段（约 2ms）。题上没记是谁、说话
-        # 的人是哪一类（芝士还是人）在下面按题分，不再各问一趟。
-        asked_places = (
-            func.unnest(
-                bindparam(None, [row[0] for row in rows], type_=ARRAY(Uuid)),
-                bindparam(
-                    None,
-                    [row[2] for row in rows],
-                    type_=ARRAY(DateTime(timezone=True)),
-                ),
-            )
-            .table_valued("place", "asked_at")
-            .render_derived()
-        )
-        said_since = (
-            select(Block.author.label("author"), func.max(Block.created_at).label("at"))
-            .where(
-                place_column == asked_places.c.place,
-                Block.created_at > asked_places.c.asked_at,
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-            )
-            .group_by(Block.author)
-            .lateral("said_since")
-        )
-        spoke = select(
-            asked_places.c.place, said_since.c.author, said_since.c.at
-        ).select_from(asked_places.join(said_since, true()))
+        # 这一趟怎么问、为什么这样问，在 `_build_spoke_statement` 上面。
         last_said: dict[uuid.UUID, dict[str, datetime]] = {}
         # 芝士问完，自己又在同一条线上接着说了一句 —— 那道题它自己已经绕过去了，
         # 不该继续挂在被问的人身上 (#2046：芝士问完没等回答就自己做完、又发了几句
@@ -628,7 +649,13 @@ class BlockRepository:
         # 且他本人是芝士 —— 别的席位上有人说话，是那名参与者的发言，不是这道题的
         # 提问者收回了它。
         said_by_agent: dict[uuid.UUID, dict[str, datetime]] = {}
-        for place_id, author, at in (await self._session.execute(spoke)).all():
+        for place_id, author, at in (
+            await self._session.execute(
+                self._awaiting_statement("spoke", self._build_spoke_statement),
+                # 两张数组按行对齐：同一个 `rows` 顺序，错开一位就答错问题了。
+                {"places": [row[0] for row in rows], "ats": [row[2] for row in rows]},
+            )
+        ).all():
             said_by = said_by_agent if looks_like_agent_handle(author) else last_said
             said_by.setdefault(place_id, {})[author] = at
         waiting: dict[uuid.UUID, Awaited] = {}

@@ -159,6 +159,47 @@ async def tell_unpaid(session: AsyncSession, home: SandboxHome) -> dict | None:
     )
 
 
+async def tell_disk_full(
+    session: AsyncSession, home: SandboxHome, *, gb: str, files: str, where: str
+) -> dict | None:
+    """The machine's disk was nearly full and this sandbox held the most of it
+    (``disk_guard``): what it held, and where, so its agent can tell what to
+    stop leaving behind."""
+    return await _line(
+        session,
+        home,
+        say("sandboxReleasedDiskFull", gb=gb, files=files, where=where),
+        {"event_type": "sandbox_asleep", "severity": "warn"},
+    )
+
+
+async def tell_over_budget(
+    session: AsyncSession,
+    home: SandboxHome,
+    *,
+    gb: str,
+    files: str,
+    where: str,
+    limit_gb: str,
+    limit_files: str,
+) -> dict | None:
+    """This sandbox held more of its host's disk than one sandbox may
+    (``disk_guard``): what it held, where, and the limit."""
+    return await _line(
+        session,
+        home,
+        say(
+            "sandboxReleasedOverBudget",
+            gb=gb,
+            files=files,
+            where=where,
+            limit_gb=limit_gb,
+            limit_files=limit_files,
+        ),
+        {"event_type": "sandbox_asleep", "severity": "warn"},
+    )
+
+
 async def tell_vm_released(
     session: AsyncSession, home: SandboxHome, minutes: int
 ) -> dict | None:

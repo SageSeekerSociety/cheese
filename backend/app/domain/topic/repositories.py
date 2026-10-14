@@ -4,6 +4,7 @@ import uuid
 from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Literal
 
 from sqlalchemy import (
@@ -198,6 +199,82 @@ def _readable_by(user_handle: str):
     return or_(
         and_(Topic.is_private.is_(False), Topic.members_only.is_(False)),
         _seated(user_handle),
+    )
+
+
+#: 「有人回复了我、我还没处理」（侧栏那盏黄灯）那条查询的房间参数。房间按百计，所以
+#: 走数组参数；`expanding` 让它在 SQL 里照样摊成 `IN ($1, $2, …)` —— 和原先直接
+#: `in_(room_ids)` 生成的文本逐字节相同，执行计划不变。
+_replied_rooms = bindparam("replied_rooms", type_=Uuid, expanding=True)
+_replied_inner = bindparam("replied_inner", type_=Uuid, expanding=True)
+
+
+@lru_cache(maxsize=64)
+def _replied_to_me_statement(user_handle: str) -> Select:
+    """`TopicRepository.replied_to_me` 的那条查询，按看的人建一次留着。
+
+    每个请求都来拼一遍这个多连接、带 `exists()` 的语句，量出来光构造本身就约
+    4.6ms（2026-10-14，48 万区块的库，一次频道详情）。房间里**谁在看**烧进了
+    「提到我」那条 JSONB 判据（`_mentions`），所以缓存的键是人；房间本身只以参数
+    进来。语句是只读的，一份拿给并发用安全（`block/repositories.py` 的
+    `_awaiting_statements` 是同一个写法）。
+    """
+    # 「回复我发的消息」：另说的一条块指着我写的某一块。别名和 `unread_counts`
+    # 里 `took_part` 那一处同一个写法 —— exists() 要关联到外层的 Block，就不能
+    # 用同一个 Block。
+    mine = aliased(Block)
+    answers_mine = (
+        select(mine.id)
+        .where(mine.id == Block.reply_to, mine.author == user_handle)
+        .exists()
+    )
+    # 同一个人在两处已读：这间房自己那一位（主线取它），和这条块所在那条线的
+    # 那一位（支线里的块取它，主线上的块两处是同一位）。
+    room_state = aliased(TopicReadState)
+    line_state = aliased(TopicReadState)
+
+    def read_state_of(state, conversation):
+        return and_(
+            state.topic_id == conversation,
+            state.user_handle == user_handle,
+        )
+
+    def past(state):
+        """这条块在那一位后面吗。没有那一行 = 那一条线从没打开过，全都还没读。"""
+        return or_(state.last_read_seq.is_(None), Block.seq > state.last_read_seq)
+
+    def opened_before(state):
+        """这个人上次打开这个频道，是在这条块落地之前吗（从没打开过 = 是）。
+
+        已读位那行的时间戳就是「上次打开」：`mark_read` 每回把它推到现在
+        （`TopicReadRepository.mark_read_many` 的 upsert）。
+        """
+        return or_(state.updated_at.is_(None), state.updated_at < Block.created_at)
+
+    return (
+        select(Block.conversation_id, _threads.c.room_id)
+        .outerjoin(_threads, _threads.c.id == Block.conversation_id)
+        .outerjoin(
+            room_state,
+            read_state_of(
+                room_state, func.coalesce(_threads.c.room_id, Block.conversation_id)
+            ),
+        )
+        .outerjoin(line_state, read_state_of(line_state, Block.conversation_id))
+        .where(
+            or_(
+                Block.conversation_id.in_(_replied_rooms),
+                _threads.c.room_id.in_(_replied_inner),
+            ),
+            Block.kind == BlockKind.message,
+            Block.author_type == AuthorType.participant,
+            Block.author != user_handle,
+            # 两处都还没读过才算「我还没处理」（见上）：这条块所在的那条线
+            # 没读过，这个频道也没在它落地之后打开过。
+            past(line_state),
+            opened_before(room_state),
+            or_(_mentions(user_handle), answers_mine),
+        )
     )
 
 
@@ -578,6 +655,49 @@ class TopicRepository:
             )
         )
         return int((await self._session.scalar(stmt)) or 0)
+
+    # ---- 有人回复了我、我还没处理（侧栏那盏黄灯） -----------------------
+
+    async def replied_to_me(
+        self, room_ids: Collection[uuid.UUID], user_handle: str
+    ) -> set[uuid.UUID]:
+        """Which of these channels hold an answer to this person that they have
+        not opened the channel since.
+
+        An answer TO them is a message from somebody else that either replies to
+        a block they wrote (`reply_to`) or names them (`refs`) — the two cases
+        the person named. AI teammates count, the platform's own events do not
+        (`author_type`).
+
+        HANDLED is having read the answer, and reading it is opening the line it
+        landed on. Opening the CHANNEL counts even when the answer landed in a
+        支线 under it ("打开这个频道就算处理了" — what the person said
+        counts): the read-state row remembers when the channel was last opened,
+        and that moment being after the answer landed is enough. Reading that
+        支线 in its own pane counts too, and is what its own cursor moves.
+        Either one is enough, so "not handled" is neither — and the two are read
+        differently because they are different kinds of number: a cursor counts
+        one conversation's blocks, and 支线 number theirs separately, so the
+        channel's cursor says nothing about a 支线's block. Only the moment can
+        be compared across the two.
+
+        The channel's own line and its 支线 count. The work dispatched under it
+        does not: a task has a row of its own, and whether it waits on somebody
+        is that row's own fact.
+        """
+        if not room_ids:
+            return set()
+        # 语句按看的人建一次留着，房间每次当参数给（`_replied_to_me_statement`）。
+        rooms = list(room_ids)
+        return {
+            room or conversation
+            for conversation, room in (
+                await self._session.execute(
+                    _replied_to_me_statement(user_handle),
+                    {"replied_rooms": rooms, "replied_inner": rooms},
+                )
+            ).all()
+        }
 
     # ---- 话题级未读 (Feishu-style badges) -------------------------------
 

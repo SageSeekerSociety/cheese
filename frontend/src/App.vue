@@ -361,6 +361,7 @@ import {
   tellDesktopTheme,
 } from '@/lib/desktopApp'
 import { landBootSplash } from '@/lib/desktopSplash'
+import { startInboxLive } from '@/lib/inboxLive'
 import { trackKeyboardInset } from '@/lib/keyboardInset'
 import { pageMotion } from '@/lib/pageMotion'
 import { randomTeammateName } from '@/lib/projectAgents'
@@ -627,6 +628,18 @@ watch(
   },
   { immediate: true }
 )
+// 收件箱有新的一行时服务端当场说一声：「动态」和首页的未读小点据此去读（`lib/inboxLive.ts`）。
+let stopInboxLive: (() => void) | null = null
+watch(
+  () => AccountService.loggedIn && AccountService.user?.id,
+  (userId) => {
+    stopInboxLive?.()
+    stopInboxLive =
+      typeof userId === 'number' ? startInboxLive(async () => (await NotificationsApi.liveToken()).token) : null
+  },
+  { immediate: true }
+)
+onBeforeUnmount(() => stopInboxLive?.())
 const stopOpeningPages = onDesktopOpenPage((path) => void router.push(path))
 onBeforeUnmount(stopOpeningPages)
 

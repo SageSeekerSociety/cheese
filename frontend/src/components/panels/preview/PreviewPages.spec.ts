@@ -202,6 +202,32 @@ describe('分页文档的阅读视图', () => {
     await waitFor(() => expect(container.querySelectorAll('canvas')).toHaveLength(2))
   })
 
+  it('文字层带着 pdf.js 6 按它算字号和宽高的那几个变量', async () => {
+    const ui = await opened()
+
+    // 版面在 happy-dom 里量不出来，宽度自己给：给一个和页宽不一样的数，才看得出
+    // 画布用的那个比例有没有传到文字层上。
+    const pv = ui.container.querySelector('.pv') as HTMLElement
+    Object.defineProperty(pv, 'clientWidth', { value: 600, configurable: true })
+    resize?.()
+    await new Promise((r) => setTimeout(r, 300))
+    await waitFor(() => expect(ui.container.querySelectorAll('canvas')).toHaveLength(2))
+
+    const canvas = ui.container.querySelector('canvas') as HTMLCanvasElement
+    const layer = ui.container.querySelector('.pv-text') as HTMLElement
+    expect(layer).toBeTruthy()
+    // 这一条是文字层的字从哪来的：字号 = --total-scale-factor × 每个 span 自己的
+    // --font-height，宽高也是 pdf.js 按这个变量写在层上的。它按自己所在的元素读这些
+    // 变量，少了就整层按继承来的字号排版——画布照常是对的，只有选中落在别处。
+    // 假的那一页 600 宽，画布就画成 568：两个数都得是同一个比例。
+    expect(Number(layer.style.getPropertyValue('--total-scale-factor'))).toBeCloseTo(
+      Number.parseFloat(canvas.style.width) / 600,
+      6
+    )
+    expect(layer.style.getPropertyValue('--scale-round-x')).not.toBe('')
+    expect(layer.style.getPropertyValue('--scale-round-y')).not.toBe('')
+  })
+
   it('选中一个字不发引用：门槛和幻灯片那条一样', async () => {
     const { container, emitted } = mount()
     await waitFor(() => expect(pdf.calls).toBeGreaterThan(0))

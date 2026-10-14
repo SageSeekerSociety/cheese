@@ -145,6 +145,7 @@ class DocumentWriter:
         quiet: bool = False,
         requested_by: str | None = None,
         edits: list[dict] | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> tuple[Document | None, Block | None]:
         """改文档即指令 (eval B2): record a new version of a room's living doc
         and drop a '编辑了文档' event into the conversation. The agent reads the
@@ -164,7 +165,8 @@ class DocumentWriter:
         ``requested_by`` is the person an edit was made for (the agent edited
         at their request), and ``edits`` the passages it changed: the line
         then says who asked, and only extends a line about the same person's
-        request.
+        request. ``turn_id`` is the AI teammate's running turn the edit was a
+        step of; the line is part of that turn.
         """
         if not actors:
             raise ValueError("a document version needs the actor who wrote it")
@@ -292,6 +294,7 @@ class DocumentWriter:
             earlier.author = author
             earlier.content = line
             earlier.meta = meta
+            earlier.turn_id = turn_id
             # It is the newest thing said in the room, and says so.
             earlier.created_at = datetime.now(UTC)
             self.notice_merged = True
@@ -306,6 +309,7 @@ class DocumentWriter:
                 kind=BlockKind.event,
                 refs=[str(doc.id)],
                 meta=meta,
+                turn_id=turn_id,
             )
         await journal.append(
             document_id=doc.id,
@@ -327,6 +331,7 @@ class DocumentWriter:
         actor: str,
         suggestion_ids: list[str],
         reason: str | None = None,
+        turn_id: uuid.UUID | None = None,
     ) -> Block | None:
         """Tell the conversation whose document it is that ``actor`` proposed
         changes to it.
@@ -365,6 +370,7 @@ class DocumentWriter:
         if earlier is not None:
             earlier.content = line
             earlier.meta = meta
+            earlier.turn_id = turn_id
             earlier.created_at = datetime.now(UTC)
             self.notice_merged = True
             await self._session.flush()
@@ -378,6 +384,7 @@ class DocumentWriter:
             kind=BlockKind.event,
             refs=[str(doc.id)],
             meta=meta,
+            turn_id=turn_id,
         )
 
     async def _mergeable_notice(
@@ -418,13 +425,15 @@ async def tell_room_of_document(
     created: bool = False,
     edits: list[dict] | None = None,
     suggested: list[str] | None = None,
+    turn_id: uuid.UUID | None = None,
 ) -> tuple[Block, bool]:
     """Put in the room (or its task ``task_id``, or its 支线 ``thread_id``) that
     ``actor`` made or changed
     ``doc``, a document of the project's own: a line with the document on it, to
     open beside the conversation. ``suggested`` are the ids of changes proposed
     instead of made. A run of changes of one kind to the same document by the same
-    actor is one line, as with a room's document. Returns the line and whether it
+    actor is one line, as with a room's document. ``turn_id`` is the actor's
+    running turn the change was a step of. Returns the line and whether it
     extended the last one."""
     blocks = BlockRepository(session)
     landed = (
@@ -459,6 +468,7 @@ async def tell_room_of_document(
                 *suggested,
             ]
         last.meta = extended
+        last.turn_id = turn_id
         last.created_at = datetime.now(UTC)
         await session.flush()
         return last, True
@@ -490,5 +500,6 @@ async def tell_room_of_document(
                 else {}
             ),
         },
+        turn_id=turn_id,
     )
     return block, False
