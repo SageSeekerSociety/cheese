@@ -92,11 +92,11 @@ async def consuming_turn(
 async def confirm_open(sessions: Sessions, work_id: uuid.UUID) -> bool:
     """Confirm the authority has this turn open; never create a row.
 
-    The row is the turn lifecycle's to open. At ``_prompt_lock`` it does not
-    exist yet, so there is nothing here to write and nothing to invent — the
-    lifecycle commits the real row (author, content, continuation) a moment
-    later, and this mark is only the in-process reservation until then. A row a
-    sweep closed is left closed. Returns whether the row is open.
+    The row is the turn lifecycle's to open. Before it commits the real row
+    (author, content, continuation) there is nothing here to write and nothing
+    to invent, so this answers False and the cache stays clear — a mark must not
+    run ahead of the row it claims to mirror. A row a sweep closed is left
+    closed. Returns whether the row is open.
     """
     async with sessions() as session:
         return await AgentTurnRepository(session).turn_is_open(work_id)

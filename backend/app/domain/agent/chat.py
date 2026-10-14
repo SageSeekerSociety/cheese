@@ -492,12 +492,11 @@ class ChatService(SessionRecovery):
     ) -> AsyncIterator[None]:
 
         async with seat_admission(self.live.seat_lock_for(topic_id, seat_handle)):
-            # 这一处标记跑在轮次那行 `AgentTurn` 存在之前（`open_turn` 在这个
-            # `yield` 里面才跑）：写穿到这里没有行可写，它也不许现编一个作者，
-            # 所以「在跑」的权威暴露等轮次自己的生命周期把行提交了才算 —— 见
-            # `mark_turn_active`。这里落的只是这台进程的预占，够同进程的下一条
-            # 消息并进来。
-            await self.live.mark_turn_active(topic_id, work_id)
+            # 这里不标「在跑」：轮次那行 `AgentTurn` 要到这个 `yield` 里面
+            # （`open_turn` / `open_interval`）才提交，先标就是让缓存替一个还
+            # 不存在的轮次说话，正是「写落地之前不许被看见在跑」不许的那件事
+            # —— 见 `mark_turn_active`。跑起来的信号随会话的 Working 事件来
+            # （`_set_hook_activity`），那时行已经在了。
             try:
                 yield
             finally:
@@ -991,18 +990,17 @@ class ChatService(SessionRecovery):
 
     async def _confirm_turn_row_open(
         self, topic_id: uuid.UUID, work_id: uuid.UUID
-    ) -> None:
+    ) -> bool:
         """The `LiveWork` write-through: confirm the turn's row is open.
 
         Reads only, and invents nothing: the row is the turn lifecycle's to open
-        (`open_turn`), so at `_prompt_lock` (no row yet) there is nothing to
-        write and nothing to fabricate — this mark is the in-process reservation
-        until the lifecycle commits the real row. A row a sweep closed stays
-        closed. No database (unit tests) means cache only.
+        (`open_turn`), so a mark that lands before the row exists is told no and
+        leaves the cache clear until the lifecycle commits the real row. A row a
+        sweep closed stays closed. No database (unit tests) means cache only.
         """
         if self._sessions is None:
-            return
-        await authority.confirm_open(self._sessions, work_id)
+            return True
+        return await authority.confirm_open(self._sessions, work_id)
 
     async def _confirm_turn_row_closed(
         self, topic_id: uuid.UUID, work_id: uuid.UUID

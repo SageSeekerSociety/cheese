@@ -21,8 +21,9 @@ TurnKey = tuple[uuid.UUID, uuid.UUID]
 
 #: 写穿回调：确认库里那行开着的 `AgentTurn` 就是这一轮（`turn/state/authority.py`
 #: 的 `confirm_open`：只读、不发明一行）。签名的两个参数就是标记自己的那两个
-#: （topic_id、work_id）——写穿不许自己另发明一套键。
-WriteThrough = Callable[[uuid.UUID, uuid.UUID], Awaitable[object]]
+#: （topic_id、work_id）——写穿不许自己另发明一套键。它答的是「行在不在」：
+#: 说不在（行还没提交、或已被清场）就不许把这一轮标进缓存。
+WriteThrough = Callable[[uuid.UUID, uuid.UUID], Awaitable[bool]]
 
 #: 松手回调：确认生命周期已经把这一轮收场了（`authority.confirm_closed`）。只在
 #: mark_turn_inactive 时问一次——缓存松手而库里的行还开着，是缓存唯一不该替它遮
@@ -245,24 +246,26 @@ class LiveWork:
             self.seat_locks[key] = lock
         return lock
 
-    async def mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+    async def mark_turn_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> bool:
         """Mark a turn this process is holding as active, write-through.
 
         The cache is a memo; the durable `AgentTurn` row is the authority. The
         write-through (`write_open`) only CONFIRMS that row is open — it never
         inserts one, because the row is the turn lifecycle's to open with its
-        real author and content (`authority.confirm_open`). It lands in the same
-        awaited step as the mark — never returned and run in the background. A
-        caller that cannot await it must expose the turn as running only after
-        its own awaitable lifecycle has committed the row (`_prompt_lock`).
-
-        The prompt lock calls this before the turn's row exists: there the
-        confirm finds nothing (and invents nothing) and the lifecycle commits
-        the row a moment later.
+        real author and content (`authority.confirm_open`). The confirm runs
+        FIRST, in the same awaited step as the mark, so a reader never sees the
+        turn as running before the authority says its row is there: a confirm
+        that raises, or that answers no (the lifecycle has not committed the row
+        yet, or a sweep closed it), leaves no cache entry behind — and drops any
+        stale one, because a closed or absent row must not be revived by the
+        cache. Returns whether the turn is now marked in this process.
         """
-        self.active_turn_ids.setdefault(topic_id, set()).add(work_id)
         if self._write_open is not None:
-            await self._write_open(topic_id, work_id)
+            if not await self._write_open(topic_id, work_id):
+                self.forget_active(topic_id, work_id)
+                return False
+        self.active_turn_ids.setdefault(topic_id, set()).add(work_id)
+        return True
 
     async def mark_turn_inactive(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
         """Let go of a turn this process was holding.
@@ -314,8 +317,8 @@ class LiveWork:
         strict: bool = False,
     ) -> uuid.UUID | None:
         """The live turn an inbound message belongs to, if unambiguous — the
-        turns THIS process is holding. `ChatService.consuming_work_id` adds the
-        rows another process opened and asks the same question of both."""
+        turns THIS process is holding. `authority.consuming_turn` adds the rows
+        another process opened and asks the same question of both."""
         active = self.active_turn_ids.get(topic_id)
         if not active:
             return None

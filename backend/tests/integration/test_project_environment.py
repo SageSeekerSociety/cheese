@@ -1,7 +1,9 @@
 """Project scripts: human stewardship, room pinning, and explicit application."""
 
 import uuid
+from datetime import UTC, datetime
 
+from app.domain.agent.repositories import AgentTurnRepository
 from tests.conftest import seed_user
 from tests.integration.conftest import (
     join_project_team,
@@ -96,25 +98,42 @@ def test_room_from_another_project_cannot_be_read_or_changed(client):
 
 
 def test_active_room_refuses_application_but_project_can_save_future_config(client):
+    """「这一轮在跑」看的是库里的 open 行，不是这台进程的缓存。
 
-    from app.api.deps import get_chat_service
-
+    种进缓存不算数：那台跑着轮次的后端不是这一台，行才是跨进程的权威。所以这里种
+    一行真开着的 ``AgentTurn``（作者、正文都由它自己的生命周期写），房间才真的在忙。
+    """
     project_id, headers = project(client)
     topic_id = room(client, project_id)
     base = f"/projects/{project_id}/environment"
-    chat = client.app.dependency_overrides[get_chat_service]()
-    chat.live.active_turn_ids[uuid.UUID(topic_id)] = {uuid.uuid4()}
-    try:
-        saved = client.put(base, headers=headers, json={"startup_script": "echo next"})
-        assert saved.status_code == 200
-        applied = client.post(
-            f"{base}/rooms/{topic_id}/apply", headers=headers, json={"latest": True}
-        )
-        assert applied.status_code == 422, applied.text
-        current = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
-        assert current["pinned_revision"] != saved.json()["data"]["revision"]
-    finally:
-        chat.live.active_turn_ids.clear()
+
+    async def seed_open_turn():
+        async with client.test_request_factory() as session:
+            work = uuid.uuid4()
+            await AgentTurnRepository(session).open(
+                turn_id=work,
+                conversation_id=uuid.UUID(topic_id),
+                continuation_id=work,
+                author="cheese",
+                content="在跑一轮活",
+                is_resume=False,
+                resendable=True,
+                started_at=datetime.now(UTC),
+                delivered_at=datetime.now(UTC),
+                agent_handle="cheese",
+            )
+            await session.commit()
+
+    client.portal.call(seed_open_turn)
+
+    saved = client.put(base, headers=headers, json={"startup_script": "echo next"})
+    assert saved.status_code == 200
+    applied = client.post(
+        f"{base}/rooms/{topic_id}/apply", headers=headers, json={"latest": True}
+    )
+    assert applied.status_code == 422, applied.text
+    current = client.get(f"{base}/rooms/{topic_id}", headers=headers).json()["data"]
+    assert current["pinned_revision"] != saved.json()["data"]["revision"]
 
 
 async def test_image_migration_keeps_other_settings_and_pins_all_rooms(db_factory):
