@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, NotFoundError
@@ -67,11 +68,9 @@ async def update_attitude_to_comment(
         "difference": result.get("upvotes", 0) - result.get("downvotes", 0),
         "user_attitude": attitude_type,
     }
-    return {
-        "code": 200,
-        "message": "You have expressed your attitude towards the comment",
-        "data": {"attitudes": attitudes},
-    }
+    return ok(
+        {"attitudes": attitudes}, "You have expressed your attitude towards the comment"
+    )
 
 
 @router.get(
@@ -95,7 +94,7 @@ async def get_comment_by_id(
             comment_dto["user"] = await auth_service.build_user_dto(
                 user, profile, viewer_id=auth_user.user_id
             )
-    return {"code": 200, "message": "OK", "data": {"comment": comment_dto}}
+    return ok({"comment": comment_dto})
 
 
 @router.patch(
@@ -116,7 +115,7 @@ async def update_comment(
         user_id=auth_user.user_id,
         content=content,
     )
-    return {"code": 200, "message": "OK", "data": {"comment": comment}}
+    return ok({"comment": comment})
 
 
 @router.delete(
@@ -129,7 +128,7 @@ async def delete_comment(
     service: CommentService = Depends(get_comment_service),
 ) -> dict:
     await service.delete_comment(comment_id=commentId, user_id=auth_user.user_id)
-    return {"code": 200, "message": "Comment deleted successfully", "data": None}
+    return ok(None, "Comment deleted successfully")
 
 
 @router.get(
@@ -151,11 +150,7 @@ async def get_comments(
         page_size=page_size,
         viewer_id=auth_user.user_id,
     )
-    return {
-        "code": 200,
-        "message": "Get comments successfully",
-        "data": {"comments": comments, "page": page},
-    }
+    return ok({"comments": comments, "page": page}, "Get comments successfully")
 
 
 @router.post(

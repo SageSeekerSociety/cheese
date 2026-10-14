@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -43,7 +44,7 @@ async def list_material_bundles(
         page_size=page_size,
         sort=sort,
     )
-    return {"code": 200, "message": "OK", "data": {"materials": bundles, "page": page}}
+    return ok({"materials": bundles, "page": page})
 
 
 @router.get(
@@ -69,7 +70,7 @@ async def get_material_bundle(
         user_id=auth_user.user_id,
     )
     bundle["materials"] = [material for material in found if material["id"] in readable]
-    return {"code": 200, "message": "OK", "data": {"materialBundle": bundle}}
+    return ok({"materialBundle": bundle})
 
 
 @router.post(
@@ -119,7 +120,7 @@ async def update_material_bundle(
         content=content,
         material_ids=material_ids,
     )
-    return {"code": 200, "message": "OK", "data": {"bundle": bundle}}
+    return ok({"bundle": bundle})
 
 
 @router.delete(

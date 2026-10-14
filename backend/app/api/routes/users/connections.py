@@ -12,6 +12,7 @@ from fastapi import (
 from app.api.deps import (
     get_oauth_service,
 )
+from app.api.response import ok
 from app.api.users_deps import (
     SudoTicketRequest,
     _spend_sudo_ticket,
@@ -49,11 +50,7 @@ async def list_oauth_connections(
 
     connections = await oauth_service.list_user_connections(user_id)
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"connections": connections},
-    }
+    return ok({"connections": connections})
 
 
 @router.delete(
@@ -83,7 +80,4 @@ async def delete_oauth_connection(
     if not deleted:
         raise NotFoundError("OAuth connection not found")
 
-    return {
-        "code": 200,
-        "message": "OAuth connection removed successfully.",
-    }
+    return ok(None, "OAuth connection removed successfully.")

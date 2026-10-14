@@ -6,6 +6,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, Path, UploadFile
 from fastapi.responses import Response
 
+from app.api.response import ok
 from app.api.task_deps import (
     _require_task,
     _task_attachment_service,
@@ -52,17 +53,15 @@ async def list_task_attachments(
     files, links, can_download = await _task_attachment_service(db).list_for_task(
         task=task, user_id=auth_user.user_id
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "attachments": [
                 _task_attachment_to_api(attachment=attachment, link=link)
                 for attachment, link in zip(files, links, strict=True)
             ],
             "canDownload": can_download,
-        },
-    }
+        }
+    )
 
 
 @router.post(

@@ -3,6 +3,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, Path, Query
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError
@@ -59,7 +60,7 @@ async def list_groups(
         joined=joined,
         managed=managed,
     )
-    return {"code": 200, "message": "OK", "data": {"groups": groups, "page": page}}
+    return ok({"groups": groups, "page": page})
 
 
 @router.post(
@@ -97,7 +98,7 @@ async def get_group(
 ) -> dict:
     user_id = auth_user.user_id if auth_user.user_id > 0 else None
     group = await service.get_group(group_id, user_id=user_id)
-    return {"code": 200, "message": "OK", "data": {"group": group}}
+    return ok({"group": group})
 
 
 @router.put(
@@ -120,7 +121,7 @@ async def update_group(
         intro=intro,
         avatar_id=avatar_id,
     )
-    return {"code": 200, "message": "OK", "data": {"group": group}}
+    return ok({"group": group})
 
 
 @router.delete(
@@ -153,7 +154,7 @@ async def list_group_members(
         page_start=page_start,
         page_size=page_size,
     )
-    return {"code": 200, "message": "OK", "data": {"members": members, "page": page}}
+    return ok({"members": members, "page": page})
 
 
 @router.post(
@@ -180,7 +181,7 @@ async def leave_group(
     service: GroupsService = Depends(get_groups_service),
 ) -> dict:
     result = await service.leave_group(group_id=group_id, user_id=auth_user.user_id)
-    return {"code": 200, "message": "OK", "data": result}
+    return ok(result)
 
 
 async def get_target_service(db=Depends(get_db)) -> GroupTargetService:
@@ -222,7 +223,7 @@ async def list_group_targets(
         page_start=page_start,
         page_size=page_size,
     )
-    return {"code": 200, "message": "OK", "data": {"targets": targets, "page": page}}
+    return ok({"targets": targets, "page": page})
 
 
 @router.post(
@@ -275,7 +276,7 @@ async def get_group_target(
 ) -> dict:
     _ = auth_user
     target = await service.get_target(group_id=group_id, target_id=target_id)
-    return {"code": 200, "message": "OK", "data": {"target": target}}
+    return ok({"target": target})
 
 
 @router.put(
@@ -311,7 +312,7 @@ async def update_group_target(
         ended_at=ended_at_dt,
         attendance_frequency=attendance_frequency,
     )
-    return {"code": 200, "message": "OK", "data": {"target": target}}
+    return ok({"target": target})
 
 
 @router.delete(
@@ -347,11 +348,7 @@ async def list_group_questions(
         page_start=page_start,
         page_size=page_size,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"questionIds": question_ids, "page": page},
-    }
+    return ok({"questionIds": question_ids, "page": page})
 
 
 @router.post(

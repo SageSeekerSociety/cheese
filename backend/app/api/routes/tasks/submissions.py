@@ -5,6 +5,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
 
+from app.api.response import ok
 from app.api.routes.tasks._common import (
     CreateSubmissionReviewRequest,
     PatchSubmissionReviewRequest,
@@ -119,11 +120,7 @@ async def get_task_submissions(
         "total": total,
     }
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"submissions": items, "page": page},
-    }
+    return ok({"submissions": items, "page": page})
 
 
 @router.post(
@@ -193,11 +190,7 @@ async def post_task_submission(
     # history next, and must find what it handed in. Same reason as the commit in
     # ``create_task``.
     await db.commit()
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"submission": submission_dto},
-    }
+    return ok({"submission": submission_dto})
 
 
 @router.patch(
@@ -255,11 +248,7 @@ async def patch_task_submission(
         version=version,
         contents=contents,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"submission": submission_dto},
-    }
+    return ok({"submission": submission_dto})
 
 
 @router.post(
@@ -296,11 +285,7 @@ async def post_task_submission_review(
         score=payload.score,
         comment=payload.comment,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"review": review_dto},
-    }
+    return ok({"review": review_dto})
 
 
 @router.get(
@@ -345,11 +330,7 @@ async def get_task_submission_review(
     if not review_dto.get("reviewed"):
         raise NotFoundError.for_resource("review", submission_id)
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"review": review_dto},
-    }
+    return ok({"review": review_dto})
 
 
 @router.patch(
@@ -382,11 +363,7 @@ async def patch_task_submission_review(
         score=payload.score,
         comment=payload.comment,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"review": review_dto},
-    }
+    return ok({"review": review_dto})
 
 
 @router.put(
@@ -419,11 +396,7 @@ async def put_task_submission_review(
         score=payload.score,
         comment=payload.comment,
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"review": review_dto},
-    }
+    return ok({"review": review_dto})
 
 
 @router.delete(
@@ -455,4 +428,4 @@ async def delete_task_submission_review(
 
     await review_service.delete_review(submission_id=submission_id)
     review_dto = await review_service.get_review_dto(submission_id)
-    return {"code": 200, "message": "OK", "data": {"review": review_dto}}
+    return ok({"review": review_dto})

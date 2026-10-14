@@ -17,6 +17,7 @@ from app.api.deps import (
     get_passkey_service,
     get_user_auth_service,
 )
+from app.api.response import ok
 from app.api.routes.users._common import (
     _EMAIL_FORMAT,
     _PENDING_2FA_SCOPE,
@@ -375,15 +376,14 @@ async def user_login(
         if requires_2fa and trust is None:
             if not totp_code:
                 # tempToken lets the client finish via POST /auth/verify-2fa.
-                return {
-                    "code": 200,
-                    "message": "2FA required",
-                    "data": {
+                return ok(
+                    {
                         "requires2FA": True,
                         "userId": user.id,
                         "tempToken": await _issue_2fa_pending_token(user.id),
                     },
-                }
+                    "2FA required",
+                )
             # This inline branch checks a TOTP code without ever minting a
             # ticket, so the single-use ticket does nothing for it — without
             # its own budget it stays exactly the oracle #357 describes.
@@ -541,10 +541,9 @@ async def verify_2fa_login(
 # The sign-in code request answers with this one body whatever the address:
 # known, unknown or a placeholder. Anything that differed would tell the
 # caller whether an account uses that address.
-_SIGN_IN_CODE_REQUESTED = {
-    "code": 200,
-    "message": "If an account uses this email, a sign-in code has been sent.",
-}
+_SIGN_IN_CODE_REQUESTED = ok(
+    None, "If an account uses this email, a sign-in code has been sent."
+)
 
 
 def _invalid_email_code() -> AuthenticationRequiredError:
@@ -644,15 +643,14 @@ async def verify_sign_in_code(
     if await TOTPService(session).is_2fa_enabled(user.id):
         trust = await _trusted_device(request, session, user.id)
         if trust is None:
-            return {
-                "code": 200,
-                "message": "2FA required",
-                "data": {
+            return ok(
+                {
                     "requires2FA": True,
                     "userId": user.id,
                     "tempToken": await _issue_2fa_pending_token(user.id),
                 },
-            }
+                "2FA required",
+            )
 
     try:
         user, profile = await auth_service.get_user_with_profile(user.id)
@@ -798,7 +796,7 @@ async def sudo_auth(
             data["sudoTicket"] = await _issue_sudo_ticket(
                 auth_user.user_id, payload.purpose
             )
-        return {"code": 200, "message": message, "data": data}
+        return ok(data, message)
 
     async def verified(message: str, **extra: Any) -> dict:
         if current is not None:

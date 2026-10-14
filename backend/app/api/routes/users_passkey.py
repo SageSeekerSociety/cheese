@@ -53,6 +53,7 @@ from redis.asyncio import Redis as AsyncRedis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_passkey_service, get_user_auth_service
+from app.api.response import ok
 from app.api.users_deps import (
     SudoTicketRequest,
     _spend_sudo_ticket,
@@ -116,11 +117,7 @@ async def passkey_register_challenge(
     finally:
         await redis.aclose()
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"options": options},
-    }
+    return ok({"options": options})
 
 
 @router.post(
@@ -186,7 +183,7 @@ async def dismiss_passkey_prompt(
         raise ForbiddenError("Only the user themselves can answer this offer.")
 
     await PasskeyPromptService(session).dismiss(user_id, forever=payload.forever)
-    return {"code": 200, "message": "OK", "data": {}}
+    return ok({})
 
 
 @router.post(
@@ -212,11 +209,7 @@ async def passkey_authenticate_challenge(
     finally:
         await redis.aclose()
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"options": options},
-    }
+    return ok({"options": options})
 
 
 @router.post(
@@ -292,11 +285,7 @@ async def list_passkeys(
 
     passkeys = await passkey_service.list_passkeys(user_id)
 
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"passkeys": passkeys},
-    }
+    return ok({"passkeys": passkeys})
 
 
 @router.delete(
@@ -324,7 +313,4 @@ async def delete_passkey(
     if not deleted:
         raise NotFoundError("Passkey not found")
 
-    return {
-        "code": 200,
-        "message": "Passkey deleted successfully.",
-    }
+    return ok(None, "Passkey deleted successfully.")

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Mapped
 
+from app.api.response import ok
 from app.api.space_deps import (
     _ensure_space_admin,
     _ensure_space_visible,
@@ -249,7 +250,7 @@ async def get_space(
     }
     if queryMyRank:
         data["myRank"] = my_rank
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -328,7 +329,7 @@ async def get_spaces(
         "nextStart": next_start,
         "total": total,
     }
-    return {"code": 200, "message": "OK", "data": {"spaces": items, "page": page}}
+    return ok({"spaces": items, "page": page})
 
 
 @router.post(
@@ -439,7 +440,7 @@ async def patch_space(
             actor_user_id=auth_user.user_id,
         )
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 200, "message": "OK", "data": {"space": space_data}}
+    return ok({"space": space_data})
 
 
 @router.delete(
@@ -476,7 +477,7 @@ async def join_space(
     # the commit in ``create_space``.
     await db.commit()
     space_data = await _build_full_space_payload(space, service=service, db=db)
-    return {"code": 200, "message": "OK", "data": {"space": space_data}}
+    return ok({"space": space_data})
 
 
 @router.get(
@@ -497,7 +498,7 @@ async def list_space_members(
         profile_repo=UserProfileRepository(session=db),
         space_service=service,
     )
-    return {"code": 200, "message": "OK", "data": {"members": items}}
+    return ok({"members": items})
 
 
 @router.post(
@@ -608,7 +609,7 @@ async def get_space_task_analytics(
         sort_by=sortBy,
         sort_order=sortOrder,
     )
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(
@@ -626,7 +627,7 @@ async def get_publishers_participation(
     await _ensure_space_admin(db=db, space_id=space_id, user_id=auth_user.user_id)
     _ = auth_user
     data = await service.get_publishers_participation(space_id=space_id)
-    return {"code": 200, "message": "OK", "data": data}
+    return ok(data)
 
 
 @router.get(

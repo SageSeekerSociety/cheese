@@ -833,6 +833,7 @@ from app.domain.site.hosting import SiteHostMiddleware  # noqa: E402
 app.add_middleware(SiteHostMiddleware, platform=app)
 
 from app.api.preview_host import PreviewHostMiddleware  # noqa: E402
+from app.api.response import ok  # noqa: E402
 
 app.add_middleware(PreviewHostMiddleware, platform=app)
 
@@ -851,7 +852,7 @@ async def debug_turns(_admin: PlatformAdminDep) -> dict:
     admin of its own throwaway backend."""
     from app.api.deps import get_work_runner
 
-    return {"code": 200, "message": "ok", "data": get_work_runner().recent_work()}
+    return ok(get_work_runner().recent_work())
 
 
 @app.get("/health")
@@ -861,15 +862,13 @@ async def health() -> dict:
     # active_turns lets a redeploy drain: wait until no agent turn is in flight
     # before restarting, so a deploy never kills 芝士 mid-work. version rides
     # along so a deploy check can confirm the running build in one call.
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
+    return ok(
+        {
             "status": "healthy",
             "active_turns": get_work_runner().active_work_count(),
             "version": settings.app_version,
-        },
-    }
+        }
+    )
 
 
 @app.get("/version")
@@ -881,16 +880,14 @@ async def app_version() -> dict:
     the commit the image was built from, older than `sha` when the release
     reused an unchanged image."""
     sha = settings.released_commit
-    return {
-        "code": 200,
-        "message": "ok",
-        "data": {
+    return ok(
+        {
             "sha": sha,
             "short": sha[:7] if sha and sha != "dev" else sha,
             "build": settings.app_version,
             "badge": settings.show_version_badge,
-        },
-    }
+        }
+    )
 
 
 # Last, once every route is mounted: refuse to start with a write route that

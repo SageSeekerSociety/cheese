@@ -9,6 +9,7 @@ from fastapi import (
     Query,
 )
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import (
@@ -49,7 +50,7 @@ async def lookup_account_route(
     found = await lookup_account(db, q)
     if found is None:
         raise NotFoundError("No account with that username or email")
-    return {"code": 200, "message": "OK", "data": found}
+    return ok(found)
 
 
 @router.get(
@@ -101,14 +102,13 @@ async def get_user_followed_questions(
         "nextStart": next_start,
         "total": total,
     }
-    return {
-        "code": 200,
-        "message": "Query followed questions successfully.",
-        "data": {
+    return ok(
+        {
             "questions": questions,
             "page": page,
         },
-    }
+        "Query followed questions successfully.",
+    )
 
 
 @router.get(
@@ -166,14 +166,13 @@ async def get_user_questions(
         "nextStart": next_start,
         "total": total,
     }
-    return {
-        "code": 200,
-        "message": "Query asked questions successfully.",
-        "data": {
+    return ok(
+        {
             "questions": questions,
             "page": page,
         },
-    }
+        "Query asked questions successfully.",
+    )
 
 
 @router.get(
@@ -256,11 +255,10 @@ async def get_user_answers(
         "nextStart": next_start,
         "total": total,
     }
-    return {
-        "code": 200,
-        "message": "Query answered questions successfully.",
-        "data": {
+    return ok(
+        {
             "answers": answers,
             "page": page,
         },
-    }
+        "Query answered questions successfully.",
+    )
