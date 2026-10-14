@@ -89,19 +89,13 @@ describe('lightOf —— 四盏灯各自的判据', () => {
 
   it('红压过黄：既卡住了又有事等我，先让我看见卡住的那一件', () => {
     expect(
-      lightOf(
-        { awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(9) },
-        NOW
-      )
+      lightOf({ awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(9) }, NOW)
     ).toEqual({ kind: 'red', breathe: false })
   })
 
   it('黄压过绿：在往前走、同时又有事等我，黄更该被看见', () => {
     expect(
-      lightOf(
-        { awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(1) },
-        NOW
-      )
+      lightOf({ awaitsMe: true, repliedToMe: true, moving: true, unseenDelivery: true, lastOutputAt: ago(1) }, NOW)
     ).toEqual({ kind: 'yellow', breathe: false })
   })
 
