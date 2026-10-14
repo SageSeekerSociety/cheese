@@ -20,6 +20,8 @@ from app.core.db import async_session_factory
 from app.domain.platform_stats import throughput
 
 #: 表头就是 `SeatRateOut` 的字段名，不另起简称 —— 另起过一次，两列打成 `-` 而没人发现。
+#: 列宽按 `_fmt` 打得出来的最长样子给：带小数的列是整数位加小数位（秒 3 位、速率
+#: 4 位），收窄一位就把右边的列顶歪，测试按每一列的宽度盯着。
 COLUMNS = (
     ("seat", 16),
     ("model", 30),
@@ -27,10 +29,10 @@ COLUMNS = (
     ("turns", 8),
     ("output_tokens", 13),
     ("calls", 8),
-    ("turn_seconds", 12),
-    ("p50_tps", 9),
-    ("p90_tps", 9),
-    ("window_tps", 10),
+    ("turn_seconds", 13),
+    ("p50_tps", 13),
+    ("p90_tps", 13),
+    ("window_tps", 13),
 )
 NUMERIC = {
     "turns",

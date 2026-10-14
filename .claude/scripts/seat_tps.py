@@ -33,6 +33,8 @@ WINDOWS = ("24h", "7d", "30d")
 #: 表头就是接口吐的字段名（`SeatRateOut` 的字段），不另起简称。另起过一次，
 #: `output` / `secs` 这两个假名对不上 `output_tokens` / `turn_seconds`，那两列
 #: 就永远打成 `-`，而自检样例用的也是假名，所以自检照过、没人发现。
+#: 列宽按 `fmt` 打得出来的最长样子给：带小数的列是整数位加小数位（秒 3 位、速率
+#: 4 位），收窄一位就把右边的列顶歪，测试按每一列的宽度盯着。
 COLUMNS = (
     ("seat", 16),
     ("model", 30),
@@ -40,10 +42,10 @@ COLUMNS = (
     ("turns", 8),
     ("output_tokens", 13),
     ("calls", 8),
-    ("turn_seconds", 12),
-    ("p50_tps", 9),
-    ("p90_tps", 9),
-    ("window_tps", 10),
+    ("turn_seconds", 13),
+    ("p50_tps", 13),
+    ("p90_tps", 13),
+    ("window_tps", 13),
 )
 
 

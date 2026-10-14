@@ -10,7 +10,7 @@
 的数；`--json` 的行是对象不是字符串；载荷里没有的字段要出声，不能默默打成横杠（两
 个脚本各测一次，库里那份每一段、每一行都查）；没算出来的速率打横杠，那是「这组里
 没有一轮秒数大于 0」不是缺字段；数是多少就打多少，不打科学计数法，带小数的也不收
-成整数；一行打出来要和表头一样宽，计数到七位不能把右边的列顶歪。走文档里那条命令的
+成整数；一行打出来要和表头一样宽，哪一列占满列宽都不能把右边的列顶歪。走文档里那条命令的
 入口 `main()`，所以老代码上红的是断言，不是 import。
 """
 
@@ -193,23 +193,32 @@ def test_a_count_over_a_million_prints_as_digits():
 
 
 def test_a_wide_count_keeps_the_row_the_same_width_as_the_header():
-    """一行打出来要和表头一样宽。计数到七位时列宽兜不住，右边的列全被顶歪一位。"""
+    """一行打出来要和表头一样宽。每一列放一个刚好占满列宽的数，哪一列收窄一位，
+    那一列就把右边的列顶歪。
+
+    样例要真的占满每一列：占不满的那一列收窄了测试也照绿，`calls` 就这么溜过去过。"""
     row = {
         "seat": "cheese",
         "model": "claude-sonnet-5",
         "supply": "subscription",
-        "turns": 1234567,
-        "output_tokens": 48000,
-        "calls": 14,
-        "turn_seconds": 612.5,
-        "p50_tps": 78.4,
-        "p90_tps": 120.0,
-        "window_tps": 0.5556,
+        "turns": 12345678,
+        "output_tokens": 1234567890123,
+        "calls": 12345678,
+        "turn_seconds": 123456789.123,
+        "p50_tps": 12345678.1234,
+        "p90_tps": 12345678.1234,
+        "window_tps": 12345678.1234,
     }
+    for columns, fmt in (
+        (db_script.COLUMNS, db_script._fmt),
+        (_cli().COLUMNS, _cli().fmt),
+    ):
+        for name, width in columns:
+            if isinstance(row[name], (int, float)):
+                assert len(fmt(row[name], width, True)) == width, (name, width)
     for table in (_cli().table, db_script._table):
         out = table([row])
         lines = out.splitlines()
-        assert "1234567" in out, out
         assert len(lines[0]) == len(lines[2]), out
 
 
