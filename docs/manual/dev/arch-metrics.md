@@ -55,9 +55,9 @@ python3 .claude/scripts/arch-metrics.py --self-test            # 证明每个数
 | `hotspots.<30d\|90d>.top` | 改动次数 × 行数前 10 的文件 | 近 30 / 90 天的提交按文件计数，乘当前行数；每条带 fix 提交数和占该文件的比 | 热点变轻 |
 | `hotspots.<窗口>.fix_commits` | 窗口里 fix/revert 提交数 | 提交主题按 `fix(` / `fix:` / `revert` 开头判定 | 占比降 |
 | `shared_days.shared_days` | 同一天被两个以上不同提交改过的文件-天 | 90 天窗口内按（文件，日期）分组数不同的提交 | 只降 |
-| `conflicts.weeks_detail` / `conflicts.per_100_merges` | 每周带冲突的合 main 次数、每百个合并 PR 的率 | 从 `refs/pull/*/head` 里找把 main 合进 PR 分支的两 parent 提交，按提交日期落进 7 天桶，用 `git merge-tree --write-tree` 重放两个 parent 判冲突；分母是同周 main 上的非合并提交数（squash 仓库里它就是合并 PR 的代理）。`registry_only` 是只冲突在登记类文件的那些，`code` 是碰到代码的 | 只降，登记类那份应接近 0 |
+| `conflicts.weeks_detail` / `conflicts.per_100_merges` / `conflicts.unreadable` | 每周带冲突的合 main 次数、每百个合并 PR 的率、重放不了的那几次 | 从 `refs/pull/*/head` 里找把 main 合进 PR 分支的两 parent 提交，按提交日期落进 7 天桶，用 `git merge-tree --write-tree` 重放两个 parent 判冲突；分母是同周 main 上的非合并提交数（squash 仓库里它就是合并 PR 的代理）。`registry_only` 是只冲突在登记类文件的那些，`code` 是碰到代码的 | 只降，登记类那份应接近 0 |
 
-冲突那一节按运行时刻往前切 4 个 7 天桶，所以它只在同一个 `anchored_at` 上可复现，节里写着这个时刻。`refs/pull/*/head` 普通 checkout 里没有——被 squash 合并的分支提交不会落到 main 上——工作流里先 `git fetch` 一遍；没取到时那一节报自己缺输入，不报 0，因为「没人撞过」和「没法看」是两回事。
+冲突那一节按运行时刻往前切 4 个 7 天桶，所以它只在同一个 `anchored_at` 上可复现，节里写着这个时刻。`refs/pull/*/head` 普通 checkout 里没有——被 squash 合并的分支提交不会落到 main 上——工作流里先 `git fetch` 一遍；没取到时那一节报自己缺输入，不报 0，因为「没人撞过」和「没法看」是两回事。单次重放读不出来（部分克隆缺 blob）是另一回事：那几次不进冲突那两列，进 `unreadable`，节里写明有它的周是下限而不是测量值。
 
 **分级方法**（从 B 数据那份体检脚本 `analyze.py` 移植并简化）：
 

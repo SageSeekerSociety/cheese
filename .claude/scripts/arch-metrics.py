@@ -615,6 +615,7 @@ def no_conflicts(why: str) -> dict[str, Any]:
         "per_100_merges": None,
         "registry_only": None,
         "code": None,
+        "unreadable": None,
         "weeks_detail": [],
     }
 
@@ -656,6 +657,7 @@ def conflicting_merges(
             "per_100_merges": None,
             "registry_only": 0,
             "code": 0,
+            "unreadable": 0,
         }
         try:
             row["main_commits"] = int(
@@ -677,13 +679,18 @@ def conflicting_merges(
                 continue
             row["merges_of_main"] += 1
             paths = replay_conflict(root, commit["parents"])
-            if not paths:
-                continue
-            row["conflicting"] += 1
-            if all(registry_file(path) for path in paths):
-                row["registry_only"] += 1
-            else:
-                row["code"] += 1
+            if paths is None:
+                # Not a clean merge: this checkout could not replay it at all.
+                # Counting it as one would report "nobody collided" where the
+                # truth is "we could not look", so it gets its own column and
+                # the section says a week with any of them is a floor.
+                row["unreadable"] += 1
+            elif paths:
+                row["conflicting"] += 1
+                if all(registry_file(path) for path in paths):
+                    row["registry_only"] += 1
+                else:
+                    row["code"] += 1
         if row["main_commits"]:
             row["per_100_merges"] = round(row["conflicting"] / row["main_commits"] * 100, 1)
         rows.append(row)
@@ -700,6 +707,7 @@ def conflicting_merges(
         "conflicting": sum(r["conflicting"] for r in rows),
         "registry_only": sum(r["registry_only"] for r in rows),
         "code": sum(r["code"] for r in rows),
+        "unreadable": sum(r["unreadable"] for r in rows),
     }
     totals["per_100_merges"] = (
         round(totals["conflicting"] / totals["main_commits"] * 100, 1)
@@ -884,17 +892,26 @@ def render_markdown(board: dict[str, Any], compare: dict[str, Any] | None = None
             "only` counts the conflicts that touched nothing but registration files."
         )
         out.append("")
+        if conflicts["unreadable"]:
+            out.append(
+                f"`unreadable` counts the {conflicts['unreadable']} merges this checkout "
+                "could not replay — a blob a partial clone never fetched, say. They are "
+                "in `merges of main` and in no other column, so a week with any of them "
+                "is a floor, not a measurement."
+            )
+            out.append("")
         out.append(
             "| week ending | merged PRs | merges of `main` | conflicting | per 100 "
-            "| registry only | code |"
+            "| registry only | code | unreadable |"
         )
-        out.append("|---|---|---|---|---|---|---|")
+        out.append("|---|---|---|---|---|---|---|---|")
         for row in conflicts["weeks_detail"]:
             per_100 = "n/a" if row["per_100_merges"] is None else row["per_100_merges"]
             merged = "n/a" if row["main_commits"] is None else row["main_commits"]
             out.append(
                 f"| {row['week_ending']} | {merged} | {row['merges_of_main']} "
-                f"| {row['conflicting']} | {per_100} | {row['registry_only']} | {row['code']} |"
+                f"| {row['conflicting']} | {per_100} | {row['registry_only']} | {row['code']} "
+                f"| {row['unreadable']} |"
             )
         out.append("")
     else:
@@ -1428,6 +1445,35 @@ def self_test() -> int:
                         "an unreadable replay is None, never zero",
                         replay_conflict(root2, ["no-such-thing", "HEAD"]),
                         None,
+                    )
+                    # And that None must not be filed as a clean merge when the
+                    # section counts: a checkout that could not replay anything
+                    # would otherwise report "nobody collided" for every week.
+                    real_replay = replay_conflict
+                    try:
+                        globals()["replay_conflict"] = lambda _root, _parents: None
+                        blind = conflicting_merges(root2, anchor)
+                    finally:
+                        globals()["replay_conflict"] = real_replay
+                    check(
+                        "an unreadable merge is counted apart, not as clean",
+                        blind["weeks_detail"][-1]["unreadable"],
+                        2,
+                    )
+                    check(
+                        "... so it is in no conflict column",
+                        [blind["weeks_detail"][-1][key] for key in ("conflicting", "registry_only", "code")],
+                        [0, 0, 0],
+                    )
+                    check(
+                        "... and the section's own total says so",
+                        blind["unreadable"],
+                        2,
+                    )
+                    check(
+                        "a replayable merge is not counted as unreadable",
+                        section["unreadable"],
+                        0,
                     )
                     # And with the refs gone, the section says so instead of
                     # reporting a quiet zero.
