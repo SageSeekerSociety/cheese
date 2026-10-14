@@ -253,6 +253,41 @@ def test_the_catch_up_carries_the_dedup_key_of_its_stall(client, line):
     assert "catch_up_seat" not in line.record()
 
 
+def test_another_stalls_delivery_does_not_answer_this_one(client, line):
+    """账上别的停摆窗口那一条，不算这一场停摆补过了。
+
+    线上账本里几乎总有别的还没送出去的投递，所以「这一场补过没有」只能按**这一次停
+    摆**的事件 id 去圈：圈松了，别人那一条会被当成「已经补过」，补跳从此静默地再也
+    发不出去 —— 它是平台的指令，判失败不在那条线上说话，连「没补成」都没人知道。
+    诱饵落在别的对话上，是为了让这里捞到的只可能是这一次补跳那一条。
+    """
+    _stalled(line)
+    other = stall_record_id(line.beat, AT - timedelta(days=1))
+
+    async def an_earlier_stall_is_still_pending() -> None:
+        async with client.test_factory() as session:
+            session.add(
+                Delivery(
+                    event_id=other,
+                    recipient_handle=line.seat,
+                    conversation_id=uuid.uuid4(),
+                    dedup_key=f"{other}:{line.seat}",
+                    type="ROOM_NOTICE",
+                    payload={},
+                    event_at=AT - timedelta(days=1),
+                    recorded_at=AT - timedelta(days=1),
+                )
+            )
+            await session.commit()
+
+    client.portal.call(an_earlier_stall_is_still_pending)
+
+    assert line.look(STALLED) == {"stalled": 1}
+
+    (delivery,) = line.deliveries()
+    assert delivery.event_id == stall_record_id(line.beat, AT)
+
+
 def test_the_catch_up_carries_the_windows_dedup_key(client, line):
     """补出来的那一条，去重键就是「这次停摆 + 这个座位」。"""
     _stalled(line)
