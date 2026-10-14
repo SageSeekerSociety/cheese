@@ -294,31 +294,33 @@ class TopicRepository:
         )
         return list((await self._session.scalars(stmt)).all())
 
-    async def visible_ids_for_projects(
+    async def visible_unarchived_ids_for_projects(
         self, project_ids: list[uuid.UUID], *, viewer: str
-    ) -> list[tuple[uuid.UUID, TopicStatus]]:
+    ) -> list[uuid.UUID]:
         """同一棵树，跨若干个项目 —— 「待我处理」要问的是我能看见的全部项目，和
-        其中 ``viewer`` 看得见的频道（私密频道只有在里面的人看得见）。这里只回
-        **主键和状态**。
+        其中 ``viewer`` 看得见、**没归档**的频道（私密频道只有在里面的人看得见）。
+        只回主键。
 
-        「待我处理」拿它要的是「我看得见的频道有哪几个」—— 用来判断一条活所在的
-        频道他看不看得见、以及在不在归档里。一整屏只点到一两个人，却要为全部频道
-        付整行装配的钱（量出来 240 行 5 毫秒，而摆上去的常常只有一两行），所以整行
-        留给真正要摆的那几个，见 `list_by_ids`。
+        「待我处理」拿它要的是「哪些频道算数」—— 归档的频道是只读的，里面没有人
+        还能推进的事，所以它的活和提问都不进清单。这一笔因此直接问「算数的频道有
+        哪几个」，调用方不必再把状态拿回去自己按词比一遍（那条词表是 `topic` 领域
+        的，路由不该认它）。一整屏只点到一两个人，却要为全部频道付整行装配的钱
+        （量出来 240 行 5 毫秒，而摆上去的常常只有一两行），所以整行留给真正要摆的
+        那几个，见 `list_by_ids`。
 
         私聊照样不在里面（见 `_project_topics_stmt`）：它不是话题树的一部分，也从
         来不会有验收卡或者待确认问题挂在上面。
         """
         if not project_ids:
             return []
-        stmt = select(Topic.id, Topic.status).where(
+        stmt = select(Topic.id).where(
             Topic.project_id.in_(project_ids),
             Topic.is_private.is_(False),
             Topic.deleted_at.is_(None),
+            Topic.status != TopicStatus.archived,
             seen_by(viewer),
         )
-        rows = (await self._session.execute(stmt)).all()
-        return [(row.id, row.status) for row in rows]
+        return list((await self._session.scalars(stmt)).all())
 
     async def list_by_ids(self, topic_ids: Collection[uuid.UUID]) -> list[Topic]:
         """这些频道的整行。点不到的 id 就是没有这一行，不是错误。"""

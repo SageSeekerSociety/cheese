@@ -47,12 +47,13 @@ from app.core.errors import ValidationError
 from app.domain.review.notes import NoteCode, NoteLevel, note_level
 from app.domain.room_task.binding import catalog_id, resolve
 
-# `Task` 是这一层唯一还拿在手里的 ORM 行 —— **暂留**，不是读模型。方案 v6 的第一期
-# 只给 block / review 开了窄读出口；项目 rail 的 Task 暂交给 task_liveness、
-# facts_for_task 和 TaskOut.model_validate。本模块的 card_model 也读取 Task 的绑定
-# 属性，计算卡面的模型名；facts_for_task 和 card_model 都只读属性、不顺着行查库。
-# 等 room_task 有自己的窄读输出，再替换这份 ORM 边界。房间那一行 (`Topic`) 不按类
-# 标进签名 —— 只看它被读到的几位 (`TopicSignals`)，和卡一样是结构契约。
+# `Task` 是这一层唯一还**按类**标进签名的 ORM 行 —— **暂留**，不是读模型。项目 rail
+# 的 Task 暂交给 task_liveness、card_model 和 TaskOut.model_validate：card_model 读
+# 的是这条活绑了什么模型（`Task.model` / `Task.effort`），标 `Task` 才读得出来。
+# `facts_for_task` 不在此列：`room_task` 已经有了自己的窄读输出
+# （`repositories.ListedTask`），所以那一格走结构契约（`TaskSignals` / `TaskRow`），
+# 和卡那一格（`CardSignals` / `CardRow`）一样。房间那一行 (`Topic`) 也是结构契约
+# （`TopicSignals`）——只看它被读到的几位。
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import TopicStatus
 
@@ -111,6 +112,54 @@ class CardRow(Protocol):
     merge_state: Mapped[dict | None]
     decided_by: Mapped[str | None]
     auto_merge_armed_by: Mapped[str | None]
+
+
+class TaskSignals(Protocol):
+    """一条活能被折成 `TaskFacts` 的五位 —— **窄读出口交出来的纯值**那一份契约。
+
+    和 `CardSignals` 同一条理由、同一份写法：`facts_for_task` 的两个调用方，领域内
+    的人手上是 `Task` 那一行（ORM 行），HTTP 路由手上是 `room_task` 窄读出口交出来
+    的纯值（`room_task.repositories.ListedTask`）——正在跑的进程和外部命令读一屏活
+    读的是状态、人、日期，整行里的交付记录、环境、检查输出那些正文它们一个字不读。
+    ORM 行的属性是 `Mapped` 描述符、纯值的属性是普通标量，所以在 pyright 那里是
+    **两份**契约：这里是纯值那一份，那一行走 `TaskRow`。
+
+    声明成 property 是有意的（同 `CardSignals`）：pyright 对只读属性按协变比对，
+    所以 `ListedTask` 上的普通字段也接得住。
+
+    五位正好是 `facts_for_task` 读的那五位，多一个就多一条「对方必须记得改」的
+    绳子，少一个那一格就折不出来。
+    """
+
+    @property
+    def status(self) -> Any: ...
+
+    @property
+    def accepted_at(self) -> datetime | None: ...
+
+    @property
+    def started_at(self) -> datetime | None: ...
+
+    @property
+    def conclusion(self) -> str | None: ...
+
+    @property
+    def closing_since(self) -> datetime | None: ...
+
+
+class TaskRow(Protocol):
+    """`Task` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
+
+    同 `CardRow`：pyright 拿 `Task` 的类成员来比协议的类成员时，属性是 `Mapped`
+    描述符，普通的 `status: str` 接不住它。`status` 同样收成 `Mapped[Any]` ——
+    `TaskStatus` 的名字在 `room_task.models` 里，这一层只把它 `str()` 成词。
+    """
+
+    status: Mapped[Any]
+    accepted_at: Mapped[datetime | None]
+    started_at: Mapped[datetime | None]
+    conclusion: Mapped[str | None]
+    closing_since: Mapped[datetime | None]
 
 
 class TopicSignals(Protocol):
@@ -313,13 +362,20 @@ def facts_for_card(card: CardSignals | CardRow | None) -> CardFacts | None:
 
 
 def facts_for_task(
-    task: Task,
+    task: TaskSignals | TaskRow,
     card: CardSignals | CardRow | None = None,
     *,
     running: bool = False,
     awaiting_answer: bool = False,
 ) -> TaskFacts:
-    """把一行 `Task`（加上它的卡）折成这层要读的事实。"""
+    """把一行活（加上它的卡）折成这层要读的事实。
+
+    收两种形状是因为活有两处来源：领域内的人手上是 `Task` 那一行，HTTP 路由手上是
+    `room_task` 窄读出口交出来的纯值 —— 一份冻结的值，没有 session 可以顺着多查
+    一行。这一层只读 `status` / `accepted_at` / `started_at` / `conclusion` /
+    `closing_since` 五个属性（`TaskSignals` / `TaskRow`），两种形状都长得出来，所以
+    折出来的 `TaskFacts` 一模一样（`tests/unit/test_presentation.py` 钉住了）。
+    """
     return TaskFacts(
         status=str(task.status),
         accepted_at=task.accepted_at,
