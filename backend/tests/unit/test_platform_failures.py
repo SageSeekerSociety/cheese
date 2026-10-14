@@ -261,12 +261,12 @@ _START_LOGS = {
     ),
     "docker run exit 125": (
         _RECORD + "subprocess.CalledProcessError: Command '['docker', 'run', "
-        "'--detach', 'cheese-private-executor:2.1.282']' returned non-zero exit "
+        "'--detach', 'cheese-private-executor:2.1.299']' returned non-zero exit "
         "status 125.",
         "Claude Code 启动失败：执行容器没能创建",
     ),
     "executor image missing": (
-        _RECORD + "Unable to find image 'cheese-private-executor:2.1.282' locally\n"
+        _RECORD + "Unable to find image 'cheese-private-executor:2.1.299' locally\n"
         "docker: Error response from daemon: pull access denied for "
         "cheese-private-executor",
         "Claude Code 启动失败：环境里缺少执行容器的镜像",
@@ -281,7 +281,7 @@ _START_LOGS = {
         "Claude Code 启动失败：这个频道上一个会话进程还没有退出",
     ),
     "binary missing (dash)": (
-        _RECORD + "sh: 1: exec: /opt/cheese/claude/versions/2.1.282: not found",
+        _RECORD + "sh: 1: exec: /opt/cheese/claude/versions/2.1.299: not found",
         "Claude Code 启动失败：环境里缺少 Claude Code",
     ),
     "binary missing (bash)": (

@@ -1,5 +1,7 @@
 import type { Project } from '@/cx_types'
 
+import { storageGetStrings, storageSetJson } from '@/lib/browserStorage'
+
 // rail 上项目的先后是**这个人**的排法，所以按 handle 存。
 // 整个浏览器一份的 `cheesex.layout` 装不了它：那份不分账号，换个账号进来 rail
 // 就按上一个人的顺序排（workspace store 里 lastProjectId 那条注释记着同一个坑）。
@@ -18,24 +20,15 @@ function key(handle: string): string | null {
 
 export function loadProjectOrder(handle: string): string[] {
   const storageKey = key(handle)
-  if (!storageKey || typeof localStorage === 'undefined') return []
-  try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(storageKey) || '[]')
-    if (!Array.isArray(parsed)) return []
-    return parsed.filter((id): id is string => typeof id === 'string')
-  } catch {
-    return [] // malformed stored order
-  }
+  if (!storageKey) return []
+  return storageGetStrings(storageKey)
 }
 
 export function saveProjectOrder(handle: string, ids: string[]): void {
   const storageKey = key(handle)
-  if (!storageKey || typeof localStorage === 'undefined') return
-  try {
-    localStorage.setItem(storageKey, JSON.stringify(ids))
-  } catch {
-    // 存不下（隐私模式、配额满）就只有这一次会话算数，rail 仍是拖完的样子。
-  }
+  if (!storageKey) return
+  // 存不下（隐私模式、配额满）就只有这一次会话算数，rail 仍是拖完的样子。
+  storageSetJson(storageKey, ids)
 }
 
 /**

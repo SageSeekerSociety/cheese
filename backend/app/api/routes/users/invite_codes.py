@@ -16,6 +16,7 @@ from app.db.session import get_db
 if TYPE_CHECKING:
     pass
 
+from app.api.response import ok
 from app.api.routes.users._common import CreateInviteCodeRequest
 from app.domain.invite.services import InviteCodeService
 
@@ -60,10 +61,8 @@ async def list_invite_codes(
 
     service = InviteCodeService(session)
     codes = await service.list_codes()
-    return {
-        "code": 200,
-        "message": "Success",
-        "data": {
+    return ok(
+        {
             "codes": [
                 {
                     "id": c.id,
@@ -78,8 +77,8 @@ async def list_invite_codes(
                 }
                 for c in codes
             ]
-        },
-    }
+        }
+    )
 
 
 @router.post(
@@ -100,15 +99,14 @@ async def create_invite_code(
         note=payload.note,
     )
     await session.commit()
-    return {
-        "code": 201,
-        "message": "Invite code created.",
-        "data": {
+    return ok(
+        {
             "code": invite.code,
             "id": invite.id,
             "maxUses": invite.max_uses,
         },
-    }
+        "Invite code created.",
+    )
 
 
 @router.delete(
@@ -125,4 +123,4 @@ async def deactivate_invite_code(
     service = InviteCodeService(session)
     await service.deactivate_code(code_id)
     await session.commit()
-    return {"code": 200, "message": "Invite code deactivated.", "data": None}
+    return ok(None, "Invite code deactivated.")

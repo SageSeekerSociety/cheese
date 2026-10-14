@@ -22,6 +22,8 @@
 // is that fixing one violation in a file buys room for one new one there until
 // somebody runs the update.
 
+import { parseEslintJsonFor } from './eslint-ratchet-json.mjs'
+
 /** Every rule this ratchet counts carries this prefix; nothing else is counted. */
 export const A11Y_RULE_PREFIX = 'vuejs-accessibility/'
 
@@ -29,17 +31,11 @@ export const A11Y_RULE_PREFIX = 'vuejs-accessibility/'
 export const A11Y_TARGETS = ['src/**/*.vue']
 
 /**
- * Read eslint's `--format json` output.
- *
- * Keys are relative to `root` (forward slashes, no leading `./`): eslint reports
- * absolute paths, and a baseline keyed by those would only match on the machine
- * that wrote it.
- *
- * `unjudged` is non-empty when eslint could not parse a file (`"fatal": true`)
- * or reported a message with no rule id — a syntax error, a missing parser, a
- * plugin that threw. Counting those as zero is how a gate goes green over files
- * it never read, so the caller treats a non-empty `unjudged` as "could not
- * judge".
+ * Count accessibility violations per file in eslint's `--format json` output —
+ * this ratchet's share of it, which is every rule under `A11Y_RULE_PREFIX`. The
+ * parsing, the relative-path keys and the "could not judge" set are the same
+ * question every rule-counting ratchet asks, so they live in
+ * `eslint-ratchet-json.mjs`; this binds it to the plugin prefix.
  *
  * @param {string} text raw eslint JSON output
  * @param {string} root absolute path the file names are made relative to
@@ -50,31 +46,7 @@ export const A11Y_TARGETS = ['src/**/*.vue']
  * }}
  */
 export function parseEslintJson(text, root) {
-  const parsed = JSON.parse(String(text))
-  if (!Array.isArray(parsed)) {
-    throw new TypeError('eslint output is not a JSON array of file results')
-  }
-
-  const prefix = String(root).replaceAll('\\', '/').replace(/\/$/, '') + '/'
-  /** @type {Record<string, number>} */
-  const counts = {}
-  const violations = []
-  const unjudged = []
-  for (const result of parsed) {
-    const absolute = String(result.filePath ?? '').replaceAll('\\', '/')
-    const file = absolute.startsWith(prefix) ? absolute.slice(prefix.length) : absolute
-    const messages = result.messages ?? []
-    if (result.fatal === true || messages.some((m) => m.ruleId == null)) {
-      unjudged.push(`${file}: ${messages.map((m) => m.message).join('; ') || 'fatal'}`)
-      continue
-    }
-    for (const m of messages) {
-      if (!String(m.ruleId).startsWith(A11Y_RULE_PREFIX)) continue
-      counts[file] = (counts[file] ?? 0) + 1
-      violations.push({ file, line: m.line, column: m.column, rule: m.ruleId, message: m.message })
-    }
-  }
-  return { counts, violations, unjudged }
+  return parseEslintJsonFor(text, root, (ruleId) => ruleId.startsWith(A11Y_RULE_PREFIX))
 }
 
 /** Violation counts per rule, for the summary line and the PR that changes them. */

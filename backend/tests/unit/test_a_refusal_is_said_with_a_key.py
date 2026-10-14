@@ -71,8 +71,9 @@ CONTAINERS = (
 
 HOW_TO_FIX = (
     "A refusal sentence is written where it is raised. Add it to both "
-    "frontend/src/i18n/messages/zh-CN/apiError.json and "
-    "frontend/src/i18n/messages/en/apiError.json under one key, and raise "
+    "frontend/src/i18n/messages/zh-CN/apiError/ and "
+    "frontend/src/i18n/messages/en/apiError/ under one key, in the shard "
+    "named after the backend module that says it, and raise "
     "say('<key>', **params) instead (app/core/sentences.py; "
     "docs/i18n.md). If this text truly is not shown to a person, put "
     "'# i18n-exempt: <reason>' on its line."

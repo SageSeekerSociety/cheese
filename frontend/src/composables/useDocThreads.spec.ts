@@ -67,6 +67,35 @@ describe('comment thread operation recovery', () => {
       expect(state.threads.find((t) => t.comment.id === 'c')?.revision).toBe(2)
     }
   )
+
+  it('picks up an operation a previous page left behind, and holds new writes until it is replayed', async () => {
+    const stored = { id: 'c', action: 'replies', body: { operation_id: 'op-1', expected_revision: 1, content: '半途' } }
+    localStorage.setItem('cheese.doc-thread.operation.v1:human:room', JSON.stringify(stored))
+    const { state, actions } = setup()
+    await vi.waitFor(() => expect(state.threads).toHaveLength(1))
+    expect(state.unknown).toBe('c')
+    await expect(actions.reply('c', 'again')).rejects.toThrow('needs recovery')
+    api.writeDocThread.mockResolvedValue(thread({ revision: 2 }))
+    await expect(actions.recover('c')).resolves.toEqual({ reply: '半途' })
+    // The same operation id goes out again: the server applies it once.
+    expect(api.writeDocThread).toHaveBeenCalledWith('room', 'c', 'replies', stored.body)
+    expect(state.unknown).toBeNull()
+    expect(localStorage.getItem('cheese.doc-thread.operation.v1:human:room')).toBeNull()
+  })
+
+  it('does not treat a stored record that is not an operation as one waiting to be replayed', async () => {
+    // Anything JSON allows can sit under this key — a hand-edited browser, a build
+    // that wrote a shape of its own. It is not trusted, and it does not lock the
+    // threads: the write goes through and replaces it.
+    localStorage.setItem('cheese.doc-thread.operation.v1:human:room', '{}')
+    const { state, actions, refresh } = setup()
+    await refresh()
+    expect(state.unknown).toBeNull()
+    api.writeDocThread.mockResolvedValue(thread({ revision: 2 }))
+    await actions.reply('c', 'reply')
+    expect(api.writeDocThread).toHaveBeenCalledTimes(1)
+    expect(state.unknown).toBeNull()
+  })
 })
 
 describe('threads follow the room', () => {

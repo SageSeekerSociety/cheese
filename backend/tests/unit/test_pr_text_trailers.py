@@ -355,3 +355,57 @@ def test_a_card_that_declared_no_work_leaves_no_empty_link():
     )
     assert "/tasks/" not in body
     assert "Cheese-Task" not in body
+
+
+REVIEW_RESULT = (
+    "独立 review：head 0123abcd 结论 有 1 条｜档位 B\n\n"
+    "**Independent review** of `0123abcd4567`\n\n### 1. [major] Something is wrong\n"
+)
+
+
+def test_a_review_result_in_the_card_body_never_reaches_github():
+    """The delivering seat pastes the independent review after its own sections;
+    the card and the patrol board keep it, the PR body and the squash commit
+    (both built from the card body) do not."""
+    topic = _topic("bob")
+    card = _card(change_body=f"Because it was asked for.\n\n{REVIEW_RESULT}")
+    who = identity.Attribution("alice", None, requester=ALICE)
+    texts = [
+        pr_text.pr_body(topic, "carol", card, who),
+        pr_text.merge_commit_message(topic, "carol", card, who),
+        pr_text.local_merge_commit_message(topic, "carol", card, who),
+    ]
+    for text in texts:
+        assert "Because it was asked for." in text
+        assert "独立 review" not in text
+        assert "Independent review" not in text
+        assert "Something is wrong" not in text
+        assert f"Cheese-Card: {card.id}" in text
+    assert "独立 review：head 0123abcd" in card.change_body
+
+
+def test_the_trailers_stay_one_block_after_the_review_result_is_cut():
+    body = pr_text.pr_body(
+        _topic("bob"),
+        "carol",
+        _card(change_body=f"Because it was asked for.\n\n{REVIEW_RESULT}"),
+        identity.Attribution("alice", None, (ALICE,), requester=ALICE),
+    )
+    head, trailers = body.split("\n\n")
+    assert head == "Because it was asked for."
+    assert trailers.splitlines()[0].startswith("Requested-by:")
+    assert trailers.splitlines()[-1].startswith("Co-authored-by:")
+
+
+def test_a_card_body_that_is_only_a_review_result_leaves_just_the_trailers():
+    body = pr_text.pr_body(_topic("bob"), "carol", _card(change_body=REVIEW_RESULT))
+    assert body.startswith("Requested-by:")
+    assert "review" not in body.lower().replace("reviewed-by", "")
+
+
+def test_a_review_mentioned_inside_a_sentence_is_not_a_review_result():
+    """Only a line that STARTS with the review line begins the block; prose that
+    quotes it stays in the PR body."""
+    text = "It is read from the line 独立 review：head <sha8> that the seat pastes."
+    assert pr_text.without_review_block(text) == text
+    assert pr_text.pr_body(_topic("bob"), "", _card(change_body=text)).startswith(text)

@@ -496,8 +496,9 @@ class TurnPreparation:
             # 图片输入: every pending image is offered to the provider; whether it
             # reaches the model as a native block depends on `embeds_images`, so
             # the prompt is built below, after the provider is picked. A file
-            # that is gone is not offered (`offered_attachments`).
-            turn_images, gone_files = await offered_attachments(
+            # that is gone, or that looks like a picture and does not decode,
+            # is not offered (`offered_attachments`).
+            turn_images, gone_files, undecodable_files = await offered_attachments(
                 session, pending, topic.project_id, place.room_id
             )
 
@@ -740,6 +741,7 @@ class TurnPreparation:
                     replied=replied.get(b.id),
                     recipient=agent.handle,
                     gone=b.id in gone_files,
+                    undecodable=b.id in undecodable_files,
                 )
                 for b in pending
             )

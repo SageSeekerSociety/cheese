@@ -526,7 +526,7 @@ defineExpose({
                 @mention-click="emit('mention-click', $event)"
                 @open-file="emit('open-file', $event)"
                 @open-comment="openComment"
-                @agent="rewrite.open($event)"
+                @agent="(spot: CommentSpot, request?: string) => rewrite.open(spot, request)"
                 @locate-comment="locateComment"
                 @error="setError"
               />

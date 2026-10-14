@@ -490,6 +490,35 @@ PLATFORM_TOOLS = ToolTable(
             "不含各任务的实况文档。",
         ),
         _tool(
+            "cheese_app_save",
+            "保存文档中的一个小程序，即嵌在文档中、可以运行的一段程序。讲解原理、结果随条件的变化、"
+            "方案比较、过程推演，或者让读者动手组合时使用；练习题只在用户要求或文档是教学材料时使用。"
+            "code 是一个 Vue 单文件组件：图形自行绘制，控件使用平台的 c- 组件，"
+            "写法和设计规范见 cheese-docs 技能的 references/apps.md。"
+            "平台先在浏览器中运行一遍；运行报错、页面没有内容、自查（console.assert）未通过，"
+            "或读者操作的控件没有绑定到变量时，不保存，并返回原因。"
+            "不给 app 时新建，返回整个块的写法，由你放进文档；给出 app 时修改该小程序，"
+            "保存为新版本，并同步更新文档中的版本号。",
+            {
+                "code": _text("小程序的 Vue 单文件组件：<script setup> 加 <template>"),
+                "title": _text("新建时：小程序的标题，十个字左右"),
+                "app": _text("改已有的小程序时：它的短号（文档里 :::app 后面那串）"),
+                "note": _text("这一版改了什么，一句话"),
+                "document": _DOCUMENT_ARG,
+            },
+            ["code"],
+        ),
+        _tool(
+            "cheese_app_get",
+            "读一个小程序的代码和它有哪些版本。只在要改它时读；文档里那句说明已经"
+            "说了它做什么。",
+            {
+                "app": _text("小程序的短号（文档里 :::app 后面那串）"),
+                "version": {"type": "integer", "description": "第几版；省略读最新一版"},
+            },
+            ["app"],
+        ),
+        _tool(
             "cheese_canvas_get",
             "读文档里的一块画布：每个格子的内容和关联的任务、格子之间的连线，按连线排成"
             "缩进的大纲，格子用编号 [3] 指。人最近改过的格子会注明是谁、什么时候改的，"
@@ -1131,6 +1160,9 @@ _NEEDS_TOPIC = frozenset(PLATFORM_TOOLS.names()) - {
     # 资料库是项目的，不是话题的。
     "cheese_doc_new",
     "cheese_doc_list",
+    # 小程序跟着它的文档走。
+    "cheese_app_save",
+    "cheese_app_get",
     # 画布有自己的编号，跟着它的文档走。
     "cheese_canvas_get",
     "cheese_canvas_edit",
@@ -2133,6 +2165,120 @@ def _doc_new(args: dict, host) -> str:
     return "\n".join(lines)
 
 
+def _refusal(exc: Exception) -> str | None:
+    """What the platform said when it refused a write (422), or None."""
+    if getattr(exc, "status", None) != 422:
+        return None
+    try:
+        return json.loads(exc.body)["error"]["message"]  # type: ignore[attr-defined]
+    except (ValueError, KeyError, TypeError):
+        return None
+
+
+def _app_path(key: str) -> str:
+    return "/apps/" + urllib.parse.quote(key.strip(), safe="")
+
+
+def _app_save(args: dict, host) -> str:
+    """A new app, or a new version of one; a new version also moves the
+    document's blocks of it onto that version, so the reader sees what was
+    just made and the document's history keeps which code it showed."""
+    body = {"code": str(args["code"]), "note": str(args.get("note") or "")}
+    key = str(args.get("app") or "").strip()
+    if key:
+        plan = {"method": "POST", "path": _app_path(key) + "/versions", "body": body}
+    else:
+        document = _document(host, args)["CHEESE_DOCUMENT"]
+        plan = {"method": "POST", "path": f"/documents/{document}/apps", "body": body}
+    try:
+        answer = host.request(plan)
+    except Exception as exc:
+        why = _refusal(exc)
+        if why is None:
+            raise
+        raise PlatformToolError(
+            f"未保存：{why.rstrip('。')}。修改后重新调用 cheese_app_save。"
+        ) from exc
+    saved = answer.get("data") or {}
+    unchecked = (
+        ""
+        if saved.get("checked")
+        else "平台的浏览器暂时不可用，这一版未经试运行，也没有截图。"
+    )
+    if not key:
+        title = str(args.get("title") or "").strip() or "小程序"
+        made = saved.get("key") or "?"
+        return (
+            f"已保存小程序 {made} 的第 1 版。{unchecked}它还不在文档中：用 "
+            "cheese_doc_edit 把下面的块放到文档中合适的位置，并把第二行改写为一句说明，"
+            "写明它展示什么、最重要的结论是什么。读者和你以后读文档时，都只读这一句。\n\n"
+            f":::app {made}@1 {title}\n一句话说明\n:::"
+        )
+    version = saved.get("version") or 1
+    done = f"已保存小程序 {key} 的第 {version} 版。{unchecked}"
+    return done + _point_at(host, key, version)
+
+
+def _point_at(host, key: str, version: int) -> str:
+    """Move the document's blocks of this app to ``version``; say what it did."""
+    found = host.request({"method": "GET", "path": _app_path(key)})
+    document = (found.get("data") or {}).get("document_id")
+    doc = host.request({"method": "GET", "path": f"/documents/{document}"})
+    content = (doc.get("data") or {}).get("content") or ""
+    head = re.compile(rf"^:{{3,}}app[ \t]+{re.escape(key)}@(\d+)\b")
+    edits = [
+        {"old": line, "new": re.sub(r"@\d+", f"@{version}", line, count=1)}
+        for line in sorted(set(content.splitlines()))
+        if (m := head.match(line)) and int(m.group(1)) != version
+    ]
+    if not any(head.match(line) for line in content.splitlines()):
+        return "文档中没有这个小程序的块，读者还看不到这一版。"
+    if not edits:
+        return "文档中的块已经是这一版。"
+    try:
+        answer = host.request(
+            {
+                "method": "POST",
+                "path": f"/documents/{document}/edits",
+                "body": {"edits": edits},
+            }
+        )
+    except Exception as exc:
+        why = _refusal(exc)
+        if why is None and getattr(exc, "status", None) != 409:
+            raise
+        return (
+            f"未能更新文档中的块（{(why or '文档刚被修改过').rstrip('。')}）："
+            f"用 cheese_doc_edit 把「:::app {key}@旧版本号」改为 @{version}。"
+        )
+    if (answer.get("data") or {}).get("mode") == "suggest":
+        return f"已提出修改建议，把文档中的块改为第 {version} 版，等待接受。"
+    return f"文档中的块已改为第 {version} 版。"
+
+
+def _app_get(args: dict, host) -> str:
+    key = str(args["app"])
+    found = host.request({"method": "GET", "path": _app_path(key)}).get("data") or {}
+    versions = found.get("versions") or []
+    if not versions:
+        return "这个小程序还没有任何一版。"
+    wanted = int(args.get("version") or versions[-1]["version"])
+    one = host.request({"method": "GET", "path": f"{_app_path(key)}/versions/{wanted}"})
+    data = one.get("data") or {}
+    lines = [f"小程序 {found.get('key')}，属于文档 {found.get('document_id')}。各版："]
+    for v in versions:
+        mark = "" if v.get("checked") else "（没有试跑）"
+        lines.append(
+            f"- 第 {v['version']} 版 · {v.get('author')}{mark}：{v.get('note') or '—'}"
+        )
+    lines += [
+        "",
+        f"--- 第 {data.get('version')} 版的代码（外壳 v{data.get('shell')}）",
+        data.get("code") or "",
+    ]
+    return "\n".join(lines)
+
+
 def _doc_set(args: dict, host) -> str:
     document = _document(host, args)["CHEESE_DOCUMENT"]
     content = str(args["content"])
@@ -2697,6 +2843,8 @@ _STEPS = {
     "cheese_doc_set": _doc_set,
     "cheese_doc_edit": _doc_edit,
     "cheese_doc_new": _doc_new,
+    "cheese_app_save": _app_save,
+    "cheese_app_get": _app_get,
     "cheese_canvas_edit": _canvas_edit,
     "cheese_accept_request": _accept_request,
     "platform_request": _platform_request,

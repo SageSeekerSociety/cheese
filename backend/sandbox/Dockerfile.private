@@ -1,5 +1,5 @@
 FROM mirror.gcr.io/library/node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
-ARG CLAUDE_CODE_VERSION=2.1.282
+ARG CLAUDE_CODE_VERSION=2.1.299
 # The backend starts this image by its local name (settings
 # private_chat_executor_image), not by its registry path. The deploy reads this
 # label to tag the pulled image with that name.

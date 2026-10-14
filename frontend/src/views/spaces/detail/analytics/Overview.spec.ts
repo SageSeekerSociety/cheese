@@ -128,10 +128,18 @@ describe('总览看板容器', () => {
     const [, params] = api.getAnalyticsOverview.mock.calls[1] as [number, Record<string, unknown>]
     expect(params).toMatchObject({ groupBy: 'day' })
 
+    // 出题人那个下拉也要守住写回那一头：只在下面从地址里读它，断掉写回照样是绿的。
+    send('update:publisherId', 5)
+    await flushPromises()
+    expect(router.currentRoute.value.query.publisherId).toBe('5')
+    expect(api.getAnalyticsOverview).toHaveBeenCalledTimes(3)
+    const [, byPublisher] = api.getAnalyticsOverview.mock.calls[2] as [number, Record<string, unknown>]
+    expect(byPublisher).toMatchObject({ publisherId: 5 })
+
     await router.push({ query: { publisherId: '3' } })
     await flushPromises()
     expect(state['publisherId']).toBe(3)
-    const [, after] = api.getAnalyticsOverview.mock.calls[2] as [number, Record<string, unknown>]
+    const [, after] = api.getAnalyticsOverview.mock.calls[3] as [number, Record<string, unknown>]
     expect(after).toMatchObject({ publisherId: 3 })
   })
 

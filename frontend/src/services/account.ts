@@ -5,7 +5,17 @@ import { computed, ref } from 'vue'
 import { toast } from 'vuetify-sonner'
 
 import { UserApi } from '@/api/users'
-import i18n, { isLocale, onLocaleChosen, setLocale, storedLocale, t } from '@/i18n'
+import i18n, {
+  forgetAccountLocaleSettled,
+  isLocale,
+  loadLocale,
+  noteAccountLocaleSettled,
+  onLocaleChosen,
+  setLocale,
+  storedLocale,
+  t,
+} from '@/i18n'
+import { storageGet, storageGetJson, storageRemove, storageSet, storageSetJson } from '@/lib/browserStorage'
 import { clearComposerDrafts } from '@/lib/composerDrafts'
 import { forgetFeedbackDraft } from '@/lib/feedbackDraft'
 import { identityChanges } from '@/lib/identity'
@@ -44,13 +54,8 @@ const API_CACHE = 'cheese-api-get'
 
 /** localStorage 里存着的上一个人是谁 —— 内存里那份还没恢复时的退路。 */
 function storedUserId(): number | undefined {
-  try {
-    const raw = localStorage.getItem('user')
-    const id = raw ? JSON.parse(raw)?.id : undefined
-    return typeof id === 'number' ? id : undefined
-  } catch {
-    return undefined
-  }
+  const id = storageGetJson<User>('user')?.id
+  return typeof id === 'number' ? id : undefined
 }
 
 /**
@@ -151,6 +156,13 @@ export class AccountService {
   // 正在保存的那个语言：保存回来之前到达的用户记录（续签、别的标签页）还是旧
   // 的，不能拿它把刚选的语言换回去。
   private savingLanguage: Locale | null = null
+  // 这个人自己选过几次语言。取语言包要等一次网络往返，这期间他可能又选了一种：他刚
+  // 选的这个比出发时手里那条记录新。已经保存完、`savingLanguage` 又清掉之后才回来的
+  // 取包结果，靠这个数挡住。
+  private languagePicks = 0
+  // 看过多少条用户记录（`followLanguage`）。换语言要等语言包，等到的时候可能已经有
+  // 更新的一条记录来过：那次换的是旧记录说的语言，不能落地。
+  private followedRecords = 0
   // 时区也存在账号上：安静时段是这个人墙上的钟点（22:00–08:00），服务端按账号上那
   // 份时区算。它跟着他正在用的浏览器走，人到了别的时区，打开页面就跟过去。
   // 正在报的那个时区：报完之前到达的用户记录还是旧的，不能因此再报一遍。
@@ -170,6 +182,7 @@ export class AccountService {
   /** 这个人在界面上选了一种语言（i18n 的 `chooseLocale`，界面已经换过去了）：
    *  登录着就记到账号上。 */
   public async languageChosen(locale: Locale) {
+    this.languagePicks += 1
     // 没登录时选择只记在浏览器里，登录那一下再写上去（followLanguage）。
     if (this.loggedIn) await this.saveLanguage(locale)
   }
@@ -180,7 +193,7 @@ export class AccountService {
       await UserApi.setLanguage(locale)
       if (this.user) {
         this.user = { ...this.user, language: locale }
-        localStorage.setItem('user', JSON.stringify(this.user))
+        storageSetJson('user', this.user)
       }
     } catch (error) {
       // 界面已经换过去了；没记上，下次登录或打开页面时会再写一次。
@@ -193,13 +206,51 @@ export class AccountService {
   /** 拿到服务端给的用户记录后，让界面和账号上的语言一致。`signingIn`：这条记录
    *  来自一次新登录，而不是续签或打开页面。 */
   private followLanguage(user: User, signingIn = false) {
+    // 每一条记录都是眼下最新的一条：换语言要等语言包，等到的时候可能已经有更新的记录
+    // 来过，那次换就不能落地了。这条记录自己什么都不换的那两种情况（下面两处 `return`）
+    // 也算：记下来的是「这会儿是什么就是什么」，比先前那条记录说的新。
+    const record = ++this.followedRecords
     if (this.savingLanguage) return
     const current = i18n.global.locale.value as Locale
-    if (!isLocale(user.language) || (signingIn && storedLocale() !== null)) {
-      if (user.language !== current) void this.saveLanguage(current)
+    const stored = storedLocale()
+    // 浏览器里存着一种语言，只有界面正显示着它时才算「这个人此刻的选择」。首屏那份
+    // 语言包取不回来时界面会退回入口那一门而偏好不动（`i18n/index.ts` 的
+    // `fallBackToEntryLocale`）：那时把界面语言写回账号，抹掉的是他真正选的那一门。
+    // 偏好里存着别的语言就说明界面上这一门不是他选的；账上那条记录说的是这里显示不出来
+    // 的一门时（`!isLocale`）也一样，它管不了要哪一门，两边都不写。
+    if (!isLocale(user.language) || (signingIn && stored !== null && stored === current)) {
+      if (user.language !== current && (stored === null || stored === current)) {
+        // 界面这一门写回账号，它就成了账号上那一份：首屏那份语言包迟到落地时不能把它
+        // 翻走（见 `noteAccountLocaleSettled`）。
+        noteAccountLocaleSettled(current)
+        void this.saveLanguage(current)
+      }
       return
     }
-    if (user.language !== current) setLocale(user.language)
+    if (user.language !== current) {
+      // 这份语言包可能还没取过（这台机器一直用的是另一种语言），先取再换：换过去的
+      // 界面不该先画出一片裸键。取语言包这段时间里，比这条记录更新的东西可能已经
+      // 来了：这个人自己选了一种（`languagePicks`），或者来了更新的记录
+      // （`followedRecords`）。都留着他的，不换。（「有人正把眼下这一门记上去」也归这
+      // 两条管：那一次写是另一条记录发起的，`followedRecords` 已经比手上这条新。）
+      //
+      // 取不到就留在这门语言上：没有那份语言包，换过去只会是一片裸键。这一条是后台
+      // 的记录跟过来时自己跑的，没有人在等它的结果，失败也不弹东西。（`main.ts` 的
+      // 首屏那份同理，它也是等不到就照常挂载。）取包按「没人在等」的那种取
+      // （`loadLocale` 的 `unattended`）：这一趟在任何一次导航之外，失败了也留在这门
+      // 语言上，拿整页刷新去救它只会一轮一轮地刷。
+      const target = user.language
+      const picks = this.languagePicks
+      void loadLocale(target, true)
+        .then(() => {
+          if (record === this.followedRecords && this.languagePicks === picks) setLocale(target)
+        })
+        .catch(() => {})
+    } else {
+      // 账号上那份就是界面上这一门：不写偏好，也不换。可界面这一门是它定下的：首屏那份
+      // 语言包迟到落地时不能把它翻走（见 `noteAccountLocaleSettled`）。
+      noteAccountLocaleSettled(current)
+    }
   }
 
   /** 拿到服务端给的用户记录后，账号上的时区和这个浏览器的不一样就报上去。 */
@@ -211,7 +262,7 @@ export class AccountService {
       .then(() => {
         if (this.user) {
           this.user = { ...this.user, timezone: zone }
-          localStorage.setItem('user', JSON.stringify(this.user))
+          storageSetJson('user', this.user)
         }
       })
       // 没报上，下次打开页面会再报一次；在那之前安静时段按账号上原来那份算。
@@ -250,9 +301,9 @@ export class AccountService {
   public set accessToken(value) {
     this._accessToken = value
     if (value) {
-      localStorage.setItem('accessToken', value)
+      storageSet('accessToken', value)
     } else {
-      localStorage.removeItem('accessToken')
+      storageRemove('accessToken')
     }
   }
 
@@ -263,7 +314,7 @@ export class AccountService {
       const data = await UserApi.getCurrentUser()
       if (data.user) {
         this.user = data.user
-        localStorage.setItem('user', JSON.stringify(data.user))
+        storageSetJson('user', data.user)
         this.followLanguage(data.user, signingIn)
         this.followTimezone(data.user)
       }
@@ -278,8 +329,8 @@ export class AccountService {
   }
 
   private async restoreSession() {
-    const accessToken = localStorage.getItem('accessToken')
-    const user = localStorage.getItem('user')
+    const accessToken = storageGet('accessToken')
+    const user = storageGetJson<User>('user')
     if (!accessToken || !user) return
 
     // 访问令牌只活 15 分钟（后端 access_token_expires_seconds），刷新令牌活 30 天。
@@ -317,7 +368,7 @@ export class AccountService {
     }
 
     this.accessToken = accessToken
-    this.user = JSON.parse(user)
+    this.user = user
     this.loggedIn = true
     // 初始化完成后更新用户信息
     await this.updateUserInfo()
@@ -370,7 +421,7 @@ export class AccountService {
     this.accessToken = accessToken
     if (user) {
       this.user = user
-      localStorage.setItem('user', JSON.stringify(user))
+      storageSetJson('user', user)
     }
     if (someoneElse) readAsNewPerson()
     this.loggedIn = true
@@ -392,7 +443,7 @@ export class AccountService {
     if (user) {
       // 如果提供了用户信息，直接使用
       this.user = user
-      localStorage.setItem('user', JSON.stringify(user))
+      storageSetJson('user', user)
       this.followLanguage(user, true)
       this.followTimezone(user)
     } else {
@@ -443,10 +494,10 @@ export class AccountService {
     this._accessToken = null
     // 会话已经没了，没有「待恢复」可言。
     this._restorePhase.value = 'idle'
-    localStorage.removeItem('accessToken')
-    localStorage.removeItem('user')
+    storageRemove('accessToken')
+    storageRemove('user')
     // Remove the identity cache left by earlier frontend versions.
-    localStorage.removeItem('cheesex.me')
+    storageRemove('cheesex.me')
     // The service-worker API cache is per-browser, not per-user: on a shared
     // machine the next account must not read this one's cached API responses.
     // Drop the data cache on logout (the app-shell precache is not user data,
@@ -464,6 +515,10 @@ export class AccountService {
     clearComposerDrafts()
     // 反馈提交表单那半篇同理（lib/feedbackDraft.ts）。
     forgetFeedbackDraft()
+    // 语言也有一份算在这个人头上：账号上那条记录把界面定在哪一门，是「这个人」的，会话
+    // 没了就该跟着没。留着它，首屏那份迟到的语言包会被一条已经不存在的账号记录拦住，
+    // 界面就停在退出前那一门上（见 `i18n/index.ts` 的 `forgetAccountLocaleSettled`）。
+    forgetAccountLocaleSettled()
   }
 }
 

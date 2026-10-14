@@ -33,6 +33,7 @@ from tests.integration.test_file_panel_safety import (  # noqa: F401
     _put,
     task_machine,
 )
+from tests.support.pictures import picture
 
 #: The exact card an artifact block serialises to. A move that changed the wire
 #: would add or drop a key here, which is the first thing this pins.
@@ -214,13 +215,14 @@ def test_attachments_upload_library_and_raw_read_the_same(client):
     pid, tid = _room(client)
     pid_u, tid_u = uuid.UUID(pid), uuid.UUID(tid)
 
+    shot = picture("PNG")
     uploaded = client.post(
         f"/topics/{tid}/attachments",
-        files={"file": ("shot.png", b"\x89PNG\r\n\x1a\n0000", "image/png")},
+        files={"file": ("shot.png", shot, "image/png")},
     )
     assert uploaded.status_code == 200, uploaded.text
     assert uploaded.json()["data"] == {
-        "bytes": 12,
+        "bytes": len(shot),
         "mime": "image/png",
         "path": "library/shot.png",
     }

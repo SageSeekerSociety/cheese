@@ -18,6 +18,7 @@ import {
   findUnknownIcons,
   keepUsedRules,
   parseCodepoints,
+  readSourceIfPresent,
   replaceIconFontFace,
   shippedNames,
 } from './mdi-icons.mjs'
@@ -118,7 +119,10 @@ test('图标名在源码里都是字面量，没有运行时拼出来的', () =>
       if (entry.isDirectory()) {
         if (entry.name !== 'node_modules') walk(full)
       } else if (/\.(?:vue|[cm]?[jt]sx?)$/.test(entry.name) && !/\.(?:spec|test)\./.test(entry.name)) {
-        const text = readFileSync(full, 'utf8')
+        // 这一步和 `a11y-ratchet.test.mjs` 种了又删的那个探针文件并行，撞上就跳过
+        // （见 `readSourceIfPresent`）。
+        const text = readSourceIfPresent(full)
+        if (text === null) continue
         for (const [index, line] of text.split('\n').entries()) {
           if (/mdi-\$\{/.test(line) || /['"`]mdi-['"`]/.test(line)) offenders.push(`${full}:${index + 1}`)
         }

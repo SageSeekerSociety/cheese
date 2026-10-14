@@ -95,6 +95,12 @@ NORMALIZATIONS = {
     "<SESSION>": "The session id, which the build draws at random.",
     "<TASK n>": "Background task ids, which the build draws at random; "
     "numbered in order of appearance, so their order is still compared.",
+    "<RUN n>": "Ids of one run of a background task, which the build draws at "
+    "random and gives a new one to every run, so the two runs never share "
+    "one; each event of a run names its id, and the entries of "
+    "background_tasks_changed name the runs of their task. Numbered in order "
+    "of appearance, so their order is still compared. 2.1.299 is the first "
+    "pinned build to name runs; 2.1.282 named tasks alone.",
     "<FILE>": "Names of persisted tool results, which the build draws at random.",
     "dropped fields": "uuid, prompt_id, timestamps, durations, cost and usage: "
     "drawn at random or read off a clock. cache_control: the build's prompt "
@@ -416,6 +422,21 @@ class Relay:
         self.server.server_close()
 
 
+def named(value, key):
+    """Every string `value` holds under `key`, in the order it appears."""
+    found = []
+    if isinstance(value, dict):
+        for name, item in value.items():
+            if name == key and isinstance(item, str):
+                found.append(item)
+            else:
+                found += named(item, key)
+    elif isinstance(value, list):
+        for item in value:
+            found += named(item, key)
+    return found
+
+
 class Run:
     """One of the two sessions, and everything needed to read its record."""
 
@@ -438,10 +459,15 @@ class Run:
         if init:
             pairs.append((init["session_id"], "<SESSION>"))
         tasks = []
+        runs = []
         for event in self.session.events:
             if is_("system", "task_started")(event) and event["task_id"] not in tasks:
                 tasks.append(event["task_id"])
+            for run in named(event, "run_id"):
+                if run not in runs:
+                    runs.append(run)
         pairs += [(task, f"<TASK {n}>") for n, task in enumerate(tasks, 1)]
+        pairs += [(run, f"<RUN {n}>") for n, run in enumerate(runs, 1)]
         return pairs
 
     def normalize(self, value):

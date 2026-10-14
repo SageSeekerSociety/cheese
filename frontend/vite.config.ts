@@ -478,7 +478,10 @@ export default defineConfig({
         // `screenshots/**` 是 manifest 里那几张安装截图（见上面的 manifest.screenshots）：
         // 只有浏览器的安装弹窗会去取它，跟 App 能不能离线跑毫无关系，别让每次安装
         // 都白下 100 KB。
-        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**', 'screenshots/**'],
+        // `miniapp/**` is the mini-app shell (vite.miniapp.config.mts): the backend
+        // serves it on the content domain, this app never loads it, and it is
+        // one file of almost 2 MB.
+        globIgnores: ['**/*.worker-*.js', '**/monaco-*.js', 'docs/**', 'screenshots/**', 'miniapp/**'],
         cleanupOutdatedCaches: true,
         // 这两行**故意不写**（原来写着 clientsClaim/skipWaiting，都是 true）。
         // 它们是「新 worker 立刻接管」的开关，留着就等于绕过 registerType: 'prompt'
@@ -693,7 +696,7 @@ export default defineConfig({
     // 使用 happy-dom 模拟 DOM
     // 这需要你安装 happy-dom 作为对等依赖（peer dependency）
     environment: 'happy-dom',
-    setupFiles: ['./src/test/setup-network.ts', './src/test/setup-dom.ts'],
+    setupFiles: ['./src/test/setup-i18n.ts', './src/test/setup-network.ts', './src/test/setup-dom.ts'],
     // Vuetify 的组件包自带 .css 副作用导入，被 externalize 掉就会以
     // "Unknown file extension .css" 崩在收集阶段——挂真实组件的测试需要它走
     // Vite 的 transform 管线。

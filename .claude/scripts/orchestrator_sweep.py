@@ -6,7 +6,7 @@ appends the rendered board to one document and never restates anything above it.
 
 Usage (keep the password in the command's heredoc, never in a file):
   OKCHEESE_USER=... OKCHEESE_PASS=... python3 .claude/scripts/orchestrator_sweep.py <channel topic id> \
-      [--silent-min 60] [--skip 1443,1405] [--json | --render | --sync-doc <document id>]
+      [--silent-min 40] [--skip 1443,1405] [--json | --render | --sync-doc <document id>]
   python3 .claude/scripts/orchestrator_sweep.py --self-test   (offline: no token, no network, no gh)
 
 For every open, started task in the channel it reads platform facts and the PR's GitHub queue state:
@@ -14,12 +14,22 @@ For every open, started task in the channel it reads platform facts and the PR's
   可采纳未采纳  card pending, PR mergeable >= 5 min, not queued, not removed since
   红了没人修    CI red / conflict / post-merge checks failed >= 30 min ago, no message since
   连续失败      last two system events are failed turns, no message since
-  长时间无动静  last message older than --silent-min minutes
+  长时间无动静  no heartbeat for --silent-min minutes (default 40, two 20-minute patrol
+                rounds). A heartbeat is the newest of the line's last message, the last
+                event block its seat wrote (a command it ran) and, when the platform gives
+                it, the running turn's last output (`last_output_at` on the task row). A
+                command the seat started and that has not returned yet — its event block
+                carries no output yet, no failed turn came after it and the platform still
+                calls a turn running — is a heartbeat now: a seat inside a 45-minute test
+                run is working, not stalled. The row says when the last event and the last
+                message were and what the message said, so the patrol reads the line's own
+                last word before nudging it. The room's task rows carry no last_output_at
+                today, so that leg is there for a platform that sends it.
 Each row carries waiting_on; --skip leaves out tasks deliberately on hold.
 
 The default output is that text list, unchanged. The same sweep in other shapes:
   --json       every class's rows — task, topic, seat, PR, head, CI state, the head its
-               review is pinned to, minutes waited, whom it waits on, the PR's two core
+               independent review covers (read from the card body), minutes waited, whom it waits on, the PR's two core
                sections and its failed checks and cases — plus that UTC day's metrics.
                Fixed shape, for tools.
   --render     the same data as Markdown, one line per signal, for a person to read;
@@ -34,7 +44,7 @@ The default output is that text list, unchanged. The same sweep in other shapes:
                once.
 """
 import json, os, re, statistics, subprocess, sys, urllib.error, urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 API = os.environ.get("OKCHEESE_API", "https://okcheese.com/api")
 REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/")
@@ -43,12 +53,42 @@ REPO = os.environ.get("ORCHESTRATOR_REPO", "SageSeekerSociety/cheese").split("/"
 #: is not a decision to make — it is the sweep saying it could not look.
 CLASSES = ["出队", "可采纳未采纳", "红了没人修", "连续失败", "长时间无动静", "GitHub 未查"]
 BOARD_START, BOARD_END = "<!-- board:start -->", "<!-- board:end -->"
-#: The first line of the comment pr-review.sh posts on a PR, naming the head it reviewed.
-REVIEW_MARK = re.compile(r"<!--\s*pr-review sha=([0-9a-f]{7,40})")
+#: The line pr-review.sh puts first in its rendered result, which the delivering seat pastes
+#: into the card body: `独立 review：head <sha8>（增量自 <sha8>）结论 <无 blocker/major | 有 N 条>`.
+#: 档位 A–G, decided from the files the PR touches, may follow the verdict; it is the last
+#: field, so a body written before the tiers existed still reads. The grammar is owned by
+#: .claude/pr-review/render.py, which writes the line; this is the reading side.
+REVIEW_LINE = re.compile(r"独立 review：head ([0-9a-f]{7,40})(?:（增量自 ([0-9a-f]{7,40})）| )"
+                         r"结论 (无 blocker/major|有 \d+ 条)"
+                         r"(?:\s*｜\s*档位 ([A-G]))?")
 CI_WORD = {"SUCCESS": "绿", "FAILURE": "红", "ERROR": "红", "PENDING": "跑", "EXPECTED": "跑"}
+#: The system events that end a turn without the step's block ever being marked: the
+#: backend's run_record.turns.TURN_FAILURE_EVENTS. A tool block left behind by any of
+#: them is not a command still running.
+TURN_ENDED = ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error")
+#: The task row's presentation phrase while a turn is running (the backend's
+#: Building.running): the frontend's 还在动 rule is the same judgement, scoped to the
+#: running turn's blocks.
+RUNNING_PHRASE = "running"
+#: The phrases the board answers *instead of* `running` although a turn may still be
+#: running, so they answer nothing: task_presentation decides 结算中 (被采纳的那一条还要跑
+#: 一轮写总结), 待回答 (「进程可能还在，但它不会自己往下走了」) and 讨论中 (还没点开始，芝士
+#: 也可能已经在回话) before it ever looks at `running`. 第四轮审查 2026-10-14：把前两个读成
+#: 「没在跑」，正在写总结、或刚被回答打断的线会被报成停摆。sweep 读到这一行之前就跳过了没
+#: 开始的行，讨论中那一格只对别的调用方有意义。
+RUNNING_OVERRIDES = ("accepted", "awaiting_answer", "discussing")
+#: A tool call older than this is not taken for still running, whatever its block says:
+#: a turn can end in a way that posts no event at all (a seat replaced under it), and a
+#: line that then reads 命令在跑 forever is the one failure this class exists to catch.
+IN_FLIGHT_MAX_MIN = 120
 ROW_FIELDS = ("task", "title", "topic", "seat", "pr", "head", "ci",
-              "review_head", "waited_min", "waiting_on", "stage", "detail",
-              "changed", "verified", "checks", "cases")
+              "review_head", "review_since", "review_verdict", "review_tier", "waited_min", "waiting_on",
+              "stage", "detail", "changed", "verified", "checks", "cases",
+              "last_event_at", "last_message_at", "last_message", "last_output_at",
+              "running", "heartbeat_min")
+#: How much of a line's last message the row carries: enough to tell "审查在跑" from
+#: "等总调度", not the whole message.
+_MESSAGE_BRIEF = 80
 #: PR -> its merge-queue timeline, filled once per run (see gh_queue_timeline).
 _TIMELINES = {}
 #: PRs this run could not read a timeline for at all. The day's numbers are short by those,
@@ -113,8 +153,8 @@ def said(m):
 
 def gh_pr(n, board=False):
     """One PR's queue state. `board` adds what only the board shows: the head, that
-    head's CI state, that head's per-check verdicts, the description, and the head the
-    newest review is pinned to. Read-only, one call.
+    head's CI state, that head's per-check verdicts, the and the description.
+    Read-only, one call.
 
     Those fields stay out of the text list's query — it asks for exactly what it
     always asked for, so a field the board wants can never be the reason the text
@@ -125,7 +165,7 @@ def gh_pr(n, board=False):
              'contexts(first:50){nodes{__typename '
              '... on CheckRun{name conclusion detailsUrl} '
              '... on StatusContext{context state targetUrl}}}}}}} '
-             'comments(last:100){nodes{body}} ') if board else ''
+             ) if board else ''
     q = ('query($n:Int!){repository(owner:"%s",name:"%s"){pullRequest(number:$n){merged '
          + extra
          + 'mergeQueueEntry{state} '
@@ -148,15 +188,8 @@ def gh_pr(n, board=False):
             return {"error": f"GitHub 上没有 PR #{n}"}
         commits = (body.get("commits") or {}).get("nodes") or []
         rollup = ((commits[0]["commit"].get("statusCheckRollup") if commits else None) or {})
-        pinned = None
-        for c in reversed((body.get("comments") or {}).get("nodes") or []):
-            found = REVIEW_MARK.search(c.get("body") or "")
-            if found:
-                pinned = found.group(1)
-                break
         body["head"] = body.get("headRefOid")
         body["ci"] = rollup.get("state")
-        body["review_head"] = pinned
         body["desc"] = body.pop("body", None) or ""
         body["checks"] = failed_checks(rollup)
         return body
@@ -181,6 +214,26 @@ def failed_checks(rollup):
         elif str(node.get("state") or "").upper() in ("FAILURE", "ERROR"):
             out.append({"name": node.get("context") or "?", "url": node.get("targetUrl") or ""})
     return out
+
+
+def review_of(card_body):
+    """The independent-review line of a card body: (head, since, verdict, tier), or None.
+    When the body carries several (one per round), the last is the newest. `tier` is None
+    for a body written before the tiers existed, which is not the same as an empty tier."""
+    found = REVIEW_LINE.findall(card_body or "")
+    return found[-1] if found else None
+
+
+def card_review(tok, topic, card_id):
+    """What the task's card body says about the independent review. The platform's card, not
+    GitHub: review results are not posted there. None when the card has no such line, or the
+    card cannot be read (the board shows "—" for both; the line is information, not a gate)."""
+    try:
+        cards = get(tok, f"/topics/{topic}/accept-card")["data"]
+    except (urllib.error.URLError, KeyError, TypeError, ValueError):
+        return None
+    mine = [c for c in cards if c.get("id") == card_id]
+    return review_of(mine[0].get("change_body")) if mine else None
 
 
 def gh_queue_timeline(n):
@@ -433,6 +486,11 @@ def brief(desc, limit=400):
     trailer = _TRAILER_LINE.search(text)
     if trailer:
         text = text[:trailer.start()]
+    # 卡片正文末尾贴着独立审查的结果，平台把它原样镜像进 PR 正文；它的标题（「### 1.
+    # [major] tests do not bite」）不是作者写的章节，不能当 改了什么／怎么验证的 读。
+    review = REVIEW_LINE.search(text)
+    if review:
+        text = text[:review.start()]
     agent = _AGENT_MARK.search(text)
     if agent:
         text = text[agent.end():]
@@ -738,16 +796,23 @@ def waiting_of(t, kind):
     return t.get("agent_handle")
 
 
-def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg):
+def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg,
+        pulse=None):
     good = pr is not None and "error" not in pr
     changed, verified = brief(pr.get("desc")) if good else ("", "")
+    pulse = pulse or {}
+    review = pr.get("review") if good else None
     return {
         "kind": kind, "name": name, "task": t["number"], "title": t["title"], "topic": t["id"],
         "seat": t.get("agent_handle"),
         "pr": card.get("pr_number"),
         "head": pr.get("head") if good else None,
         "ci": CI_WORD.get(pr.get("ci"), "无") if good else None,
-        "review_head": pr.get("review_head") if good else None,
+        "review_head": review[0] if review else None,
+        "review_since": (review[1] or None) if review else None,
+        "review_verdict": review[2] if review else None,
+        # 卡片上没写档位（旧卡）时就不提档位：空串和没有是两回事，这里只认没有。
+        "review_tier": (review[3] or None) if review and len(review) > 3 else None,
         "waited_min": round(waited) if waited is not None else None,
         "waiting_on": waiting or waiting_of(t, kind),
         "stage": stage_of(card, pr, ready_at, last_ready, red_at, last_msg),
@@ -756,8 +821,89 @@ def row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, re
         "verified": verified,
         "checks": [c["name"] for c in (pr.get("checks") or [])] if good else [],
         "cases": (pr.get("cases") or []) if good else [],
+        "last_event_at": pulse.get("last_event_at"),
+        "last_message_at": pulse.get("last_message_at"),
+        "last_message": pulse.get("last_message"),
+        "last_output_at": pulse.get("last_output_at"),
+        "running": pulse.get("running"),
+        "heartbeat_min": pulse.get("heartbeat_min"),
         "read": good,
     }
+
+
+def message_brief(m):
+    """One line of a message, for the row: its author and the first _MESSAGE_BRIEF
+    characters, whitespace collapsed so it stays on one line of the text list."""
+    body = " ".join(str(m.get("content") or "").split())
+    if len(body) > _MESSAGE_BRIEF:
+        body = body[:_MESSAGE_BRIEF] + "…"
+    return f"@{m.get('author') or '-'}「{body}」"
+
+
+def heartbeat_of(last_msg, last_event, last_output=None):
+    """The line's last sign of life: the newest of its last message, the last event
+    block its seat wrote, and the running turn's last output when the platform gives it.
+    A line that has no event blocks at all beats by its messages."""
+    return max((x for x in (last_msg, last_event, last_output) if x), key=ts)
+
+
+def turn_running(task):
+    """Whether the platform says a turn is running in this task right now: the row's
+    presentation phrase is `running` while one is, and False for a phrase that means no
+    turn is running (Building.started, the card's own states — `running` outranks all of
+    those). None when the row carries no phrase (an older platform), or when the phrase
+    is one the board decides *instead of* `running` though a turn may be running
+    (RUNNING_OVERRIDES): those leave the caller its own fallback."""
+    pres = task.get("presentation")
+    if isinstance(pres, dict) and isinstance(pres.get("phrase"), str):
+        if pres["phrase"] in RUNNING_OVERRIDES:
+            return None
+        return pres["phrase"] == RUNNING_PHRASE
+    return None
+
+
+def in_flight(event, ended_after, now=None, turn=None):
+    """Whether the seat's latest event block is a tool call that has not returned: the
+    platform writes the block when the call starts (that is its created_at) and adds
+    `output_bytes` when it ends, so a tool block without one is a command still running
+    — unless the turn ended after it (TURN_ENDED), which leaves the block unmarked
+    forever, or the call is older than IN_FLIGHT_MAX_MIN.
+
+    `turn` is the platform's word on whether a turn is running (turn_running). A call that
+    returned with empty output leaves the block byte-identical to this one, so the block
+    alone cannot tell the two apart (第三轮审查 2026-10-14): when the platform says no turn
+    is running, the block has returned and is not in flight. When the platform does not say
+    (None — an older platform, or a phrase that overrides `running`, see RUNNING_OVERRIDES),
+    only the age limit above keeps 命令在跑 from lasting forever."""
+    m = meta(event)
+    if not m.get("tool") or "output_bytes" in m or m.get("failed") or ended_after:
+        return False
+    if turn is False:
+        return False
+    now = now or datetime.now(timezone.utc)
+    return (now - ts(event["created_at"])).total_seconds() / 60 < IN_FLIGHT_MAX_MIN
+
+
+def stalled_for(now, heartbeat, silent, running=False):
+    """Minutes since the heartbeat when that is at least `silent`, else None. A command
+    still running is a heartbeat now, whatever the timestamps say."""
+    if running:
+        return None
+    w = (now - ts(heartbeat)).total_seconds() / 60
+    return w if w >= silent else None
+
+
+def hhmm(iso):
+    return f"{iso[11:16]} UTC" if iso else "没有"
+
+
+def pulse_detail(waited, last_event, last_msg_at, last_msg_brief, last_output=None):
+    """The 长时间无动静 line: how long without a heartbeat, then the facts the patrol
+    needs before it nudges — when the seat last ran something, when the turn last
+    produced output (only when the platform says), and the line's own last word."""
+    return (f"{waited:.0f} 分钟无心跳：最后 event {hhmm(last_event)}，"
+            + (f"最后输出 {hhmm(last_output)}，" if last_output else "")
+            + f"最后消息 {hhmm(last_msg_at)} {last_msg_brief}")
 
 
 def sweep(tok, room, silent, skip, want_facts):
@@ -778,10 +924,30 @@ def sweep(tok, room, silent, skip, want_facts):
         name = f"#{t['number']} {t['title'][:28]} @{t.get('agent_handle') or '-'}" + (f" 等:{t['waiting_on']}" if t.get("waiting_on") else "")
         msg = get(tok, f"/topics/{tid}/history?limit=1&kind=message")["data"]
         last_msg = msg[-1]["created_at"] if msg else t["started_at"]
+        # 心跳：座位跑命令是 event 块，不是消息。只看消息会把一条正在跑长命令的线报成
+        # 停摆（2026-10-13 #1468 跑了 70 分钟命令、被按「70 分钟没消息」催过）。event 只认
+        # 座位自己写的：system 的 turn_failed 也是 event，但那不是它在动。
         sysev = get(tok, f"/topics/{tid}/history?limit=30&author=system")["data"]
         accev = get(tok, f"/topics/{tid}/history?limit=30&author=accept")["data"]
         sysev.sort(key=lambda m: m["created_at"])
         accev.sort(key=lambda m: m["created_at"])
+        # 一条长命令只在开始时落一个 event 块、结束时才补 output_bytes，所以还没返回的
+        # 命令是「现在在跑」；单条 45 分钟的命令靠它才不会被报成停摆。event 只认座位自己
+        # 写的，author 过滤不能省：不过滤的话别人的块（accept 的 pr_closed 每隔几天来一
+        # 条，`review/room_notices.py` 的 announce(author="accept")）会被当成它的心跳；座位
+        # 不知道是谁时就一条都不读。行上的 last_output_at 是
+        # 平台的第三个说法，现在两端都不给值，给了就顺手采信。
+        seat = t.get("agent_handle")
+        evs = get(tok, f"/topics/{tid}/history?limit=1&kind=event&author={seat}")["data"] if seat else []
+        last_event = evs[-1]["created_at"] if evs else None
+        ended_after = any(meta(m).get("event_type") in TURN_ENDED and m["created_at"] > last_event
+                          for m in sysev) if evs else False
+        running = bool(evs) and in_flight(evs[-1], ended_after, now, turn_running(t))
+        heartbeat = heartbeat_of(last_msg, last_event, t.get("last_output_at"))
+        pulse = {"last_event_at": last_event, "last_message_at": msg[-1]["created_at"] if msg else None,
+                 "last_message": message_brief(msg[-1]) if msg else None,
+                 "last_output_at": t.get("last_output_at"), "running": running,
+                 "heartbeat_min": 0 if running else round(age(heartbeat))}
 
         card = t.get("card") or {}
         n = card.get("pr_number")
@@ -795,6 +961,8 @@ def sweep(tok, room, silent, skip, want_facts):
                 pr = gh_pr(n, board=want_facts)
                 if want_facts:
                     facts[n] = pr
+        if want_facts and pr is not None and "error" not in pr and "review" not in pr:
+            pr["review"] = card_review(tok, tid, card.get("id"))
 
         ready = [m for m in accev if meta(m).get("event_type") == "accept_ready"]
         last_ready = ready[-1]["created_at"] if ready else None
@@ -814,7 +982,7 @@ def sweep(tok, room, silent, skip, want_facts):
             pr["cases"] = failing_cases(pr.get("checks") or [])
 
         def add(kind, text, waited=None, waiting=None):
-            rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg))
+            rows.append(row(kind, name, text, t, card, pr, waited, waiting, ready_at, last_ready, red_at, last_msg, pulse))
 
         if card.get("status") == "pending" and n:
             if "error" in pr:
@@ -840,9 +1008,11 @@ def sweep(tok, room, silent, skip, want_facts):
             w = age(tail[-1]["created_at"])
             add("连续失败", f"最后 {tail[-1]['created_at'][11:16]} UTC：{said(tail[-1])}", w)
 
-        if age(last_msg) >= silent:
-            w = age(last_msg)
-            add("长时间无动静", f"{w:.0f} 分钟没消息", w)
+        w = stalled_for(now, heartbeat, silent, running)
+        if w is not None:
+            add("长时间无动静", pulse_detail(w, last_event, pulse["last_message_at"],
+                                        pulse["last_message"] or "（还没有消息）",
+                                        t.get("last_output_at")), w)
 
     rows.sort(key=lambda r: CLASSES.index(r["kind"]))
     return rows, idmap
@@ -856,17 +1026,29 @@ def text(rows):
         print(f"[{r['kind']}] {r['name']}｜{r['detail']}")
 
 
+def review_cell(r):
+    """The 独立审查 column: the reviewed head, 增量 when the review was a delta, the verdict,
+    the tier, and 旧 when the PR has moved past that head (a small increment needs no new
+    review, so this says only that it has moved). The tier is what kind of change it is, so
+    a G here next to 无 blocker/major reads as 不用审 rather than 审过没事."""
+    rev = r["review_head"]
+    if rev is None:
+        return "—"
+    moved = "" if r["head"] and r["head"].startswith(rev) else "（旧）"
+    tier = f" {r['review_tier']}档" if r["review_tier"] else ""
+    return f"{rev[:8]}{moved} {'增量 ' if r['review_since'] else ''}{r['review_verdict']}{tier}"
+
+
 def render(rows, metrics, silent, now, room):
     out = ["## 调度看板", "",
            f"UTC {now:%Y-%m-%d %H:%M}｜信号阈值 {silent} 分钟｜{len(rows)} 条｜频道 {room[:8]}", ""]
     if not rows:
         out.append("各线无待处理信号。")
     else:
-        out += ["| 类别 | 任务 | 到哪一步 | CI | 审查钉 | 卡了 | 在等 |",
+        out += ["| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
                 "| --- | --- | --- | --- | --- | --- | --- |"]
         for r in rows:
-            rev = r["review_head"]
-            rev = "—" if rev is None else (rev[:8] + (" ✓" if rev == r["head"] else "（旧）"))
+            rev = review_cell(r)
             waited = "—" if r["waited_min"] is None else f"{r['waited_min']} 分"
             out.append(f"| {r['kind']} | #{r['task']} | {r['stage']} | {r['ci'] or '—'} "
                        f"| {rev} | {waited} | {r['waiting_on'] or '—'} |")
@@ -887,6 +1069,11 @@ def details(rows):
             continue
         seen.add(r["task"])
         out += [f"**#{r['task']} {r['title']}**｜{r['kind']}｜{r['stage']}", ""]
+        if r.get("heartbeat_min") is not None:
+            out += [f"心跳：{'命令在跑' if r.get('running') else str(r['heartbeat_min']) + ' 分钟前'}"
+                    f"｜最后 event {hhmm(r['last_event_at'])}"
+                    + (f"｜最后输出 {hhmm(r['last_output_at'])}" if r.get("last_output_at") else "")
+                    + f"｜最后消息 {hhmm(r['last_message_at'])} {r['last_message'] or '（还没有消息）'}", ""]
         if not r["read"]:
             # 「没写这一节」是替作者下判断；读不到正文时说读不到，两件事分开。
             out += ["PR 正文：" + ("还没有 PR" if not r["pr"] else "GitHub 上看不到"), ""]
@@ -1380,7 +1567,7 @@ _SELF_TEST_METRICS = {
 def _self_pr(desc, **over):
     """A PR as `gh_pr` returns one, carrying the fields `row` and `stage_of` read."""
     pr = {"desc": desc, "head": "abcdef1234567890", "ci": "SUCCESS",
-          "review_head": "abcdef1234567890", "merged": False, "mergeQueueEntry": None,
+          "review": ("abcdef12", None, "无 blocker/major", "B"), "merged": False, "mergeQueueEntry": None,
           "timelineItems": {"nodes": []}, "checks": [], "cases": None}
     pr.update(over)
     return pr
@@ -1401,7 +1588,7 @@ def _self_test_board():
     """(name, got, want) for 组装两段那一步：`row` 把一次读到的 PR 装成一行，`details`
     和 `render` 再把这行摆出来。两段各自加粗一行、正文按 `> ` 引，正文没写的那一段说
     「没写这一节」，正文读不到的两种情形各说各的，红在哪个检查、哪些用例，表格里 CI
-    用字／审查钉对不上标「（旧）」／没在等的写 `—`，同一个任务只说一次，以及一条
+    用字／审查对的不是现在的 head 标「（旧）」／没在等的写 `—`，同一个任务只说一次，以及一条
     信号都没有时的那一句。这几条各有一处变了就红。"""
     board = lambda rows: render(rows, _SELF_TEST_METRICS, 60,
                                 datetime(2026, 10, 13, 5, 0), "12345678-ab")
@@ -1429,26 +1616,249 @@ def _self_test_board():
          "\n红的是：guards / guards、unit\n失败用例：\n> tests/a.py::b\n> tests/c.py::d"),
         ("每个待判 PR：同一个任务在两类里只说一次",
          detail([_self_row(), _self_row(kind="长时间无动静")]).count("**#1 甲**"), 1),
-        ("表格：CI 用字、审查钉对不上标「（旧）」、没在等的写「—」",
+        ("表格：CI 用字、审查对的不是现在的 head 标「（旧）」、增量标出来、没在等的写「—」",
          [ln for ln in board([_self_row(),
                               _self_row(number=2, title="乙", waited=None, waiting=None,
                                         pr=_self_pr("改动：B。", head="abcdef1234567890",
-                                                    review_head="0123456789abcdef",
+                                                    review=("01234567", "89abcdef", "有 2 条"),
                                                     ci="FAILURE"))]).split("\n")
           if ln.startswith("| ") and "| #" in ln],
-         ["| 可采纳未采纳 | #1 | 递卡后等 CI 审查 | 绿 | abcdef12 ✓ | 7 分 | wangchangxin |",
-          "| 可采纳未采纳 | #2 | 递卡后等 CI 审查 | 红 | 01234567（旧） | — | — |"]),
+         ["| 可采纳未采纳 | #1 | 递卡后等 CI 审查 | 绿 | abcdef12 无 blocker/major B档 | 7 分 | wangchangxin |",
+          "| 可采纳未采纳 | #2 | 递卡后等 CI 审查 | 红 | 01234567（旧） 增量 有 2 条 | — | — |"]),
         ("有信号时：表头、频道那行、每个待判 PR 那一段都在",
          [ln for ln in board([_self_row()]).split("\n")
           if ln.startswith(("UTC ", "| 类别", "### "))],
          ["UTC 2026-10-13 05:00｜信号阈值 60 分钟｜1 条｜频道 12345678",
-          "| 类别 | 任务 | 到哪一步 | CI | 审查钉 | 卡了 | 在等 |",
+          "| 类别 | 任务 | 到哪一步 | CI | 独立审查 | 卡了 | 在等 |",
           "### 每个待判 PR"]),
         ("一条信号都没有时：不摆表格，只说一句",
          board([]),
          "## 调度看板\n\nUTC 2026-10-13 05:00｜信号阈值 60 分钟｜0 条｜频道 12345678\n"
          "\n各线无待处理信号。\n\n" + metrics_line(_SELF_TEST_METRICS)),
     ]
+
+
+def _self_test_pulse():
+    """(name, got, want) for 心跳那一步：最后一条消息和最后一个 event 块谁新谁算；
+    摘要压成一行、截到上限；停摆那一行把两件事都摆出来，没有 event 的线说「没有」；
+    看板每个任务下面多一行心跳，老的用例没给心跳就没有这一行。"""
+    msg = {"author": "cheese-a", "content": "审查在跑，\n  等它出结论。"}
+    now = datetime(2026, 10, 13, 2, 0, tzinfo=timezone.utc)
+    call = {"meta": {"tool": "Bash", "arg": "跑测试"}, "created_at": "2026-10-13T01:30:00Z"}
+    done = {"meta": {"tool": "Bash", "arg": "跑测试", "output_bytes": 12}, "created_at": "2026-10-13T01:30:00Z"}
+    return [
+        ("心跳取消息和 event 里新的那个",
+         heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z"), "2026-10-13T01:40:00Z"),
+        ("没有 event 块的线按消息算心跳",
+         heartbeat_of("2026-10-13T01:00:00Z", None), "2026-10-13T01:00:00Z"),
+        ("平台给了 last_output_at（+00:00 写法）且更新，心跳取它",
+         heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z", "2026-10-13T01:55:00+00:00"),
+         "2026-10-13T01:55:00+00:00"),
+        ("停摆判定：心跳 60 分钟前、阈值 40，报 60",
+         stalled_for(now, "2026-10-13T01:00:00Z", 40), 60.0),
+        ("停摆判定：消息 60 分钟前但 event 20 分钟前，不报（回退成只看消息这里就红）",
+         stalled_for(now, heartbeat_of("2026-10-13T01:00:00Z", "2026-10-13T01:40:00Z"), 40), None),
+        ("停摆判定：命令还在跑，时间戳再旧也不报",
+         stalled_for(now, "2026-10-13T00:00:00Z", 40, running=True), None),
+        ("在跑：tool 块没有 output_bytes 就是还没返回", in_flight(call, False, now), True),
+        ("在跑：补了 output_bytes 的是返回了的", in_flight(done, False, now), False),
+        ("在跑：之后有结束一轮的系统事件的块是被扔下的，不算在跑", in_flight(call, True, now), False),
+        ("在跑：progress 这类不是 tool 的 event 不算", in_flight({"meta": {"progress": 1}}, False, now), False),
+        ("在跑：没返回的 tool 块超过 IN_FLIGHT_MAX_MIN 也不算在跑",
+         in_flight(dict(call, created_at="2026-10-12T23:00:00Z"), False, now), False),
+        ("在跑：块没返回但平台说这一轮没在跑（返回了、输出是空的块就长这样），不算在跑",
+         in_flight(call, False, now, turn=False), False),
+        ("在跑：平台说 running，同样没返回的块照旧算在跑",
+         in_flight(call, False, now, turn=True), True),
+        ("在跑：平台给不出判断（行上没有这个字段）时退回按块的年龄算",
+         in_flight(call, False, now, turn=None), True),
+        ("平台说在不在跑：running 是、started 不是、压过 running 的三个短语和空字段都不回答",
+         [turn_running(t) for t in ({"presentation": {"phrase": "running"}},
+                                    {"presentation": {"phrase": "started"}},
+                                    {"presentation": {"phrase": "awaiting_answer"}},
+                                    {"presentation": {"phrase": "accepted"}},
+                                    {"presentation": {"phrase": "discussing"}},
+                                    {}, {"presentation": None})],
+         [True, False, None, None, None, None, None]),
+        ("结束一轮的事件：四种都算，memory_changed 不算",
+         [e in TURN_ENDED for e in ("turn_failed", "turn_timeout", "deploy_interrupted", "platform_error", "memory_changed")],
+         [True, True, True, True, False]),
+        ("消息摘要：作者加正文一行，换行压掉",
+         message_brief(msg), "@cheese-a「审查在跑， 等它出结论。」"),
+        ("消息摘要：超过上限截断并标省略",
+         message_brief({"author": "a", "content": "x" * 100}), "@a「" + "x" * 80 + "…」"),
+        ("停摆那一行：无心跳分钟数、最后 event、最后消息都在",
+         pulse_detail(52.4, "2026-10-13T01:40:00Z", "2026-10-13T01:00:00Z", "@a「审查在跑」"),
+         "52 分钟无心跳：最后 event 01:40 UTC，最后消息 01:00 UTC @a「审查在跑」"),
+        ("停摆那一行：没有 event 的线说「没有」",
+         pulse_detail(45, None, "2026-10-13T01:00:00Z", "@a「等」"),
+         "45 分钟无心跳：最后 event 没有，最后消息 01:00 UTC @a「等」"),
+        ("停摆那一行：平台给了最后输出就一并写",
+         pulse_detail(45, "2026-10-13T01:00:00Z", "2026-10-13T01:00:00Z", "@a「等」", "2026-10-13T01:10:00+00:00"),
+         "45 分钟无心跳：最后 event 01:00 UTC，最后输出 01:10 UTC，最后消息 01:00 UTC @a「等」"),
+        ("看板：带心跳的行在标题下多一行心跳",
+         [ln for ln in details([row("长时间无动静", "#1 甲 @cheese", "细节",
+                                    {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese"},
+                                    {}, None, 52, None, None, None, None, "2026-10-13T00:00:00Z",
+                                    {"last_event_at": "2026-10-13T01:40:00Z",
+                                     "last_message_at": "2026-10-13T01:00:00Z",
+                                     "last_message": "@a「审查在跑」", "heartbeat_min": 52})])
+          if ln.startswith("心跳：")],
+         ["心跳：52 分钟前｜最后 event 01:40 UTC｜最后消息 01:00 UTC @a「审查在跑」"]),
+        ("看板：命令在跑的行说「命令在跑」",
+         [ln for ln in details([row("可采纳未采纳", "#1 甲 @cheese", "细节",
+                                    {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese"},
+                                    {}, None, 5, None, None, None, None, "2026-10-13T00:00:00Z",
+                                    {"last_event_at": "2026-10-13T01:40:00Z", "last_message_at": None,
+                                     "last_message": None, "running": True, "heartbeat_min": 0})])
+          if ln.startswith("心跳：")],
+         ["心跳：命令在跑｜最后 event 01:40 UTC｜最后消息 没有 （还没有消息）"]),
+        ("看板：没给心跳的行（老用例）不多这一行",
+         [ln for ln in details([_self_row()]) if ln.startswith("心跳：")], []),
+    ]
+
+
+def _self_test_sweep():
+    """(name, got, want) for `sweep` 本身那一条线：平台读数换成现成的答案，看 长时间无动静
+    这一类到底按什么开火。只测 helper 测不到这里——把 sweep 里那一行退回「按最后一条
+    消息」，helper 全绿、这几条红。阈值 40 分钟，消息一律 60 分钟前。"""
+    now = datetime.now(timezone.utc)
+    at = lambda mins: (now - timedelta(minutes=mins)).strftime("%Y-%m-%dT%H:%M:%S.000000Z")
+    task = {"number": 1, "title": "甲", "id": "t1", "agent_handle": "cheese", "started_at": at(300)}
+    call = {"tool": "Bash", "arg": "跑测试"}
+    done = {"tool": "Bash", "arg": "跑测试", "output_bytes": 9}
+    sysev = lambda kind, mins: [{"created_at": at(mins), "meta": {"event_type": kind}, "content": kind}]
+
+    def kinds(ev_min=None, ev_meta=None, system=(), row=None):
+        answers = {
+            "/tasks?": [dict(task, **(row or {}))],
+            "kind=message": {"data": [{"created_at": at(60), "author": "a", "content": "等"}]},
+            "kind=event": {"data": [{"created_at": at(ev_min), "meta": ev_meta}] if ev_min is not None else []},
+            "author=system": {"data": list(system)},
+            "author=accept": {"data": []},
+        }
+        real = globals()["get"]
+        globals()["get"] = lambda tok, path: next(v for k, v in answers.items() if k in path)
+        try:
+            rows, _ = sweep("tok", "room", 40, set(), False)
+        finally:
+            globals()["get"] = real
+        return [r["kind"] for r in rows]
+
+    return [
+        ("sweep：消息 60 分钟前、没有 event，报停摆", kinds(), ["长时间无动静"]),
+        ("sweep：消息 60 分钟前、座位 20 分钟前跑完一条命令，不报（只看消息这里就红）",
+         kinds(20, done), []),
+        ("sweep：消息和 event 都 60 分钟前，报停摆", kinds(60, done), ["长时间无动静"]),
+        ("sweep：60 分钟前发出的命令还没返回，算在跑，不报", kinds(60, call), []),
+        ("sweep：命令没返回但之后一轮 turn_timeout 结束了，报停摆",
+         kinds(60, call, sysev("turn_timeout", 50)), ["长时间无动静"]),
+        ("sweep：命令没返回但之后 platform_error 结束了一轮，报停摆",
+         kinds(60, call, sysev("platform_error", 50)), ["长时间无动静"]),
+        ("sweep：命令没返回、任务行说这一轮没在跑，块已经返回了，报停摆",
+         kinds(60, call, row={"presentation": {"phrase": "started"}}), ["长时间无动静"]),
+        ("sweep：任务行说结算中（被采纳的那一条还要跑一轮写总结），同样没返回的块算在跑，不报",
+         kinds(60, call, row={"presentation": {"phrase": "accepted"}}), []),
+        ("sweep：任务行说待回答（这一轮可能还在跑），同样没返回的块不报",
+         kinds(60, call, row={"presentation": {"phrase": "awaiting_answer"}}), []),
+        ("sweep：不知道座位是谁时别人的 event 不算心跳（10 分钟前的块也不认）",
+         kinds(10, done, row={"agent_handle": None}), ["长时间无动静"]),
+        ("sweep：还没点「开始」的行整行跳过（判的是 started_at，行上有座位也一样）",
+         kinds(60, done, row={"started_at": None}), []),
+        ("sweep：平台给的 last_output_at 10 分钟前，不报",
+         kinds(60, done, row={"last_output_at": at(10)}), []),
+    ]
+
+
+def _self_test_review():
+    """(name, got, want) for 审查结论从卡片正文来：render.py 写的第一行 `review_of` 读得回，
+    GitHub 的查询里不再要评论，`card_review` 只认自己这张卡，文本清单不去读卡片。`get`
+    和 `subprocess.run` 只在这一段里被换掉。"""
+    import importlib.util, pathlib
+    spec = importlib.util.spec_from_file_location(
+        "pr_review_render", pathlib.Path(__file__).resolve().parents[1] / "pr-review" / "render.py")
+    renderer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(renderer)
+    head, old = "a" * 40, "b" * 40
+    finding = lambda sev: {"severity": sev, "title": "t", "file": "f.py", "line": 1, "kind": "runtime",
+                           "rung": 4, "failure": "x", "evidence": "y", "confirm_with": ""}
+    result = lambda *sevs: {"reviewed_sha": head, "summary": "s", "candidates_found": 3,
+                            "candidates_refuted": 2, "findings": [finding(v) for v in sevs],
+                            "not_covered": []}
+    out = []
+    for name, res, since, tier, want in (
+        ("整轮、无严重问题", result("minor"), "", "", ("a" * 8, "", "无 blocker/major", "")),
+        ("增量、有 blocker 和 major", result("blocker", "major", "minor"), old, "",
+         ("a" * 8, "b" * 8, "有 2 条", "")),
+        ("带档位", result("minor"), "", "A", ("a" * 8, "", "无 blocker/major", "A")),
+    ):
+        body = renderer.render(res, head, "m" * 40, since, tier)
+        out.append((f"审查行：{name}，卡片正文里读得回", review_of("## 摘要\n\n" + body), want))
+    out += [
+        ("审查行：没有这一行就是没有", review_of("只有一段说明"), None),
+        ("审查行：空正文", review_of(None), None),
+        ("审查行：多轮时取最后一行",
+         review_of("独立 review：head 11111111 结论 有 1 条\n"
+                   "独立 review：head 22222222（增量自 11111111）结论 无 blocker/major｜档位 C"),
+         ("22222222", "11111111", "无 blocker/major", "C")),
+        ("审查行：档位之前写的旧行也读得回，档位读成空",
+         review_of("独立 review：head 33333333（增量自 22222222）结论 有 1 条"),
+         ("33333333", "22222222", "有 1 条", "")),
+    ]
+
+    real_get, real_run = globals()["get"], subprocess.run
+    queries = []
+    card = {"id": "c1", "change_body": renderer.render(result(), head, "m" * 40, old)}
+    task = {"id": "t1", "number": 7, "title": "T", "started_at": "2026-01-01T00:00:00Z",
+            "agent_handle": "seat", "card": {"id": "c1", "status": "pending", "pr_number": 70}}
+    pull = {"merged": False, "headRefOid": head, "mergeQueueEntry": None, "timelineItems": {"nodes": []},
+            "commits": {"nodes": [{"commit": {"statusCheckRollup": {"state": "SUCCESS"}}}]}}
+
+    def fake_get(tok, path):
+        if path.endswith("/tasks?status=open&limit=200"):
+            return {"data": [task]}
+        if path.endswith("/accept-card"):
+            return {"data": [{"id": "other", "change_body": "独立 review：head 99999999 结论 有 3 条"}, card],
+                    "total": 2}
+        return {"data": []}
+
+    def fake_run(cmd, **kw):
+        queries.append(" ".join(cmd))
+        return subprocess.CompletedProcess(cmd, 0, json.dumps({"data": {"repository": {"pullRequest": pull}}}), "")
+
+    globals()["get"], subprocess.run = fake_get, fake_run
+    try:
+        rows, _ = sweep("tok", "room", 60, set(), True)
+        text_rows, _ = sweep("tok", "room", 60, set(), False)
+    finally:
+        globals()["get"], subprocess.run = real_get, real_run
+    # 审查结果贴在卡片正文末尾、被镜像进 PR 正文后，看板读 改了什么／怎么验证的 不能读到它的标题。
+    authored = "## Change\n\n- swap A for B\n\n验证：ran pytest, green\n\n"
+    pasted = authored + renderer.render(
+        {**result("major"), "findings": [{**finding("major"), "title": "tests do not bite"}]},
+        head, "m" * 40, "")
+    out += [
+        ("审查结果贴在正文末尾时，改了什么／怎么验证的 仍读作者写的",
+         brief(pasted), brief(authored)),
+        ("审查结果贴在正文末尾时，作者那两段读得出来",
+         brief(pasted), ("- swap A for B", "ran pytest, green")),
+        ("GitHub 查询里不再要评论", [q for q in queries if "comments" in q], []),
+        ("行里带着卡片上的审查行",
+         [(r["review_head"], r["review_since"], r["review_verdict"], r["review_tier"]) for r in rows],
+         [("a" * 8, "b" * 8, "无 blocker/major", None)]),
+        ("文本清单不去读卡片", [r["review_head"] for r in text_rows], [None]),
+        ("head 往前走了标旧",
+         review_cell({**rows[0], "head": "c" * 40}), "aaaaaaaa（旧） 增量 无 blocker/major"),
+        ("卡上有档位就摆出来", review_cell({**rows[0], "review_tier": "G"}),
+         "aaaaaaaa 增量 无 blocker/major G档"),
+        ("没有档位的旧卡，列里就不提档位",
+         review_cell({**rows[0], "review_tier": None}), "aaaaaaaa 增量 无 blocker/major"),
+        ("没有审查行显示破折号", review_cell({"review_head": None}), "—"),
+        ("--json 的字段里有审查结论和档位",
+         all(f in rows[0] for f in ("review_head", "review_since", "review_verdict", "review_tier")),
+         True),
+    ]
+    return out
 
 
 def _self_test_patterns():
@@ -1523,7 +1933,8 @@ def self_test():
         found = _CASE_LINE.match(_LOG_STAMP.sub("", line).strip())
         got = next((g for g in found.groups() if g), "").strip() if found else ""
         check("读用例：" + line, got, want)
-    for name, got, want in _self_test_board() + _self_test_patterns() + _self_test_jobs():
+    for name, got, want in (_self_test_board() + _self_test_review() + _self_test_patterns()
+                            + _self_test_jobs() + _self_test_pulse() + _self_test_sweep()):
         check("看板：" + name, got, want)
     for line in bad:
         print("FAIL " + line)
@@ -1538,7 +1949,7 @@ def main():
     if "--self-test" in argv:
         return self_test()
     room = argv[1]
-    silent = int(value_of(argv, "--silent-min") or 60)
+    silent = int(value_of(argv, "--silent-min") or 40)
     skip = set((value_of(argv, "--skip") or "").split(",")) - {""}
     as_json = "--json" in argv
     as_render = "--render" in argv

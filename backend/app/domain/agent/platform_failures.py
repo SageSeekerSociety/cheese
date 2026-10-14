@@ -656,6 +656,20 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
 
 _HAS_CJK = re.compile(r"[一-鿿]")
 
+#: Claude Code's line for a request the model's API refused as invalid. Read by
+#: its status, 400, which every provider gives an invalid request, and never by
+#: the provider's own words after it, which differ from one provider to the next.
+_REQUEST_REFUSED = re.compile(r"^API Error:\s*400\b")
+
+
+def is_request_refused(text: str) -> bool:
+    """A failure the model's API refused as an invalid request.
+
+    Retrying sends the same conversation again, and it is refused the same way:
+    what it refuses is already in the conversation, an image that does not
+    decode being the case that ended a conversation for good."""
+    return bool(_REQUEST_REFUSED.match(text.strip()))
+
 
 def classify_cli_notice(text: str) -> str | None:
     """整条消息其实是 CLI 自己印的一句英文提示时,它属于哪一类;否则 None。"""

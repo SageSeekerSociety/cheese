@@ -1,0 +1,15 @@
+{
+  "active": "{when}活跃",
+  "empty": "暂无频道",
+  "filterLabel": "筛选频道",
+  "general": "默认频道",
+  "join": "加入",
+  "joined": "已加入",
+  "leave": "退出",
+  "loadFailed": "无法加载频道",
+  "members": "{count} 位成员",
+  "noMatch": "暂无匹配的频道",
+  "openTasks": "{count} 个进行中的任务",
+  "private": "私密频道",
+  "search": "搜索频道"
+}

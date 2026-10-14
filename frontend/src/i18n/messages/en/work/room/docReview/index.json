@@ -1,0 +1,10 @@
+{
+  "allRestored": "All changes {requester} asked {agent} to make are restored",
+  "allRestoredOwn": "All changes by {agent} are restored",
+  "close": "Hide changes",
+  "label": "Changes",
+  "position": "Change {i} of {n}",
+  "restore": "Restore this",
+  "title": "Changes {requester} asked {agent} to make: {n}",
+  "titleOwn": "{n} changes by {agent}"
+}

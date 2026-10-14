@@ -1,0 +1,8 @@
+{
+  "draftEdit": "{name} proposes a change",
+  "draftNew": "{name} proposes a new skill",
+  "originCheese": "Written up by {name}",
+  "originImport": "Imported",
+  "originPerson": "Written by hand",
+  "revision": "Version {revision} · {date}"
+}

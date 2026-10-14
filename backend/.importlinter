@@ -546,6 +546,10 @@ unmatched_ignore_imports_alerting = warn
 # down; `agent.platform_notices` keeps the sentences it says to people, which
 # need block's row key and the memory tree's paths and so stay at layer 5.
 #
+# `web_snippet` joined at layer 4 beside `living_doc` and `canvas` (2026-10-13):
+# a document's mini-apps are part of the document, it keeps its pictures in the
+# `library` blob store on the same layer, and only routes import it.
+#
 # `delivery_events` joined at layer 1 (2026-10-14), the same move once more:
 # the notification codes (`NotificationType`) and the shape of one event
 # (`DeliveryEvent`, `event_id_for`, `dedup_key`) are what every layer needs to
@@ -567,7 +571,7 @@ layers =
     platform_stats : feature_stats : dashboard : project_progress : onboarding
     routine : task_quiet : admin : room_cleanup : wake_watch
     agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
-    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas
+    block : thread : pin : mentions : room_task : task : review : living_doc : documents : library : memory : feedback : space : groups : questions : answers : comments : discussion : knowledge : materials : project_skill : search : docs_site : canvas : web_snippet
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ratchet
     common : day_windows : conversation : idempotency : addressing : delivery_events : run_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta

@@ -1488,3 +1488,13 @@ def test_a_call_admission_names_as_the_dream_is_metered_as_the_dream(tmp_path):
         json.loads(line) for line in (tmp_path / "usage.jsonl").read_text().splitlines()
     ]
     assert [line.get("kind") for line in lines] == ["memory_dream", None]
+
+
+def test_a_usage_line_names_its_account_only_when_one_is_given(tmp_path):
+    meter = core.Meter(tmp_path / "usage.jsonl", cap_window_s=3600)
+    meter.record("p1", "t1", {"input_tokens": 5}, "m", account="extra")
+    meter.record("p1", "t1", {"input_tokens": 5}, "m")
+    lines = [
+        json.loads(line) for line in (tmp_path / "usage.jsonl").read_text().splitlines()
+    ]
+    assert [line.get("account") for line in lines] == ["extra", None]

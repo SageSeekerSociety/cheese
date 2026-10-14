@@ -1,0 +1,15 @@
+{
+  "active": "active {when}",
+  "empty": "No channels",
+  "filterLabel": "Filter channels",
+  "general": "Default channel",
+  "join": "Join",
+  "joined": "Joined",
+  "leave": "Leave",
+  "loadFailed": "Couldn't load channels",
+  "members": "{count} members",
+  "noMatch": "No matching channels",
+  "openTasks": "{count} tasks in progress",
+  "private": "Private channel",
+  "search": "Search channels"
+}

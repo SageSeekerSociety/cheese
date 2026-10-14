@@ -14,6 +14,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Path, Query, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.response import ok
 from app.api.teams_deps import get_team_service
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
@@ -204,10 +205,8 @@ async def list_recruitment_posts(
         )
         for p in posts
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "posts": items,
             "page": {
                 "pageStart": page_start,
@@ -215,8 +214,8 @@ async def list_recruitment_posts(
                 "hasMore": has_more,
                 "nextStart": next_start,
             },
-        },
-    }
+        }
+    )
 
 
 @router.patch("/recruitment/{postId}", summary="Edit Recruitment Post")
@@ -263,10 +262,8 @@ async def edit_recruitment_post(
     teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
         db, [post]
     )
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "post": _post_to_api(
                 post,
                 teams_map=teams_map,
@@ -274,8 +271,8 @@ async def edit_recruitment_post(
                 profiles_map=profiles_map,
                 chosen_map=chosen_map,
             )
-        },
-    }
+        }
+    )
 
 
 @router.delete(
@@ -327,10 +324,8 @@ async def create_recruitment_post(
     teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
         db, [post]
     )
-    return {
-        "code": 201,
-        "message": "Created",
-        "data": {
+    return ok(
+        {
             "post": _post_to_api(
                 post,
                 teams_map=teams_map,
@@ -338,8 +333,8 @@ async def create_recruitment_post(
                 profiles_map=profiles_map,
                 chosen_map=chosen_map,
             )
-        },
-    }
+        }
+    )
 
 
 @team_recruitment_router.get(
@@ -372,8 +367,4 @@ async def list_team_recruitment_posts(
         )
         for p in posts
     ]
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {"posts": items},
-    }
+    return ok({"posts": items})

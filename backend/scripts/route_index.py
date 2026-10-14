@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-"""Effective route index and first-FULL guard (v6 reading-boundary pilot).
+"""Effective route index, first-FULL guard and annotation coverage.
 
-Literal later routes have a unique URL: an earlier FULL match proves that
-URL unreachable for the reported method. Parameterized routes only yield
-verified concrete witnesses; sampling is not a proof of disjointness or
-whole-branch coverage. Mounts remain unsupported and fail loudly.
+    uv run python -m scripts.route_index --emit  # the index as JSON lines
+    uv run python -m scripts.route_index --check  # nothing provably shadowed
+    uv run python -m scripts.route_index --check-annotations  # every route noted
+
+The index this emits is NOT committed. It changes with every route, and as a
+tracked file 84 commits from 83 PRs touched it in the twelve days it existed; it
+is generated where it is judged instead (the frontend `request-paths` job, and the
+addressing contract suite). `--check` is the first-FULL guard (v6
+reading-boundary pilot): literal later routes have a unique URL, so an earlier
+FULL match proves that URL unreachable for the reported method. Parameterized
+routes only yield verified concrete witnesses; sampling is not a proof of
+disjointness or whole-branch coverage. Mounts remain unsupported and fail loudly.
 """
 
 from __future__ import annotations
@@ -15,7 +23,7 @@ import re
 import sys
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
-from itertools import islice, product, zip_longest
+from itertools import islice, product
 from pathlib import Path
 
 from starlette.routing import Match, Mount, Route, WebSocketRoute, compile_path
@@ -209,32 +217,40 @@ def first_match_findings(records: list[RouteRecord]) -> list[Shadow]:
 def checked_findings(records, frozen):
     """Validate exact frozen registrations before subtracting any findings.
 
-    Used by --check and intended for the real-index assertion as well.
-    A stale entry fails even when no currently reported shadow remains.
+    Used by --check. A frozen pair names its two leaves by path and handler,
+    never by registration position, so a route added or removed anywhere else
+    leaves the exemption untouched. A pair whose leaves are gone, duplicated or
+    no longer shadowing fails on purpose: a stale entry fails even when no
+    currently reported shadow remains.
     """
     findings = first_match_findings(records)
+    positions = {id(record): position for position, record in enumerate(records)}
+
+    def leaf(path, endpoint, protocol):
+        found = [
+            record
+            for record in records
+            if (record.path, record.endpoint, record.protocol)
+            == (path, endpoint, protocol)
+        ]
+        if len(found) != 1:
+            raise ValueError(
+                f"stale frozen pair: {path} ({endpoint}) is registered "
+                f"{len(found)} times, expected exactly one"
+            )
+        return found[0]
+
     exempt = set()
     for pair in frozen:
 
         def stale(pair=pair):
             raise ValueError(f"stale frozen pair: {pair}")
 
-        earlier = [r for r in records if r.index == pair.earlier_index]
-        later = [r for r in records if r.index == pair.later_index]
-        if len(earlier) != 1 or len(later) != 1:
+        if not pair.why.strip() or (pair.protocol == "ws" and pair.method != "WS"):
             stale()
-        earlier, later = earlier[0], later[0]
-        if (
-            (earlier.path, earlier.endpoint)
-            != (pair.earlier_path, pair.earlier_endpoint)
-            or (later.path, later.endpoint) != (pair.later_path, pair.later_endpoint)
-            or earlier.protocol != pair.protocol
-            or later.protocol != pair.protocol
-            or earlier.index >= later.index
-            or records.index(earlier) >= records.index(later)
-            or not pair.why.strip()
-            or (pair.protocol == "ws" and pair.method != "WS")
-        ):
+        earlier = leaf(pair.earlier_path, pair.earlier_endpoint, pair.protocol)
+        later = leaf(pair.later_path, pair.later_endpoint, pair.protocol)
+        if positions[id(earlier)] >= positions[id(later)]:
             stale()
         if not _full(later, pair.witness, pair.protocol, pair.method):
             stale()
@@ -250,78 +266,6 @@ def checked_findings(records, frozen):
         for f in findings
         if (f.earlier.index, f.later.index, f.later.protocol, f.method) not in exempt
     ]
-
-
-def parse_snapshot(text: str) -> tuple[dict, list[dict]]:
-    """Read the existing JSONL index, validating its profile before any rows.
-
-    The first line is metadata; effective leaf rows keep their original shape,
-    order and multiplicity. Extra handwritten row columns remain untouched.
-    """
-    from scripts.route_index_profile import profile_header
-
-    lines = [line for line in text.splitlines() if line.strip()]
-    if not lines:
-        raise ValueError("route index settings profile header missing")
-    header = json.loads(lines[0])
-    if not isinstance(header, dict) or "settings_profile" not in header:
-        raise ValueError("route index settings profile header missing")
-    if header["settings_profile"] != profile_header():
-        raise ValueError("route index settings profile mismatch")
-    rows = [json.loads(line) for line in lines[1:]]
-    if any(not isinstance(row, dict) for row in rows):
-        raise ValueError("route index rows must be JSON objects")
-    return header, rows
-
-
-def _sync(
-    index_file: str,
-    records: list[RouteRecord],
-    annotations_file: str | Path | None = None,
-) -> int:
-    """One drift check: profile, ordered leaf rows, complete handwritten notes."""
-    path = Path(index_file)
-    if not path.exists():
-        print(f"route index missing: {index_file}")
-        return 1
-    try:
-        _, indexed = parse_snapshot(path.read_text(encoding="utf-8"))
-    except ValueError as exc:
-        print(f"route index invalid: {exc}")
-        return 1
-    live = [
-        {
-            "index": r.index,
-            "protocol": r.protocol,
-            "path": r.path,
-            "methods": sorted(r.methods),
-            "endpoint": r.endpoint,
-        }
-        for r in records
-    ]
-    columns = ("index", "protocol", "path", "methods", "endpoint")
-    generated = [{key: row.get(key) for key in columns} for row in indexed]
-    if generated != live:
-        for position, (old, new) in enumerate(zip_longest(generated, live)):
-            if old != new:
-                print(f"[row {position}] indexed={old!r} live={new!r}")
-        print(f"route index out of sync: {len(indexed)} indexed / {len(live)} live")
-        return 1
-    from scripts.route_index_annotations import (
-        DEFAULT_SIDECAR,
-        check_annotation_coverage,
-    )
-
-    try:
-        keys = check_annotation_coverage(indexed, annotations_file or DEFAULT_SIDECAR)
-    except ValueError as exc:
-        print(f"route annotations invalid: {exc}")
-        return 1
-    print(
-        f"route index in sync ({len(indexed)} registrations; "
-        f"{keys} annotated addresses)"
-    )
-    return 0
 
 
 def main() -> int:
@@ -349,12 +293,14 @@ def main() -> int:
         "--check", action="store_true", help="run the first-match guard"
     )
     parser.add_argument(
-        "--sync", metavar="FILE", help="verify ordered index and handwritten notes"
+        "--check-annotations",
+        action="store_true",
+        help="verify every live route has its handwritten annotation",
     )
     parser.add_argument(
         "--annotations",
         metavar="FILE",
-        help="override the route annotation sidecar for --sync",
+        help="override the route annotation sidecar",
     )
     args = parser.parse_args()
 
@@ -400,8 +346,30 @@ def main() -> int:
             return 1
         print(f"first-match guard: clean ({len(findings)} witness-only pairs)")
         return 0
-    if args.sync:
-        return _sync(args.sync, records, args.annotations)
+    if args.check_annotations:
+        from scripts.route_index_annotations import (
+            DEFAULT_SIDECAR,
+            check_annotation_coverage,
+        )
+
+        rows = [
+            {
+                "protocol": record.protocol,
+                "methods": sorted(record.methods),
+                "path": record.path,
+            }
+            for record in records
+        ]
+        try:
+            keys = check_annotation_coverage(rows, args.annotations or DEFAULT_SIDECAR)
+        except ValueError as exc:
+            print(f"route annotations invalid: {exc}")
+            return 1
+        print(
+            f"route annotations complete ({len(records)} registrations; "
+            f"{keys} annotated addresses)"
+        )
+        return 0
     parser.print_help()
     return 2
 

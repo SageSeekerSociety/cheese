@@ -205,7 +205,8 @@ describe('agent status messages', () => {
     expect(visibleText(frame)).toContain('完整的处理说明')
   })
 
-  it("opens the library document a line is about, not the room's, with the changes to mark", async () => {
+  // 卡片本身打开文档；只有「查看改动」打开时把这一轮改的几处标出来。
+  it("opens the library document a line is about, not the room's; only 「查看改动」 marks the changes", async () => {
     listTopicMembers.mockResolvedValue({ data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }] })
     const made = {
       ...event('', '测试助手 新建了文档《竞品定价对比》', {
@@ -233,7 +234,11 @@ describe('agent status messages', () => {
     expect(cards).toHaveLength(2)
     cards[0].click()
     cards[1].click()
+    const review = Array.from(container.querySelectorAll('button')).filter((b) => b.textContent?.trim() === '查看改动')
+    expect(review).toHaveLength(1)
+    review[0].click()
     expect(emitted()['open-resource']).toEqual([
+      ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
       ['doc', undefined, undefined, { id: 'lib-doc', title: '竞品定价对比' }],
       [
         'doc',

@@ -18,6 +18,7 @@ import { onBeforeUnmount, reactive, watch } from 'vue'
 
 import { ApiError } from '../api'
 import { listDocThreads, stopDocThreadAgent, writeDocThread } from '../api/docThreads'
+import { storageGetJson, storageRemove, storageSetJson } from '../lib/browserStorage'
 import { listenToComments } from '../lib/docCommentSignals'
 import { myId } from '../me'
 
@@ -64,8 +65,8 @@ export function useDocThreads(document: () => string | null) {
     }
   }
   function persist(value: Operation | null) {
-    if (value) localStorage.setItem(key(), JSON.stringify(value))
-    else localStorage.removeItem(key())
+    if (value) storageSetJson(key(), value)
+    else storageRemove(key())
     operation = value
     state.unknown = value?.id ?? null
   }
@@ -140,14 +141,16 @@ export function useDocThreads(document: () => string | null) {
     state.busy = false
     state.unknown = null
     operation = null
-    try {
-      const saved = localStorage.getItem(key())
-      if (saved) {
-        operation = JSON.parse(saved) as Operation
-        state.unknown = operation.id
-      }
-    } catch {
-      /* No writes are sent until persistence succeeds. */
+    // A record that will not parse is dropped by the module: it cannot become an
+    // operation again, so keeping it would fail the same way at every load. A record
+    // that parses but does not have an operation's shape is left where it is — the
+    // module does not delete what it successfully read, and nobody here can tell a
+    // half-written record from a newer format. It is simply not trusted as one, and
+    // the next successful write overwrites it.
+    const saved = storageGetJson<Partial<Operation>>(key())
+    if (saved?.id && saved.action && saved.body) {
+      operation = saved as Operation
+      state.unknown = operation.id
     }
     stopListening?.()
     stopListening = doc

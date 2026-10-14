@@ -1,0 +1,12 @@
+{
+  "accountFailed": "Couldn't connect the GitHub account: {reason}",
+  "repoFailed": "Couldn't connect the GitHub repository: {reason}",
+  "taken": "{repo} is already connected to {where}; a repository can be connected to only one project. {next}",
+  "takenHidden": "another project you can't see",
+  "takenHolder": "the project \"{holder}\"",
+  "takenNextHidden": "Use a different repository, or have a member of that project invite you",
+  "takenNextHolder": "Work in that project, or use a different repository",
+  "takenRepo": "this repository",
+  "unknown": "unknown reason",
+  "unknownCode": "unknown reason ({code})"
+}

@@ -17,12 +17,15 @@
 它们与调用方之间全部的约定，所以行为一格没动。
 """
 
+import asyncio
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import raster_images
+from app.core.model_images import model_media_type
 from app.core.sentences import say
 from app.domain.agent.harness.prompt import (
     is_inline_image,
@@ -238,22 +241,37 @@ async def live_inputs(
     return stored, replied
 
 
-async def read_images(
-    session: AsyncSession, room: Topic | None, images: list[dict]
-) -> list[Image]:
-    """The pictures said along with words mid-turn, read now: the session that
-    is handed them reads no files of its own. No room, no pictures."""
-    if room is None:
-        return []
-    return [
-        Image(
-            image["media_type"],
-            await library_records.read_attachment(
-                session, room.project_id, room.id, image["path"]
-            ),
-        )
-        for image in images
-    ]
+async def model_images(
+    session: AsyncSession,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    files: list[tuple[str, str]],
+) -> tuple[dict[str, Image], set[str]]:
+    """Which of ``files`` (path, media type the message gave) go to the model as
+    pictures, read now, and which look like pictures but do not decode.
+
+    A file goes as a picture only when its message calls it one AND its bytes
+    decode (`model_media_type`), under the type they decode as: the message's
+    type is whatever a browser or a client said. A file whose message or name
+    says picture and whose bytes do not decode is named in the second answer, so
+    the line about it can warn the session off opening it as one. A file that
+    decodes but that its message does not call a picture stays a file: its
+    message is the only account of what it is, and a path is never taken as one.
+    """
+    images: dict[str, Image] = {}
+    undecodable: set[str] = set()
+    for path, media_type in files:
+        claimed = is_inline_image(media_type)
+        suffix = path[path.rfind(".") :].lower() if "." in path else ""
+        if not claimed and suffix not in raster_images.SUFFIX_MEDIA_TYPE:
+            continue
+        data = await library_records.read_attachment(session, project_id, room_id, path)
+        decoded = await asyncio.to_thread(model_media_type, data)
+        if decoded is None:
+            undecodable.add(path)
+        elif claimed:
+            images[path] = Image(decoded, data)
+    return images, undecodable
 
 
 async def offered_attachments(
@@ -261,9 +279,10 @@ async def offered_attachments(
     pending: list[Block],
     project_id: uuid.UUID,
     room_id: uuid.UUID,
-) -> tuple[list[Image], set[uuid.UUID]]:
-    """The images a turn hands the session, read now, and the attachments whose
-    file is gone.
+) -> tuple[list[Image], set[uuid.UUID], set[uuid.UUID]]:
+    """The images a turn hands the session, read now; the attachments whose
+    file is gone; and those that look like pictures but do not decode
+    (`model_images`).
 
     A message outlives its file: a library file can be deleted while a message
     still references it. Offering that file fails the read, the turn ends
@@ -279,17 +298,18 @@ async def offered_attachments(
             session, project_id, room_id, b.content
         )
     }
-    images = [
-        Image(
-            b.mime_type or "",
-            await library_records.read_attachment(
-                session, project_id, room_id, b.content
-            ),
-        )
-        for b in attachments
-        if b.id not in gone and is_inline_image(b.mime_type)
-    ]
-    return images, gone
+    present = [b for b in attachments if b.id not in gone]
+    images, undecodable = await model_images(
+        session,
+        project_id,
+        room_id,
+        [(b.content, b.mime_type or "") for b in present],
+    )
+    return (
+        [images[b.content] for b in present if b.content in images],
+        gone,
+        {b.id for b in present if b.content in undecodable},
+    )
 
 
 def _pending_platform_notices(history: list[Block]) -> list[Block]:

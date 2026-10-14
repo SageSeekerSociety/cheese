@@ -49,7 +49,9 @@ function team(overrides: Partial<Team> = {}): Team {
 }
 
 function mount() {
+  // 令牌来自路由记录的 `props: true`，不再是页面自己读 `route.params.token`。
   return render(TeamInviteView as unknown as Component, {
+    props: { token: 'team-link' },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
 }

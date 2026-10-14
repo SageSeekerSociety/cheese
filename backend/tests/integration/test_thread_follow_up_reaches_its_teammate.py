@@ -1,11 +1,11 @@
-"""A 支线 is a conversation with the teammate who was called into it.
+"""A 支线 is a conversation with the teammate who was called into it, and a
+message without an @ calls nobody there either.
 
 Once a person has called an AI teammate into a 支线, what they say there next
-without an @ is said to that teammate, as if it @-ed it: while the teammate is
-working it joins that turn, and while it is idle it starts its next one. That
-is the 支线 only. In the channel's main line a message without an @ calls
-nobody; a message that @-s someone else, or replies to another person, is for
-them; and a teammate's own message never calls another this way.
+without an @ is said to that teammate: while it is working the message joins
+that turn, and while it is idle the message waits for the next time someone
+calls it. It never starts a turn by itself, in the 支线 as in the channel's
+main line: a teammate answers only when someone @-s it.
 """
 
 import asyncio
@@ -144,7 +144,7 @@ class _Channel:
 
 
 @pytest.mark.anyio
-async def test_a_follow_up_starts_the_idle_teammates_turn(
+async def test_a_follow_up_without_an_at_does_not_wake_the_idle_teammate(
     business_db_factory, tmp_path
 ):
     channel = await _Channel(business_db_factory, tmp_path).open()
@@ -152,11 +152,7 @@ async def test_a_follow_up_starts_the_idle_teammates_turn(
 
     await channel.say("再查一下出处")
 
-    await _until(lambda: len(channel.screen.prompts) == 2)
-    assert len(channel.screen.prompts) == 2, channel.screen.prompts
-    assert "再查一下出处" in channel.screen.prompts[1]
-    await finish_turn(channel.service, channel.thread)
-    await channel.runner.drain()
+    await channel.nothing_more_started()
 
 
 @pytest.mark.anyio
@@ -262,13 +258,18 @@ def _wait_for_prompt(stub_hooks, needle: str) -> None:
     raise AssertionError(f"the teammate never got it: {stub_hooks.last_prompt!r}")
 
 
-def test_a_follow_up_calls_the_teammate_called_there(client, stub_hooks):
+def test_a_follow_up_rides_into_the_next_call_of_the_teammate_called_there(
+    client, stub_hooks
+):
     """Not the channel's default: the teammate called into this 支线."""
     room, teammate, _ = _room_with_two_teammates(client)
     thread = in_thread(client, room, "alice")
     _say(client, thread, f"<@{teammate}> 这段说明读一下")
 
-    _say(client, thread, "再查一下出处")
+    post_message(client, thread, "alice", {"content": "再查一下出处"})
+    _settle(client, thread)
+    assert "再查一下出处" not in (stub_hooks.last_prompt or "")
+    _say(client, thread, f"<@{teammate}>")
 
     _wait_for_prompt(stub_hooks, "再查一下出处")
     assert client.get(f"/topics/{thread}/thread").json()["data"]["teammate"] == (
@@ -276,7 +277,9 @@ def test_a_follow_up_calls_the_teammate_called_there(client, stub_hooks):
     )
 
 
-def test_a_follow_up_calls_the_teammate_called_in_the_main_line(client, stub_hooks):
+def test_a_follow_up_rides_into_the_next_call_of_the_teammate_called_in_the_main_line(
+    client, stub_hooks
+):
     """Called from the channel's main line, the teammate answers in the 支线
     under that message: the 支线 is a conversation with it from the start."""
     room, teammate, _ = _room_with_two_teammates(client)
@@ -292,7 +295,10 @@ def test_a_follow_up_calls_the_teammate_called_in_the_main_line(client, stub_hoo
     thread = opened.json()["data"]["id"]
     _settle(client, thread)
 
-    _say(client, thread, "再查一下出处")
+    post_message(client, thread, "alice", {"content": "再查一下出处"})
+    _settle(client, thread)
+    assert "再查一下出处" not in (stub_hooks.last_prompt or "")
+    _say(client, thread, f"<@{teammate}>")
 
     _wait_for_prompt(stub_hooks, "再查一下出处")
 

@@ -285,7 +285,7 @@ class Settings(BaseSettings):
     # session needs: a turn that would start one waits until the host has that
     # much available.
     agent_session_memory_max_mb: int = 3072
-    private_chat_executor_image: str = "cheese-private-executor:2.1.282"
+    private_chat_executor_image: str = "cheese-private-executor:2.1.299"
     anthropic_base_url: str | None = None
     anthropic_auth_token: str | None = None
     # 骨架设置，不是设计约束（结论 33）：活在房间里是平的，没有子卡，谁能开活也
@@ -314,6 +314,12 @@ class Settings(BaseSettings):
     # browser process tree cleanly. Measured, one shared instance served six
     # concurrent pages in 4.7s where per-caller browsers took 9.5s for three.
     fetch_browser_endpoint: str | None = None
+    # Where the frontend serves the mini-app shell it builds (`frontend/miniapp/`),
+    # as reached from here: `<this>/v1/index.html` is shell 1. The content
+    # domain's `apps.` host answers with it, and a new mini-app is run in it
+    # once before it is kept (`app/domain/web_snippet/check.py`). Unset, no
+    # mini-app runs anywhere and new ones are kept unchecked.
+    miniapp_shell_url: str | None = None
     # A DNS-over-HTTPS resolver (JSON API), asked only on a machine whose own DNS
     # answers every name with a fake-IP placeholder (198.18.0.0/15): fetch has
     # to see the real address to know it is public. See domain/fetch/guard.py.
@@ -990,6 +996,10 @@ class Settings(BaseSettings):
     #: （`domain/wake_watch/`，只跑在平台自己那一侧）。比拍的周期密得多就行 ——
     #: 判停摆的线是 60 分钟，它只决定「多久发现」。0 关闭。
     wake_watch_interval_s: int = 300
+    #: 判到停摆之后，要不要真的点 #1343 那条线上的座位补一跳
+    #: （`domain/wake_watch/catchup.py`）。关掉就是影子期：只判、只记，判据一个字
+    #: 不变 —— 判据在真实数据上核过之后才默认打开。
+    wake_watch_catchup: bool = True
     # merge_method for the auto-merge (GitHub: merge | squash | rebase). MUST
     # be one the target repo actually allows — GitHub answers 405 forever for
     # a disabled one, which is exactly how 两阶段采纳 shipped never having

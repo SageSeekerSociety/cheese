@@ -30,9 +30,6 @@ class HumanPreparation:
     agent_handles: list[str]
     named_seats: dict[str, tuple[str, str]]
     recipient: dict
-    #: A person's message in a 支线 that @-s nobody: it calls the 支线's
-    #: teammate (`recipient`) unless it turns out to answer someone's question.
-    follows_up: bool
 
 
 @dataclass(frozen=True, slots=True)

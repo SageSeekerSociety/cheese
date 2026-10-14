@@ -32,7 +32,7 @@ defineProps<{ light: RowLight }>()
   height: 8px;
   border-radius: var(--radius-pill);
 }
-/* 蓝：别人的活。红黄绿说的是「这条现在怎么了」，蓝说的是「这条不归我」——所以它
+/* 蓝：这条活归我。红黄绿说的是「这条现在怎么了」，蓝说的是「这条归谁」——所以它
    自己一个色相，不借红黄绿里的任何一个，也不和任务行右边别的蓝（链接、选中态）
    混：那是一处 --signal-blue，和 --signal-yellow 同样的用法。 */
 .row-light--blue {

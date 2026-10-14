@@ -16,6 +16,8 @@
 // each other already, and everything that refreshes sits among them.
 import type { User } from '@/types/users'
 
+import { storageGet, storageGetJson, storageSet, storageSetJson } from './browserStorage'
+
 export type RefreshOutcome = { kind: 'ok'; token: string; user?: User } | { kind: 'rejected' } | { kind: 'unreachable' }
 
 export type SessionEvent =
@@ -37,20 +39,11 @@ let channel: BroadcastChannel | null | undefined
 let inFlight: Promise<RefreshOutcome> | null = null
 
 function storedToken(): string | null {
-  try {
-    return localStorage.getItem('accessToken')
-  } catch {
-    return null
-  }
+  return storageGet('accessToken')
 }
 
 function storedUser(): User | undefined {
-  try {
-    const raw = localStorage.getItem('user')
-    return raw ? (JSON.parse(raw) as User) : undefined
-  } catch {
-    return undefined
-  }
+  return storageGetJson<User>('user') ?? undefined
 }
 
 function tabs(): BroadcastChannel | null {
@@ -157,12 +150,9 @@ async function refreshOnce(held: string | null): Promise<RefreshOutcome> {
   const token = body?.data?.accessToken
   if (typeof token !== 'string' || !token) return { kind: 'unreachable' }
   const user = body?.data?.user ?? undefined
-  try {
-    localStorage.setItem('accessToken', token)
-    if (user) localStorage.setItem('user', JSON.stringify(user))
-  } catch {
-    // Storage refused (private mode, quota). The listeners still hold it.
-  }
+  // Storage may refuse (private mode, quota). The listeners still hold it.
+  storageSet('accessToken', token)
+  if (user) storageSetJson('user', user)
   announce({ type: 'token', token, user })
   return { kind: 'ok', token, user }
 }

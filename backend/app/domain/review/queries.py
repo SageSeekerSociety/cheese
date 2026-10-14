@@ -1,8 +1,9 @@
 """review 领域的**窄读**出口：别的领域想知道卡上的一两件事，问这里。
 
-两问：
+三问：
 
 - 一条活此刻骑的那张卡，折成路由画得出来的几个值（``RailCard``）。
+- 一屏要摆的那些卡，一次问完（``listed_cards``）：每个房间自己那张、每条活那张。
 - 这条活是不是停在「等 CI」上（``waiting_on_checks``）——环境释放判据读它，
   判据本身在 :func:`merge_state.checks_running` 里。
 
@@ -24,12 +25,16 @@ session。这里交出去的 `RailCard` 是一份冻结的值：没有 session�
 """
 
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
+from sqlalchemy import Row
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.domain.review import archive
 from app.domain.review.merge_state import checks_running
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.notes import NoteCode
@@ -59,9 +64,18 @@ class RailCard:
     auto_merge_armed_by: str | None
     #: 卡递给谁审阅 —— 「这一条在不在等看的这个人」要读它（`addressing`）。
     reviewer_handle: str | None = None
+    #: 卡读在哪个房间、为哪条活递的（房间自己的卡 `task_id` 为空）——
+    #: 「待我处理」按它们把卡认回各自那一行。
+    topic_id: uuid.UUID | None = None
+    task_id: uuid.UUID | None = None
+    #: 清单那一行的第二行：递的是什么改动，卡停住时卡上那句为什么。
+    change_subject: str | None = None
+    note: str = ""
 
 
-def _rail_card(card: AcceptCard) -> RailCard:
+def _rail_card(card: AcceptCard | Row[Any]) -> RailCard:
+    """The entity, or the row of its columns `AcceptCardRepository.listed`
+    brings back under the same names — one fold for both."""
     return RailCard(
         id=card.id,
         # `status` 在线上是一个字符串（`AcceptStatus` 是 StrEnum，`str()` 就是它的
@@ -75,7 +89,44 @@ def _rail_card(card: AcceptCard) -> RailCard:
         decided_by=card.decided_by,
         auto_merge_armed_by=card.auto_merge_armed_by,
         reviewer_handle=card.reviewer_handle,
+        topic_id=card.topic_id,
+        task_id=card.task_id,
+        change_subject=card.change_subject,
+        note=card.note,
     )
+
+
+async def listed_cards(
+    db: AsyncSession,
+    *,
+    room_ids: Collection[uuid.UUID],
+    task_ids: Collection[uuid.UUID],
+) -> tuple[dict[uuid.UUID, RailCard], dict[uuid.UUID, RailCard]]:
+    """The cards a list shows, one query: ``(每个房间自己最新那张没结算的卡,
+    每条活最新那张卡)``, both keyed by the place and both as `RailCard`.
+
+    The 待办 asks both of every screen — which of my rooms' own cards wait on
+    me, where each of my tasks stands — and asked apart they read the same
+    table twice (`AcceptCardRepository.listed`). Which statuses count as
+    「还没结算」 is `archive.OPEN_CARD_STATUSES`, the table review maintains, so
+    the caller does not count statuses.
+
+    Callers authorize and own this session and its transaction; this read does
+    not explicitly begin, commit or roll back.
+    """
+    rows = await AcceptCardRepository(db).listed(
+        room_ids=room_ids, task_ids=task_ids, open_statuses=archive.OPEN_CARD_STATUSES
+    )
+    by_room: dict[uuid.UUID, RailCard] = {}
+    by_task: dict[uuid.UUID, RailCard] = {}
+    # Oldest first, so the last write per key is the newest card there.
+    for row in rows:
+        card = _rail_card(row)
+        if row.task_id is None:
+            by_room[row.topic_id] = card
+        else:
+            by_task[row.task_id] = card
+    return by_room, by_task
 
 
 async def latest_cards_by_task(

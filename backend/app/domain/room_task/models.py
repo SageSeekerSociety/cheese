@@ -2,6 +2,7 @@
 
 import enum
 import uuid
+from collections.abc import Iterable
 from datetime import datetime
 
 from sqlalchemy import (
@@ -95,6 +96,33 @@ class TaskSnapshot(UuidPk, Timestamps, Base):
     snapshot_sha: Mapped[str] = mapped_column(String(64))
     digest: Mapped[str] = mapped_column(String(64))
     storage_key: Mapped[str] = mapped_column(String(1024))
+
+
+def people_of(
+    owner_handle: str | None, contributor_handles: Iterable[str] | None
+) -> tuple[str, ...]:
+    """This task's people — the owner first, then its contributors.
+
+    A question asked inside a task and landing on no one person waits on them:
+    whose work this is, and who answers for it. Both places that record it read
+    this one list (`agent/announce.py`'s ``notify_question`` writes the
+    notification, `api/routes/awaiting.py` the 待办). A channel or 支线 has no
+    such list, so a question there still lands on nobody.
+
+    The owner leads because he is 唯一的主 (``owner_handle``); a contributor who
+    is also the owner, or listed twice, is one person here.
+
+    A function rather than a property alone because rows read as plain columns
+    (`room_task/repositories.py`'s `ListedTask`) are not `Task` instances, and
+    「等谁」 must be the same list for both: two implementations would be two
+    answers to one question.
+    """
+    people: list[str] = []
+    for handle in (owner_handle, *(contributor_handles or ())):
+        name = (handle or "").strip()
+        if name and name not in people:
+            people.append(name)
+    return tuple(people)
 
 
 class Task(UuidPk, Timestamps, Base):
@@ -283,20 +311,5 @@ class Task(UuidPk, Timestamps, Base):
 
     @property
     def people(self) -> tuple[str, ...]:
-        """This task's people — the owner first, then its contributors.
-
-        A question asked inside a task and landing on no one person waits on
-        them: whose work this is, and who answers for it. Both places that
-        record it read this one list (`agent/announce.py`'s ``notify_question``
-        writes the notification, `api/routes/awaiting.py` the 待办). A channel
-        or 支线 has no such list, so a question there still lands on nobody.
-
-        The owner leads because he is 唯一的主 (``owner_handle``); a contributor
-        who is also the owner, or listed twice, is one person here.
-        """
-        people: list[str] = []
-        for handle in (self.owner_handle, *self.contributor_handles):
-            name = (handle or "").strip()
-            if name and name not in people:
-                people.append(name)
-        return tuple(people)
+        """This task's people — see :func:`people_of`, which is the same list."""
+        return people_of(self.owner_handle, self.contributor_handles)

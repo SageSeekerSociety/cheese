@@ -84,6 +84,17 @@ registered the same way). `cch` hashes the request body, so it changes on every
 request; at the head of the prompt it makes a prefix cache such as RUC's miss
 the whole conversation. Requests bound for Anthropic keep it.
 
+Every inline image in a request is opened with Pillow before the request goes
+upstream (`image_guard.py`, registered the same way). An image that is not PNG,
+JPEG, GIF or WebP, does not decode, or is over 8000 px on a side is replaced by
+a text block naming the reason and the image's hash, and the gateway logs one
+`image_guard replaced image` line for it. Every provider refuses a request with
+such an image in it, and Claude Code resends its whole history on each turn, so
+without this one broken picture fails every later request of a conversation.
+The replacement depends only on the image's bytes, so it is the same on every
+turn and the prompt cache keeps hitting. Images that open pass unchanged, and
+an image given by URL is not fetched.
+
 The box's `backend/.env` must contain:
 
 ```

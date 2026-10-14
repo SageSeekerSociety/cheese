@@ -19,7 +19,7 @@
  * topic. So the new worker takes over first (`takeWaitingWorker`), then the
  * tab reloads.
  *
- * Two callers handle a missing chunk themselves, and Vite still announces
+ * Three callers handle a missing chunk themselves, and Vite still announces
  * their failures as `vite:preloadError`, so the global listener must stay out
  * of their way:
  * - a prefetch (lib/routePrefetch.ts) failing means nothing was prefetched.
@@ -30,6 +30,15 @@
  *   was going (`recoverNavigations`). The global listener would reload the
  *   current page instead, and its one-shot guard would then stop the router
  *   from loading the target.
+ * - the locale catalogs nobody waits on (i18n/index.ts): the boot one, fetched
+ *   on every load, and the one an account's language brings on the way in
+ *   (services/account.ts). Both are fetched outside any navigation and both
+ *   land somewhere of their own when they fail (the entry locale, or the
+ *   language already on screen), so a server that keeps failing one looked
+ *   exactly like a tab one deploy behind: every load cleared the guard on the
+ *   way in and failed the same way again, and the tab reloaded itself for as
+ *   long as it stayed open. While either fetch is in flight its failures are
+ *   not ours to act on, and a reload does not fetch it any better.
  *
  * A weak network fails a chunk the same way a deploy does, and in WebKit (iOS
  * Safari, and the WeChat in-app browser on iPhone) a module that failed to
@@ -42,7 +51,8 @@ import type { Router } from 'vue-router'
 
 import { toast } from 'vuetify-sonner'
 
-import { t } from '@/i18n'
+import { t, unattendedPackIsLoading } from '@/i18n'
+import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 import { prefetchingChunks } from '@/lib/routePrefetch'
 import { takeWaitingWorker } from '@/pwa'
 
@@ -70,14 +80,12 @@ function describes(reason: unknown): string {
  */
 export function reloadForNewBuild(reason: unknown, target?: string): boolean {
   if (!MISSING_CHUNK.test(describes(reason))) return false
-  try {
-    if (sessionStorage.getItem(RELOADED_KEY)) return false
-    sessionStorage.setItem(RELOADED_KEY, '1')
-  } catch {
-    // Private windows and blocked site data throw on both calls. Reloading
-    // without the guard beats leaving the tab dead: looping needs the failure
-    // to outlive the reload, and a deploy's does not.
-  }
+  // Private windows and blocked site data cannot keep the guard — the read
+  // comes back empty and the write does nothing. Reloading without it beats
+  // leaving the tab dead: looping needs the failure to outlive the reload, and
+  // a deploy's does not.
+  if (storageGet(RELOADED_KEY, 'session')) return false
+  storageSet(RELOADED_KEY, '1', 'session')
   void takeWaitingWorker({ check: true }).finally(() =>
     target === undefined ? window.location.reload() : window.location.assign(target)
   )
@@ -129,11 +137,8 @@ export function recoverNavigations(router: Router): void {
 }
 
 function clearStaleBuildGuard(): void {
-  try {
-    sessionStorage.removeItem(RELOADED_KEY)
-  } catch {
-    // Same stores that refuse the write above; nothing was written either.
-  }
+  // Same stores that refuse the write above; nothing was written either.
+  storageRemove(RELOADED_KEY, 'session')
 }
 
 /**
@@ -143,7 +148,7 @@ function clearStaleBuildGuard(): void {
  */
 export function watchForStaleBuild(): void {
   window.addEventListener('vite:preloadError', (event) => {
-    if (navigating !== null || prefetchingChunks()) return
+    if (navigating !== null || prefetchingChunks() || unattendedPackIsLoading()) return
     const reason = (event as Event & { payload?: unknown }).payload
     if (reloadForNewBuild(reason)) event.preventDefault()
   })

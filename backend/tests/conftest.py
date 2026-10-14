@@ -22,7 +22,6 @@ import logging
 import os
 import re
 import signal
-import subprocess
 import sys
 import tempfile
 import threading
@@ -89,6 +88,7 @@ os.environ["CLOUD_VM_CREDITS_PER_HOUR"] = '{"4c8g": 30}'
 from app.core.config import settings  # noqa: E402
 from tests import isolation  # noqa: E402
 from tests.support.hang import HANG_S  # noqa: E402
+from tests.support.processes import process_list  # noqa: E402
 
 _XDIST_WORKER = os.environ.get("PYTEST_XDIST_WORKER", "")  # "gw0"… or "" (serial)
 # The runner slot this run is on, empty everywhere but a pool machine with more
@@ -1039,47 +1039,19 @@ def _fresh_dependency_probe() -> Iterator[None]:
     dependency_probe.forget()
 
 
-#: An executor on a process list: its service, and the worker beside it that
-#: serves the platform CLI.
+#: An executor on a process list: its service, the worker beside it that
+#: serves the platform CLI, the tunnel a room's seat keeps, and the shell
+#: prefix that stands in for a command it runs (which waits out a lost link
+#: for as long as it lives, and outlives a test whose build died without
+#: killing it). Named by file alone, since a test runs them from an installed
+#: release (`remote-execution/`) or straight from the source tree
+#: (`remote_execution/`).
 _EXECUTOR_PROGRAMS = (
-    "remote-execution/runtime.py serve",
-    "remote-execution/cli_worker.py",
+    "/runtime.py serve",
+    "/cli_worker.py",
+    "/cheese-tunnel.py",
+    "/client.py shell",
 )
-
-
-def _process_list() -> list[tuple[int, str]]:
-    """Every process's pid and command line.
-
-    Read from /proc where there is one: it is the same list `ps` prints, and
-    starting `ps` for it cost 13 ms per test on a hosted runner, for every
-    test that has a `tmp_path`. A process that exits mid-read is skipped.
-    """
-    proc = Path("/proc")
-    if not proc.is_dir():
-        # -ww: a long tmp path is otherwise cut at the terminal width.
-        listing = subprocess.run(
-            ["ps", "-A", "-ww", "-o", "pid=,args="],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        rows = []
-        for line in listing.stdout.splitlines():
-            pid, _, args = line.strip().partition(" ")
-            rows.append((int(pid), args))
-        return rows
-    rows = []
-    for entry in proc.iterdir():
-        if not entry.name.isdigit():
-            continue
-        try:
-            raw = (entry / "cmdline").read_bytes()
-        except OSError:
-            continue
-        rows.append(
-            (int(entry.name), raw.replace(b"\0", b" ").decode(errors="replace"))
-        )
-    return rows
 
 
 def _executors_under(directory: Path) -> dict[int, str]:
@@ -1087,7 +1059,7 @@ def _executors_under(directory: Path) -> dict[int, str]:
     root = str(directory.resolve()) + os.sep
     return {
         pid: args
-        for pid, args in _process_list()
+        for pid, args in process_list()
         if root in args and any(program in args for program in _EXECUTOR_PROGRAMS)
     }
 

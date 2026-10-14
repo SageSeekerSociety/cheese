@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.legal_deps import client_context
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.errors import NotFoundError, UnprocessableEntityError
@@ -55,19 +56,17 @@ def _full(doc: LegalDocument, version: LegalVersion) -> dict:
 
 @router.get("/legal/documents", summary="Current version of every legal document")
 async def list_documents() -> dict:
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
+    return ok(
+        {
             "documents": [_summary(d, d.current) for d in DOCUMENTS.values()],
-        },
-    }
+        }
+    )
 
 
 @router.get("/legal/documents/{document}", summary="Current text of a document")
 async def get_document(document: Annotated[str, Path()]) -> dict:
     doc = _document_or_404(document)
-    return {"code": 200, "message": "OK", "data": _full(doc, doc.current)}
+    return ok(_full(doc, doc.current))
 
 
 @router.get(
@@ -81,7 +80,7 @@ async def get_document_version(
     found = doc.get(version)
     if found is None:
         raise NotFoundError("No such version")
-    return {"code": 200, "message": "OK", "data": _full(doc, found)}
+    return ok(_full(doc, found))
 
 
 @router.get(
@@ -93,13 +92,9 @@ async def get_my_pending_consents(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     pending = await ConsentService(session).pending(auth_user.user_id)
-    return {
-        "code": 200,
-        "message": "OK",
-        "data": {
-            "pending": [_summary(DOCUMENTS[k], DOCUMENTS[k].current) for k in pending]
-        },
-    }
+    return ok(
+        {"pending": [_summary(DOCUMENTS[k], DOCUMENTS[k].current) for k in pending]}
+    )
 
 
 class AcceptRequest(BaseModel):
@@ -138,4 +133,4 @@ async def accept_documents(
     # Dependency teardown commits after the response: a failed commit there
     # would already have told the person their acceptance was recorded.
     await session.commit()
-    return {"code": 200, "message": "OK", "data": {"pending": []}}
+    return ok({"pending": []})

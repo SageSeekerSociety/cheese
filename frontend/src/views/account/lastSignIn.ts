@@ -2,25 +2,19 @@
 // Kept on the device only: it is a convenience, and clearing site data simply
 // brings back the default order.
 
+import { storageGet, storageSet } from '@/lib/browserStorage'
+
 export type SignInMethod = 'password' | 'passkey' | 'email_code' | `oauth:${string}`
 
 const KEY = 'cheese.lastSignIn'
 
 export function rememberSignIn(method: SignInMethod): void {
-  try {
-    localStorage.setItem(KEY, method)
-  } catch {
-    // storage unavailable — the page keeps its default order
-  }
+  storageSet(KEY, method)
 }
 
 export function lastSignIn(): SignInMethod | null {
-  try {
-    const value = localStorage.getItem(KEY)
-    if (value === 'password' || value === 'passkey' || value === 'email_code' || value?.startsWith('oauth:'))
-      return value as SignInMethod
-  } catch {
-    // as above
-  }
+  const value = storageGet(KEY)
+  if (value === 'password' || value === 'passkey' || value === 'email_code' || value?.startsWith('oauth:'))
+    return value as SignInMethod
   return null
 }

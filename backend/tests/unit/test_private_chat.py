@@ -226,7 +226,7 @@ def test_controlling_a_private_room_reaches_the_seat_that_prepared_it(
 # the session's startup record says which of these it was.
 _DOCKER_REFUSALS = {
     "image": (
-        "Unable to find image 'cheese-private-executor:2.1.282' locally\n"
+        "Unable to find image 'cheese-private-executor:2.1.299' locally\n"
         "docker: Error response from daemon: pull access denied for "
         "cheese-private-executor, repository does not exist.",
         "Claude Code 启动失败：环境里缺少执行容器的镜像",

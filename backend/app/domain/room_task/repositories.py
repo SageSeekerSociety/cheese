@@ -3,6 +3,7 @@ those threads work on."""
 
 import uuid
 from collections.abc import Collection
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import (
@@ -23,11 +24,53 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.project.address import Numbered, take_number
-from app.domain.room_task.models import Task, TaskStatus, TaskTitleSource
+from app.domain.room_task.models import (
+    Task,
+    TaskStatus,
+    TaskTitleSource,
+    people_of,
+)
 
 
 def _uuids(name: str, values: Collection[uuid.UUID] | None):
     return bindparam(name, list(values or ()), type_=ARRAY(Uuid()))
+
+
+@dataclass(frozen=True, slots=True)
+class ListedTask:
+    """一条活摆上清单时要读的那几列，加上它最后一次说话的时刻 —— 一份纯值。
+
+    看板和「待我处理」读一条活读的是状态、人、日期那几位，而 `Task` 那一行还背着
+    交付记录、PR、执行环境、检查输出那一堆正文，装配一行比读这几列贵得多
+    （`tests/integration/test_indexed_rows.py` 量了同一批行的两种读法）。所以这一份
+    是**列投影交出来的值**，没有 session、没有懒加载：读得到什么，这里就列着什么。
+
+    `last_said_at`（看板的心跳）和这几列一起回来，是因为它本来要单独问一趟
+    （`last_block_at_for_tasks`）；两笔一起取，少一次往返，也少一次把活按 id 收窄。
+    `None` 是「这条活还没人说过话」，由调用方决定它意味着什么 —— 这里不替它编一个
+    时间。
+    """
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    room_id: uuid.UUID
+    title: str
+    title_source: TaskTitleSource
+    status: TaskStatus
+    owner_handle: str | None
+    reporter_handle: str | None
+    contributor_handles: tuple[str, ...]
+    accepted_at: datetime | None
+    started_at: datetime | None
+    conclusion: str | None
+    closing_since: datetime | None
+    updated_at: datetime
+    last_said_at: datetime | None
+
+    @property
+    def people(self) -> tuple[str, ...]:
+        """等谁 —— 和 `Task.people` 是同一份名单（`models.people_of`）。"""
+        return people_of(self.owner_handle, self.contributor_handles)
 
 
 class TaskRepository:
@@ -81,6 +124,76 @@ class TaskRepository:
             select(Task).where(Task.id.in_(task_ids)).order_by(Task.created_at, Task.id)
         )
         return list((await self._session.scalars(stmt)).all())
+
+    async def listed_by_ids(self, task_ids: Collection[uuid.UUID]) -> list[ListedTask]:
+        """These threads as a listing draws them, each with its last word's time.
+
+        One query for what used to be two: the rows a listing reads
+        (`list_by_ids`) plus the heartbeat (`last_block_at_for_tasks`). The
+        heartbeat rides along as a correlated `max(created_at)` on this task's
+        own conversation — the planner turns that into one backwards step on
+        `ix_blocks_conversation_created_at` per task, so its cost follows the
+        number of tasks, not how much they have said (see
+        `last_block_at_for_tasks` for why not a GROUP BY).
+
+        A column projection rather than the entity: 「待我处理」 takes a few
+        hundred threads at once, and `Task` carries delivery records, the
+        environment, check output — text and JSONB a listing never reads. Ids
+        that name nothing are simply absent, as in `list_by_ids`.
+
+        The ids go in as one array parameter (`_uuids`): a few hundred of them
+        spelled as an `IN` list make the driver re-spell the statement every
+        time it runs.
+        """
+        ids = list(task_ids)
+        if not ids:
+            return []
+        last_said = (
+            select(func.max(Block.created_at))
+            .where(Block.conversation_id == Task.id)
+            .scalar_subquery()
+        )
+        stmt = (
+            select(
+                Task.id,
+                Task.project_id,
+                Task.room_id,
+                Task.title,
+                Task.title_source,
+                Task.status,
+                Task.owner_handle,
+                Task.reporter_handle,
+                Task.contributor_handles,
+                Task.accepted_at,
+                Task.started_at,
+                Task.conclusion,
+                Task.closing_since,
+                Task.updated_at,
+                last_said.label("last_said_at"),
+            )
+            .where(Task.id == any_(_uuids("task_ids", ids)))
+            .order_by(Task.created_at, Task.id)
+        )
+        return [
+            ListedTask(
+                id=row.id,
+                project_id=row.project_id,
+                room_id=row.room_id,
+                title=row.title,
+                title_source=row.title_source,
+                status=row.status,
+                owner_handle=row.owner_handle,
+                reporter_handle=row.reporter_handle,
+                contributor_handles=tuple(row.contributor_handles or ()),
+                accepted_at=row.accepted_at,
+                started_at=row.started_at,
+                conclusion=row.conclusion,
+                closing_since=row.closing_since,
+                updated_at=row.updated_at,
+                last_said_at=row.last_said_at,
+            )
+            for row in (await self._session.execute(stmt)).all()
+        ]
 
     async def underway_counts(self, room_ids: list[uuid.UUID]) -> dict[uuid.UUID, int]:
         """How many tasks each of these rooms has underway: open and not in the

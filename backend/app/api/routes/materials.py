@@ -16,6 +16,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
 
+from app.api.response import ok
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core.config import settings
@@ -104,7 +105,7 @@ async def upload_material(
         uploader_id=auth_user.user_id,
         meta=meta,
     )
-    return {"code": 201, "message": "Created", "data": result}
+    return ok(result)
 
 
 @router.get(
@@ -128,11 +129,7 @@ async def get_material_detail(
     ):
         raise ForbiddenError("This material is only visible to the board's managers")
     material = await service.get_material(material_id)
-    return {
-        "code": 200,
-        "message": "Get Material successfully",
-        "data": {"material": material},
-    }
+    return ok({"material": material}, "Get Material successfully")
 
 
 @router.delete(

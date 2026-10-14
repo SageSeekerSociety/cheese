@@ -33,6 +33,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import DeviceTeamsPicker from '@/components/settings/DeviceTeamsPicker.vue'
 import { t } from '@/i18n'
 import { screenAgentName } from '@/lib/agentNames'
+import { storageGet } from '@/lib/browserStorage'
 import { renderNoticeMessage } from '@/lib/noticeText'
 import { relTime } from '@/lib/relTime'
 import accountService from '@/services/account'
@@ -41,16 +42,12 @@ import { sandboxOf } from '@/types/deviceSandbox'
 import { claudeLoginOf, modelServiceOf } from '@/types/ownAgents'
 
 // The real logged-in session, resolved the same way the rest of the app resolves
-// it: AccountService.loggedIn (set from localStorage `accessToken` + `user` at
-// boot). We also accept the raw localStorage credential as a fallback so the gate
-// is correct even before AccountService.init() has finished its async warm-up.
+// it: AccountService.loggedIn (set from the stored `accessToken` + `user` at
+// boot). We also accept the raw stored credential as a fallback so the gate is
+// correct even before AccountService.init() has finished its async warm-up.
 const isLoggedIn = computed(() => {
   if (accountService.loggedIn) return true
-  try {
-    return !!localStorage.getItem('accessToken')
-  } catch {
-    return false
-  }
+  return !!storageGet('accessToken')
 })
 
 const devices = ref<MyDevice[]>([])

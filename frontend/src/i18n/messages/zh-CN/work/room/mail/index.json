@@ -1,0 +1,17 @@
+{
+  "attachments": "附件",
+  "body": "正文",
+  "cc": "抄送",
+  "confirmSend": "确认发送",
+  "discard": "放弃",
+  "discardFailed": "没有放弃成功",
+  "discarded": "已放弃",
+  "from": "从 {account}",
+  "hint": "发出去的就是上面这封；{name}不能替你发。",
+  "noSubject": "（无主题）",
+  "notSent": "没有发出去",
+  "notSentReason": "没有发出去：{reason}",
+  "sent": "已发送",
+  "to": "收件人",
+  "waiting": "等 {owner} 确认后才会发送"
+}

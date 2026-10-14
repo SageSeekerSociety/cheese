@@ -2,7 +2,7 @@
   "backend": [
     "backend/**",
     "frontend/src/i18n/messages/*/roomNotice.json",
-    "frontend/src/i18n/messages/*/apiError.json",
+    "frontend/src/i18n/messages/*/apiError/*.json",
     "frontend/src/i18n/messages/*/global.json",
     "deploy/metering-proxy/**",
     ".pre-commit-config.yaml",
@@ -12,7 +12,7 @@
   ],
   "frontend": [
     "frontend/**",
-    "backend/openapi.json",
+    "backend/openapi.sha256",
     ".github/workflows/frontend.yml",
     ".claude/scripts/frontend_grade.py",
     ".claude/scripts/catalog-ratchet.py",
@@ -51,6 +51,8 @@
     ".claude/scripts/pr-watch.sh",
     "backend/scripts/gateway_supply_probe.py",
     "backend/scripts/test_gateway_supply_probe.py",
+    "backend/scripts/gateway_conformance.py",
+    "backend/scripts/test_gateway_conformance.py",
     ".github/workflows/deploy-drift.yml",
     ".github/workflows/deploy-scripts-test.yml",
     ".github/workflows/deploy-dev.yml",

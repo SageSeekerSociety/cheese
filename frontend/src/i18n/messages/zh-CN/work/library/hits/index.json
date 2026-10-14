@@ -1,0 +1,8 @@
+{
+  "keep": "另存为文档",
+  "library": "资料库里的文档",
+  "libraryCount": "资料库 · {n}",
+  "roomDoc": "「{room}」的文档",
+  "rooms": "对话里的文档",
+  "roomsCount": "对话里的文档 · {n}"
+}

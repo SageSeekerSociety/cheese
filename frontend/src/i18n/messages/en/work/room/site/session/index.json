@@ -1,0 +1,13 @@
+{
+  "askFailed": "Could not read it",
+  "collapse": "Hide details",
+  "connected": "Session connected",
+  "expand": "Show details",
+  "label": "Session details",
+  "loadFailed": "Could not load the session state",
+  "none": "No session running",
+  "several": "{count} sessions are running in this channel; pick a teammate to view one",
+  "teammate": "Teammate",
+  "view": "View",
+  "what": "What to view"
+}
