@@ -42,7 +42,7 @@ echo "PASS: blank DOCS_ORIGIN is unset"
 # ---------- a docs host ----------
 d=$(fixture host)
 run "$d" DOCS_ORIGIN="https://Docs.Example.test:443/" FRONTEND_URL="https://app.example.test/" >/dev/null
-contains "$d/etc/docs/host.conf" "server_name docs.example.test frontend;"
+contains "$d/etc/docs/host.conf" "server_name docs.example.test;"
 contains "$d/etc/docs/platform.conf" "return 301 https://docs.example.test/"
 lacks "$d/etc/docs/platform.conf" ":443"
 contains "$d/html/assets/main.js" 'const d="https://docs.example.test"'

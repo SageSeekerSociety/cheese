@@ -12,9 +12,8 @@ from urllib.parse import urlsplit
 
 from app.core.config import browser_origin, settings
 
-# The frontend container, by its compose name. With a docs host configured, its
-# nginx answers this name with the docs host's server (frontend/nginx/), so the
-# backend reads the very files readers get, at the same paths.
+# The frontend container, by its compose name: the backend reads the very files
+# readers get, at the same paths.
 FRONTEND = "http://frontend"
 
 
@@ -53,6 +52,17 @@ def index_url() -> str:
 
 def dev_index_url() -> str:
     return settings.docs_dev_index_url or f"{FRONTEND}{base()}/dev/sections.json"
+
+
+def read_headers(url: str) -> dict[str, str]:
+    """What a read of ``url`` from the frontend container says it wants.
+
+    Under the container's own name its nginx serves the platform. With a docs
+    host, the docs are that host's site (``frontend/nginx/docs/host.conf``), so
+    a read asks for it by name."""
+    if settings.docs_origin and url.startswith(f"{FRONTEND}/"):
+        return {"Host": urlsplit(settings.docs_origin).hostname or ""}
+    return {}
 
 
 def on_docs_host(host_header: str | None) -> bool:
