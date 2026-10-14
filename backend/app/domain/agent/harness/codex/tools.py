@@ -456,9 +456,18 @@ class RemoteTools:
             text, success = failure_text(exc), False
         else:
             success = True
+        # Pictures a tool hands back (a mini-app's, as the platform ran it)
+        # follow its text.
+        images = [
+            {
+                "type": "inputImage",
+                "imageUrl": f"data:{i['mimeType']};base64,{i['data']}",
+            }
+            for i in getattr(text, "images", ())
+        ]
         return {
             "success": success,
-            "contentItems": [{"type": "inputText", "text": text}],
+            "contentItems": [{"type": "inputText", "text": str(text)}, *images],
         }
 
     async def __call__(self, method: str, params: dict) -> dict:

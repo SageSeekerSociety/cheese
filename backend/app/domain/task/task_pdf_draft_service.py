@@ -299,9 +299,9 @@ class TaskPdfDraftService:
         """这一版的草稿模型读不读图。
 
         默认草稿模型是文本模型 —— 一份 PNG 发给读不了图的模型只是白白花一次调用的
-        钱，所以只有部署在 ``task_draft_vision_models`` 里点过名的模型才走兜底。
+        钱，所以只有部署在 ``vision_models`` 里点过名的模型才走兜底。
         """
-        return self.model in settings.task_draft_vision_models
+        return self.model in settings.vision_models
 
     async def generate_task_payloads_from_pdf(
         self,
