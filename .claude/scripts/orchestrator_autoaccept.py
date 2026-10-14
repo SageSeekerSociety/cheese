@@ -26,7 +26,7 @@ Output. Text: one line per card,
   [交总调度] #<task> PR #<n> head <sha8>｜<code>: <detail>；<code>: <detail>
 --json: {"room", "apply", "cards": [{"task", "pr", "head", "verdict": "accept" | "handoff",
   "codes": [...], "reasons": [{"code", "detail", "reply"}], "notes": [...], "applied"?}]}.
-A detail never contains ；or ｜ in the text shape, so splitting on them is safe. Both shapes are
+A detail, note or applied result never contains ；or ｜ in the text shape, so splitting on them is safe. Both shapes are
 read by other scripts: change them only together with their readers.
 
 --apply also accepts the 会采 cards as OKCHEESE_USER: approve, then accept with the card's head.
@@ -310,11 +310,11 @@ def _flat(text):
 
 def line(row):
     verdict = "会采" if row["verdict"] == "accept" else "交总调度"
-    tail = (row["notes"] if row["verdict"] == "accept"
+    tail = ([_flat(n) for n in row["notes"]] if row["verdict"] == "accept"
             else [f"{r['code']}: {_flat(r['detail'])}" for r in row["reasons"]])
     head = (row["head"] or "")[:8] or "-"
     out = f"[{verdict}] #{row['task']} PR #{row['pr']} head {head}" + (f"｜{'；'.join(tail)}" if tail else "")
-    return out + (f"｜{row['applied']}" if "applied" in row else "")
+    return out + (f"｜{_flat(row['applied'])}" if "applied" in row else "")
 
 
 def value_of(argv, flag):
@@ -393,7 +393,9 @@ def self_test():
     check("CI 红", facts(ci="failure"), "交总调度", "ci_red", "CI required 在卡上 head 是 failure")
     check("CI 没跑", facts(ci=None), "交总调度", "ci_pending", "没跑")
     check("CI 读不到", facts(ci="读不到"), "交总调度", "unreadable")
-    check("CI 取消也算红", facts(ci="cancelled"), "交总调度", "ci_red")
+    for red in ("failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"):
+        check(f"CI {red} 算红", facts(ci=red), "交总调度", "ci_red")
+    check("CI 还在跑", facts(ci="in_progress"), "交总调度", "ci_pending")
     # 审查
     check("审查有 major", facts(card=card(change_body=f"独立 review：head {H[:8]} 结论 有 2 条")),
           "交总调度", "review_major", "有 2 条 blocker/major")
@@ -469,11 +471,14 @@ def self_test():
     f = facts(ci="failure", files=["deploy/deploy.sh", "backend/alembic/versions/x.py"])
     row = row_of(f, *judge(f, "me"))
     if row["verdict"] != "handoff" or row["codes"] != ["ci_red", "prod_deploy", "high_risk"] \
-            or not all(r["reply"] for r in row["reasons"]):
+            or [r["reply"] for r in row["reasons"]] != [REASONS["ci_red"], REASONS["prod_deploy"], REASONS["high_risk"]]:
         failures.append(f"多条原因按判据顺序给码并附话术: got {row!r}")
     codes = {"ci_red", "review_missing", "review_major", "head_mismatch", "conflicting", "high_risk",
              "prod_deploy", "ci_pending", "mergeable_unknown", "not_reviewer", "pr_merged", "unreadable"}
-    if set(REASONS) != codes or not all(REASONS.values()):
+    # What each sentence must tell the line to do, not its wording.
+    musts = {"ci_red": "CI", "review_missing": "pr-review.sh", "review_major": "增量审", "head_mismatch": "push-fix",
+             "conflicting": "合 main", "prod_deploy": "正式部署", "high_risk": "高风险"}
+    if set(REASONS) != codes or not all(REASONS.values()) or any(w not in REASONS[c] for c, w in musts.items()):
         failures.append(f"原因码是固定的十二个、各有话术: got {sorted(REASONS)}")
     mixed = facts(files=["backend/alembic/versions/x.py", "backend/app/api/auth.py"], ci="failure")
     tail = line(row_of(mixed, *judge(mixed, "me"))).split("｜", 1)[1].split("；")
@@ -483,6 +488,9 @@ def self_test():
     parts = line(row_of(odd, *judge(odd, "me"))).split("｜")
     if len(parts) != 2 or parts[1] != "unreadable: 平台回了 422，原因/看不懂 第二行":
         failures.append(f"细节里的 ；｜和换行不拆行: got {parts!r}")
+    applied = dict(row_of(facts(), *judge(facts(), "me")), applied="accept 被拒：409 已过时；重读｜再试")
+    if line(applied).count("｜") != 2 or "；" in line(applied):
+        failures.append(f"--apply 的结果也不拆行: got {line(applied)!r}")
     want = "[交总调度] #1 PR #9 head aaaaaaaa｜ci_red: CI required 在卡上 head 是 failure；prod_deploy: "
     if not line(row).startswith(want):
         failures.append(f"文本行格式: got {line(row)!r}")
