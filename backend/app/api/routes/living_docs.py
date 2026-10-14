@@ -463,11 +463,17 @@ async def edit_doc_passages(
     edits = [edit.model_dump() for edit in body.edits]
     settled: list[Settled] = []
     for edit in edits:
+        # The same friendly @名字 / @话题名 → token rewrite a whole-document
+        # write gets (``replace_document``): a passage is stored as the
+        # document stores everything else.
+        new = await canonicalize_refs(
+            db, doc.project_id, edit["new"], team=project_team
+        )
         one = await _settled(
             db,
             resolver,
             doc,
-            edit["new"],
+            new,
             actor=actor.handle,
             keep=Counter(canvas_ids(edit["old"])),
         )
