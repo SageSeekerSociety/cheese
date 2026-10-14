@@ -89,12 +89,13 @@ function identityOf(item: unknown): { handle: string; name: string; avatarId: nu
         <span v-else>{{ item.title }}</span>
       </v-list-item>
     </template>
-    <!-- The single-value cell: draw the picked account's face + name; a handle with no
-         candidate behind it (not searched yet) stays plain text. -->
-    <template #selection="{ item }">
-      <IdentityView v-if="identityOf(item)" v-bind="identityOf(item)" :size="20" />
-      <template v-else>{{ item.title }}</template>
-    </template>
+    <!-- No `#selection` slot here, unlike the plain `v-select`s elsewhere: this is a
+         `v-autocomplete`, whose input IS the editable field. A `#selection` slot would
+         draw the picked account with a face and drop the handle out of that field — but
+         the field must keep showing the handle, because that is what actually gets sent.
+         The feedback e2e pins it (`toHaveValue('alice')`) exactly to catch a nickname
+         being filed as the handle. The picked person's face still shows on every
+         candidate row above (`#item`). -->
     <!-- 这一句得挂在 `no-data` 上，不能挂 `append-item`：`hide-no-data` 会让候选为空时
          整张菜单直接不可打开（VSelect 的 `menuDisabled`），那时什么提示都露不出来。 -->
     <template #no-data>

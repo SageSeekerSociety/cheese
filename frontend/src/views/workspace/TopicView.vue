@@ -617,6 +617,7 @@ void openPlace()
         :room="selectedTopic"
         :task="currentTask"
         :member-names="memberNames"
+        :member-faces="memberFaces"
         :agent-name="store.agentName"
         :people="taskPeople"
         :agents="roomAgents"

@@ -31,7 +31,7 @@ function mount(props: Record<string, unknown>, onNavigate?: () => void) {
   })
 }
 
-const chipOf = (el: HTMLElement) => el.querySelector<HTMLElement>('.mention')
+const chipOf = (el: Element) => el.querySelector<HTMLElement>('.mention')
 
 describe('UserRef：只凭 props 画一个人（头像 + @名字）', () => {
   it('没有 store、没有路由也能画：头像 + @名字，加全局 .mention 样式', () => {

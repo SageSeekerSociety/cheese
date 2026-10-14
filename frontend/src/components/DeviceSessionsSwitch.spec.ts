@@ -105,11 +105,14 @@ it('switches the selected agents one by one and says what happened to each', asy
   })
   const { emitted } = await open()
   expect(await dialog().findByText('定价')).toBeTruthy()
-  // 行里的队友是一颗 @chip，和对话里 @ 到它的那颗一样。
-  const metas = Array.from(document.querySelectorAll('.bs-meta')).map((el) =>
-    el.textContent?.replace(/\s+/g, ' ').trim()
-  )
-  expect(metas.some((m) => /^@助手b · 最近活动 .* · 正在运行任务$/.test(m ?? ''))).toBe(true)
+  // 行里的队友是一颗 @chip（头像 + @名字），和对话里 @ 到它的那颗一样。整段文本会被
+  // 头像那圈首字母挡住，所以看 chip 里那个可见的名字节点；「最近活动…正在运行任务」那半句
+  // 照旧在行里。
+  const metas = Array.from(document.querySelectorAll('.bs-meta'))
+  expect(metas.some((el) => el.querySelector('.mention .identity-view__name')?.textContent === '@助手b')).toBe(true)
+  expect(
+    metas.some((el) => /最近活动 .* · 正在运行任务$/.test(el.textContent?.replace(/\s+/g, ' ').trim() ?? ''))
+  ).toBe(true)
   expect(dialog().getByText('另有 2 个 agent 在你打不开的频道里')).toBeTruthy()
   expect(dialog().getByRole('button', { name: '推送并更换' }).hasAttribute('disabled')).toBe(true)
 

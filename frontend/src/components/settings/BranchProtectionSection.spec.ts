@@ -2,7 +2,7 @@
  *  画头像 + 姓名，只有「未指定」这种不是人的选项才退回纯文字。这一件是纯 props 的，
  *  能直接挂起来看它真画了什么（同目录的 `src/branchProtectionSection.spec.ts` 管的是
  *  规则顺序那类结构断言，另走源码扫描）。 */
-import type { BranchProtection } from '@/cx_types'
+import type { BranchProtection } from '@/branchProtection'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -25,6 +25,7 @@ const bp = (over: Partial<BranchProtection> = {}): BranchProtection => ({
   override_handles: null,
   approvals_required: 1,
   default_reviewer: '',
+  dispatch_seat: '',
   merge_method: 'squash',
   github_protection: { enforced: false, status: 'none' },
   ...over,
@@ -43,6 +44,7 @@ function mount(over: Partial<BranchProtection> = {}) {
         { title: 'Unassigned', value: '', handle: '', name: '', avatarId: null, agent: null },
         { title: 'Alice', value: 'alice', handle: 'alice', name: 'Alice', avatarId: 7, agent: false },
       ],
+      dispatchSeatItems: [],
       checkName: '',
       checkPaths: '',
       approvalsDraft: '1',

@@ -75,6 +75,19 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
+/** 名册那张「画脸要的三样」（`memberFacesOf` 的样子，键是 handle）：页头负责人那颗 chip 只
+ *  查它，名字跟着 `memberNames`（和页头别处一个读法），没挑过头像（`avatar_id` 缺省或 null）
+ *  给 null，交给 `UserAvatar` 画按 handle 派生的首字母。 */
+function facesOf(rows: readonly { member_handle: string; agent: boolean; avatar_id?: number | null }[]) {
+  const names = AGENT_NAMES as Record<string, string>
+  return Object.fromEntries(
+    rows.map((m) => [
+      m.member_handle,
+      { name: names[m.member_handle] ?? m.member_handle, avatarId: m.avatar_id ?? null, agent: m.agent },
+    ])
+  )
+}
+
 function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, startError: string | null = null) {
   const start = vi.fn(async () => {})
   const loadMachine = vi.fn(async () => {})
@@ -89,6 +102,7 @@ function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, s
     agentName: '芝士',
     people,
     agents,
+    memberFaces: { ...facesOf(people), ...facesOf(agents) },
     machine: MACHINE,
     machineError: false,
     starting: false,

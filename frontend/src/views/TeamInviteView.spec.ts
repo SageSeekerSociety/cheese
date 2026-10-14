@@ -68,8 +68,9 @@ describe('opening a team link', () => {
     mount()
     await screen.findByText('Cheese 核心组')
     screen.getByText('做 Cheese 的人')
-    // 所有者是一颗 @chip，和对话里 @ 到他的那颗一样。
-    expect(document.body.textContent).toMatch(/所有者：\s*@芝士/)
+    // 所有者是一颗 @chip（头像 + @名字），和对话里 @ 到他的那颗一样。整句连着读会被头像
+    // 那圈首字母挡住，所以看 chip 里那个可见的名字节点，不是整段文本。
+    expect(document.body.querySelector('.mention .identity-view__name')?.textContent).toBe('@芝士')
     screen.getByText(/5 名成员/)
     expect(detail).toHaveBeenCalledWith('team-link')
     expect(join).not.toHaveBeenCalled()

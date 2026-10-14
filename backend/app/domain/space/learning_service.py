@@ -286,7 +286,7 @@ class SpaceLearningService:
         return {block_id: room_id for block_id, room_id in rows}
 
     async def _student_faces(
-        self, handles: set[str]
+        self, handles: set[str | None]
     ) -> dict[str, tuple[str, int | None, bool]]:
         """handle → (名字, 自己挑过的头像 id, 是不是 AI 队友)。
 
@@ -299,11 +299,16 @@ class SpaceLearningService:
         首字母），绝不退回全站默认头像 —— 那是所有没挑过的人共用的一张脸。判断「这
         是不是真队友」认 agent-binding（``agents_among``），不按 handle 长相猜。
         没起昵称就退回 handle，空白比 handle 更难认。
+
+        收 nullable：调用点给的是 ``Project.owner_handle``（可为 None），那里已经按
+        真值筛过一道，但那是运行时的事、类型上看不见，所以签名认下 ``None``、在这里
+        摘掉——一个 None 本来就解析不出脸。
         """
-        if not handles:
+        present = {h for h in handles if h}
+        if not present:
             return {}
-        faces = await faces_by_handle(self._session, handles)
-        agents = await IdentityService(self._session).agents_among(sorted(handles))
+        faces = await faces_by_handle(self._session, present)
+        agents = await IdentityService(self._session).agents_among(sorted(present))
         return {
             handle: ((nickname or handle), avatar_id, handle in agents)
             for handle, (nickname, avatar_id) in faces.items()

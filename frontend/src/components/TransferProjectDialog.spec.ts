@@ -187,7 +187,9 @@ describe('TransferProjectDialog', () => {
     await fireEvent.click(await screen.findByText('卡罗'))
     // 团队外的人选中之后，弹窗里多出一条说明 —— 不是安静地换个名字。说明里的人按显示名写。
     const alert = screen.getAllByRole('alert').find((a) => a.textContent?.includes('转让会把项目整个搬到'))!
-    expect(alert.textContent).toContain('搬到 @卡罗 名下')
+    // 接手人是一颗「头像 + @名字」的 chip（UserRef）。整句连着读会被头像那圈首字母挡住，
+    // 所以看的是 chip 里那个可见的名字节点，不是整段文本。
+    expect(alert.querySelector('.mention .identity-view__name')?.textContent).toBe('@卡罗')
     expect(alert.textContent).not.toContain('@carol')
 
     await fireEvent.click(screen.getByRole('button', { name: '转让' }))
