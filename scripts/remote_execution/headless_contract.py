@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -806,8 +807,86 @@ def skipping(binary, root):
         session.stop()
 
 
+#: How long a released session gets to end on its own before what it started is
+#: stopped for it — the runner's own grace (``runner.RELEASE_GRACE_S``).
+RELEASE_GRACE_S = 5.0
+#: How long the build gets to go, after the work it was waiting on is stopped.
+RELEASE_WAIT_S = 30.0
+
+
+def started_by(pid):
+    """The session's descendants: what it started and has not finished with.
+    The runner has the same function, which this script cannot import (it runs
+    alone, against the build)."""
+    listing = subprocess.run(
+        ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True
+    ).stdout
+    children = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
+            children.setdefault(int(fields[1]), []).append(int(fields[0]))
+    found, queue = [], [pid]
+    while queue:
+        for child in children.get(queue.pop(), []):
+            found.append(child)
+            queue.append(child)
+    return found
+
+
+def stop(pids):
+    """Signal them to go, and kill what is still there a moment later."""
+    for number, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 1.0)):
+        for pid in pids:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, number)
+        deadline = time.monotonic() + wait
+        while pids and time.monotonic() < deadline:
+            time.sleep(0.1)
+            pids = [pid for pid in pids if still_there(pid)]
+        if not pids:
+            return
+
+
+def still_there(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def waited(session, within):
+    """The session's status once it exits, or None while it is still there."""
+    try:
+        return session.process.wait(within)
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def let_go(session):
+    """Release the session the way the runner does, and return its status.
+
+    Closing stdin is the ending, and a session with nothing running goes at
+    once. One that still has a background task waits for it first (2.1.292 on),
+    so the task is stopped for it — not the session itself — and the session
+    then exits with the status it would have had. A session that will not go
+    even then is ended where it stands.
+    """
+    session.close_stdin()
+    code = waited(session, RELEASE_GRACE_S)
+    if code is not None:
+        return code
+    stop(started_by(session.process.pid))
+    code = waited(session, RELEASE_WAIT_S)
+    if code is not None:
+        return code
+    stop([session.process.pid])
+    return waited(session, RELEASE_GRACE_S)
+
+
 def lifetime(binary, root):
-    """The process outlives its turns and is ended by closing stdin."""
+    """The process outlives its turns and is ended when the runner lets it go."""
     session = Session(binary, root, "lifetime", DRIVER)
     marker = f"contract-lifetime-{os.getpid()}-{time.monotonic_ns()}"
     try:
@@ -845,17 +924,14 @@ def lifetime(binary, root):
             f"alive={session.process.poll() is None}, control={usage.get('subtype')}, "
             f"second result at {second}, {len(running)} background process(es)",
         )
-        session.close_stdin()
-        try:
-            code = session.process.wait(30)
-        except subprocess.TimeoutExpired:
-            code = None
+        code = let_go(session)
         time.sleep(1)
         left = subprocess.run(
             ["pgrep", "-f", marker], capture_output=True, text=True
         ).stdout.split()
         yield (
-            "closing stdin exits the process and kills its background tasks",
+            "releasing the session exits it with status 0 and leaves nothing of "
+            "it running, background tasks included",
             code == 0 and not left,
             f"exit {code}, {len(left)} background process(es) left",
         )
