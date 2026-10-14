@@ -9,7 +9,7 @@
  * `catalogScenesPages2.ts`。
  */
 import type { Integration, MailDraft } from '@/api'
-import type { FeedbackComment, FeedbackDetail, FeedbackTimelineEntry } from '@/cx_types'
+import type { FeedbackComment, FeedbackDetail, FeedbackTimelineEntry, Project } from '@/cx_types'
 import type { FeatureView } from '@/views/admin/features/registry'
 
 import { defineComponent, h, markRaw } from 'vue'

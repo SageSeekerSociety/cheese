@@ -87,7 +87,7 @@ function originLabel(s: ProjectSkill): string {
         </h2>
         <ul class="skills-list">
           <!-- 整行可点；键盘落在名称那颗按钮上。行里提到的人是链接，点它不开详情。 -->
-          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the pointer's shortcut over the whole row; the row's title button below is the keyboard path (this is the line the page carried before the split) -->
+          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the pointer's shortcut over the whole row; the row's title button below is the keyboard path. Suppressed on purpose: the page this view was split out of broke these same two rules on the same row and carried them in frontend/a11y-baseline.json. -->
           <li
             v-for="s in drafts"
             :key="s.id"
@@ -124,7 +124,7 @@ function originLabel(s: ProjectSkill): string {
           </span>
         </h2>
         <ul class="skills-list">
-          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the pointer's shortcut over the whole row; the row's title button below is the keyboard path (this is the line the page carried before the split) -->
+          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- the pointer's shortcut over the whole row; the row's title button below is the keyboard path. Suppressed on purpose: the page this view was split out of broke these same two rules on the same row and carried them in frontend/a11y-baseline.json. -->
           <li
             v-for="s in active"
             :key="s.id"

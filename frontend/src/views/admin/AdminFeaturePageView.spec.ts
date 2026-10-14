@@ -35,7 +35,7 @@ function feature(over: Partial<FeatureView> = {}): FeatureView {
   }
 }
 
-function mount(props: Record<string, unknown>) {
+function mount(props: { feature: FeatureView | undefined; id: string }) {
   return render(AdminFeaturePageView, {
     props,
     global: { plugins: [createVuetify({ components, directives }), i18n] },
