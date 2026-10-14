@@ -3,6 +3,7 @@
 // 点卡片是看它（正文跟着滚过去），拖着选字不算；长的对话中间先收起来；AI 队友在答时
 // 卡上说它到了哪一步；回复发出去了才清空，失败了字还在。
 import type { SendDocComment } from '../../../composables/useDocCommentDraft'
+import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { CommentSpot } from '../../../lib/docCommentSpots'
 import type { DocThread, DocThreadActions, DocThreadState, ThreadPlace } from '../../../lib/docThreadTypes'
 
@@ -11,13 +12,27 @@ import { createVuetify } from 'vuetify'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useMentionOutside } from '../../../composables/useMentionOutside'
+
 import DocComments from './DocComments.vue'
 
 import { setLocale } from '@/i18n'
 
+const addTopicMember = vi.fn(async (_room: string, handle: string) => ({ member_handle: handle }))
+vi.mock('../../../api', async () => ({
+  ...(await vi.importActual<typeof import('../../../api')>('../../../api')),
+  addTopicMember: (room: string, handle: string) => addTopicMember(room, handle),
+}))
+vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+
 let serial = 0
 beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
+
+const PEOPLE: MentionPoolEntry[] = [
+  { handle: 'bob', label: '王博', avatar: null, agent: false },
+  { handle: 'cheese-a1', label: '芝士', avatar: null, agent: true },
+]
 
 const spot: CommentSpot = { quote: '五百万行', from: 5, to: 9, rel: null }
 
@@ -51,6 +66,8 @@ function mount(
     place?: ThreadPlace
     filter?: 'open' | 'resolved'
     topicId?: string
+    people?: MentionPoolEntry[]
+    outside?: boolean
   } = {}
 ) {
   const topicId = ref(options.topicId ?? `comments-${++serial}`)
@@ -73,9 +90,12 @@ function mount(
   const located: string[] = []
   const send = options.send ?? vi.fn(async () => undefined)
   const comments = ref<InstanceType<typeof DocComments> | null>(null)
+  let outside: ReturnType<typeof useMentionOutside> | undefined
   const view = render(
     defineComponent({
       setup() {
+        if (options.outside)
+          outside = useMentionOutside({ place: () => 'doc-1', nameOf: (handle) => (handle === 'carol' ? '张衡' : handle) })
         return () =>
           h(DocComments, {
             ref: comments,
@@ -88,6 +108,8 @@ function mount(
             placeOf: () => (options.place === undefined ? 'marked' : options.place),
             agentName: '芝士',
             mentionNames: {},
+            mentionPeople: options.people ?? PEOPLE,
+            outside,
             nameOf: (handle: string) => handle,
             writable: true,
             filter: options.filter ?? 'open',
@@ -102,7 +124,7 @@ function mount(
     comments.value!.open(at)
     return (await screen.findByLabelText('写评论')) as HTMLTextAreaElement
   }
-  return { ...view, topicId, openId, state, actions, located, send, write }
+  return { ...view, topicId, openId, state, actions, located, send, write, outside: () => outside! }
 }
 function pending() {
   let resolve!: () => void
@@ -247,5 +269,76 @@ describe('a thread’s card', () => {
     cleanup()
     mount({ threads: [thread('a')], place: null })
     expect((screen.getByRole('button', { name: '五百万行' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+})
+
+describe('naming someone in a comment', () => {
+  it('offers the people and the document’s teammate on @, and Enter picks rather than posts', async () => {
+    const view = mount()
+    const input = await view.write()
+    await fireEvent.update(input, '这里 @王')
+    await screen.findByRole('button', { name: /王博/ })
+    // A comment calls no channel: nobody is offered as 「所有人」.
+    expect(screen.queryByRole('button', { name: /所有人/ })).toBeNull()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    expect(input.value).toBe('这里 @王博 ')
+    expect(view.send).not.toHaveBeenCalled()
+    await fireEvent.keyDown(input, { key: 'Enter' })
+    await waitFor(() => expect(view.send).toHaveBeenCalledWith(view.topicId.value, '这里 @王博', spot))
+  })
+
+  it('Escape puts the list away and leaves the draft open', async () => {
+    const view = mount()
+    const input = await view.write()
+    await fireEvent.update(input, '@')
+    await screen.findByRole('button', { name: /王博/ })
+    await fireEvent.keyDown(input, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /王博/ })).toBeNull())
+    expect(screen.getByLabelText('写评论')).toBeTruthy()
+  })
+
+  it('offers the same people in a reply', async () => {
+    const view = mount({ threads: [thread('t1')] })
+    view.openId.value = 't1'
+    const box = (await screen.findByLabelText('回复')) as HTMLTextAreaElement
+    await fireEvent.update(box, '@bo')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    expect(box.value).toBe('@王博 ')
+    expect(view.actions.reply).not.toHaveBeenCalled()
+  })
+})
+
+describe('naming someone who cannot open the document', () => {
+  const told = (mayAdd: boolean) => ({
+    mentioned_outside: { room_id: 'room-1', handles: ['carol'], may_add: mayAdd, members_only: true },
+  })
+
+  it('asks the writer, and adding brings them into the channel through its roster', async () => {
+    // The button's busy spinner measures itself; jsdom has no ResizeObserver.
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      }
+    )
+    addTopicMember.mockClear()
+    const view = mount({ outside: true })
+    view.outside().offer(told(true))
+    await fireEvent.click(await screen.findByRole('button', { name: '添加到频道' }))
+    await waitFor(() => expect(addTopicMember).toHaveBeenCalledWith('room-1', 'carol'))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '添加到频道' })).toBeNull())
+  })
+
+  it('offers nothing to add for someone who may not add people, and adds nobody', async () => {
+    addTopicMember.mockClear()
+    const view = mount({ outside: true })
+    view.outside().offer(told(false))
+    await screen.findByText(/张衡/)
+    expect(screen.queryByRole('button', { name: '添加到频道' })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: '关闭' }))
+    await waitFor(() => expect(screen.queryByText(/张衡/)).toBeNull())
+    expect(addTopicMember).not.toHaveBeenCalled()
   })
 })

@@ -117,3 +117,43 @@ it('a mention in a task’s document opens the task the document belongs to', as
   await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-task'))
   expect(router.currentRoute.value.params).toMatchObject({ taskId: 'k-2' })
 })
+
+// 文档评论里的 @：说是谁、哪份文档，点开落在文档所在的任务，项目自己的文档落在那份文档上。
+function commented(extra: Record<string, string>): Notification {
+  return {
+    id: 9,
+    type: 'MENTION',
+    read: false,
+    createdAt: 0,
+    entities: {},
+    contextMetadata: {
+      projectId: 'p1',
+      documentId: 'd1',
+      commentId: 'c1',
+      documentTitle: '季度预算',
+      topicTitle: '季度预算',
+      author: 'alice',
+      authorName: 'Alice',
+      content: '这里的数字再核一下',
+      ...extra,
+    },
+  }
+}
+
+it('a mention in a task document’s comment says which document, and opens the task', async () => {
+  const { view, router } = await openInTheInbox(commented({ topicId: 't1', taskId: 'k1' }))
+
+  expect(view.getByText('Alice 在文档「季度预算」的评论里提到了你')).toBeTruthy()
+  expect(view.getByText('这里的数字再核一下')).toBeTruthy()
+  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-task'))
+  expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', taskId: 'k1' })
+})
+
+it('a mention in a project document’s comment opens the document', async () => {
+  const { router, view } = await openInTheInbox(commented({}))
+
+  await fireEvent.click(view.container.querySelector('.v-list-item')!)
+  await waitFor(() => expect(router.currentRoute.value.name).toBe('project-document'))
+  expect(router.currentRoute.value.params).toMatchObject({ projectId: 'p1', docId: 'd1' })
+})

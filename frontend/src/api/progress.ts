@@ -1,5 +1,5 @@
 import type { Block, ListPayload, TopicProgress } from '../cx_types'
-import type { DocComment } from '../lib/docThreadTypes'
+import type { DocComment, WrittenToWriter } from '../lib/docThreadTypes'
 
 import { request } from './http'
 
@@ -19,8 +19,12 @@ export function getDocNodes(documentId: string): Promise<{ data: Block[]; total:
 }
 
 /** Start a comment thread on the words `quote` (or on the whole document without them). */
-export function addComment(documentId: string, content: string, quote?: string): Promise<DocComment> {
-  return request<DocComment>(`/documents/${encodeURIComponent(documentId)}/comments`, {
+export function addComment(
+  documentId: string,
+  content: string,
+  quote?: string
+): Promise<DocComment & WrittenToWriter> {
+  return request<DocComment & WrittenToWriter>(`/documents/${encodeURIComponent(documentId)}/comments`, {
     method: 'POST',
     body: JSON.stringify({ content, quote: quote || undefined }),
   })

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 // 一条评论串一张卡：上面是评的那几个字，下面是来回的每一句；AI 队友在答时说它到了哪一步。
 // 点卡片就是在看它（正文滚到那几个字）；在看的那张才给回复框和解决。
+import type { MentionPoolEntry } from '../../../composables/useRoomMentionPicker'
 import type { DocThread, DocThreadActivity, ThreadPlace } from '../../../lib/docThreadTypes'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
+import { useCommentMentions } from '../../../composables/useCommentMentions'
 import { isAgentHandle } from '../../../lib/authorship'
 import { storageGet, storageRemove, storageSet } from '../../../lib/browserStorage'
 import { plainRefs } from '../../../lib/refChip'
@@ -12,6 +14,7 @@ import { relTime } from '../../../lib/relTime'
 import CheeseAvatar from '../../CheeseAvatar.vue'
 import MarkdownView from '../../common/MarkdownView.vue'
 import UserAvatar from '../../common/UserAvatar.vue'
+import MentionMenu from '../../room/MentionMenu.vue'
 
 import { t } from '@/i18n'
 
@@ -29,6 +32,8 @@ const props = defineProps<{
   error?: string
   agentName: string
   mentionNames: Record<string, string>
+  /** 回复里能 @ 的人。 */
+  mentionPeople?: MentionPoolEntry[]
   /** handle 读成名字。 */
   nameOf: (handle: string) => string
   /** handle 读成他挑过的头像地址；他没挑过、或不在名册上时给空串，画首字母。 */
@@ -99,6 +104,9 @@ watch(text, (value) => {
   else storageRemove(props.draftKey)
 })
 const input = ref<HTMLTextAreaElement | null>(null)
+const mentions = useCommentMentions({ text, people: () => props.mentionPeople ?? [], input })
+const { menu: mentionMenu, at: mentionAt, matches: mentionMatches, activeIndex: mentionActive } = mentions
+const mentionVisible = mentions.menuVisible
 function grow() {
   const el = input.value
   if (!el) return
@@ -107,6 +115,7 @@ function grow() {
 }
 watch(text, () => void nextTick(grow))
 function onKey(e: KeyboardEvent) {
+  if (mentions.onKey(e)) return
   if (e.isComposing || e.keyCode === 229 || e.key !== 'Enter' || e.shiftKey) return
   e.preventDefault()
   send()
@@ -215,6 +224,17 @@ function onCard(e: MouseEvent) {
           :placeholder="t('work.room.comments.reply')"
           :title="t('work.room.comments.keyHint')"
           @keydown="onKey"
+        />
+        <MentionMenu
+          ref="mentionMenu"
+          :open="mentionVisible"
+          :matches="mentionMatches"
+          :active-index="mentionActive"
+          level="root"
+          enter-sends
+          :at="mentionAt"
+          @pick="mentions.pick"
+          @hover="mentions.hover"
         />
       </div>
       <div class="doc-thread-card__actions">
@@ -380,6 +400,7 @@ function onCard(e: MouseEvent) {
   line-height: var(--lh-13);
 }
 .doc-thread-card__composer {
+  position: relative;
   margin-top: 12px;
   padding: 8px 10px;
   border: 1px solid var(--line-2);

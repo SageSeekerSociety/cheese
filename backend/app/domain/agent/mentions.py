@@ -541,7 +541,9 @@ async def announce_comment_mentions(
     targets = named
     if room is not None:
         targets = await members.reached(room, named)
-        away = await members.outside(room, named)
+        # Only whoever the comment could not tell: in a public channel someone
+        # not in it still opens the document and is told.
+        away = [h for h in await members.outside(room, named) if h not in targets]
         if away:
             outside = MentionedOutside(
                 room_id=room.id,

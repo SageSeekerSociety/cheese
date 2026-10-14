@@ -151,3 +151,15 @@ def test_a_friendly_name_is_stored_as_the_persons_token(client):
 
     assert posted["content"] == "<@bob> 看一下"
     assert len(_mentions(client, "bob")) == 1
+
+
+def test_in_a_public_channel_someone_not_in_it_is_still_told(client):
+    p = _project(client)
+    tid = _channel(client, p["id"], private=False)
+    task = open_task(client, tid)["id"]
+
+    posted = _comment(client, task, "<@carol> 看一下")
+
+    assert len(_mentions(client, "carol")) == 1
+    assert posted["notified"] == ["carol"]
+    assert "mentioned_outside" not in posted

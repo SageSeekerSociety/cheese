@@ -103,6 +103,8 @@ export interface MentionPickerDeps {
   listLibrary?: (projectId: string, query: string, limit: number) => Promise<LibraryFile[]>
   /** 用键盘换高亮之后把那一项滚进视野（菜单自己有高度上限、自己滚）。 */
   scrollActiveIntoView: () => void
+  /** 候选里有没有 @所有人 / @在线的人。不填是有；文档评论没有「这个频道的所有人」可叫。 */
+  broadcast?: boolean
 }
 
 export function useRoomMentionPicker(deps: MentionPickerDeps) {
@@ -196,7 +198,10 @@ export function useRoomMentionPicker(deps: MentionPickerDeps) {
     if (q === null) return []
     const ql = q.toLowerCase()
     if (level.value === 'library') return libraryItems(ql).slice(0, 12)
-    const broadcast = broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
+    const broadcast =
+      deps.broadcast === false
+        ? []
+        : broadcastItems().filter((b) => b.insert.startsWith(ql) || b.label.includes(q))
     const named: MentionItem[] = [
       ...deps.mentionPool().map((m) => ({
         label: m.label,
