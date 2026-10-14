@@ -41,13 +41,13 @@ generated where it is judged — the frontend `request-paths` job and this suite
 so there is no file to regenerate and no conflict to resolve in it. After adding,
 removing or reordering routes, from `backend/` run
 
-* `uv run python -m scripts.route_index --check` — no later route is provably
+- `uv run python -m scripts.route_index --check` — no later route is provably
   shadowed by an earlier one. The frozen pairs in
   `scripts/route_index_frozen.py` name their two leaves by path and handler, so a
   route added elsewhere never moves them. Never freeze a newly introduced
   shadowing relationship just to clear the check, and never pin a pair by
   registration position.
-* `uv run python -m scripts.route_index --check-annotations` — every live route
+- `uv run python -m scripts.route_index --check-annotations` — every live route
   has its handwritten authorization and owner note in
   `tests/contract/route_index.yaml` (`tests/unit/test_route_index*.py`).
 
