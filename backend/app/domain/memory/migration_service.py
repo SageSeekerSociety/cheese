@@ -35,7 +35,6 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.core.sentences import exception_text, say
-from app.domain.agent.announce import announce
 from app.domain.gateway_chat import GatewayCallError, GatewayChat
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.living_doc.services import Documents
@@ -64,6 +63,7 @@ from app.domain.memory.models import (
     MemoryMigrationStatus,
     parse_user_scope_id,
 )
+from app.domain.memory.ports import Announce
 from app.domain.memory.scopes import MemoryScope
 from app.domain.memory.store import live_entries
 from app.domain.notice_meta import (
@@ -107,11 +107,22 @@ class Gathered:
 
 
 class MemoryMigrationService:
-    """一个请求一个实例，跟着那一个 session 走。"""
+    """一个请求一个实例，跟着那一个 session 走。
 
-    def __init__(self, session: AsyncSession, *, chat: GatewayChat | None = None):
+    说进房间的那一句（`_say_report` / `_say_applied`）是 `announce` 递进来的，
+    本包在第 4 层、`agent.announce` 在第 5 层（`ports.py`）。
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        chat: GatewayChat | None = None,
+        announce: Announce,
+    ):
         self._session = session
         self._chat = chat
+        self._announce = announce
 
     async def _model(self) -> GatewayChat | None:
         """The model that judges where each old memory goes. The platform runs
@@ -548,6 +559,6 @@ class MemoryMigrationService:
     async def _say(self, gathered: Gathered, *, content: str, meta: dict) -> None:
         if gathered.root_topic_id is None:
             return
-        await announce(
+        await self._announce(
             self._session, place_id=gathered.root_topic_id, content=content, meta=meta
         )

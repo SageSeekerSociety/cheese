@@ -316,7 +316,7 @@ async def _pass_policy_gate(
         return None
     if topic_id is None:
         raise gate.OverTier(verdict.content)
-    block = await propose(session, verdict, place_id=topic_id)
+    block = await propose(session, verdict, place_id=topic_id, announce=announce)
     return _Proposed(
         verdict, _block_payload(BlockOut.model_validate(block)) if block else None
     )

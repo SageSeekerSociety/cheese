@@ -34,7 +34,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
 from app.domain.addressing import Event
-from app.domain.agent.announce import announce
 from app.domain.block.models import Block
 from app.domain.notice_meta import (
     EVENT_POLICY_PROPOSAL,
@@ -43,6 +42,7 @@ from app.domain.notice_meta import (
     notice,
 )
 from app.domain.policy.gate import Call, Proposal
+from app.domain.policy.ports import Announce
 from app.domain.room_task.place import PlaceResolver
 
 #: 提议 id 的命名空间。固定值，因为身份要跨进程、跨重启算得出同一个。
@@ -66,6 +66,7 @@ async def propose(
     *,
     place_id: uuid.UUID,
     proposal_id: uuid.UUID | None = None,
+    announce: Announce,
 ) -> Block | None:
     """把这条提议落进房间并投给要点头的那个人；已经提过就什么也不做。
 
@@ -78,6 +79,9 @@ async def propose(
     session，提议和「绑定没写」一起提交；轮次组装（`agent/chat.py` 的
     `_pass_policy_gate`）写在组装那条事务上，提交完这一轮就以这条提议收场——机器
     没绑、请求没发，往下那些占用一样也没发生。
+
+    说进房间那一步是 `announce` 递进来的：本包在第 2 层，`agent.announce` 在第 5
+    层，本包够不着它（`ports.py`）。
     """
     place = await PlaceResolver(session).resolve(place_id)
     if place is None:
@@ -93,7 +97,7 @@ async def propose(
     )
     if already is not None:
         return None
-    return await announce(
+    landed = await announce(
         session,
         place_id=place_id,
         content=proposal.content,
@@ -114,3 +118,6 @@ async def propose(
         points_at=Event(asked=proposal.approver),
         event_id=proposal_id,
     )
+    # 口子只承诺「可能什么都没落」，写下的是哪种行它不说（见 `ports.py`）。本包要
+    # 把这条提议交回调用方，所以在这里认一次。
+    return landed if isinstance(landed, Block) else None
