@@ -275,7 +275,9 @@ describe('转让团队', () => {
     await waitFor(() => expect(transferOwner).toHaveBeenCalledWith(team('crew', '').id, 7))
 
     await fireEvent.click(await screen.findByLabelText('团队操作'))
-    expect(await screen.findByText('退出团队')).toBeTruthy()
+    // 「退出团队」管理员和普通成员都有，分不出降级成没成：管理员那两条菜单项才是刀口。
+    expect(await screen.findByText('邀请成员')).toBeTruthy()
+    expect(screen.getByText('退出团队')).toBeTruthy()
   })
 
   // 名单这一格的状态活着的地方（composable）比弹窗长命：关掉甲队的弹窗不会取消那次
@@ -304,6 +306,34 @@ describe('转让团队', () => {
     answerCrew({ members: [{ role: 'MEMBER', user: { id: 8, username: 'other', nickname: '小李', avatarId: 0 } }] })
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(screen.queryByText('小李')).toBeNull()
+    expect(screen.getByText('小王')).toBeTruthy()
+  })
+
+  // 同上，只是甲队那次读是**失败**着晚回来的：失败的理由同样只能落回它自己那一次。
+  it('上一个团队读失败得晚，理由不会画到这一个团队的弹窗上', async () => {
+    getMyTeams.mockResolvedValue({
+      teams: [team('crew', '知是开发组', 'OWNER'), team('lab', '数据课第三组', 'OWNER')],
+    })
+    let failCrew: (reason: unknown) => void = () => {}
+    getMembers
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => (failCrew = reject)))
+      .mockResolvedValueOnce({
+        members: [{ role: 'MEMBER', user: { id: 7, username: 'mate', nickname: '小王', avatarId: 0 } }],
+      })
+    await mount()
+
+    const more = await screen.findAllByLabelText('团队操作')
+    await fireEvent.click(more[0])
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '转让团队' }))
+    await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
+
+    await fireEvent.click(more[1])
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '转让团队' }))
+    expect(await screen.findByText('小王')).toBeTruthy()
+
+    failCrew(new Error('甲队读不到'))
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(screen.queryByText('甲队读不到')).toBeNull()
     expect(screen.getByText('小王')).toBeTruthy()
   })
 })
@@ -339,6 +369,18 @@ describe('改团队资料', () => {
     expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '芝士社', intro: '', avatarId: 77 })
     await waitFor(() => expect(screen.queryByRole('button', { name: '保存' })).toBeNull())
     expect(await screen.findByText('芝士社')).toBeTruthy()
+  })
+
+  // 这条是从原来那个弹窗自己的 spec 里搬过来的：只改名字、没碰头像时，交上去的那一份
+  // 里不能有 avatarId，否则用户现成的头像会被清掉。
+  it('没换图就不带 avatarId，免得把现成的头像覆盖掉', async () => {
+    update.mockResolvedValue({ team: team('crew', '芝士社') })
+    const name = await openEditor()
+    await fireEvent.update(name, '芝士社')
+    await fireEvent.click(screen.getByRole('button', { name: '保存' }))
+
+    await waitFor(() => expect(update).toHaveBeenCalledWith(team('crew', '').id, { name: '芝士社', intro: '' }))
+    expect(createAvatar).not.toHaveBeenCalled()
   })
 
   it('撞名报在名字那一格，不是「保存失败」', async () => {
@@ -381,6 +423,24 @@ describe('手机上', () => {
       window.dispatchEvent(new Event('focus'))
       await new Promise((resolve) => setTimeout(resolve, 0))
       expect(getMyTeams).not.toHaveBeenCalled()
+    } finally {
+      vi.stubGlobal('innerWidth', 1024)
+    }
+  })
+
+  // 反向的一半：从窄变宽时侧栏才露出来，此前一次没读过，得在这里补上。团队名单有换页面
+  // 和拿回焦点两条兜底，空间列表没有——少了这一下，这个会话里的空间就一直是空的。
+  it('从窄变宽，侧栏露出来时把名单和空间补读一次', async () => {
+    vi.stubGlobal('innerWidth', 390)
+    try {
+      await mount()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      expect(getMyTeams).not.toHaveBeenCalled()
+
+      vi.stubGlobal('innerWidth', 1024)
+      window.dispatchEvent(new Event('resize'))
+      await waitFor(() => expect(getMyTeams).toHaveBeenCalledTimes(1))
+      expect(spaceList).toHaveBeenCalledTimes(1)
     } finally {
       vi.stubGlobal('innerWidth', 1024)
     }

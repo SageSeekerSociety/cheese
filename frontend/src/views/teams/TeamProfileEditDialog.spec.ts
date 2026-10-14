@@ -88,7 +88,9 @@ describe('改团队资料这一个弹窗', () => {
     await fireEvent.change(document.querySelector('input[type="file"]')!, { target: { files: [file] } })
     await fireEvent.click(await screen.findByRole('button', { name: '保存' }))
 
-    const saved = view.emitted('save')![0][0] as { avatarFile?: File }
+    // 带名字的那个重载给的是 `unknown[]`，取两次下标就是「对 unknown 取下标」；
+    // 类型要在下标之前整块给（别处 spec 也是这么转的），不是在最后 as。
+    const saved = (view.emitted()['save'] as { avatarFile?: File }[][])[0][0]
     expect(saved.avatarFile?.name).toBe('avatar.png')
   })
 
